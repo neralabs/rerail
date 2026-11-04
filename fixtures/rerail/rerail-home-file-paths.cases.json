@@ -1,0 +1,78 @@
+{
+  "caught": [
+    {
+      "path": "src/setup/coding-agents.ts",
+      "content": "import { existsSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\n/** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */\nexport function registrationRoot(rerailHome: string, packageRoot: string): string {\n  const current = join(rerailHome, \"current\");\n  return existsSync(join(current, \"package.json\")) ? current : packageRoot;\n}\n"
+    },
+    {
+      "path": "src/setup/rule-pack-store.ts",
+      "content": "/** The update channel in the Rerail home's `update-state.json`: the dist-tag packs are fetched under. */\nexport function updateChannel(home: string = defaultRerailHome()): string {\n  const path = join(home, \"update-state.json\");\n  if (!existsSync(path)) return \"latest\";\n  return \"latest\";\n}\n"
+    },
+    {
+      "path": "src/setup/harness-registration.ts",
+      "content": "/** The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it. */\nfunction setupLauncher(context: Context): string {\n  const home = process.env.RERAIL_HOME === undefined ? join(context.home, \".rerail\") : resolve(process.env.RERAIL_HOME);\n  return shellQuote(join(home, \"bin\", context.platform === \"win32\" ? \"rerail.cmd\" : \"rerail\"), context.platform);\n}\n"
+    },
+    {
+      "path": "src/setup/package-roots.ts",
+      "content": "async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {\n  if (root === context.root || root === join(context.home, \".rerail\", \"current\")) return true;\n  return false;\n}\n"
+    },
+    {
+      "path": "src/engine/native/rerail-build.ts",
+      "content": "  const home = defaultRerailHome(environment);\n  const versionsRoot = join(home, \"versions\");\n  if (!existsSync(versionsRoot)) return undefined;\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "  if (lookup.status === \"absent\" && !existsSync(join(home, \"current\")) && !existsSync(join(home, RERAIL_DATABASE_FILE))) {\n    return 1;\n  }\n"
+    },
+    {
+      "path": "src/engine/native/rerail-build-error.ts",
+      "content": "  throw new Error(\n    `Rerail at ${realPackageRoot} is neither the managed installation under ` +\n      `${join(defaultRerailHome(environment), \"versions\")} nor in a Git checkout, so it has no content store`,\n  );\n"
+    },
+    {
+      "path": "src/setup/setup-next-steps.ts",
+      "content": "export function nextSteps(home: string): string[] {\n  return [\n    `  add ${join(home, \"bin\")} to PATH to run \\`rerail\\` directly`,\n  ];\n}\n"
+    },
+    {
+      "path": "src/setup/active-version.ts",
+      "content": "export const active = (rerailHome: string) => resolve(rerailHome, \"versions\", version);\nexport const link = `${defaultRerailHome()}/current`;\n"
+    },
+    {
+      "path": "src/setup/user-home.ts",
+      "content": "const managed = join(homedir(), \".rerail\", \"current\");\nconst state = join(options.home ?? defaultRerailHome(), \"update-state.json\");\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/cli/setup-path.ts",
+      "content": "  const { launcherPath } = context.updater;\n  if (!existsSync(launcherPath)) return undefined;\n  const binDir = dirname(launcherPath);\n"
+    },
+    {
+      "path": "src/engine/git.ts",
+      "content": "      win32.join(home, \"scoop\", \"apps\", \"git\", \"current\", \"cmd\", \"git.exe\"),\n    posix.join(home, \".nix-profile\", \"bin\", \"git\"),\n"
+    },
+    {
+      "path": "src/setup/node-path.ts",
+      "content": "  const links = [join(keg[1]!, \"bin\", \"node\"), join(keg[1]!, \"opt\", keg[2]!, \"bin\", \"node\")];\n"
+    },
+    {
+      "path": "src/cli/status.ts",
+      "content": "  if (lookup.status === \"absent\" && !existsSync(context.updater.currentLink) && !existsSync(join(home, RERAIL_DATABASE_FILE))) return 1;\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-catalog.ts",
+      "content": "export function installedPacksPrefix(home: string = defaultRerailHome()): string {\n  return join(home, \"packs\");\n}\n"
+    },
+    {
+      "path": "src/setup/updater.ts",
+      "content": "  get currentLink(): string {\n    return join(this.home, \"current\");\n  }\n"
+    },
+    {
+      "path": "src/runtime/npm-bin.ts",
+      "content": "const npmBin = join(npmPrefix, \"bin\");\nconst nodeBin = join(dirname(process.execPath), \"bin\");\nconst view = spawnSync(join(nodeDir, \"bin\", \"npm\"), [\"view\", \"rerail\"]);\n"
+    },
+    {
+      "path": "src/engine/snapshot.ts",
+      "content": "const latest = join(snapshotDir, \"current\");\nconst nvm = join(nvmDir, \"versions\", \"node\");\nconst userBin = join(homedir(), \"bin\");\n"
+    }
+  ]
+}

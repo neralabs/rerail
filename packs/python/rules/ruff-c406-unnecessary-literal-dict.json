@@ -1,0 +1,188 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c406-unnecessary-literal-dict",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write a dict literal instead of passing a list or tuple of pairs to dict(); the call builds a throwaway sequence first.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-literal-dict",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee-dict": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^dict$",
+                  "resolves": {
+                    "global": [
+                      "dict"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee-dict"
+                  }
+                }
+              ]
+            },
+            "element": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  },
+                  {
+                    "regex": "^[\\[\\](),]$"
+                  }
+                ]
+              }
+            },
+            "pair": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "element"
+                    },
+                    "min": 2,
+                    "max": 2
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pair"
+                  }
+                }
+              ]
+            },
+            "pair-sequence": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "list"
+                    },
+                    {
+                      "kind": "tuple"
+                    }
+                  ],
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "element",
+                      "not": {
+                        "matches": "pair"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "pair-sequence"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "kind": "call",
+              "has": {
+                "field": "function",
+                "matches": "callee-dict"
+              },
+              "all": [
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "element"
+                      },
+                      "min": 1,
+                      "max": 1
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "pair-sequence"
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C406",
+        "message": "Rewrite `dict([(k, v), ...])` as the dict literal `{k: v, ...}` and `dict([])` as `{}`; leave it when a pair unpacks with `*`, as in `(k, *v)`.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C406"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

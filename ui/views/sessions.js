@@ -1,10 +1,11 @@
 /**
  * History, by session (`#sessions`, `?sessionId=<id>&host=<agent>` selects one): the repository's coding agent
- * sessions by day, and the selected one's transcript with the violations Rerail logged and steered in it.
+ * sessions by day (All · With violations · In progress, `?filter=`), and the selected one's transcript with the
+ * violations Rerail logged and steered in it, filtered to one rule from its dropdown in either Show all events state.
  */
 import { h, setAttr, setText, setClass, chevron, searchIcon, syncChildren } from "../dom.js";
-import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId } from "../format.js";
-import { data, ui } from "../state.js";
+import { fmt, plural, ago, duration, stamp, dayLabel, daysAgo, shortSessionId, truncate } from "../format.js";
+import { data, ui, repoName, titleOf as ruleTitle, packRuleOf } from "../state.js";
 import { ensureTitle, loadSession, loadSessionFindings, loadMoreSessions, loadEarlier } from "../poll.js";
 import { sessionTurns, sessionCorrections, sessionViolationTotal, loadedFrom, placeCorrections, resumeCommand, openState, lastEventAt, isOpen, violationCounts } from "../sessions-model.js";
 import { copyText, invalidate, loadMore, renderNow, toast } from "../shell.js";
@@ -22,6 +23,7 @@ let selecting = null;
  * dropped). Resolves to the transcript's load error (`null` on success) so a caller can tell a missing session from a slow one.
  */
 async function selectSession(id, then) {
+  if (id !== ui.selectedSession) ui.sessRule = null;
   ui.selectedSession = id;
   ui.resumeOpen = false;
   invalidate();
@@ -47,12 +49,20 @@ function jumpToFirst() {
 async function selectLinked(id, jump) {
   const error = await selectSession(id, jump ? jumpToFirst : undefined);
   if (error === null || !error.message.endsWith("answered 404")) return;
-  if (ui.selectedSession === id) selectSession(currentSession()?.sessionId ?? null);
-  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} is not in this repo`);
+  // The page falls back to the list's first row, the most recent session, only while the missing one is selected.
+  const selected = ui.selectedSession === id, fallback = selected ? currentSession() : null;
+  const instead = fallback?.sessionId === id ? null : fallback;
+  if (selected) selectSession(instead?.sessionId ?? null);
+  const shown = instead ? " Showing the most recent one." : "";
+  toast(`Session ${shortSessionId(id, new URLSearchParams(location.search).get("host"))} isn’t in ${repoName() || "this repo"}.${shown}`);
 }
 
-/** Entered with a session (a link, a violation's session): that one; else the one the view would show anyway. */
+/**
+ * Entered with a session (a link, a violation's session): that one; else the one the view would show anyway. The
+ * list's chip is the route's (`?filter=`; the Sessions with violations tile opens With violations), else All.
+ */
 export function enter(route) {
+  ui.sessFilter = route.sessionFilter ?? "all";
   if (route.session !== undefined) selectLinked(route.session, route.jump === true);
   else selectSession(ui.selectedSession ?? currentSession()?.sessionId ?? null);
 }
@@ -89,7 +99,7 @@ function build() {
     h("button.chip", { "data-act": "sfilter", "data-i": "corr" }, "With violations"),
     h("button.chip", { "data-act": "sfilter", "data-i": "open" }, "In progress"));
   el.list = h("div.srows");
-  el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations logged")), el.list);
+  el.listBox = h("div.list.slist", null, h("div.slhead", null, h("span", null, "Session"), h("span", null, "Violations")), el.list);
   el.listEmpty = h("div.empty", { hidden: true }, h("p", null, "No sessions match."));
   el.more = h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "sessmore" }));
   el.title = h("h2.clamp2");
@@ -97,26 +107,22 @@ function build() {
   el.hpickLabel = h("span.m", { "aria-hidden": "true" });
   el.hpickWrap = h("h2.hpick", { hidden: true }, h("span.sel", null, el.hpickLabel, el.hpick, chevron(12)));
   el.state = h("span", { hidden: true });
-  el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.sid = h("span.mono");
-  el.copyId = h("button.btn.sm", { "data-act": "copyid" }, "Copy id");
+  el.started = h("span"); el.dur = h("span"); el.events = h("span"); el.violations = h("span"); el.sid = h("span.mono");
   el.resume = h("button.btn.sm.solid", { "data-act": "resumetoggle", "aria-expanded": "false" });
   el.resumeLbl = h("p.lbl");
   el.resumeText = h("textarea.one", { id: "resumeText", readonly: true, "aria-label": "Resume command" });
-  el.resumeHow = h("p", { style: "margin:0;font-size:13px", hidden: true });
-  el.resumeFoot = h("span");
   el.resumeCopy = h("button.btn.sm.solid", { "data-act": "resumecopy" });
   el.resumeBox = h("div.pask.sresume", { hidden: true },
     h("button.x", { "data-act": "resumetoggle", "aria-label": "Close", title: "Close" }, "✕"),
-    el.resumeLbl, el.resumeText, el.resumeHow, h("div.foot", null, el.resumeFoot, el.resumeCopy));
-  el.tsum = h("span.tsum");
-  el.tchips = h("span.tchips", { role: "group", "aria-label": "Event type", hidden: true },
-    [["all", "All"], ["changes", "Changes"], ["commands", "Commands"], ["outside", "Outside & asks"], ["failures", "Failures"]].map(([k, l]) =>
-      h("button.chip", { "data-act": "evfilter", "data-i": k, "aria-pressed": "false" }, l, k === "all" ? null : h("span.n"))));
+    el.resumeLbl, el.resumeText, h("div.foot", null, h("span"), el.resumeCopy));
+  // The one filter on the timeline: a rule that logged in this session, with how many; "All rules" lifts it.
+  el.rule = h("select", { id: "srule", "aria-label": "Filter the timeline to one rule" });
+  el.ruleCtl = h("label.sortctl.srule", null, el.rule);
   el.showAll = h("input", { type: "checkbox", id: "showAll" });
   el.rail = h("div.rail", { id: "rail" }, h("div.line"));
   el.tl = h("div.tl", { id: "tl" });
   el.scroll = h("div.scroll", { id: "sscroll" }, h("div.tlwrap", null, el.rail, el.tl));
-  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No sessions yet"), h("p", null, "Your first coding agent session in this repo shows here, with the violations it logged.")));
+  el.empty = h("div.list", { hidden: true }, h("div.empty", null, h("h3", null, "No sessions yet."), h("p", null, "The first coding agent session in this repo shows here.")));
   el.listToggle = h("button.ltoggle", { "data-act": "slisttoggle", "aria-pressed": "true" });
   el.ltrow = h("div.ltrow", null, el.listToggle);
   el.aside = h("aside", null,
@@ -128,9 +134,9 @@ function build() {
     h("section", null, h("div.list", null,
       h("div.shead", null,
         h("div.l1", null, el.title, el.hpickWrap, el.state),
-        h("div.l3", null, el.started, el.dur, el.events, el.sid, h("span.acts", null, el.copyId, el.resume)),
+        h("div.l3", null, el.started, el.dur, el.events, el.violations, el.sid, h("span.acts", null, el.resume)),
         el.resumeBox),
-      h("div.tfilter", null, el.tsum, el.tchips, h("label.tall", null, el.showAll, " Show all events")),
+      h("div.tfilter", null, el.ruleCtl, h("label.tall", null, el.showAll, " Show all events")),
       el.scroll)));
   el.root = h("div", null, h("div.ghead.hhead", null, h("h2", null, "History by session"), el.lead), el.ltrow, el.empty, el.sess);
   v = el;
@@ -237,7 +243,8 @@ function renderList(all, sess) {
   const visible = all.filter(s => passesFilter(s) && matchesQuery(s, q));
   const total = Math.max(data.sessions.total, all.length);
   // Filters and search run over the loaded pages; the total says how many more Load more can bring.
-  setText(v.lead, `${fmt(visible.length)} of ${fmt(total)} · newest first`);
+  const narrowed = ui.sessFilter !== "all" || q !== "";
+  setText(v.lead, narrowed ? `${fmt(visible.length)} of ${fmt(total)} sessions, newest first.` : `${fmt(total)} ${plural(total, "session")}, newest first.`);
   if (v.search.value !== ui.sessQuery && document.activeElement !== v.search) v.search.value = ui.sessQuery;
   for (const c of v.chips.children) setAttr(c, "aria-pressed", String(c.dataset.i === ui.sessFilter));
 
@@ -296,30 +303,47 @@ function renderHeader(sess) {
   setText(v.started, `Started ${stamp(sess.startedAt)}`);
   setText(v.dur, duration((sess.endedAt ?? lastEventAt(sess)) - sess.startedAt));
   setText(v.events, `${fmt(sess.eventCount)} events`);
+  // The violation count sits in the meta line; the controls row below is only the rule filter and Show all events.
+  const violations = sessionViolationTotal(sess.sessionId) ?? sess.violationCount ?? 0;
+  setText(v.violations, `${fmt(violations)} ${plural(violations, "violation")}`);
   setText(v.sid, shortSessionId(sess.sessionId, sess.host));
-  setAttr(v.copyId, "data-i", sess.sessionId); setAttr(v.copyId, "title", sess.sessionId);
+  setAttr(v.sid, "title", sess.sessionId);
   const rc = resumeCommand(sess);
   setText(v.resume, resumeLabel(rc, st));
   setAttr(v.resume, "aria-expanded", String(ui.resumeOpen));
+  // While its box is open the button shows an open state instead of a second primary beside the box's Copy.
+  setAttr(v.resume, "class", ui.resumeOpen ? "btn sm open" : "btn sm solid");
   setAttr(v.resumeBox, "hidden", !ui.resumeOpen);
   if (ui.resumeOpen) renderResumeBox(rc);
 }
 
 function renderResumeBox(rc) {
-  setText(v.resumeLbl, rc.cmd ? `Run this in your terminal to pick the conversation back up in ${rc.name}` : `${rc.name} has no resume command`);
+  setText(v.resumeLbl, rc.cmd ? `Run this in your terminal to continue the session in ${rc.name}, with its history.` : `Open ${rc.name} in ${rc.cwd} and find the session.`);
   setAttr(v.resumeText, "hidden", !rc.cmd);
   if (rc.cmd && v.resumeText.value !== rc.cmd) v.resumeText.value = rc.cmd;
-  setAttr(v.resumeHow, "hidden", Boolean(rc.cmd)); setText(v.resumeHow, rc.how ?? "");
-  setText(v.resumeFoot, rc.cmd ? "Reopens the same conversation with its history." : "The id is what to look for.");
   setText(v.resumeCopy, rc.cmd ? "Copy command" : "Copy id");
 }
 
-function updateEventChip(c, count) {
-  const k = c.dataset.i;
-  setAttr(c, "aria-pressed", String(ui.evFilter === k));
-  setAttr(c, "disabled", count === 0 && ui.evFilter !== k ? true : null);
-  setClass(c, "bad", k === "failures" && count > 0);
-  if (count !== undefined) setText(c.querySelector(".n"), fmt(count));
+/** The rules that logged in the session's loaded violations, most first, ties by title: `{ id, title, count }`. */
+function rulesLogged(cs) {
+  const counts = new Map();
+  for (const c of cs) counts.set(c.finding.ruleId, (counts.get(c.finding.ruleId) ?? 0) + 1);
+  return [...counts].map(([id, count]) => {
+    const stored = data.rules.get(id);
+    return { id, count, title: stored ? ruleTitle(stored) : packRuleOf(id)?.rule.title ?? id };
+  }).sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
+}
+
+/** The rule dropdown: All rules, then each rule that logged here with its count; a rule no longer logged lifts the filter. */
+function renderRuleFilter(cs) {
+  const rules = rulesLogged(cs);
+  if (ui.sessRule !== null && !rules.some(r => r.id === ui.sessRule)) ui.sessRule = null;
+  setAttr(v.ruleCtl, "hidden", rules.length === 0);
+  const options = [{ id: "", title: "All rules", count: cs.length }, ...rules];
+  syncChildren(v.rule, options, o => o.id, o => h("option", { value: o.id }), (node, o) => setText(node, `${truncate(o.title, 60)} · ${fmt(o.count)}`));
+  const value = ui.sessRule ?? "";
+  if (v.rule.value !== value) v.rule.value = value;
+  setAttr(v.rule, "title", options.find(o => o.id === value)?.title ?? null);
 }
 
 function renderTranscript(sess) {
@@ -329,15 +353,9 @@ function renderTranscript(sess) {
   const events = (detail?.events ?? []).filter(e => e.observedAt >= from);
   const cs = sessionCorrections(sess.sessionId);
   const total = sessionViolationTotal(sess.sessionId);
-  const logged = total ?? cs.length;
+  // Placed over every rule, so a card lands where it would unfiltered; the timeline shows only the chosen rule's.
   const turns = placeCorrections(sessionTurns(events), cs);
-  const tools = turns.flatMap(t => t.tools);
-  const n = lvl => tools.filter(e => e.level === lvl).length;
-  setText(v.tsum, "");
-  v.tsum.replaceChildren(h("b", null, fmt(ui.showAll ? sess.eventCount : logged)), ui.showAll ? " events" : ` ${plural(logged, "violation")} logged`);
-  setAttr(v.tchips, "hidden", !ui.showAll);
-  const chipCounts = { changes: n("change"), commands: n("execute"), outside: n("outside") + n("ask") + n("delegate"), failures: tools.filter(e => e.failed).length };
-  for (const c of v.tchips.children) updateEventChip(c, chipCounts[c.dataset.i]);
+  renderRuleFilter(cs);
   if (v.showAll.checked !== ui.showAll) v.showAll.checked = ui.showAll;
   const slot = data.sessionFindings;
   const loaded = detail?.loaded === true;
@@ -358,8 +376,7 @@ function toggleSet(set, key) {
 }
 
 export const actions = {
-  ssel: id => { ui.evFilter = "all"; selectSession(id); },
-  copyid: id => copyText(id, null, `Copied ${id}`),
+  ssel: id => selectSession(id),
   jump: id => jumpTo(id),
   etoggle: (id, b) => {
     const wasOpen = b.parentElement.dataset.open === "true";
@@ -367,18 +384,17 @@ export const actions = {
     invalidate();
   },
   foldtoggle: id => { toggleSet(ui.openFolds, id); invalidate(); },
-  evfilter: id => { ui.evFilter = id; invalidate(); },
-  showall: () => { ui.showAll = true; ui.evFilter = "all"; invalidate(); },
+  showall: () => { ui.showAll = true; invalidate(); },
   sfilter: id => { ui.sessFilter = id; invalidate(); },
   daytoggle: id => { toggleSet(ui.openDays, id); invalidate(); },
-  sessmore: () => loadMore(loadMoreSessions),
-  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId)); },
+  sessmore: () => loadMore(loadMoreSessions, "sessions"),
+  earlier: () => { const s = currentSession(); if (s) loadMore(() => loadEarlier(s.sessionId), "earlier events"); },
   resumetoggle: () => { ui.resumeOpen = !ui.resumeOpen; invalidate(); },
   slisttoggle: () => { listHidden = !listHidden; invalidate(); },
   resumecopy: () => {
     const s = currentSession(); if (!s) return;
     const rc = resumeCommand(s);
-    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Copied. Run it in your terminal." : "Copied the session id.");
+    copyText(rc.cmd ?? s.sessionId, document.getElementById("resumeText"), rc.cmd ? "Resume command copied. Run it in your terminal." : "Session id copied.");
   },
 };
 
@@ -387,7 +403,8 @@ export function onInput(el) {
 }
 
 export function onChange(el) {
-  if (el.id === "showAll") { ui.showAll = el.checked; ui.evFilter = "all"; invalidate(); }
+  if (el.id === "showAll") { ui.showAll = el.checked; invalidate(); }
+  else if (el.id === "srule") { ui.sessRule = el.value || null; invalidate(); }
   else if (el.id === "spick" || el.id === "hpick") selectSession(el.value);
 }
 

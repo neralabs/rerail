@@ -1,5 +1,18 @@
 # @neralabs/rerail-pack-react
 
+## 0.1.6 (2026-11-04)
+
+40 rules, 21 of them on by default.
+
+- 40 new rules (30 from eslint-plugin-react and 10 from eslint-plugin-react-hooks): 20 start in Steer, 1 in Log and 19 off.
+
+## 0.1.5
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- 211e8b5: The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+
 ## 0.1.4
 
 ### Patch Changes

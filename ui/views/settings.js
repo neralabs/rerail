@@ -1,11 +1,12 @@
 /**
  * Settings (`#settings`). General: theme, the status line, when Rerail was installed, where history is kept (and
  * clearing the shown repo's), and the shown repo's Follow .gitignore. Repos: every repo Rerail knows, with how many
- * rules it has and a switch where it has any. Coding agents: which are connected, with the command that changes it.
+ * rules it has and a switch where it has any. Coding agents: which are connected, whether each connected one's tools
+ * can read Rerail's data, with the command that changes the connection.
  * Uninstall: the command. Settings are the machine's: the page shows with or without a repository in scope.
  */
 import { h, setContent, icon } from "../dom.js";
-import { andList, fmt, plural } from "../format.js";
+import { andList, failed, fmt, plural } from "../format.js";
 import { send } from "../api.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
@@ -41,8 +42,8 @@ function historyRow() {
   if (ui.scope === null) return row("History stored at", [path, " · stays on this machine"], null);
   if (!clearAsk) return row("History stored at", [path, " · stays on this machine"], h("button.btn.sm.danger", { "data-act": "clearask" }, "Clear history"));
   return row("History stored at",
-    h("span.confirm", null, "Clear every recorded session and violation for ", h("span.mono", null, name),
-      "? Rules and settings stay. This cannot be undone. In a terminal this is ", h("code", null, "rerail reset"), "."),
+    h("span.confirm", null, "Clear all history for ", h("span.mono", null, name),
+      "? Running sessions keep recording. Rules and settings stay. This cannot be undone. In a terminal this is ", h("code", null, "rerail reset"), "."),
     h("span.btns", null, h("button.btn.sm", { "data-act": "clearcancel", disabled: clearing }, "Cancel"),
       h("button.btn.sm.danger.solid", { "data-act": "cleargo", disabled: clearing }, clearing ? "Clearing…" : "Clear history")));
 }
@@ -52,13 +53,13 @@ function general() {
   return h("section", null, h("div.ghead", null, h("h2", null, "Settings")),
     h("div.list", null,
       row("Theme", null, seg("theme", [["", "System"], ["light", "Light"], ["dark", "Dark"]], ui.theme)),
-      row("Status line", "Rerail’s line in Claude Code’s footer: how many rules are on and how often it steered. Other coding agents have no footer line.",
+      row("Footer", "Shows in Claude Code, OMP and Pi only.",
         data.presence === null ? h("span.val", null, "…") : seg("presence", [["compact", "Show"], ["silent", "Do not show"]], data.presence)),
       installed === null ? null : row("Installed", null, h("span.val", null, installed)),
       historyRow(),
       ui.scope === null ? null : row("Follow .gitignore",
-        ["Files git ignores (", h("code", null, ".gitignore"), ", ", h("code", null, ".git/info/exclude"), ", your global excludes) are not checked in ",
-          repoName() || "this repo", ". Applies to sessions started after the change."],
+        [`New sessions in ${repoName() || "this repo"} skip Git-ignored files, and so does `, h("code", null, "rerail rules test"),
+          ". Agent tools can turn this on, not off."],
         data.followGitignore === null ? h("span.val", null, "…") : seg("gitignore", [["on", "On"], ["off", "Off"]], data.followGitignore ? "on" : "off"))));
 }
 
@@ -80,10 +81,12 @@ function repos() {
     h("div.list", null, data.repositories.length ? data.repositories.map(repoRow) : h("div.empty", null, h("p", null, "Rerail has not seen a repo yet."))));
 }
 
+/** One coding agent: its name over its state, for a connected one whether its tools can read Rerail's data, and the command that changes it. */
 function agentRow(agent) {
   const status = agentStatus(agent);
   return h(`div.agent${status.tone === "off" ? ".off" : ""}`, { "data-agent": agent.id },
     h("div.rt2", null, h("span", null, agent.name), h(`span.st${status.tone && status.tone !== "off" ? `.${status.tone}` : ""}`, null, status.state),
+      status.data ? h(`span.st${status.data.warn ? ".warn" : ""}`, null, status.data.text) : null,
       status.problem ? h("span.tip", null, status.problem) : null),
     status.command === null ? null : copyButton(status.command.text, status.command.label));
 }
@@ -91,7 +94,7 @@ function agentRow(agent) {
 function agents() {
   const head = lead => h("div.ghead", null, h("h2", null, "Coding agents"), h("p", null, lead));
   if (data.agentsError !== null) return h("section", null, head(`Couldn’t check the coding agents: ${data.agentsError}`));
-  if (data.agents === null) return h("section", null, head("Checking…"));
+  if (data.agents === null) return h("section", null, head("Loading…"));
   const connected = data.agents.filter(a => a.connected && !a.problem).map(a => a.name);
   return h("section", null, head(connected.length ? `Connected to ${andList(connected)}.` : "No coding agent connected yet."),
     h("div.list.agents", null, data.agents.map(agentRow)));
@@ -125,8 +128,8 @@ export function enter() {
   countsRound = -1;
   data.agentsError = null;
   loadAgents().catch(error => { data.agentsError = error.message; }).then(invalidate);
-  loadPresence().then(invalidate, error => toast(`Could not read the status line setting: ${error.message}`));
-  if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(`Could not read the Follow .gitignore setting: ${error.message}`));
+  loadPresence().then(invalidate, error => toast(failed("Couldn’t load the footer setting", error)));
+  if (ui.scope !== null) loadFollowGitignore().then(invalidate, error => toast(failed("Couldn’t load Follow .gitignore", error)));
 }
 
 async function savePresence(presence) {
@@ -134,15 +137,15 @@ async function savePresence(presence) {
   data.presence = presence; invalidate();
   try {
     await send("PUT", "/api/presentation-preferences", { repository: "", host: "", presence });
-    toast(presence === "silent" ? "The status line is hidden in new turns." : "The status line shows in new turns.");
-  } catch (error) { data.presence = was; toast(`Could not save: ${error.message}`); }
+    toast(presence === "silent" ? "Footer hidden." : "Footer shown.");
+  } catch (error) { data.presence = was; toast(failed("Couldn’t change the footer setting", error)); }
   invalidate();
 }
 
-/** "Cleared 12 sessions from storefront." plus the ones still running, which keep recording. */
-function clearedMessage({ sessions, openSessions }, name) {
-  const running = openSessions === 0 ? "" : ` ${fmt(openSessions)} still running ${plural(openSessions, "keeps", "keep")} recording.`;
-  return `Cleared ${fmt(sessions)} ${plural(sessions, "session")} from ${name}.${running}`;
+/** "History cleared for storefront." plus the sessions still running, which keep recording. */
+function clearedMessage({ openSessions }, name) {
+  const running = openSessions === 0 ? "" : ` ${fmt(openSessions)} running ${plural(openSessions, "session keeps", "sessions keep")} recording.`;
+  return `History cleared for ${name}.${running}`;
 }
 
 /** Clear the shown repo's history (`rerail reset`), then read everything of it again. */
@@ -158,7 +161,7 @@ async function clearHistory() {
       loadFollowGitignore().then(invalidate, () => {});
     }
   } catch (error) {
-    toast(`Could not clear the history: ${error.message}`);
+    toast(failed(`Couldn’t clear history for ${name}`, error));
   }
   clearing = false; clearAsk = false;
   invalidate();

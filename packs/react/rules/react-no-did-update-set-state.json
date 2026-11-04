@@ -1,0 +1,276 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-did-update-set-state",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid calling setState in componentDidUpdate; it triggers a second render after every update and can loop.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "any": [
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "this"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^#?setState$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "subscript_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "this"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "index",
+                      "kind": "identifier",
+                      "regex": "^setState$"
+                    }
+                  }
+                ]
+              }
+            ],
+            "all": [
+              {
+                "matches": "callee"
+              },
+              {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "function"
+                      },
+                      "matches": "named-holder"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "function"
+                      },
+                      "matches": "function",
+                      "inside": {
+                        "stopBy": {
+                          "matches": "function"
+                        },
+                        "matches": "named-field"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "utils": {
+            "this": {
+              "any": [
+                {
+                  "kind": "this"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "kind": "comment"
+                    },
+                    "matches": "this"
+                  }
+                }
+              ]
+            },
+            "callee": {
+              "any": [
+                {
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "function": {
+              "any": [
+                {
+                  "kind": "arrow_function"
+                },
+                {
+                  "kind": "function_expression"
+                },
+                {
+                  "kind": "function_declaration"
+                },
+                {
+                  "kind": "generator_function"
+                },
+                {
+                  "kind": "generator_function_declaration"
+                },
+                {
+                  "kind": "method_definition"
+                }
+              ]
+            },
+            "key": {
+              "any": [
+                {
+                  "kind": "property_identifier",
+                  "regex": "^componentDidUpdate$"
+                },
+                {
+                  "kind": "private_property_identifier",
+                  "regex": "^#componentDidUpdate$"
+                },
+                {
+                  "kind": "computed_property_name",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "regex": "^componentDidUpdate$"
+                  }
+                }
+              ]
+            },
+            "named-field": {
+              "any": [
+                {
+                  "kind": "pair",
+                  "has": {
+                    "field": "key",
+                    "matches": "key"
+                  }
+                },
+                {
+                  "kind": "pair_pattern",
+                  "has": {
+                    "field": "key",
+                    "matches": "key"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "class_body"
+                  },
+                  "all": [
+                    {
+                      "not": {
+                        "kind": "method_definition"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^accessor$"
+                        }
+                      }
+                    }
+                  ],
+                  "any": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "matches": "key"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "matches": "key"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "object_assignment_pattern",
+                  "has": {
+                    "field": "left",
+                    "kind": "shorthand_property_identifier_pattern",
+                    "regex": "^componentDidUpdate$"
+                  }
+                }
+              ]
+            },
+            "named-holder": {
+              "any": [
+                {
+                  "kind": "method_definition",
+                  "has": {
+                    "field": "name",
+                    "matches": "key"
+                  }
+                },
+                {
+                  "matches": "named-field"
+                }
+              ]
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-did-update-set-state",
+        "message": "Derive this value from props during render instead of calling setState in componentDidUpdate; leave it only when a prevProps or prevState check guards it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-did-update-set-state"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-did-update-set-state"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

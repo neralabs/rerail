@@ -1,69 +1,133 @@
 # Rerail rule pack: Node.js
 
-24 ports of eslint-plugin-n 18.4.1 rules with its default options. A port starts in `candidates/rules/` and moves to
-`rules/` and `pack.json` once it passes the port readiness gates ([docs/port-readiness.md](../../docs/port-readiness.md)); eslint-plugin-n
-has no port readiness recording yet, so every port is a candidate today, `pack.json` lists no rules, and the pack ships
-none and is never recommended. Each port is scored against the plugin's own findings on its rule tests and on two pinned
-corpora (fastify, prettier), through the engine's production workspace path, with every disagreement declared in
-`divergences.json` (one today: `n-prefer-promises-fs` does not report `fs.watch`). The conformance check (`--check`, run
-in CI) scores the tests: it gates the ports in `rules/` and reports the candidates without gating them.
+42 ports of eslint-plugin-n 18.4.1 rules with its default options. A port is in `rules/` and `pack.json` when it passes
+the pack's conformance check, gates included (`upstream/eslint-plugin-n/gates.yaml`), and in `candidates/rules/`
+until then ([conformance/README.md](../../conformance/README.md)). Each port is scored through the engine's production workspace
+path, with every disagreement declared in `divergences.json` (`n-prefer-promises-fs` does not report `fs.watch`;
+`n-callback-return` does not report a final `callback?.()`; `n-no-unsupported-features-es-syntax` cannot read a tagged
+template with an invalid escape), against:
+
+- **the plugin's own findings on its rule tests** (`fixtures`);
+- **the tool-pack's real-code samples** (`samples.lock`, `SAMPLES.md`): files from fastify and prettier labelled with
+  the plugin's findings, and the Node test set: 294 real files from 48 repositories, each at the commit that
+  introduced a violation of one rule (about ten per rule), beside its nearest package.json, labelled with the plugin's
+  findings for that rule, and 270 copies with those findings fixed by hand, clean for it. Each file is under the MIT,
+  Apache-2.0 or BSD-3-Clause licence its repository gave it at that commit, whose text the archive's `LICENSES.md`
+  holds.
+
+37 ports ship, 11 of them on (the ones the plugin's recommended configurations turn on: `n-hashbang`,
+`n-no-deprecated-api`, `n-no-exports-assign`, `n-no-extraneous-require`, `n-no-missing-import`, `n-no-missing-require`,
+`n-no-process-exit`, `n-no-unpublished-import`, `n-no-unpublished-require`, `n-no-unsupported-features-es-builtins`,
+`n-no-unsupported-features-node-builtins`) and the other 26 off until a repository turns them on. The five rules that
+read where a specifier resolves and ship (`n-no-missing-import`/`-require`, `n-no-unpublished-import`/`-require`,
+`n-no-extraneous-require`) are judged by the plugin's tests and their rename variants; no sample judges them yet: a
+sample carries its file and its package.json, not the files and installed packages its imports resolve to. The 5
+candidates: `n-no-unsupported-features-es-syntax` matches the plugin on both sources but fails the compact gate's
+no-written-out-repetition (a member chain over the global object reaches one node kind three times along a nesting
+path through its trace-map utilities); `n-no-restricted-import` and `n-no-restricted-require` report nothing at
+upstream's default options, so neither source shows them catching anything; `n-file-extension-in-import` and
+`n-no-extraneous-import` pass the plugin's tests, but the renaming takes every finding of each from its rename
+variants, so `holds-under-rename` fails as vacuous.
 
 It follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by
 `npx vitest run test/engine/catalog/packs.test.ts -t "pack node"`.
 
 | Path | What |
 |---|---|
-| `pack.json` | The pack (`rerail.rule-pack/v1`); it lists no rules while every port is a candidate |
-| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin and the pinned corpora (fastify, prettier) |
+| `pack.json` | The pack (`rerail.rule-pack/v1`): the shipped rules, and the match that recommends it for a repository with a Node.js server framework or Electron dependency, or `.cjs`/`.mjs`/`.cts`/`.mts` files outside tests, scripts, fixtures and configuration |
+| `rules/` | The shipped ports; `node_policies.py` writes every document (its `SHIPPED`) but the hand-written `n-no-process-exit` |
+| `conformance.json` | Each ported rule's upstream rule, how findings compare, and the capabilities it exercises; the pinned plugin |
 | `divergences.json` | Declared disagreements with the plugin |
-| `upstream/eslint-plugin-n/` | The plugin's copied rule tests (`tests/`), one file per test case (`fixtures/`), its recordings (`fixtures.expected.json`, `corpus-<name>.expected.json`) and the recorder (`generate.mjs`, sharing `conformance/recorders/eslint-record.mjs`) |
-| `candidates/` | Every port (`rules/`, listed in `conformance.json`; `n-no-deprecated-api` and `n-hashbang` in `candidates/conformance.json`) and the Node probes (`probes/`), scored, never shipped; `node_policies.py` writes every document but the hand-written `n-no-process-exit` |
-| `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, listing every copied file |
+| `upstream/eslint-plugin-n/` | The plugin's upstream manifest (`gates.yaml`), its copied rule tests (`tests/`), one file per test case (`fixtures/`, their rename variants under `fixtures/renamed/`), its expected findings (`fixtures.expected.json`), the generator (`generate.mjs`, sharing `scripts/pack-data/eslint-expected.mjs` and writing `provenance.json` and `LICENSES.md` through `scripts/pack-data/provenance.mjs`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
+| `candidates/` | The ports that do not pass yet (`rules/`, listed in `conformance.json`) and the Node probes (`probes/`), scored, never shipped |
+| `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
+| `licenses/eslint-plugin-n/` | The plugin's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the test-data archive) |
 
-No rule in `rules/` or `candidates/rules/` pins `languageOptions.sourceType` (the probes do, to state Node facts): each
-file keeps its own module system (`.cjs`/`.cts` CommonJS; `.mjs`/`.mts`/`.tsx` an ES module; `.js`/`.jsx`/`.ts` by the
-nearest package.json's `type`, Node's syntax detection where that package.json sets no valid `type`, and an ES module
-where there is no package.json), as the plugin's `flat/mixed-esm-and-cjs` config picks `flat/recommended-script` or
-`flat/recommended-module` per file. Only a CommonJS file has `require`, `module`,
+No rule pins `languageOptions.sourceType` (the probes do, to state Node facts). The rules that reach CommonJS names
+through scope set `languageOptions.moduleSystem: "package-type"`, so each file has the module system the plugin's
+`flat/mixed-esm-and-cjs` config gives it, by extension and package.json `type` alone: `.mjs`/`.mts` an ES module,
+`.cjs`/`.cts` CommonJS, any other file an ES module only under `"type": "module"` and CommonJS otherwise (a `type`-less
+package.json and no package.json included, whatever the file's syntax: tsc compiles such TypeScript to CommonJS). The
+engine's own default, Node's syntax detection where `type` is unset and an ES module without a package.json, is left to
+the other packs. Only a CommonJS file has `require`, `module`,
 `exports`, `__dirname` and `__filename`; an ES module has none (`flat/recommended-module` turns them off), so the rules
 that reach them through scope (exports-style, no-exports-assign, no-path-concat, prefer-global/\*, prefer-promises/\*,
 no-deprecated-api) report them in CommonJS files only. Rules upstream reads by name (global-require, no-new-require,
-no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each fixture and corpus file the same way:
+no-mixed-requires, prefer-node-protocol) report in both. The recorder lints each fixture the same way:
 `globals.node`, without those five names in an ES module. Upstream's RuleTester declares `globals.node` in every case,
 so a case it runs as a module that reads one of those names and has no module syntax is written as CommonJS (`.js`
-under the fixtures' `"type": "commonjs"` package.json), where Node defines them.
+under the fixtures' `"type": "commonjs"` package.json), where Node defines them. A case configured by nothing but a
+Node version (its `version` option, or the `n.version` setting) is written beside a package.json whose `engines.node`
+is that version, which the plugin reads when no option sets one, so the rules that read the configured range
+(`n-no-unsupported-features-*`, `n-prefer-node-protocol`, `n-prefer-process-get-builtin-module`) are judged at the
+range each case states.
 
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
+The rules that read where a file sits in its package do it through `file.package` conditions on its nearest
+package.json: `bin` (its `bin` targets, as the plugin's `isBinFile` resolves them), `nodeVersion` (its configured Node
+range), `private` (its `private` is `true`) and `published` (npm publishes the file, as the plugin's `getNpmignore`
+reads the manifest's `files` and `main` and the `.npmignore`, else, without `files`, the `.gitignore` in its folder;
+[docs/code-rule-dsl-reference.html](../../docs/code-rule-dsl-reference.html)). Without a package.json none of them
+holds, `published: false` included, as the plugin checks nothing there.
+
+The rules that read where an import or `require()` target resolves (`n-no-missing-*`, `n-file-extension-in-import`,
+`n-no-unpublished-import`/`-require`, `n-no-extraneous-*`) do it through `importTarget` conditions on the specifier:
+the engine resolves it as the plugin's `ImportTarget` does (enhanced-resolve with the plugin's options: `exports`
+and `imports` conditions, `node_modules`, main fields and files, the tried extensions, a TypeScript file's tsconfig
+`paths` and extension mapping), over the files the workspace holds and, below the workspace root, the files on disk,
+so a bare specifier resolves only where its package is installed in the repository. It then reads the facts the
+plugin's checks read: `failed` (no file found), `extensionSpelled`, `published` (npm publishes the target file, read
+as `file.package.published` is), `devDependency`, `declared` (a dependency field of the importing file's package.json,
+or of the workspace root that claims it) and `aliased` (a tsconfig `paths` key). The plugin finds packages in any
+`node_modules` up to `/`; the engine looks no higher than the workspace root, and reads letter case as the disk does.
+
+The recorder writes each case into a copy of the whole upstream fixture folder it runs in (its package.json,
+`.npmignore`, `.gitignore`, `node_modules` and sibling files), lints that copy in a temporary folder so nothing of this
+repository is found, and the scoring workspace's root is the fixtures folder, so resolution reads the same tree. A
+case upstream runs as a module at a `.js`/`.ts` fixture path beside a package.json without `"type": "module"` is
+written as `.mjs`/`.mts` in the same folder, so its package and module system both hold.
+
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/eslint-plugin-n/publish/`. The recipe
 (`scripts/pack-data/recipes/node.ts`) runs `upstream/eslint-plugin-n/generate.mjs` against the pinned tools (eslint
-10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0) and corpora.
+10.11.0, eslint-plugin-n 18.4.1, @typescript-eslint/parser 8.70.1, typescript 5.9.3, globals 17.13.0; the same packages
+`scripts/pack-data/runtimes/eslint-plugin-n-18.4.1/` pins for the release check and `npm run upstream:bump`).
 Regenerating the rule documents runs offline, against the same tools installed under `.rerail/tools/node`:
 
 ```sh
 npm run fixtures:derive -- --pack node
-npm run fixtures:push -- --pack node     # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack node    # copy what changed into upstream/eslint-plugin-n/publish/
 python3 scripts/generate/packs/node_policies.py
 ```
 
-Scoring one rule with every false positive and false negative printed, and the candidates and probes:
+Scoring one rule with every false positive and false negative printed, on the tests and on the samples (`npm run
+fixtures:pull` fetches them), and the probes:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack node --rule n-no-process-exit --fixtures
-node --import tsx conformance/languages/cli.ts --pack-dir packs/node/candidates --fixtures
+node --import tsx conformance/languages/cli.ts --pack node --rule n-no-process-exit --samples
 node --import tsx conformance/languages/cli.ts --pack-dir packs/node/candidates/probes --fixtures
 ```
+
+The Node test set's files were mined outside this repository, from full clones of the source repositories: a history
+scan, then a pattern search for the rules the scan left short, keeping only violations a commit introduced, with every
+fixed copy checked to parse, to have no finding of its rule, to add no suppression comment and to keep 70% of its
+lines. They are samples like any other: a change to the set is staged under `upstream/eslint-plugin-n/publish/samples/`
+and published with the test data ([docs/upstream.md](../../docs/upstream.md#samples)).
+
+## Module system per file
+
+Shared by `n-exports-style`, `n-global-require`, `n-no-exports-assign`, `n-no-path-concat`, the `n-prefer-global-*` ports and the `n-prefer-promises-*` ports.
+
+All ports target eslint-plugin-n 18.4.1 with default options. No sourceType is pinned; `moduleSystem: "package-type"` gives each file the plugin's module system: .mjs/.mts are ES modules, .cjs/.cts CommonJS, any other file (.tsx included) an ES module only under package.json `"type": "module"` and CommonJS otherwise, without a package.json too. Like the plugin's flat/mixed-esm-and-cjs config, a CommonJS file has the globals require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module has none (flat/recommended-module). Consequences: the global `exports` exists only in CommonJS files; `__dirname`/`__filename` path concatenation is caught only in CommonJS (the `-commonjs` clauses), while ES modules are checked for `import.meta` paths; for prefer-global and prefer-promises rules, `require(…)` is reached only in CommonJS files, and in ES modules only imports and `process.getBuiltinModule(…)` are.
 
 ## Rule details
 
 What each rule matches beyond its one-line description: exact matching, edge cases, upstream settings and known divergences.
 
-### Module system per file (shared by n-exports-style, n-global-require, n-no-exports-assign, n-no-path-concat, n-prefer-global-*, n-prefer-promises-*)
-
-All ports target eslint-plugin-n 18.4.1 with default options. No sourceType is pinned, so each file keeps its own module system: .cjs/.cts are CommonJS; .mjs/.mts/.tsx are ES modules; .js/.jsx/.ts follow the nearest package.json's `type`, fall back to Node's syntax detection when that package.json sets no valid type, and are ES modules when there is no package.json. Like the plugin's flat/mixed-esm-and-cjs config, a CommonJS file has the globals require, module, exports, __dirname and __filename (flat/recommended-script) and an ES module has none (flat/recommended-module). Consequences: the global `exports` exists only in CommonJS files; `__dirname`/`__filename` path concatenation is caught only in CommonJS (the `-commonjs` clauses), while ES modules are checked for `import.meta` paths; for prefer-global and prefer-promises rules, `require(…)` is reached only in CommonJS files, and in ES modules only imports and `process.getBuiltinModule(…)` are.
-
 ### `n-callback-return`
 
-Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched.
+Default callback names: callback, cb, next. A call of one of those is allowed when its nearest block/return/arrow ancestor is a return or an arrow function, when it is the last statement of a function body (or the right side of a binary/logical expression statement there), or when it is the statement just before a block's final return. Calls with a template-string argument are not matched. An optional call (`callback?.()`) gets the same exemptions; upstream reports one in those positions, because ESTree's ChainExpression around it defeats its `parentNode.expression === node` check (declared in `divergences.json`).
 
 ### `n-global-require`
 
@@ -97,7 +161,7 @@ Upstream matches by name only (an identifier named process / require), with no s
 
 Upstream selectors `CallExpression > MemberExpression.callee Identifier[name=/Sync$/]` and `CallExpression > Identifier[name=/Sync$/]`, reported at the identifier's ESTree parent: a call with a /Sync$/ identifier as callee or argument, or a node inside (or being) a call's member callee with a /Sync$/ identifier child. So a `…Sync` identifier passed as an argument is also reported.
 
-### `n-prefer-global-*` (buffer, console, process, text-decoder, text-encoder, url, url-search-params)
+### `n-prefer-global-buffer` / `n-prefer-global-console` / `n-prefer-global-crypto` / `n-prefer-global-process` / `n-prefer-global-text-decoder` / `n-prefer-global-text-encoder` / `n-prefer-global-timers` / `n-prefer-global-url` / `n-prefer-global-url-search-params`
 
 Default "always". References are found as ReferenceTracker (legacy mode) does: `require('<mod>')`/`require('node:<mod>')` with the global require, `process.getBuiltinModule(…)` with the global process, through constant aliases, member reads, object-pattern properties, import/export specifiers and `export *`. For console and process, the module itself and every ESM import/export declaration from it are reported.
 
@@ -115,8 +179,46 @@ Callback API covered: access, copyFile, open, rename, truncate, rmdir, mkdir, re
 
 ### `n-hashbang`
 
-Candidate for eslint-plugin-n 18.4.1 n/hashbang (default options). Whether a file needs a shebang is read from the nearest package.json's `bin` (a path, or an object of paths, relative to the manifest's folder, `.js` and `/index` optional); without a package.json nothing is checked, as upstream. A file `bin` does not name reports a shebang (`#!` and at least one character opening the text, ended by a line break): "Remove the shebang line; package.json does not list this file as a bin executable.". A file it names reports a first line that is no node shebang (`#!/usr/bin/env`, env flags and variables as upstream's isNodeShebang strips them, then `node`): "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable.". Not ported: the convertPath option and settings, ignoreUnpublished (.npmignore), additionalExecutables and executableMap (the expected executable is always node), and the BOM and CRLF reports on a bin file whose shebang is right ("This file must not have Unicode BOM.", "This file must have Unix linebreaks (LF).").
+eslint-plugin-n 18.4.1 n/hashbang (default options). Whether a file needs a shebang is read from the nearest package.json's `bin` (a path, or an object of paths, relative to the manifest's folder, `.js` and `/index` optional); without a package.json nothing is checked, as upstream. A file `bin` does not name reports a shebang (`#!` and at least one character opening the text, ended by a line break): "Remove the shebang line; package.json does not list this file as a bin executable.". A file it names reports a first line that is no node shebang (`#!/usr/bin/env`, env flags and variables as upstream's isNodeShebang strips them, then `node`): "Add #!/usr/bin/env node as the first line; package.json lists this file as a bin executable.". A file it names whose node shebang is right is reported, at the start of the file, once for a byte order mark before it (`file.byteOrderMark`, since no node's text holds the mark): "Remove the byte order mark before the shebang; …", and once for a shebang line ending in CR LF: "End the shebang line with LF, not CRLF; …", as upstream reports `unexpectedBOM` and `expectedLF`. Not ported: the convertPath option and settings, ignoreUnpublished (.npmignore), additionalExecutables and executableMap (the expected executable is always node).
 
 ### `n-no-deprecated-api`
 
-eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned, so each file keeps its own module system (.cjs/.cts CommonJS; .mjs/.mts/.tsx an ES module; .js/.jsx/.ts by the nearest package.json's type, Node's syntax detection where that package.json sets no valid type, and an ES module where there is no package.json). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.
+eslint-plugin-n 18.4.1 n/no-deprecated-api (default options; the configured version only words the message). Reports every read, call or construction its deprecation trace map marks (generated from lib/rules/no-deprecated-api.js rawModules and globals), as ReferenceTracker (legacy mode) reaches it: require/process.getBuiltinModule/ESM imports of the modules (with and without `node:`), and `export * from` a module once for each deprecated member it re-exports (one clause per member, as ReferenceTracker reports it), global variables (declared by globals.node, the ES builtins or `/* global */` comments) and members of global/globalThis, through constant aliases, (nested) destructuring, defaults and member chains. No sourceType is pinned; `moduleSystem: "package-type"` gives each file the plugin's module system (.mjs/.mts an ES module, .cjs/.cts CommonJS, any other file an ES module only under package.json `"type": "module"`). As eslint-plugin-n's own configs (flat/mixed-esm-and-cjs picks per file), a CommonJS file has require, module, exports, `__dirname` and `__filename` (flat/recommended-script) and an ES module none of them (flat/recommended-module turns them off). So `require` and its members are reached only in a CommonJS file; Buffer, global and process in every file.
+
+### `n-no-unpublished-bin`
+
+eslint-plugin-n 18.4.1 n/no-unpublished-bin (default options). Reports, at the start of the file, a file the nearest package.json's `bin` names (read as `n-hashbang` reads it) that npm leaves out of the package (`file.package.published: false`, upstream's get-npmignore.js: the `files` whitelist, the package folder's `.npmignore`, or its `.gitignore` when there is neither a `files` field nor a `.npmignore`; never `main` or `package.json`). Without a package.json nothing is checked. The message cannot name the file's path relative to the package, which upstream's does. Not ported: the `convertPath` option and setting.
+
+### `n-no-top-level-await`
+
+eslint-plugin-n 18.4.1 n/no-top-level-await (default options: `ignoreBin` false). Reports each `await` expression, `for await (…)` and `await using` declaration outside every function (ESLint's `:function`: function declarations and expressions, arrows, and a method's parameters and body; its key and decorators, class fields and static blocks are outside), in a file npm publishes (`file.package.published: true`): a file without a package.json, or one the package's `files`, `.npmignore` or `.gitignore` leaves out, is not checked. Not ported: the `ignoreBin` and `convertPath` options and the `convertPath` setting.
+
+### `n-prefer-import-assert-strict`
+
+eslint-plugin-n 18.4.1 n/prefer-import/assert-strict. Reports the string literal `"node:assert"` (exactly: no template, no bare `"assert"`) as the source of an import, export or `import()`, or the first argument of a call of any function named `require`, unless only `strict` is taken from it: import or export specifiers that all name `strict`; a require read as `.strict`/`["strict"]` (through parentheses), destructured into properties that are all `strict` (a string key is not), or assigned to a `.strict` member.
+
+### `n-prefer-process-get-builtin-module`
+
+eslint-plugin-n 18.4.1 n/prefer-process-get-builtin-module, where the configured Node range is within `^20.16.0 || >=22.3.0`. Reports `require(M)` (one argument, not optional; `require` unshadowed, or a `const` made by `createRequire` imported from `module`/`node:module`) and `await import(M)` (no options), M a constant naming a built-in module (Node's `isBuiltin`: the plugin's list with and without `node:`, and `module.builtinModules` of the Node.js running the generator), unless a binding named `process` is in scope. Process shadowing is read structurally: a declaration in an enclosing block or the program, a `var` anywhere in an enclosing function, a parameter of an enclosing function or catch clause.
+
+### `n-no-unsupported-features-node-builtins` / `n-no-unsupported-features-es-builtins`
+
+eslint-plugin-n 18.4.1 n/no-unsupported-features/node-builtins and es-builtins (default options: no `ignores`, `allowExperimental` off). Every reference eslint-utils' ReferenceTracker finds in legacy mode (require, `process.getBuiltinModule`, import and export, globals, `import.meta` for node-builtins) to an entry of the rule's trace map whose `supported` versions do not cover the configured Node range (the range is a subset of `^v` for each supported version or `>=` the latest), one clause per supported-version list, gated on `file.package.nodeVersion.notSubsetOf`; an entry with no supported version is reported everywhere. node-builtins' map lists each module with and without `node:`, whose own versions differ: the members are traced once for both names and each name's module read apart. A global is traced only where globals.node declares it. node-builtins is 933 clauses (about 2.4 MB), which takes the engine about 3 s to compile.
+
+### `n-no-missing-import` / `n-no-missing-require`
+
+eslint-plugin-n 18.4.1 n/no-missing-import and n/no-missing-require (default options). Reports each target of the plugin's visitImport (an import or export declaration's source, the literal argument of `import()`: a string, number, boolean, null or regular expression, read as its `String()`) or visitRequire (the first argument of a call of the global `require` or `require.resolve`, whatever constant it folds to) that is no Node.js built-in module and whose resolution fails (`importTarget: { failed: true }`). The message cannot repeat the resolver's error, which upstream's does. Not ported: the `allowModules`, `resolvePaths`, `resolverConfig`, `tryExtensions`, `tsconfigPath`, `typescriptExtensionMap` and `ignoreTypeImport` options and their settings.
+
+### `n-no-unpublished-import` / `n-no-unpublished-require`
+
+eslint-plugin-n 18.4.1 n/no-unpublished-import and n/no-unpublished-require (default options: `ignorePrivate` true). In a file npm publishes (`file.package.published: true`) of a package that is not private (`private: false`), reports a path target npm does not publish (`importTarget: { published: false }`: outside the package, or left out by its `files`, `.npmignore` or `.gitignore`) and a package target only `devDependencies` lists (`devDependency: true`). A target that resolves to no file is read at the workspace root, which stands for the plugin's working directory. Not ported: the `allowModules`, `convertPath`, `resolvePaths`, `resolverConfig`, `tryExtensions` and `ignoreTypeImport` options and their settings.
+
+### `n-no-extraneous-require`
+
+eslint-plugin-n 18.4.1 n/no-extraneous-require (default options). Reports a package target of the global `require` or `require.resolve` that resolves (`resolved: true`) but that neither the importing file's package.json (its own name and its `dependencies`, `devDependencies`, `peerDependencies` and `optionalDependencies`) nor the workspace root that claims it (`workspaces`, or `pnpm-workspace.yaml`) lists (`declared: false`), and that no tsconfig `paths` key names (`aliased: false`). Without a package.json nothing is checked. Not ported: the `allowModules`, `convertPath`, `resolvePaths`, `resolverConfig` and `tryExtensions` options and their settings.
+
+## Not ported
+
+- `n/process-exit-as-throw`: it reports nothing; it marks `process.exit()` as the end of a code path for ESLint's other rules, which Rerail's queries do not share.
+- The deprecated `n/no-hide-core-modules` and `n/shebang` (renamed `n/hashbang`, which is ported).
+

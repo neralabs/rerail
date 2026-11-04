@@ -43,6 +43,15 @@ const note: Message = {
   timestamp: 0,
 };
 const otherExtension: Message = { role: "custom", customType: "plan-mode.reminder", content: "Stay in plan mode.", display: false, timestamp: 7 };
+/** The person's line for the steer that rode `editResult`; the coding agent read that steer in the result. */
+const steerLine: Message = {
+  role: "custom",
+  customType: "rerail.steer-line",
+  content: "Rerail found 1 problem in src/cart.ts:\n- no-console-log: Remove console.log calls.",
+  display: true,
+  details: { rules: [{ id: "no-console-log", state: "steered" }] },
+  timestamp: 4,
+};
 
 const label = (text: string): string => `${RERAIL_COMPACTION_LABEL}\n${text}`;
 
@@ -127,6 +136,43 @@ describe("compaction guard", () => {
     guardCompaction(preparation);
 
     expect(preparation.recentMessages).toEqual([editCall, editResult, { ...steer, content: label(steer.content as string) }]);
+  });
+
+  it("summarizes no steer line, whatever part of the turn it falls in, and folds a split turn one leads", () => {
+    const inHistory: CompactionPreparationLike<Message> = {
+      messagesToSummarize: [prompt, editCall, editResult, steerLine, fixCall],
+      turnPrefixMessages: [],
+      isSplitTurn: false,
+    };
+    const leading: CompactionPreparationLike<Message> = {
+      messagesToSummarize: [prompt, editCall, editResult],
+      turnPrefixMessages: [steerLine, fixCall, fixResult],
+      isSplitTurn: true,
+    };
+    const inPrefix: CompactionPreparationLike<Message> = {
+      messagesToSummarize: [],
+      turnPrefixMessages: [prompt, editCall, editResult, steerLine, fixCall],
+      isSplitTurn: true,
+    };
+
+    for (const preparation of [inHistory, leading, inPrefix]) guardCompaction(preparation);
+
+    expect(inHistory).toEqual({ messagesToSummarize: [prompt, editCall, editResult, fixCall], turnPrefixMessages: [], isSplitTurn: false });
+    expect(leading).toEqual({ messagesToSummarize: [prompt, editCall, editResult, fixCall, fixResult], turnPrefixMessages: [], isSplitTurn: false });
+    expect(inPrefix).toEqual({ messagesToSummarize: [], turnPrefixMessages: [prompt, editCall, editResult, fixCall], isSplitTurn: true });
+  });
+
+  it("keeps a steer line in OMP's recentMessages, labelled, since the entry ids it keeps run parallel to them", () => {
+    const preparation: CompactionPreparationLike<Message> = {
+      messagesToSummarize: [prompt],
+      turnPrefixMessages: [],
+      isSplitTurn: false,
+      recentMessages: [editCall, editResult, steerLine],
+    };
+
+    guardCompaction(preparation);
+
+    expect(preparation.recentMessages).toEqual([editCall, editResult, { ...steerLine, content: label(steerLine.content as string) }]);
   });
 
   it("leaves the preparation as the host made it when it cannot be read", () => {

@@ -1,0 +1,17 @@
+{
+  "name": "rerail",
+  "owner": {
+    "name": "Nera",
+    "email": "opensource@nera.software"
+  },
+  "metadata": {
+    "description": "Rerail's plugin for the Cursor Marketplace: it installs Rerail, which checks a coding agent's edits and commands against your rules."
+  },
+  "plugins": [
+    {
+      "name": "rerail",
+      "source": "plugins/cursor",
+      "description": "Installs Rerail, which checks a coding agent's edits and commands against your rules as it works and steers it back when it breaks one."
+    }
+  ]
+}

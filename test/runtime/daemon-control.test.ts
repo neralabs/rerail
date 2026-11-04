@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { EventEmitter, once } from "node:events";
-
+import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,7 +25,9 @@ import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js
 import {
   type DaemonState,
   autostartDaemon,
+  DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  dashboardAccessLink,
   daemonUsesPackageRoot,
   findRunningDaemon,
   isUsableEngineSocketPath,
@@ -38,6 +40,7 @@ import {
   stopDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
+import { otherUserPid } from "../support/other-user-pid.js";
 
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
@@ -104,6 +107,22 @@ describe("Rerail daemon control", () => {
     expect(await stopDaemon(home)).toBe("not-running");
   });
 
+  const foreignPid = otherUserPid();
+  it.runIf(foreignPid !== undefined)("treats a state file whose pid another OS user runs as stale, and never sends it the capability", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await writeFile(stateFile, JSON.stringify(stateFor({ pid: foreignPid!, accessToken: "secret-capability" })));
+    const probe = vi.fn(async () => Response.json({ status: "ok", pid: foreignPid }));
+    vi.stubGlobal("fetch", probe);
+    try {
+      expect(processAlive(foreignPid!)).toBe(true);
+      expect(await lookupDaemon(home)).toEqual({ status: "absent" });
+      expect(probe).not.toHaveBeenCalled();
+      expect(existsSync(stateFile)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("ignores a state file whose listener belongs to a different process", async () => {
     const daemon = await RerailDaemon.start({
       version: "0.0.0-test",
@@ -116,7 +135,7 @@ describe("Rerail daemon control", () => {
       // The recorded pid is alive (this test process) but the listener reports process.pid as well,
       // so use the parent pid: alive, yet not the pid the daemon answers with.
       const stateFile = join(home, DAEMON_STATE_FILE);
-      await writeFile(stateFile, JSON.stringify(stateFor({ pid: process.ppid, url: daemon.url, port: daemon.port })));
+      await writeFile(stateFile, JSON.stringify(stateFor({ pid: process.ppid, url: daemon.url, port: daemon.port, accessToken: daemon.state().accessToken! })));
       expect(await findRunningDaemon(home)).toBeUndefined();
       expect(existsSync(stateFile)).toBe(false);
     } finally {
@@ -170,6 +189,28 @@ describe("Rerail daemon control", () => {
       if (daemonPid !== undefined && processAlive(daemonPid)) process.kill(daemonPid, "SIGKILL");
     }
   }, 15_000);
+
+  it.runIf(process.platform === "linux")("counts a daemon nothing reaped as stopped, so stop returns in a container without init", async () => {
+    // `sh` backgrounds a child, then becomes `sleep`, which never reaps it: the zombie a daemon becomes when PID 1 is
+    // `sleep infinity` rather than an init. The child outlives the `exec`, so `sh` itself can never reap it first.
+    const parent = spawn("sh", ["-c", "sleep 0.2 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      if (parent.stdout === null) throw new Error("test parent did not start");
+      const [pidOutput] = await once(parent.stdout, "data") as [Buffer];
+      const zombie = Number(pidOutput.toString());
+      // The child exits on the OS's schedule and signals nothing this process can await, so its state is polled.
+      const deadline = Date.now() + 5_000;
+      while (processAlive(zombie) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20));
+      expect(processAlive(zombie)).toBe(false);
+      expect(() => process.kill(zombie, 0)).not.toThrow();
+
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: zombie, url: "http://127.0.0.1:1/" })));
+      expect(await stopDaemon(home)).toBe("not-running");
+      expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+    } finally {
+      parent.kill("SIGKILL");
+    }
+  });
 
   it("reclaims a start lock whose owner is dead or whose lease has expired", async () => {
     const lockPath = join(home, "start.lock");
@@ -262,6 +303,25 @@ describe("Rerail daemon control", () => {
     expect(existsSync(join(home, "start.lock"))).toBe(false);
   });
 
+  it("shows only this start's output when the daemon exits before it is ready, not earlier runs' log", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    await writeFile(join(home, DAEMON_LOG_FILE), "rerail daemon 0.0.0-earlier listening at http://127.0.0.1:1/ (pid 1)\n");
+    const blocker = createServer();
+    blocker.listen(0, "127.0.0.1");
+    await once(blocker, "listening");
+    try {
+      const { port } = blocker.address() as AddressInfo;
+      const failure = await startDaemon(
+        { home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) },
+        { dev: true, port },
+      ).then(() => undefined, (error: unknown) => String(error));
+      expect(failure).toMatch(/EADDRINUSE/u);
+      expect(failure).not.toContain("0.0.0-earlier");
+    } finally {
+      blocker.close();
+    }
+  });
+
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const first = await startDaemon({ home, packageRoot }, { dev: true, port: 0 });
@@ -288,7 +348,8 @@ describe("Rerail daemon control", () => {
 describe("openDashboard", () => {
   const url = "http://127.0.0.1:4737/#rules";
   const desktopOpener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "rundll32" : "xdg-open";
-  const underOrca = { ORCA_TAB_ID: "tab-1" };
+  let outsideOrca: NodeJS.ProcessEnv;
+  let underOrca: NodeJS.ProcessEnv;
   /** An installed Orca CLI, preceded by an absent candidate that must be skipped. */
   let orca: string;
   let candidates: string[];
@@ -299,16 +360,18 @@ describe("openDashboard", () => {
     orca = join(scratch, "orca");
     await writeFile(orca, "");
     candidates = [join(scratch, "missing", "orca"), orca];
+    outsideOrca = { RERAIL_HOME: join(scratch, "home") };
+    underOrca = { ...outsideOrca, ORCA_TAB_ID: "tab-1" };
   });
 
   /** Records every spawn; `orca` children settle per `settle`, desktop openers are inert. */
-  function interceptSpawns(settle: (child: EventEmitter) => void): string[] {
+  function interceptSpawns(settle: (child: EventEmitter) => void, opened = url): string[] {
     const commands: string[] = [];
     opener.intercept = (command, args) => {
       commands.push(command);
       const child = Object.assign(new EventEmitter(), { unref() {} }) as unknown as ChildProcess;
       if (command === orca) {
-        expect(args).toEqual(["tab", "create", "--url", url]);
+        expect(args).toEqual(["tab", "create", "--url", opened]);
         process.nextTick(() => settle(child));
       }
       return child;
@@ -323,7 +386,7 @@ describe("openDashboard", () => {
 
   it("uses the desktop browser outside Orca", async () => {
     const commands = interceptSpawns(() => { throw new Error("orca must not be spawned"); });
-    expect(await openDashboard(url, {}, candidates)).toBe("system-browser");
+    expect(await openDashboard(url, outsideOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([desktopOpener]);
   });
 
@@ -349,6 +412,19 @@ describe("openDashboard", () => {
     const commands = interceptSpawns(child => child.emit("exit", 1, null));
     expect(await openDashboard(url, underOrca, candidates)).toBe("system-browser");
     expect(commands).toEqual([orca, desktopOpener]);
+  });
+
+  it.skipIf(process.platform === "win32")("hands the home daemon's access capability to the browser, only for that daemon's own pages", async () => {
+    const home = outsideOrca.RERAIL_HOME!;
+    await mkdir(home, { recursive: true });
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/", accessToken: "cap" })));
+    const commands = interceptSpawns(child => child.emit("exit", 0, null), "http://127.0.0.1:4737/?rerail-access=cap#rules");
+    expect(await openDashboard(url, underOrca, candidates)).toBe("orca-tab");
+    expect(commands).toEqual([orca]);
+    // Another origin is not this daemon, and a loopback-only daemon has nothing to hand over.
+    expect(await dashboardAccessLink("http://127.0.0.1:1/#rules", home)).toBe("http://127.0.0.1:1/#rules");
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ url: "http://127.0.0.1:4737/" })));
+    expect(await dashboardAccessLink(url, home)).toBe(url);
   });
 });
 

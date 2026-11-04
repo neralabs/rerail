@@ -14,6 +14,7 @@ import {
   defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
+  DAEMON_KEEPS_RUNNING,
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
@@ -37,8 +38,14 @@ const NO_PRINT = codeRuleSchema.parse({
   }],
 });
 
+/** The capability the test daemon requires; its `fetch`es carry it, as `rerail scan` and the dashboard do. */
+const ACCESS = "test-access-capability";
+const fetch = (input: string | URL, init: RequestInit & { headers?: Record<string, string> } = {}): Promise<Response> =>
+  globalThis.fetch(input, { ...init, headers: { "x-rerail-access": ACCESS, ...init.headers } });
+
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const { root, runtime, daemon } of fixtures.splice(0)) {
     await runtime.dispose();
     await daemon.close();
@@ -67,7 +74,7 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "s1", cwd: root } });
   const daemon = await RerailDaemon.start({
     version: "test", databasePath: database, workspaceRoot: root, port: 0,
-    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"),
+    stateFile: join(home, "daemon.json"), kernelSocketPath: join(root, "engine.sock"), accessToken: ACCESS,
   });
   fixtures.push({ root, runtime, daemon });
   return { root, home, database, daemon, runtime, repositoryKey };
@@ -124,6 +131,7 @@ describe("rerail scan and settings CLI", () => {
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
+      `  ${DAEMON_KEEPS_RUNNING}`,
       "",
       "  Rerail steered this session on one rule, test:no-print.",
       "  To turn off only that rule, say “turn that rule off”.",
@@ -138,6 +146,7 @@ describe("rerail scan and settings CLI", () => {
   }, 60_000);
 
   it("runs one log-only repository audit for the workspace and exposes it to later sessions", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const automaticAuditRequests: Array<{ sessionId: string; scope: string; mode: string }> = [];
     const { root, runtime, daemon } = await fixture(options => ({
       openWorkspace: async () => undefined,
@@ -356,6 +365,7 @@ describe("rerail scan and settings CLI", () => {
   });
 
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {
       const auditor = new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT]), options);
@@ -405,7 +415,9 @@ describe("rerail scan and settings CLI", () => {
 
 
   it("requires a session instead of guessing the latest one", async () => {
-    await expect(runAuditCommand("scan", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    // `rerail scan` without one is the headless scan of a checkout (headless-scan.test.ts), never the latest session's.
+    await expect(runAuditCommand("settings", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    await expect(runAuditCommand("scan", ["--session", "s1", "--repo", "."], { home: "/unused" })).rejects.toThrow("Unknown option: --repo");
   });
 
   it("refuses a steer strategy it does not know before reaching Rerail", async () => {

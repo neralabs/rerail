@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addLauncherToPath, removeLauncherFromPath } from "../../src/setup/shell-path.js";
@@ -37,6 +37,20 @@ describe.skipIf(process.platform === "win32")("launcher on PATH", () => {
     expect(path).toBe(`${binDir}:/usr/bin:/bin`);
 
     expect(await removeLauncherFromPath(options)).toEqual({ status: "changed", locations: [zshrc] });
+    expect(await readFile(zshrc, "utf8")).toBe("alias ll='ls -l'\n");
+  });
+
+  it("keeps one backup of a startup file it changes, and deletes it with the block", async () => {
+    const { home, options } = await machine("/bin/zsh");
+    const zshrc = join(home, ".zshrc");
+    await writeFile(zshrc, "alias ll='ls -l'\n");
+    await addLauncherToPath(options);
+    await addLauncherToPath({ ...options, binDir: join(home, "other", "bin") });
+    expect((await readdir(home)).sort()).toEqual([".zshrc", ".zshrc.rerail.bak"]);
+    expect(await readFile(`${zshrc}.rerail.bak`, "utf8")).toContain("# >>> rerail >>>");
+
+    await removeLauncherFromPath({ ...options, binDir: join(home, "other", "bin") });
+    expect(await readdir(home)).toEqual([".zshrc"]);
     expect(await readFile(zshrc, "utf8")).toBe("alias ll='ls -l'\n");
   });
 

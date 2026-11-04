@@ -1,5 +1,20 @@
 # @neralabs/rerail-pack-typescript
 
+## 0.1.5 (2026-11-04)
+
+65 rules, 23 of them on by default.
+
+- 41 new rules (38 from typescript-eslint and 3 from @vitest/eslint-plugin): 9 start in Steer, 1 in Log and 31 off.
+
+## 0.1.4
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- d0dd309: README: internal ticket references removed; no rule changes.
+- 5976319: TypeScript pack: 3 more typescript-eslint 8.70.1 rules ship, all on: `no-empty-object-type`, `no-unsafe-declaration-merging` and `triple-slash-reference` (24 rules, 11 of them off). 12 more ports join the candidates. `no-restricted-types` is out of scope: at its default options it reports nothing. The README says why `no-magic-numbers` stays a candidate and why `init-declarations` can't match upstream's tests.
+- 211e8b5: The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+
 ## 0.1.3
 
 ### Patch Changes

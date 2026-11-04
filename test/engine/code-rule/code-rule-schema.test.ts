@@ -170,6 +170,29 @@ describe("code rule schema language families", () => {
     expect(codeRuleSchema.safeParse(astRule("php", mixedParam)).error?.issues ?? []).toEqual([]);
   });
 
+  it("reads import targets with a style and eslint-plugin-n's facts", () => {
+    const source = { field: "source", any: [{ kind: "import_statement" }, { kind: "export_statement" }] };
+    const accepted = [
+      { kind: "string", inside: source, importTarget: { via: "import", builtin: false, failed: true } },
+      { kind: "string", importTarget: { via: "require", moduleType: "npm", declared: false } },
+      { kind: "string", importTarget: { via: "import", moduleType: ["relative", "absolute"], resolved: true, extensionSpelled: false, published: false } },
+      { kind: "string", not: { importTarget: { via: "require", devDependency: true, aliased: false } } },
+    ];
+    for (const rule of accepted) expect(astIssues(astRule("typescript", rule))).toEqual([]);
+    expect(astIssues(astRule("javascript", { kind: "string", has: { kind: "string_fragment", importTarget: { via: "import" } } }))).toEqual([]);
+    const refused = (importTarget: object) => astIssues(astRule("typescript", { kind: "string", importTarget })).map(issue => issue.path);
+    expect(refused({ failed: true })).toContain("rule.importTarget.via");
+    expect(refused({ via: "export" })).toContain("rule.importTarget.via");
+    expect(refused({ via: "import", moduleType: [] })).toContain("rule.importTarget.moduleType");
+    expect(refused({ via: "import", moduleType: "builtin" })).toContain("rule.importTarget.moduleType");
+    expect(refused({ via: "import", failed: "yes" })).toContain("rule.importTarget.failed");
+    expect(refused({ via: "import", missing: true })).toContain("rule.importTarget");
+    expect(validateCodeRule(astRule("python", { kind: "string", importTarget: { via: "import", failed: true } }))).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("/clauses/0/forbid/ast/rule/importTarget: import targets are eslint-plugin-n's, read in JavaScript and TypeScript files"),
+    });
+  });
+
   it("accepts Blade predicates over the PHP its template embeds", () => {
     const sleeps = { stopBy: "end", kind: "function_call_expression", has: { field: "function", resolves: { import: ["sleep"] } } };
     const accepted = [

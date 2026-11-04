@@ -1,0 +1,426 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-prefer-import-assert-strict",
+  "revision": 3,
+  "mode": "steer",
+  "description": "Import node:assert/strict instead of node:assert, so assertions use strict equality.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "c1": {
+            "inside": {
+              "field": "right",
+              "has": {
+                "any": [
+                  {
+                    "has": {
+                      "matches": "c6"
+                    },
+                    "kind": "object_pattern",
+                    "not": {
+                      "matches": "c5"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "matches": "c7"
+                      },
+                      {
+                        "matches": "c8"
+                      }
+                    ]
+                  }
+                ],
+                "field": "left"
+              },
+              "kind": "assignment_expression"
+            }
+          },
+          "c2": {
+            "inside": {
+              "field": "value",
+              "has": {
+                "field": "name",
+                "has": {
+                  "matches": "c6"
+                },
+                "kind": "object_pattern",
+                "not": {
+                  "matches": "c5"
+                }
+              },
+              "kind": "variable_declarator"
+            }
+          },
+          "c3": {
+            "inside": {
+              "any": [
+                {
+                  "matches": "c7"
+                },
+                {
+                  "matches": "c8"
+                }
+              ],
+              "field": "object"
+            }
+          },
+          "c4": {
+            "has": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^strict$"
+                },
+                {
+                  "kind": "string",
+                  "value": {
+                    "regex": "^strict$"
+                  }
+                }
+              ],
+              "field": "name"
+            }
+          },
+          "c5": {
+            "has": {
+              "any": [
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                },
+                {
+                  "kind": "pair_pattern"
+                },
+                {
+                  "kind": "object_assignment_pattern"
+                },
+                {
+                  "kind": "rest_pattern"
+                }
+              ],
+              "not": {
+                "any": [
+                  {
+                    "kind": "shorthand_property_identifier_pattern",
+                    "regex": "^strict$"
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "property_identifier",
+                          "regex": "^strict$"
+                        },
+                        {
+                          "has": {
+                            "kind": "string",
+                            "value": {
+                              "regex": "^strict$"
+                            }
+                          },
+                          "kind": "computed_property_name"
+                        }
+                      ],
+                      "field": "key"
+                    },
+                    "kind": "pair_pattern"
+                  },
+                  {
+                    "has": {
+                      "field": "left",
+                      "kind": "shorthand_property_identifier_pattern",
+                      "regex": "^strict$"
+                    },
+                    "kind": "object_assignment_pattern"
+                  }
+                ]
+              }
+            }
+          },
+          "c6": {
+            "any": [
+              {
+                "kind": "shorthand_property_identifier_pattern"
+              },
+              {
+                "kind": "pair_pattern"
+              },
+              {
+                "kind": "object_assignment_pattern"
+              },
+              {
+                "kind": "rest_pattern"
+              }
+            ]
+          },
+          "c7": {
+            "has": {
+              "field": "property",
+              "kind": "property_identifier",
+              "regex": "^strict$"
+            },
+            "kind": "member_expression"
+          },
+          "c8": {
+            "has": {
+              "field": "index",
+              "kind": "string",
+              "value": {
+                "regex": "^strict$"
+              }
+            },
+            "kind": "subscript_expression"
+          }
+        }
+      }
+    },
+    {
+      "id": "require",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^node:assert$"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "regex": "^require$"
+                },
+                "not": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "matches": "c3"
+                        },
+                        {
+                          "matches": "c2"
+                        },
+                        {
+                          "matches": "c1"
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "kind": "parenthesized_expression",
+                        "any": [
+                          {
+                            "matches": "c3"
+                          },
+                          {
+                            "matches": "c2"
+                          },
+                          {
+                            "matches": "c1"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-import/assert-strict",
+        "message": "Import node:assert/strict instead of node:assert, so assertions compare strictly.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-import/assert-strict"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^node:assert$"
+            },
+            "inside": {
+              "field": "source",
+              "kind": "import_statement",
+              "not": {
+                "has": {
+                  "kind": "import_clause",
+                  "not": {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ]
+                    }
+                  },
+                  "has": {
+                    "kind": "named_imports",
+                    "has": {
+                      "kind": "import_specifier"
+                    },
+                    "not": {
+                      "has": {
+                        "kind": "import_specifier",
+                        "not": {
+                          "matches": "c4"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-import/assert-strict",
+        "message": "Import node:assert/strict instead of node:assert, so assertions compare strictly.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-import/assert-strict"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "export",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^node:assert$"
+            },
+            "inside": {
+              "field": "source",
+              "kind": "export_statement",
+              "not": {
+                "has": {
+                  "kind": "export_clause",
+                  "has": {
+                    "kind": "export_specifier"
+                  },
+                  "not": {
+                    "has": {
+                      "kind": "export_specifier",
+                      "not": {
+                        "matches": "c4"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-import/assert-strict",
+        "message": "Import node:assert/strict instead of node:assert, so assertions compare strictly.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-import/assert-strict"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-expression",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "string",
+            "value": {
+              "regex": "^node:assert$"
+            },
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "import"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/prefer-import/assert-strict",
+        "message": "Import node:assert/strict instead of node:assert, so assertions compare strictly.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/prefer-import/assert-strict"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

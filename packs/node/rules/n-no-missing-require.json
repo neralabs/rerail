@@ -1,0 +1,120 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "n-no-missing-require",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Require only modules that exist: each require() target must resolve, as Node.js resolves it, to an installed package or a file in the repository.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "languageOptions": {
+            "moduleSystem": "package-type"
+          },
+          "utils": {
+            "require-callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^require$",
+                  "resolves": {
+                    "global": [
+                      "require"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "require-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "nthChild": {
+              "position": 1,
+              "ofRule": {
+                "not": {
+                  "kind": "comment"
+                }
+              }
+            },
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "field": "arguments",
+                "kind": "call_expression",
+                "not": {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "template_string"
+                  }
+                },
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "matches": "require-callee"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "matches": "require-callee"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "kind": "property_identifier",
+                            "regex": "^resolve$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "importTarget": {
+              "via": "require",
+              "builtin": false,
+              "failed": true
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "n/no-missing-require",
+        "message": "This module cannot be resolved: no installed package or file in the repository provides it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "n/no-missing-require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

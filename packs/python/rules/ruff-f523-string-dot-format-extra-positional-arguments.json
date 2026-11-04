@@ -17,16 +17,101 @@
         "ast": {
           "language": "python",
           "rule": {
-            "pattern": "$S.format($$$A)",
-            "formatArgs": {
-              "style": "brace",
-              "string": "S",
-              "args": "A",
-              "unused": {
-                "not": {
-                  "kind": "keyword_argument"
+            "any": [
+              {
+                "pattern": "$S.format($$$A)",
+                "formatArgs": {
+                  "style": "brace",
+                  "string": "S",
+                  "args": "A",
+                  "unused": {
+                    "not": {
+                      "kind": "keyword_argument"
+                    }
+                  }
                 }
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "field": "arguments",
+                  "kind": "generator_expression"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "field": "function",
+                      "kind": "attribute",
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^format$"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "function",
+                      "has": {
+                        "field": "object",
+                        "matches": "never-reads-first"
+                      }
+                    }
+                  }
+                ]
               }
+            ]
+          },
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "never-reads-first": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "braceFormat",
+                    "not": {
+                      "has": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "error"
+                          },
+                          {
+                            "kind": "field_name",
+                            "value": {
+                              "eq": 0
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "never-reads-first"
+                  }
+                }
+              ]
             }
           }
         }

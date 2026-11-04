@@ -6,7 +6,7 @@ rerail:
 upstream:
   name: PyCQA/bandit
   repository: https://github.com/PyCQA/bandit
-  # The release rerail's python pack records for every Bandit document (packs/python/licenses/bandit/UPSTREAM.md:
+  # The release rerail's python pack ports for every Bandit document (packs/python/licenses/bandit/UPSTREAM.md:
   # Bandit 1.9.4); tag 1.9.4.
   commit: 92ae8b82fb422a639f0ed8d99e96cea769594e08
   version: 1.9.4
@@ -14,7 +14,7 @@ upstream:
   runtime: bandit-1.9.4
   # Bandit has no named configuration; upstream's default is bare `bandit`: no profile, every registered test on,
   # `# nosec` honoured (ADR 0006, "Bandit's `# nosec`"). bandit:b317 follows `# nosec` with a comment pattern; the other
-  # documents do not model it. It decides three Gate 5 results: bandit:B303 (examples/nosec.py:3), bandit:b308
+  # documents do not model it. It explains three disagreements: bandit:B303 (examples/nosec.py:3), bandit:b308
   # (examples/mark_safe_secure.py 38, 39 and 49, each ending `# nosec TODO`) and
   # python-conformance:bandit-b506-yaml-load (the suppressed `yaml.load` lines of examples/new_candidates-all.py:17,
   # new_candidates-nosec.py:13 and new_candidates-some.py:15) differ from upstream on their test files only on
@@ -22,14 +22,330 @@ upstream:
   recommended_configs:
     - default
   # Positions are compared exactly as Bandit reports them (ADR 0006, "Bandit's keyword lines"). bandit:B602 differs on
-  # real code only on such positions: its four Gate 6 cases (iterative-dvc's dvc/stage.py 672, 745 and 784 and
-  # dvc/remote/hdfs.py 77) have the port at the call's first line with Bandit's columns, and are goldens. It also
+  # real code only on such positions: its four real-code cases (iterative-dvc's dvc/stage.py 672, 745 and 784 and
+  # dvc/remote/hdfs.py 77) have the port at the call's first line with Bandit's columns. It also
   # differs on its own tests (`# nosec` lines, `shell=[]` and `shell={}`, and line 7 of examples/new_candidates-all.py
   # and new_candidates-some.py), so the reading decides no verdict. bandit:b106 meets the same positions (examples/pyghmi.py 5, dask's
   # multi-line keyword calls) but reports the keyword rather than its value, so it differs there either way.
+  # The file types upstream lints with its approved configuration at the pins (declared; reviewed at each bump).
+  lints: [".py"]
 popularity:
   observed_on: 2026-10-06
   evidence:
     - "PyPI: 6,183,459 downloads of bandit in the week 2026-09-28 to 2026-10-04, without mirrors (pypistats.org)"
     - "GitHub: PyCQA/bandit has 8,295 stars and is not archived"
-known_gaps: []
+# Every rule of the pinned upstream the pack ports or may port, with upstream's deprecation and the first approved
+# configuration that turns it on (declared; reviewed at each bump).
+rules:
+  "B101":
+    deprecated: null
+    recommended: { config: "default", options: [{"skips":[]}] }
+  "B102":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B103":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B104":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B105":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B106":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B107":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B108":
+    deprecated: null
+    recommended: { config: "default", options: [{"tmp_dirs":["/tmp","/var/tmp","/dev/shm"]}] }
+  "B110":
+    deprecated: null
+    recommended: { config: "default", options: [{"check_typed_exception":false}] }
+  "B112":
+    deprecated: null
+    recommended: { config: "default", options: [{"check_typed_exception":false}] }
+  "B113":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B201":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B202":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B301":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B302":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B303":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B304":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B305":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B306":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B307":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B308":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B310":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B311":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B312":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B313":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B314":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B315":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B316":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B317":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B318":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B319":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B321":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B323":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B324":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B401":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B402":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B403":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B404":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B405":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B406":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B407":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B408":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B409":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B411":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B412":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B413":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B415":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B501":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B502":
+    deprecated: null
+    recommended: { config: "default", options: [{"bad_protocol_versions":["PROTOCOL_SSLv2","SSLv2_METHOD","SSLv23_METHOD","PROTOCOL_SSLv3","PROTOCOL_TLSv1","SSLv3_METHOD","TLSv1_METHOD","PROTOCOL_TLSv1_1","TLSv1_1_METHOD"]}] }
+  "B503":
+    deprecated: null
+    recommended: { config: "default", options: [{"bad_protocol_versions":["PROTOCOL_SSLv2","SSLv2_METHOD","SSLv23_METHOD","PROTOCOL_SSLv3","PROTOCOL_TLSv1","SSLv3_METHOD","TLSv1_METHOD","PROTOCOL_TLSv1_1","TLSv1_1_METHOD"]}] }
+  "B504":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B505":
+    deprecated: null
+    recommended: { config: "default", options: [{"weak_key_size_dsa_high":1024,"weak_key_size_dsa_medium":2048,"weak_key_size_ec_high":160,"weak_key_size_ec_medium":224,"weak_key_size_rsa_high":1024,"weak_key_size_rsa_medium":2048}] }
+  "B506":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B507":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B508":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B509":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B601":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B602":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B603":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B604":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B605":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B606":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B607":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B608":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B609":
+    deprecated: null
+    recommended: { config: "default", options: [{"no_shell":["os.execl","os.execle","os.execlp","os.execlpe","os.execv","os.execve","os.execvp","os.execvpe","os.spawnl","os.spawnle","os.spawnlp","os.spawnlpe","os.spawnv","os.spawnve","os.spawnvp","os.spawnvpe","os.startfile"],"shell":["os.system","os.popen","os.popen2","os.popen3","os.popen4","popen2.popen2","popen2.popen3","popen2.popen4","popen2.Popen3","popen2.Popen4","commands.getoutput","commands.getstatusoutput","subprocess.getoutput","subprocess.getstatusoutput"],"subprocess":["subprocess.Popen","subprocess.call","subprocess.check_call","subprocess.check_output","subprocess.run"]}] }
+  "B610":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B611":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B612":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B613":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B614":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B615":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B701":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B702":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B703":
+    deprecated: null
+    recommended: { config: "default", options: [] }
+  "B704":
+    deprecated: null
+    recommended: { config: "default", options: [{"allowed_calls":[],"extend_markup_names":[]}] }
+# What the nightly upstream report compares between the pins and upstream's latest release (docs/pack-format.md,
+# "watch"). The generator reads fixtures.json's examples/ files; a file added to examples/ may fire a ported test. Each
+# test's code is the plugin that declares its id (B3xx and B4xx: the blacklists).
+watch:
+  tests:
+    - { file: "fixtures.json" }
+  code: []
+  shared:
+    - "bandit/core/**"
+  new-tests:
+    - "examples/**"
+  rules:
+    "B101": { code: ["bandit/plugins/asserts.py"] }
+    "B102": { code: ["bandit/plugins/exec.py"] }
+    "B103": { code: ["bandit/plugins/general_bad_file_permissions.py"] }
+    "B104": { code: ["bandit/plugins/general_bind_all_interfaces.py"] }
+    "B105": { code: ["bandit/plugins/general_hardcoded_password.py"] }
+    "B106": { code: ["bandit/plugins/general_hardcoded_password.py"] }
+    "B107": { code: ["bandit/plugins/general_hardcoded_password.py"] }
+    "B108": { code: ["bandit/plugins/general_hardcoded_tmp.py"] }
+    "B110": { code: ["bandit/plugins/try_except_pass.py"] }
+    "B112": { code: ["bandit/plugins/try_except_continue.py"] }
+    "B113": { code: ["bandit/plugins/request_without_timeout.py"] }
+    "B201": { code: ["bandit/plugins/app_debug.py"] }
+    "B202": { code: ["bandit/plugins/tarfile_unsafe_members.py"] }
+    "B301": { code: ["bandit/blacklists/calls.py"] }
+    "B302": { code: ["bandit/blacklists/calls.py"] }
+    "B303": { code: ["bandit/blacklists/calls.py"] }
+    "B304": { code: ["bandit/blacklists/calls.py"] }
+    "B305": { code: ["bandit/blacklists/calls.py"] }
+    "B306": { code: ["bandit/blacklists/calls.py"] }
+    "B307": { code: ["bandit/blacklists/calls.py"] }
+    "B308": { code: ["bandit/blacklists/calls.py"] }
+    "B310": { code: ["bandit/blacklists/calls.py"] }
+    "B311": { code: ["bandit/blacklists/calls.py"] }
+    "B312": { code: ["bandit/blacklists/calls.py"] }
+    "B313": { code: ["bandit/blacklists/calls.py"] }
+    "B314": { code: ["bandit/blacklists/calls.py"] }
+    "B315": { code: ["bandit/blacklists/calls.py"] }
+    "B316": { code: ["bandit/blacklists/calls.py"] }
+    "B317": { code: ["bandit/blacklists/calls.py"] }
+    "B318": { code: ["bandit/blacklists/calls.py"] }
+    "B319": { code: ["bandit/blacklists/calls.py"] }
+    "B321": { code: ["bandit/blacklists/calls.py"] }
+    "B323": { code: ["bandit/blacklists/calls.py"] }
+    "B324": { code: ["bandit/plugins/hashlib_insecure_functions.py"] }
+    "B401": { code: ["bandit/blacklists/imports.py"] }
+    "B402": { code: ["bandit/blacklists/imports.py"] }
+    "B403": { code: ["bandit/blacklists/imports.py"] }
+    "B404": { code: ["bandit/blacklists/imports.py"] }
+    "B405": { code: ["bandit/blacklists/imports.py"] }
+    "B406": { code: ["bandit/blacklists/imports.py"] }
+    "B407": { code: ["bandit/blacklists/imports.py"] }
+    "B408": { code: ["bandit/blacklists/imports.py"] }
+    "B409": { code: ["bandit/blacklists/imports.py"] }
+    "B411": { code: ["bandit/blacklists/imports.py"] }
+    "B412": { code: ["bandit/blacklists/imports.py"] }
+    "B413": { code: ["bandit/blacklists/imports.py"] }
+    "B415": { code: ["bandit/blacklists/imports.py"] }
+    "B501": { code: ["bandit/plugins/crypto_request_no_cert_validation.py"] }
+    "B502": { code: ["bandit/plugins/insecure_ssl_tls.py"] }
+    "B503": { code: ["bandit/plugins/insecure_ssl_tls.py"] }
+    "B504": { code: ["bandit/plugins/insecure_ssl_tls.py"] }
+    "B505": { code: ["bandit/plugins/weak_cryptographic_key.py"] }
+    "B506": { code: ["bandit/plugins/yaml_load.py"] }
+    "B507": { code: ["bandit/plugins/ssh_no_host_key_verification.py"] }
+    "B508": { code: ["bandit/plugins/snmp_security_check.py"] }
+    "B509": { code: ["bandit/plugins/snmp_security_check.py"] }
+    "B601": { code: ["bandit/plugins/injection_paramiko.py"] }
+    "B602": { code: ["bandit/plugins/injection_shell.py"] }
+    "B603": { code: ["bandit/plugins/injection_shell.py"] }
+    "B604": { code: ["bandit/plugins/injection_shell.py"] }
+    "B605": { code: ["bandit/plugins/injection_shell.py"] }
+    "B606": { code: ["bandit/plugins/injection_shell.py"] }
+    "B607": { code: ["bandit/plugins/injection_shell.py"] }
+    "B608": { code: ["bandit/plugins/injection_sql.py"] }
+    "B609": { code: ["bandit/plugins/injection_wildcard.py"] }
+    "B610": { code: ["bandit/plugins/django_sql_injection.py"] }
+    "B611": { code: ["bandit/plugins/django_sql_injection.py"] }
+    "B612": { code: ["bandit/plugins/logging_config_insecure_listen.py"] }
+    "B613": { code: ["bandit/plugins/trojansource.py"] }
+    "B614": { code: ["bandit/plugins/pytorch_load.py"] }
+    "B615": { code: ["bandit/plugins/huggingface_unsafe_download.py"] }
+    "B701": { code: ["bandit/plugins/jinja2_templates.py"] }
+    "B702": { code: ["bandit/plugins/mako_templates.py"] }
+    "B703": { code: ["bandit/plugins/django_xss.py"] }
+    "B704": { code: ["bandit/plugins/markupsafe_markup_xss.py"] }

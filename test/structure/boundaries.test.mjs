@@ -7,23 +7,21 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkBoundaries } from "../../scripts/check/check-boundaries.mjs";
 
-const PACKAGE = JSON.stringify({ exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } } });
 const roots = [];
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-/** The violations, as `file:line [rule]`, of a checkout holding `tree` (path → contents) and a package.json. */
+/** The violations, as `file:line [rule]`, of a checkout holding `tree` (path → contents). */
 function violations(tree) {
   const root = mkdtempSync(join(tmpdir(), "rerail-boundaries-"));
   roots.push(root);
-  const files = { "package.json": PACKAGE, ...tree };
-  for (const [path, text] of Object.entries(files)) {
+  for (const [path, text] of Object.entries(tree)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), text);
   }
-  return checkBoundaries(root, { files: Object.keys(files).sort() }).violations.map(
+  return checkBoundaries(root, { files: Object.keys(tree).sort() }).violations.map(
     (violation) => `${violation.file}:${violation.line} [${violation.rule}]`,
   );
 }
@@ -126,26 +124,5 @@ describe("entry-points", () => {
       'const { r } = await import("../../src/runtime/r.js");',
     ].join("\n");
     expect(violations({ "test/api/a.test.ts": test, "src/runtime/r.ts": "" })).toEqual(["test/api/a.test.ts:3 [entry-points]"]);
-  });
-});
-
-describe("playground-public-api", () => {
-  it("lets the playground import the package's published entry points", () => {
-    expect(
-      violations({
-        "playground/ui/a.ts": 'import { run } from "../../dist/index.js";\nimport { b } from "./b.js";',
-        "playground/ui/b.ts": "",
-        "playground/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { rerail: ["../dist/index.d.ts"] } } }),
-      }),
-    ).toEqual([]);
-  });
-
-  it("flags the playground importing src/ or an unpublished dist/ module, in code or tsconfig paths", () => {
-    expect(
-      violations({
-        "playground/ui/a.ts": 'import { e } from "../../src/engine/index.js";\nimport { i } from "../../dist/internal.js";',
-        "playground/tsconfig.json": JSON.stringify({ compilerOptions: { paths: { rerail: ["../dist/internal.d.ts"] } } }, null, 2),
-      }),
-    ).toEqual(["playground/tsconfig.json:4 [playground-public-api]", "playground/ui/a.ts:1 [playground-public-api]", "playground/ui/a.ts:2 [playground-public-api]"]);
   });
 });

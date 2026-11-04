@@ -1,10 +1,9 @@
-// Recorder for the React pack's eslint-plugin-react rules (rerail/packs/react/conformance.json).
+// Generator for the React pack's eslint-plugin-react rules (rerail/packs/react/conformance.json).
 //
 // Pins: eslint 9.39.5, eslint-plugin-react 7.37.5, @typescript-eslint/parser 8.70.1, typescript 5.9.3 (refuses any
-// other); upstream jsx-eslint/eslint-plugin-react v7.37.5 = 2c98b83c451a4297edf1787d9a616e50687e27e8; corpus
-// excalidraw = excalidraw/excalidraw@ed10ac7dca7e40f3f4a31269b4bfba980d0db41e (conformance.json).
+// other); upstream jsx-eslint/eslint-plugin-react v7.37.5 = 2c98b83c451a4297edf1787d9a616e50687e27e8.
 //
-// Usage: node generate.mjs [--tools <.rerail/tools/react>] [--corpora <.rerail/corpora/react>] [--no-corpora]
+// Usage: node generate.mjs [--tools <.rerail/tools/react>]
 //
 // 1. Copies each chosen rule's upstream test file verbatim to tests/lib/rules/<rule>.js.
 // 2. Executes it with the stubs below (ours, not upstream's): a RuleTester that captures `run(name, rule, tests)` and
@@ -12,19 +11,19 @@
 //    case's `code` is written verbatim to fixtures/<rule>/<valid|invalid>-NNN.<jsx|tsx> (or under the case directory
 //    when the case names a `filename`). Cases needing Flow or Babel-only syntax are dropped.
 // 3. Writes Rerail's own cases (common.mjs `AUTHORED`) beside them and lists them in UPSTREAM.md. Runs the pinned plugin
-//    (common.mjs `config`: every chosen rule, default options) over every fixture file and each corpus, and writes
-//    fixtures.expected.json / corpus-<name>.expected.json.
-// 4. Writes ../../licenses/eslint-plugin-react/UPSTREAM.md and LICENSE.
+//    (common.mjs `config`: every chosen rule, default options) over every fixture file, and writes
+//    fixtures.expected.json.
+// 4. Copies ../../licenses/eslint-plugin-react/LICENSE and writes provenance.json and LICENSES.md: every copied test
+//    file and every extracted case with its upstream path and locator.
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertCommit } from "../../../../conformance/recorders/eslint-record.mjs";
-import { execute, finishFixtures, options, recordCorpora, RULES, toolsRequire, UPSTREAM, writeLicense } from "../common.mjs";
+import { assertCommit } from "../../../../scripts/pack-data/eslint-expected.mjs";
+import { execute, finishFixtures, options, RULES, toolsRequire, UPSTREAM, writeLicenseAndProvenance } from "../common.mjs";
 
 const TOOL = "eslint-plugin-react";
 const DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const argv = process.argv.slice(2);
-const { tools, corpora } = options(argv);
+const { tools } = options(process.argv.slice(2));
 const require = toolsRequire(tools);
 const upstream = join(tools, UPSTREAM[TOOL].checkout);
 assertCommit(upstream, UPSTREAM[TOOL].commit);
@@ -91,14 +90,10 @@ for (const rule of RULES[TOOL]) {
     captured[0].tests[kind].forEach((test, index) => {
       const code = typeof test === "string" ? test : test.code;
       const errors = kind === "valid" ? 0 : typeof test.errors === "number" ? test.errors : test.errors.length;
-      cases.push({ rule, directory: name, kind, index, test, code, errors, origin: `${relativeTest} ${kind}[${index}]`, filename: typeof test === "string" ? undefined : test.filename, ...classify(test) });
+      cases.push({ rule, directory: name, kind, index, test, code, errors, origin: `${relativeTest} ${kind}[${index}]`, from: relativeTest, detail: `${kind}[${index}]`, filename: typeof test === "string" ? undefined : test.filename, ...classify(test) });
     });
   }
 }
 
 const result = await finishFixtures(require, TOOL, DIRECTORY, cases, tools);
-writeLicense(TOOL, upstream, copied, result.kept);
-if (!argv.includes("--no-corpora")) {
-  const summary = await recordCorpora(require, TOOL, DIRECTORY, corpora);
-  for (const entry of summary) console.log(`corpus ${entry.corpus}: ${entry.files} files, ${entry.skipped} skipped, ${entry.findings} findings`);
-}
+writeLicenseAndProvenance(TOOL, upstream, copied, result.kept, result.recorded);

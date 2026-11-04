@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        We reply within 10 business days ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)).
+        We reply within 5 business days, and decide within 10 ([response times](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#response-times)).
   - type: dropdown
     id: kind
     attributes:
@@ -36,12 +36,12 @@ body:
     attributes:
       label: Pointers
       description: For a coding agent, the docs of its hooks or extension API. For rules, the linter and the rules you'd want first.
-  - type: checkboxes
-    id: contribute
+  - type: input
+    id: fork
     attributes:
-      label: Building it
-      options:
-        - label: I'd like to build this myself ([becoming a trusted contributor](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#becoming-a-trusted-contributor)).
+      label: A change in your fork
+      description: Optional. A branch or pull request in your fork with the change ([how it works](https://github.com/neralabs/rerail/blob/main/CONTRIBUTING.md#proposing-a-change-from-your-fork)).
+      placeholder: https://github.com/you/rerail/tree/your-branch
   - type: checkboxes
     id: checks
     attributes:

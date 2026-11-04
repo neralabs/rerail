@@ -42,6 +42,8 @@ import {
   SqliteAuditControlStore,
   STEER_STRATEGIES,
   upsertLibraryRule,
+  approve,
+  ruleSubject,
 } from "../src/engine/index.js";
 import { RerailDaemon } from "../src/daemon/index.js";
 import { setRepositoryStarted } from "../src/runtime/index.js";
@@ -57,6 +59,7 @@ import {
   hostCommand,
   jsonlFiles,
   readDeliveries,
+  removeHostAuth,
   run,
   sandboxAvailable,
   sandboxEnvironment,
@@ -186,7 +189,8 @@ export function parseArgs(argv: readonly string[]): Options {
 function seedRepository(databasePath: string, project: string, strategy: SteerStrategy): void {
   const database = openRerailDatabase(databasePath);
   try {
-    upsertLibraryRule(database, loadRuleCatalog(), RULE, "code");
+    const stored = upsertLibraryRule(database, loadRuleCatalog(), RULE, "code");
+    approve(database, ruleSubject(stored.document.rule.id, stored.payloadHash));
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: RULE.id, folder: "" }] });
     setRepositoryStarted(database, repositoryKey, true);
@@ -705,7 +709,12 @@ async function runTrial(host: RerailHost, strategy: SteerStrategy, trial: number
     } finally {
       if (previousRerailHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousRerailHome;
-      if (!options.keep) await rm(sandbox, { recursive: true, force: true });
+      // `--keep` keeps the sandbox for inspection, never the credential copy imported into it.
+      try {
+        await removeHostAuth(sandbox);
+      } finally {
+        if (!options.keep) await rm(sandbox, { recursive: true, force: true });
+      }
     }
   }
 }

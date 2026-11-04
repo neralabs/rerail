@@ -1,0 +1,115 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf030-assert-with-print-message",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass the message itself as the assert message instead of a print call; print returns None, so the assertion error is empty.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assert-with-print-message",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            },
+            "callee": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "global": [
+                      "print"
+                    ],
+                    "import": [
+                      "builtins.print"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "message-slot": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assert_statement"
+                  },
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "matches": "trivia"
+                      }
+                    },
+                    "regex": "^,$"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "message-slot"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "callee"
+                }
+              },
+              {
+                "matches": "message-slot"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF030",
+        "message": "Replace the `print(...)` message with the text itself, as in `assert cond, \"text\"`, or drop the message when `print` has no arguments; `print` returns None.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF030"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-int003-printf-in-get-text-func-call",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Pass a constant template to a gettext call and format the translated result; a printf-style formatted string is evaluated before the catalog lookup.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "printf-in-gettext-call",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "gettext-callee": {
+       "any": [
+        {
+         "kind": "identifier",
+         "regex": "^(?:_|gettext|ngettext)$"
+        },
+        {
+         "kind": "identifier",
+         "resolves": {
+          "global": [
+           "_",
+           "gettext",
+           "ngettext"
+          ]
+         }
+        },
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "gettext.gettext",
+           "gettext.ngettext",
+           "builtins._",
+           "builtins.gettext",
+           "builtins.ngettext"
+          ]
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "gettext-callee"
+         }
+        }
+       ]
+      },
+      "first-gettext-arg": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "argument_list",
+          "inside": {
+           "stopBy": "neighbor",
+           "kind": "call",
+           "has": {
+            "stopBy": "neighbor",
+            "matches": "gettext-callee"
+           }
+          }
+         },
+         "not": {
+          "follows": {
+           "stopBy": "end",
+           "not": {
+            "any": [
+             {
+              "kind": "comment"
+             },
+             {
+              "kind": "line_continuation"
+             },
+             {
+              "kind": "keyword_argument"
+             },
+             {
+              "kind": "dictionary_splat"
+             },
+             {
+              "regex": "^[(,]$"
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "first-gettext-arg"
+         }
+        }
+       ]
+      },
+      "plain-string": {
+       "any": [
+        {
+         "kind": "string",
+         "not": {
+          "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+         }
+        },
+        {
+         "kind": "concatenated_string",
+         "not": {
+          "has": {
+           "stopBy": "neighbor",
+           "kind": "string",
+           "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "plain-string"
+         }
+        }
+       ]
+      },
+      "target": {
+       "kind": "binary_operator",
+       "matches": "first-gettext-arg",
+       "has": {
+        "stopBy": "neighbor",
+        "matches": "plain-string",
+        "precedes": {
+         "stopBy": "end",
+         "regex": "^%$"
+        }
+       }
+      },
+      "in-annotation": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "concatenated_string"
+        }
+       ],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "target",
+           "capture": "ARG"
+          },
+          {
+           "matches": "in-annotation"
+          }
+         ]
+        }
+       }
+      }
+     },
+     "rule": {
+      "any": [
+       {
+        "matches": "target",
+        "pattern": "$ARG"
+       },
+       {
+        "matches": "in-annotation"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.ARG",
+    "code": "INT003",
+    "message": "Translate the template, then format the result: `_(\"Hello, %s!\") % name`, not `_(\"Hello, %s!\" % name)`. Leave it if the callee is not a translation function or the text is a computed catalog key.",
+    "each": "ARG",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "INT003"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

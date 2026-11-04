@@ -1,0 +1,172 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-workflow-shared-conditions",
+  "revision": 1,
+  "mode": "log",
+  "description": "Decide the release pull request skip once per workflow, in one job output every job reads, instead of repeating the branch test in each job.",
+  "scope": {
+    "include": [
+      ".github/workflows/**/*.yml",
+      ".github/workflows/**/*.yaml",
+      ".github/actions/**/*.yml",
+      ".github/actions/**/*.yaml"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "release-skip-2",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)).*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-3",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){2}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-4",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){3}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-5",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){4}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-6",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){5}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-7",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){6}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-8",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){7}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-9",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){8}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-10",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){9}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-11",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){10}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    },
+    {
+      "id": "release-skip-12",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?ms)\\A(?:.*?^[^#\\n]*?(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b)){11}.*?^[^#\\n]*?(?P<again>(?:!=[ \\t]*'changeset-release\\b|!startsWith\\([^)\\n]*'changeset-release\\b|!=[ \\t]*(?:vars|env)\\.RELEASE_BRANCH\\b))"
+        }
+      },
+      "violation": {
+        "code": "RELEASE_PR_SKIP_REPEATED",
+        "anchor": "capture.again",
+        "message": "Work out the release pull request skip once, as an output of a job the others need (ci.yml's changes job), and read that output in each job instead of repeating the branch test."
+      }
+    }
+  ]
+}

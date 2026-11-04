@@ -1,0 +1,46 @@
+{
+  "caught": [
+    {
+      "path": "packs/javascript/upstream/generate.mjs",
+      "content": "import { isVariantPath, withOrigins, writeRenameVariants } from \"../../../scripts/pack-data/eslint-expected.mjs\";\n\nfunction codePointColumn(lines, line, column) {\n  return [...lines[line - 1].slice(0, column - 1)].length + 1;\n}\n"
+    },
+    {
+      "path": "packs/javascript/upstream/eslint-plugin-unicorn/generate.mjs",
+      "content": "import { assertCommit, lint } from \"../../../../scripts/pack-data/eslint-expected.mjs\";\n\nconst ECMA_EXTENSIONS = [\".ts\", \".mts\", \".cts\", \".tsx\", \".js\", \".jsx\", \".mjs\", \".cjs\"];\n"
+    },
+    {
+      "path": "packs/typescript/upstream/generate.mjs",
+      "content": "const splitLines = text => text.split(/\\r\\n|[\\r\\n\\u2028\\u2029]/u);\n"
+    },
+    {
+      "path": "packs/javascript/upstream/eslint-plugin-unicorn/record.mjs",
+      "content": "const RECORDING_CWD = \"/work/project\";\nconst realCwd = process.cwd;\nprocess.cwd = () => RECORDING_CWD;\n"
+    },
+    {
+      "path": "packs/react/upstream/generate.mjs",
+      "content": "export async function assertKnownReportRules(name, reports, rules) {\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "packs/javascript/upstream/eslint-plugin-unicorn/generate.mjs",
+      "content": "import { withUpstreamTestCwd, codePointColumn } from \"../../../../scripts/pack-data/eslint-expected.mjs\";\n\nawait withUpstreamTestCwd(() => import(test));\nconst column = codePointColumn(text, line, column);\nconst cwd = process.cwd();\nif (process.cwd === undefined) throw new Error();\n"
+    },
+    {
+      "path": "packs/vue/upstream/eslint-plugin-vue/generate.mjs",
+      "content": "function lint(code, path) {\n  return linter.verify(code, config, path);\n}\nconst columnOf = (lines, line) => lines[line].length;\n"
+    },
+    {
+      "path": "scripts/pack-data/eslint-expected.mjs",
+      "content": "export function codePointColumn(text, line, column) {\n}\n"
+    },
+    {
+      "path": "packs/vue/upstream/eslint-plugin-vue/authored.mjs",
+      "content": "// never process.chdir(tests) here\nexport const cases = [{ code: \"process.chdir('/tmp')\" }];\nfunction build() {\n  const codePointColumn = 1;\n  return codePointColumn;\n}\n"
+    },
+    {
+      "path": "packs/complexity/upstream/lizard/generate.mjs",
+      "content": "function gitHead(directory) {\n  return directory;\n}\n"
+    }
+  ]
+}

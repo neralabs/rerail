@@ -1,0 +1,1116 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-unsafe",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid the UNSAFE_componentWillMount, UNSAFE_componentWillReceiveProps and UNSAFE_componentWillUpdate lifecycle methods in class components; they break under async rendering.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared-typescript",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "component-superclass": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:Pure)?Component$"
+              },
+              {
+                "kind": "member_expression",
+                "regex": "^React\\s*\\.\\s*(?:Pure)?Component$",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:Pure)?Component$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "component-superclass"
+                }
+              }
+            ]
+          },
+          "jsdoc-component": {
+            "kind": "comment",
+            "regex": "(?m)^(?:/\\*\\*|[ \\t]*\\*?)[ \\t]*@(?:extends|augments)[ \\t]+React\\.(?:Pure)?Component(?:\\s|\\*/)",
+            "all": [
+              {
+                "regex": "^/\\*\\*[^*]"
+              },
+              {
+                "layout": {
+                  "after": {
+                    "to": "token",
+                    "breaks": {
+                      "max": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "after-jsdoc-component": {
+            "follows": {
+              "stopBy": "neighbor",
+              "matches": "jsdoc-component"
+            }
+          },
+          "es6-component": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "has": {
+                  "kind": "class_heritage",
+                  "any": [
+                    {
+                      "has": {
+                        "matches": "component-superclass"
+                      }
+                    },
+                    {
+                      "has": {
+                        "kind": "extends_clause",
+                        "has": {
+                          "field": "value",
+                          "matches": "component-superclass"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  }
+                ],
+                "matches": "after-jsdoc-component"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "abstract_class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "inside": {
+                  "kind": "export_statement",
+                  "matches": "after-jsdoc-component"
+                }
+              },
+              {
+                "kind": "class",
+                "inside": {
+                  "kind": "variable_declarator",
+                  "field": "value",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "matches": "after-jsdoc-component"
+                  }
+                }
+              }
+            ]
+          },
+          "in-es6-component": {
+            "inside": {
+              "kind": "class_body",
+              "inside": {
+                "matches": "es6-component"
+              }
+            }
+          },
+          "will-mount-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^UNSAFE_componentWillMount$"
+              },
+              {
+                "kind": "private_property_identifier",
+                "regex": "^#UNSAFE_componentWillMount$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^UNSAFE_componentWillMount$"
+                }
+              }
+            ]
+          },
+          "will-receive-props-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^UNSAFE_componentWillReceiveProps$"
+              },
+              {
+                "kind": "private_property_identifier",
+                "regex": "^#UNSAFE_componentWillReceiveProps$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^UNSAFE_componentWillReceiveProps$"
+                }
+              }
+            ]
+          },
+          "will-update-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^UNSAFE_componentWillUpdate$"
+              },
+              {
+                "kind": "private_property_identifier",
+                "regex": "^#UNSAFE_componentWillUpdate$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^UNSAFE_componentWillUpdate$"
+                }
+              }
+            ]
+          },
+          "create-class-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^createReactClass$"
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^createReactClass$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "es5-component": {
+            "kind": "object",
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "any": [
+                  {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "matches": "create-class-callee"
+                    }
+                  },
+                  {
+                    "kind": "new_expression",
+                    "has": {
+                      "field": "constructor",
+                      "matches": "create-class-callee"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "undecorated": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "regex": "^(?:[^@/]|$)"
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "method_definition"
+                    },
+                    {
+                      "kind": "public_field_definition"
+                    },
+                    {
+                      "has": {
+                        "field": "property",
+                        "regex": "^"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "follows": {
+                  "stopBy": "neighbor",
+                  "kind": "comment",
+                  "matches": "undecorated"
+                }
+              }
+            ]
+          },
+          "will-mount": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-mount-key"
+                    }
+                  },
+                  {
+                    "kind": "method_signature",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-mount-key"
+                    }
+                  },
+                  {
+                    "kind": "abstract_method_signature",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-mount-key"
+                    }
+                  },
+                  {
+                    "kind": "public_field_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-mount-key"
+                    }
+                  }
+                ],
+                "matches": "in-es6-component"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-mount-key"
+                    }
+                  },
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "matches": "will-mount-key"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^UNSAFE_componentWillMount$"
+                  }
+                ],
+                "inside": {
+                  "matches": "es5-component"
+                }
+              }
+            ]
+          },
+          "decorates-will-mount": {
+            "any": [
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "matches": "will-mount"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^[@/]",
+                  "matches": "decorates-will-mount"
+                }
+              }
+            ]
+          },
+          "will-receive-props": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-receive-props-key"
+                    }
+                  },
+                  {
+                    "kind": "method_signature",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-receive-props-key"
+                    }
+                  },
+                  {
+                    "kind": "abstract_method_signature",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-receive-props-key"
+                    }
+                  },
+                  {
+                    "kind": "public_field_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-receive-props-key"
+                    }
+                  }
+                ],
+                "matches": "in-es6-component"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-receive-props-key"
+                    }
+                  },
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "matches": "will-receive-props-key"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^UNSAFE_componentWillReceiveProps$"
+                  }
+                ],
+                "inside": {
+                  "matches": "es5-component"
+                }
+              }
+            ]
+          },
+          "decorates-will-receive-props": {
+            "any": [
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "matches": "will-receive-props"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^[@/]",
+                  "matches": "decorates-will-receive-props"
+                }
+              }
+            ]
+          },
+          "will-update": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-update-key"
+                    }
+                  },
+                  {
+                    "kind": "method_signature",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-update-key"
+                    }
+                  },
+                  {
+                    "kind": "abstract_method_signature",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-update-key"
+                    }
+                  },
+                  {
+                    "kind": "public_field_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-update-key"
+                    }
+                  }
+                ],
+                "matches": "in-es6-component"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "method_definition",
+                    "has": {
+                      "field": "name",
+                      "matches": "will-update-key"
+                    }
+                  },
+                  {
+                    "kind": "pair",
+                    "has": {
+                      "field": "key",
+                      "matches": "will-update-key"
+                    }
+                  },
+                  {
+                    "kind": "shorthand_property_identifier",
+                    "regex": "^UNSAFE_componentWillUpdate$"
+                  }
+                ],
+                "inside": {
+                  "matches": "es5-component"
+                }
+              }
+            ]
+          },
+          "decorates-will-update": {
+            "any": [
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "matches": "will-update"
+                }
+              },
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^[@/]",
+                  "matches": "decorates-will-update"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shared-javascript",
+      "define": {
+        "language": "javascript",
+        "utils": {
+          "component-superclass": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:Pure)?Component$"
+              },
+              {
+                "kind": "member_expression",
+                "regex": "^React\\s*\\.\\s*(?:Pure)?Component$",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^React$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:Pure)?Component$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "matches": "component-superclass"
+                }
+              }
+            ]
+          },
+          "jsdoc-component": {
+            "kind": "comment",
+            "regex": "(?m)^(?:/\\*\\*|[ \\t]*\\*?)[ \\t]*@(?:extends|augments)[ \\t]+React\\.(?:Pure)?Component(?:\\s|\\*/)",
+            "all": [
+              {
+                "regex": "^/\\*\\*[^*]"
+              },
+              {
+                "layout": {
+                  "after": {
+                    "to": "token",
+                    "breaks": {
+                      "max": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "after-jsdoc-component": {
+            "follows": {
+              "stopBy": "neighbor",
+              "matches": "jsdoc-component"
+            }
+          },
+          "es6-component": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "has": {
+                  "kind": "class_heritage",
+                  "any": [
+                    {
+                      "has": {
+                        "matches": "component-superclass"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  }
+                ],
+                "matches": "after-jsdoc-component"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "class_declaration"
+                  },
+                  {
+                    "kind": "class"
+                  }
+                ],
+                "inside": {
+                  "kind": "export_statement",
+                  "matches": "after-jsdoc-component"
+                }
+              },
+              {
+                "kind": "class",
+                "inside": {
+                  "kind": "variable_declarator",
+                  "field": "value",
+                  "inside": {
+                    "any": [
+                      {
+                        "kind": "lexical_declaration"
+                      },
+                      {
+                        "kind": "variable_declaration"
+                      }
+                    ],
+                    "matches": "after-jsdoc-component"
+                  }
+                }
+              }
+            ]
+          },
+          "in-es6-component": {
+            "inside": {
+              "kind": "class_body",
+              "inside": {
+                "matches": "es6-component"
+              }
+            }
+          },
+          "will-mount-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^UNSAFE_componentWillMount$"
+              },
+              {
+                "kind": "private_property_identifier",
+                "regex": "^#UNSAFE_componentWillMount$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^UNSAFE_componentWillMount$"
+                }
+              }
+            ]
+          },
+          "will-receive-props-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^UNSAFE_componentWillReceiveProps$"
+              },
+              {
+                "kind": "private_property_identifier",
+                "regex": "^#UNSAFE_componentWillReceiveProps$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^UNSAFE_componentWillReceiveProps$"
+                }
+              }
+            ]
+          },
+          "will-update-key": {
+            "any": [
+              {
+                "kind": "property_identifier",
+                "regex": "^UNSAFE_componentWillUpdate$"
+              },
+              {
+                "kind": "private_property_identifier",
+                "regex": "^#UNSAFE_componentWillUpdate$"
+              },
+              {
+                "kind": "computed_property_name",
+                "has": {
+                  "kind": "identifier",
+                  "regex": "^UNSAFE_componentWillUpdate$"
+                }
+              }
+            ]
+          },
+          "will-mount-field": {
+            "kind": "field_definition",
+            "has": {
+              "field": "property",
+              "matches": "will-mount-key"
+            },
+            "matches": "in-es6-component"
+          },
+          "will-receive-props-field": {
+            "kind": "field_definition",
+            "has": {
+              "field": "property",
+              "matches": "will-receive-props-key"
+            },
+            "matches": "in-es6-component"
+          },
+          "will-update-field": {
+            "kind": "field_definition",
+            "has": {
+              "field": "property",
+              "matches": "will-update-key"
+            },
+            "matches": "in-es6-component"
+          }
+        }
+      }
+    },
+    {
+      "id": "will-mount",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "will-mount",
+            "all": [
+              {
+                "matches": "undecorated"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Move the work in UNSAFE_componentWillMount to componentDidMount (side effects, subscriptions) or the constructor (initial state); it is unsafe with async rendering.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-mount-decorated",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "decorator",
+            "matches": "undecorated",
+            "all": [
+              {
+                "matches": "decorates-will-mount"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Move the work in UNSAFE_componentWillMount to componentDidMount (side effects, subscriptions) or the constructor (initial state); it is unsafe with async rendering.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-mount-javascript-field",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "matches": "will-mount-field"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Move the work in UNSAFE_componentWillMount to componentDidMount (side effects, subscriptions) or the constructor (initial state); it is unsafe with async rendering.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-receive-props",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "will-receive-props",
+            "all": [
+              {
+                "matches": "undecorated"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Replace UNSAFE_componentWillReceiveProps: derive state from props in static getDerivedStateFromProps, and react to prop changes in componentDidUpdate.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-receive-props-decorated",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "decorator",
+            "matches": "undecorated",
+            "all": [
+              {
+                "matches": "decorates-will-receive-props"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Replace UNSAFE_componentWillReceiveProps: derive state from props in static getDerivedStateFromProps, and react to prop changes in componentDidUpdate.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-receive-props-javascript-field",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "matches": "will-receive-props-field"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Replace UNSAFE_componentWillReceiveProps: derive state from props in static getDerivedStateFromProps, and react to prop changes in componentDidUpdate.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-update",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "will-update",
+            "all": [
+              {
+                "matches": "undecorated"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Move the work in UNSAFE_componentWillUpdate to componentDidUpdate, reading any DOM values it needs from before the update in getSnapshotBeforeUpdate.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-update-decorated",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "decorator",
+            "matches": "undecorated",
+            "all": [
+              {
+                "matches": "decorates-will-update"
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Move the work in UNSAFE_componentWillUpdate to componentDidUpdate, reading any DOM values it needs from before the update in getSnapshotBeforeUpdate.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "will-update-javascript-field",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "matches": "will-update-field"
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unsafe",
+        "message": "Move the work in UNSAFE_componentWillUpdate to componentDidUpdate, reading any DOM values it needs from before the update in getSnapshotBeforeUpdate.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unsafe"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unsafe"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

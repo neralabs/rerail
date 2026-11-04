@@ -1,5 +1,20 @@
 # @neralabs/rerail-pack-javascript
 
+## 0.1.6 (2026-11-04)
+
+121 rules, 36 of them on by default.
+
+- 50 new rules (47 from ESLint and 3 from eslint-plugin-unicorn): 11 start in Steer, 1 in Log and 38 off.
+- `eslint-no-loss-of-precision` no longer reports a decimal literal that a JavaScript number stores exactly, such as `9223372036854775808` (2^63): it compares the literal with the number at the same precision, as ESLint does.
+- `eslint-no-setter-return` no longer reports `return /* comment */;` in a setter, now reports an arrow setter whose body follows a comment (`set: v => /* comment */ v`), and reports a parenthesized arrow body at the expression inside the parentheses, as ESLint does. Its message for a `return` now says to return without a value.
+
+## 0.1.5
+
+### Patch Changes
+
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+- 211e8b5: The note on the port readiness recording in each `licenses/*/UPSTREAM.md` names the upstream licence file kept beside it (`LICENSE`) by its own name.
+
 ## 0.1.4
 
 ### Patch Changes

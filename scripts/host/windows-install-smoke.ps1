@@ -1,107 +1,116 @@
 # Release gate for native Windows: install a packed @neralabs/rerail tarball the way a user does, with
-# `npx @neralabs/rerail setup`, from a throwaway local registry standing in for npmjs, in a sandbox profile. Then
-# exercise the managed runtime: launcher, `current` junction, daemon and native engine, Claude Code's exec-form
-# hook, the Codex hook as Codex runs it (PowerShell), update check, and coding-agent registration removal. Uses
-# `node` from PATH, so the runner's architecture decides which native engine is exercised.
+# `npx @neralabs/rerail setup`, from a throwaway local registry standing in for npmjs, in a sandbox profile, answering
+# set-up's questions through its machine-readable lane. Then exercise the managed runtime: launcher, `current`
+# junction, daemon and native engine, Claude Code's exec-form hook, the Codex hook as Codex runs it (PowerShell),
+# update check, and the full uninstall. Uses `node` from PATH, so the runner's architecture decides
+# which native engine is exercised. The environment matrix (scripts/host/azure/guest.ps1) runs the same steps from
+# windows-host.ps1 on Windows 11 VMs.
 #
-# Only the @neralabs scope resolves through the local registry (Verdaccio); every dependency still comes from
-# npmjs, exactly as for a user who installs the published package.
+# Only the @neralabs scope resolves through the local registry (Verdaccio), which serves the package and this
+# checkout's rule packs, as npmjs serves them; every dependency still comes from npmjs, exactly as for a user who
+# installs the published package.
 param([Parameter(Mandatory)][string]$Tarball)
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "windows-host.ps1")
 $Tarball = (Resolve-Path $Tarball).Path
-$node = (Get-Command node).Source
-$npmBin = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin"
-$npmCli = Join-Path $npmBin "npm-cli.js"
-$npxCli = Join-Path $npmBin "npx-cli.js"
 $base = Join-Path ([IO.Path]::GetTempPath()) ("rerail-windows-smoke-" + [guid]::NewGuid())
-$sandbox = Join-Path $base "home"
+# A profile folder as a person's name gives it, accented and with a space: cmd.exe reads the batch launcher in the
+# console's code page, so a path written out in UTF-8 would come back garbled, and PowerShell, which runs the Codex
+# hook, splits a command at a space its quoting does not cover.
+$sandbox = Join-Path $base ("Jos" + [char]0x00E9 + " Garc" + [char]0x00ED + "a")
 $project = Join-Path $sandbox "proj"
-$launcher = Join-Path $sandbox ".rerail\bin\rerail.cmd"
+$rerailHome = Join-Path $sandbox ".rerail"
+$launcher = Join-Path $rerailHome "bin\rerail.cmd"
 
 function Step($message) { Write-Host "==> $message" }
-function Invoke-Node([string[]]$arguments) {
-  $output = & $node @arguments
-  if ($LASTEXITCODE -ne 0) { throw "node $($arguments[0]) exited $LASTEXITCODE" }
-  return $output
-}
-function Get-FreePort { Invoke-Node @("-e", "const s=require('net').createServer();s.listen(0,'127.0.0.1',()=>{process.stdout.write(String(s.address().port));s.close()})") }
 
-New-Item -ItemType Directory -Force $project, "$sandbox\.claude", "$sandbox\.codex", "$sandbox\.cursor", "$base\storage", "$base\npm-cache" | Out-Null
-$verdaccio = $null
+New-Item -ItemType Directory -Force $project, "$sandbox\.claude", "$sandbox\.codex", "$sandbox\.cursor", "$base\npm-cache", "$base\git-bash-home" | Out-Null
+$registry = $null
 try {
-  Step "Starting a local registry for the @neralabs scope"
-  $port = Get-FreePort
-  $registry = "http://127.0.0.1:$port"
-  # Readable by anyone, as npmjs serves a public package; publishing needs the throwaway account below.
-  $password = Invoke-Node @("-e", "process.stdout.write(require('crypto').randomBytes(18).toString('hex'))")
-  $sha = Invoke-Node @("-e", "process.stdout.write(require('crypto').createHash('sha1').update(process.argv[1]).digest('base64'))", $password)
-  [IO.File]::WriteAllText("$base\htpasswd", "rerail-smoke:{SHA}$sha`n")
-  $storage = "$base\storage" -replace '\\', '/'
-  $authFile = "$base\htpasswd" -replace '\\', '/'
-  [IO.File]::WriteAllText("$base\verdaccio.yaml", @"
-storage: $storage
-auth:
-  htpasswd:
-    file: $authFile
-    max_users: -1
-uplinks: {}
-packages:
-  "@neralabs/*":
-    access: `$all
-    publish: `$authenticated
-max_body_size: 200mb
-log: { type: stdout, level: warn }
-"@)
-  $encoded = Invoke-Node @("-p", "Buffer.from(process.argv[1]).toString('base64')", $password)
-  [IO.File]::WriteAllText("$base\publisher.npmrc", "//127.0.0.1:$port/:username=rerail-smoke`n//127.0.0.1:$port/:_password=$encoded`n")
-  # No output redirection: a redirected Start-Process inherits this shell's handles and would hold the caller's pipe.
-  $verdaccio = Start-Process -PassThru -WindowStyle Hidden -FilePath $node -ArgumentList @(
-    "`"$npmCli`"", "exec", "--yes", "--", "verdaccio@6", "--config", "`"$base\verdaccio.yaml`"", "--listen", "127.0.0.1:$port")
-  $ready = $false
-  for ($attempt = 0; $attempt -lt 120 -and -not $ready; $attempt++) {
-    try { Invoke-WebRequest -UseBasicParsing "$registry/-/ping" | Out-Null; $ready = $true } catch { Start-Sleep 1 }
+  Step "Packing this checkout's rule packs"
+  # Set-up downloads the packs that fit the project; with none to download it offers only to try again.
+  New-Item -ItemType Directory -Force "$base\packs" | Out-Null
+  $node = Get-RerailNode
+  $npmCli = Join-Path (Split-Path -Parent $node) "node_modules\npm\bin\npm-cli.js"
+  foreach ($pack in Get-ChildItem -Directory (Join-Path $PSScriptRoot "..\..\packs")) {
+    if (-not (Test-Path (Join-Path $pack.FullName "package.json"))) { continue }
+    & $node $npmCli pack $pack.FullName --pack-destination "$base\packs" --ignore-scripts --silent | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "npm pack $($pack.Name) exited $LASTEXITCODE" }
   }
-  if (-not $ready) { throw "Verdaccio did not answer $registry/-/ping within 120s" }
-  & $node $npmCli publish $Tarball --tag latest --registry $registry --userconfig "$base\publisher.npmrc" --loglevel=warn
-  if ($LASTEXITCODE -ne 0) { throw "npm publish to the local registry failed" }
+  $packTarballs = @(Get-ChildItem "$base\packs" -Filter *.tgz | ForEach-Object { $_.FullName })
+  Write-Host "packed $($packTarballs.Count) rule packs"
 
-  Step "Running npx @neralabs/rerail setup in a sandbox profile (stdout captured)"
+  Step "Starting a local registry for the @neralabs scope"
+  $registry = Start-RerailRegistry -Root "$base\registry" -Tarballs (@($Tarball) + $packTarballs)
+
+  Step "Running npx @neralabs/rerail setup in a sandbox profile, answering its questions (stdout captured)"
   # os.homedir() reads USERPROFILE on Windows; the rest pins npm and Rerail state, including the one Rerail
   # database under RERAIL_HOME, inside the sandbox. The user config maps only the @neralabs scope to the
-  # local registry, so Rerail's own npm calls (install, update check) resolve it the same way.
-  $env:USERPROFILE = $sandbox; $env:HOME = $sandbox; $env:RERAIL_HOME = "$sandbox\.rerail"
+  # local registry, so Rerail's own npm calls (install, update check) resolve it the same way. BROWSER=none keeps
+  # the dashboard link from opening a browser on the runner. HOME names another folder, as Git Bash's may: coding
+  # agents read the profile folder, so set-up must connect them there.
+  $env:USERPROFILE = $sandbox; $env:HOME = "$base\git-bash-home"; $env:RERAIL_HOME = $rerailHome
   $env:NPM_CONFIG_USERCONFIG = "$sandbox\.npmrc"; $env:NPM_CONFIG_CACHE = "$base\npm-cache"
   $env:RERAIL_STORAGE_ROOT = "$project\.rerail\sessions"
-  # Captured stdout is the coding agent's lane: answer "start" for the project in one run. BROWSER=none
-  # keeps the dashboard link from opening a browser on the runner.
   $env:BROWSER = "none"
-  [IO.File]::WriteAllText("$sandbox\.npmrc", "@neralabs:registry=$registry/`n")
-  # Set-up first asks, once per computer, whether Rerail may read coding agent sessions, and stops there until it is
-  # answered. This sandbox has said yes already (what set-up writes on an `allow` answer), so the one run reaches
-  # "start"; the question itself is covered by test/cli/setup-json.test.ts.
-  New-Item -ItemType Directory -Force "$sandbox\.rerail" | Out-Null
-  [IO.File]::WriteAllText("$sandbox\.rerail\consent.json", '{"sessions":{"approvedAt":"2026-10-20T00:00:00.000Z"}}')
-  $daemonPort = Get-FreePort
-  $start = New-Object Diagnostics.ProcessStartInfo($node)
-  $start.Arguments = "`"$npxCli`" --yes @neralabs/rerail@latest setup --repo `"$project`" --answer start --port $daemonPort"
-  $start.WorkingDirectory = $project
-  $start.UseShellExecute = $false; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-  $setup = [Diagnostics.Process]::Start($start)
-  $stdout = $setup.StandardOutput.ReadToEndAsync(); $stderr = $setup.StandardError.ReadToEndAsync()
-  $setup.WaitForExit()
-  # The daemon must not inherit setup's output pipe, or every captured `rerail setup` hangs until `rerail daemon stop`.
-  if (-not $stdout.Wait(15000)) { throw "setup exited but its stdout stayed open: the daemon holds the caller's pipe" }
-  Write-Host ($stdout.Result + $stderr.Result)
-  if ($setup.ExitCode -ne 0) { throw "npx @neralabs/rerail setup exited $($setup.ExitCode)" }
+  Write-RerailUtf8 "$sandbox\.npmrc" "@neralabs:registry=$($registry.Url)/`n"
+  $daemonPort = Get-RerailFreePort
+  Invoke-RerailSetup -Spec "latest" -Project $project -Launcher $launcher -Options @("--port", "$daemonPort") | ForEach-Object { Write-Host $_ }
 
   Step "Checking the managed installation"
-  if (-not (Test-Path $launcher)) { throw "setup did not write $launcher" }
-  if ((Get-Item "$sandbox\.rerail\current").LinkType -ne "Junction") { throw "$sandbox\.rerail\current is not a junction" }
+  Assert-RerailManagedInstall -RerailHome $rerailHome | ForEach-Object { Write-Host $_ }
   $status = (& $launcher status) -join "`n"
   Write-Host $status
   if ($status -notmatch [regex]::Escape("running at http://127.0.0.1:$daemonPort")) { throw "rerail status does not show the setup-started daemon" }
   if ($status -notmatch "Engine: ok") { throw "the daemon has no working native engine" }
+
+  Step "Running rerail from Git Bash"
+  # Git Bash runs a command without an extension or with `.exe`, never `rerail.cmd`; a new terminal gets the user Path
+  # set-up wrote, which this one predates.
+  $windowsPath = $env:PATH
+  $env:PATH = "$rerailHome\bin;$windowsPath"
+  $gitBash = (& (Join-Path $env:ProgramFiles "Git\bin\bash.exe") -c 'command -v rerail && rerail version') -join "`n"
+  $gitBashExit = $LASTEXITCODE
+  $env:PATH = $windowsPath
+  Write-Host $gitBash
+  if ($gitBashExit -ne 0) { throw "bare rerail did not run in Git Bash (exit $gitBashExit)" }
+
+  Step "Running rerail.cmd in a console on code page 437"
+  # The runner's console is on UTF-8 (65001); a person's is on their OEM code page, 437 or 850 in the West. A console of
+  # its own (CreateNoWindow) keeps the chcp from reaching this one.
+  $env:SMOKE_LAUNCHER = $launcher
+  $legacy = New-Object Diagnostics.ProcessStartInfo("cmd.exe")
+  $legacy.Arguments = '/d /s /c "chcp 437 >nul & call "%SMOKE_LAUNCHER%" version"'
+  $legacy.UseShellExecute = $false; $legacy.CreateNoWindow = $true
+  $legacy.RedirectStandardOutput = $true; $legacy.RedirectStandardError = $true
+  $legacyRun = [Diagnostics.Process]::Start($legacy)
+  $legacyOut = $legacyRun.StandardOutput.ReadToEndAsync(); $legacyErr = $legacyRun.StandardError.ReadToEndAsync()
+  $legacyRun.WaitForExit()
+  Write-Host ($legacyOut.Result + $legacyErr.Result)
+  if ($legacyRun.ExitCode -ne 0) { throw "rerail.cmd failed on code page 437 (exit $($legacyRun.ExitCode))" }
+
+  Step "A launcher whose recorded node is gone runs node.exe from PATH, never a repository's"
+  # cmd tries the current folder before PATH for a bare command name, so a repository holding a node.bat would run it
+  # on every `rerail`. A copy of the launcher, beside it so %~dp0 still finds `current`, records a node that is gone.
+  $fallback = "$rerailHome\bin\rerail-fallback.cmd"
+  $lines = (Get-Content $launcher) -replace '^set "RERAIL_NODE=.*"$', 'set "RERAIL_NODE=C:\gone\node.exe"'
+  [IO.File]::WriteAllLines($fallback, [string[]]$lines)
+  New-Item -ItemType Directory -Force "$base\hostile-repo" | Out-Null
+  Write-RerailUtf8 "$base\hostile-repo\node.bat" "@echo the repository's node.bat ran`r`n"
+  $env:SMOKE_FALLBACK = $fallback
+  $hostile = New-Object Diagnostics.ProcessStartInfo("cmd.exe")
+  $hostile.Arguments = '/d /s /c "call "%SMOKE_FALLBACK%" version"'
+  $hostile.WorkingDirectory = "$base\hostile-repo"
+  $hostile.UseShellExecute = $false; $hostile.CreateNoWindow = $true
+  $hostile.RedirectStandardOutput = $true; $hostile.RedirectStandardError = $true
+  $hostileRun = [Diagnostics.Process]::Start($hostile)
+  $hostileOut = $hostileRun.StandardOutput.ReadToEndAsync(); $hostileErr = $hostileRun.StandardError.ReadToEndAsync()
+  $hostileRun.WaitForExit()
+  Remove-Item -Force $fallback
+  Write-Host ($hostileOut.Result + $hostileErr.Result)
+  if (($hostileOut.Result + $hostileErr.Result) -match "node\.bat ran") { throw "rerail.cmd ran node.bat from the current folder" }
+  if ($hostileRun.ExitCode -ne 0) { throw "rerail.cmd did not fall back to node.exe on PATH (exit $($hostileRun.ExitCode))" }
 
   Step "Starting Rerail in the project"
   # Set-up's "start" answer turned Rerail on in the project; starting again says it is already on.
@@ -109,44 +118,40 @@ log: { type: stdout, level: warn }
   if ($LASTEXITCODE -ne 0) { throw "rerail start exited $LASTEXITCODE" }
 
   Step "Running the harness hooks as each harness spawns them"
-  foreach ($harness in @("claude", "codex")) {
-    $payload = @{ session_id = "windows-smoke-$harness"; cwd = $project; hook_event_name = "SessionStart"; source = "startup" } | ConvertTo-Json -Compress
-    [IO.File]::WriteAllText("$base\payload-$harness.json", $payload)
-  }
-  $claude = (Get-Content -Raw "$sandbox\.claude\settings.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0]
-  if ($null -eq $claude.args) { throw "the Claude Code hook is not in exec form: $($claude.command)" }
-  # Claude Code spawns exec-form hooks directly (no shell); Codex passes its command to PowerShell.
-  $probe = "const {spawnSync}=require('child_process'),fs=require('fs');const [kind,a,b]=process.argv.slice(1);const input=fs.readFileSync(process.env.SMOKE_PAYLOAD);" +
-    "const r=kind==='exec'?spawnSync(a,JSON.parse(fs.readFileSync(b,'utf8')),{input,encoding:'utf8',cwd:process.env.SMOKE_PROJECT}):spawnSync('powershell.exe',['-NoProfile','-Command',fs.readFileSync(a,'utf8')],{input,encoding:'utf8',cwd:process.env.SMOKE_PROJECT});" +
-    "process.stdout.write('exit='+r.status+' '+(r.stdout+r.stderr).trim());process.exitCode=r.status"
-  $env:SMOKE_PROJECT = $project
-  $env:SMOKE_PAYLOAD = "$base\payload-claude.json"
-  [IO.File]::WriteAllText("$base\claude-args.json", (ConvertTo-Json -Compress @($claude.args)))
-  Write-Host ("Claude Code exec-form hook: " + (Invoke-Node @("-e", "$probe", "exec", $claude.command, "$base\claude-args.json")))
-  $env:SMOKE_PAYLOAD = "$base\payload-codex.json"
-  [IO.File]::WriteAllText("$base\codex-command.txt", (Get-Content -Raw "$sandbox\.codex\hooks.json" | ConvertFrom-Json).hooks.SessionStart[0].hooks[0].command)
-  Write-Host ("Codex hook through PowerShell: " + (Invoke-Node @("-e", "$probe", "powershell", "$base\codex-command.txt")))
-  # An exit code alone proves nothing: a hook in a checkout where Rerail is off exits 0 too.
-  $recorded = (Invoke-RestMethod "http://127.0.0.1:$daemonPort/api/sessions").sessions | ForEach-Object { $_.sessionId }
-  foreach ($harness in @("claude", "codex")) {
-    if ($recorded -notcontains "windows-smoke-$harness") { throw "the $harness hook did not record its session; recorded: $($recorded -join ', ')" }
-  }
+  Invoke-RerailSessionStartHooks -UserHome $sandbox -Project $project -WorkDir $base -Prefix "windows-smoke" | ForEach-Object { Write-Host $_ }
+  Assert-RerailSessionsRecorded -Port $daemonPort -SessionIds @("windows-smoke-claude", "windows-smoke-codex") | ForEach-Object { Write-Host $_ }
 
   Step "rerail update check"
   $update = (& $launcher update check) -join "`n"
   Write-Host $update
   if ($update -notmatch "Update available: no") { throw "update check did not report 'Update available: no'" }
 
+  Step "rerail.cmd passes on the CLI's exit code"
+  # The launcher ends its batch before node runs (so install --remove can delete it); a failing command must still fail.
+  $ErrorActionPreference = "Continue"
+  & $launcher install --no-such-option 2>$null | Out-Null
+  $failed = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
+  if ($failed -eq 0) { throw "rerail.cmd exited 0 for a command that failed" }
+
   Step "rerail install --remove"
-  & $launcher install --remove
-  if ($LASTEXITCODE -ne 0) { throw "install --remove exited $LASTEXITCODE" }
-  if ((Get-Content -Raw "$sandbox\.claude\settings.json") -match "claude-hook") { throw "install --remove left Claude Code hooks behind" }
+  # stderr too: cmd says "The batch file cannot be found." there when the launcher is deleted under it.
+  $ErrorActionPreference = "Continue"
+  $removal = (& $launcher install --remove 2>&1 | ForEach-Object { "$_" }) -join "`n"
+  $removed = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
+  Write-Host $removal
+  if ($removed -ne 0) { throw "install --remove exited $removed" }
+  $leftovers = @(Get-RerailHookLeftovers -UserHome $sandbox)
+  if ($leftovers.Count -gt 0) { throw "install --remove left Rerail hooks in $($leftovers -join ', ')" }
+  if ($removal -match "batch file cannot be found") { throw "cmd lost the launcher install --remove deleted under it" }
+  # Listed by name: Test-Path calls a junction whose target is gone absent.
+  $left = @(Get-ChildItem -Force -Name $rerailHome | Where-Object { $_ -in @("current", "bin", "versions", "update-state.json", "packs") })
+  if (Test-Path "$sandbox\.cache\rerail") { $left += "$sandbox\.cache\rerail" }
+  if ($left.Count -gt 0) { throw "install --remove left behind: $($left -join ', ')" }
   Step "windows-install-smoke: PASS"
 } finally {
   if (Test-Path $launcher) { & $launcher daemon stop | Out-Null }
-  if ($null -ne $verdaccio) {
-    # npm exec wraps Verdaccio in a child; stop the whole tree.
-    & taskkill.exe /T /F /PID $verdaccio.Id 2>&1 | Out-Null
-  }
+  Stop-RerailRegistry $registry
   Remove-Item -Recurse -Force $base -ErrorAction SilentlyContinue
 }

@@ -3,7 +3,7 @@
 // Predicate: every code or test directory (a directory with at least one tracked .ts .tsx .mts .cts .js
 // .mjs .cjs .rs .py .php .sh file directly in it) holds at most 25 tracked files directly.
 // Exemption `pack-data`: `packs/<id>/{rules,candidates,upstream,licenses}/**` are pack data, one file per
-// rule or recording; their size follows the upstream rule set.
+// rule or expected findings; their size follows the upstream rule set.
 // Exemption `fixture-data`: `fixtures/**` is recorded data laid out per engine feature (#10).
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 

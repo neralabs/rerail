@@ -339,9 +339,11 @@ export function restartArguments(state) {
   return args;
 }
 
-export async function daemonHealth(url, fetchImpl = globalThis.fetch) {
+/** The health the daemon `state` records reports; every request carries the capability the state file records. */
+export async function daemonHealth(state, fetchImpl = globalThis.fetch) {
   try {
-    const response = await fetchImpl(new URL("/healthz", url), { signal: AbortSignal.timeout(5_000) });
+    const headers = typeof state.accessToken === "string" ? { "x-rerail-access": state.accessToken } : {};
+    const response = await fetchImpl(new URL("/healthz", state.url), { headers, signal: AbortSignal.timeout(5_000) });
     if (!response.ok) return undefined;
     const body = await response.json();
     return body?.status === "ok" ? body : undefined;
@@ -368,7 +370,7 @@ export async function restoreInstalled({ backupDir, env = process.env, log = con
     throw new RestoreError(`rerail ${args.join(" ")} failed: ${(started.stderr || started.stdout || "").trim()}`);
   }
   const after = readDaemonState(home);
-  const health = typeof after?.url === "string" ? await daemonHealth(after.url) : undefined;
+  const health = typeof after?.url === "string" ? await daemonHealth(after) : undefined;
   if (health === undefined) throw new RestoreError(`The restarted daemon did not answer /healthz at ${String(after?.url)}`);
   log(`Daemon healthy at ${after.url}`);
   const database = join(home, RERAIL_DATABASE);

@@ -19,7 +19,7 @@
 //   - no tracked file under `src/` resolves the fixtures root (production code never reads fixtures);
 //   - per language (Rust, TypeScript/JavaScript, Python, PHP, shell), at most one tracked file resolves it.
 // Exemption `data-roots`: generators under `fixtures/` and `packs/<id>/upstream/` write their own
-// recordings with paths relative to themselves.
+// expected findings with paths relative to themselves.
 // Exemption `structure-gate`: this gate (`scripts/check-structure*`) and its tests in `test/structure/`
 // name layout paths to classify them; they never read fixture data through them.
 

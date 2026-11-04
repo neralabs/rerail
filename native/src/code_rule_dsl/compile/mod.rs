@@ -12,6 +12,7 @@ mod evidence;
 #[cfg(test)]
 mod examples_tests;
 mod format_args;
+mod import_target;
 mod layout;
 mod nth_child;
 pub(crate) mod options;
@@ -31,7 +32,7 @@ use super::language::adapter::{Refusal, gate};
 use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
-    UtilOrigin, UtilTable, collect_variables, reads_values,
+    UtilOrigin, UtilTable, collect_variables, reads_import_targets, reads_values,
 };
 use super::model::{
     Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexSource,
@@ -542,8 +543,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
-    reject_unknown(query, &["regex", "ast", "select_when"], path)?;
-    let forms = ["regex", "ast", "select_when"]
+    reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
+    let forms = ["regex", "ast", "select_when", "file"]
         .into_iter()
         .filter(|key| query.contains_key(*key))
         .collect::<Vec<_>>();
@@ -583,6 +584,14 @@ fn compile_query_as(
                     .map_err(|error| invalid(format!("{path}/regex/pattern: {error}")))?,
                 source,
             })
+        }
+        "file" => {
+            let file = object(
+                query.get("file").expect("form exists"),
+                &format!("{path}/file"),
+            )?;
+            reject_unknown(file, &[], &format!("{path}/file"))?;
+            Ok(Query::File)
         }
         "ast" => {
             let ast = object(
@@ -993,6 +1002,7 @@ fn compile_query_as(
                         other_utils: others.iter().map(|(_, table)| Arc::clone(table)).collect(),
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
+                        import_target: reads_import_targets(&matcher),
                         three_valued,
                         matcher,
                         anchors,
@@ -1001,6 +1011,9 @@ fn compile_query_as(
                         file: file.clone(),
                         applies,
                         source_types: source_types.clone(),
+                        package_type_gate: options
+                            .as_deref()
+                            .is_some_and(|options| options.package_type_module_system),
                         transform: transform.clone(),
                     });
                 }
@@ -1071,13 +1084,19 @@ fn compile_query_as(
                             "{transform_path}/{name}: `${name}` is already a capture of the query"
                         )));
                     }
+                    for (index, source) in trans.source_names().enumerate() {
+                        let known = transform.contains(source)
+                            || bindable.contains(source)
+                            || groups.contains(source);
+                        if !known {
+                            let key = if index == 0 { "source" } else { "digits" };
+                            return Err(invalid(format!(
+                                "{transform_path}/{name}/{key}: `${source}` names no capture the query can bind"
+                            )));
+                        }
+                    }
                     let source = trans.source_name();
                     let group = groups.contains(source);
-                    if !transform.contains(source) && !bindable.contains(source) && !group {
-                        return Err(invalid(format!(
-                            "{transform_path}/{name}/source: `${source}` names no capture the query can bind"
-                        )));
-                    }
                     if group && trans.reads_value() {
                         let kind = ast["transform"][name.as_str()]
                             .as_object()
@@ -1290,7 +1309,7 @@ fn compile_query_as(
             }
             required_ast.insert((language_name.to_owned(), grammar));
             Ok(Query::Ast {
-                matchers,
+                matchers: matchers.into(),
                 calls: terms,
             })
         }

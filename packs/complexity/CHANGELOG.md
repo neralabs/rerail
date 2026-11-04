@@ -1,5 +1,19 @@
 # @neralabs/rerail-pack-complexity
 
+## 0.1.5 (2026-11-04)
+
+7 rules, all on by default.
+
+- 4 new rules: `complexity-cyclomatic-php`, `complexity-cyclomatic-blade`, `complexity-cyclomatic-rust` and `complexity-cyclomatic-vue` start in Steer.
+- Set-up now recommends the pack for PHP, Blade, Rust and Vue source too, not only Python, TypeScript and JavaScript.
+
+## 0.1.4
+
+### Patch Changes
+
+- e95629a: Complexity pack: a `switch` or `match` counts once however many cases it has, as slapkit scores a function, so a flat dispatch table no longer steers an agent to split it. Each steer now names the function, and says it is over the ceiling of 6 and to decompose it.
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+
 ## 0.1.3
 
 ### Patch Changes

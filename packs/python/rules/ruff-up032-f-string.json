@@ -1,0 +1,381 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up032-f-string",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Prefer an f-string over a str.format() call on a string literal; it keeps each value next to its placeholder.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-string": {
+            "any": [
+              { "kind": "string", "not": {"regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"} },
+              {
+                "kind": "concatenated_string",
+                "not": { "has": {"kind": "string", "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"} }
+              }
+            ]
+          },
+          "segment-ok": {
+            "kind": "string",
+            "parse": {
+              "grammar": "braceFormat",
+              "not": {
+                "any": [
+                  { "has": {"kind": "error"} },
+                  { "has": {"stopBy": "end", "kind": "format_spec", "has": {"kind": "field"}} }
+                ]
+              }
+            }
+          },
+          "template": {
+            "any": [
+              {
+                "matches": "plain-string",
+                "any": [
+                  { "kind": "string", "matches": "segment-ok" },
+                  {
+                    "kind": "concatenated_string",
+                    "not": { "has": {"kind": "string", "not": {"matches": "segment-ok"}} }
+                  }
+                ]
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "template"} }
+            ]
+          },
+          "multiline": {
+            "any": [
+              { "kind": "parenthesized_expression", "has": {"matches": "multiline"} },
+              { "not": {"kind": "parenthesized_expression"}, "layout": {"span": {"min": 1}} }
+            ]
+          },
+          "real-arg": { "not": {"any": [{"kind": "comment"}, {"regex": "^[(),]$"}]} },
+          "bad-arg": {
+            "not": { "kind": "comment" },
+            "any": [
+              { "kind": "list_splat" },
+              { "kind": "dictionary_splat" },
+              { "not": {"kind": "keyword_argument"}, "matches": "quoted" },
+              { "kind": "keyword_argument", "has": {"field": "value", "matches": "quoted"} },
+              { "kind": "keyword_argument", "has": {"field": "value", "matches": "multiline"} },
+              { "not": {"kind": "keyword_argument"}, "matches": "multiline" }
+            ]
+          },
+          "safe-operand": {
+            "any": [
+              { "kind": "integer" },
+              { "kind": "float" },
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "none" },
+              { "kind": "ellipsis" },
+              { "kind": "list" },
+              { "kind": "tuple" },
+              { "kind": "set" },
+              { "kind": "dictionary" },
+              { "kind": "list_comprehension" },
+              { "kind": "set_comprehension" },
+              { "kind": "dictionary_comprehension" },
+              { "kind": "parenthesized_expression", "has": {"matches": "safe-operand"} }
+            ]
+          },
+          "effect-node": {
+            "any": [
+              { "kind": "call" },
+              { "kind": "await" },
+              { "kind": "subscript" },
+              { "kind": "named_expression" },
+              { "kind": "yield" },
+              { "kind": "list_comprehension" },
+              { "kind": "set_comprehension" },
+              { "kind": "dictionary_comprehension" },
+              { "kind": "generator_expression" },
+              {
+                "kind": "binary_operator",
+                "not": {
+                  "all": [
+                    { "has": {"field": "left", "matches": "safe-operand"} },
+                    { "has": {"field": "right", "matches": "safe-operand"} }
+                  ]
+                }
+              }
+            ]
+          },
+          "effectful": { "any": [{"matches": "effect-node"}, {"has": {"stopBy": "end", "matches": "effect-node"}}] },
+          "segment-repeats-effect": {
+            "kind": "string",
+            "parse": {
+              "grammar": "braceFormat",
+              "has": {
+                "any": [
+                  {
+                    "kind": "field",
+                    "capture": "F1",
+                    "has": { "stopBy": "end", "kind": "name", "capture": "H1" },
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "field",
+                      "has": { "stopBy": "end", "kind": "name" },
+                      "capture": "F2",
+                      "compare": { "left": "F1", "op": "eq", "right": "F2", "text": "value" }
+                    },
+                    "host": {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "kind": "keyword_argument",
+                            "matches": "effectful",
+                            "has": { "field": "name", "pattern": "$KN" }
+                          }
+                        }
+                      },
+                      "compare": { "left": "H1", "op": "eq", "right": "KN", "text": "source" }
+                    }
+                  },
+                  {
+                    "kind": "field",
+                    "capture": "F1",
+                    "has": { "stopBy": "end", "kind": "index", "capture": "H1" },
+                    "precedes": {
+                      "stopBy": "end",
+                      "kind": "field",
+                      "has": { "stopBy": "end", "kind": "index" },
+                      "capture": "F2",
+                      "compare": { "left": "F1", "op": "eq", "right": "F2", "text": "value" }
+                    },
+                    "host": {
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "call",
+                        "has": {
+                          "field": "arguments",
+                          "has": { "not": {"kind": "keyword_argument"}, "matches": "effectful" }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "repeats-effect": {
+            "any": [
+              { "kind": "string", "matches": "segment-repeats-effect" },
+              { "kind": "concatenated_string", "has": {"kind": "string", "matches": "segment-repeats-effect"} },
+              { "kind": "parenthesized_expression", "has": {"matches": "repeats-effect"} }
+            ]
+          },
+          "bad-arg-inline": {
+            "not": { "kind": "comment" },
+            "any": [{"kind": "list_splat"}, {"kind": "dictionary_splat"}, {"regex": "['\"]"}]
+          },
+          "quoted": {
+            "any": [
+              { "not": {"kind": "parenthesized_expression"}, "regex": "['\"]" },
+              { "kind": "parenthesized_expression", "has": {"not": {"kind": "comment"}, "matches": "quoted"} }
+            ]
+          },
+          "gen-seg": {
+            "kind": "string",
+            "parse": {
+              "grammar": "braceFormat",
+              "not": {
+                "any": [
+                  { "has": {"stopBy": "end", "kind": "name"} },
+                  { "has": {"stopBy": "end", "kind": "index", "not": {"value": {"eq": 0}}} },
+                  { "has": {"kind": "field", "precedes": {"stopBy": "end", "kind": "field"}} }
+                ]
+              }
+            }
+          },
+          "seg-auto": {
+            "kind": "string",
+            "parse": { "grammar": "braceFormat", "has": {"stopBy": "end", "kind": "auto"} }
+          },
+          "gen-template": {
+            "any": [
+              {
+                "matches": "template",
+                "any": [
+                  { "kind": "string", "matches": "gen-seg" },
+                  {
+                    "kind": "concatenated_string",
+                    "all": [
+                      { "not": {"has": {"kind": "string", "not": {"matches": "gen-seg"}}} },
+                      {
+                        "not": {
+                          "has": {
+                            "kind": "string",
+                            "matches": "seg-auto",
+                            "precedes": { "stopBy": "end", "kind": "string", "matches": "seg-auto" }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              { "kind": "parenthesized_expression", "has": {"matches": "gen-template"} }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "f-string",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "pattern": "$S.format($$$A)",
+                    "all": [
+                      { "has": {"field": "function", "has": {"field": "object", "matches": "template"}} },
+                      { "has": {"field": "arguments", "has": {"matches": "real-arg"}} },
+                      { "not": {"has": {"field": "arguments", "has": {"matches": "bad-arg"}}} },
+                      { "not": {"has": {"field": "function", "has": {"field": "object", "matches": "repeats-effect"}}} },
+                      {
+                        "not": {
+                          "formatArgs": { "style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"} }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "pattern": "($S.format)($$$A)",
+                    "all": [
+                      { "has": {"field": "function", "has": {"kind": "attribute", "has": {"field": "object", "matches": "template"}}} },
+                      { "has": {"field": "arguments", "has": {"matches": "real-arg"}} },
+                      { "not": {"has": {"field": "arguments", "has": {"matches": "bad-arg"}}} },
+                      { "not": {"has": {"field": "function", "has": {"kind": "attribute", "has": {"field": "object", "matches": "repeats-effect"}}}} },
+                      {
+                        "not": {
+                          "formatArgs": { "style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"} }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "call",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "kind": "generator_expression",
+                          "not": { "any": [{"regex": "['\"]"}, {"matches": "multiline"}] }
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "function",
+                          "any": [
+                            {
+                              "kind": "attribute",
+                              "all": [
+                                { "has": {"field": "attribute", "regex": "^format$"} },
+                                { "has": {"field": "object", "matches": "gen-template"} }
+                              ]
+                            },
+                            {
+                              "kind": "parenthesized_expression",
+                              "has": {
+                                "kind": "attribute",
+                                "all": [
+                                  { "has": {"field": "attribute", "regex": "^format$"} },
+                                  { "has": {"field": "object", "matches": "gen-template"} }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "call",
+                    "has": {
+                      "field": "function",
+                      "resolves": {
+                        "import": ["django.utils.translation.gettext", "django.utils.translation.gettext_lazy"]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP032",
+        "message": "Replace this `.format()` call with an f-string, putting each argument inside its `{}` placeholder; keep `.format()` when the string is passed to a translation function.",
+        "suppress": { "noqa": {"codes": ["UP032"]} }
+      }
+    },
+    {
+      "id": "f-string-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [{"kind": "string"}, {"kind": "concatenated_string"}],
+            "parse": {
+              "grammar": "annotation",
+              "has": {
+                "stopBy": "end",
+                "kind": "call",
+                "capture": "CALL",
+                "any": [
+                  {
+                    "pattern": "$S.format($$$A)",
+                    "all": [
+                      { "has": {"kind": "attribute", "has": {"matches": "template"}} },
+                      { "has": {"kind": "argument_list", "has": {"matches": "real-arg"}} },
+                      { "not": {"has": {"kind": "argument_list", "has": {"matches": "bad-arg-inline"}}} }
+                    ]
+                  },
+                  {
+                    "has": { "kind": "generator_expression", "not": {"regex": "['\"]"} },
+                    "all": [
+                      {
+                        "has": {
+                          "kind": "attribute",
+                          "all": [
+                            { "has": {"kind": "identifier", "regex": "^format$"} },
+                            { "has": {"matches": "gen-template"} }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "UP032",
+        "message": "Replace this `.format()` call with an f-string, putting each argument inside its `{}` placeholder; keep `.format()` when the string is passed to a translation function.",
+        "suppress": { "noqa": {"codes": ["UP032"]} }
+      }
+    }
+  ]
+}

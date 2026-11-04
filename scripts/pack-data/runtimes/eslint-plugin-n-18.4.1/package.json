@@ -1,0 +1,12 @@
+{
+  "name": "validation-upstream-eslint-plugin-n",
+  "private": true,
+  "description": "eslint-plugin-n 18.4.1 as published, with the packages packs/node/upstream/eslint-plugin-n/generate.mjs records it on (its PINS, which the generator refuses any other version of and the node recipe installs): eslint, @typescript-eslint/parser and typescript for the TypeScript cases, and globals for globals.node.",
+  "dependencies": {
+    "@typescript-eslint/parser": "8.70.1",
+    "eslint": "10.11.0",
+    "eslint-plugin-n": "18.4.1",
+    "globals": "17.13.0",
+    "typescript": "5.9.3"
+  }
+}

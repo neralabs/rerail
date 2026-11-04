@@ -3,6 +3,7 @@ export interface ReleasePack {
   id: string;
   name: string;
   version: string;
+  private: boolean;
 }
 
 export interface GateReport {
@@ -17,7 +18,9 @@ export const HELD_PUBLISH_TAG: string;
 export function releaseTag(name: string, version: string): string;
 export function releaseTags(): string[];
 export function createReleaseTag(tag: string, sha: string): string;
+export function isPrivatePack(manifest: unknown, where?: string): boolean;
 export function listPacks(packsDirectory?: string): ReleasePack[];
+export function publishedPacks(packsDirectory?: string): ReleasePack[];
 export function assertCommitOnGitHub(sha: string): void;
 export function alreadyOnRegistry(output: string): boolean;
 export function releasePacks(
@@ -25,7 +28,9 @@ export function releasePacks(
   tags: readonly string[],
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
-    assertRestricted(name: string): Promise<void>;
+    assertPublic(name: string, version: string): Promise<void>;
+    readNext(name: string): Promise<string | null>;
+    distTag(name: string, version: string, tag: string): void;
     tag(tag: string): void;
     log(line: string): void;
   },
@@ -52,8 +57,15 @@ export function planPromotions(
 export function promotePacks(
   promotions: readonly { name: string; version: string; hold?: boolean; release?: boolean }[],
   tags: readonly string[],
-  steps: { promote(name: string, version: string): void; hold(name: string, version: string): void; release(name: string): void; log(line: string): void },
-): string[];
+  steps: {
+    promote(name: string, version: string): void;
+    hold(name: string, version: string): void;
+    release(name: string): void;
+    readNext(name: string): Promise<string | null>;
+    distTag(name: string, version: string, tag: string): void;
+    log(line: string): void;
+  },
+): Promise<{ promoted: { name: string; version: string }[]; failures: string[] }>;
 export function syncPackLockfile<Lock extends { packages: Record<string, { version?: string }> }>(lock: Lock, packs: readonly ReleasePack[]): Lock;
 export function gateFailures(report: GateReport, ids: readonly string[], checkCount: number): string[];
 export function packIds(args: readonly string[], packs?: readonly ReleasePack[]): string[];

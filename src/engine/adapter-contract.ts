@@ -15,6 +15,8 @@ export interface CodingAgentState {
   connected: boolean;
   /** Why its connection could not be checked, such as a config file that is not valid JSON; null when it could. */
   problem: string | null;
+  /** Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Read-only: Rerail never changes it. */
+  rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
 }
 export type AssistantObservation = "streaming" | "completed";
 export type ToolSurface = "native" | "event";
@@ -34,6 +36,15 @@ export type DeliveryMechanism =
 export const STEER_STRATEGIES = ["message", "rewind", "subagent"] as const;
 export type SteerStrategy = (typeof STEER_STRATEGIES)[number];
 
+/** How a person types a Rerail command in a coding agent: Codex runs skills as `$name`, every other agent as `/name`. */
+export type CommandSigil = "/" | "$";
+
+/**
+ * How a coding agent writes a file so that Rerail's hooks see the edit: Codex's hooks see a write through its shell
+ * tool, not through apply_patch; every other agent's own edit tool is seen.
+ */
+export type ObservedFileWrite = "edit-tool" | "shell";
+
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -42,6 +53,10 @@ export interface AdapterCapabilityProfile {
   delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
+  /** What Rerail's commands start with in this coding agent, in every text that names one. */
+  commandSigil: CommandSigil;
+  /** How this coding agent writes a file so that Rerail's hooks see the edit. */
+  observedFileWrite: ObservedFileWrite;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -62,6 +77,8 @@ export const ADAPTER_CAPABILITIES = {
       tool: "tool_call",
       turn: "turn_end",
     },
+    commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
   pi: {
     host: "pi",
@@ -80,6 +97,8 @@ export const ADAPTER_CAPABILITIES = {
       tool: "tool_call",
       turn: "turn_end",
     },
+    commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
   "claude-code": {
     host: "claude-code",
@@ -98,6 +117,8 @@ export const ADAPTER_CAPABILITIES = {
       tool: "PreToolUse/PostToolUse/PostToolUseFailure",
       turn: "Stop/StopFailure",
     },
+    commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
   codex: {
     host: "codex",
@@ -116,6 +137,8 @@ export const ADAPTER_CAPABILITIES = {
       tool: "PreToolUse/PostToolUse",
       turn: "Stop",
     },
+    commandSigil: "$",
+    observedFileWrite: "shell",
   },
   cursor: {
     host: "cursor",
@@ -134,6 +157,8 @@ export const ADAPTER_CAPABILITIES = {
       tool: "preToolUse/postToolUse/postToolUseFailure",
       turn: "stop",
     },
+    commandSigil: "/",
+    observedFileWrite: "edit-tool",
   },
 } as const satisfies Record<RerailHost, AdapterCapabilityProfile>;
 
@@ -298,6 +323,13 @@ export function isSteerRule(value: unknown): value is SteerRule {
 
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
 export const RULE_MESSAGE_TYPE = "rerail.rule" as const;
+
+/**
+ * The `customType` of the person's line for the steers that rode a tool call's own result (OMP): drawn like a
+ * `rerail.rule` message, but for the person alone. The coding agent read those steers in the result, so the OMP adapter
+ * takes this message out of every model request and the compaction guard out of what the host summarizes.
+ */
+export const STEER_LINE_MESSAGE_TYPE = "rerail.steer-line" as const;
 
 type NativeRuleMessage = {
   customType: typeof RULE_MESSAGE_TYPE;

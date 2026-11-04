@@ -3,7 +3,7 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isByRerail, isRunning, ruleTitle, rulePrefix, scopeText } from "./derive.js";
+import { isFromPack, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -66,8 +66,10 @@ export const data = {
   sessionDetail: new Map(),
   /** sessionId → first useful user prompt (null while unknown). */
   titles: new Map(),
-  /** Every rule pack that comes with Rerail (`GET /api/rule-packs`), languages first, then frameworks. */
+  /** Every rule pack installed on this machine (`GET /api/rule-packs`), languages first, then frameworks, and the scoped checkout's own rules. */
   packs: [],
+  /** The installed packs left out, and the scoped checkout's `.rerail/rules` files left out, with why (`GET /api/rule-packs` `skipped`). */
+  packsSkipped: [],
   /** `/healthz`: version, database path; `null` until the daemon answers once. */
   health: null,
   /** Coding agents found and connected (`GET /api/coding-agents`); loaded for Settings. */
@@ -85,10 +87,14 @@ export const data = {
   disconnected: false,
   /** The daemon answered that it does not know the scoped repository or checkout. */
   missing: false,
+  /** The daemon answered `401`: this browser has not opened the dashboard link, so it holds no capability. */
+  accessRequired: false,
   loaded: false,
 };
 
-export const RANGES = [[0, "Today"], [7, "7 days"], [30, "30 days"], [9999, "Since install"]];
+/** The Since install range: every range button's `data-i` is its days, and this one reaches back to the first record. */
+export const ALL_TIME = 9999;
+export const RANGES = [[0, "Today"], [7, "7 days"], [30, "30 days"], [ALL_TIME, "Since install"]];
 
 export const ui = {
   /** Set by `setScope` before the first poll; `null` lists repositories. */
@@ -109,15 +115,20 @@ export const ui = {
   askIntent: "ask",
   /** History: the rule chosen (a `?rule=` link or a click); null shows the top-ranked one. */
   actRule: null,
+  /** History by rule's chip ("all", "steered", "logged"): which violations its list counts (`?outcome=`). */
+  histOutcome: "all",
   /** Rule packs page: list or cards, and the pack whose Remove waits for its second click. */
   catView: "list",
   removeAsk: null,
+  /** Packs removed from the catalog during this visit: their row reads Removed with Undo until the page is left. */
+  removedPacks: new Set(),
   /** Overview's day-one banner, dismissed for this repository. */
   welcomeDismissed: false,
   selectedSession: null,
   sessQuery: "",
   sessFilter: "all",
-  evFilter: "all",
+  /** History by session: the one rule the selected session's timeline is filtered to, or null for every rule. */
+  sessRule: null,
   showAll: false,
   openDays: new Set(["d0"]),
   openEvents: new Set(),
@@ -135,11 +146,11 @@ export const ui = {
 const QUANTUM = 600_000;
 export function sinceFor(range = ui.range) {
   if (range === 0) return startOfDay();
-  if (range >= 9999) return 0;
+  if (range >= ALL_TIME) return 0;
   return Math.floor((Date.now() - range * 86_400_000) / QUANTUM) * QUANTUM;
 }
 
-const RANGE_LABEL = { 0: "today", 7: "last 7 days", 30: "last 30 days" };
+const RANGE_LABEL = { 0: "today", 7: "in the last 7 days", 30: "in the last 30 days" };
 export const rangeLabel = () => RANGE_LABEL[ui.range] ?? "since install";
 
 const NONE = { measured: true, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 };
@@ -192,7 +203,7 @@ function packs() {
 export const packById = id => packs().byId.get(id);
 /** The pack's own entry for a rule: title, group and its caught and passing examples. */
 export const packRuleOf = id => packs().rules.get(id);
-/** The rule pack a By Rerail rule ships in, whether or not that pack is added here. */
+/** The rule pack a pack's rule ships in, whether or not that pack is added here. */
 export const packOfRule = stored => packRuleOf(stored.rule.id)?.pack;
 /** The added pack a rule is present through; `undefined` for a rule added on its own. */
 export const attachedPackOf = stored => (stored.source?.kind === "pack" ? packById(stored.source.id) : undefined);
@@ -230,16 +241,17 @@ export const filtering = () => ui.filter !== "all" || ui.query !== "";
 
 /**
  * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
- * rule by Rerail (added on its own, not through a pack). Each section holds its groups; a group holds
+ * rule from a pack (added on its own, not through it). Each section holds its groups; a group holds
  * every rule (`all`).
  */
 export function ruleSections() {
   const mine = [], byPack = new Map(), other = new Map();
   for (const r of data.rules.values()) {
-    if (!isByRerail(r)) { mine.push(r); continue; }
+    if (!isFromPack(r)) { mine.push(r); continue; }
     const pack = attachedPackOf(r);
     if (pack === undefined) {
-      const key = packOfRule(r)?.name ?? rulePrefix(r.rule.id);
+      const known = packOfRule(r);
+      const key = known === undefined ? rulePrefix(r.rule.id) : packOriginName(known);
       if (!other.has(key)) other.set(key, []);
       other.get(key).push(r);
       continue;

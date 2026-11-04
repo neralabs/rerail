@@ -23,6 +23,17 @@ describe("#16 rules/ directories", () => {
     expect(paths(result)).toEqual(["packs/example/rules/a.verdict.json", "packs/php/rules/README.md"]);
     expect(result.actual).toBe("2");
   });
+
+  it("takes a conversation rule as a rule document, but not a JSON object that only shares some of its fields", () => {
+    const conversation = { id: "no-push", mode: "steer", match: { field: "input.command", regex: "push" }, sample: { source: "tool:*", boundary: "tool-call" }, action: { content: "Don't." } };
+    const result = rulesDirs(
+      memoryRepo({
+        "packs/rerail/rules/no-push.json": JSON.stringify(conversation),
+        "packs/rerail/rules/sample.json": JSON.stringify({ sample: {}, note: "not a rule" }),
+      }),
+    );
+    expect(paths(result)).toEqual(["packs/rerail/rules/sample.json"]);
+  });
 });
 
 describe("#17 test helpers in support/", () => {
@@ -66,16 +77,14 @@ describe("#18 case convention", () => {
     ]);
   });
 
-  it("exempts data roots, fixture trees and React component files in the playground UI", () => {
+  it("exempts data roots and fixture trees, not React component names elsewhere", () => {
     const result = caseConvention(
       memoryRepo({
         "fixtures/ecma/scope/generate_eslint.mjs": "",
         "packs/next/candidates/probes/labels/fixtures/pages/_app.tsx": "",
-        "playground/ui/src/RerailPlayground.tsx": "",
-        "playground/ui/src/useRerailPlayground.ts": "",
-        "playground/ui/src/rulesApi.ts": "",
+        "ui/src/RulesView.tsx": "",
       }),
     );
-    expect(paths(result)).toEqual(["playground/ui/src/rulesApi.ts"]);
+    expect(paths(result)).toEqual(["ui/src/RulesView.tsx"]);
   });
 });

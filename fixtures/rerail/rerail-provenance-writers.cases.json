@@ -1,0 +1,414 @@
+{
+  "caught": [
+    {
+      "path": "packs/python/upstream/ruff/generate.py",
+      "content": "import pathlib\nimport re\n\nHERE = pathlib.Path(__file__).resolve().parent\n\n\ndef not_copied() -> list[str]:\n    \"\"\"The upstream path prefixes licenses/ruff/UPSTREAM.md lists as \"Not copied\": fixtures of copyleft plugins' ports.\"\"\"\n    record = HERE.parent.parent / \"licenses\" / \"ruff\" / \"UPSTREAM.md\"\n    prefixes = re.findall(r\"^- Not copied: `([^`]+)`\", record.read_text(encoding=\"utf-8\"), re.MULTILINE)\n    if not prefixes:\n        raise SystemExit(f\"{record} lists no \\\"Not copied\\\" upstream paths\")\n    return prefixes\n"
+    },
+    {
+      "path": "packs/blade/upstream/blade-parser/generate.py",
+      "content": "import pathlib\nimport shutil\n\nHERE = pathlib.Path(__file__).resolve().parent\nLICENSES = HERE.parents[1] / \"licenses\" / \"blade-parser\"\n\n\ndef write_licenses(checkout: pathlib.Path, copies: list[tuple]) -> None:\n    LICENSES.mkdir(parents=True, exist_ok=True)\n    shutil.copyfile(checkout / \"license.md\", LICENSES / \"license.md\")\n    rows = \"\".join(f\"| `upstream/blade-parser/fixtures/{file}` | `{test}` | captured verbatim |\\n\" for file, test, name, dataset in copies)\n    (LICENSES / \"UPSTREAM.md\").write_text(f\"\"\"# stillat/blade-parser {VERSION}\n\n| File | Upstream test | Copy |\n|---|---|---|\n{rows}\"\"\")\n"
+    },
+    {
+      "path": "packs/react/upstream/common.mjs",
+      "content": "import { copyFileSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\n/** `licenses/<project>/LICENSE` (verbatim) and `UPSTREAM.md`: every copied file and every extracted fixture. */\nexport function writeLicense(tool, upstream, copied, kept) {\n  const meta = UPSTREAM[tool];\n  const directory = join(UPSTREAM_DIRECTORY, \"..\", \"licenses\", meta.project);\n  mkdirSync(directory, { recursive: true });\n  copyFileSync(join(upstream, \"LICENSE\"), join(directory, \"LICENSE\"));\n  const rows = copied.map(entry => `| \\`upstream/${tool}/${entry.file}\\` | \\`${entry.upstream}\\` | verbatim |`);\n  const text = `# ${meta.title}\\n\\n| File | Upstream path | Copy |\\n|---|---|---|\\n${rows.join(\"\\n\")}\\n`;\n  writeFileSync(join(directory, \"UPSTREAM.md\"), text);\n}\n"
+    },
+    {
+      "path": "packs/vue/upstream/eslint-plugin-vue/generate.mjs",
+      "content": "import { copyFileSync, mkdirSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\n/** `packs/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */\nfunction writeLicense(checkout, kept) {\n  const dir = join(HERE, \"../../licenses/eslint-plugin-vue\");\n  mkdirSync(dir, { recursive: true });\n  copyFileSync(join(checkout, \"LICENSE\"), join(dir, \"LICENSE\"));\n  const rows = kept.map(c => `| \\`upstream/eslint-plugin-vue/${c.file}\\` | \\`${c.upstream}\\` case \\`${c.case}\\` | ${c.copy} |`);\n  writeFileSync(join(dir, \"UPSTREAM.md\"), `# eslint-plugin-vue ${TOOLS[\"eslint-plugin-vue\"]}\n\n${rows.join(\"\\n\")}\n`);\n}\n"
+    },
+    {
+      "path": "packs/javascript/upstream/generate.mjs",
+      "content": "import { join } from \"node:path\";\nimport { writeVariantRows } from \"../../../scripts/pack-data/eslint-expected.mjs\";\n\nconst { files: units } = withOrigins(fixtures, kept, origins, variants, unparsedSet, linted.findings);\nwriteVariantRows(join(HERE, \"..\", \"licenses\", TOOL, \"UPSTREAM.md\"), TOOL, units);\n"
+    },
+    {
+      "path": "packs/node/upstream/eslint-plugin-n/generate.mjs",
+      "content": "import { readFileSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\nfunction writeLicenses(upstream, cases, copies, variants) {\n  const record = provenance(cases, copies, variants);\n  writeFileSync(join(HERE, \"provenance.json\"), `${JSON.stringify(record, null, 2)}\\n`);\n  const licence = readFileSync(join(upstream, \"LICENSE\"), \"utf8\");\n  writeFileSync(join(HERE, \"LICENSES.md\"), [\n    `# Licences of the ${TOOL} test data`,\n    \"\",\n    licence,\n  ].join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "conformance/recorders/gates/record.ts",
+      "content": "/** Ruff's notebook fixtures, which its linter tests read from the ruff_notebook crate. */\nconst RUFF_NOTEBOOK_FIXTURES = \"crates/ruff_notebook/resources/test/fixtures/\";\n/** Ruff's fixtures of pylint-derived (PL*) and flake8-builtins (A*) rules are GPL-derived and are never copied. */\nconst RUFF_NOT_COPIED = [\"pylint/\", \"flake8_builtins/\"];\n"
+    },
+    {
+      "path": "conformance/recorders/gates/read.ts",
+      "content": "/** Ruff's fixture directories whose files derive from GPL-licensed projects: their text is never written into a recording. */\nconst GPL_DERIVED = /(?:^|\\/)resources\\/test\\/fixtures\\/(?:pylint|flake8_builtins)\\//u;\n"
+    },
+    {
+      "path": "conformance/port-readiness/recording/record-plan.mjs",
+      "content": "/** An UPSTREAM.md line naming an upstream path prefix nothing is copied from: record.ts's NOT_COPIED, as a test holds. */\nexport const NOT_COPIED = /^- Not copied: `([^`]+)`/gmu;\nexport function notCopiedOf(text) {\n  return [...text.matchAll(NOT_COPIED)].map((match) => match[1]).sort();\n}\n"
+    },
+    {
+      "path": "conformance/recorders/port-readiness/record.ts",
+      "content": "import { readFileSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\nfunction withRecordingNote(root: string, pack: string, project: string, note: string): void {\n  const upstreamMd = join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\");\n  const text = readFileSync(upstreamMd, \"utf8\");\n  writeFileSync(upstreamMd, `${text.trimEnd()}\\n\\n${note}\\n`);\n}\n"
+    },
+    {
+      "path": "scripts/samples/check-sources.ts",
+      "content": "/** Sample sources whose licence is copyleft: never published. */\nexport const COPYLEFT_REPOSITORIES: readonly string[] = [\n  \"grafana/grafana\",\n  \"secdev/scapy\",\n];\n"
+    },
+    {
+      "path": "scripts/pack-data/read-not-copied.ts",
+      "content": "export function notCopiedPrefixes(text: string): string[] {\n  return text.split(\"\\n\").filter((line) => line.startsWith(\"- Not copied: \")).map((line) => line.slice(15, line.indexOf(\"`\", 15)));\n}\n"
+    },
+    {
+      "path": "packs/sql/upstream/sqlfluff/generate.py",
+      "content": "import json\n\ndef write_provenance(record: dict) -> None:\n    (HERE / \"provenance.json\").write_text(json.dumps(record, indent=2) + \"\\n\", encoding=\"utf-8\")\n"
+    },
+    {
+      "path": "packs/zz/upstream/p03/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction write(tool, record) {\n  writeFileSync(join(toolDirectory(tool), \"provenance.json\"), JSON.stringify(record));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p04/generate.py",
+      "content": "import json\n\ndef write(record):\n    with (HERE / \"provenance.json\").open(\"w\", encoding=\"utf-8\") as handle:\n        json.dump(record, handle, indent=2)\n"
+    },
+    {
+      "path": "packs/zz/upstream/p06/generate.py",
+      "content": "def write(text):\n    with open(HERE / \"LICENSES.md\", mode=\"w\", encoding=\"utf-8\") as handle:\n        handle.write(text)\n"
+    },
+    {
+      "path": "packs/zz/upstream/p07/generate.py",
+      "content": "def write(text):\n    with open(HERE / \"LICENSES.md\", \"wt\") as handle:\n        handle.write(text)\n"
+    },
+    {
+      "path": "packs/zz/upstream/p08/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction write(record) {\n  writeFileSync(TEMPORARY, JSON.stringify(record));\n  renameSync(TEMPORARY, join(HERE, \"provenance.json\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p09/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction write(staged) {\n  copyFileSync(staged, join(HERE, \"LICENSES.md\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p10/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nasync function write(text) {\n  await fs.writeFile(resolve(HERE, \"provenance.json\"), text);\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p11/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction write(text) {\n  writeFileSync(`${HERE}/provenance.json`, text);\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p12/generate.py",
+      "content": "import json, os\n\ndef write(record):\n    json.dump(record, open(os.path.join(HERE, \"provenance.json\"), \"w\"))\n"
+    },
+    {
+      "path": "packs/zz/upstream/p13/generate.mjs",
+      "content": "import { writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { PROVENANCE } from \"../../../../scripts/pack-data/provenance.mjs\";\nwriteFileSync(join(HERE, PROVENANCE), text);\n"
+    },
+    {
+      "path": "packs/zz/upstream/p14/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction write(record) {\n  writeFileSync(\n    join(HERE, \"provenance.json\"),\n    JSON.stringify(record),\n  );\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p15/generate.mjs",
+      "content": "import { createWriteStream } from \"node:fs\";\nimport { join } from \"node:path\";\nconst out = createWriteStream(join(HERE, \"LICENSES.md\"));\nout.end(text);\n"
+    },
+    {
+      "path": "packs/zz/upstream/p20/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nconst record = join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\");\nwriteFileSync(record, rows.join(\"\\n\"));\n"
+    },
+    {
+      "path": "packs/zz/upstream/p21/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nconst LICENCE_DIRECTORY = join(PACK, \"licenses\", TOOL);\nfunction writeLicense(rows) {\n  writeFileSync(join(LICENCE_DIRECTORY, \"UPSTREAM.md\"), rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p22/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction writeLicense(rows) {\n  writeFileSync(`${PACK}/licenses/${TOOL}/UPSTREAM.md`, rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p23/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction writeLicense(rows) {\n  writeFileSync(join(PACK, \"licenses/eslint-plugin-x/UPSTREAM.md\"), rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p24/generate.mjs",
+      "content": "import fs from \"node:fs\";\nimport { join } from \"node:path\";\nasync function writeLicense(rows) {\n  const record = join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\");\n  await fs.promises.writeFile(record, rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p25/generate.js",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction writeLicense(rows) {\n  writeFileSync(join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\"), rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/p26.mts",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function writeLicense(rows: string[]): void {\n  writeFileSync(join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\"), rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p27/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nconst writeLicense = (rows) => {\n  const record = join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\");\n  writeFileSync(record, rows.join(\"\\n\"));\n};\n"
+    },
+    {
+      "path": "packs/zz/upstream/p31/generate.py",
+      "content": "import os\n\ndef write_licenses(rows):\n    with open(os.path.join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\"), \"w\") as handle:\n        handle.write(\"\".join(rows))\n"
+    },
+    {
+      "path": "packs/zz/upstream/p32/generate.py",
+      "content": "def write_licenses(rows):\n    with (LICENSES / \"UPSTREAM.md\").open(\"w\", encoding=\"utf-8\") as handle:\n        handle.write(\"\".join(rows))\n"
+    },
+    {
+      "path": "packs/zz/upstream/p33/generate.py",
+      "content": "def write_licenses(rows):\n    with open(LICENSES / \"UPSTREAM.md\", \"w\", encoding=\"utf-8\") as handle:\n        handle.write(\"\".join(rows))\n"
+    },
+    {
+      "path": "scripts/pack-data/p40.mjs",
+      "content": "export const prefixes = (text) => text.split(\"\\n\").filter((line) => /^- Not copied: /u.test(line));\n"
+    },
+    {
+      "path": "packs/zz/upstream/p41/generate.py",
+      "content": "def not_copied(text):\n    return [line[15:].strip(\"`\") for line in text.splitlines() if \"- Not copied: \" in line]\n"
+    },
+    {
+      "path": "scripts/pack-data/p42.mjs",
+      "content": "const PREFIX = \"- Not copied: \";\nexport const prefixes = (text) => text.split(\"\\n\").filter((line) => line.startsWith(PREFIX));\n"
+    },
+    {
+      "path": "scripts/pack-data/p43.mjs",
+      "content": "export function prefix(line) {\n  const match = /^- [Nn]ot copied: `([^`]+)`/u.exec(line);\n  return match?.[1];\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p44/generate.py",
+      "content": "import re\nNOT = re.compile(r\"^-\\s+Not\\s+copied:\\s+`([^`]+)`\", re.M)\n"
+    },
+    {
+      "path": "packs/zz/upstream/p45/generate.py",
+      "content": "def prefix(line):\n    return line.removeprefix(\"- Not copied: \").strip(\"`\")\n"
+    },
+    {
+      "path": "packs/zz/upstream/p46/generate.py",
+      "content": "import re\nNOT = re.compile(r\"\"\"^- Not copied: `([^`]+)`\"\"\", re.M)\n"
+    },
+    {
+      "path": "scripts/pack-data/p47.mjs",
+      "content": "export const isNotCopied = (line) => line.slice(0, 14) === \"- Not copied: \";\n"
+    },
+    {
+      "path": "scripts/pack-data/p48.mjs",
+      "content": "const NOT = new RegExp(\"^- Not copied: `([^`]+)`\", \"gmu\");\nexport const of = (text) => [...text.matchAll(NOT)];\n"
+    },
+    {
+      "path": "scripts/pack-data/p49.mjs",
+      "content": "const LINES = [/^- Not copied: `([^`]+)`/u, /^- Taken: /u];\nexport const of = (line) => LINES.map((pattern) => pattern.exec(line));\n"
+    },
+    {
+      "path": "scripts/pack-data/p50.mjs",
+      "content": "export function pattern() {\n  return /^- Not copied: `([^`]+)`/gmu;\n}\n"
+    },
+    {
+      "path": "conformance/p60.ts",
+      "content": "const COPYLEFT_PREFIXES = new Set<string>([\"pylint/\", \"flake8_builtins/\"]);\n"
+    },
+    {
+      "path": "packs/zz/upstream/p61/generate.py",
+      "content": "import re\nGPL_DERIVED = re.compile(r\"(?:^|/)resources/test/fixtures/(?:pylint|flake8_builtins)/\")\n"
+    },
+    {
+      "path": "conformance/p62.ts",
+      "content": "const GPL_DERIVED = new RegExp(\"(?:^|/)resources/test/fixtures/(?:pylint|flake8_builtins)/\", \"u\");\n"
+    },
+    {
+      "path": "scripts/samples/p64.ts",
+      "content": "export const COPYLEFT_REPOS = Object.freeze([\"grafana/grafana\", \"secdev/scapy\"]);\n"
+    },
+    {
+      "path": "conformance/p65.ts",
+      "content": "class Recorder {\n  static readonly NOT_COPIED = [\"pylint/\", \"flake8_builtins/\"];\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p66/generate.py",
+      "content": "COPYLEFT: frozenset[str] = frozenset({\"pylint/\", \"flake8_builtins/\"})\n"
+    },
+    {
+      "path": "packs/zz/upstream/p67/generate.py",
+      "content": "NOT_COPIED = set([\"pylint/\", \"flake8_builtins/\"])\n"
+    },
+    {
+      "path": "scripts/profiling/sql-budget.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function writeCorpus(directory, source, bytes) {\n  writeFileSync(join(directory, \"provenance.json\"), JSON.stringify({ source, size: bytes.length }));\n}\n"
+    },
+    {
+      "path": "scripts/release/notices.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function writeNotices(packageDirectory, notices) {\n  writeFileSync(join(packageDirectory, \"LICENSES.md\"), notices);\n}\n"
+    },
+    {
+      "path": "scripts/samples/stage.ts",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function stage(directory: string, text: string): void {\n  writeFileSync(join(directory, \"LICENSES.md\"), text);\n}\n"
+    },
+    {
+      "path": "scripts/upstream/pin.ts",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function moveSourceRow(root: string, pack: string, project: string, text: string): void {\n  writeFileSync(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"), text);\n}\n"
+    },
+    {
+      "path": "scripts/report/m43.ts",
+      "content": "export const GPL_NAMES: Record<string, string> = {\n  \"GPL-3.0-only\": \"GNU General Public License v3.0 only\",\n};\n"
+    },
+    {
+      "path": "packs/zz/upstream/p02/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nconst PROVENANCE_FILE = \"provenance.json\";\nfunction write(record) {\n  writeFileSync(join(HERE, PROVENANCE_FILE), JSON.stringify(record));\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "packs/react/upstream/eslint-plugin-react/common.mjs",
+      "content": "import { writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\n/** UPSTREAM.md beside the generator: the fixtures Rerail wrote, which are Rerail's, not the plugin's. */\nfunction writeAuthoredRecord(tool, directory, kept) {\n  const rows = kept.filter(entry => entry.kind === \"authored\").map(entry => `| \\`upstream/${tool}/fixtures/${entry.unit}\\` | written by Rerail |`);\n  const text = `# ${UPSTREAM[tool].title}: cases Rerail wrote\n\nThe fixtures listed below were written by Rerail for the pinned plugin to score, beside the cases extracted from the plugin's own tests (\\`licenses/${UPSTREAM[tool].project}/UPSTREAM.md\\`).\n\n| File | Origin |\n|---|---|\n${rows.join(\"\\n\")}\n`;\n  writeFileSync(join(directory, \"UPSTREAM.md\"), text);\n}\n"
+    },
+    {
+      "path": "packs/vue/upstream/eslint-plugin-vue/generate-fixed.mjs",
+      "content": "import { copyFileSync, mkdirSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { writeProvenance } from \"../../../../scripts/pack-data/provenance.mjs\";\n\nfunction writeLicenseAndProvenance(checkout, kept) {\n  const dir = join(HERE, \"../../licenses/eslint-plugin-vue\");\n  mkdirSync(dir, { recursive: true });\n  copyFileSync(join(checkout, \"LICENSE\"), join(dir, \"LICENSE\"));\n  const source = \"eslint-plugin-vue\";\n  const entries = new Map(kept.map(c => [c.file, { source, from: c.upstream, how: \"verbatim\", detail: `case \\`${c.case}\\`` }]));\n  writeProvenance({ pack: \"vue\", tool: source, entries, commits: { [source]: UPSTREAM_COMMIT } });\n}\n"
+    },
+    {
+      "path": "packs/python/upstream/common.py",
+      "content": "def write_record(tool: str, title: str, files: list[str], holders: str) -> None:\n    \"\"\"upstream/<tool>/UPSTREAM.md: the fixtures Rerail wrote, which the tool's expected findings score.\"\"\"\n    rows = \"\".join(f\"| `upstream/{tool}/fixtures/{file}` | written by Rerail |\\n\" for file in files)\n    (HERE / tool / \"UPSTREAM.md\").write_text(\n        f\"# {title}: cases Rerail wrote\\n\\n\"\n        f\"Copied from upstream (`licenses/{tool}/UPSTREAM.md`): nothing goes under `licenses/`.\\n\\n{rows}\"\n    )\n"
+    },
+    {
+      "path": "packs/python/upstream/ruff/generate-fixed.py",
+      "content": "# Fixtures under the upstream paths that\n# licenses/ruff/UPSTREAM.md lists as \"Not copied\" (ports of copyleft plugins: pylint, flake8-builtins, flake8-django,\n# flake8-executable, refurb) are never copied (the provenance writer refuses one).\ndef fixtures(checkout, executable):\n    copied = copy_fixtures(checkout)\n    common.write_provenance(\"ruff\", ORIGIN, FIXTURES, copied)\n"
+    },
+    {
+      "path": "conformance/pack-validation.ts",
+      "content": "import { existsSync, readFileSync, readdirSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { readUpstreamSources } from \"../scripts/s3/pack-fixtures.mjs\";\n\nfunction readSources(directory: string): string[] {\n  const failures: string[] = [];\n  const licenses = join(directory, \"licenses\");\n  for (const project of readdirSync(licenses)) {\n    const record = `licenses/${project}/UPSTREAM.md`;\n    if (!existsSync(join(licenses, project, \"UPSTREAM.md\"))) failures.push(`licenses/${project}/: no UPSTREAM.md`);\n    const sources = readUpstreamSources(readFileSync(join(directory, \"licenses\", project, \"UPSTREAM.md\"), \"utf8\"));\n    for (const line of sources.malformed) failures.push(`${record}: \"${line}\" is not a \\`- Not copied: \\`<prefix>\\` as \\`<glob>\\`\\` line`);\n  }\n  return failures;\n}\n"
+    },
+    {
+      "path": "scripts/samples/samples.ts",
+      "content": "/** The archive entries of a sample set (format.ts's layout), `LICENSES.md` first; ids are checked unique. */\nexport function archiveEntries(licenses: string, samples: Sample[]): { path: string; bytes: Buffer }[] {\n  const entries: { path: string; bytes: Buffer }[] = [{ path: \"LICENSES.md\", bytes: Buffer.from(licenses, \"utf8\") }];\n  return entries;\n}\n"
+    },
+    {
+      "path": "scripts/upstream/bump.ts",
+      "content": "import { writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\nfunction moveSourceRow(root: string, pack: string, project: string, text: string): void {\n  writeFileSync(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"), text);\n}\n"
+    },
+    {
+      "path": "scripts/check/check-licenses.mjs",
+      "content": "const COPYLEFT = /\\b(A?GPL|LGPL|MPL|EPL|EUPL|CDDL|CPAL|OSL|SSPL|RPL|QPL|Sleepycat|CC-BY-SA|CC-BY-NC)\\b/iu;\n"
+    },
+    {
+      "path": "scripts/pack-data/derive-notes.ts",
+      "content": "// licenses/ruff/UPSTREAM.md lists as \"Not copied\" what the writer refuses.\nconst notCopied = sources.notCopied.map(({ prefix }) => prefix);\nconst copyleftReasons = [...repos].map(copyleftReason);\n"
+    },
+    {
+      "path": "scripts/check/check-structure/metrics/09-licence-records.mjs",
+      "content": "import { readFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { readUpstreamSources } from \"../../../s3/pack-fixtures.mjs\";\n\nexport function recordedLicence(root, pack, project) {\n  const record = readFileSync(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"), \"utf8\");\n  return readUpstreamSources(record).licence;\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p01/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction write(record) {\n  const target = join(HERE, \"provenance.json\");\n  writeFileSync(target, `${JSON.stringify(record, null, 2)}\\n`);\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p05/generate.py",
+      "content": "import json\n\ndef write(record):\n    target = HERE / \"provenance.json\"\n    target.write_text(json.dumps(record, indent=2) + \"\\n\", encoding=\"utf-8\")\n"
+    },
+    {
+      "path": "packs/zz/upstream/p28/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nfunction writeLicense(rows) {\n  writeFileSync(join(PACK, \"licenses\", TOOL, `UPSTREAM.md`), rows.join(\"\\n\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/p30/generate.py",
+      "content": "def write_licenses(rows):\n    record = LICENSES / \"UPSTREAM.md\"\n    record.write_text(\"\".join(rows))\n"
+    },
+    {
+      "path": "packs/zz/upstream/p34/generate.py",
+      "content": "RECORD_DIR = HERE.parents[1] / \"licenses\" / \"tlint\"\n\ndef write_licenses(rows):\n    (RECORD_DIR / \"UPSTREAM.md\").write_text(\"\".join(rows))\n"
+    },
+    {
+      "path": "conformance/p63.ts",
+      "content": "const RUFF_EXCLUDED = [\"pylint/\", \"flake8_builtins/\"];\n"
+    },
+    {
+      "path": "packs/zz/upstream/p68/generate.mjs",
+      "content": "const kept = files.filter((file) => ![\"pylint/\", \"flake8_builtins/\"].some((prefix) => file.startsWith(prefix)));\n"
+    },
+    {
+      "path": "packs/zz/upstream/m03/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\n// Never writeFileSync(join(HERE, \"provenance.json\"), text) here: writeProvenance writes both files.\nexport const X = 1;\n"
+    },
+    {
+      "path": "scripts/report/summary.py",
+      "content": "import json\njson.dump(summarise(json.load(open(HERE / \"provenance.json\"))), open(OUT / \"summary.json\", \"w\"), indent=2)\n"
+    },
+    {
+      "path": "packs/zz/upstream/m10/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nimport { readUpstreamSources } from \"../../../../scripts/s3/pack-fixtures.mjs\";\nfunction main() {\n  const record = readUpstreamSources(readFileSync(join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\"), \"utf8\"));\n  writeFileSync(join(HERE, \"fixtures.expected.json\"), JSON.stringify(expected(record)));\n}\nmain();\n"
+    },
+    {
+      "path": "conformance/m11-check.ts",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function failuresOf(root: string, pack: string, project: string): string[] {\n  return [`${relative(root, join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"))}: no Source row`];\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/m12-read.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport async function recordText(root, pack, project) {\n  return await fs.readFile(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"), \"utf8\");\n}\n"
+    },
+    {
+      "path": "scripts/check/m13-check.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nexport function sourcesOf(root, pack, project) {\n  return readRecord(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"));\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/m14/generate.mjs",
+      "content": "import { copyFileSync, readFileSync, renameSync, writeFileSync, promises as fs } from \"node:fs\";\nimport { join, relative, resolve } from \"node:path\";\nimport { writeProvenance } from \"../../../../scripts/pack-data/provenance.mjs\";\nfunction writeRecords(checkout, kept) {\n  copyFileSync(join(checkout, \"LICENSE\"), join(PACK, \"licenses\", TOOL, \"LICENSE\"));\n  writeFileSync(join(HERE, \"UPSTREAM.md\"), authoredTable(kept));\n  writeProvenance({ pack: \"zz\", tool: TOOL, entries: entries(kept), commits: { [TOOL]: COMMIT } });\n}\n"
+    },
+    {
+      "path": "scripts/upstream/m15.mjs",
+      "content": "import { execFileSync } from \"node:child_process\";\nimport { join } from \"node:path\";\nexport const last = () => execFileSync(\"git\", [\"log\", \"-1\", \"--format=%H\", \"--\", join(PACK, \"licenses\", TOOL, \"UPSTREAM.md\")]);\n"
+    },
+    {
+      "path": "packs/zz/upstream/m20/generate.py",
+      "content": "def recorded(rows):\n    return (LICENSES / \"UPSTREAM.md\").read_text(encoding=\"utf-8\")\n"
+    },
+    {
+      "path": "packs/zz/upstream/m30/generate.mjs",
+      "content": "import { writeProvenance } from \"../../../../scripts/pack-data/provenance.mjs\";\ntry {\n  writeProvenance(options);\n} catch (error) {\n  if (error.message.includes(\"Not copied\")) throw new Error(`${TOOL}: drop the copies the record refuses`, { cause: error });\n  throw error;\n}\n"
+    },
+    {
+      "path": "scripts/check/m31-docs.mjs",
+      "content": "import { readFileSync } from \"node:fs\";\nconst text = readFileSync(\"docs/upstream.md\", \"utf8\");\nif (!text.includes(\"Not copied\")) failures.push(\"docs/upstream.md: does not describe the Not copied lines\");\n"
+    },
+    {
+      "path": "scripts/s3/m32.py",
+      "content": "import re\nSKIPPED = re.compile(r\"(\\d+) files not copied\")\n"
+    },
+    {
+      "path": "scripts/check/check-cargo-licenses.mjs",
+      "content": "/** Licence families that impose terms on the work they are combined with. */\nconst COPYLEFT = /\\b(A?GPL|LGPL|MPL|EPL)\\b/iu;\n"
+    },
+    {
+      "path": "packs/zz/upstream/m41/generate.py",
+      "content": "COPYLEFT_NOTE = (\n    \"Copyleft sources are never sampled: \"\n    \"scripts/samples/licences.ts records them.\"\n)\n"
+    },
+    {
+      "path": "scripts/samples/m42.ts",
+      "content": "import { COPYLEFT_SOURCES } from \"./licences.js\";\nconst copyleft = new Set(Object.keys(COPYLEFT_SOURCES));\n"
+    },
+    {
+      "path": "scripts/pack-data/m12b.mjs",
+      "content": "import fs from \"node:fs\";\nimport { join } from \"node:path\";\nexport async function recordText(root, pack, project) {\n  return await fs.promises.readFile(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"), \"utf8\");\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/m12c.mjs",
+      "content": "import * as fsp from \"node:fs/promises\";\nimport { join } from \"node:path\";\nexport async function recordText(root, pack, project) {\n  return await fsp.readFile(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"), \"utf8\");\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/m12d.mjs",
+      "content": "import { stat } from \"node:fs/promises\";\nimport { join } from \"node:path\";\nexport async function recorded(root, pack, project) {\n  return (await stat(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\"))).isFile();\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/m12e.mjs",
+      "content": "import { pathToFileURL } from \"node:url\";\nimport { join } from \"node:path\";\nexport const recordUrl = (root, pack, project) => pathToFileURL(join(root, \"packs\", pack, \"licenses\", project, \"UPSTREAM.md\")).href;\n"
+    },
+    {
+      "path": "scripts/pack-data/m33.mjs",
+      "content": "/** Refuses each Not copied line (readUpstreamSources: NOT_COPIED, /^- Not copied: `<prefix>`/) before copying. */\nexport const X = 1;\n"
+    },
+    {
+      "path": "packs/zz/upstream/m34/generate.py",
+      "content": "# The record's line.startswith(\"- Not copied: \") prefixes are refused by write_provenance; nothing here reads them.\nX = 1\n"
+    },
+    {
+      "path": "conformance/m36.ts",
+      "content": "export function sourcesOf(text: string, notCopied: string[] = []): string[] {\n  return notCopied;\n}\n"
+    },
+    {
+      "path": "packs/zz/upstream/m37/generate.mjs",
+      "content": "import { copyFileSync, writeFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { writeProvenance } from \"../../../../scripts/pack-data/provenance.mjs\";\nasync function main() {\n  const kept = await capture();\n  copyFileSync(join(CHECKOUT, \"LICENSE\"), join(HERE, \"../../licenses/zz/LICENSE\"));\n  writeFileSync(join(HERE, \"fixtures.expected.json\"), JSON.stringify(kept));\n  writeFileSync(join(HERE, \"UPSTREAM.md\"), authoredTable(kept));\n  writeProvenance({ pack: \"zz\", tool: TOOL, entries: entries(kept), commits: { [TOOL]: COMMIT } });\n}\nawait main();\n"
+    },
+    {
+      "path": "packs/zz/upstream/m35/generate.py",
+      "content": "report(\n    copyleft_note=(\"Copyleft plugins' fixtures are refused by the writer\",),\n)\n"
+    },
+    {
+      "path": "conformance/port-readiness/recording/plan-help.mjs",
+      "content": "const HELP = \"A recording plan names every tool-pack whose inputs changed: its generators, \"\n  + \"in the pack's `conformance.json` or `candidates/conformance.json`; the `- Not copied:` lines of the pack's \"\n  + \"licence records, and its gates.yaml.\";\n"
+    }
+  ]
+}

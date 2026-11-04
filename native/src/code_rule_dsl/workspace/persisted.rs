@@ -84,8 +84,9 @@ pub(super) fn restore_complete_results(
 }
 
 /// The stored per-file result encoding. A stored result of any other version is a cache miss.
-/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key.
-const LOCAL_RESULT_VERSION: u64 = 3;
+/// A marked witness (`Witness::ignored`) carries `"ignored": true`; another omits the key. A
+/// witness without a span (`Witness::span`) omits `span`.
+const LOCAL_RESULT_VERSION: u64 = 4;
 
 /// A stored local result as `encode_local_result` writes it, borrowing its witnesses. Fields are
 /// in key order, as a JSON object of the same keys serializes.
@@ -105,7 +106,8 @@ struct WitnessEncoding<'a> {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ignored: bool,
     message: &'a Option<String>,
-    span: &'a Span,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span: Option<&'a Span>,
 }
 
 fn serialize_witnesses<S: serde::Serializer>(
@@ -117,7 +119,7 @@ fn serialize_witnesses<S: serde::Serializer>(
         fix: &witness.fix,
         ignored: witness.ignored,
         message: &witness.message,
-        span: &witness.span,
+        span: witness.span.as_ref(),
     }))
 }
 
@@ -202,7 +204,10 @@ pub(super) fn decode_local_result(
         .map(|witness| {
             Some(Witness {
                 path: path.to_owned(),
-                span: Span::deserialize(witness.get("span")?).ok()?,
+                span: match witness.get("span") {
+                    None => None,
+                    Some(span) => Some(Span::deserialize(span).ok()?),
+                },
                 captures: Captures::from_value(witness.get("captures")?)?,
                 message: witness
                     .get("message")

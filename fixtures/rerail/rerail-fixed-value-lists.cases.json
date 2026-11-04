@@ -1,0 +1,106 @@
+{
+  "caught": [
+    {
+      "path": "src/runtime/event-protocol.ts",
+      "content": "import { RULE_MODES } from \"../engine/catalog/rule-mode.js\";\nexport const hostField = z.enum([\"omp\", \"pi\", \"claude-code\", \"codex\", \"cursor\"]);\n"
+    },
+    {
+      "path": "src/setup/harness-registration.ts",
+      "content": "export type Harness = \"omp\" | \"pi\" | \"claude-code\" | \"codex\" | \"cursor\";\n"
+    },
+    {
+      "path": "scripts/host/host-smoke.ts",
+      "content": "const HOSTS: readonly RerailHost[] = ['omp', 'pi', 'claude-code', 'codex', 'cursor'];\n"
+    },
+    {
+      "path": "src/engine/audit/audit-control-schema.ts",
+      "content": "  scope: z.enum([\"repository\", \"touched-files\", \"ai-output\"]),\n"
+    },
+    {
+      "path": "src/engine/audit/audit-control-mode.ts",
+      "content": "    mode: z.enum([\"log\", \"steer\"]),\n"
+    },
+    {
+      "path": "src/api/operations.ts",
+      "content": "    status: z.enum([\"running\", \"completed\", \"failed\", \"interrupted\", \"superseded\"]).optional(),\n"
+    },
+    {
+      "path": "src/api/operations-mode.ts",
+      "content": "    mode: z.enum([\"steer\", \"log\"]).optional(),\n"
+    },
+    {
+      "path": "src/api/audit-filter.ts",
+      "content": "type AuditMode = \"steer\" | \"log\";\n"
+    },
+    {
+      "path": "scripts/review/guidance-review-data.ts",
+      "content": "      mode: z.enum([\"log\", \"steer\", \"block\"]),\n"
+    },
+    {
+      "path": "src/engine/catalog/pack-order.ts",
+      "content": "const KIND_ORDER = [\"language\", \"framework\", \"repository\"];\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-enforcer.ts",
+      "content": "  code: z.enum([\"budget-exceeded\", \"missing-capability\", \"source-incomplete\", \"source-partial\", \"adapter-error\"]),\n"
+    },
+    {
+      "path": "src/engine/audit/audit-store.ts",
+      "content": "  code: \"budget-exceeded\" | \"missing-capability\" | \"source-incomplete\" | \"source-partial\" | \"adapter-error\";\n"
+    },
+    {
+      "path": "src/api/hosts-multiline.ts",
+      "content": "const hosts = z.enum([\n  \"omp\",\n  \"pi\",\n  \"claude-code\",\n  \"codex\",\n  \"cursor\",\n]);\n"
+    },
+    {
+      "path": "integration/support/parity-harness.ts",
+      "content": "export const PARITY_HOSTS = [\"omp\", \"pi\", \"claude-code\", \"codex\", \"cursor\"] as const;\n"
+    },
+    {
+      "path": "src/api/audit-mode-optional.ts",
+      "content": "  mode: \"steer\" | \"log\" | undefined;\n"
+    },
+    {
+      "path": "src/api/audit-failures.ts",
+      "content": "  code: z.enum([\"budget-exceeded\", \"file-budget-exceeded\", \"witness-limit\", \"input-limit\", \"missing-capability\", \"source-incomplete\", \"source-partial\", \"adapter-error\"]),\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/api/operations-fixed.ts",
+      "content": "import { AUDIT_FAILURE_CODES } from \"../engine/audit/audit.js\";\n  code: z.enum(AUDIT_FAILURE_CODES),\n  host: z.enum(RERAIL_HOSTS),\n"
+    },
+    {
+      "path": "src/harness/host-commands.ts",
+      "content": "type NativeHost = \"omp\" | \"pi\";\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule.ts",
+      "content": "export type FileScanScope = \"repository\" | \"touched-files\";\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-mode-check.ts",
+      "content": "const steerable = [\"steer\", \"block\"];\nif (mode === \"log\" || mode === \"steer\") return;\n"
+    },
+    {
+      "path": "src/engine/audit/audit-request.ts",
+      "content": "  status: z.enum([\"queued\", \"running\", \"completed\", \"failed\"]),\n"
+    },
+    {
+      "path": "src/engine/audit/audit.ts",
+      "content": "export const AUDIT_MODES = [\"steer\", \"log\"] as const;\n"
+    },
+    {
+      "path": "src/engine/code-rule/failure-subset.ts",
+      "content": "  code: z.enum([\"budget-exceeded\", \"source-incomplete\", \"source-partial\"]),\n"
+    },
+    {
+      "path": "src/api/scope-extended.ts",
+      "content": "  scope: z.enum([\"repository\", \"touched-files\", \"ai-output\", \"git-diff\"]),\n"
+    },
+    {
+      "path": "src/engine/catalog/mode-union.ts",
+      "content": "type M = \"block\" | \"steer\" | \"log\";\n"
+    }
+  ]
+}

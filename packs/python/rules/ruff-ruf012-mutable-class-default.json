@@ -1,0 +1,1762 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf012-mutable-class-default",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Initialize mutable class attributes such as lists, dicts and sets in the constructor, or mark them as class variables; a default in the class body is shared by every instance.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "immutable-name": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "global": [
+                "bool",
+                "bytes",
+                "complex",
+                "float",
+                "int",
+                "object",
+                "range",
+                "str",
+                "frozenset",
+                "tuple",
+                "frozendict"
+              ],
+              "import": [
+                "collections.abc.Sized",
+                "typing.LiteralString",
+                "typing.Sized",
+                "builtins.frozenset",
+                "builtins.tuple",
+                "builtins.frozendict",
+                "collections.abc.ByteString",
+                "collections.abc.Collection",
+                "collections.abc.Container",
+                "collections.abc.Iterable",
+                "collections.abc.Mapping",
+                "collections.abc.Reversible",
+                "collections.abc.Sequence",
+                "collections.abc.Set",
+                "typing.AbstractSet",
+                "typing.ByteString",
+                "typing.Callable",
+                "typing.Collection",
+                "typing.Container",
+                "typing.FrozenSet",
+                "typing.Iterable",
+                "typing.Literal",
+                "typing.Mapping",
+                "typing.Never",
+                "typing.NoReturn",
+                "typing.Reversible",
+                "typing.Sequence",
+                "typing.Tuple"
+              ]
+            }
+          },
+          "immutable-generic": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "global": [
+                "frozenset",
+                "tuple",
+                "frozendict"
+              ],
+              "import": [
+                "builtins.frozenset",
+                "builtins.tuple",
+                "builtins.frozendict",
+                "collections.abc.ByteString",
+                "collections.abc.Collection",
+                "collections.abc.Container",
+                "collections.abc.Iterable",
+                "collections.abc.Mapping",
+                "collections.abc.Reversible",
+                "collections.abc.Sequence",
+                "collections.abc.Set",
+                "typing.AbstractSet",
+                "typing.ByteString",
+                "typing.Callable",
+                "typing.Collection",
+                "typing.Container",
+                "typing.FrozenSet",
+                "typing.Iterable",
+                "typing.Literal",
+                "typing.Mapping",
+                "typing.Never",
+                "typing.NoReturn",
+                "typing.Reversible",
+                "typing.Sequence",
+                "typing.Tuple"
+              ]
+            }
+          },
+          "ref-typing-union": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Union"
+              ]
+            }
+          },
+          "ref-typing-optional": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Optional"
+              ]
+            }
+          },
+          "ref-annotated": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "typing.Annotated",
+                "typing_extensions.Annotated"
+              ]
+            }
+          },
+          "generic-head": {
+            "any": [
+              {
+                "precedes": {
+                  "stopBy": "neighbor",
+                  "regex": "^\\[$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript"
+                }
+              },
+              {
+                "kind": "identifier",
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "generic_type"
+                }
+              }
+            ]
+          },
+          "generic-item": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[\\[\\],|]$"
+                },
+                {
+                  "kind": "comment"
+                }
+              ]
+            },
+            "any": [
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^\\[$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "type_parameter"
+                }
+              }
+            ]
+          },
+          "immutable-annotation": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\],|]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "immutable-annotation"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "matches": "immutable-name"
+              },
+              {
+                "kind": "none"
+              },
+              {
+                "any": [
+                  {
+                    "kind": "union_type"
+                  },
+                  {
+                    "kind": "binary_operator",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^\\|$"
+                    }
+                  }
+                ],
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "regex": "^[\\[\\],|]$"
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        },
+                        {
+                          "regex": "^\\|$"
+                        },
+                        {
+                          "matches": "immutable-annotation"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "subscript"
+                  },
+                  {
+                    "kind": "generic_type"
+                  }
+                ],
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "matches": "generic-head",
+                          "all": [
+                            {
+                              "matches": "immutable-generic"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-typing-union"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^,$"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "generic-item",
+                                    "not": {
+                                      "matches": "immutable-annotation"
+                                    }
+                                  }
+                                },
+                                {
+                                  "kind": "generic_type",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "type_parameter",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "matches": "generic-item",
+                                      "not": {
+                                        "matches": "immutable-annotation"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-typing-optional"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "subscript",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                {
+                                  "kind": "generic_type",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "kind": "type_parameter",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "generic-item",
+                                  "all": [
+                                    {
+                                      "matches": "immutable-annotation"
+                                    }
+                                  ]
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "generic-item",
+                                    "all": [
+                                      {
+                                        "matches": "immutable-annotation"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-annotated"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "regex": "^,$"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "matches": "generic-item",
+                                  "all": [
+                                    {
+                                      "matches": "immutable-annotation"
+                                    }
+                                  ],
+                                  "not": {
+                                    "follows": {
+                                      "stopBy": "end",
+                                      "matches": "generic-item"
+                                    }
+                                  }
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "generic-item",
+                                    "all": [
+                                      {
+                                        "matches": "immutable-annotation"
+                                      }
+                                    ],
+                                    "not": {
+                                      "follows": {
+                                        "stopBy": "end",
+                                        "matches": "generic-item"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-typing-union"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "subscript",
+                                  "matches": "tuple-all-immutable"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "tuple-all-immutable"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "all": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "generic-head",
+                              "all": [
+                                {
+                                  "matches": "ref-annotated"
+                                }
+                              ]
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "subscript",
+                                "not": {
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "regex": "^,$"
+                                  }
+                                },
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "field": "subscript",
+                                  "matches": "tuple-first-immutable"
+                                }
+                              },
+                              {
+                                "kind": "generic_type",
+                                "has": {
+                                  "stopBy": "neighbor",
+                                  "kind": "type_parameter",
+                                  "not": {
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "regex": "^,$"
+                                    }
+                                  },
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "matches": "tuple-first-immutable"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "class-var-import-follows": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "module",
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(typing|typing_extensions|_typeshed)$",
+                      "field": "module_name"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^ClassVar$"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "class-var-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.ClassVar",
+                    "typing_extensions.ClassVar",
+                    "_typeshed.ClassVar"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "class-var-ref"
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^ClassVar$",
+                "resolves": {
+                  "unresolved": true
+                },
+                "matches": "class-var-import-follows"
+              }
+            ]
+          },
+          "class-var-annotation": {
+            "any": [
+              {
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "class-var-annotation"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "class-var-annotation"
+                }
+              },
+              {
+                "matches": "class-var-ref"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "generic_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "generic-head",
+                      "all": [
+                        {
+                          "matches": "class-var-ref"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "mutable-name": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "global": [
+                    "dict",
+                    "list",
+                    "set"
+                  ],
+                  "import": [
+                    "builtins.dict",
+                    "builtins.list",
+                    "builtins.set",
+                    "collections.Counter",
+                    "collections.OrderedDict",
+                    "collections.defaultdict",
+                    "collections.deque"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutable-name"
+                }
+              }
+            ]
+          },
+          "mutable-callee": {
+            "any": [
+              {
+                "matches": "mutable-name"
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutable-name",
+                  "field": "value"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutable-callee"
+                }
+              }
+            ]
+          },
+          "mutable-expression": {
+            "any": [
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "dictionary"
+              },
+              {
+                "kind": "set"
+              },
+              {
+                "kind": "list_comprehension"
+              },
+              {
+                "kind": "dictionary_comprehension"
+              },
+              {
+                "kind": "set_comprehension"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "mutable-callee",
+                  "field": "function"
+                }
+              }
+            ]
+          },
+          "stdlib-name": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "dataclasses.dataclass"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "stdlib-name"
+                }
+              }
+            ]
+          },
+          "attrs-name": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "attrs.define",
+                    "attrs.frozen",
+                    "attrs.mutable",
+                    "attr.define",
+                    "attr.frozen",
+                    "attr.mutable",
+                    "attr.s",
+                    "attr.attributes",
+                    "attr.attrs"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "attrs-name"
+                }
+              }
+            ]
+          },
+          "stdlib-expression": {
+            "any": [
+              {
+                "matches": "stdlib-name"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "stdlib-name",
+                  "field": "function"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "stdlib-expression"
+                }
+              }
+            ]
+          },
+          "attrs-expression": {
+            "any": [
+              {
+                "matches": "attrs-name"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "attrs-name",
+                  "field": "function"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "attrs-expression"
+                }
+              }
+            ]
+          },
+          "final-import-follows": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "module",
+              "has": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^(typing|typing_extensions|_typeshed)$",
+                      "field": "module_name"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "dotted_name",
+                      "regex": "^Final$"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "final-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Final",
+                    "typing_extensions.Final",
+                    "_typeshed.Final"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "final-ref"
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^Final$",
+                "resolves": {
+                  "unresolved": true
+                },
+                "matches": "final-import-follows"
+              }
+            ]
+          },
+          "final-annotation": {
+            "any": [
+              {
+                "kind": "type",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "final-annotation"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "final-annotation"
+                }
+              },
+              {
+                "matches": "final-ref"
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "subscript"
+                      },
+                      {
+                        "kind": "generic_type"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "generic-head",
+                      "all": [
+                        {
+                          "matches": "final-ref"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "dataclass-expression": {
+            "any": [
+              {
+                "matches": "stdlib-expression"
+              },
+              {
+                "matches": "attrs-expression"
+              }
+            ]
+          },
+          "special-name": {
+            "kind": "identifier",
+            "regex": "^(__slots__|__dict__|__weakref__|__annotations__)$"
+          },
+          "copy-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "pydantic.BaseModel",
+                    "pydantic.RootModel",
+                    "pydantic.BaseSettings",
+                    "pydantic.BaseConfig",
+                    "pydantic.generics.GenericModel",
+                    "pydantic.v1.BaseModel",
+                    "pydantic.v1.BaseSettings",
+                    "pydantic.v1.BaseConfig",
+                    "pydantic.v1.generics.GenericModel",
+                    "pydantic_settings.BaseSettings",
+                    "msgspec.Struct",
+                    "sqlmodel.SQLModel"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$B",
+                "matches": {
+                  "copy-module-class": {
+                    "P": "$B"
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "copy-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "copy-ref"
+                }
+              }
+            ]
+          },
+          "copy-module-class": {
+            "params": [
+              "P"
+            ],
+            "rule": {
+              "pattern": "$P",
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "class_definition",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "pattern": "$P"
+                      }
+                    },
+                    {
+                      "matches": "copy-class"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "copy-class": {
+            "kind": "class_definition",
+            "has": {
+              "field": "superclasses",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "copy-ref"
+              }
+            }
+          },
+          "ctypes-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "ctypes.Structure",
+                    "ctypes.BigEndianStructure",
+                    "ctypes.LittleEndianStructure",
+                    "ctypes.Union",
+                    "ctypes.BigEndianUnion",
+                    "ctypes.LittleEndianUnion"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$B",
+                "matches": {
+                  "ctypes-module-class": {
+                    "P": "$B"
+                  }
+                }
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "ctypes-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "ctypes-ref"
+                }
+              }
+            ]
+          },
+          "ctypes-module-class": {
+            "params": [
+              "P"
+            ],
+            "rule": {
+              "pattern": "$P",
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "kind": "function_definition"
+                      },
+                      {
+                        "kind": "class_definition"
+                      }
+                    ]
+                  },
+                  "kind": "class_definition",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "pattern": "$P"
+                      }
+                    },
+                    {
+                      "matches": "ctypes-class"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "ctypes-class": {
+            "kind": "class_definition",
+            "has": {
+              "field": "superclasses",
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "ctypes-ref"
+              }
+            }
+          },
+          "good-target": {
+            "any": [
+              {
+                "matches": "special-name"
+              },
+              {
+                "kind": "identifier",
+                "pattern": "$N",
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "expression_statement",
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "expression_statement",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "assignment",
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "type",
+                            "matches": "class-var-annotation"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "right",
+                            "pattern": "$_V"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "left",
+                            "kind": "identifier",
+                            "pattern": "$N"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "good-target"
+                }
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "good-target"
+                }
+              }
+            ]
+          },
+          "assigned-mutable": {
+            "any": [
+              {
+                "matches": "mutable-expression"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "assigned-mutable"
+                }
+              },
+              {
+                "kind": "assignment",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "assigned-mutable"
+                }
+              }
+            ]
+          },
+          "ctypes-return": {
+            "kind": "expression_statement",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "assignment",
+              "all": [
+                {
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "type"
+                    }
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "left",
+                    "kind": "identifier",
+                    "regex": "^_fields_$"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "right",
+                    "matches": "assigned-mutable"
+                  }
+                }
+              ]
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "body",
+                "kind": "class_definition",
+                "matches": "ctypes-class"
+              }
+            }
+          },
+          "after-ctypes-return": {
+            "kind": "expression_statement",
+            "any": [
+              {
+                "matches": "ctypes-return"
+              },
+              {
+                "follows": {
+                  "stopBy": "end",
+                  "matches": "ctypes-return"
+                }
+              }
+            ]
+          },
+          "ann-default": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "kind": "assignment",
+                  "all": [
+                    {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "kind": "type"
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "type",
+                          "any": [
+                            {
+                              "matches": "immutable-annotation"
+                            },
+                            {
+                              "matches": "class-var-annotation"
+                            },
+                            {
+                              "matches": "final-annotation"
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "field": "left",
+                          "matches": "special-name"
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "expression_statement",
+                        "not": {
+                          "matches": "after-ctypes-return"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "block",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "field": "body",
+                            "kind": "class_definition",
+                            "all": [
+                              {
+                                "not": {
+                                  "matches": "copy-class"
+                                }
+                              },
+                              {
+                                "not": {
+                                  "inside": {
+                                    "stopBy": "neighbor",
+                                    "kind": "decorated_definition",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "kind": "decorator",
+                                      "has": {
+                                        "stopBy": "neighbor",
+                                        "matches": "dataclass-expression"
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "ann-default"
+                }
+              }
+            ]
+          },
+          "plain-default": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "kind": "assignment",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "kind": "type"
+                        }
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "left",
+                            "not": {
+                              "matches": "good-target"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": {
+                              "kind": "expression_statement"
+                            },
+                            "kind": "assignment",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "field": "left",
+                              "not": {
+                                "matches": "good-target"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "inside": {
+                        "stopBy": {
+                          "kind": "expression_statement"
+                        },
+                        "kind": "expression_statement",
+                        "not": {
+                          "matches": "after-ctypes-return"
+                        },
+                        "inside": {
+                          "stopBy": "neighbor",
+                          "kind": "block",
+                          "inside": {
+                            "stopBy": "neighbor",
+                            "field": "body",
+                            "kind": "class_definition",
+                            "all": [
+                              {
+                                "not": {
+                                  "matches": "copy-class"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "plain-default"
+                }
+              }
+            ]
+          },
+          "tuple-all-immutable": {
+            "any": [
+              {
+                "kind": "tuple",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "regex": "^[\\[\\](),|]$"
+                            },
+                            {
+                              "kind": "comment"
+                            }
+                          ]
+                        },
+                        {
+                          "matches": "immutable-annotation"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "tuple-all-immutable"
+                }
+              }
+            ]
+          },
+          "tuple-first-immutable": {
+            "any": [
+              {
+                "kind": "tuple",
+                "has": {
+                  "stopBy": "neighbor",
+                  "all": [
+                    {
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[\\[\\](),|]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "matches": "immutable-annotation"
+                    },
+                    {
+                      "not": {
+                        "follows": {
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "regex": "^[\\[\\](),|]$"
+                              },
+                              {
+                                "kind": "comment"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "type"
+                  },
+                  {
+                    "kind": "parenthesized_expression"
+                  }
+                ],
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "any": [
+                      {
+                        "regex": "^[\\[\\](),|]$"
+                      },
+                      {
+                        "kind": "comment"
+                      }
+                    ]
+                  },
+                  "matches": "tuple-first-immutable"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "mutable-class-default",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "matches": "mutable-expression"
+              },
+              {
+                "any": [
+                  {
+                    "matches": "ann-default"
+                  },
+                  {
+                    "matches": "plain-default"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "RUF012",
+        "message": "Initialize this mutable default in `__init__`, or annotate it `ClassVar[...]` if one object is meant to be shared; a class-level default is shared by every instance.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF012"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

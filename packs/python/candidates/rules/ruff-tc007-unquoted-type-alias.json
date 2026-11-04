@@ -1,0 +1,414 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-tc007-unquoted-type-alias",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Quote explicit type aliases that refer to names imported only under a type-checking guard; those names do not exist at runtime, so evaluating the alias raises NameError.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "type-checking-name": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^TYPE_CHECKING$"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "import": [
+                    "typing.TYPE_CHECKING",
+                    "typing_extensions.TYPE_CHECKING",
+                    "_typeshed.TYPE_CHECKING"
+                  ]
+                }
+              },
+              {
+                "kind": "attribute",
+                "has": {
+                  "field": "attribute",
+                  "regex": "^TYPE_CHECKING$"
+                }
+              }
+            ]
+          },
+          "type-checking-test": {
+            "any": [
+              {
+                "matches": "type-checking-name"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "type-checking-name"
+                }
+              }
+            ]
+          },
+          "in-type-checking-block": {
+            "inside": {
+              "stopBy": "end",
+              "kind": "block",
+              "inside": {
+                "stopBy": "neighbor",
+                "field": "consequence",
+                "kind": "if_statement",
+                "has": {
+                  "field": "condition",
+                  "matches": "type-checking-test"
+                }
+              }
+            }
+          },
+          "type-alias-annotation": {
+            "kind": "type",
+            "has": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "attribute"
+                }
+              ],
+              "resolves": {
+                "import": [
+                  "typing.TypeAlias",
+                  "typing_extensions.TypeAlias",
+                  "_typeshed.TypeAlias"
+                ]
+              }
+            }
+          },
+          "type-alias-statement": {
+            "kind": "assignment",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "left",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "parenthesized_expression"
+                    },
+                    {
+                      "kind": "tuple_pattern",
+                      "not": {
+                        "has": {
+                          "stopBy": "end",
+                          "regex": "^,$"
+                        }
+                      }
+                    }
+                  ],
+                  "has": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "parenthesized_expression"
+                          },
+                          {
+                            "kind": "tuple_pattern"
+                          }
+                        ]
+                      }
+                    },
+                    "kind": "identifier"
+                  }
+                }
+              ]
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "type",
+                  "matches": "type-alias-annotation"
+                }
+              }
+            ],
+            "not": {
+              "matches": "in-type-checking-block"
+            }
+          },
+          "unchecked-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "resolves": {
+                      "import": [
+                        "typing.Literal",
+                        "typing_extensions.Literal"
+                      ]
+                    }
+                  }
+                },
+                "not": {
+                  "nthChild": 1
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "resolves": {
+                      "import": [
+                        "typing.Annotated",
+                        "typing_extensions.Annotated"
+                      ]
+                    }
+                  }
+                },
+                "not": {
+                  "any": [
+                    {
+                      "nthChild": 1
+                    },
+                    {
+                      "all": [
+                        {
+                          "nthChild": 2
+                        },
+                        {
+                          "any": [
+                            {
+                              "kind": "tuple"
+                            },
+                            {
+                              "kind": "list_splat"
+                            },
+                            {
+                              "precedes": {
+                                "stopBy": "neighbor",
+                                "regex": "^,$"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "nthChild": 1
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "tuple",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "subscript",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "value",
+                      "resolves": {
+                        "import": [
+                          "typing.Annotated",
+                          "typing_extensions.Annotated"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "reference-path": {
+            "not": {
+              "matches": "unchecked-slot"
+            },
+            "any": [
+              {
+                "kind": "parenthesized_expression"
+              },
+              {
+                "kind": "binary_operator"
+              },
+              {
+                "kind": "list"
+              },
+              {
+                "kind": "tuple"
+              },
+              {
+                "kind": "list_splat"
+              },
+              {
+                "kind": "attribute"
+              },
+              {
+                "kind": "subscript"
+              }
+            ]
+          },
+          "runtime-module-binding": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$N"
+              },
+              {
+                "kind": "dotted_name",
+                "has": {
+                  "stopBy": "neighbor",
+                  "nthChild": 1,
+                  "kind": "identifier",
+                  "pattern": "$N"
+                }
+              }
+            ],
+            "binds": {
+              "scope": "module"
+            },
+            "not": {
+              "any": [
+                {
+                  "matches": "in-type-checking-block"
+                },
+                {
+                  "binds": {
+                    "form": [
+                      "annotation",
+                      "deletion"
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "earlier-runtime-binding": {
+            "inside": {
+              "stopBy": "end",
+              "not": {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "kind": "assignment"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                }
+              },
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "runtime-module-binding"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "runtime-module-binding"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "typing-only-name-in-type-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "all": [
+              {
+                "kind": "identifier",
+                "pattern": "$N"
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "not": {
+                      "matches": "reference-path"
+                    }
+                  },
+                  "field": "right",
+                  "matches": "type-alias-statement"
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "matches": "unchecked-slot"
+                    },
+                    {
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "field": "attribute",
+                        "kind": "attribute"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {}
+                }
+              },
+              {
+                "not": {
+                  "matches": "earlier-runtime-binding"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "TC007",
+        "message": "`$N` has no runtime module-level binding before this alias; quote the whole alias value (`X: TypeAlias = \"Foo | None\"`) unless `$N` is defined in the enclosing function or class.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TC007"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

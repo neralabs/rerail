@@ -1,0 +1,119 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d200-unnecessary-multiline-docstring",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write a docstring with a single line of text on one line, with the quotes beside the text, not on lines of their own.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unnecessary-multiline-docstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": {
+                "any": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "regex": "^,$"
+                    }
+                  },
+                  {
+                    "follows": {
+                      "stopBy": "end",
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  }
+                ]
+              },
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "module"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "block",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "function_definition"
+                        },
+                        {
+                          "kind": "class_definition"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                {
+                  "matches": "doc-stmt"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "doc-holder"
+                  }
+                }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "[bBfFtT]"
+                }
+              },
+              "inside": {
+                "stopBy": "neighbor",
+                "matches": "doc-holder"
+              }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "string_content",
+              "regex": "\\A(?:[^\\S\\r\\n]*(?:\\r\\n?|\\n))+[^\\r\\n]*\\S[^\\r\\n]*(?:(?:\\r\\n?|\\n)[^\\S\\r\\n]*)*\\z|\\A[^\\r\\n]*\\S[^\\r\\n]*(?:(?:\\r\\n?|\\n)[^\\S\\r\\n]*)+\\z"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "D200",
+        "anchor": "witness.span",
+        "message": "Put this docstring's only line of text on one line with its quotes: `\"\"\"Text.\"\"\"`; escape a quote or backslash that would then touch the closing quotes.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "D200"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

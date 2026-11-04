@@ -1,4 +1,8 @@
-import { findRunningDaemon } from "../runtime/daemon-control.js";
+import { readFileSync } from "node:fs";
+import { describeScan, runHeadlessScan } from "./headless-scan.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
+import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
 
 import {
   auditSettingsPatchSchema, auditSettingsSchema, type AuditControls, type AuditSettings, type AuditSettingsPatch, type AuditRequest,
@@ -12,6 +16,8 @@ type SteerStrategy = AuditSettings["steerStrategy"];
 
 export interface AuditCliOptions {
   home: string;
+  /** The version `rerail scan` reports; a headless scan names it in its report. */
+  version?: string;
   stdout?: Pick<NodeJS.WriteStream, "write">;
 }
 
@@ -97,17 +103,18 @@ function parseCommon(args: readonly string[]): ParsedCommon {
 }
 
 /** The Rerail home's daemon serves every session recorded in its database, whichever repository ran it. */
-async function targetDaemon(options: AuditCliOptions): Promise<URL> {
+async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
   const daemon = await findRunningDaemon(options.home);
   if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
-  return new URL(daemon.state.url);
+  return daemonEndpoint(daemon.state);
 }
 
-async function api<T>(base: URL, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {
-  const response = await fetch(new URL(path, base), {
+async function api<T>(base: DaemonEndpoint, path: string, method: "GET" | "PATCH" | "POST", body?: unknown): Promise<T> {
+  const response = await base.fetch(new URL(path, base.url), {
     signal: AbortSignal.timeout(WAIT_TIMEOUT_MS),
     method,
-    ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+    headers: { ...base.headers, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const payload = await response.json() as T | { error?: string; message?: string };
   if (!response.ok) {
@@ -127,7 +134,7 @@ function describeAuditRequest(request: AuditRequest): string {
   return `Scan ${request.id}: ${request.status} (${request.scope}/${request.mode}; ${result})${error}`;
 }
 
-async function waitForAuditRequest(base: URL, sessionId: string, id: string): Promise<AuditRequest> {
+async function waitForAuditRequest(base: DaemonEndpoint, sessionId: string, id: string): Promise<AuditRequest> {
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   for (;;) {
     const { auditRequests } = await api<{ auditRequests: AuditRequest[] }>(base, `/api/sessions/${encodeURIComponent(sessionId)}/audit-requests`, "GET");
@@ -153,7 +160,7 @@ function settingsPatch(parsed: ParsedCommon): AuditSettingsPatch {
 }
 
 async function runSettingsCommand(
-  base: URL,
+  base: DaemonEndpoint,
   session: string,
   patch: AuditSettingsPatch,
   json: boolean,
@@ -170,7 +177,7 @@ async function runSettingsCommand(
 
 /** Internal testing: `rerail scan`, an explicit full-repository or git-diff audit of one session's checkout. */
 async function runAuditRequestCommand(
-  base: URL,
+  base: DaemonEndpoint,
   session: string,
   parsed: ParsedCommon,
   options: AuditCliOptions,
@@ -187,7 +194,71 @@ async function runAuditRequestCommand(
   return result.status === "failed" || result.status === "interrupted" ? 1 : 0;
 }
 
+/** Exit code of a headless scan that completed with violations under `--fail-on-violations`. */
+export const SCAN_VIOLATIONS_EXIT = 3;
+
+/**
+ * Internal testing: `rerail scan` without `--session`, a headless scan of one checkout in this process
+ * (`headless-scan.ts`). Exit 0 when it completed, 1 when it failed, 3 when it completed with violations and
+ * `--fail-on-violations` was given.
+ */
+async function runHeadlessScanCommand(args: readonly string[], options: AuditCliOptions): Promise<number> {
+  const values = new Map<string, string>();
+  const packs: string[] = [];
+  let paths: string[] | undefined;
+  const flags = new Set<string>();
+  for (let index = 0; index < args.length;) {
+    const argument = args[index]!;
+    if (argument === "--json" || argument === "--fail-on-violations" || argument === "--no-send") {
+      flags.add(argument);
+      index += 1;
+    } else if (argument === "--pack") {
+      packs.push(requireValue(args, index, argument));
+      index += 2;
+    } else if (argument === "--path") {
+      paths = [...(paths ?? []), requireValue(args, index, argument)];
+      index += 2;
+    } else if (argument === "--paths-from") {
+      const listed = readFileSync(requireValue(args, index, argument), "utf8").split(/\r?\n/u).map(line => line.trim()).filter(line => line.length > 0);
+      paths = [...(paths ?? []), ...listed];
+      index += 2;
+    } else if (["--repo", "--scope", "--base", "--rules-ref"].includes(argument)) {
+      values.set(argument, requireValue(args, index, argument));
+      index += 2;
+    } else {
+      throw new Error(`Unknown option: ${argument}`);
+    }
+  }
+  const scope = auditRequestScope(values.get("--scope")) ?? "repository";
+  const base = values.get("--base");
+  const rulesRef = values.get("--rules-ref");
+  const ruleDocuments = new Map<string, RuleDocument>();
+  const report = await runHeadlessScan({
+    ruleDocuments,
+    repo: values.get("--repo") ?? process.cwd(),
+    scope,
+    packs,
+    version: options.version ?? "unknown",
+    ...(base === undefined ? {} : { base }),
+    ...(rulesRef === undefined ? {} : { rulesRef }),
+    ...(paths === undefined ? {} : { paths }),
+  });
+  print(options, flags.has("--json"), report, describeScan(report));
+  // Internal testing: with a remote added, the report goes to it too (the daemon or `rerail remote push` sends it).
+  if (!flags.has("--no-send") && report.status === "completed") {
+    try {
+      if (new RemoteOutbox({ home: options.home }).queueScan(report, ruleDocuments)) process.stderr.write("rerail: scan queued for this machine's remotes\n");
+    } catch (error) {
+      // The scan itself succeeded; a remote configuration that cannot be read does not change its exit code.
+      process.stderr.write(`rerail: scan not queued for remotes: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+  }
+  if (report.status !== "completed") return 1;
+  return flags.has("--fail-on-violations") && report.violations.length > 0 ? SCAN_VIOLATIONS_EXIT : 0;
+}
+
 export async function runAuditCommand(command: "scan" | "settings", args: readonly string[], options: AuditCliOptions): Promise<number> {
+  if (command === "scan" && !args.includes("--session")) return await runHeadlessScanCommand(args, options);
   const parsed = parseCommon(args);
   const patch = command === "settings" ? settingsPatch(parsed) : undefined;
   const base = await targetDaemon(options);

@@ -122,15 +122,15 @@ test("npm error classification", () => {
   assert.equal(classifyNpmError("weird"), "other");
 });
 
-test("an unreadable package asks for npm login when logged out, and for scope access when logged in", () => {
+test("an unreadable package says it is not published when logged out, and points at npm's token when logged in", () => {
   const base = { kind: "not-found", reason: "E404", registry: "https://registry.npmjs.org/", tag: "latest" };
   const loggedOut = accessFailureMessage({ ...base, user: undefined });
-  assert.match(loggedOut, /npm is not logged in to https:\/\/registry\.npmjs\.org\//u);
-  assert.match(loggedOut, /`npm login`/u);
+  assert.match(loggedOut, /@neralabs\/rerail@latest is not on https:\/\/registry\.npmjs\.org\/ \(E404\)/u);
+  assert.match(loggedOut, /--tag next/u);
   assert.match(loggedOut, /@neralabs scope/u);
   const noAccess = accessFailureMessage({ ...base, kind: "auth", reason: "E403", user: "alice" });
-  assert.match(noAccess, /logged in .* as alice, but alice cannot read @neralabs\/rerail@latest \(E403\)/u);
-  assert.match(noAccess, /organization owner to give alice read access/u);
+  assert.match(noAccess, /logged in .* as alice, but cannot read @neralabs\/rerail@latest \(E403\)/u);
+  assert.match(noAccess, /check the token in ~\/\.npmrc or run `npm logout`/u);
   assert.match(accessFailureMessage({ ...base, kind: "network", reason: "ECONNREFUSED" }), /Could not reach .*ECONNREFUSED/u);
 });
 
@@ -189,7 +189,7 @@ test("--help prints the usage and runs nothing", { skip: process.platform === "w
   });
 });
 
-test("a logged-out npm stops before npx with a message to run npm login", { skip: process.platform === "win32" }, () => {
+test("a package npm cannot find while logged out stops before npx, suggesting another tag", { skip: process.platform === "win32" }, () => {
   withTempDir(dir => {
     const { env, npxLog } = stubTools(dir, {
       view: { status: 1, output: "npm error code E404" },
@@ -197,7 +197,7 @@ test("a logged-out npm stops before npx with a message to run npm login", { skip
     });
     const result = runScript([], env);
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /npm is not logged in to .*Run `npm login`/su);
+    assert.match(result.stderr, /@neralabs\/rerail@latest is not on .*Try --tag next/su);
     assert.throws(() => readFileSync(npxLog));
   });
 });

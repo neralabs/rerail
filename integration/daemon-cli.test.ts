@@ -34,12 +34,14 @@ describe("Rerail daemon CLI", () => {
         databasePath: database,
         ui: "dev",
       });
-      const health = await fetch(new URL("/healthz", state.url));
+      // Every request carries the capability the state file records, as every Rerail client and the browser's cookie do.
+      const access = { headers: { "x-rerail-access": state.accessToken! } };
+      const health = await fetch(new URL("/healthz", state.url), access);
       expect(health.status).toBe(200);
       expect(health.ok).toBe(true);
       expect(await health.json()).toMatchObject({ pid: child.pid, database: { path: database }, ui: "dev" });
       // `--dev` serves the committed `ui/` source straight from the checkout, not `dist/ui`.
-      const page = await fetch(state.url);
+      const page = await fetch(state.url, access);
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
       expect(await page.text()).toBe(await readFile(join(process.cwd(), "ui", "index.html"), "utf8"));
@@ -76,6 +78,27 @@ describe("Rerail daemon CLI", () => {
       expect(exitCode).not.toBe(0);
       expect(Buffer.concat(chunks).toString()).toContain("--allow-remote");
       expect(existsSync(join(root, "daemon.json"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  test("refuses a daemon reachable from other machines over plain http unless --insecure-http is passed, before spawning anything", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
+    try {
+      for (const remote of [["--host", "0.0.0.0", "--allow-remote"], ["--public-host", "rerail.example"]]) {
+        const start = spawn(process.execPath, [join(process.cwd(), "dist", "cli", "cli.js"), "daemon", "start", ...remote, "--port", "0"], {
+          env: { ...process.env, RERAIL_HOME: root },
+          stdio: ["ignore", "ignore", "pipe"],
+        });
+        if (start.stderr === null) throw new Error("cli stderr was not piped");
+        const chunks: Buffer[] = [];
+        start.stderr.on("data", chunk => chunks.push(chunk));
+        const [exitCode] = await once(start, "close");
+        expect(exitCode).not.toBe(0);
+        expect(Buffer.concat(chunks).toString()).toContain("--insecure-http");
+        expect(existsSync(join(root, "daemon.json"))).toBe(false);
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }

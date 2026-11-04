@@ -1,0 +1,113 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up009-utf8-encoding-declaration",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove the UTF-8 encoding declaration comment at the top of a Python file; UTF-8 is already the default source encoding.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "utf8-encoding-declaration",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "coding": {
+              "kind": "comment",
+              "regex": "^#.*?coding[:=][ \\t]*[-_.a-zA-Z0-9]+"
+            },
+            "utf8-coding": {
+              "kind": "comment",
+              "regex": "^#(?:[^c]|(?:c(?:o(?:d(?:i(?:n(?:g)?)?)?)?)?)*c(?:[^co]|o(?:[^cd]|d(?:[^ci]|i(?:[^cn]|n(?:[^cg]|g(?:[^c:=]|[:=][ \\t]*[^-_.a-zA-Z0-9 \\t])))))))*(?:c(?:o(?:d(?:i(?:n(?:g)?)?)?)?)?)*coding[:=][ \\t]*(?:utf-8|utf8)(?:[^-_.a-zA-Z0-9]|$)"
+            },
+            "other-coding": {
+              "matches": "coding",
+              "not": {
+                "matches": "utf8-coding"
+              }
+            }
+          },
+          "rule": {
+            "kind": "comment",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "module"
+            },
+            "all": [
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                }
+              },
+              {
+                "layout": {
+                  "before": {
+                    "to": "token",
+                    "edge": true,
+                    "breaks": {
+                      "max": 1
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "follows": {
+                    "stopBy": "end",
+                    "matches": "coding"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "matches": "other-coding"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "precedes": {
+                    "stopBy": "neighbor",
+                    "kind": "comment",
+                    "not": {
+                      "matches": "coding"
+                    },
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "matches": "other-coding"
+                    }
+                  }
+                }
+              }
+            ],
+            "matches": "utf8-coding"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP009",
+        "message": "Delete this UTF-8 encoding declaration comment; Python 3 reads source as UTF-8 by default. Keep it only if the file must also run on Python 2.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP009"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

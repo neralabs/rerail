@@ -1,0 +1,118 @@
+{
+  "caught": [
+    {
+      "path": "conformance/port-readiness/cache.ts",
+      "content": "import { execFileSync } from \"node:child_process\";\nimport { createHash } from \"node:crypto\";\n\nexport function trackedDigest(root: string, pathspec: string): string {\n  const listed = execFileSync(\"git\", [\"ls-files\", \"-z\", \"--\", pathspec], { cwd: root, encoding: \"utf8\", maxBuffer: 1 << 28 })\n    .split(\"\\0\")\n    .filter(Boolean);\n  return createHash(\"sha256\").update(listed.join(\"\\n\")).digest(\"hex\");\n}\n"
+    },
+    {
+      "path": "conformance/port-readiness/plan.mjs",
+      "content": "import { readFileSync } from \"node:fs\";\nimport { execFileSync } from \"node:child_process\";\n\nfunction changedFiles(from, to) {\n  const output = execFileSync(\"git\", [\"diff\", \"--no-renames\", \"--name-only\", \"-z\", from, to], {\n    encoding: \"utf8\",\n  });\n  return output.split(\"\\0\").filter(Boolean);\n}\n"
+    },
+    {
+      "path": "conformance/eslint-test-set/cli.ts",
+      "content": "import { existsSync, mkdirSync } from \"node:fs\";\nimport {\n  execFileSync,\n} from \"child_process\";\n\nexport function extract(zip: string, directory: string): void {\n  mkdirSync(directory, { recursive: true });\n  execFileSync(\"unzip\", [\"-q\", \"-o\", zip, \"-d\", directory]);\n}\n"
+    },
+    {
+      "path": "conformance/languages/corpus-head.cjs",
+      "content": "const { spawnSync } = require(\"child_process\");\n\nmodule.exports.head = (directory) => spawnSync(\"git\", [\"-C\", directory, \"rev-parse\", \"HEAD\"], { encoding: \"utf8\" }).stdout.trim();\n"
+    },
+    {
+      "path": "conformance/languages/checks/base.ts",
+      "content": "export async function base(root: string, sha: string): Promise<string> {\n  const { execFile } = await import(\"node:child_process\");\n  return await new Promise((resolve) => execFile(\"git\", [\"cat-file\", \"-t\", sha], { cwd: root }, (_e, out) => resolve(out)));\n}\n"
+    },
+    {
+      "path": "conformance/port-readiness/upstream/bump.ts",
+      "content": "import { readFile } from \"node:fs/promises\";\nimport { RUNTIMES_DIRECTORY } from \"../../../scripts/pack-data/runtimes.js\";\n\nexport const runtimes = RUNTIMES_DIRECTORY;\n"
+    },
+    {
+      "path": "conformance/port-readiness/recording/tree.ts",
+      "content": "import { join } from \"node:path\";\nimport { fileTypeOf } from \"../../recorders/port-readiness/file-type.js\";\nimport type { ParserVerdict, Span } from \"../../recorders/port-readiness/types.js\";\n\nexport const kind = (path: string) => fileTypeOf(join(\".\", path));\n"
+    },
+    {
+      "path": "conformance/languages/releases.ts",
+      "content": "import { checkReleases } from \"../../scripts/upstream/releases.js\";\n\nexport const pending = await checkReleases();\n"
+    },
+    {
+      "path": "conformance/languages/expected.ts",
+      "content": "export async function expected(tool: string) {\n  const { generate } = await import(\"../../packs/javascript/upstream/generate.mjs\");\n  return generate(tool);\n}\n"
+    },
+    {
+      "path": "conformance/recorders/eslint-record.mjs",
+      "content": "import { renameVariant } from \"../../scripts/pack-data/rename/ecmascript.ts\";\n\nexport function record(finding) {\n  return { ...finding, rule: renameVariant(finding.rule) };\n}\n"
+    },
+    {
+      "path": "conformance/recorders/port-readiness/drivers/phpcs_driver.php",
+      "content": "<?php\n// Runs PHP_CodeSniffer over the corpus and prints its findings as JSON.\n$report = [];\necho json_encode($report);\n"
+    },
+    {
+      "path": "conformance/languages/checks/head.ts",
+      "content": "import cp = require(\"child_process\");\nexport const head = (dir: string) => cp.execFileSync(\"git\", [\"-C\", dir, \"rev-parse\", \"HEAD\"], { encoding: \"utf8\" }).trim();\n"
+    },
+    {
+      "path": "conformance/languages/spawn-builtin.mjs",
+      "content": "const { spawnSync } = process.getBuiltinModule(\"node:child_process\");\nexport const run = (argv) => spawnSync(argv[0], argv.slice(1), { encoding: \"utf8\" });\n"
+    },
+    {
+      "path": "conformance/languages/generators.ts",
+      "content": "export async function generator(pack: string, tool: string) {\n  return await import(`../../packs/${pack}/upstream/${tool}/generate.mjs`);\n}\n"
+    },
+    {
+      "path": "conformance/languages/pack-generate.ts",
+      "content": "import { generate } from \"@neralabs/rerail-pack-javascript/upstream/generate.mjs\";\nexport { generate };\n"
+    },
+    {
+      "path": "conformance/languages/recorders/eslint.mjs",
+      "content": "export const record = (findings) => findings;\n"
+    },
+    {
+      "path": "conformance/languages/record-expected.ts",
+      "content": "import { writeFile } from \"node:fs/promises\";\nimport { fixturesExpectedPath, type LoadedPack } from \"./pack.js\";\nexport async function save(loaded: LoadedPack, tool: string, findings: unknown[]) {\n  await writeFile(fixturesExpectedPath(loaded, tool), JSON.stringify({ findings }, null, 2));\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "conformance/languages/checks/ungated.ts",
+      "content": "import { readFile } from \"node:fs/promises\";\nimport { runChecked, type CommandRunner } from \"../../process.js\";\n\nexport async function baseExists(runner: CommandRunner, root: string, base: string): Promise<boolean> {\n  const fetched = await runner.run([\"git\", \"fetch\", \"--depth=1\", \"origin\", base], { cwd: root });\n  if (fetched.exitCode !== 0) return false;\n  return (await runChecked(runner, [\"git\", \"cat-file\", \"-t\", base], { cwd: root })).trim() === \"commit\";\n}\n"
+    },
+    {
+      "path": "conformance/process.ts",
+      "content": "/**\n * How the conformance checks and the derivation (scripts/pack-data/) run other programs (git; the pinned runtimes):\n * through a runner, so a test can stand one in.\n */\nimport { spawn } from \"node:child_process\";\n\nexport const start = (argv: readonly string[]) => spawn(argv[0]!, argv.slice(1));\n"
+    },
+    {
+      "path": "scripts/pack-data/eslint-expected.mjs",
+      "content": "import { execFileSync } from \"node:child_process\";\nimport { renameVariant } from \"./rename/ecmascript.ts\";\n\nexport const head = (directory) => execFileSync(\"git\", [\"-C\", directory, \"rev-parse\", \"HEAD\"], { encoding: \"utf8\" }).trim();\nexport { renameVariant };\n"
+    },
+    {
+      "path": "conformance/languages/manifest.ts",
+      "content": "import { z } from \"zod\";\n\n/** A directory under scripts/pack-data/runtimes/ that pins a runtime by its manifest. */\nconst runtimeDirectory = z.string().regex(/^[a-z0-9._-]+$/u, \"a directory under scripts/pack-data/runtimes/\");\n\nexport const manifestLabel = (pack: string, tool: string) => `packs/${pack}/upstream/${tool}/gates.yaml`;\n// Child processes go through ../process.ts; never import from \"child_process\" here.\nexport { runtimeDirectory };\n"
+    },
+    {
+      "path": "conformance/languages/runner.ts",
+      "content": "import { readFile } from \"node:fs/promises\";\nimport { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree } from \"../../scripts/s3/pack-fixtures.mjs\";\nimport { LABELS_SUFFIX, SAMPLE_ID, sampleLabelsSchema } from \"../../scripts/samples/format.js\";\nimport { ProcessCommandRunner } from \"../process.js\";\n\nexport const runner = new ProcessCommandRunner();\n"
+    },
+    {
+      "path": "conformance/pack-validation.ts",
+      "content": "import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from \"../scripts/generate/packs/pack-list.js\";\nimport { recordedVerdicts } from \"./languages/recorded-adapter.js\";\nimport { upstreamPath } from \"./languages/upstream-paths.js\";\n\nexport const repository = { type: \"git\", url: \"https://github.com/neralabs/rerail\" };\n"
+    },
+    {
+      "path": "scripts/upstream/bump.ts",
+      "content": "import { RUNTIMES_DIRECTORY } from \"../pack-data/runtimes.js\";\n\nexport const runtimes = RUNTIMES_DIRECTORY;\n"
+    },
+    {
+      "path": "conformance/languages/watch.ts",
+      "content": "import { pathGlob } from \"../../scripts/s3/pack-fixtures.mjs\";\n\nconst note = \"import { x } from \\\"../../scripts/pack-data/derive.js\\\"\";\nexport const label = (pack: string, tool: string) => `packs/${pack}/upstream/${tool}/gates.yaml`;\nexport { pathGlob, note };\n"
+    },
+    {
+      "path": "conformance/languages/options.ts",
+      "content": "import type { SpawnOptions } from \"node:child_process\";\ntype Spawn = typeof import(\"node:child_process\").spawn;\nexport type Options = SpawnOptions;\nexport type { Spawn };\n"
+    },
+    {
+      "path": "conformance/languages/expected-read.ts",
+      "content": "import { readFile } from \"node:fs/promises\";\nimport { fixturesExpectedPath, type LoadedPack } from \"./pack.js\";\nexport async function expected(loaded: LoadedPack, tool: string) {\n  return JSON.parse(await readFile(fixturesExpectedPath(loaded, tool), \"utf8\"));\n}\nexport async function writeSummary(path: string, text: string) {\n  const { writeFile } = await import(\"node:fs/promises\");\n  await writeFile(path, text);\n}\n"
+    },
+    {
+      "path": "conformance/languages/shards.ts",
+      "content": "import { fork, type ChildProcess } from \"node:child_process\";\n\nexport function startWorker(script: string): ChildProcess {\n  return fork(script, [], { serialization: \"advanced\" });\n}\n"
+    }
+  ]
+}

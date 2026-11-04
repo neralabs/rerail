@@ -1,5 +1,20 @@
 # @neralabs/rerail-pack-blade
 
+## 0.1.6 (2026-11-04)
+
+10 rules, 8 of them on by default.
+
+- New rule: `blade-parser-duplicate-condition-expressions` starts in Steer.
+- No longer shipped: `tlint-no-json-directive`.
+- `tlint-no-json-directive` left because it missed `@json` in real templates that embed large script blocks, which the engine reads only in part, though it matches tlint on tlint's own test templates.
+
+## 0.1.5
+
+### Patch Changes
+
+- 211e8b5: Blade pack: ships 10 rules, tlint's 5 lints, 3 stillat/blade-parser validators and 2 Bladestan rules (the Bladestan two start off), now that its Bladestan, tlint and blade-parser tool-packs are gated by the port readiness gates. The other 7 ports stay candidates: the six Bladestan rules' findings never occur in Bladestan's own test templates, so nothing upstream wrote proves them yet, and `blade-parser-duplicate-condition-expressions` is `source-incomplete` on two malformed blade-parser test templates, which blade-parser accepts and Laravel's Blade compiler rejects.
+- 7392aea: README and licence notes: the pack's test data now lives outside the package; no rule changes.
+
 ## 0.1.4
 
 ### Patch Changes

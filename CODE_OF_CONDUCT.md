@@ -1,7 +1,7 @@
 # Code of Conduct
 
-Rerail is built by a small team that ships often, argues about code constantly, and mostly enjoys it. This page is how
-we keep it that way as more people join.
+Rerail is built by a team that ships often, argues about code constantly, and mostly enjoys it. This page is how we
+keep it that way as more people join.
 
 It applies in every project space (the repository, its issues, pull requests and discussions, and any channel the
 project runs) and wherever you speak for the project: an official email address or account, or an event you attend on

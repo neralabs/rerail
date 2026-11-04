@@ -1,0 +1,1960 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-no-unknown-property",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use only attribute names React knows on DOM elements, in its spelling and on elements that support them; React ignores or warns about others.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "dom-element": {
+            "any": [
+              {
+                "kind": "jsx_opening_element"
+              },
+              {
+                "kind": "jsx_self_closing_element"
+              }
+            ],
+            "has": {
+              "field": "name",
+              "kind": "identifier",
+              "regex": "^[a-z][^-]*$",
+              "not": {
+                "regex": "^(?:fbt|fbs)$"
+              },
+              "pattern": "$T"
+            },
+            "not": {
+              "has": {
+                "kind": "jsx_attribute",
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^is$"
+                }
+              }
+            }
+          },
+          "dom-attribute": {
+            "kind": "jsx_attribute",
+            "inside": {
+              "stopBy": "neighbor",
+              "matches": "dom-element"
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "kind": "property_identifier",
+                    "regex": "^data-[^:]*$",
+                    "not": {
+                      "regex": "^(?i:data-xml)"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:aria-activedescendant|aria-atomic|aria-autocomplete|aria-braillelabel|aria-brailleroledescription|aria-busy|aria-checked|aria-colcount|aria-colindex|aria-colindextext|aria-colspan|aria-controls|aria-current|aria-describedby|aria-description|aria-details|aria-disabled|aria-dropeffect|aria-errormessage|aria-expanded|aria-flowto|aria-grabbed|aria-haspopup|aria-hidden|aria-invalid|aria-keyshortcuts|aria-label|aria-labelledby|aria-level|aria-live|aria-modal|aria-multiline|aria-multiselectable|aria-orientation|aria-owns|aria-placeholder|aria-posinset|aria-pressed|aria-readonly|aria-relevant|aria-required|aria-roledescription|aria-rowcount|aria-rowindex|aria-rowindextext|aria-rowspan|aria-selected|aria-setsize|aria-sort|aria-valuemax|aria-valuemin|aria-valuenow|aria-valuetext)$"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-abbr",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:abbr)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:td|th)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <th> and <td>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-charset",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:property)$|^(?i:charset)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:meta)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <meta>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-checked",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:checked)$|^(?i:webkitDirectory)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:input)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <input>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-cross-origin",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:crossOrigin)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:audio|image|img|link|script|video)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <script>, <img>, <video>, <audio>, <link> and <image>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-displaystyle",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:displaystyle)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:math)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <math>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-download",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:download)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:a|area)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <a> and <area>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-fill",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:fill)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:altGlyph|animate|animateColor|animateMotion|animateTransform|circle|ellipse|g|line|marker|mask|path|polygon|polyline|rect|set|svg|symbol|text|textPath|tref|tspan|use)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on SVG shapes, text and animation elements.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-focusable",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:focusable)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:svg)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <svg>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-image-sizes",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:as|imageSizes|imageSrcSet)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:link)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <link>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-view-box",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:viewBox)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:marker|pattern|svg|symbol|view)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <marker>, <pattern>, <svg>, <symbol> and <view>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-align",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:align)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:applet|caption|col|colgroup|hr|iframe|img|table|tbody|td|tfoot|th|thead|tr)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <applet>, <caption>, <col>, <colgroup>, <hr>, <iframe>, <img>, <table>, <tbody>, <td>, <tfoot>, <th>, <thead> and <tr>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-valign",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:valign)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:col|colgroup|tbody|td|tfoot|th|thead|tr)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <tr>, <td>, <th>, <thead>, <tbody>, <tfoot>, <colgroup> and <col>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-no-module",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:noModule)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:script)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <script>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-on-abort",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:controls|controlsList|disableRemotePlayback|loop|muted|onAbort|onCanPlay|onCanPlayThrough|onDurationChange|onEmptied|onEncrypted|onEnded|onLoadStart|onLoadedData|onLoadedMetadata|onPause|onPlay|onPlaying|onProgress|onRateChange|onResize|onSeeked|onSeeking|onStalled|onSuspend|onTimeUpdate|onVolumeChange|onWaiting|preload)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:audio|video)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <audio> and <video>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-on-cancel",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:onCancel|onClose|returnValue)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:dialog)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <dialog>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-on-error",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:onError)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:audio|iframe|img|link|picture|script|source|video)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <audio>, <video>, <img>, <link>, <source>, <script>, <picture> and <iframe>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-on-load",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:onLoad)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:iframe|img|link|object|picture|script|source)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <script>, <img>, <link>, <picture>, <iframe>, <object> and <source>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-auto-picture-in-picture",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:autoPictureInPicture|disablePictureInPicture|playsInline|poster)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:video)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <video>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-allow-full-screen",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?i:allowFullScreen|mozAllowFullScreen|webkitAllowFullScreen)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:iframe|video)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <iframe> and <video>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-scrolling",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:scrolling)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:iframe)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <iframe>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-shadowrootmode",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:shadowrootclonable|shadowrootdelegatesfocus|shadowrootmode|shadowrootserializable)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:template)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <template>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-element-transform-origin",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:transform-origin)$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "any": [
+                {
+                  "kind": "jsx_opening_element"
+                },
+                {
+                  "kind": "jsx_self_closing_element"
+                }
+              ],
+              "not": {
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:rect)$"
+                }
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Remove $N from this <$T>; React supports it only on <rect>.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "html-or-svg-name",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?:accent-height|accept-charset|alignment-baseline|arabic-form|baseline-shift|cap-height|class|clip-path|clip-rule|color-interpolation|color-interpolation-filters|color-profile|color-rendering|crossorigin|dominant-baseline|enable-background|fill-opacity|fill-rule|flood-color|flood-opacity|font-family|font-size|font-size-adjust|font-stretch|font-style|font-variant|font-weight|for|glyph-name|glyph-orientation-horizontal|glyph-orientation-vertical|horiz-adv-x|horiz-origin-x|http-equiv|image-rendering|letter-spacing|lighting-color|marker-end|marker-mid|marker-start|nomodule|overline-position|overline-thickness|paint-order|panose-1|pointer-events|rendering-intent|shape-rendering|stop-color|stop-opacity|strikethrough-position|strikethrough-thickness|stroke-dasharray|stroke-dashoffset|stroke-linecap|stroke-linejoin|stroke-miterlimit|stroke-opacity|stroke-width|text-anchor|text-decoration|text-rendering|underline-position|underline-thickness|unicode-bidi|unicode-range|units-per-em|v-alphabetic|v-hanging|v-ideographic|v-mathematical|vector-effect|vert-adv-y|vert-origin-x|vert-origin-y|word-spacing|writing-mode|x-height|xlink:actuate|xlink:arcrole|xlink:href|xlink:role|xlink:show|xlink:title|xlink:type|xml:base|xml:lang|xml:space)$"
+            }
+          },
+          "transform": {
+            "DASHED": {
+              "replace": {
+                "source": "$N",
+                "replace": ":",
+                "by": "-"
+              }
+            },
+            "CAMEL": {
+              "convert": {
+                "source": "$DASHED",
+                "toCase": "camelCase",
+                "separatedBy": [
+                  "dash"
+                ]
+              }
+            },
+            "S1": {
+              "replace": {
+                "source": "$CAMEL",
+                "replace": "^class$",
+                "by": "className"
+              }
+            },
+            "S2": {
+              "replace": {
+                "source": "$S1",
+                "replace": "^for$",
+                "by": "htmlFor"
+              }
+            },
+            "S3": {
+              "replace": {
+                "source": "$S2",
+                "replace": "^crossorigin$",
+                "by": "crossOrigin"
+              }
+            },
+            "STD": {
+              "replace": {
+                "source": "$S3",
+                "replace": "^nomodule$",
+                "by": "noModule"
+              }
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Rename $N to $STD, the name React uses for this attribute.",
+        "fix": {
+          "template": "$STD",
+          "range": "capture.N"
+        },
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "wrong-case",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N",
+              "regex": "^(?i:accentheight|accept|acceptcharset|accesskey|accumulate|action|additive|alignmentbaseline|allow|alphabetic|alt|amplitude|arabicform|as|ascent|async|attributename|attributetype|autocapitalize|autocomplete|autocorrect|autofocus|autopictureinpicture|autoplay|autosave|azimuth|basefrequency|baselineshift|baseprofile|bbox|begin|bias|border|buffered|by|calcmode|capheight|capture|cellpadding|cellspacing|challenge|children|cite|classid|classname|clip|clippath|clippathunits|cliprule|code|codebase|color|colorinterpolation|colorinterpolationfilters|colorprofile|colorrendering|cols|colspan|content|contenteditable|contentscripttype|contentstyletype|contextmenu|controls|controlslist|coords|crossorigin|csp|cursor|cx|cy|d|dangerouslysetinnerhtml|data|datetime|decelerate|decoding|default|defaultchecked|defaultvalue|defer|descent|diffuseconstant|dir|direction|disabled|disablepictureinpicture|disableremoteplayback|display|divisor|dominantbaseline|draggable|dur|dx|dy|edgemode|elevation|enablebackground|enctype|end|enterkeyhint|exponent|exportparts|fetchpriority|fill|fillopacity|fillrule|filter|filterres|filterunits|floodcolor|floodopacity|fontfamily|fontsize|fontsizeadjust|fontstretch|fontstyle|fontvariant|fontweight|form|formaction|format|formenctype|formmethod|formnovalidate|formtarget|fr|frameborder|from|fx|fy|g1|g2|glyphname|glyphorientationhorizontal|glyphorientationvertical|glyphref|gradienttransform|gradientunits|hanging|headers|height|hidden|high|horizadvx|horizoriginx|href|hreflang|htmlfor|httpequiv|icon|id|ideographic|imagerendering|imagesizes|imagesrcset|importance|in|in2|inert|inputmode|integrity|intercept|ismap|itemid|itemprop|itemref|itemscope|itemtype|k|k1|k2|k3|k4|kernelmatrix|kernelunitlength|kerning|key|keyparams|keypoints|keysplines|keytimes|keytype|kind|label|lang|language|lengthadjust|letterspacing|lightingcolor|limitingconeangle|list|loading|local|loop|low|manifest|marginheight|marginwidth|markerend|markerheight|markermid|markerstart|markerunits|markerwidth|mask|maskcontentunits|maskunits|mathematical|max|maxlength|media|mediagroup|method|min|minlength|mode|multiple|muted|name|nonce|novalidate|numoctaves|offset|onabort|onabortcapture|onanimationend|onanimationendcapture|onanimationiteration|onanimationstart|onanimationstartcapture|onauxclick|onauxclickcapture|onbeforeinput|onbeforeinputcapture|onbeforetoggle|onblur|onblurcapture|oncanplay|oncanplaycapture|oncanplaythrough|oncanplaythroughcapture|onchange|onchangecapture|onclick|onclickcapture|oncompositionend|oncompositionendcapture|oncompositionstart|oncompositionstartcapture|oncompositionupdate|oncompositionupdatecapture|oncontextmenu|oncontextmenucapture|oncopy|oncopycapture|oncut|oncutcapture|ondoubleclick|ondoubleclickcapture|ondrag|ondragcapture|ondragend|ondragendcapture|ondragenter|ondragentercapture|ondragexit|ondragexitcapture|ondragleave|ondragleavecapture|ondragover|ondragovercapture|ondragstart|ondragstartcapture|ondrop|ondropcapture|ondurationchange|ondurationchangecapture|onemptied|onemptiedcapture|onencrypted|onencryptedcapture|onended|onendedcapture|onerror|onerrorcapture|onfocus|onfocuscapture|ongotpointercapture|ongotpointercapturecapture|oninput|oninputcapture|oninvalid|oninvalidcapture|onkeydown|onkeydowncapture|onkeypress|onkeypresscapture|onkeyup|onkeyupcapture|onload|onloadcapture|onloadeddata|onloadeddatacapture|onloadedmetadata|onloadedmetadatacapture|onloadstart|onloadstartcapture|onlostpointercapture|onlostpointercapturecapture|onmousedown|onmousedowncapture|onmouseenter|onmouseleave|onmousemove|onmousemovecapture|onmouseout|onmouseoutcapture|onmouseover|onmouseovercapture|onmouseup|onmouseupcapture|onpaste|onpastecapture|onpause|onpausecapture|onplay|onplaycapture|onplaying|onplayingcapture|onpointercancel|onpointercancelcapture|onpointerdown|onpointerdowncapture|onpointerenter|onpointerentercapture|onpointerleave|onpointerleavecapture|onpointermove|onpointermovecapture|onpointerout|onpointeroutcapture|onpointerover|onpointerovercapture|onpointerup|onpointerupcapture|onprogress|onprogresscapture|onratechange|onratechangecapture|onreset|onresetcapture|onresize|onscroll|onscrollcapture|onseeked|onseekedcapture|onseeking|onseekingcapture|onselect|onselectcapture|onstalled|onstalledcapture|onsubmit|onsubmitcapture|onsuspend|onsuspendcapture|ontimeupdate|ontimeupdatecapture|ontoggle|ontouchcancel|ontouchcancelcapture|ontouchend|ontouchendcapture|ontouchmove|ontouchmovecapture|ontouchstart|ontouchstartcapture|ontransitionend|ontransitionendcapture|onvolumechange|onvolumechangecapture|onwaiting|onwaitingcapture|onwheel|onwheelcapture|opacity|open|operator|optimum|order|orient|orientation|origin|overflow|overlineposition|overlinethickness|paintorder|panose1|part|path|pathlength|pattern|patterncontentunits|patterntransform|patternunits|ping|placeholder|pointerevents|points|pointsatx|pointsaty|pointsatz|popover|popovertarget|popovertargetaction|poster|precedence|preload|preservealpha|preserveaspectratio|primitiveunits|profile|property|r|radiogroup|radius|readonly|ref|referrerpolicy|refx|refy|rel|rendering-intent|repeatcount|repeatdur|required|requiredextensions|requiredfeatures|restart|result|results|reversed|role|rotate|rows|rowspan|rx|ry|sandbox|scale|scope|seamless|security|seed|selected|shape|shaperendering|size|sizes|slope|slot|spacing|span|specularconstant|specularexponent|speed|spellcheck|spreadmethod|src|srcdoc|srclang|srcset|start|startoffset|stddeviation|stemh|stemv|step|stitchtiles|stopcolor|stopopacity|strikethroughposition|strikethroughthickness|string|stroke|strokedasharray|strokedashoffset|strokelinecap|strokelinejoin|strokemiterlimit|strokeopacity|strokewidth|style|summary|suppresscontenteditablewarning|suppresshydrationwarning|surfacescale|systemlanguage|tabindex|tablevalues|target|targetx|targety|textanchor|textdecoration|textlength|textrendering|title|to|transform|transformorigin|translate|type|u1|u2|underlineposition|underlinethickness|unicode|unicodebidi|unicoderange|unitsperem|usemap|valphabetic|value|values|vectoreffect|version|vertadvy|vertoriginx|vertoriginy|vhanging|videographic|viewbox|viewtarget|visibility|vmathematical|width|widths|wmode|wordspacing|wrap|writingmode|x|x1|x2|xchannelselector|xheight|xlinkactuate|xlinkarcrole|xlinkhref|xlinkrole|xlinkshow|xlinktitle|xlinktype|xmlbase|xmllang|xmlns|xmlnsxlink|xmlspace|y|y1|y2|ychannelselector|z|zoomandpan)$"
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?i:popoverTarget|popoverTargetAction)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?i:allowFullScreen|charset|mozAllowFullScreen|webkitAllowFullScreen|webkitDirectory)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:abbr|align|allowFullScreen|as|autoPictureInPicture|charset|checked|controls|controlsList|crossOrigin|disablePictureInPicture|disableRemotePlayback|displaystyle|download|fill|focusable|imageSizes|imageSrcSet|loop|mozAllowFullScreen|muted|noModule|onAbort|onCanPlay|onCanPlayThrough|onCancel|onClose|onDurationChange|onEmptied|onEncrypted|onEnded|onError|onLoad|onLoadStart|onLoadedData|onLoadedMetadata|onPause|onPlay|onPlaying|onProgress|onRateChange|onResize|onSeeked|onSeeking|onStalled|onSuspend|onTimeUpdate|onVolumeChange|onWaiting|playsInline|poster|preload|property|returnValue|scrolling|shadowrootclonable|shadowrootdelegatesfocus|shadowrootmode|shadowrootserializable|transform-origin|valign|viewBox|webkitAllowFullScreen|webkitDirectory)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:accent-height|accept-charset|alignment-baseline|arabic-form|baseline-shift|cap-height|class|clip-path|clip-rule|color-interpolation|color-interpolation-filters|color-profile|color-rendering|crossorigin|dominant-baseline|enable-background|fill-opacity|fill-rule|flood-color|flood-opacity|font-family|font-size|font-size-adjust|font-stretch|font-style|font-variant|font-weight|for|glyph-name|glyph-orientation-horizontal|glyph-orientation-vertical|horiz-adv-x|horiz-origin-x|http-equiv|image-rendering|letter-spacing|lighting-color|marker-end|marker-mid|marker-start|nomodule|overline-position|overline-thickness|paint-order|panose-1|pointer-events|rendering-intent|shape-rendering|stop-color|stop-opacity|strikethrough-position|strikethrough-thickness|stroke-dasharray|stroke-dashoffset|stroke-linecap|stroke-linejoin|stroke-miterlimit|stroke-opacity|stroke-width|text-anchor|text-decoration|text-rendering|underline-position|underline-thickness|unicode-bidi|unicode-range|units-per-em|v-alphabetic|v-hanging|v-ideographic|v-mathematical|vector-effect|vert-adv-y|vert-origin-x|vert-origin-y|word-spacing|writing-mode|x-height|xlink:actuate|xlink:arcrole|xlink:href|xlink:role|xlink:show|xlink:title|xlink:type|xml:base|xml:lang|xml:space)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:accentHeight|accept|acceptCharset|accessKey|accumulate|action|additive|alignmentBaseline|allow|alphabetic|alt|amplitude|arabicForm|as|ascent|async|attributeName|attributeType|autoCapitalize|autoComplete|autoCorrect|autoFocus|autoPictureInPicture|autoPlay|autoSave|azimuth|baseFrequency|baseProfile|baselineShift|bbox|begin|bias|border|buffered|by|calcMode|capHeight|capture|cellPadding|cellSpacing|challenge|children|cite|classID|className|clip|clipPath|clipPathUnits|clipRule|code|codeBase|colSpan|color|colorInterpolation|colorInterpolationFilters|colorProfile|colorRendering|cols|content|contentEditable|contentScriptType|contentStyleType|contextMenu|controls|controlsList|coords|crossOrigin|csp|cursor|cx|cy|d|dangerouslySetInnerHTML|data|dateTime|decelerate|decoding|default|defaultChecked|defaultValue|defer|descent|diffuseConstant|dir|direction|disablePictureInPicture|disableRemotePlayback|disabled|display|divisor|dominantBaseline|draggable|dur|dx|dy|edgeMode|elevation|enableBackground|encType|end|enterKeyHint|exponent|exportParts|fetchPriority|fill|fillOpacity|fillRule|filter|filterRes|filterUnits|floodColor|floodOpacity|fontFamily|fontSize|fontSizeAdjust|fontStretch|fontStyle|fontVariant|fontWeight|form|formAction|formEncType|formMethod|formNoValidate|formTarget|format|fr|frameBorder|from|fx|fy|g1|g2|glyphName|glyphOrientationHorizontal|glyphOrientationVertical|glyphRef|gradientTransform|gradientUnits|hanging|headers|height|hidden|high|horizAdvX|horizOriginX|href|hrefLang|htmlFor|httpEquiv|icon|id|ideographic|imageRendering|imageSizes|imageSrcSet|importance|in|in2|inert|inputMode|integrity|intercept|isMap|itemID|itemProp|itemRef|itemScope|itemType|k|k1|k2|k3|k4|kernelMatrix|kernelUnitLength|kerning|key|keyParams|keyPoints|keySplines|keyTimes|keyType|kind|label|lang|language|lengthAdjust|letterSpacing|lightingColor|limitingConeAngle|list|loading|local|loop|low|manifest|marginHeight|marginWidth|markerEnd|markerHeight|markerMid|markerStart|markerUnits|markerWidth|mask|maskContentUnits|maskUnits|mathematical|max|maxLength|media|mediaGroup|method|min|minLength|mode|multiple|muted|name|noValidate|nonce|numOctaves|offset|onAbort|onAbortCapture|onAnimationEnd|onAnimationEndCapture|onAnimationIteration|onAnimationStart|onAnimationStartCapture|onAuxClick|onAuxClickCapture|onBeforeInput|onBeforeInputCapture|onBeforeToggle|onBlur|onBlurCapture|onCanPlay|onCanPlayCapture|onCanPlayThrough|onCanPlayThroughCapture|onChange|onChangeCapture|onClick|onClickCapture|onCompositionEnd|onCompositionEndCapture|onCompositionStart|onCompositionStartCapture|onCompositionUpdate|onCompositionUpdateCapture|onContextMenu|onContextMenuCapture|onCopy|onCopyCapture|onCut|onCutCapture|onDoubleClick|onDoubleClickCapture|onDrag|onDragCapture|onDragEnd|onDragEndCapture|onDragEnter|onDragEnterCapture|onDragExit|onDragExitCapture|onDragLeave|onDragLeaveCapture|onDragOver|onDragOverCapture|onDragStart|onDragStartCapture|onDrop|onDropCapture|onDurationChange|onDurationChangeCapture|onEmptied|onEmptiedCapture|onEncrypted|onEncryptedCapture|onEnded|onEndedCapture|onError|onErrorCapture|onFocus|onFocusCapture|onGotPointerCapture|onGotPointerCaptureCapture|onInput|onInputCapture|onInvalid|onInvalidCapture|onKeyDown|onKeyDownCapture|onKeyPress|onKeyPressCapture|onKeyUp|onKeyUpCapture|onLoad|onLoadCapture|onLoadStart|onLoadStartCapture|onLoadedData|onLoadedDataCapture|onLoadedMetadata|onLoadedMetadataCapture|onLostPointerCapture|onLostPointerCaptureCapture|onMouseDown|onMouseDownCapture|onMouseEnter|onMouseLeave|onMouseMove|onMouseMoveCapture|onMouseOut|onMouseOutCapture|onMouseOver|onMouseOverCapture|onMouseUp|onMouseUpCapture|onPaste|onPasteCapture|onPause|onPauseCapture|onPlay|onPlayCapture|onPlaying|onPlayingCapture|onPointerCancel|onPointerCancelCapture|onPointerDown|onPointerDownCapture|onPointerEnter|onPointerEnterCapture|onPointerLeave|onPointerLeaveCapture|onPointerMove|onPointerMoveCapture|onPointerOut|onPointerOutCapture|onPointerOver|onPointerOverCapture|onPointerUp|onPointerUpCapture|onProgress|onProgressCapture|onRateChange|onRateChangeCapture|onReset|onResetCapture|onResize|onScroll|onScrollCapture|onSeeked|onSeekedCapture|onSeeking|onSeekingCapture|onSelect|onSelectCapture|onStalled|onStalledCapture|onSubmit|onSubmitCapture|onSuspend|onSuspendCapture|onTimeUpdate|onTimeUpdateCapture|onToggle|onTouchCancel|onTouchCancelCapture|onTouchEnd|onTouchEndCapture|onTouchMove|onTouchMoveCapture|onTouchStart|onTouchStartCapture|onTransitionEnd|onTransitionEndCapture|onVolumeChange|onVolumeChangeCapture|onWaiting|onWaitingCapture|onWheel|onWheelCapture|opacity|open|operator|optimum|order|orient|orientation|origin|overflow|overlinePosition|overlineThickness|paintOrder|panose1|part|path|pathLength|pattern|patternContentUnits|patternTransform|patternUnits|ping|placeholder|pointerEvents|points|pointsAtX|pointsAtY|pointsAtZ|popover|popoverTarget|popoverTargetAction|poster|precedence|preload|preserveAlpha|preserveAspectRatio|primitiveUnits|profile|property|r|radioGroup|radius|readOnly|ref|refX|refY|referrerPolicy|rel|repeatCount|repeatDur|required|requiredExtensions|requiredFeatures|restart|result|results|reversed|role|rotate|rowSpan|rows|rx|ry|sandbox|scale|scope|seamless|security|seed|selected|shape|shapeRendering|size|sizes|slope|slot|spacing|span|specularConstant|specularExponent|speed|spellCheck|spreadMethod|src|srcDoc|srcLang|srcSet|start|startOffset|stdDeviation|stemh|stemv|step|stitchTiles|stopColor|stopOpacity|strikethroughPosition|strikethroughThickness|string|stroke|strokeDasharray|strokeDashoffset|strokeLinecap|strokeLinejoin|strokeMiterlimit|strokeOpacity|strokeWidth|style|summary|suppressContentEditableWarning|suppressHydrationWarning|surfaceScale|systemLanguage|tabIndex|tableValues|target|targetX|targetY|textAnchor|textDecoration|textLength|textRendering|title|to|transform|transformOrigin|translate|type|u1|u2|underlinePosition|underlineThickness|unicode|unicodeBidi|unicodeRange|unitsPerEm|useMap|vAlphabetic|vHanging|vIdeographic|vMathematical|value|values|vectorEffect|version|vertAdvY|vertOriginX|vertOriginY|viewBox|viewTarget|visibility|width|widths|wmode|wordSpacing|wrap|writingMode|x|x1|x2|xChannelSelector|xHeight|xlinkActuate|xlinkArcrole|xlinkHref|xlinkRole|xlinkShow|xlinkTitle|xlinkType|xmlBase|xmlLang|xmlSpace|xmlns|xmlnsXlink|y|y1|y2|yChannelSelector|z|zoomAndPan)$"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Rename $N to the exact letter case React uses for this DOM property, such as tabIndex for tabindex or onClick for onclick.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unknown",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "matches": "dom-attribute",
+            "has": {
+              "any": [
+                {
+                  "kind": "property_identifier"
+                },
+                {
+                  "kind": "jsx_namespace_name"
+                }
+              ],
+              "pattern": "$N"
+            },
+            "all": [
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?i:popoverTarget|popoverTargetAction)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?i:allowFullScreen|charset|mozAllowFullScreen|webkitAllowFullScreen|webkitDirectory)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:abbr|align|allowFullScreen|as|autoPictureInPicture|charset|checked|controls|controlsList|crossOrigin|disablePictureInPicture|disableRemotePlayback|displaystyle|download|fill|focusable|imageSizes|imageSrcSet|loop|mozAllowFullScreen|muted|noModule|onAbort|onCanPlay|onCanPlayThrough|onCancel|onClose|onDurationChange|onEmptied|onEncrypted|onEnded|onError|onLoad|onLoadStart|onLoadedData|onLoadedMetadata|onPause|onPlay|onPlaying|onProgress|onRateChange|onResize|onSeeked|onSeeking|onStalled|onSuspend|onTimeUpdate|onVolumeChange|onWaiting|playsInline|poster|preload|property|returnValue|scrolling|shadowrootclonable|shadowrootdelegatesfocus|shadowrootmode|shadowrootserializable|transform-origin|valign|viewBox|webkitAllowFullScreen|webkitDirectory)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:accent-height|accept-charset|alignment-baseline|arabic-form|baseline-shift|cap-height|class|clip-path|clip-rule|color-interpolation|color-interpolation-filters|color-profile|color-rendering|crossorigin|dominant-baseline|enable-background|fill-opacity|fill-rule|flood-color|flood-opacity|font-family|font-size|font-size-adjust|font-stretch|font-style|font-variant|font-weight|for|glyph-name|glyph-orientation-horizontal|glyph-orientation-vertical|horiz-adv-x|horiz-origin-x|http-equiv|image-rendering|letter-spacing|lighting-color|marker-end|marker-mid|marker-start|nomodule|overline-position|overline-thickness|paint-order|panose-1|pointer-events|rendering-intent|shape-rendering|stop-color|stop-opacity|strikethrough-position|strikethrough-thickness|stroke-dasharray|stroke-dashoffset|stroke-linecap|stroke-linejoin|stroke-miterlimit|stroke-opacity|stroke-width|text-anchor|text-decoration|text-rendering|underline-position|underline-thickness|unicode-bidi|unicode-range|units-per-em|v-alphabetic|v-hanging|v-ideographic|v-mathematical|vector-effect|vert-adv-y|vert-origin-x|vert-origin-y|word-spacing|writing-mode|x-height|xlink:actuate|xlink:arcrole|xlink:href|xlink:role|xlink:show|xlink:title|xlink:type|xml:base|xml:lang|xml:space)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?:accentHeight|accept|acceptCharset|accessKey|accumulate|action|additive|alignmentBaseline|allow|alphabetic|alt|amplitude|arabicForm|as|ascent|async|attributeName|attributeType|autoCapitalize|autoComplete|autoCorrect|autoFocus|autoPictureInPicture|autoPlay|autoSave|azimuth|baseFrequency|baseProfile|baselineShift|bbox|begin|bias|border|buffered|by|calcMode|capHeight|capture|cellPadding|cellSpacing|challenge|children|cite|classID|className|clip|clipPath|clipPathUnits|clipRule|code|codeBase|colSpan|color|colorInterpolation|colorInterpolationFilters|colorProfile|colorRendering|cols|content|contentEditable|contentScriptType|contentStyleType|contextMenu|controls|controlsList|coords|crossOrigin|csp|cursor|cx|cy|d|dangerouslySetInnerHTML|data|dateTime|decelerate|decoding|default|defaultChecked|defaultValue|defer|descent|diffuseConstant|dir|direction|disablePictureInPicture|disableRemotePlayback|disabled|display|divisor|dominantBaseline|draggable|dur|dx|dy|edgeMode|elevation|enableBackground|encType|end|enterKeyHint|exponent|exportParts|fetchPriority|fill|fillOpacity|fillRule|filter|filterRes|filterUnits|floodColor|floodOpacity|fontFamily|fontSize|fontSizeAdjust|fontStretch|fontStyle|fontVariant|fontWeight|form|formAction|formEncType|formMethod|formNoValidate|formTarget|format|fr|frameBorder|from|fx|fy|g1|g2|glyphName|glyphOrientationHorizontal|glyphOrientationVertical|glyphRef|gradientTransform|gradientUnits|hanging|headers|height|hidden|high|horizAdvX|horizOriginX|href|hrefLang|htmlFor|httpEquiv|icon|id|ideographic|imageRendering|imageSizes|imageSrcSet|importance|in|in2|inert|inputMode|integrity|intercept|isMap|itemID|itemProp|itemRef|itemScope|itemType|k|k1|k2|k3|k4|kernelMatrix|kernelUnitLength|kerning|key|keyParams|keyPoints|keySplines|keyTimes|keyType|kind|label|lang|language|lengthAdjust|letterSpacing|lightingColor|limitingConeAngle|list|loading|local|loop|low|manifest|marginHeight|marginWidth|markerEnd|markerHeight|markerMid|markerStart|markerUnits|markerWidth|mask|maskContentUnits|maskUnits|mathematical|max|maxLength|media|mediaGroup|method|min|minLength|mode|multiple|muted|name|noValidate|nonce|numOctaves|offset|onAbort|onAbortCapture|onAnimationEnd|onAnimationEndCapture|onAnimationIteration|onAnimationStart|onAnimationStartCapture|onAuxClick|onAuxClickCapture|onBeforeInput|onBeforeInputCapture|onBeforeToggle|onBlur|onBlurCapture|onCanPlay|onCanPlayCapture|onCanPlayThrough|onCanPlayThroughCapture|onChange|onChangeCapture|onClick|onClickCapture|onCompositionEnd|onCompositionEndCapture|onCompositionStart|onCompositionStartCapture|onCompositionUpdate|onCompositionUpdateCapture|onContextMenu|onContextMenuCapture|onCopy|onCopyCapture|onCut|onCutCapture|onDoubleClick|onDoubleClickCapture|onDrag|onDragCapture|onDragEnd|onDragEndCapture|onDragEnter|onDragEnterCapture|onDragExit|onDragExitCapture|onDragLeave|onDragLeaveCapture|onDragOver|onDragOverCapture|onDragStart|onDragStartCapture|onDrop|onDropCapture|onDurationChange|onDurationChangeCapture|onEmptied|onEmptiedCapture|onEncrypted|onEncryptedCapture|onEnded|onEndedCapture|onError|onErrorCapture|onFocus|onFocusCapture|onGotPointerCapture|onGotPointerCaptureCapture|onInput|onInputCapture|onInvalid|onInvalidCapture|onKeyDown|onKeyDownCapture|onKeyPress|onKeyPressCapture|onKeyUp|onKeyUpCapture|onLoad|onLoadCapture|onLoadStart|onLoadStartCapture|onLoadedData|onLoadedDataCapture|onLoadedMetadata|onLoadedMetadataCapture|onLostPointerCapture|onLostPointerCaptureCapture|onMouseDown|onMouseDownCapture|onMouseEnter|onMouseLeave|onMouseMove|onMouseMoveCapture|onMouseOut|onMouseOutCapture|onMouseOver|onMouseOverCapture|onMouseUp|onMouseUpCapture|onPaste|onPasteCapture|onPause|onPauseCapture|onPlay|onPlayCapture|onPlaying|onPlayingCapture|onPointerCancel|onPointerCancelCapture|onPointerDown|onPointerDownCapture|onPointerEnter|onPointerEnterCapture|onPointerLeave|onPointerLeaveCapture|onPointerMove|onPointerMoveCapture|onPointerOut|onPointerOutCapture|onPointerOver|onPointerOverCapture|onPointerUp|onPointerUpCapture|onProgress|onProgressCapture|onRateChange|onRateChangeCapture|onReset|onResetCapture|onResize|onScroll|onScrollCapture|onSeeked|onSeekedCapture|onSeeking|onSeekingCapture|onSelect|onSelectCapture|onStalled|onStalledCapture|onSubmit|onSubmitCapture|onSuspend|onSuspendCapture|onTimeUpdate|onTimeUpdateCapture|onToggle|onTouchCancel|onTouchCancelCapture|onTouchEnd|onTouchEndCapture|onTouchMove|onTouchMoveCapture|onTouchStart|onTouchStartCapture|onTransitionEnd|onTransitionEndCapture|onVolumeChange|onVolumeChangeCapture|onWaiting|onWaitingCapture|onWheel|onWheelCapture|opacity|open|operator|optimum|order|orient|orientation|origin|overflow|overlinePosition|overlineThickness|paintOrder|panose1|part|path|pathLength|pattern|patternContentUnits|patternTransform|patternUnits|ping|placeholder|pointerEvents|points|pointsAtX|pointsAtY|pointsAtZ|popover|popoverTarget|popoverTargetAction|poster|precedence|preload|preserveAlpha|preserveAspectRatio|primitiveUnits|profile|property|r|radioGroup|radius|readOnly|ref|refX|refY|referrerPolicy|rel|repeatCount|repeatDur|required|requiredExtensions|requiredFeatures|restart|result|results|reversed|role|rotate|rowSpan|rows|rx|ry|sandbox|scale|scope|seamless|security|seed|selected|shape|shapeRendering|size|sizes|slope|slot|spacing|span|specularConstant|specularExponent|speed|spellCheck|spreadMethod|src|srcDoc|srcLang|srcSet|start|startOffset|stdDeviation|stemh|stemv|step|stitchTiles|stopColor|stopOpacity|strikethroughPosition|strikethroughThickness|string|stroke|strokeDasharray|strokeDashoffset|strokeLinecap|strokeLinejoin|strokeMiterlimit|strokeOpacity|strokeWidth|style|summary|suppressContentEditableWarning|suppressHydrationWarning|surfaceScale|systemLanguage|tabIndex|tableValues|target|targetX|targetY|textAnchor|textDecoration|textLength|textRendering|title|to|transform|transformOrigin|translate|type|u1|u2|underlinePosition|underlineThickness|unicode|unicodeBidi|unicodeRange|unitsPerEm|useMap|vAlphabetic|vHanging|vIdeographic|vMathematical|value|values|vectorEffect|version|vertAdvY|vertOriginX|vertOriginY|viewBox|viewTarget|visibility|width|widths|wmode|wordSpacing|wrap|writingMode|x|x1|x2|xChannelSelector|xHeight|xlinkActuate|xlinkArcrole|xlinkHref|xlinkRole|xlinkShow|xlinkTitle|xlinkType|xmlBase|xmlLang|xmlSpace|xmlns|xmlnsXlink|y|y1|y2|yChannelSelector|z|zoomAndPan)$"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "any": [
+                      {
+                        "kind": "property_identifier"
+                      },
+                      {
+                        "kind": "jsx_namespace_name"
+                      }
+                    ],
+                    "regex": "^(?i:accentheight|accept|acceptcharset|accesskey|accumulate|action|additive|alignmentbaseline|allow|alphabetic|alt|amplitude|arabicform|as|ascent|async|attributename|attributetype|autocapitalize|autocomplete|autocorrect|autofocus|autopictureinpicture|autoplay|autosave|azimuth|basefrequency|baselineshift|baseprofile|bbox|begin|bias|border|buffered|by|calcmode|capheight|capture|cellpadding|cellspacing|challenge|children|cite|classid|classname|clip|clippath|clippathunits|cliprule|code|codebase|color|colorinterpolation|colorinterpolationfilters|colorprofile|colorrendering|cols|colspan|content|contenteditable|contentscripttype|contentstyletype|contextmenu|controls|controlslist|coords|crossorigin|csp|cursor|cx|cy|d|dangerouslysetinnerhtml|data|datetime|decelerate|decoding|default|defaultchecked|defaultvalue|defer|descent|diffuseconstant|dir|direction|disabled|disablepictureinpicture|disableremoteplayback|display|divisor|dominantbaseline|draggable|dur|dx|dy|edgemode|elevation|enablebackground|enctype|end|enterkeyhint|exponent|exportparts|fetchpriority|fill|fillopacity|fillrule|filter|filterres|filterunits|floodcolor|floodopacity|fontfamily|fontsize|fontsizeadjust|fontstretch|fontstyle|fontvariant|fontweight|form|formaction|format|formenctype|formmethod|formnovalidate|formtarget|fr|frameborder|from|fx|fy|g1|g2|glyphname|glyphorientationhorizontal|glyphorientationvertical|glyphref|gradienttransform|gradientunits|hanging|headers|height|hidden|high|horizadvx|horizoriginx|href|hreflang|htmlfor|httpequiv|icon|id|ideographic|imagerendering|imagesizes|imagesrcset|importance|in|in2|inert|inputmode|integrity|intercept|ismap|itemid|itemprop|itemref|itemscope|itemtype|k|k1|k2|k3|k4|kernelmatrix|kernelunitlength|kerning|key|keyparams|keypoints|keysplines|keytimes|keytype|kind|label|lang|language|lengthadjust|letterspacing|lightingcolor|limitingconeangle|list|loading|local|loop|low|manifest|marginheight|marginwidth|markerend|markerheight|markermid|markerstart|markerunits|markerwidth|mask|maskcontentunits|maskunits|mathematical|max|maxlength|media|mediagroup|method|min|minlength|mode|multiple|muted|name|nonce|novalidate|numoctaves|offset|onabort|onabortcapture|onanimationend|onanimationendcapture|onanimationiteration|onanimationstart|onanimationstartcapture|onauxclick|onauxclickcapture|onbeforeinput|onbeforeinputcapture|onbeforetoggle|onblur|onblurcapture|oncanplay|oncanplaycapture|oncanplaythrough|oncanplaythroughcapture|onchange|onchangecapture|onclick|onclickcapture|oncompositionend|oncompositionendcapture|oncompositionstart|oncompositionstartcapture|oncompositionupdate|oncompositionupdatecapture|oncontextmenu|oncontextmenucapture|oncopy|oncopycapture|oncut|oncutcapture|ondoubleclick|ondoubleclickcapture|ondrag|ondragcapture|ondragend|ondragendcapture|ondragenter|ondragentercapture|ondragexit|ondragexitcapture|ondragleave|ondragleavecapture|ondragover|ondragovercapture|ondragstart|ondragstartcapture|ondrop|ondropcapture|ondurationchange|ondurationchangecapture|onemptied|onemptiedcapture|onencrypted|onencryptedcapture|onended|onendedcapture|onerror|onerrorcapture|onfocus|onfocuscapture|ongotpointercapture|ongotpointercapturecapture|oninput|oninputcapture|oninvalid|oninvalidcapture|onkeydown|onkeydowncapture|onkeypress|onkeypresscapture|onkeyup|onkeyupcapture|onload|onloadcapture|onloadeddata|onloadeddatacapture|onloadedmetadata|onloadedmetadatacapture|onloadstart|onloadstartcapture|onlostpointercapture|onlostpointercapturecapture|onmousedown|onmousedowncapture|onmouseenter|onmouseleave|onmousemove|onmousemovecapture|onmouseout|onmouseoutcapture|onmouseover|onmouseovercapture|onmouseup|onmouseupcapture|onpaste|onpastecapture|onpause|onpausecapture|onplay|onplaycapture|onplaying|onplayingcapture|onpointercancel|onpointercancelcapture|onpointerdown|onpointerdowncapture|onpointerenter|onpointerentercapture|onpointerleave|onpointerleavecapture|onpointermove|onpointermovecapture|onpointerout|onpointeroutcapture|onpointerover|onpointerovercapture|onpointerup|onpointerupcapture|onprogress|onprogresscapture|onratechange|onratechangecapture|onreset|onresetcapture|onresize|onscroll|onscrollcapture|onseeked|onseekedcapture|onseeking|onseekingcapture|onselect|onselectcapture|onstalled|onstalledcapture|onsubmit|onsubmitcapture|onsuspend|onsuspendcapture|ontimeupdate|ontimeupdatecapture|ontoggle|ontouchcancel|ontouchcancelcapture|ontouchend|ontouchendcapture|ontouchmove|ontouchmovecapture|ontouchstart|ontouchstartcapture|ontransitionend|ontransitionendcapture|onvolumechange|onvolumechangecapture|onwaiting|onwaitingcapture|onwheel|onwheelcapture|opacity|open|operator|optimum|order|orient|orientation|origin|overflow|overlineposition|overlinethickness|paintorder|panose1|part|path|pathlength|pattern|patterncontentunits|patterntransform|patternunits|ping|placeholder|pointerevents|points|pointsatx|pointsaty|pointsatz|popover|popovertarget|popovertargetaction|poster|precedence|preload|preservealpha|preserveaspectratio|primitiveunits|profile|property|r|radiogroup|radius|readonly|ref|referrerpolicy|refx|refy|rel|rendering-intent|repeatcount|repeatdur|required|requiredextensions|requiredfeatures|restart|result|results|reversed|role|rotate|rows|rowspan|rx|ry|sandbox|scale|scope|seamless|security|seed|selected|shape|shaperendering|size|sizes|slope|slot|spacing|span|specularconstant|specularexponent|speed|spellcheck|spreadmethod|src|srcdoc|srclang|srcset|start|startoffset|stddeviation|stemh|stemv|step|stitchtiles|stopcolor|stopopacity|strikethroughposition|strikethroughthickness|string|stroke|strokedasharray|strokedashoffset|strokelinecap|strokelinejoin|strokemiterlimit|strokeopacity|strokewidth|style|summary|suppresscontenteditablewarning|suppresshydrationwarning|surfacescale|systemlanguage|tabindex|tablevalues|target|targetx|targety|textanchor|textdecoration|textlength|textrendering|title|to|transform|transformorigin|translate|type|u1|u2|underlineposition|underlinethickness|unicode|unicodebidi|unicoderange|unitsperem|usemap|valphabetic|value|values|vectoreffect|version|vertadvy|vertoriginx|vertoriginy|vhanging|videographic|viewbox|viewtarget|visibility|vmathematical|width|widths|wmode|wordspacing|wrap|writingmode|x|x1|x2|xchannelselector|xheight|xlinkactuate|xlinkarcrole|xlinkhref|xlinkrole|xlinkshow|xlinktitle|xlinktype|xmlbase|xmllang|xmlns|xmlnsxlink|xmlspace|y|y1|y2|ychannelselector|z|zoomandpan)$"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/no-unknown-property",
+        "message": "Rename $N to an attribute React supports on DOM elements, move custom values to a data-* attribute, or remove it.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/no-unknown-property"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-unknown-property"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/suspicious/noUnknownAttribute"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

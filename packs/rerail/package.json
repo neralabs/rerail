@@ -1,7 +1,8 @@
 {
   "name": "@neralabs/rerail-pack-rerail",
   "version": "0.1.0",
-  "description": "Rerail rule pack: steers the wording of rule pack messages in repositories that hold Rerail rule packs.",
+  "private": true,
+  "description": "Rerail rule pack: steers work in the Rerail repository toward its own architecture and conventions.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -22,8 +23,5 @@
     "@neralabs/rerail": {
       "optional": true
     }
-  },
-  "publishConfig": {
-    "access": "restricted"
   }
 }

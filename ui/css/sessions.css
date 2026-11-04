@@ -65,36 +65,31 @@ body[data-panel="open"] .sess > aside{display:none}
 .sess .stale::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted-foreground);opacity:.5}
 .shead{padding:16px 18px 8px}
 .shead .l1{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
-.shead .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header-primary)}
+.shead .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header)}
 .shead .l1 h2[hidden]{display:none}
 /* List hidden: the session heading is the picker; a hidden measuring span gives the select the title's own width. */
 .shead .l1 h2.hpick{display:flex;max-width:100%}
 .hpick .sel{position:relative;display:inline-grid;grid-template-columns:minmax(0,auto);min-width:0;max-width:100%;margin:-3px 0 -3px -9px;border-radius:999px}
 .hpick .sel:hover,.hpick .sel:focus-within{background:var(--subtle)}
 .hpick .m{grid-area:1/1;visibility:hidden;white-space:nowrap;overflow:hidden;min-width:0;padding:3px 34px 3px 9px;font:inherit}
-.hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header-primary);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;transform:rotate(90deg);opacity:.7;pointer-events:none}
 .shead .l3{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:12.5px;color:var(--muted-foreground)}
 .shead .l3 > span + span::before{content:"·";margin:0 8px;opacity:.6}
 .shead .l3 .acts{margin-left:auto;display:inline-flex;gap:8px;padding-left:12px}
 .shead .l3 .acts::before{content:none}
-.pask.sresume{position:relative;margin-top:16px;border:0;border-radius:var(--radius-xl);background:var(--resume-bg);padding:20px 18px}
+.pask.sresume{position:relative;margin-top:16px;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:20px 18px}
+.pask.sresume .cmd{background:var(--card)}
 .pask.sresume .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin:0 0 12px;padding-right:32px}
 .pask.sresume > .x{position:absolute;top:10px;right:10px;width:28px;height:28px;border-radius:6px;display:grid;place-items:center;color:var(--muted-foreground)}
 .pask.sresume > .x:hover{background:var(--subtle);color:var(--foreground)}
 .pask textarea.one{min-height:0;height:54px}
-.tfilter{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
-.tfilter .tsum{font-size:13px;color:var(--muted-foreground);margin-right:6px;white-space:nowrap}
-.tfilter .tsum b{color:var(--foreground);font-weight:600}
-.tfilter .tchips{display:flex;flex-wrap:wrap;gap:6px}
+/* The controls row: the rule dropdown, then Show all events at the right end. */
+.tfilter{display:flex;flex-wrap:wrap;gap:6px 12px;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
+.tfilter .srule select{max-width:min(360px,50vw);overflow:hidden;text-overflow:ellipsis}
 .tfilter .tall{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap}
 .tfilter .tall input{width:15px;height:15px;margin:0;accent-color:var(--brand)}
-.tfilter .chip{display:inline-flex;align-items:center;gap:6px}
-.tfilter .chip .n{font-size:11px;font-weight:600;color:var(--muted-foreground)}
-.tfilter .chip[aria-pressed="true"] .n{color:inherit;opacity:.85}
-.tfilter .chip.bad:not([aria-pressed="true"]) .n{color:var(--danger-foreground)}
-.tfilter .chip[disabled]{opacity:.5;cursor:default}
 .ssearch{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:6px 9px;margin-bottom:8px}
 .ssearch input{flex:1;border:0;background:none;font:inherit;font-size:13px;color:inherit;min-width:0}
 .ssearch input::placeholder{color:var(--muted-foreground)}
@@ -109,7 +104,7 @@ body[data-panel="open"] .sess > aside{display:none}
 .tlwrap{display:grid;grid-template-columns:28px minmax(0,1fr);position:relative}
 .rail{grid-column:1;position:relative}
 .rail .line{position:absolute;left:13px;top:0;bottom:0;width:2px;background:var(--border)}
-.rail .tick{position:absolute;left:8px;width:12px;height:12px;border-radius:50%;background:var(--steered);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steered);cursor:pointer;transform:translateY(-6px)}
+.rail .tick{position:absolute;left:8px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}
 .rail .tick:hover{transform:translateY(-6px) scale(1.25)}
 .tl{grid-column:2;padding:6px 16px 16px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .tl .turns{display:flex;flex-direction:column;gap:4px}
@@ -122,8 +117,8 @@ body[data-panel="open"] .sess > aside{display:none}
 .msgrow.u .msg{background:var(--brand-subtle);border-radius:var(--radius-lg);padding:5px 10px;font-weight:500;margin:-1px 0}
 .msgrow .mt{font-family:var(--font-mono);font-size:11px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;padding-right:8px}
 .corr{margin:6px 0 6px 58px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}
-.corr[data-outcome="logged"]{background:var(--logged-subtle)}
-.corr[data-outcome="steered"]{background:var(--steered-subtle)}
+.corr[data-outcome="logged"]{background:var(--log-bg)}
+.corr[data-outcome="steered"]{background:var(--steer-bg)}
 .corr.hit{animation:hit 1.2s ease-out}
 @keyframes hit{0%{box-shadow:0 0 0 6px var(--brand-subtle-hover)}100%{box-shadow:0 0 0 0 transparent}}
 .corr .ch{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--muted-foreground)}
@@ -134,8 +129,8 @@ body[data-panel="open"] .sess > aside{display:none}
 .beats dt.nera{color:var(--brand-foreground)}
 .beats dd{margin:0}
 .evt{margin-left:58px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);margin-top:4px;overflow:hidden}
-.evt.failed{border-color:var(--danger-foreground)}
-.evt.lvl-outside{border-color:var(--warning-foreground)}
+.evt.failed{border-color:var(--fail-border)}
+.evt.lvl-outside{border-color:var(--outside-border)}
 .evt .eh{display:grid;grid-template-columns:20px auto minmax(0,1fr) auto;gap:0 8px;align-items:center;width:100%;padding:5px 8px;text-align:left}
 .evt .eh:hover{background:var(--subtle)}
 .evt .eh svg{transition:transform .15s;color:var(--muted-foreground)}

@@ -1,11 +1,14 @@
 //! What the engine reads of an ECMA file's nearest `package.json` (a file's `package`): its
-//! `type`, `bin` targets, configured Node range and dependency names. Hosts and the native
-//! repository index read manifests on disk (`Manifests`); workspaces and stateless snapshots read
-//! the `package.json` entries of their own file set (`manifest_in`). Both go through
-//! `Manifest::parse`, so they cannot disagree.
+//! `type`, `bin` targets, configured Node range, dependency names, `private`, and which of its
+//! files npm publishes (its `files`, `main` and the folder's `.npmignore` or `.gitignore`).
+//! Hosts and the native repository index read manifests on disk (`Manifests`); workspaces and
+//! stateless snapshots read the `package.json`, `.npmignore` and `.gitignore` entries of their
+//! own file set (`manifest_in`). Both go through `Manifest::parse` and
+//! `Manifest::with_ignore_files`, so they cannot disagree.
 
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::{JsxRuntime, PackageType};
+use crate::code_rule_dsl::npm_ignore::NpmPublication;
 use crate::code_rule_dsl::semver::Range;
 use napi::Result;
 use parking_lot::Mutex;
@@ -53,6 +56,22 @@ const OTHER_JSX_PACKAGES: [&str; 7] = [
     "mithril",
 ];
 
+/// The ignore files whose rules decide which files of the package in their folder npm publishes
+/// (`NpmPublication`).
+pub(crate) const NPMIGNORE: &str = ".npmignore";
+pub(crate) const GITIGNORE: &str = ".gitignore";
+
+/// The folder of the package whose publication an ignore file at `path` in a file set decides
+/// (`pkg` for `pkg/.npmignore`, `""` for a root `.gitignore`), if it is one.
+pub(crate) fn ignore_file_directory(path: &str) -> Option<&str> {
+    [NPMIGNORE, GITIGNORE].into_iter().find_map(|name| {
+        if path == name {
+            return Some("");
+        }
+        path.strip_suffix(name)?.strip_suffix('/')
+    })
+}
+
 /// An ECMA file's nearest `package.json`, as `file.package` and the module system read it.
 #[derive(Clone, Debug)]
 pub(crate) struct Manifest {
@@ -72,13 +91,99 @@ pub(crate) struct Manifest {
     jsx_import_source: Option<String>,
     /// The file's or files' place in Next's App Router server module graph (`module_graph`).
     server_graph: ServerGraph,
-    /// SHA-256 of `to_wire` and the server graph: what equality and reuse keys compare.
+    /// Whether the manifest's `private` is `true`.
+    private: bool,
+    /// Which files below the manifest npm publishes.
+    publication: Publication,
+    /// SHA-256 of `to_wire`, the server graph and the publication: what equality and reuse keys
+    /// compare.
     digest: [u8; 32],
     /// `node_version` parsed.
     node_range: Option<Range>,
-    /// Whether `node_range` (else the default) is a subset of a condition's range, by the range's
-    /// text (`node_range_is_subset_of`); shared by the manifest's copies, which keep its range.
-    node_subsets: Arc<Mutex<HashMap<String, bool>>>,
+}
+
+/// Which files below a manifest npm publishes, as eslint-plugin-n's `getNpmignore` reads them.
+#[derive(Debug, Clone)]
+pub(crate) enum Publication {
+    /// Not known: a host sent the file no `published` fact, so neither value holds.
+    Unread,
+    /// Read from the package: its manifest's `files` and `main`, and its folder's ignore files.
+    Package(Arc<PackagePublication>),
+    /// One file's fact, a host's: whether npm publishes it.
+    Member(bool),
+}
+
+/// What a package's publication reads, and its matcher.
+pub(crate) struct PackagePublication {
+    /// The `files` field's non-empty strings, where it is an array.
+    files: Option<Vec<String>>,
+    /// `main`, where a string.
+    main: Option<String>,
+    /// The texts of the folder's `.npmignore` and `.gitignore`, where present.
+    npmignore: Option<String>,
+    gitignore: Option<String>,
+    matcher: NpmPublication,
+}
+
+impl PackagePublication {
+    fn new(
+        folder: &str,
+        files: Option<Vec<String>>,
+        main: Option<String>,
+        npmignore: Option<String>,
+        gitignore: Option<String>,
+    ) -> Self {
+        let matcher = NpmPublication::new(
+            folder,
+            files.as_deref(),
+            main.as_deref(),
+            npmignore.as_deref(),
+            gitignore.as_deref(),
+        );
+        Self {
+            files,
+            main,
+            npmignore,
+            gitignore,
+            matcher,
+        }
+    }
+}
+
+impl std::fmt::Debug for PackagePublication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PackagePublication")
+            .field("files", &self.files)
+            .field("main", &self.main)
+            .field("npmignore", &self.npmignore)
+            .field("gitignore", &self.gitignore)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Whether a configured Node range is a subset of a condition's range, by the two ranges' texts
+/// (`Manifest::node_range_is_subset_of`): every manifest with the same range, and every copy of
+/// one, asks the same of each gated rule. Cleared when it holds `NODE_SUBSETS_MAX` answers.
+static NODE_SUBSETS: LazyLock<Mutex<HashMap<(String, String), bool>>> =
+    LazyLock::new(Mutex::default);
+const NODE_SUBSETS_MAX: usize = 1 << 16;
+
+/// Whether a configured Node range (`None`: eslint-plugin-n's default, as for a file without a
+/// manifest) is a subset of `range`, node-semver's `subset`, through `NODE_SUBSETS`.
+pub(crate) fn node_range_is_subset_of(configured: Option<&Range>, range: &Range) -> bool {
+    let configured = configured.unwrap_or(&DEFAULT_NODE_RANGE);
+    let key = (configured.text().to_owned(), range.text().to_owned());
+    if let Some(&subset) = NODE_SUBSETS.lock().get(&key) {
+        return subset;
+    }
+    let subset = configured.is_subset_of(range);
+    let mut subsets = NODE_SUBSETS.lock();
+    if subsets.len() >= NODE_SUBSETS_MAX {
+        subsets.clear();
+    }
+    subsets.insert(key, subset);
+    subset
 }
 
 /// Which files below a manifest are in their Next app's server module graph.
@@ -125,9 +230,10 @@ impl Manifest {
             dependencies,
             jsx_import_source: None,
             server_graph: ServerGraph::Unread,
+            private: false,
+            publication: Publication::Unread,
             digest: [0; 32],
             node_range,
-            node_subsets: Arc::default(),
         };
         manifest.digest = manifest.compute_digest();
         manifest
@@ -143,7 +249,27 @@ impl Manifest {
                 hasher.update(member.as_bytes());
             }
         }
+        if let Publication::Package(package) = &self.publication {
+            hasher.update(b"\0publication");
+            let read = serde_json::json!([
+                package.files,
+                package.main,
+                package.npmignore,
+                package.gitignore
+            ]);
+            hasher.update(read.to_string().as_bytes());
+        }
         hasher.finalize().into()
+    }
+
+    /// The digest, and the server graph's per-file manifests, again after a change.
+    fn rederived(mut self) -> Self {
+        if let ServerGraph::Members { members, .. } = &self.server_graph {
+            let members = (**members).clone();
+            return self.with_server_graph(Some(members));
+        }
+        self.digest = self.compute_digest();
+        self
     }
 
     /// This manifest with the server graph its package's files give (`module_graph`); without one
@@ -190,8 +316,49 @@ impl Manifest {
     /// This manifest with the `jsxImportSource` its package's project configuration gives.
     pub(crate) fn with_jsx_import_source(mut self, source: Option<&str>) -> Self {
         self.jsx_import_source = source.map(str::to_owned);
-        self.digest = self.compute_digest();
-        self
+        self.rederived()
+    }
+
+    /// This manifest with the texts of its folder's `.npmignore` and `.gitignore` (`None` where
+    /// absent), which decide with its `files` and `main` which of its files npm publishes. A
+    /// host's manifest, which carries each file's own fact, is returned as it is.
+    pub(crate) fn with_ignore_files(
+        mut self,
+        npmignore: Option<String>,
+        gitignore: Option<String>,
+    ) -> Self {
+        let Publication::Package(package) = &self.publication else {
+            return self;
+        };
+        if package.npmignore == npmignore && package.gitignore == gitignore {
+            return self;
+        }
+        self.publication = Publication::Package(Arc::new(PackagePublication::new(
+            &self.folder,
+            package.files.clone(),
+            package.main.clone(),
+            npmignore,
+            gitignore,
+        )));
+        self.rederived()
+    }
+
+    /// Whether the manifest's `private` is `true`.
+    pub(crate) fn is_private(&self) -> bool {
+        self.private
+    }
+
+    /// Whether npm publishes the file at `path` (workspace-relative), as eslint-plugin-n's
+    /// `getNpmignore` reads it (`NpmPublication`); `None` where a host sent no fact, or for a
+    /// path outside the manifest's folder.
+    pub(crate) fn publishes(&self, path: &str) -> Option<bool> {
+        match &self.publication {
+            Publication::Unread => None,
+            Publication::Member(published) => Some(*published),
+            Publication::Package(package) => self
+                .relative_path(path)
+                .map(|relative| !package.matcher.leaves_out(relative)),
+        }
     }
 
     /// Whether the package's files have a server graph: it names a `next` dependency.
@@ -215,21 +382,34 @@ impl Manifest {
     }
 
     /// A `package.json` that cannot be read (not a regular file, over 1 MiB, unreadable, or not
-    /// JSON): a manifest with no valid `type` and nothing else.
+    /// JSON): a manifest with no valid `type` and nothing else, whose publication only its
+    /// folder's ignore files decide.
     fn unreadable(folder: String) -> Self {
-        Self::new(
+        let mut manifest = Self::new(
             folder,
             PackageType::Unset,
             BTreeSet::new(),
             None,
             BTreeSet::new(),
-        )
+        );
+        manifest.publication = Publication::Package(Arc::new(PackagePublication::new(
+            &manifest.folder,
+            None,
+            None,
+            None,
+            None,
+        )));
+        manifest.digest = manifest.compute_digest();
+        manifest
     }
 
     /// The manifest in `folder` whose text is `bytes`. eslint-plugin-n's readings: `bin` as a
     /// string or the string values of an object, each resolved against the folder (one that
     /// leaves it never names a file below it); `engines.node` when it is a valid range, else the
-    /// first `devEngines.runtime` entry named `node` with a string `version`, when that is valid.
+    /// first `devEngines.runtime` entry named `node` with a string `version`, when that is valid;
+    /// `files` (its non-empty strings, where an array) and `main` (where a string), which with
+    /// the folder's ignore files (`with_ignore_files`, none until then) decide which files npm
+    /// publishes; `private` when it is `true`.
     pub(crate) fn parse(folder: String, bytes: &[u8]) -> Self {
         let manifest = (bytes.len() <= MAX_MANIFEST_BYTES)
             .then(|| serde_json::from_slice::<Value>(bytes).ok())
@@ -258,23 +438,48 @@ impl Manifest {
             .into_iter()
             .filter_map(|target| resolve_target(&folder, target))
             .collect();
-        Self::new(
+        let files = manifest
+            .get("files")
+            .and_then(Value::as_array)
+            .map(|files| {
+                files
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter(|file| !file.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            });
+        let main = manifest
+            .get("main")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let mut parsed = Self::new(
             folder,
             package_type,
             bin,
             configured_node_version(&manifest),
             dependencies,
-        )
+        );
+        parsed.private = manifest.get("private") == Some(&Value::Bool(true));
+        parsed.publication = Publication::Package(Arc::new(PackagePublication::new(
+            &parsed.folder,
+            files,
+            main,
+            None,
+            None,
+        )));
+        parsed.digest = parsed.compute_digest();
+        parsed
     }
 
     /// The host's `package` fact: `{ folder, type, bin?, nodeVersion?, dependencies?,
-    /// jsxImportSource?, serverGraph? }`, as `to_wire` writes it; `nodeVersion` must be a valid
-    /// npm range, as the on-disk reader keeps only one (`configured_node_version`); `serverGraph`
-    /// is the file's own membership.
+    /// jsxImportSource?, private?, serverGraph?, published? }`, as `to_wire` writes it;
+    /// `nodeVersion` must be a valid npm range, as the on-disk reader keeps only one
+    /// (`configured_node_version`); `serverGraph` and `published` are the file's own facts.
     pub(crate) fn from_wire(value: &Value, at: &str) -> Result<Self> {
         let malformed = || {
             invalid(format!(
-                "{at}/package must be {{ \"folder\": string, \"type\": \"module\" | \"commonjs\" | \"unset\", \"bin\"?: [string], \"nodeVersion\"?: string (a valid npm range), \"dependencies\"?: [string], \"jsxImportSource\"?: string, \"serverGraph\"?: boolean }}"
+                "{at}/package must be {{ \"folder\": string, \"type\": \"module\" | \"commonjs\" | \"unset\", \"bin\"?: [string], \"nodeVersion\"?: string (a valid npm range), \"dependencies\"?: [string], \"jsxImportSource\"?: string, \"private\"?: boolean, \"serverGraph\"?: boolean, \"published\"?: boolean }}"
             ))
         };
         let object = value.as_object().ok_or_else(malformed)?;
@@ -287,7 +492,9 @@ impl Manifest {
                     | "nodeVersion"
                     | "dependencies"
                     | "jsxImportSource"
+                    | "private"
                     | "serverGraph"
+                    | "published"
             )
         }) {
             return Err(malformed());
@@ -320,6 +527,16 @@ impl Manifest {
             Some(Value::Bool(member)) => ServerGraph::Member(*member),
             Some(_) => return Err(malformed()),
         };
+        let private = match object.get("private") {
+            None => false,
+            Some(Value::Bool(private)) => *private,
+            Some(_) => return Err(malformed()),
+        };
+        let publication = match object.get("published") {
+            None => Publication::Unread,
+            Some(Value::Bool(published)) => Publication::Member(*published),
+            Some(_) => return Err(malformed()),
+        };
         let mut manifest = Self::new(
             object
                 .get("folder")
@@ -337,6 +554,8 @@ impl Manifest {
         );
         manifest.jsx_import_source = jsx_import_source;
         manifest.server_graph = server_graph;
+        manifest.private = private;
+        manifest.publication = publication;
         manifest.digest = manifest.compute_digest();
         Ok(manifest)
     }
@@ -361,8 +580,14 @@ impl Manifest {
         if let Some(source) = &self.jsx_import_source {
             wire.insert("jsxImportSource".to_owned(), Value::from(source.as_str()));
         }
+        if self.private {
+            wire.insert("private".to_owned(), Value::from(true));
+        }
         if let ServerGraph::Member(member) = self.server_graph {
             wire.insert("serverGraph".to_owned(), Value::from(member));
+        }
+        if let Publication::Member(published) = self.publication {
+            wire.insert("published".to_owned(), Value::from(published));
         }
         Value::Object(wire)
     }
@@ -428,21 +653,9 @@ impl Manifest {
     }
 
     /// Whether eslint-plugin-n's configured Node range for files below the manifest (its own, else
-    /// the default) is a subset of `range`, worked out once per range text: every file below the
-    /// manifest asks the same of each gated rule.
+    /// the default) is a subset of `range`, worked out once per pair of range texts (`NODE_SUBSETS`).
     pub(crate) fn node_range_is_subset_of(&self, range: &Range) -> bool {
-        if let Some(&subset) = self.node_subsets.lock().get(range.text()) {
-            return subset;
-        }
-        let subset = self
-            .node_range
-            .as_ref()
-            .unwrap_or(&DEFAULT_NODE_RANGE)
-            .is_subset_of(range);
-        self.node_subsets
-            .lock()
-            .insert(range.text().to_owned(), subset);
-        subset
+        node_range_is_subset_of(self.node_range.as_ref(), range)
     }
 
     /// The JSX runtime the package names: its `jsxImportSource` where that names React (or a
@@ -496,10 +709,10 @@ fn configured_node_version(manifest: &Map<String, Value>) -> Option<(String, Ran
     Range::parse(version).map(|range| (version.to_owned(), range))
 }
 
-/// A `bin` target of the manifest in `folder` relative to that folder, as Node's `path.resolve`
-/// resolves it against the folder; `None` for an absolute target, or one that ends outside the
-/// folder and so names no file below it.
-fn resolve_target(folder: &str, target: &str) -> Option<String> {
+/// A `bin` target (or `main`) of the manifest in `folder` relative to that folder, as Node's
+/// `path.resolve` resolves it against the folder; `None` for an absolute target, or one that ends
+/// outside the folder and so names no file below it.
+pub(crate) fn resolve_target(folder: &str, target: &str) -> Option<String> {
     if target.starts_with('/') {
         return None;
     }
@@ -561,13 +774,31 @@ fn manifest_on_disk(directory: &Path, folder: String) -> Option<Manifest> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
         Err(_) => return Some(Manifest::unreadable(folder)),
     };
+    let manifest = if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES as u64 {
+        Manifest::unreadable(folder)
+    } else {
+        match std::fs::read(&path) {
+            Ok(bytes) => Manifest::parse(folder, &bytes),
+            Err(_) => Manifest::unreadable(folder),
+        }
+    };
+    Some(manifest.with_ignore_files(
+        ignore_file_on_disk(directory, NPMIGNORE),
+        ignore_file_on_disk(directory, GITIGNORE),
+    ))
+}
+
+/// The text of the ignore file `name` in `directory` on disk, read as a manifest is: a regular
+/// file (never a symlink, which eslint-plugin-n would follow) of at most 1 MiB, its invalid UTF-8
+/// replaced; `None` for any other, or where it cannot be read.
+fn ignore_file_on_disk(directory: &Path, name: &str) -> Option<String> {
+    let path = directory.join(name);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
     if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES as u64 {
-        return Some(Manifest::unreadable(folder));
+        return None;
     }
-    Some(match std::fs::read(&path) {
-        Ok(bytes) => Manifest::parse(folder, &bytes),
-        Err(_) => Manifest::unreadable(folder),
-    })
+    let bytes = std::fs::read(&path).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// The nearest manifest of files below a root, looked up once per directory: the `package.json`
@@ -606,6 +837,11 @@ impl Manifests {
     pub(crate) fn of_file(&mut self, file: &Path) -> Option<Arc<Manifest>> {
         let manifest = self.of_directory(file.parent()?)?;
         Some(Manifest::for_file(&manifest, &self.folder(file)))
+    }
+
+    /// `path` relative to the root, `/`-separated: a file's workspace-relative path.
+    pub(crate) fn relative(&self, path: &Path) -> String {
+        self.folder(path)
     }
 
     /// The nearest manifest at or above `directory`; `None` without one, or for a directory
@@ -672,11 +908,6 @@ impl Manifests {
             })
             .unwrap_or_default()
     }
-}
-
-/// The nearest manifest at or above `file`, never above `root`.
-pub(crate) fn manifest_of_file(file: &Path, root: &Path) -> Option<Arc<Manifest>> {
-    Manifests::new(root).of_file(file)
 }
 
 #[cfg(test)]

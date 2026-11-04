@@ -1,0 +1,324 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi007-unrecognized-platform-check",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.platform only by equality or inequality with a plain string literal in stub files; type checkers cannot evaluate other checks.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "test-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-slot"
+                }
+              }
+            ]
+          },
+          "bool-and-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-and-top"
+                }
+              }
+            ]
+          },
+          "bool-or-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-or-top"
+                }
+              }
+            ]
+          },
+          "test-operand": {
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "bool-and-top"
+                    },
+                    {
+                      "matches": "bool-or-top"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-operand"
+                }
+              }
+            ]
+          },
+          "sys-platform": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "sys.platform"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "sys-platform"
+                }
+              }
+            ]
+          },
+          "str-literal": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "^[uUrR]?[\"']"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "regex": "^[uUrR]?[\"']"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "str-literal"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "other-operator",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-platform"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(<|>|<=|>=|in|not\\s+in|is|is\\s+not)$"
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI007",
+        "message": "Compare `sys.platform` to a string with `==` or `!=`, e.g. `sys.platform == \"linux\"` (use `or` for several platforms); type checkers can't evaluate other operators.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI007"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-string-operand",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-platform"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "regex": "^(==|!=)$"
+                  },
+                  "not": {
+                    "matches": "str-literal"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI007",
+        "message": "Compare `sys.platform` to a plain string literal such as `\"linux\"`; type checkers can't evaluate any other value.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI007"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

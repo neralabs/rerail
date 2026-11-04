@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 28 880 248" width="880" height="248" role="img" aria-labelledby="title desc">
+  <title id="title">How Rerail works</title>
+  <desc id="desc">The coding agent's edits go to the Rerail engine on your machine, which checks them against your rules. When a rule is broken, Rerail steers the agent back in the same session, and every session is recorded for the dashboard.</desc>
+  <style>
+    svg {
+      --bg: #ffffff; --ink: #1e1b18; --muted: #6b6560; --line: #a39e98;
+      --node: #ffffff; --edge: #dcd8d3; --accent: #4d5fda; --accent-fill: #eef0fc; --accent-edge: #c3c9f4;
+    }
+    @media (prefers-color-scheme: dark) {
+      svg {
+        --bg: #0d1117; --ink: #eceae7; --muted: #9c968f; --line: #6e6964;
+        --node: #15171c; --edge: #33353b; --accent: #8f99fa; --accent-fill: #1b1f3d; --accent-edge: #3a4280;
+      }
+    }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif; fill: var(--ink); }
+    .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+    .title { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+    .sub { font-size: 11.5px; fill: var(--muted); }
+    .label { font-size: 11.5px; fill: var(--muted); letter-spacing: 0.04em; }
+    .caption { font-size: 11px; fill: var(--muted); }
+    .steer { fill: var(--accent); font-weight: 600; }
+    .plate { fill: var(--bg); }
+    .node { fill: var(--node); stroke: var(--edge); stroke-width: 1; }
+    .engine { fill: var(--accent-fill); stroke: var(--accent-edge); stroke-width: 1; }
+    .wire { fill: none; stroke: var(--line); stroke-width: 1.25; }
+    .wire-steer { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .head { fill: var(--line); }
+    .head-steer { fill: var(--accent); }
+    .dot { fill: var(--accent); }
+    .pill { fill: var(--node); stroke: var(--edge); stroke-width: 1; stroke-dasharray: 3 3; }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head" d="M1 1.5 L9 5 L1 8.5 Z"/>
+    </marker>
+    <marker id="arrow-steer" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path class="head-steer" d="M1 1.5 L9 5 L1 8.5 Z"/>
+    </marker>
+  </defs>
+
+  <!-- steer: back into the same session -->
+  <path class="wire-steer" d="M440 114 C440 46, 140 46, 140 110" marker-end="url(#arrow-steer)"/>
+  <rect class="plate" x="262" y="51" width="56" height="20"/>
+  <text class="mono label steer" x="290" y="65" text-anchor="middle">steer</text>
+
+  <!-- edit and record -->
+  <line class="wire" x1="240" y1="150" x2="334" y2="150" marker-end="url(#arrow)"/>
+  <text class="mono label" x="287" y="140" text-anchor="middle">edit</text>
+  <line class="wire" x1="540" y1="150" x2="634" y2="150" marker-end="url(#arrow)"/>
+  <text class="mono label" x="587" y="140" text-anchor="middle">record</text>
+
+  <!-- your rules feed the engine -->
+  <line class="wire" x1="440" y1="226" x2="440" y2="192" marker-end="url(#arrow)"/>
+
+  <!-- coding agent -->
+  <rect class="node" x="40" y="114" width="200" height="72" rx="12"/>
+  <text class="title" x="140" y="146" text-anchor="middle">Coding agent</text>
+  <text class="sub" x="140" y="166" text-anchor="middle">writes the code</text>
+  <text class="mono caption" x="140" y="212" text-anchor="middle">Claude Code · Codex · Cursor</text>
+  <text class="mono caption" x="140" y="229" text-anchor="middle">OMP · Pi</text>
+
+  <!-- rerail engine -->
+  <rect class="engine" x="340" y="114" width="200" height="72" rx="12"/>
+  <circle class="dot" cx="383" cy="141" r="3.5"/>
+  <text class="title" x="447" y="146" text-anchor="middle">Rerail engine</text>
+  <text class="sub" x="440" y="166" text-anchor="middle">checks the changed lines</text>
+
+  <!-- rules -->
+  <rect class="pill" x="380" y="226" width="120" height="32" rx="16"/>
+  <text class="sub" x="440" y="246" text-anchor="middle" style="fill: var(--ink)">Your rules</text>
+
+  <!-- history -->
+  <rect class="node" x="640" y="114" width="200" height="72" rx="12"/>
+  <text class="title" x="740" y="146" text-anchor="middle">Session history</text>
+  <text class="sub" x="740" y="166" text-anchor="middle">shown in the dashboard</text>
+  <text class="mono caption" x="740" y="212" text-anchor="middle">~/.rerail/rerail.sqlite</text>
+</svg>

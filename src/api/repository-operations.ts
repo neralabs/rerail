@@ -4,7 +4,7 @@
  * names its target in the query or body (`repository`, `checkout`, `folder`); an MCP caller's checkout is the
  * default. GETs never record a checkout. Coding agents may change a repository's attachments and settings only
  * while it is not set up, to add a rule they created in the same call, or to add the copy of a By Rerail rule they
- * edited; people may change anything.
+ * edited; they may never turn Follow .gitignore off; people may change anything.
  */
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
@@ -13,6 +13,7 @@ import { z, ZodError } from "zod";
 import { resetRepositoryHistoryIn, type RerailDatabase } from "../engine/storage/database.js";
 import { CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import {
+  CALLER_CWD_HEADER,
   normalizeFolder,
   type ApiCaller,
   type CheckoutContext,
@@ -21,6 +22,7 @@ import {
   type LibraryRule,
   type RepositoryStartState,
   type RepositoryStatus,
+  type RuleCatalog,
   type RuleConfig,
   type RuleSetting,
   type RuleSettingTargetKind,
@@ -40,13 +42,17 @@ import {
   writeLibraryRule,
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
-import type { RuleMode } from "../engine/catalog/rule-mode.js";
+import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
+import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
+import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import {
+  approvalSubjectSchema,
   attachmentRecordSchema,
   attachmentsSetBodySchema,
+  blockNoteShape,
   followGitignoreBodySchema,
   inactiveOf,
   libraryRuleRecordSchema,
@@ -73,6 +79,11 @@ interface TargetInput {
   readonly repository?: string | undefined;
   readonly checkout?: string | undefined;
   readonly folder?: string | undefined;
+}
+
+/** `{ note }` when a write puts a rule on `block`, which steers until block enforcement lands; else nothing. */
+function blockNote(modes: ReadonlyArray<RuleMode | null | undefined>): { note?: string } {
+  return modes.includes("block") ? { note: BLOCK_STEERS_NOTE } : {};
 }
 
 interface Target {
@@ -116,7 +127,7 @@ function checkoutNotFound(path: string): ApiError {
  * The checkout `path` is in and the folder inside it, never recording one: the API only acts on checkouts the CLI,
  * hooks or a trusted runtime recorded. Writes need the checkout itself recorded, not just its clone.
  */
-function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
+export function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
   let physical: string;
   try {
     physical = realpathSync(path);
@@ -131,9 +142,37 @@ function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { ch
   return { checkout, folder: inside === undefined ? "" : folderOf(inside.split(sep).join("/")) };
 }
 
+/** The repository a coding agent's own checkout belongs to; undefined for a person, or an agent whose call names no checkout. */
+export function callerRepositoryKey(stores: RerailApiStores, caller: ApiCaller): string | undefined {
+  return caller.kind === "person" || caller.checkout === undefined ? undefined : checkoutAt(stores, caller.checkout, false).checkout.repositoryKey;
+}
+
+/**
+ * Refuse a coding agent's call about what it does not work in: another repository, unless the target is a checkout
+ * inside the agent's own checkout tree (a nested repository it edits as part of its work). `does` says what it may
+ * do where it may.
+ */
+function guardAgentRepository(
+  stores: RerailApiStores, caller: ApiCaller, repository: RepositoryListing, checkout: CheckoutContext | undefined, does: "reads" | "changes rules and settings",
+): void {
+  if (caller.kind === "person") return;
+  if (caller.checkout !== undefined && checkout !== undefined && within(caller.checkout, checkout.checkoutPath) !== undefined) return;
+  const own = callerRepositoryKey(stores, caller);
+  if (own === repository.repositoryKey) return;
+  throw new ApiError(403, "agent-not-permitted",
+    `a coding agent ${does} only in the repository it works in${own === undefined ? "" : `, ${own}`}; a person can see ${repository.displayName} in the dashboard`);
+}
+
+/** The catalog an operation on `checkout` reads: the installed packs, plus the checkout's own rules when it names one. */
+export function checkoutRuleCatalog(stores: RerailApiStores, checkout: CheckoutContext | undefined): RuleCatalog {
+  return checkout === undefined ? stores.ruleCatalog() : worktreeRuleCatalog(stores.ruleCatalog(), checkout.checkoutPath);
+}
+
 /**
  * The checkout and repository an operation acts on: the `checkout` (with `repository`, if given, matching it), else
- * the `repository`, else the calling agent's checkout. `write` targets default to the whole repository.
+ * the `repository`, else the calling agent's checkout. `write` targets default to the whole repository. A coding agent
+ * reaches only the repository it works in, whatever it names: another's rules, settings and checkouts are not its
+ * business, and its paths are the person's.
  */
 function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiCaller, write: boolean): Target {
   const db = stores.database();
@@ -149,6 +188,7 @@ function resolveTarget(stores: RerailApiStores, input: TargetInput, caller: ApiC
   if (located !== undefined && input.repository !== undefined && findRepository(db, input.repository)?.repositoryKey !== repository.repositoryKey) {
     throw new ApiError(400, "target-mismatch", `checkout ${located.checkout.checkoutPath} belongs to ${repository.repositoryKey}, not ${input.repository}`);
   }
+  guardAgentRepository(stores, caller, repository, located?.checkout, write ? "changes rules and settings" : "reads");
   const folder = input.folder !== undefined ? folderOf(input.folder) : write ? "" : located?.folder ?? "";
   return { repository, checkout: located?.checkout, folder };
 }
@@ -161,9 +201,15 @@ function guardAgentCheckout(caller: ApiCaller, checkout: CheckoutContext): void 
   }
 }
 
-/** Refuse an agent's change to a set-up repository's attachments or settings unless `allowed` says why it may. */
+/**
+ * Refuse an agent's change to a repository's attachments or settings: another repository's always (an agent at work in
+ * one repository never plants a rule, and the steer text it carries, in another's future sessions), and its own
+ * repository's once it is set up unless `allowed` says why it may.
+ */
 function guardAgent(stores: RerailApiStores, caller: ApiCaller, target: Target, allowed = false): void {
-  if (caller.kind === "person" || target.repository.configuredAt === null || allowed) return;
+  if (caller.kind === "person") return;
+  guardAgentRepository(stores, caller, target.repository, target.checkout, "changes rules and settings");
+  if (target.repository.configuredAt === null || allowed) return;
   const url = rulesDashboardUrl(stores.dashboardOrigin(), {
     repositoryKey: target.repository.repositoryKey,
     checkoutPath: target.checkout?.checkoutPath ?? null,
@@ -209,6 +255,26 @@ export function historyRepositoryIds(stores: RerailApiStores, key: string): stri
   return repository === undefined ? [key] : repositoryHistoryIds(repository);
 }
 
+/**
+ * The session `repository_id`s whose history `caller` may read, narrowed to `repository` when it names one; undefined
+ * is every repository's. A person reads the whole machine's history. A coding agent reads only the history of the
+ * repository its own checkout belongs to: transcripts hold prompts and tool output, and violations hold source, so an
+ * agent at work in one repository never reads another's. An agent with no checkout reads none.
+ */
+export function historyScope(stores: RerailApiStores, caller: ApiCaller, repository: string | undefined): string[] | undefined {
+  if (caller.kind === "person") return repository === undefined ? undefined : historyRepositoryIds(stores, repository);
+  if (caller.checkout === undefined) {
+    throw new ApiError(403, "agent-not-permitted",
+      `a coding agent reads only the history of the repository it works in; connect through Rerail's MCP bridge from a session in that repository, which names it in ${CALLER_CWD_HEADER}`);
+  }
+  const { repositoryKey } = checkoutAt(stores, caller.checkout, false).checkout;
+  if (repository !== undefined && repository !== repositoryKey && findRepository(stores.database(), repository)?.repositoryKey !== repositoryKey) {
+    throw new ApiError(403, "agent-not-permitted",
+      `a coding agent reads only the history of the repository it works in, ${repositoryKey}; a person can read ${repository}'s in the dashboard`);
+  }
+  return historyRepositoryIds(stores, repositoryKey);
+}
+
 /** When each effective rule was added here and, for a rule created by you, last edited. */
 interface RuleDates {
   /** `created_at` by attachment: `sourceKind\0sourceId\0folder`. */
@@ -245,6 +311,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
     configError: rule.configError,
     revision: rule.revision,
     payloadHash: rule.payloadHash,
+    ...(rule.approval === undefined ? {} : { approval: { subject: { ...rule.approval.subject }, approved: rule.approval.approved } }),
   };
   return rule.document.kind === "code"
     ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
@@ -300,14 +367,14 @@ function foldedChanges(changes: readonly SettingChange[]): SettingChange[] {
  * Rejects a `config` that can't apply: it is for one code rule by Rerail over the whole repository, and each option
  * must be one the rule's document declares, with a value its declaration allows.
  */
-function checkConfig(stores: RerailApiStores, change: SettingChange): void {
+function checkConfig(stores: RerailApiStores, catalog: RuleCatalog, change: SettingChange): void {
   if (change.config === undefined || change.config === null) return;
   const id = change.targetId;
   if (change.targetKind !== "rule") throw new ApiError(400, "invalid-setting", `config applies to one rule, not to pack ${id}`);
   if (change.folder !== "") throw new ApiError(400, "invalid-setting", "config applies to a rule over the whole repository; set it with folder \"\"");
   const library = stores.database().select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
-  const configured = configureBundledCodeRule(stores.ruleCatalog(), id, change.config);
+  const configured = configureBundledCodeRule(catalog, id, change.config);
   if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
 }
 
@@ -397,9 +464,13 @@ export const repositoryOperations: readonly Operation[] = [
     id: "repositories_list",
     method: "GET",
     path: "/api/repositories",
-    summary: "List every repository Rerail knows on this machine: key, name, aliases, whether it is set up and started, and how many checkouts it has.",
+    summary: "List every repository Rerail knows on this machine: key, name, aliases, whether it is set up and started, and how many checkouts it has. A coding agent sees only the repository it works in.",
     output: z.object({ repositories: z.array(repositorySummarySchema) }),
-    handler: stores => ({ repositories: listRepositories(stores.database()).map(repositorySummary) }),
+    handler: (stores, _input, caller) => {
+      const own = callerRepositoryKey(stores, caller);
+      const listed = listRepositories(stores.database()).filter(repository => caller.kind === "person" || repository.repositoryKey === own);
+      return { repositories: listed.map(repositorySummary) };
+    },
   }),
   defineOperation({
     id: "repository_context_get",
@@ -444,7 +515,7 @@ export const repositoryOperations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, false);
       const db = stores.database();
-      const view = listRepositoryRules(db, stores.ruleCatalog(), target.repository.repositoryKey, target.checkout === undefined ? {} : {
+      const view = listRepositoryRules(db, checkoutRuleCatalog(stores, target.checkout), target.repository.repositoryKey, target.checkout === undefined ? {} : {
         checkoutPath: target.checkout.checkoutPath,
         parentCheckoutPaths: parentCheckouts(db, target.checkout).map(parent => parent.checkoutPath),
       });
@@ -464,7 +535,7 @@ export const repositoryOperations: readonly Operation[] = [
     path: "/api/repository/settings",
     summary: "Turn rules or whole packs on or off, change their mode, or choose whether linters' suppression comments (eslint-disable, noqa, ...) silence them (suppressions: honour or ignore), for the repository or for one checkout (this worktree), optionally in one folder. config sets the option values of one code rule by Rerail over the whole repository (folder \"\"); an unknown option or a value the option does not allow is rejected. null clears a value so the next owner decides; an omitted value is kept. A coding agent may change checkout settings at any time, and the repository's only before it is set up.",
     body: settingsSetBodySchema,
-    output: z.object({ settings: z.array(ruleSettingRecordSchema) }),
+    output: z.object({ settings: z.array(ruleSettingRecordSchema), ...blockNoteShape }),
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, true);
       const db = stores.database();
@@ -481,10 +552,11 @@ export const repositoryOperations: readonly Operation[] = [
         folder: target.folder, targetKind: change.kind, targetId: change.id,
         on: input.on, mode: input.mode, suppressions: input.suppressions, config: input.config,
       }));
-      for (const change of changes) checkConfig(stores, change);
+      const catalog = checkoutRuleCatalog(stores, target.checkout);
+      for (const change of changes) checkConfig(stores, catalog, change);
       const settings = changes.map(change => mergedSetting(db, owner, change));
       for (const setting of settings) setRuleSetting(db, setting);
-      return { settings: settings.map(settingRecord) };
+      return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
     },
   }),
   defineOperation({
@@ -493,7 +565,7 @@ export const repositoryOperations: readonly Operation[] = [
     path: "/api/repository/attachments",
     summary: "Add or remove rule packs, By Rerail rules and your library rules in a repository, per folder (whole repository by default), with optional repository settings (on, mode, suppressions, config, as repository_settings_set takes them). The first call that adds anything, or passes configure: true, sets the repository up; it does not start Rerail. A coding agent may do this only before the repository is set up.",
     body: attachmentsSetBodySchema,
-    output: z.object({ repository: repositorySummarySchema, attachments: z.array(attachmentRecordSchema) }),
+    output: z.object({ repository: repositorySummarySchema, attachments: z.array(attachmentRecordSchema), ...blockNoteShape }),
     handler: (stores, input, caller) => {
       const target = resolveTarget(stores, input, caller, true);
       guardAgent(stores, caller, target);
@@ -505,7 +577,8 @@ export const repositoryOperations: readonly Operation[] = [
       if (missing !== undefined) throw new ApiError(404, "rule-source-not-found", `${missing.sourceKind} ${missing.sourceId} does not exist`);
       const owner = { kind: "repository" as const, repositoryKey };
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
-      for (const change of changes) checkConfig(stores, change);
+      const catalog = checkoutRuleCatalog(stores, target.checkout);
+      for (const change of changes) checkConfig(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
       db.transaction(tx => {
         const settings = changes.map(change => mergedSetting(tx, owner, change));
@@ -521,7 +594,11 @@ export const repositoryOperations: readonly Operation[] = [
         }
         for (const entry of remove) removeAttachment(tx, { repositoryKey, ...entry });
       }, { behavior: "immediate" });
-      return { repository: repositorySummary(requireRepository(db, repositoryKey)), attachments: attachmentsOf(db, repositoryKey) };
+      return {
+        repository: repositorySummary(requireRepository(db, repositoryKey)),
+        attachments: attachmentsOf(db, repositoryKey),
+        ...blockNote(changes.map(change => change.mode)),
+      };
     },
   }),
   defineOperation({
@@ -562,10 +639,14 @@ export const repositoryOperations: readonly Operation[] = [
     id: "repository_follow_gitignore_set",
     method: "PUT",
     path: "/api/repository/follow-gitignore",
-    summary: "Choose whether a repository's audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes; tracked files are always audited). On by default. It applies to every checkout of the repository, from the next session started there. A coding agent may change it only before the repository is set up.",
+    summary: "Choose whether a repository's audits leave out files Git ignores (.gitignore, .git/info/exclude, global excludes; tracked files are always audited). On by default. It applies to every checkout of the repository, from the next session started there. A coding agent may turn it on, only before the repository is set up, and never off: letting Rerail read ignored files is the person's choice, in the dashboard's Settings.",
     body: followGitignoreBodySchema,
     output: z.object({ repository: repositorySummarySchema }),
     handler: (stores, input, caller) => {
+      if (caller.kind === "agent" && !input.followGitignore) {
+        throw new ApiError(403, "agent-not-permitted",
+          "only a person can turn Follow .gitignore off, which lets audits and rule tests read files Git ignores; ask them to change it in the dashboard");
+      }
       const target = resolveTarget(stores, input, caller, true);
       guardAgent(stores, caller, target);
       const db = stores.database();
@@ -660,7 +741,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "library_rules_upsert",
     method: "PUT",
     path: "/api/library-rules/{id}",
-    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository, with the original switched off there.",
+    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository; the original is switched off there once the copy is approved, at once for a person's write and, for a coding agent's, when a person approves it.",
     params: libraryRuleId,
     body: libraryUpsertBodySchema,
     output: libraryUpsertResultSchema,
@@ -671,19 +752,23 @@ export const repositoryOperations: readonly Operation[] = [
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.
       if (existing === undefined && ruleCatalog.documents.has(input.id)) {
-        // Copy-on-edit: an agent may add the copy to a set-up repository, as people may.
+        // Copy-on-edit: an agent may add the copy to its own repository, set up or not, as people may.
         const target = resolveTarget(stores, input, caller, true);
+        guardAgent(stores, caller, target, true);
         const copied = libraryWrite(() => copyRerailRuleToLibrary(db, ruleCatalog, target.repository.repositoryKey, input.id, input.rule));
+        // A person's own write is their approval; a coding agent's waits for one (`rule_approvals_set`).
+        if (caller.kind === "person") approve(db, ruleSubject(copied.rule.document.rule.id, copied.rule.payloadHash));
         return {
           rule: libraryRecord(copied.rule),
           copiedFromRuleId: input.id,
           attached: { repositoryKey: target.repository.repositoryKey, folders: [...copied.folders] },
+          ...blockNote([input.rule.mode]),
         };
       }
-      // An agent editing an existing rule changes it in every repository that runs it, so each set-up one must allow
-      // it. Edits to a copy of a By Rerail rule are allowed as making the copy was; a rule the agent creates in
-      // this call may be added where it likes.
-      if (caller.kind === "agent" && existing !== undefined && existing.copiedFrom === null) guardRepositoriesUsing(stores, caller, input.id);
+      // An agent editing an existing rule changes it in every repository that runs it, so each must be its own, and
+      // set-up ones must allow it. Edits to a copy of a By Rerail rule are allowed as making the copy was, so a set-up
+      // repository of its own does not refuse them; a rule the agent creates in this call may be added where it likes.
+      if (caller.kind === "agent" && existing !== undefined) guardRepositoriesUsing(stores, caller, input.id, existing.copiedFrom !== null);
       const target = input.attach === true ? resolveTarget(stores, input, caller, true) : undefined;
       if (target !== undefined) guardAgent(stores, caller, target, existing === undefined || existing.copiedFrom !== null);
       const document = libraryWrite(() => validateLibraryDocument(input.rule, input.kind));
@@ -698,8 +783,10 @@ export const repositoryOperations: readonly Operation[] = [
       }, { behavior: "immediate" }));
       const rule = getLibraryRule(db, input.id);
       if (rule === undefined) throw new ApiError(500, "internal", `library rule ${input.id} was not stored`);
-      if (target === undefined) return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: null };
-      return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: { repositoryKey: target.repository.repositoryKey, folders: [target.folder] } };
+      if (caller.kind === "person") approve(db, ruleSubject(input.id, rule.payloadHash));
+      const note = blockNote([input.rule.mode]);
+      if (target === undefined) return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: null, ...note };
+      return { rule: libraryRecord(rule), copiedFromRuleId: null, attached: { repositoryKey: target.repository.repositoryKey, folders: [target.folder] }, ...note };
     },
   }),
   defineOperation({
@@ -716,14 +803,39 @@ export const repositoryOperations: readonly Operation[] = [
       return { removed: 1 as const };
     },
   }),
+  defineOperation({
+    id: "rule_approvals_set",
+    method: "POST",
+    path: "/api/rule-approvals",
+    summary: "Approve a rule's content so it steers: a rule created by you, a rule in a checkout's .rerail/rules, or a pack Rerail does not publish (a third party's, or one installed from a folder), at the digest repository_rules_get or rule_packs_list gave. Until then it runs in Log. Content that changed since is refused, so a person approves what they read. People only: a coding agent asks the person, who approves with rerail rules approve or in the dashboard.",
+    body: approvalSubjectSchema.extend({ ...targetShape }).strict(),
+    output: z.object({ approved: approvalSubjectSchema }),
+    handler: (stores, input, caller) => {
+      if (caller.kind === "agent") {
+        throw new ApiError(403, "agent-not-permitted", "only a person approves a rule; ask them, and they approve it with rerail rules approve or in the dashboard");
+      }
+      // A checkout names where a worktree's own rules are read from; library rules and packs are the machine's.
+      const checkout = input.checkout === undefined ? undefined : checkoutAt(stores, input.checkout, false).checkout;
+      const current = currentSubject(stores.database(), checkoutRuleCatalog(stores, checkout), input.id);
+      if (current === undefined) throw new ApiError(404, "rule-not-found", `${input.id} is no rule or pack waiting for approval here`);
+      if (current.kind !== input.kind || current.digest !== input.digest) {
+        throw new ApiError(409, "approval-stale", `${input.id} changed since it was read: read it again and approve what it is now`);
+      }
+      approve(stores.database(), current);
+      return { approved: { ...current } };
+    },
+  }),
 ];
 
-/** Refuse an agent's change to a library rule that any set-up repository has added. */
-function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, ruleId: string): void {
+/**
+ * Refuse an agent's change to a library rule that another repository has added, or a set-up one unless `allowed` says
+ * why it may.
+ */
+function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, ruleId: string, allowed = false): void {
   const db = stores.database();
   const users = db.selectDistinct({ key: ruleAttachments.repositoryKey }).from(ruleAttachments)
     .where(and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, ruleId))).all();
-  for (const { key } of users) guardAgent(stores, caller, { repository: requireRepository(db, key), checkout: undefined, folder: "" });
+  for (const { key } of users) guardAgent(stores, caller, { repository: requireRepository(db, key), checkout: undefined, folder: "" }, allowed);
 }
 
 /**

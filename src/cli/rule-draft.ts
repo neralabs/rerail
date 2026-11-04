@@ -1,14 +1,17 @@
-import { readFileSync, type Dirent } from "node:fs";
+import { existsSync, readFileSync, type Dirent } from "node:fs";
 import { opendir, readFile, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { bundledModelPath } from "../engine/package-root.js";
+import { resolveModelPath } from "../runtime/session-paths.js";
 import { z } from "zod";
 import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import {
+  AUDIT_MAX_FILES,
+  AUDIT_MAX_SOURCE_BYTES,
   IGNORED_DIRECTORIES,
+  MAX_SOURCE_BYTES,
   languageFor,
   sourceFactsCache,
   sourceFileFacts,
@@ -18,29 +21,34 @@ import {
 import {
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
+  RESULT_PAGE_BYTES,
   type NativeBinding,
   type NativeCompiledCodeRuleDsl,
+  type NativeGitIgnoreMatcher,
 } from "../engine/native/native.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
-import type { CodeRule } from "../engine/code-rule/code-rule-schema.js";
+import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { normalizeFolder } from "../engine/catalog/repository-model.js";
-import { recordCheckout } from "../engine/catalog/repository-registry.js";
-import { checkoutStatus } from "../engine/catalog/repository-registry.js";
+import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { checkoutStatus, followsGitignore, lookupCheckout, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { addAttachment, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import { getLibraryRule, upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
+import { deniedByPathBoundary } from "../engine/path-boundary.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import type { CodeRuleSourceLanguage } from "../engine/code-rule/code-rule.js";
+import { UNLISTED_TEXT_LANGUAGE } from "../engine/code-rule/code-rule-languages.js";
 
-/** How many repository matches the report shows; the count covers every match. */
-const REPOSITORY_EXAMPLES = 5;
-/** The same bounds a repository scan walks with. */
-const REPOSITORY_MAX_FILES = 100_000;
-const REPOSITORY_MAX_FILE_BYTES = 32_000_000;
-const REPOSITORY_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
-const EXAMPLE_TEXT_LENGTH = 200;
+/** How many repository matches and unchecked files the text report shows; the JSON report lists every one. */
+const REPOSITORY_SHOWN = 5;
+/** The batches an audit sends its files to the Engine in: at most this many files, or about this many bytes. */
+const BATCH_FILES = 32;
+const BATCH_BYTES = 1024 * 1024;
+const MATCH_TEXT_LENGTH = 200;
 const CASE_LABEL_LENGTH = 60;
 
 const codeRuleCaseSchema = z.strictObject({ path: z.string().min(1), content: z.string() });
@@ -76,11 +84,12 @@ export interface RuleDraftCaseResult {
   notChecked?: string;
 }
 
+/** A place the rule matches: one-based line and column and the line's text, none of them for a match on the file's path. */
 export interface RuleDraftRepositoryMatch {
   path: string;
-  line: number;
-  column: number;
-  text: string;
+  line?: number;
+  column?: number;
+  text?: string;
 }
 
 /** A file some clause of the rule could not check: the first such failure's message. */
@@ -95,10 +104,17 @@ export interface RuleDraftReport {
   error?: string;
   cases: RuleDraftCaseResult[];
   repository: {
-    matches: number;
-    examples: RuleDraftRepositoryMatch[];
-    /** Files some clause could not check, and the messages of such failures that name no file. */
-    unchecked: { count: number; examples: RuleDraftUncheckedFile[]; unattributed: string[] };
+    /** Every place the rule matches, in path, line and column order. */
+    matches: RuleDraftRepositoryMatch[];
+    /** Every file some clause could not check, and the messages of such failures that name no file. */
+    unchecked: { files: RuleDraftUncheckedFile[]; unattributed: string[] };
+    /** Files in the rule's scope the pass skipped as binary: they hold a NUL byte. */
+    binary: number;
+    /**
+     * Files and folders the data boundary kept the pass from reading: hidden, sensitive by name, or ignored by Git
+     * while the repository follows `.gitignore`. A count only; their names stay out of the report.
+     */
+    leftOut: number;
   } | null;
 }
 
@@ -134,6 +150,11 @@ export function parseRuleDraft(value: unknown): RuleDraft {
   const { cases: rawCases, ...body } = envelope.data;
   const target = TARGET_FIELDS.find(field => field in body);
   if (target !== undefined) throw new RuleDraftError(`${target}: a draft is added to this checkout's repository and cannot name ${target}`);
+  // The body's `rule` is a union of both kinds, whose failure names neither; a code draft is told what its rule lacks.
+  if (body.kind === "code") {
+    const rule = codeRuleSchema.safeParse(body.rule);
+    if (!rule.success) throw new RuleDraftError(issuesText(rule.error, ["rule"]));
+  }
   const upsert = libraryUpsertBodySchema.safeParse(body);
   if (!upsert.success) throw new RuleDraftError(issuesText(upsert.error));
   let folder: string;
@@ -167,7 +188,17 @@ export function parseRuleDraft(value: unknown): RuleDraft {
   };
 }
 
-export function readRuleDraft(file: string): RuleDraft {
+/**
+ * A rule document on its own, as a worktree keeps one in `.rerail/rules`, as a draft with no cases: a JSON object that
+ * names neither `kind` nor `rule`, a code rule when its `format` is the code rule format and else a conversation rule.
+ */
+function asDraft(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || "kind" in value || "rule" in value) return value;
+  return { kind: "format" in value && value.format === CODE_RULE_FORMAT ? "code" : "conversation", rule: value };
+}
+
+/** The draft in `file`; with `bareRule`, a rule document on its own is read as a draft with no cases (`asDraft`). */
+export function readRuleDraft(file: string, options: { readonly bareRule?: boolean } = {}): RuleDraft {
   const text = readFileSync(resolve(file), "utf8");
   let value: unknown;
   try {
@@ -175,7 +206,7 @@ export function readRuleDraft(file: string): RuleDraft {
   } catch (error) {
     throw new RuleDraftError(`${file} is not JSON: ${errorMessage(error)}`);
   }
-  return parseRuleDraft(value);
+  return parseRuleDraft(options.bareRule === true ? asDraft(value) : value);
 }
 
 function errorMessage(error: unknown): string {
@@ -206,27 +237,55 @@ function compileCodeRule(rule: CodeRule): { binding: NativeBinding; compiled: Na
 }
 
 type SourceFile = { path: string; language: string; source: string } & SourceFileFacts;
-/** The part of the Engine's evaluation the report reads: where each violation starts (zero-based), and each failure. */
-const evaluationSchema = z.object({
-  evaluation: z.object({
-    violations: z.array(z.object({
-      path: z.string().optional(),
-      span: z.object({ startLine: z.number().int(), startColumn: z.number().int() }).optional(),
-    })),
-    failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
-  }),
+/** The part of a page of the Engine's results the report reads: where each violation starts (zero-based), and each failure. */
+const resultPageSchema = z.object({
+  cursor: z.number().int().nonnegative(),
+  done: z.boolean(),
+  violations: z.array(z.object({
+    path: z.string().optional(),
+    span: z.object({ startLine: z.number().int(), startColumn: z.number().int() }).optional(),
+  })),
+  failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
 });
-type Evaluation = z.infer<typeof evaluationSchema>["evaluation"];
+type Evaluation = Pick<z.infer<typeof resultPageSchema>, "violations" | "failures">;
 
-/** Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. */
-async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, files: readonly SourceFile[]): Promise<Evaluation> {
+/**
+ * Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. Import
+ * targets resolve against the files below `root` the workspace does not hold, as in the daemon. The files go in the
+ * batches an audit sends, with cross-file clauses held until a last empty apply sees them all; the whole result is
+ * then read a page at a time, as an audit reads it.
+ */
+async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, root: string, files: readonly SourceFile[]): Promise<Evaluation> {
   const workspace = new binding.CodeRuleDslWorkspace();
   try {
     workspace.addCodeRule(compiled);
+    workspace.setRoot(resolve(root));
     const accepted = files.filter(file => workspace.acceptsPath(file.path));
     if (accepted.length === 0) return { violations: [], failures: [] };
-    const result = await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: 1, files: accepted, removed: [] }));
-    return evaluationSchema.parse(JSON.parse(result)).evaluation;
+    let revision = 0;
+    let batch: SourceFile[] = [];
+    let bytes = 0;
+    for (const [index, file] of accepted.entries()) {
+      batch.push(file);
+      bytes += Buffer.byteLength(file.source);
+      if (batch.length < BATCH_FILES && bytes < BATCH_BYTES && index < accepted.length - 1) continue;
+      revision += 1;
+      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true }));
+      batch = [];
+      bytes = 0;
+    }
+    revision += 1;
+    await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
+    const evaluation: Evaluation = { violations: [], failures: [] };
+    let cursor = 0;
+    while (true) {
+      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+      evaluation.violations.push(...page.violations);
+      evaluation.failures.push(...page.failures);
+      if (page.done) return evaluation;
+      if (page.cursor <= cursor) throw new Error("the Engine's result pages did not advance");
+      cursor = page.cursor;
+    }
   } finally {
     workspace.close();
   }
@@ -254,16 +313,17 @@ async function policyCaseResult(
   root: string,
   { expected, sample }: { expected: Expectation; sample: CodeRuleCase },
 ): Promise<RuleDraftCaseResult> {
-  const language = languageFor(sample.path);
+  // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
+  const language = languageFor(sample.path) ?? (compiled.readsText() ? UNLISTED_TEXT_LANGUAGE : undefined);
   let caught = false;
   let note = "";
-  if (language === undefined) note = " (not a file type rules read)";
-  else if (!compiled.inScope(sample.path)) note = " (outside the files this rule covers)";
+  if (!compiled.inScope(sample.path)) note = " (outside the files this rule covers)";
+  else if (language === undefined) note = " (not read: no language lists this file, and this rule has no regex or file clause)";
   else {
     // The graph reads the sample in place of the repository's file at its path.
     const facts = await sourceFileFacts(root, sample.path, language, undefined, compiled.readsServerGraph(), { path: sample.path, source: sample.content });
     const file = { path: sample.path, language, source: sample.content, ...facts };
-    const evaluation = await evaluate(binding, compiled, [file]);
+    const evaluation = await evaluate(binding, compiled, root, [file]);
     caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
     // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
     const unchecked = caught ? undefined : uncheckedPlaces(evaluation.failures);
@@ -273,21 +333,23 @@ async function policyCaseResult(
   return { expected, caught, ok: caught === (expected === "caught"), label: `${sample.path}${note}` };
 }
 
-/** One file a repository scan would read, with its size on disk, or undefined when the scan skips it. */
+/**
+ * One file a repository scan would read, with its size on disk; `"binary"` when it holds a NUL byte, and undefined
+ * when it is over the byte bounds. Either way the scan skips it.
+ */
 async function repositoryFile(
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
-  absolute: string,
+  path: string,
+  language: CodeRuleSourceLanguage,
   bytesSoFar: number,
   cache: SourceFactsCache,
-): Promise<{ file: SourceFile; size: number } | undefined> {
-  const path = relative(root, absolute).split(sep).join("/");
-  const language = languageFor(path);
-  if (language === undefined || !compiled.inScope(path)) return undefined;
+): Promise<{ file: SourceFile; size: number } | "binary" | undefined> {
+  const absolute = join(root, path);
   const size = (await stat(absolute)).size;
-  if (size > REPOSITORY_MAX_FILE_BYTES || bytesSoFar + size > REPOSITORY_MAX_SOURCE_BYTES) return undefined;
+  if (size > MAX_SOURCE_BYTES || bytesSoFar + size > AUDIT_MAX_SOURCE_BYTES) return undefined;
   const source = await readFile(absolute);
-  if (source.includes(0)) return undefined;
+  if (source.includes(0)) return "binary";
   return {
     file: { path, language, source: source.toString("utf8"), ...(await sourceFileFacts(root, path, language, cache, compiled.readsServerGraph())) },
     size,
@@ -300,32 +362,111 @@ async function sortedEntries(directory: string): Promise<Dirent[]> {
   return entries.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/** Every regular file under `root` a scan visits, depth-first in name order, skipping ignored directories and symlinks. */
-async function* repositoryPaths(root: string): AsyncGenerator<string> {
+/** Whether `root`'s repository follows `.gitignore`, read without recording anything: on where Rerail cannot tell. */
+function repositoryFollowsGitignore(root: string, databasePath = defaultRerailDatabasePath()): boolean {
+  if (!existsSync(databasePath)) return true;
+  let database: RerailDatabase | undefined;
+  try {
+    database = openRerailDatabase(databasePath, { readonly: true });
+    return followsGitignore(database, lookupCheckout(database, root));
+  } catch {
+    return true;
+  } finally {
+    database?.$client.close();
+  }
+}
+
+/**
+ * The repository pass's data boundary: whether it must not read the file or folder at `path`, since the lines it
+ * matches go back to the agent that ran it. A hidden or sensitive path is always withheld, as is a checkout of its own
+ * nested in this one (its files answer to its own ignore rules and setting, which this pass does not read). A path
+ * Git ignores is withheld unless a person turned the repository's `followGitignore` off; a tracked file never is.
+ * Where the pass follows `.gitignore` in a Git checkout but Git's rules cannot be read, nothing can be told apart, so
+ * the pass refuses rather than read what may be ignored.
+ */
+function repositoryBoundary(binding: NativeBinding, root: string): (path: string, directory: boolean) => boolean {
+  let ignored = (_path: string, _directory: boolean): boolean => false;
+  if (repositoryFollowsGitignore(root)) {
+    let matcher: NativeGitIgnoreMatcher | null;
+    try {
+      matcher = binding.openGitIgnoreMatcher(root);
+    } catch (error) {
+      throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run: ${errorMessage(error)}`);
+    }
+    if (matcher === null && existsSync(join(root, ".git"))) {
+      throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run`);
+    }
+    if (matcher !== null) {
+      const opened = matcher;
+      ignored = (path, directory) => {
+        try {
+          return opened.ignored(path, directory);
+        } catch {
+          return true;
+        }
+      };
+    }
+  }
+  return (path, directory) =>
+    deniedByPathBoundary(path) || (directory && existsSync(join(root, path, ".git"))) || ignored(path, directory);
+}
+
+/**
+ * Every regular file under `root` a scan visits, as a `/`-separated path below it, depth-first in name order, skipping
+ * ignored directories, symlinks and the folders `prune` refuses.
+ */
+async function* repositoryPaths(root: string, prune: (path: string) => boolean): AsyncGenerator<string> {
   const pending = [root];
   while (pending.length > 0) {
     const directory = pending.pop()!;
     for (const entry of await sortedEntries(directory)) {
       const absolute = join(directory, entry.name);
-      if (entry.isDirectory() && !IGNORED_DIRECTORIES.has(entry.name)) pending.push(absolute);
-      else if (entry.isFile()) yield absolute;
+      const path = relative(root, absolute).split(sep).join("/");
+      if (entry.isDirectory()) {
+        if (!IGNORED_DIRECTORIES.has(entry.name) && !prune(path)) pending.push(absolute);
+      } else if (entry.isFile()) yield path;
     }
   }
 }
 
-/** The files a repository scan would hand `compiled`: the same ignored directories, file types and bounds. */
-async function repositoryFiles(compiled: NativeCompiledCodeRuleDsl, root: string): Promise<SourceFile[]> {
+/**
+ * The files a repository scan would hand `compiled` (the same ignored directories, file types and bounds) that the
+ * data boundary lets the pass read, how many files and folders it left out, and how many in-scope files it skipped
+ * as binary.
+ */
+async function repositoryFiles(
+  binding: NativeBinding,
+  compiled: NativeCompiledCodeRuleDsl,
+  root: string,
+): Promise<{ files: SourceFile[]; leftOut: number; binary: number }> {
+  const withheld = repositoryBoundary(binding, root);
+  const readsText = compiled.readsText();
   const files: SourceFile[] = [];
   const cache = sourceFactsCache();
   let bytes = 0;
-  for await (const absolute of repositoryPaths(root)) {
-    if (files.length >= REPOSITORY_MAX_FILES) break;
-    const read = await repositoryFile(compiled, root, absolute, bytes, cache);
-    if (read === undefined) continue;
+  let leftOut = 0;
+  let binary = 0;
+  const prune = (path: string): boolean => {
+    if (!withheld(path, true)) return false;
+    leftOut += 1;
+    return true;
+  };
+  for await (const path of repositoryPaths(root, prune)) {
+    if (files.length >= AUDIT_MAX_FILES) break;
+    // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
+    const language = languageFor(path) ?? (readsText ? UNLISTED_TEXT_LANGUAGE : undefined);
+    if (language === undefined || !compiled.inScope(path)) continue;
+    if (withheld(path, false)) {
+      leftOut += 1;
+      continue;
+    }
+    const read = await repositoryFile(compiled, root, path, language, bytes, cache);
+    if (read === "binary") binary += 1;
+    if (read === undefined || read === "binary") continue;
     bytes += read.size;
     files.push(read.file);
   }
-  return files;
+  return { files, leftOut, binary };
 }
 
 async function repositoryPass(
@@ -333,36 +474,31 @@ async function repositoryPass(
   compiled: NativeCompiledCodeRuleDsl,
   root: string,
 ): Promise<NonNullable<RuleDraftReport["repository"]>> {
-  const files = await repositoryFiles(compiled, root);
+  const { files, leftOut, binary } = await repositoryFiles(binding, compiled, root);
   const sources = new Map(files.map(file => [file.path, file.source]));
-  const evaluation = await evaluate(binding, compiled, files);
-  const located = evaluation.violations
-    .map(violation => ({
-      path: violation.path ?? "",
-      line: (violation.span?.startLine ?? 0) + 1,
-      column: (violation.span?.startColumn ?? 0) + 1,
-    }))
-    .sort((left, right) => left.path.localeCompare(right.path) || left.line - right.line || left.column - right.column);
-  const examples = located.slice(0, REPOSITORY_EXAMPLES).map(match => ({
-    ...match,
-    text: (sources.get(match.path)?.split("\n")[match.line - 1] ?? "").trim().slice(0, EXAMPLE_TEXT_LENGTH),
-  }));
+  const lines = new Map<string, string[]>();
+  const evaluation = await evaluate(binding, compiled, root, files);
+  const matches: RuleDraftRepositoryMatch[] = evaluation.violations
+    .map(({ path = "", span }) => {
+      // A match on the file's path has no span: it is the whole file, with no line.
+      if (span === undefined) return { path };
+      if (!lines.has(path)) lines.set(path, sources.get(path)?.split("\n") ?? []);
+      const text = (lines.get(path)![span.startLine] ?? "").trim().slice(0, MATCH_TEXT_LENGTH);
+      return { path, line: span.startLine + 1, column: span.startColumn + 1, text };
+    })
+    .sort((left, right) => left.path.localeCompare(right.path) || (left.line ?? 0) - (right.line ?? 0) || (left.column ?? 0) - (right.column ?? 0));
   const { files: uncheckedFiles, unattributed } = uncheckedPlaces(evaluation.failures);
   const unchecked = [...uncheckedFiles]
     .map(([path, message]) => ({ path, message }))
     .sort((left, right) => left.path.localeCompare(right.path));
-  return {
-    matches: located.length,
-    examples,
-    unchecked: { count: unchecked.length, examples: unchecked.slice(0, REPOSITORY_EXAMPLES), unattributed },
-  };
+  return { matches, unchecked: { files: unchecked, unattributed }, binary, leftOut };
 }
 
 function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }>): RuleDraftCaseResult[] {
   let registry: ConversationRuleRegistry;
   try {
     registry = new ConversationRuleRegistry({
-      modelPath: process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+      modelPath: resolveModelPath(process.cwd()),
     });
   } catch (error) {
     throw engineUnavailable(rule.id, errorMessage(error));
@@ -379,6 +515,27 @@ function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ 
   });
 }
 
+async function policyCaseResults(
+  binding: NativeBinding,
+  compiled: NativeCompiledCodeRuleDsl,
+  root: string,
+  cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }>,
+): Promise<RuleDraftCaseResult[]> {
+  const results: RuleDraftCaseResult[] = [];
+  for (const entry of cases) results.push(await policyCaseResult(binding, compiled, root, entry));
+  return results;
+}
+
+/**
+ * Run a draft's cases as `rules test` runs them, with import targets resolved against `root`, and skip its
+ * repository pass. A draft the Engine refuses throws `RuleDraftError`.
+ */
+export async function testRuleDraftCases(draft: RuleDraft, root: string): Promise<RuleDraftCaseResult[]> {
+  if (draft.kind === "conversation") return conversationCaseResults(draft.rule, draft.cases);
+  const { binding, compiled } = compileCodeRule(draft.rule);
+  return policyCaseResults(binding, compiled, root, draft.cases);
+}
+
 /**
  * Try a draft without storing it: validate it as storing would, run its cases, and for a policy rule count its
  * matches across `repo`'s files. Nothing is written to the catalog or the content store.
@@ -390,16 +547,18 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
   }
   const { binding, compiled } = compileCodeRule(draft.rule);
   const root = repositoryIdentityLocation(repo).workspaceRoot;
-  const cases: RuleDraftCaseResult[] = [];
-  for (const entry of draft.cases) cases.push(await policyCaseResult(binding, compiled, root, entry));
+  const cases = await policyCaseResults(binding, compiled, root, draft.cases);
   const repository = await repositoryPass(binding, compiled, root);
   return { ok: cases.every(result => result.ok), valid: true, cases, repository };
 }
 
-/** `testRuleDraft` for a draft file; an unreadable or invalid draft is reported, not thrown. */
+/**
+ * `testRuleDraft` for a draft file, or a rule document on its own (a worktree's `.rerail/rules/<name>.json`), which has
+ * no cases; an unreadable or invalid draft is reported, not thrown.
+ */
 export async function testRuleDraftFile(file: string, repo: string): Promise<RuleDraftReport> {
   try {
-    return await testRuleDraft(readRuleDraft(file), repo);
+    return await testRuleDraft(readRuleDraft(file, { bareRule: true }), repo);
   } catch (error) {
     if (!(error instanceof RuleDraftError)) throw error;
     return { ok: false, valid: false, error: error.message, cases: [], repository: null };
@@ -413,6 +572,10 @@ export interface AddedRule {
   folder: string;
   /** Whether adding the rule set the repository up, with this rule as its only one. */
   setUp: boolean;
+  /** The mode the rule's content sets; `block` steers until block enforcement lands. */
+  mode: RuleMode;
+  /** Whether the rule's content is approved, so it steers; otherwise it runs in Log until `rerail rules approve`. */
+  approved: boolean;
 }
 
 /**
@@ -439,7 +602,9 @@ export function addRuleDraft(draft: RuleDraft, repo: string, databasePath = defa
     const setUp = checkoutStatus(database, checkout).setUp === false;
     if (setUp) setUpRepository(database, checkout.repositoryKey, { packs: [], rules: [attachment] });
     else addAttachment(database, { repositoryKey: checkout.repositoryKey, ...attachment });
-    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp };
+    const stored = getLibraryRule(database, draft.rule.id);
+    const approved = stored !== undefined && isApproved(database, ruleSubject(draft.rule.id, stored.payloadHash));
+    return { ruleId: draft.rule.id, repositoryName: repositoryName(checkout.checkoutPath), folder: draft.folder, setUp, mode: draft.rule.mode, approved };
   } finally {
     database.$client.close();
   }
@@ -455,20 +620,33 @@ function caseLine(result: RuleDraftCaseResult): string {
 
 function repositoryLines(repository: RuleDraftReport["repository"]): string[] {
   if (repository === null) return ["  Repo: not checked for conversation rules."];
-  const { matches, examples, unchecked } = repository;
-  const lines = [`  Repo: ${matches} ${matches === 1 ? "place matches" : "places match"}.`];
-  for (const example of examples) lines.push(`    ${example.path}:${example.line}:${example.column}  ${example.text}`);
-  if (matches > examples.length) lines.push(`    … and ${matches - examples.length} more.`);
-  if (unchecked.count > 0) {
-    lines.push(`  ${unchecked.count} ${unchecked.count === 1 ? "file was" : "files were"} not checked, so the rule may miss places there:`);
-    for (const file of unchecked.examples) lines.push(`    ${file.path}  ${file.message}`);
-    if (unchecked.count > unchecked.examples.length) lines.push(`    … and ${unchecked.count - unchecked.examples.length} more.`);
+  const { matches, unchecked, binary, leftOut } = repository;
+  const lines = [`  Repo: ${matches.length} ${matches.length === 1 ? "place matches" : "places match"}.`];
+  for (const match of matches.slice(0, REPOSITORY_SHOWN)) {
+    lines.push(match.line === undefined ? `    ${match.path}  (the whole file: no line)` : `    ${match.path}:${match.line}:${match.column}  ${match.text}`);
+  }
+  if (matches.length > REPOSITORY_SHOWN) lines.push(`    … and ${matches.length - REPOSITORY_SHOWN} more.`);
+  const { files } = unchecked;
+  if (files.length > 0) {
+    lines.push(`  ${files.length} ${files.length === 1 ? "file was" : "files were"} not checked, so the rule may miss places there:`);
+    for (const file of files.slice(0, REPOSITORY_SHOWN)) lines.push(`    ${file.path}  ${file.message}`);
+    if (files.length > REPOSITORY_SHOWN) lines.push(`    … and ${files.length - REPOSITORY_SHOWN} more.`);
   }
   for (const message of unchecked.unattributed) lines.push(`  Not checked in any one file (${message}), so the rule may miss places anywhere.`);
+  if (binary > 0) {
+    lines.push(`  ${binary} ${binary === 1 ? "file was" : "files were"} skipped as binary: no rule reads a file holding a NUL byte.`);
+  }
+  if (leftOut > 0) {
+    lines.push(`  ${leftOut} ${leftOut === 1 ? "file or folder was" : "files or folders were"} left out unread: hidden, sensitive by name, or ignored by Git.`);
+  }
   return lines;
 }
 
-function verdictLine(cases: readonly RuleDraftCaseResult[]): string {
+function verdictLine(report: RuleDraftReport): string {
+  const { cases } = report;
+  if (cases.length === 0) {
+    return `● No cases to run${report.repository === null ? "" : "; only the repo was checked"}. A draft's caught and passed cases prove the rule.`;
+  }
   const failed = cases.filter(result => !result.ok).length;
   if (failed === 0) return "● Every case matched.";
   return `● ${failed} ${failed === 1 ? "case did" : "cases did"} not match.`;
@@ -480,7 +658,7 @@ export function formatRuleDraftReport(report: RuleDraftReport): string {
     "● The rule is valid.",
     ...report.cases.map(caseLine),
     ...repositoryLines(report.repository),
-    verdictLine(report.cases),
+    verdictLine(report),
   ].join("\n");
 }
 
@@ -489,9 +667,72 @@ export interface RuleDraftCommandIo {
   stderr?: { write(text: string): unknown };
 }
 
+/** A small valid code-rule draft, the example `--help` prints. */
+const EXAMPLE_DRAFT = {
+  kind: "code",
+  rule: {
+    format: "rerail.policy/v1",
+    id: "acme:no-console-log",
+    revision: 1,
+    mode: "steer",
+    description: "Use the logger, not console.log.",
+    scope: { include: ["src/**/*.ts"], exclude: [] },
+    clauses: [{
+      id: "no-console-log",
+      forbid: { regex: { source: "file.content", pattern: String.raw`console\.log` } },
+      violation: { anchor: "witness.span", code: "NO_CONSOLE_LOG", message: "Use the logger, not console.log." },
+    }],
+  },
+  cases: {
+    caught: [{ path: "src/a.ts", content: "console.log(1);\n" }],
+    passed: [{ path: "src/b.ts", content: "logger.info(1);\n" }],
+  },
+};
+
+/** What `rerail rules test --help` and `rerail rules add --help` print: the commands, the draft format, and an example. */
+function ruleDraftHelp(): string {
+  return [
+    "Usage:",
+    "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
+    "  rerail rules add <draft.json> [--repo <dir>]",
+    "",
+    "rules test checks a draft without storing it: it validates the rule, runs its cases, and for a code rule lists the",
+    "places it matches in the repository. It also takes a rule document on its own (a worktree's .rerail/rules/<name>.json),",
+    "which has no cases. rules add stores the rule in your library and adds it to the repository.",
+    "",
+    "A draft is one JSON file:",
+    "  {",
+    '    "kind": "code" | "conversation",',
+    '    "rule": { ... },',
+    '    "folder"?: "<repo folder>",',
+    '    "cases": {',
+    '      "caught": [{ "path", "content" }],',
+    '      "passed": [...]',
+    "    }",
+    "  }",
+    "",
+    "  kind    code for a code rule (a rerail.policy/v1 document), conversation for a conversation rule.",
+    "  rule    the rule, as your library stores it.",
+    "  folder  optional: the repository folder the rule is added at; the whole repository when absent.",
+    "  cases   optional: the files the rule must catch and the files it must pass, each { \"path\", \"content\" }.",
+    "          A conversation rule's cases are { \"source\", \"boundary\", \"text\", \"input\"? } instead: source is",
+    `          user-input, assistant-text or tool:<name>; boundary is ${SAMPLE_BOUNDARIES.join(", ")}; input is a tool`,
+    "          call's input as JSON text.",
+    "",
+    "Options:",
+    "  --repo <dir>  the checkout whose repository the rule is tested against or added to (default: the current directory)",
+    "  --json        rules test only: print the report as JSON, with every match and every unchecked file",
+    "",
+    "Example: a code rule that forbids console.log in src/**/*.ts, with one case of each kind.",
+    JSON.stringify(EXAMPLE_DRAFT, null, 2),
+  ].join("\n");
+}
+
 function draftArguments(action: "test" | "add", args: readonly string[], usage: () => string): { file: string; repo: string; json: boolean } {
   const file = args[0];
-  if (file === undefined || file.startsWith("--")) throw new Error(`rules ${action} needs a draft file\n\n${usage()}`);
+  if (file === undefined || file.startsWith("--")) {
+    throw new Error(`rules ${action} needs a draft file; rerail rules ${action} --help shows its format\n\n${usage()}`);
+  }
   const parsed = parseArguments(
     args.slice(1),
     { flags: action === "test" ? ["--json"] : [], options: ["--repo"] },
@@ -500,7 +741,7 @@ function draftArguments(action: "test" | "add", args: readonly string[], usage: 
   return { file, repo: resolve(parsed.options.get("--repo") ?? process.cwd()), json: parsed.flags.has("--json") };
 }
 
-/** `rerail rules test <draft.json>` and `rerail rules add <draft.json>`. */
+/** `rerail rules test <draft.json | rule.json>` and `rerail rules add <draft.json>`; with `--help`, the draft format. */
 export async function runRuleDraftCommand(
   action: "test" | "add",
   args: readonly string[],
@@ -508,6 +749,10 @@ export async function runRuleDraftCommand(
   io: RuleDraftCommandIo = {},
 ): Promise<number> {
   const stdout = io.stdout ?? process.stdout;
+  if (args.includes("--help") || args.includes("-h")) {
+    stdout.write(`${ruleDraftHelp()}\n`);
+    return 0;
+  }
   const { file, repo, json } = draftArguments(action, args, usage);
   if (action === "test") {
     const report = await testRuleDraftFile(file, repo);
@@ -525,6 +770,8 @@ export async function runRuleDraftCommand(
   const where = added.folder === "" ? added.repositoryName : `${added.repositoryName}/${added.folder}`;
   stdout.write(`● Added ${added.ruleId} to ${where}.\n`);
   if (added.setUp) stdout.write(`  ${added.repositoryName} was not set up, so it is now set up with this rule.\n`);
+  if (added.mode === "block") stdout.write(`  ${added.ruleId} is on Block. ${BLOCK_STEERS_NOTE}\n`);
+  if (!added.approved) stdout.write(`  It runs in Log until a person approves it: rerail rules approve ${added.ruleId}\n`);
   // The same dashboard the footer and steers link to, scoped to this checkout's repository when the daemon knows it.
   const dashboard = await readRulesDashboard({ cwd: repo });
   if (dashboard.url !== null) {

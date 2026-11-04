@@ -1,7 +1,6 @@
 /**
- * The rust pack: Clippy 0.1.99's answers on its own UI tests (copied from rust-clippy at the pinned commit) and on the
- * pinned ripgrep and tokio corpora, recorded by packs/rust/upstream/clippy/generate.py with the toolchain
- * packs/rust/upstream/common.py pins.
+ * The rust pack: Clippy 0.1.99's answers on its own UI tests (copied from rust-clippy at the pinned commit), recorded by
+ * packs/rust/upstream/clippy/generate.py with the toolchain packs/rust/upstream/common.py pins.
  */
 import { join } from "node:path";
 
@@ -26,32 +25,23 @@ export const recipes: DeriveRecipe[] = [
   {
     pack: "rust",
     tool: "clippy",
-    platforms: {
-      only: ["linux"],
-      reason: "corpus-tokio.expected.json is Clippy's answer on the build of tokio for the host, and the nightly producer derives on Linux, where `#[cfg(target_os = \"linux\")]` code compiles too: tokio/src/process/unix/pidfd_reaper.rs leaves `skipped`, and examples/prewarm-fd-table.rs:57's `#[allow(dead_code)]` adds an allow_attributes and an allow_attributes_without_reason finding. The rest is the same on macOS. Derive and record rust/clippy on Linux",
-    },
-    async derive({ toolDirectory, cacheRoot, capture, exec, checkout, corpus }) {
+    async derive({ toolDirectory, cacheRoot, capture, exec, checkout }) {
       const env = rustEnvironment();
       const generator = join(toolDirectory, "generate.py");
 
-      // The pins generate.py refuses anything else than: the toolchain, rust-clippy's commit, the corpora.
+      // The pins generate.py refuses anything else than: the toolchain and rust-clippy's commit.
       const pins = JSON.parse(await capture([PYTHON, "-c",
         "import json, sys; sys.path.insert(0, sys.argv[1]); import common; "
-        + "print(json.dumps({'toolchain': common.TOOLCHAIN, 'origin': common.CLIPPY_ORIGIN, 'commit': common.CLIPPY_COMMIT, 'corpora': sorted(common.CORPUS_COMMITS)}))",
-        join(toolDirectory, "..")], { env })) as { toolchain: string; origin: string; commit: string; corpora: string[] };
+        + "print(json.dumps({'toolchain': common.TOOLCHAIN, 'origin': common.CLIPPY_ORIGIN, 'commit': common.CLIPPY_COMMIT}))",
+        join(toolDirectory, "..")], { env })) as { toolchain: string; origin: string; commit: string };
 
       await exec(["rustup", "toolchain", "install", pins.toolchain, "--profile", "minimal", "--component", "clippy", "--no-self-update"], { env });
 
       // generate.py copies tests/ui{,-toml}/** and builds clippy_test_deps (cargo --locked, from crates.io); nothing else.
       const clippy = await checkout(pins.origin.slice(0, pins.origin.lastIndexOf("@")), pins.commit, { sparse: ["/tests/", "/clippy_test_deps/"] });
-      // Kept between runs: clippy_test_deps' target directory and the corpora's (cargo's fingerprints say what is stale).
-      const scratch = join(cacheRoot, "rust-clippy");
-      // The generator's scratch (clippy_test_deps' build); it writes the case sources beside itself.
-      await exec([PYTHON, generator, "fixtures", clippy, join(scratch, "test-deps")], { env });
-      // Each corpus at the pack's pin; common.run_corpus writes tokio's Cargo.lock (CORPUS_LOCK_PUBLISH_TIMES).
-      const corpora: string[] = [];
-      for (const name of pins.corpora) corpora.push(`${name}=${await corpus(name)}`);
-      await exec([PYTHON, generator, "corpus", join(scratch, "corpora"), ...corpora], { env });
+      // The generator's scratch, kept between runs: clippy_test_deps' target directory (cargo's fingerprints say what is
+      // stale). It writes the case sources beside itself.
+      await exec([PYTHON, generator, "fixtures", clippy, join(cacheRoot, "rust-clippy", "test-deps")], { env });
     },
   },
 ];
