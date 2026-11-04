@@ -8,6 +8,8 @@
  *     [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--json out.json] [--keep] [--verbose]
  *     [--model m] [-c key=value] [--list-variants] [--validate-oracles]
  *   node --import tsx benchmark/merge-assist-context.ts --index index.json --sweep control.json [--thresholds 0.3,0.35,...]
+ *   node --import tsx benchmark/merge-assist-context.ts --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id]
+ *     [--concurrency N] [--timeout-min N] [--json out.json] [--keep]
  *
  * The decision index is built once, from the product's own code paths, never by hand: `--build-index` runs
  * `draftDecision` with the person's agent CLI judge on each real decision's capture case in cases.json (its correction,
@@ -44,15 +46,20 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
+  type Candidate,
+  CANDIDATE_FORMAT,
+  candidateFileName,
+  callSummary,
   type CheckoutContext,
   globPattern,
+  type NativeSemanticEmbedder,
   openRerailDatabase,
   PACKAGE_ROOT,
   type RerailDatabase,
   recordCheckout,
   setUpRepository,
 } from "../src/engine/index.js";
-import { type AgentJudge, createAgentJudge, deriveSignals, draftDecision, type DraftOutcome, MAX_RANKED, rankPrompt, setRepositoryStarted } from "../src/runtime/index.js";
+import { type AgentJudge, type CaptureInput, createAgentJudge, deriveSignals, draftDecision, type DraftOutcome, MAX_RANKED, rankPrompt, setRepositoryStarted } from "../src/runtime/index.js";
 import { fixturesPath } from "../test/support/oracles.js";
 import {
   advance,
@@ -88,6 +95,7 @@ import {
   type VariantParameters,
   WHEN,
 } from "./merge-assist-context-hook.js";
+import { LIVE_ARMS, liveAlpha, type LiveResult, liveTest } from "./merge-assist-stats.js";
 
 const DATASET = fixturesPath("host", "benchmark", "merge-assist", "context.json");
 const HOOK = fileURLToPath(new URL("./merge-assist-context-hook.ts", import.meta.url));
@@ -321,6 +329,8 @@ const provenanceSchema = z.object({
   generality: z.string().optional(),
   level: z.enum(["code", "note"]).optional(),
   ruleDropped: z.string().nullable().optional(),
+  /** `--live`: the entry was captured in the trial from agent A's session, not built from a cases.json case. */
+  via: z.literal("live-capture").optional(),
 }).strict();
 
 const builtEntrySchema = z.object({
@@ -622,9 +632,13 @@ interface Options {
   timeoutMin: number;
   /** `--arms`: the cost-to-clean comparison's arms (`focus-k3`, `posthoc`) instead of `--variants`; null otherwise. */
   arms: Arm[] | null;
+  /** `--live`: the two-agent coordination check instead of `--variants` or `--arms`. */
+  live: boolean;
+  /** `--live`: the decisions to run (every one with an A task and a B task by default). */
+  decisions: string[] | null;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id] [--concurrency N] [--timeout-min N] [--json out.json] [--keep] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
 
 function positive(flag: string, value: string | undefined): number {
   const number = Number(value);
@@ -662,6 +676,8 @@ function parseOptions(argv: readonly string[]): Options {
     buildIndex: undefined,
     timeoutMin: DEFAULT_TIMEOUT_MIN,
     arms: null,
+    live: false,
+    decisions: null,
   };
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index]!;
@@ -689,6 +705,8 @@ function parseOptions(argv: readonly string[]): Options {
         break;
       }
       case "--tasks": options.tasks = list(flag, value()); break;
+      case "--live": options.live = true; break;
+      case "--decisions": options.decisions = list(flag, value()); break;
       case "--trials": options.trials = positive(flag, value()); break;
       case "--concurrency": options.concurrency = positive(flag, value()); break;
       case "--json": options.json = value(); if (options.json === undefined) throw new Error(USAGE); break;
@@ -763,14 +781,19 @@ function writeTree(root: string, files: Readonly<Record<string, string>>): void 
   }
 }
 
-/** A repository at `repo` with the project committed on `main`, and `branch` checked out from it. */
-function createRepository(repo: string, project: Readonly<Record<string, string>>, branch: string): void {
+/** A repository at `repo` with the project committed on `main`, which stays checked out. */
+function createMain(repo: string, project: Readonly<Record<string, string>>): void {
   mkdirSync(repo, { recursive: true });
   git(repo, "init", "-q", "-b", "main");
   git(repo, "config", "commit.gpgsign", "false");
   writeTree(repo, project);
   git(repo, "add", "-A");
   git(repo, "commit", "-q", "-m", "Orders service");
+}
+
+/** A repository at `repo` with the project committed on `main`, and `branch` checked out from it. */
+function createRepository(repo: string, project: Readonly<Record<string, string>>, branch: string): void {
+  createMain(repo, project);
   git(repo, "checkout", "-q", "-b", branch);
 }
 
@@ -1231,7 +1254,15 @@ function runCodex(repo: string, codexHome: string, configPath: string, prompt: s
 }
 
 /** What Codex's `--json` events say: the thread id, the last agent message, token usage, commands run, and any reported failure. */
-function readEvents(stdout: string): { threadId: string | null; finalMessage: string | null; usage: Usage | null; commands: number; error: string | null } {
+interface CodexEvents {
+  readonly threadId: string | null;
+  readonly finalMessage: string | null;
+  readonly usage: Usage | null;
+  readonly commands: number;
+  readonly error: string | null;
+}
+
+function readEvents(stdout: string): CodexEvents {
   let threadId: string | null = null;
   let finalMessage: string | null = null;
   let usage: Usage | null = null;
@@ -1355,7 +1386,7 @@ function doneMissesIn(repo: string, task: Task): string[] {
   }).map(done => `${done.path} /${done.regex}/`);
 }
 
-async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Options): Promise<RunResult> {
+async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Options, setUp = (repo: string) => createRepository(repo, dataset.project, WORK_BRANCH)): Promise<RunResult> {
   const { task } = job;
   const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-context-")));
   const repo = join(folder, "repo");
@@ -1365,7 +1396,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
   const index = runIndex(dataset, built, task, options.distractors ?? built.distractors, options.seed);
   const base = { variant: job.variant, taskId: task.id, split: task.split, kind: task.kind, trial: job.trial, targets: task.targets };
   try {
-    createRepository(repo, dataset.project, WORK_BRANCH);
+    setUp(repo);
     const config: HookConfig = {
       variant: VARIANTS[job.variant]!,
       index,
@@ -2264,6 +2295,11 @@ function recordingJudge(inner: AgentJudge, entryId: string, calls: JudgeCall[]):
 /** A repository of the project at `root`, recorded and set up in a scratch database, as Merge Assist sees a checkout. */
 function judgeWorkspace(root: string, databasePath: string, project: Readonly<Record<string, string>>): { database: RerailDatabase; checkout: CheckoutContext } {
   createRepository(root, project, WORK_BRANCH);
+  return openJudgeWorkspace(root, databasePath);
+}
+
+/** The checkout at `root` recorded, set up and started in a scratch database at `databasePath`. */
+function openJudgeWorkspace(root: string, databasePath: string): { database: RerailDatabase; checkout: CheckoutContext } {
   const database = openRerailDatabase(databasePath);
   const checkout = recordCheckout(database, root);
   setUpRepository(database, checkout.repositoryKey, { packs: [] });
@@ -2427,6 +2463,597 @@ function printBuild(dataset: Dataset, entries: readonly BuiltEntry[], absent: Bu
   ));
 }
 
+// ---------------------------------------------------------------------------------------------------------- live
+
+/*
+ * `--live`: a correction one person gives their agent (A) on one branch, turned into a decision by the product's own
+ * capture, carried to another person's agent (B) on another branch. Per decision D and trial:
+ * - A runs its task in worktree `a` (branch `alice/<task>`, cut from `main`) under a fresh CODEX_HOME and the control
+ *   hooks, so nothing is injected into it. It is graded with D's oracle, then resumed once with the person's
+ *   correction: cases.json's, as it is when A broke D, otherwise prefixed "Going forward: ".
+ * - `draftDecision` with the real judge, in a scratch Rerail database over worktree `a`, turns the correction into a
+ *   candidate: the correction, A's last six tool calls from its Codex transcript, and each file the resume changed
+ *   (before and after, from the two trees, four at most). The candidate is written as a rule in `.rerail/rules/` and
+ *   committed on A's branch.
+ * - B's index is the built index without D's own entry, plus, when captured, an entry read from A's committed rule
+ *   (a peer decision of Alice Chen on `alice/<task>`, embedded with the bundled model, with the candidate's signals).
+ * - B runs each of D's other dev, heldout and size tempt tasks (three at most, by id) in a clone of the repository's
+ *   `main` alone, on branch `bob/<task>` cut from it, under `focus-pool` and `none`: phase 1 only, graded with D's
+ *   oracle. The clone gives each arm its own checkout of the same branch name; holding no other branch, it leaves the
+ *   decision only one way to B, the index.
+ */
+
+const LIVE_SPLITS: ReadonlyArray<Task["split"]> = ["dev", "heldout", "size"];
+const LIVE_B_TASKS = 3;
+/** What the product's capture names of the agent's work before a correction: its last six calls, its first four edits. */
+const LIVE_PRIOR_CALLS = 6;
+const LIVE_EDITS = 4;
+const ALICE = { name: "Alice Chen", email: "alice@example.com" };
+const GOING_FORWARD = "Going forward: ";
+const RULES_DIRECTORY = ".rerail/rules";
+const LIVE_FORMAT = "rerail.merge-assist-live/v1";
+
+/** A's task for `decisionId`: the first dev tempt task that targets it, else the first size one. */
+export function liveATask(dataset: Dataset, decisionId: string): Task | undefined {
+  const first = (split: Task["split"]) => dataset.tasks.find(task => task.split === split && task.kind === "tempt" && task.targets.includes(decisionId));
+  return first("dev") ?? first("size");
+}
+
+/** B's tasks for `decisionId`: its dev, heldout and size tempt tasks but A's, those `only` names, at most three by id. */
+export function liveBTasks(dataset: Dataset, decisionId: string, aTask: Task, only: readonly string[] | null): Task[] {
+  return dataset.tasks
+    .filter(task => task.kind === "tempt" && LIVE_SPLITS.includes(task.split) && task.targets.includes(decisionId) && task.id !== aTask.id && (only === null || only.includes(task.id)))
+    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    .slice(0, LIVE_B_TASKS);
+}
+
+/** A `call` event's payload, as the product's capture stores one and `callSummary` reads it. */
+interface CallPayload {
+  readonly toolName: string;
+  readonly input: Record<string, unknown>;
+}
+
+const PATCH_FILE = /\*\*\* (?:Add|Update|Delete) File: ([^\n"\\]+)/gu;
+const INNER_TOOL = /\btools\.(\w+)\s*\(/gu;
+const COMMAND_LITERAL = /\bcmd\s*:\s*("(?:[^"\\]|\\.)*")/su;
+
+/** A JavaScript double-quoted string literal's value; its raw text when JSON cannot read it. */
+function stringLiteral(literal: string): string {
+  try {
+    return String(JSON.parse(literal));
+  } catch {
+    return literal.slice(1, -1);
+  }
+}
+
+/**
+ * The calls one Codex custom tool call makes: an `apply_patch` names the files its patch changes; a code-mode `exec`
+ * cell (JavaScript calling `tools.exec_command({cmd: …})`, `tools.apply_patch(…)`) makes one call per tool it calls.
+ */
+function customToolCalls(name: string, input: string): CallPayload[] {
+  const patched = { path: [...input.matchAll(PATCH_FILE)].map(match => match[1]!.trim()).join(" ") };
+  if (name === "apply_patch") return [{ toolName: name, input: patched }];
+  if (name !== "exec") return [{ toolName: name, input: { command: input } }];
+  const inner = [...input.matchAll(INNER_TOOL)];
+  return inner.map((match, position) => {
+    const tool = match[1]!;
+    if (tool === "apply_patch") return { toolName: tool, input: patched };
+    const literal = COMMAND_LITERAL.exec(input.slice(match.index + match[0].length, inner[position + 1]?.index ?? input.length))?.[1];
+    return { toolName: tool, input: literal === undefined ? {} : { command: stringLiteral(literal) } };
+  });
+}
+
+/** The agent's tool calls in Codex session transcripts (JSONL), oldest first, as `call` payloads. */
+export function transcriptCalls(text: string): CallPayload[] {
+  const calls: CallPayload[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    let event: Record<string, unknown>;
+    try {
+      event = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const payload = event.payload as Record<string, unknown> | undefined;
+    if (event.type !== "response_item" || payload === undefined || payload === null) continue;
+    const name = typeof payload.name === "string" ? payload.name : "tool";
+    const command = (value: unknown): string => (Array.isArray(value) ? value.map(String).join(" ") : String(value ?? ""));
+    if (payload.type === "function_call") {
+      let args: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(String(payload.arguments)) as unknown;
+        if (parsed !== null && typeof parsed === "object") args = parsed as Record<string, unknown>;
+      } catch {
+        // arguments that are not JSON leave the tool's name alone
+      }
+      const shell = args.cmd ?? args.command;
+      calls.push({ toolName: name, input: shell === undefined ? args : { command: command(shell) } });
+    } else if (payload.type === "local_shell_call") {
+      calls.push({ toolName: "shell", input: { command: command((payload.action as Record<string, unknown> | undefined)?.command) } });
+    } else if (payload.type === "custom_tool_call" && typeof payload.input === "string") {
+      calls.push(...customToolCalls(name, payload.input));
+    }
+  }
+  return calls;
+}
+
+/** The worktree's files, untracked ones included, as a tree object: a snapshot that leaves its history alone. */
+function snapshotTree(worktree: string): string {
+  git(worktree, "add", "-A");
+  return git(worktree, "write-tree").trim();
+}
+
+/** The files that differ between two trees, at most {@link LIVE_EDITS}, each with its content in both (null: absent). */
+function treeEdits(worktree: string, before: string, after: string): CaptureInput["edits"] {
+  const blob = (tree: string, path: string): string | null => {
+    try {
+      return git(worktree, "cat-file", "blob", `${tree}:${path}`);
+    } catch {
+      return null;
+    }
+  };
+  return git(worktree, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", before, after)
+    .split("\n").filter(path => path !== "").slice(0, LIVE_EDITS)
+    .map(path => ({ path, before: blob(before, path), after: blob(after, path) }));
+}
+
+/**
+ * The candidate as a rule document for `.rerail/rules/`: its code rule, described by its decision; for a note, a
+ * document in the candidate format's shape with only its text and scope.
+ */
+function ruleDocument(candidate: Candidate): Record<string, unknown> {
+  if (candidate.rule !== undefined) return { ...candidate.rule, description: candidate.rule.description ?? candidate.decision };
+  return { format: CANDIDATE_FORMAT, id: candidate.id, decision: candidate.decision, scope: candidate.scope };
+}
+
+/** The decision text and scope a committed rule document states: a code rule's description and scope, or a note's. */
+const committedRuleSchema = z.union([
+  z.object({ description: z.string().min(1), scope: z.object({ include: z.array(z.string().min(1)).min(1) }).passthrough() }).passthrough()
+    .transform(rule => ({ decision: rule.description, scope: rule.scope.include })),
+  z.object({ format: z.literal(CANDIDATE_FORMAT), decision: z.string().min(1), scope: z.array(z.string().min(1)).min(1) }).passthrough()
+    .transform(note => ({ decision: note.decision, scope: note.scope })),
+]);
+
+/** `git commit` in `cwd` as Alice, the person whose agent is A. */
+function commitAsAlice(cwd: string, message: string): string {
+  const env = { ...GIT_ENV, GIT_AUTHOR_NAME: ALICE.name, GIT_AUTHOR_EMAIL: ALICE.email, GIT_COMMITTER_NAME: ALICE.name, GIT_COMMITTER_EMAIL: ALICE.email };
+  execFileSync("git", ["commit", "-q", "-m", message], { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+  return git(cwd, "rev-parse", "HEAD").trim();
+}
+
+/** The built index without `decisionId`'s own entry, so the decision can reach B only through the live capture. */
+function withoutDecision(built: BuiltIndex, decisionId: string): BuiltIndex {
+  const { [decisionId]: _removed, ...embeddings } = built.embeddings;
+  return { ...built, entries: built.entries.filter(entry => entry.id !== decisionId), embeddings, absent: built.absent.filter(entry => entry.id !== decisionId) };
+}
+
+/** One Codex call of the live check: its time, tokens and failure. */
+interface LivePhase {
+  readonly wallMs: number;
+  readonly usage: Usage | null;
+  readonly error: string | null;
+}
+
+function livePhase(outcome: CodexOutcome, events: CodexEvents, options: Options): LivePhase {
+  const error = outcome.timedOut
+    ? `timed out after ${options.timeoutMin} minutes`
+    : events.error ?? (outcome.exitCode === 0 ? null : `codex exited ${outcome.exitCode}: ${clip(outcome.stderr.trim().split("\n").at(-1) ?? "", 200)}`);
+  return { wallMs: outcome.wallMs, usage: events.usage, error };
+}
+
+interface LiveAgentA {
+  readonly taskId: string;
+  readonly branch: string;
+  readonly threadId: string | null;
+  readonly phase1: LivePhase;
+  /** Null when there was no session to resume. */
+  readonly resume: LivePhase | null;
+  /** D's oracle hits on A's work after its task, and after the correction. */
+  readonly hitsBefore: readonly string[];
+  readonly hitsAfter: readonly string[] | null;
+  readonly brokeD: boolean;
+  /** The correction sent, and whether "Going forward: " was put before it. */
+  readonly correction: string;
+  readonly prefixed: boolean;
+  readonly priorCalls: readonly string[];
+  readonly edits: CaptureInput["edits"];
+  readonly error: string | null;
+}
+
+const CAPTURE_OUTCOMES = ["captured", "one-off", "duplicate", "unjudged", "not-run"] as const;
+type CaptureOutcome = (typeof CAPTURE_OUTCOMES)[number];
+
+interface LiveCapture {
+  readonly outcome: CaptureOutcome;
+  readonly detail: string;
+  readonly ms: number;
+  readonly judgeCalls: readonly JudgeCall[];
+  readonly candidate: Candidate | null;
+  /** Why the drafted code rule was dropped, leaving a note. */
+  readonly ruleDropped: string | null;
+  /** The rule file committed on A's branch, its commit, and the document as committed. */
+  readonly ruleFile: string | null;
+  readonly commit: string | null;
+  readonly document: Record<string, unknown> | null;
+}
+
+interface LiveBRun {
+  readonly arm: string;
+  readonly taskId: string;
+  readonly trial: number;
+  /** D's oracle on B's diff. */
+  readonly violated: boolean;
+  readonly hits: readonly string[];
+  /** Whether D was injected, and before B's first edit in its scope. */
+  readonly injected: boolean;
+  readonly timely: boolean;
+  /** B's other targets, each with its oracle hits: context only. */
+  readonly others: Readonly<Record<string, number>>;
+  readonly error: string | null;
+  readonly wallMs: number;
+  readonly usage: Usage | null;
+  readonly run: RunResult;
+}
+
+interface LiveTrial {
+  readonly decisionId: string;
+  readonly trial: number;
+  readonly a: LiveAgentA | null;
+  readonly capture: LiveCapture;
+  /** B's index entry for D, from A's committed rule; null when capture failed. */
+  readonly entry: BuiltEntry | null;
+  readonly integrity: { readonly failures: readonly string[]; readonly overlaps: number; readonly rankerFailures: readonly string[] };
+  readonly b: readonly LiveBRun[];
+  readonly wallMs: number;
+  readonly error: string | null;
+  readonly folder: string | null;
+}
+
+interface LiveJob {
+  readonly decision: DatasetEntry;
+  readonly aTask: Task;
+  readonly bTasks: readonly Task[];
+  readonly trial: number;
+}
+
+interface LiveContext {
+  readonly dataset: Dataset;
+  readonly base: BuiltIndex;
+  readonly options: Options;
+  readonly embedder: NativeSemanticEmbedder;
+  /** Runs `work` when one of `--concurrency` slots is free: each A (with its capture) and each B run takes one. */
+  readonly limit: <T>(work: () => Promise<T>) => Promise<T>;
+}
+
+/** At most `slots` of the works given at once, the rest in the order they came. */
+function limiter(slots: number): <T>(work: () => Promise<T>) => Promise<T> {
+  let free = slots;
+  const waiting: Array<() => void> = [];
+  return async work => {
+    if (free > 0) free--;
+    else {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      waiting.push(resolve);
+      await promise;
+    }
+    try {
+      return await work();
+    } finally {
+      const next = waiting.shift();
+      if (next === undefined) free++;
+      else next();
+    }
+  };
+}
+
+/** A in worktree `a`: its task under the control hooks, graded with D's oracle, then one resume with the correction. */
+async function runAgentA(job: LiveJob, folder: string, worktree: string, index: BuiltIndex, context: LiveContext): Promise<LiveAgentA> {
+  const { dataset, options } = context;
+  const { decision, aTask } = job;
+  const labelled = dataset.labelled.find(entry => entry.id === decision.id);
+  if (labelled === undefined) throw new Error(`No capture case in cases.json for decision ${decision.id}`);
+  const home = join(folder, "a-run");
+  mkdirSync(home, { recursive: true });
+  const codexHome = join(home, "codex-home");
+  const configPath = join(home, "hook-config.json");
+  const logPath = join(home, "hook.log");
+  const rerailHome = join(home, "rerail-home");
+  const runIndexA = runIndex(dataset, index, aTask, options.distractors ?? index.distractors, options.seed);
+  const config: HookConfig = {
+    variant: null,
+    index: runIndexA,
+    prompt: aTask.prompt,
+    embeddings: Object.fromEntries(runIndexA.map(entry => [entry.id, index.embeddings[entry.id]!])),
+    modelPath: MODEL_PATH,
+    files: Object.keys(dataset.project),
+    root: worktree,
+    folder: home,
+    log: logPath,
+    state: join(home, "hook-state.json"),
+  };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  writeFileSync(logPath, "");
+  createCodexHome(codexHome, configPath);
+  const first = await runCodex(worktree, codexHome, configPath, aTask.prompt, options, rerailHome);
+  const events = readEvents(first.stdout);
+  const hitsBefore = grade(diffAgainstMain(worktree), [decision])[decision.id] ?? [];
+  const brokeD = hitsBefore.length > 0;
+  // A correction that already says it is for the future (cases.json's dates decision) is not prefixed twice.
+  const prefixed = !brokeD && !/^going forward\b/iu.test(labelled.correction);
+  const correction = prefixed ? `${GOING_FORWARD}${labelled.correction}` : labelled.correction;
+  const priorCalls = transcriptCalls(transcriptText(codexHome) ?? "").slice(-LIVE_PRIOR_CALLS).map(call => callSummary({ ...call }));
+  const base = { taskId: aTask.id, branch: `alice/${aTask.id}`, threadId: events.threadId, phase1: livePhase(first, events, options), hitsBefore, brokeD, correction, prefixed, priorCalls };
+  if (events.threadId === null) return { ...base, resume: null, hitsAfter: null, edits: [], error: "A's run reported no thread id, so the correction could not resume it" };
+  const treeBefore = snapshotTree(worktree);
+  const second = await runCodex(worktree, codexHome, configPath, correction, options, rerailHome, events.threadId);
+  const resume = livePhase(second, readEvents(second.stdout), options);
+  const hitsAfter = grade(diffAgainstMain(worktree), [decision])[decision.id] ?? [];
+  const treeAfter = snapshotTree(worktree);
+  return { ...base, resume, hitsAfter, edits: treeEdits(worktree, treeBefore, treeAfter), error: null };
+}
+
+const NOT_CAPTURED = { judgeCalls: [], candidate: null, ruleDropped: null, ruleFile: null, commit: null, document: null } as const;
+
+/** The product's capture of A's correction: `draftDecision` with the real judge, over worktree `a`. */
+async function captureLive(folder: string, worktree: string, agent: LiveAgentA, decisionId: string): Promise<LiveCapture> {
+  const calls: JudgeCall[] = [];
+  const started = performance.now();
+  const { database, checkout } = openJudgeWorkspace(worktree, join(folder, "rerail.sqlite"));
+  try {
+    const judge = recordingJudge(createAgentJudge({ database, preferredHost: JUDGE_HOST, limitPerHour: JUDGE_LIMIT }), decisionId, calls);
+    const input: CaptureInput = { correction: agent.correction, priorCalls: [...agent.priorCalls], edits: agent.edits.map(edit => ({ ...edit })), ownDecisions: [] };
+    const outcome = await draftDecision({ database, checkout, judge, author: async () => ALICE.name, now: () => Date.now() }, input);
+    const done = { ...NOT_CAPTURED, ms: Math.round(performance.now() - started), judgeCalls: calls };
+    if ("oneOff" in outcome) return { ...done, outcome: "one-off", detail: "the judge called the correction one-off" };
+    if ("duplicateOf" in outcome) return { ...done, outcome: "duplicate", detail: `the judge called it a duplicate of ${outcome.duplicateOf}` };
+    if ("unjudged" in outcome) return { ...done, outcome: "unjudged", detail: outcome.unjudged };
+    return { ...done, outcome: "captured", detail: "", candidate: outcome.candidate, ruleDropped: outcome.dropped };
+  } finally {
+    database.$client.close();
+  }
+}
+
+/** One trial of one decision: A, the capture, B's index, then every B task in both arms. */
+async function runLiveTrial(job: LiveJob, context: LiveContext): Promise<LiveTrial> {
+  const { dataset, base, options } = context;
+  const { decision, aTask, bTasks, trial } = job;
+  const started = performance.now();
+  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-live-")));
+  const repo = join(folder, "repo");
+  const worktree = join(folder, "a");
+  const branch = `alice/${aTask.id}`;
+  const without = withoutDecision(base, decision.id);
+  let a: LiveAgentA | null = null;
+  let capture: LiveCapture = { ...NOT_CAPTURED, outcome: "not-run", detail: "", ms: 0 };
+  let entry: BuiltEntry | null = null;
+  let integrity: LiveTrial["integrity"] = { failures: [], overlaps: 0, rankerFailures: [] };
+  let b: LiveBRun[] = [];
+  let error: string | null = null;
+  try {
+    createMain(repo, dataset.project);
+    git(repo, "worktree", "add", "-q", "-b", branch, worktree, "main");
+    ({ a, capture } = await context.limit(async () => {
+      const agent = await runAgentA(job, folder, worktree, without, context);
+      if (agent.error !== null) return { a: agent, capture: { ...capture, detail: agent.error } };
+      return { a: agent, capture: await captureLive(folder, worktree, agent, decision.id) };
+    }));
+    let vector: number[] | null = null;
+    if (capture.candidate !== null) {
+      const candidate = capture.candidate;
+      const ruleFile = `${RULES_DIRECTORY}/${candidateFileName(candidate.id)}`;
+      writeTree(worktree, { [ruleFile]: `${JSON.stringify(ruleDocument(candidate), null, 2)}\n` });
+      git(worktree, "add", "-A");
+      const commit = commitAsAlice(worktree, `${aTask.id}, with the decision from Alice's correction`);
+      const document = JSON.parse(git(repo, "show", `${branch}:${ruleFile}`)) as Record<string, unknown>;
+      const committed = committedRuleSchema.parse(document);
+      capture = { ...capture, ruleFile, commit, document };
+      entry = {
+        id: decision.id,
+        decision: committed.decision,
+        scope: { include: committed.scope, exclude: [] },
+        source: "peer",
+        author: ALICE.name,
+        branch,
+        signals: candidate.signals ?? [],
+        provenance: {
+          by: "draftDecision",
+          via: "live-capture",
+          runner: runnersOf(capture.judgeCalls, decision.id),
+          at: new Date().toISOString(),
+          candidateId: candidate.id,
+          generality: candidate.generality,
+          level: candidate.rule === undefined ? "note" : "code",
+          ruleDropped: capture.ruleDropped,
+        },
+      };
+      const [embedded] = await context.embedder.embed([entry.decision]);
+      vector = [...embedded!].map(value => Math.round(value * 1e6) / 1e6);
+    }
+    const trialIndex: BuiltIndex = entry === null || vector === null
+      ? { ...without, path: `${base.path} without ${decision.id}`, absent: [...without.absent, { id: decision.id, outcome: capture.outcome, detail: capture.detail }] }
+      : { ...without, path: `${base.path} without ${decision.id}, with its live capture`, entries: [...without.entries, entry], embeddings: { ...without.embeddings, [entry.id]: vector } };
+    const report = checkIntegrity(trialIndex.entries);
+    const rankerFailures = bTasks.flatMap(task => rankerLeaks(dataset, trialIndex, task, options.distractors ?? base.distractors, options.seed, [VARIANTS["focus-pool"]!]).failures);
+    integrity = { failures: report.failures, overlaps: report.overlaps.length, rankerFailures };
+    if (report.failures.length > 0 || rankerFailures.length > 0) throw new Error(`B's index fails the integrity check: ${[...report.failures, ...rankerFailures].join("; ")}`);
+    const cloneForB = (task: Task) => (path: string) => {
+      git(dirname(path), "clone", "-q", "--single-branch", "--branch", "main", repo, path);
+      git(path, "config", "commit.gpgsign", "false");
+      git(path, "checkout", "-q", "-b", `bob/${task.id}`, "main");
+    };
+    b = await Promise.all(bTasks.flatMap(task => LIVE_ARMS.map(arm => context.limit(async (): Promise<LiveBRun> => {
+      const run = await runJob({ variant: arm, task, trial }, dataset, trialIndex, options, cloneForB(task));
+      const delivery = run.delivery.find(entry => entry.decisionId === decision.id);
+      const hits = run.hits[decision.id] ?? [];
+      console.error(`  B ${decision.id} #${trial} ${arm} ${task.id}: ${run.error ?? `${hits.length > 0 ? "VIOLATION" : "clean"}, ${delivery?.injected === true ? `injected${delivery.timely ? " in time" : " late"}` : "not injected"}, ${(run.wallMs / 1000).toFixed(0)}s`}`);
+      return {
+        arm,
+        taskId: task.id,
+        trial,
+        violated: hits.length > 0,
+        hits,
+        injected: delivery?.injected ?? false,
+        timely: delivery?.timely ?? false,
+        others: Object.fromEntries(task.targets.filter(id => id !== decision.id).map(id => [id, (run.hits[id] ?? []).length])),
+        error: run.error,
+        wallMs: run.wallMs,
+        usage: run.usage,
+        run,
+      };
+    }))));
+  } catch (failure) {
+    error = failure instanceof Error ? failure.message : String(failure);
+  } finally {
+    if (options.keep) console.error(`kept ${folder}`);
+    else await rm(folder, { recursive: true, force: true });
+  }
+  return { decisionId: decision.id, trial, a, capture, entry, integrity, b, wallMs: performance.now() - started, error, folder: options.keep ? folder : null };
+}
+
+/** The live check's report: per trial, then the capture, delivery and violation descriptives, then L1. */
+function printLive(trials: readonly LiveTrial[], decisions: readonly string[]): LiveResult | null {
+  console.log("\nTrials (A: its task, then the correction; capture; B: each task in each arm)");
+  console.log(table(
+    ["decision", "#", "A task", "A broke D", "after correction", "sent", "A s (task+resume)", "A in/cached/out", "capture", "capture s", "B runs (arm task: viol, injected/timely)", "error"],
+    trials.map(trial => [
+      trial.decisionId,
+      String(trial.trial),
+      trial.a?.taskId ?? "-",
+      trial.a === null ? "-" : trial.a.brokeD ? "VIOL" : "ok",
+      trial.a?.hitsAfter === null || trial.a === null ? "-" : trial.a.hitsAfter.length > 0 ? "VIOL" : "ok",
+      trial.a === null ? "-" : trial.a.prefixed ? "going forward" : "as is",
+      trial.a === null ? "-" : `${(trial.a.phase1.wallMs / 1000).toFixed(0)}+${((trial.a.resume?.wallMs ?? 0) / 1000).toFixed(0)}`,
+      trial.a === null ? "-" : [trial.a.phase1.usage, trial.a.resume?.usage ?? null].map(usage => (usage === null ? "-" : `${usage.input}/${usage.cached}/${usage.output}`)).join(" + "),
+      `${trial.capture.outcome}${trial.capture.candidate === null ? "" : ` (${trial.capture.candidate.rule === undefined ? "note" : "code"})`}`,
+      (trial.capture.ms / 1000).toFixed(0),
+      trial.b.map(run => `${run.arm} ${run.taskId}: ${run.error === null ? (run.violated ? "VIOL" : "ok") : "err"}, ${run.injected ? "y" : "n"}/${run.timely ? "y" : "n"}`).join(" | "),
+      clip(trial.error ?? trial.a?.error ?? [trial.a?.phase1.error, trial.a?.resume?.error].filter(entry => typeof entry === "string").join("; "), 120),
+    ]),
+  ));
+
+  console.log("\nCapture success (draftDecision with the real judge on A's correction)");
+  const captured = (list: readonly LiveTrial[]) => ratio(list.filter(trial => trial.capture.outcome === "captured").length, list.length);
+  console.log(table(
+    ["decision", "captured", ...CAPTURE_OUTCOMES.filter(outcome => outcome !== "captured")],
+    [...decisions, "overall"].map(id => {
+      const list = id === "overall" ? trials : trials.filter(trial => trial.decisionId === id);
+      return [id, rate(captured(list)), ...CAPTURE_OUTCOMES.filter(outcome => outcome !== "captured").map(outcome => String(list.filter(trial => trial.capture.outcome === outcome).length))];
+    }),
+  ));
+
+  console.log("\nWhat the product produced, against the correction");
+  for (const trial of trials) {
+    console.log(`\n${trial.decisionId} #${trial.trial}: ${trial.capture.outcome}${trial.capture.detail === "" ? "" : ` (${clip(trial.capture.detail, 200)})`}`);
+    if (trial.a !== null) {
+      console.log(`  correction:  ${trial.a.correction}`);
+      console.log(`  prior calls: ${trial.a.priorCalls.length === 0 ? "(none)" : trial.a.priorCalls.map(call => JSON.stringify(clip(call, 80))).join(", ")}`);
+      console.log(`  edits:       ${trial.a.edits.length === 0 ? "(none)" : trial.a.edits.map(edit => `${edit.path} (${edit.before === null ? "new" : `${edit.before.length}`} → ${edit.after === null ? "deleted" : `${edit.after.length}`} chars)`).join(", ")}`);
+    }
+    const candidate = trial.capture.candidate;
+    if (candidate === null) continue;
+    console.log(`  decision:    ${trial.entry?.decision ?? candidate.decision}`);
+    console.log(`  scope:       ${(trial.entry?.scope.include ?? candidate.scope).join(", ")}`);
+    console.log(`  signals:     ${(candidate.signals ?? []).length === 0 ? "(none)" : (candidate.signals ?? []).map(signal => JSON.stringify(signal)).join(" ")}`);
+    console.log(`  ${candidate.generality}, ${candidate.rule === undefined ? "note" : "code rule"}${trial.capture.ruleDropped === null ? "" : ` (rule dropped: ${trial.capture.ruleDropped})`}; committed ${trial.capture.ruleFile ?? "-"} on ${trial.a?.branch ?? "-"} at ${trial.capture.commit?.slice(0, 12) ?? "-"}`);
+  }
+
+  const runs = trials.flatMap(trial => trial.b.map(run => ({ trial, run })));
+  const ofArm = (arm: string, capturedOnly: boolean | null) => runs.filter(({ trial, run }) => run.arm === arm && (capturedOnly === null || (trial.capture.outcome === "captured") === capturedOnly));
+  const violation = (list: ReadonlyArray<{ run: LiveBRun }>) => rate(ratio(list.filter(({ run }) => run.violated || run.error !== null).length, list.length));
+  console.log("\nDelivery to B and B's violation of D (a run with an error counts as a violation)");
+  console.log(table(
+    ["arm", "B runs", "D injected (captured)", "D timely (captured)", "violation of D: all", "captured", "not captured", "other targets violated"],
+    LIVE_ARMS.map(arm => {
+      const all = ofArm(arm, null);
+      const delivered = ofArm(arm, true);
+      const others = all.flatMap(({ run }) => Object.values(run.others));
+      return [
+        arm, String(all.length),
+        rate(ratio(delivered.filter(({ run }) => run.injected).length, delivered.length)),
+        rate(ratio(delivered.filter(({ run }) => run.timely).length, delivered.length)),
+        violation(all), violation(delivered), violation(ofArm(arm, false)),
+        rate(ratio(others.filter(count => count > 0).length, others.length)),
+      ];
+    }),
+  ));
+
+  console.log("\nTime and tokens per phase (mean; input/cached/output)");
+  const usageMean = (list: ReadonlyArray<Usage | null>) => {
+    const known = list.filter((usage): usage is Usage => usage !== null);
+    return known.length === 0 ? "-" : `${fixed(mean(known.map(usage => usage.input)), 0)}/${fixed(mean(known.map(usage => usage.cached)), 0)}/${fixed(mean(known.map(usage => usage.output)), 0)}`;
+  };
+  const agents = trials.flatMap(trial => (trial.a === null ? [] : [trial.a]));
+  console.log(table(["phase", "n", "wall s", "tokens"], [
+    ["A task", String(agents.length), fixed(mean(agents.map(agent => agent.phase1.wallMs / 1000)), 0), usageMean(agents.map(agent => agent.phase1.usage))],
+    ["A resume", String(agents.filter(agent => agent.resume !== null).length), fixed(mean(agents.flatMap(agent => (agent.resume === null ? [] : [agent.resume.wallMs / 1000]))), 0), usageMean(agents.map(agent => agent.resume?.usage ?? null))],
+    ["capture (judge calls)", String(trials.filter(trial => trial.capture.outcome !== "not-run").length), fixed(mean(trials.filter(trial => trial.capture.outcome !== "not-run").map(trial => trial.capture.ms / 1000)), 0), `${trials.reduce((sum, trial) => sum + trial.capture.judgeCalls.length, 0)} calls, prompts ~${fixed(mean(trials.flatMap(trial => trial.capture.judgeCalls.map(call => call.prompt.length / 4))), 0)} tokens each`],
+    ...LIVE_ARMS.map(arm => {
+      const list = ofArm(arm, null).map(({ run }) => run);
+      return [`B ${arm}`, String(list.length), fixed(mean(list.map(run => run.wallMs / 1000)), 0), usageMean(list.map(run => run.usage))];
+    }),
+  ]));
+
+  const failures = trials.filter(trial => trial.integrity.failures.length > 0 || trial.integrity.rankerFailures.length > 0);
+  console.log(`\nB's per-trial index integrity: ${failures.length === 0 ? `PASS (${trials.length} trials)` : `FAIL in ${failures.length} trials`}; oracle code text in the product's output (reported, not refused): ${trials.map(trial => trial.integrity.overlaps).join(", ")}`);
+
+  const result = liveTest(runs.map(({ run }) => run), 1, liveAlpha(1));
+  console.log(`\nL1: B's violation of D lower with focus-pool than with none (this batch alone, one look; pool looks with merge-assist-stats.ts --analyze-live)`);
+  printLiveResult(result);
+  return result;
+}
+
+function printLiveResult(result: LiveResult | null): void {
+  if (result === null) {
+    console.log("  no B task ran in both arms");
+    return;
+  }
+  console.log(`  ${result.runs} runs over ${result.tasks} B tasks${result.unpaired.length === 0 ? "" : ` (+${result.unpaired.length} unpaired)`}; focus-pool ${rate(result.rates.a)}, none ${rate(result.rates.b)} violated`);
+  console.log(`  effect (mean within-task difference in proportions, focus-pool − none): ${result.effect >= 0 ? "+" : ""}${result.effect.toFixed(3)}, 95% cluster-bootstrap CI [${result.ci[0].toFixed(3)}, ${result.ci[1].toFixed(3)}]`);
+  console.log(`  stratified permutation p (one-sided, strata = B task) ${result.p.toFixed(4)} against α ${result.alpha}: ${result.reject ? "REJECT H0" : "keep H0"}`);
+}
+
+/** `--live`: every decision with an A task and a B task (or those `--decisions` names), `--trials` trials each. */
+async function runLive(dataset: Dataset, base: BuiltIndex, options: Options): Promise<void> {
+  const ids = options.decisions ?? dataset.decisions.map(decision => decision.id);
+  const unknown = ids.filter(id => !dataset.decisions.some(decision => decision.id === id));
+  if (unknown.length > 0) throw new Error(`Unknown decision id: ${unknown.join(", ")}`);
+  const unknownTasks = (options.tasks ?? []).filter(id => !dataset.tasks.some(task => task.id === id));
+  if (unknownTasks.length > 0) throw new Error(`Unknown task id: ${unknownTasks.join(", ")}`);
+  const plan = ids.map(id => {
+    const aTask = liveATask(dataset, id);
+    return { decision: dataset.decisions.find(decision => decision.id === id)!, aTask, bTasks: aTask === undefined ? [] : liveBTasks(dataset, id, aTask, options.tasks) };
+  });
+  const jobs: LiveJob[] = plan.flatMap(({ decision, aTask, bTasks }) => (aTask === undefined || bTasks.length === 0 ? [] : Array.from({ length: options.trials }, (_, trial) => ({ decision, aTask, bTasks, trial: trial + 1 }))));
+  if (jobs.length === 0) throw new Error("No selected decision has an A task and a B task.");
+  const startedAt = new Date().toISOString();
+  const codexVersion = execFileSync("codex", ["--version"], { encoding: "utf8" }).trim();
+  console.log(`\nMerge Assist live two-agent check (${codexVersion}${options.model === undefined ? ", default model" : `, model ${options.model}`}): index ${base.path}; arms ${LIVE_ARMS.join(",")} (phase 1 only); ${options.trials} trials per decision; ${options.distractors} distractors; seed ${options.seed}; ${options.timeoutMin} min per Codex call; concurrency ${options.concurrency}`);
+  console.log(table(["decision", "A task", "B tasks"], plan.map(({ decision, aTask, bTasks }) => [decision.id, aTask?.id ?? "(none: skipped)", bTasks.length === 0 ? "(none: skipped)" : bTasks.map(task => task.id).join(", ")])));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-live-home-")));
+  const previousHome = process.env.RERAIL_HOME;
+  process.env.RERAIL_HOME = home;
+  try {
+    const context: LiveContext = { dataset, base, options, embedder: loadEmbedder(MODEL_PATH).embedder, limit: limiter(options.concurrency) };
+    let done = 0;
+    const trials = await Promise.all(jobs.map(async job => {
+      const trial = await runLiveTrial(job, context);
+      console.error(`trial ${++done}/${jobs.length}: ${trial.decisionId} #${trial.trial} ${trial.error ?? `A ${trial.a?.brokeD === true ? "broke" : "kept"} D, capture ${trial.capture.outcome}, ${trial.b.length} B runs, ${(trial.wallMs / 1000).toFixed(0)}s`}`);
+      return trial;
+    }));
+    const decisions = [...new Set(jobs.map(job => job.decision.id))];
+    const result = printLive(trials, decisions);
+    if (options.json !== undefined) {
+      const report = { format: LIVE_FORMAT, startedAt, codexVersion, options, index: { path: base.path, builtAt: base.builtAt }, arms: LIVE_ARMS, variants: Object.fromEntries(LIVE_ARMS.map(arm => [arm, VARIANTS[arm] ?? null])), plan: plan.map(({ decision, aTask, bTasks }) => ({ decisionId: decision.id, aTask: aTask?.id ?? null, bTasks: bTasks.map(task => task.id) })), trials, result };
+      await writeFile(options.json, `${JSON.stringify(report, null, 2)}\n`);
+      console.log(`\nWrote ${options.json}`);
+    }
+  } finally {
+    if (previousHome === undefined) delete process.env.RERAIL_HOME;
+    else process.env.RERAIL_HOME = previousHome;
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------------- main
 
 async function pool<T, R>(items: readonly T[], concurrency: number, work: (item: T) => Promise<R>, progress: (done: number, result: R) => void): Promise<R[]> {
@@ -2476,6 +3103,10 @@ async function main(): Promise<void> {
   if (unfrozen.length > 0) throw new Error(`${unfrozen.join(", ")} need EMBED_THRESHOLD, frozen from --sweep over a dev control run first.`);
   if (!printOracleChecks(await validateOracles(dataset))) throw new Error("An oracle grades a labelled file wrongly: fix it before spending model budget on runs.");
   if (!existsSync(AUTH)) throw new Error(`${AUTH} is missing: sign in to Codex first (codex login).`);
+  if (options.live) {
+    await runLive(dataset, built, options);
+    return;
+  }
   const tasks = selectTasks(dataset, options);
   if (tasks.length === 0) throw new Error("No tasks selected.");
   const names = options.arms === null ? options.variants : options.arms.map(arm => ARM_VARIANTS[arm]);

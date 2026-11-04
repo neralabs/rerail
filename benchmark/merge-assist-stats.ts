@@ -2,6 +2,7 @@
  * Merge Assist significance: the confirmatory analysis of `--arms` reports from benchmark/merge-assist-context.ts.
  *
  *   node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric m] [--look N] [--seed N]
+ *   node --import tsx benchmark/merge-assist-stats.ts --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N]
  *   node --import tsx benchmark/merge-assist-stats.ts --self-test
  *
  * The unit of analysis is a run, stratified by task: every comparison is within a task, then summed over tasks, so a
@@ -25,6 +26,11 @@
  * task, superiority. Each look is
  * judged against the Pocock boundary for at most three looks, nominal one-sided α = 0.0221 per look, and the last line
  * says whether to stop. Everything here is a pure function of the reports and a seed; nothing calls a model.
+ *
+ * `--analyze-live` reads `--live` reports (the two-agent coordination check): L1, B's violation of the decision lower
+ * with `focus-pool` than with `none`, by the same stratified permutation test with strata = B task, the effect the
+ * mean within-task difference in proportions with a cluster-bootstrap 95% CI. One-sided α 0.05 when the check is
+ * looked at once (`--planned-looks 1`, the default), else the Pocock boundary per look, at most three looks.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -433,6 +439,111 @@ function analyzeReports(paths: readonly string[], arms: readonly [string, string
   console.log(`\n${verdict(adjusted, look)}`);
 }
 
+// ---------------------------------------------------------------------------------------------------------- live
+
+/** The live check's treatment and control arms (merge-assist-context.ts `--live`). */
+export const LIVE_ARMS = ["focus-pool", "none"] as const;
+/** The live check's one-sided α when it is looked at once. */
+export const SINGLE_LOOK_ALPHA = 0.05;
+
+/** The α per look of a live check planned for `plannedLooks` looks: 0.05 for one, the Pocock boundary for more. */
+export function liveAlpha(plannedLooks: number): number {
+  if (!Number.isInteger(plannedLooks) || plannedLooks < 1 || plannedLooks > MAX_LOOKS) throw new Error(`A live check plans 1 to ${MAX_LOOKS} looks`);
+  return plannedLooks === 1 ? SINGLE_LOOK_ALPHA : POCOCK_ALPHA;
+}
+
+/** The fields of a live B run the analysis reads. */
+export interface LiveRun {
+  readonly arm: string;
+  readonly taskId: string;
+  /** D's oracle found a violation in B's diff. */
+  readonly violated: boolean;
+  readonly error: string | null;
+}
+
+export interface LiveResult extends TestResult {
+  readonly unpaired: readonly string[];
+  /** Violated runs (errors counted) over runs, per arm: `a` focus-pool, `b` none. */
+  readonly rates: { readonly a: { readonly hits: number; readonly total: number }; readonly b: { readonly hits: number; readonly total: number } };
+  readonly alpha: number;
+  readonly reject: boolean;
+}
+
+/**
+ * L1 over `runs`: per B task, focus-pool's and none's violation of D (1 violated, 0 not; a run with an error counts as
+ * violated), tested one-sided for focus-pool lower; null when no B task ran in both arms.
+ */
+export function liveTest(runs: readonly LiveRun[], seed: number, alpha: number, permutations = PERMUTATIONS, resamples = RESAMPLES): LiveResult | null {
+  const value = (run: LiveRun): number => (run.violated || run.error !== null ? 1 : 0);
+  const strata: Stratum[] = [];
+  const unpaired: string[] = [];
+  for (const task of [...new Set(runs.map(run => run.taskId))]) {
+    const [a, b] = LIVE_ARMS.map(arm => runs.filter(run => run.taskId === task && run.arm === arm).map(value)) as [number[], number[]];
+    if (a.length === 0 || b.length === 0) unpaired.push(task);
+    else strata.push({ task, a, b });
+  }
+  if (strata.length === 0) return null;
+  const random = seeded(seed);
+  const p = permutationTest(strata, "lower", permutations, random);
+  const estimate = (picked: readonly Stratum[]) => stratifiedStatistic(picked) / picked.length;
+  const ci = clusterBootstrap(strata, estimate, resamples, random);
+  const paired = strata.flatMap(stratum => [...stratum.a.map(hit => ({ arm: "a", hit })), ...stratum.b.map(hit => ({ arm: "b", hit }))]);
+  const counted = (arm: string) => ({ hits: paired.filter(entry => entry.arm === arm && entry.hit === 1).length, total: paired.filter(entry => entry.arm === arm).length });
+  return { runs: paired.length, tasks: strata.length, effect: estimate(strata), ci, p, unpaired, rates: { a: counted("a"), b: counted("b") }, alpha, reject: p <= alpha };
+}
+
+/** The fields of a `--live` report the analysis reads. */
+interface LiveReport {
+  readonly format: string;
+  readonly startedAt: string;
+  readonly codexVersion: string;
+  readonly options: Readonly<Record<string, unknown>>;
+  readonly index: { readonly path: string; readonly builtAt: string };
+  readonly variants?: Readonly<Record<string, unknown>>;
+  readonly trials: ReadonlyArray<{ readonly decisionId: string; readonly capture: { readonly outcome: string }; readonly b: readonly LiveRun[] }>;
+}
+
+const LIVE_REPORT_FORMAT = "rerail.merge-assist-live/v1";
+
+function analyzeLiveReports(paths: readonly string[], look: number, plannedLooks: number, seed: number): void {
+  const reports = paths.map(path => ({ path, report: JSON.parse(readFileSync(path, "utf8")) as LiveReport }));
+  const problems: string[] = [];
+  for (const { path, report } of reports) if (report.format !== LIVE_REPORT_FORMAT || !Array.isArray(report.trials)) problems.push(`${path} is not a --live report of benchmark/merge-assist-context.ts`);
+  if (new Set(reports.map(({ report }) => report.startedAt)).size < reports.length) problems.push("the same batch appears twice (two reports share a start time)");
+  const [first, ...rest] = reports;
+  for (const { path, report } of rest) {
+    if (!isDeepStrictEqual(report.index, first!.report.index)) problems.push(`${path} ran on index ${report.index.path} built ${report.index.builtAt}, ${first!.path} on ${first!.report.index.path} built ${first!.report.index.builtAt}`);
+    if (!isDeepStrictEqual(report.variants, first!.report.variants)) problems.push(`${path} defines the arms differently from ${first!.path}`);
+    for (const option of PROTOCOL_OPTIONS) {
+      if (!isDeepStrictEqual(report.options[option], first!.report.options[option])) problems.push(`${path} ran with ${option} ${JSON.stringify(report.options[option])}, ${first!.path} with ${JSON.stringify(first!.report.options[option])}`);
+    }
+  }
+  if (problems.length > 0) throw new Error(`Refusing to pool:\n- ${problems.join("\n- ")}`);
+  if (look > plannedLooks) throw new Error(`Look ${look} is past the ${plannedLooks} planned; plan the looks before the first one (--planned-looks)`);
+  const trials = reports.flatMap(({ report }) => report.trials);
+  const runs = trials.flatMap(trial => trial.b.map(run => ({ ...run, captured: trial.capture.outcome === "captured" })));
+  const alpha = liveAlpha(plannedLooks);
+  console.log(`Merge Assist live check: L1, B's violation of the decision, focus-pool (treatment) vs none (control), look ${look} of ${plannedLooks} planned; ${reports.length} report(s) pooled: ${reports.map(({ path, report }) => `${path} (${report.startedAt}, ${report.codexVersion})`).join("; ")}`);
+  console.log(`Index ${first!.report.index.path} built ${first!.report.index.builtAt}; ${PROTOCOL_OPTIONS.map(option => `${option} ${JSON.stringify(first!.report.options[option] ?? null)}`).join(", ")}; ${PERMUTATIONS} permutations within B task, ${RESAMPLES} cluster-bootstrap resamples, seed ${seed}; one-sided α ${alpha}${plannedLooks === 1 ? " (one look)" : " (Pocock)"}`);
+  const captured = trials.filter(trial => trial.capture.outcome === "captured").length;
+  console.log(`\nCapture: ${captured}/${trials.length} trials captured the decision. Excluded: none; B runs with an error count as violations: ${LIVE_ARMS.map(arm => `${arm} ${runs.filter(run => run.arm === arm && run.error !== null).length}/${runs.filter(run => run.arm === arm).length}`).join(", ")}`);
+  console.log(table(
+    ["arm", "violated: all", "captured", "not captured"],
+    LIVE_ARMS.map(arm => {
+      const cell = (list: ReadonlyArray<LiveRun>) => `${list.filter(run => run.violated || run.error !== null).length}/${list.length}`;
+      const own = runs.filter(run => run.arm === arm);
+      return [arm, cell(own), cell(own.filter(run => run.captured)), cell(own.filter(run => !run.captured))];
+    }),
+  ));
+  const result = liveTest(runs, seed, alpha);
+  if (result === null) {
+    console.log("\nNo B task ran in both arms.");
+    return;
+  }
+  console.log(`\nL1 over ${result.runs} runs, ${result.tasks} B tasks${result.unpaired.length === 0 ? "" : ` (+${result.unpaired.length} unpaired: ${result.unpaired.join(", ")})`}: effect ${result.effect >= 0 ? "+" : ""}${result.effect.toFixed(3)} (mean within-task difference in proportions, focus-pool − none), 95% CI [${result.ci[0].toFixed(3)}, ${result.ci[1].toFixed(3)}], p ${formatP(result.p)}: ${result.reject ? "REJECT H0" : "keep H0"}`);
+  console.log(`\n${result.reject ? "STOP: success" : look >= plannedLooks ? "STOP: futility/max looks" : "CONTINUE"}`);
+}
+
 // ---------------------------------------------------------------------------------------------------------- self-test
 
 /** A standard normal draw (Box–Muller) from `random`. */
@@ -504,7 +615,7 @@ function selfTest(): boolean {
 
 // ---------------------------------------------------------------------------------------------------------- CLI
 
-const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] | --self-test`;
+const USAGE = `Usage: node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...] --arms A,B [--metric ${METRICS.join("|")}] [--look N] [--seed N] | --analyze-live live.json [live.json ...] [--look N] [--planned-looks N] [--seed N] | --self-test`;
 
 function main(): void {
   const args = process.argv.slice(2);
@@ -513,9 +624,11 @@ function main(): void {
     return;
   }
   const paths: string[] = [];
+  const livePaths: string[] = [];
   let arms: [string, string] | null = null;
   let metric: Metric | null = null;
   let look: number | null = null;
+  let plannedLooks = 1;
   let seed = 1;
   for (let index = 0; index < args.length; index++) {
     const flag = args[index]!;
@@ -528,6 +641,15 @@ function main(): void {
       case "--analyze":
         while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) paths.push(args[++index]!);
         break;
+      case "--analyze-live":
+        while (args[index + 1] !== undefined && !args[index + 1]!.startsWith("--")) livePaths.push(args[++index]!);
+        break;
+      case "--planned-looks": {
+        const number = Number(value());
+        if (!Number.isInteger(number) || number < 1 || number > MAX_LOOKS) throw new Error(`--planned-looks takes 1 to ${MAX_LOOKS}\n${USAGE}`);
+        plannedLooks = number;
+        break;
+      }
       case "--arms": {
         const names = value().split(",").map(name => name.trim()).filter(name => name !== "");
         if (names.length !== 2 || names[0] === names[1]) throw new Error(`--arms takes two different arms, treatment first: A,B\n${USAGE}`);
@@ -555,6 +677,11 @@ function main(): void {
       default:
         throw new Error(`Unknown argument ${flag}\n${USAGE}`);
     }
+  }
+  if (livePaths.length > 0) {
+    if (paths.length > 0 || arms !== null || metric !== null) throw new Error(`--analyze-live takes no --analyze, --arms or --metric\n${USAGE}`);
+    analyzeLiveReports(livePaths, look ?? livePaths.length, plannedLooks, seed);
+    return;
   }
   if (paths.length === 0 || arms === null) throw new Error(USAGE);
   if (look === null && paths.length > MAX_LOOKS) throw new Error(`${paths.length} reports is more than ${MAX_LOOKS} looks; pass --look\n${USAGE}`);

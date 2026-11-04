@@ -24,7 +24,7 @@ export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } 
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
 export { type AgentJudge, createAgentJudge } from "./merge-assist/agent-judge.js";
 export { deriveSignals, draftDecision, type DraftOutcome, validateSignals } from "./merge-assist/capture.js";
-export { MAX_RANKED, type RankInput, rankJsonSchemaFor, rankPrompt, type RankVerdict, rankVerdictSchema, rankVerdictSchemaFor, type SignalsInput } from "./merge-assist/judge-prompts.js";
+export { type CaptureInput, MAX_RANKED, type RankInput, rankJsonSchemaFor, rankPrompt, type RankVerdict, rankVerdictSchema, rankVerdictSchemaFor, type SignalsInput } from "./merge-assist/judge-prompts.js";
 export {
   createMergeAssistService,
   MERGE_ASSIST_ERROR_CODES,

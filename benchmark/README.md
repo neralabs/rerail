@@ -99,6 +99,24 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   target, medium two, large three or four in at least three areas), with prompts, features and file names new to the
   dataset and each of the nine graded decisions targeted at least three times. It is held out: no agent runs on it
   before its pre-registration is committed.
+
+  `--live [--trials N] [--decisions id,id] [--tasks id,id]` is the two-agent coordination check: does a person's
+  correction of their agent (A) on one branch reach another agent (B) on another branch through the product's capture,
+  and does B follow it? Per decision D and trial, A runs D's first `dev` tempt task (else its first `size` one) in a
+  worktree on `alice/<task>`, under the control hooks; it is graded with D's oracle and resumed once with D's
+  correction from cases.json, as it is when A broke D, otherwise prefixed `Going forward: ` (unless it already says
+  so). `draftDecision` with the real judge, in a scratch database over that worktree, gets the correction, A's last six
+  tool calls from its Codex transcript and each file the resume changed (before and after, four at most); a candidate
+  is written to `.rerail/rules/` (its code rule, or for a note a candidate-format document with its text and scope)
+  and committed on A's branch as Alice Chen. B's index is the built index without D's entry, plus, when captured, an
+  entry read from the committed rule (a `peer` decision on `alice/<task>`, provenance `live-capture`, its embedding
+  from the bundled model, the candidate's signals); it must pass the integrity and ranker checks. B runs D's other
+  `dev`, `heldout` and `size` tempt tasks (three at most, by id; `--tasks` narrows them) in a clone of `main` alone on
+  `bob/<task>`, under `focus-pool` and `none`, phase 1 only, graded with D's oracle. A failed capture still runs both
+  arms, with D absent from B's index. It prints per trial A's outcome, the capture, B's runs, capture success per
+  decision, the decision the product produced against the correction, delivery to B, B's violation of D split by
+  capture, time and tokens per phase, and L1 for the batch alone; `--json` keeps it all. `--concurrency` bounds the
+  Codex work at once: an A with its capture, or one B run.
 - `merge-assist-stats.ts` (`node --import tsx benchmark/merge-assist-stats.ts --analyze report.json [report.json ...]
   --arms A,B [--metric m] [--look N] [--seed N]`, or `--self-test`) analyses `--arms` reports, no model involved. A
   run is the unit, stratified by task; several reports' batches are pooled (one look each unless `--look` says
@@ -117,7 +135,11 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   against the Pocock boundary for three looks (nominal one-sided α 0.0221); the last line is `STOP: success`,
   `CONTINUE` or `STOP: futility/max looks`. `--self-test` prints the false-positive rate under no effect and the power
   under a large one, and for P3's test the false-positive rate at a true ratio of 1.10 and the power at 0.9, 200
-  synthetic datasets each.
+  synthetic datasets each. `--analyze-live live.json [...] [--look N] [--planned-looks N]` analyses `--live` reports:
+  L1, B's violation of D lower with `focus-pool` than with `none`, by the same stratified permutation test with strata
+  = B task, its effect the mean within-task difference in proportions with a cluster-bootstrap 95% CI, one-sided
+  α 0.05 for a check looked at once (`--planned-looks 1`, the default) and the Pocock 0.0221 per look otherwise, at
+  most three. A B run with an error counts as a violation.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross

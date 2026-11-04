@@ -155,6 +155,6 @@ export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
 export * from "./merge-assist/candidate.js";
 export { type CandidateSet } from "./merge-assist/candidate-files.js";
-export { correctionFamilies } from "./merge-assist/corrections.js";
+export { callSummary, correctionFamilies } from "./merge-assist/corrections.js";
 export * from "./merge-assist/model.js";
 export * from "./merge-assist/signals.js";
