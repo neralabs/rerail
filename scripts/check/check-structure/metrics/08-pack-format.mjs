@@ -6,6 +6,8 @@
 //   - has an `<id>` of lowercase letters, digits and dashes;
 //   - has a `pack.json` whose `format` is `rerail.rule-pack/v1` and whose `id` is `<id>`, and whose every
 //     `rules[].document` is a tracked file, while every file in `rules/` is listed;
+//   - has a `pack.json` `name` with no brackets, digits or ported tool, repeated exactly in its README headings and,
+//     for a published pack, in docs/rule-packs.md's table;
 //   - has a `package.json` named `@neralabs/rerail-pack-<id>` with a `license`, no `dependencies`, and
 //     `files` publishing `pack.json`, `rules`, `LICENSE`.
 // `packs/README.md` is the directory's index, not a pack.
@@ -17,6 +19,38 @@ export const title = "Packs pass the pack-format layout";
 export const target = "100%";
 
 const REQUIRED = ["pack.json", "package.json", "README.md", "LICENSE", "NOTICE"];
+
+function headingFindings(repo, path, heading) {
+  if (!repo.has(path) || repo.text(path).split("\n", 1)[0] === heading) return [];
+  return [finding(path, `first line must be "${heading}"`)];
+}
+
+function toolsNamed(repo, dir, name) {
+  const tools = readJson(repo, `${dir}/conformance.json`)?.tools;
+  if (!Array.isArray(tools)) return [];
+  return tools.map((tool) => tool?.name).filter((tool) => typeof tool === "string" && name.toLowerCase().includes(tool.toLowerCase()));
+}
+
+function docsRowFindings(repo, dir, name) {
+  if (readJson(repo, `${dir}/package.json`)?.private === true) return [];
+  if ((repo.text("docs/rule-packs.md") ?? "").includes(`\n| ${name} |`)) return [];
+  return [finding("docs/rule-packs.md", `no table row names the pack "${name}"`)];
+}
+
+/** A pack's name says what it is about, and each place repeating it says the same. The schema requires it to exist. */
+function nameFindings(repo, dir, name) {
+  if (typeof name !== "string") return [];
+  const problems = toolsNamed(repo, dir, name).map((tool) => finding(`${dir}/pack.json`, `name "${name}" names the tool ${tool}: tools go in covers`));
+  if (/[()[\]{}\d]/.test(name)) {
+    problems.push(finding(`${dir}/pack.json`, `name "${name}" has brackets or digits: a name says what the pack is about, and limits and versions go in covers`));
+  }
+  return [
+    ...problems,
+    ...headingFindings(repo, `${dir}/README.md`, `# Rerail rule pack: ${name}`),
+    ...headingFindings(repo, `${dir}/candidates/README.md`, `# Rerail rule pack: ${name}, candidates`),
+    ...docsRowFindings(repo, dir, name),
+  ];
+}
 
 function packFindings(repo, pack) {
   const dir = `packs/${pack}`;
@@ -38,6 +72,7 @@ function packFindings(repo, pack) {
     for (const path of repo.files) {
       if (path.startsWith(`${dir}/rules/`) && !listed.has(path)) problems.push(finding(path, "in rules/ but not listed in pack.json"));
     }
+    problems.push(...nameFindings(repo, dir, manifest?.name));
   }
   const pkg = readJson(repo, `${dir}/package.json`);
   if (repo.has(`${dir}/package.json`)) {
