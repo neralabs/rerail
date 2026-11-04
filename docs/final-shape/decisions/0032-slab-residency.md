@@ -1,0 +1,98 @@
+# 0032: Tapes resident in slabs, read in place by the device
+
+Status: accepted (2026-11-04, list step 28; scope chosen by the user: "Full §20 now")
+
+## Context
+
+Architecture §5 (F3, F4, F7) and PIAT §20:
+- the device reads pinned tapes and programs;
+- wave preparation loads what a batch lacks;
+- everything pinned is dropped two minutes after each full execution.
+
+Before this step, each Metal label run repacked its batch's tapes into 44-byte `MetalNode`
+records, with batch-global indices, a children list and concatenated sources and line starts
+(`PackedBatch::new`). It then copied them into new buffers per batch. Only the last batch's
+buffers were kept (`RunBuffers`). PIAT §20.11 names exactly this repacking as forbidden. The
+pipeline caches were thread-local and never dropped.
+
+The user chose the full §20 scope: the kernels on the wave's path read the v9np columns in place.
+
+## Prior work consulted
+
+- **PIAT spec §20** (Pulling-it-all-together `docs/rule-engine-direction/spec.md`).
+  - **Adopted:**
+    - 20.1 resident forms;
+    - 20.2 slabs (anonymous mappings, 64 MiB, a 16-byte bump, no partial `MADV_DONTNEED`);
+    - 20.2.3 columns at 16-byte offsets, which is format 11;
+    - 20.3 identity by content, bulk admission, one validation;
+    - 20.4.1 one retained no-copy shared buffer per slab;
+    - 20.5.1 a batch document table, with nothing concatenated;
+    - 20.6.2 line starts computed once per resident source;
+    - 20.10 the pools.
+  - **Departs:**
+    - 20.2.4: compaction is replaced by retiring a whole slab, least recently used. Its documents
+      are admitted again when next read.
+    - 20.5.2: batches are not width-homogeneous. The width is a per-document field the accessors
+      read, not a function constant. This is to be measured.
+    - 20.4.5: a batch binds at most four slabs (`MAX_SLABS`), with no argument buffer. That is the
+      whole residency share of the 256 MB buffer budget.
+- **Decision 0026 (nodes live in tapes):**
+  - **Agrees:** the stored form is the v9np image alone.
+  - The parents, the fixed-width code table and the line starts are a reader's state built at
+    admission. They are not stored, as 0026 allows ("in-memory structures a consumer builds").
+- **Decision 0025 (v9np):**
+  - Its "no parent column" stands for storage.
+  - Its measured upload saving (≤ 12 ms of a 1.83 s cold S7 audit) means this step buys shape and
+    pinning, not cold speed.
+- **Tempo evidence** (§20 preamble):
+  - First-use Metal mapping cost 213 ms against 6.1 ms of GPU time, and reused buffers cut the
+    wait 30–60×. **Agrees:** buffers are retained per slab, not created per batch.
+  - Heap decompression left 3.3 GiB of high-water. **Agrees:** frames are decompressed straight
+    into slabs.
+- **Lessons ledger:**
+  - #1 (no per-node rows stored): **agrees**.
+  - #8 (no stored per-node sidecars): **agrees**, since nothing derived is stored.
+  - #26 (a fixed budget does not scale): the residency is a share of the buffer budget, and a batch
+    over it is split, never `Unknown`.
+
+## Decision
+
+1. **Format 11:** each v9np column starts at a 16-byte offset in the image (zero padding,
+   checked on read). `TAPE_FORMAT_VERSION` is 11, so stored tapes re-derive.
+2. **`residency::slabs`:**
+   - **Slabs:** `SLAB_BYTES` of anonymous mapping, each with one no-copy shared `MTLBuffer`
+     (`MappedBuffer::slab`).
+   - **Documents** are keyed by the tape's SHA-256. Each lies in one slab: the image as stored, the
+     source, parents (u32), codes (`DeviceCode`, 24 B) and line starts.
+   - **Admission:**
+     - one store read for the misses (`ContentStore::resident_frames`);
+     - each frame is decompressed into its slab;
+     - both SHA-256s, the header against the source, and UTF-8 are checked once.
+   - **Leases** are `Arc`s. Retiring a slab drops its documents, and its memory goes with the last
+     batch reading it.
+   - **The budget** is half the Metal buffer budget (`RESIDENT_SHARE`). The other half is for the
+     runs' workspaces.
+   - **The drop:** `executed()` sets a deadline two minutes out. A thread then releases the
+     documents, the slabs and every compiled pipeline (`metal_backend::drop_pipelines`,
+     `label_passes::drop_pipelines`). The pipeline caches are now process-wide so that they can
+     be dropped.
+3. **The device view** (`metal_tape.metal`):
+   - `DocView` (64 B) holds a document's offsets in its slab and its `nodeBase` in the batch's
+     numbering. Labels are still bit rows over that numbering.
+   - The accessors read kind, field, flags, classes, start and end, size, parent, next sibling (any
+     or named), first child, k-th child and child count. They also read source bytes and line
+     starts.
+   - `tape_conformance` checks every accessor, for every node of a five-file batch, against the
+     `MetalNode` record, children and supertype pairs that `PackedBatch` makes for the same files.
+4. **The kernels on the wave's path** (the label passes, the pattern kernel, the interpreter and
+   the JIT) bind the document table and the slabs instead of `nodes`, `children`, `source`,
+   `lineStarts` and the supertype pairs. The Metal path then no longer calls `PackedBatch::new` for
+   tapes. This lands in the steps that follow; the status is in the plan.
+5. **Not in this step:** the CPU executors still read `TapeDoc` (§20.5.3).
+
+## Consequences
+
+- Each document's form is made once per admission and shared by every batch and run, until the
+  drop or its slab's retirement.
+- The device does more work per access: a code-table lookup, and sibling hops where `MetalNode`
+  held links. The cost is to be measured on S2 and S7 when the kernels move.

@@ -25,12 +25,20 @@ use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
 /// memberships folded into the codes.
-pub(super) const TAPE_FORMAT_VERSION: u32 = 10;
+pub(super) const TAPE_FORMAT_VERSION: u32 = 11;
 const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
 /// The image header: magic, language, the three column widths, version, source length and
 /// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
 /// table's bytes.
 const HEADER_BYTES: usize = 56 + 5 * 8;
+/// Each column starts at this alignment from the image's start (format 11), so a reader of the
+/// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
+pub(super) const COLUMN_ALIGN: usize = 16;
+
+/// `length` rounded up to `COLUMN_ALIGN`.
+const fn padded(length: usize) -> usize {
+    length.div_ceil(COLUMN_ALIGN) * COLUMN_ALIGN
+}
 /// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
 /// its last descendant's (for a tree where a node ends before its last descendant starts).
 const TAIL_FROM_START: u8 = 0x80;
@@ -53,6 +61,7 @@ mod index;
 #[allow(unused_imports)]
 pub(in crate::code_rule_dsl) use index::IndexImage;
 mod wire;
+pub(in crate::code_rule_dsl) mod resident;
 pub(super) use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 const ERROR_SYMBOL: u16 = u16::MAX;
@@ -996,11 +1005,7 @@ impl TapeImage {
         let lengths = [self.node_count(), self.codes.len(), code_bytes, self.kind_aliases.len(), alias_bytes];
         let mut bytes = Vec::with_capacity(
             HEADER_BYTES
-                + self.code.len()
-                + self.size.len()
-                + self.base.len()
-                + self.off.len()
-                + self.tail.len()
+                + [&self.code, &self.size, &self.base, &self.off, &self.tail].iter().map(|column| padded(column.len())).sum::<usize>()
                 + code_bytes
                 + alias_bytes,
         );
@@ -1013,8 +1018,10 @@ impl TapeImage {
         for length in lengths {
             bytes.extend_from_slice(&(length as u64).to_le_bytes());
         }
+        debug_assert_eq!(bytes.len() % COLUMN_ALIGN, 0);
         for column in [&self.code, &self.size, &self.base, &self.off, &self.tail] {
             bytes.extend_from_slice(column);
+            bytes.resize(padded(bytes.len()), 0);
         }
         for code in &self.codes {
             bytes.extend_from_slice(&code.kf.to_le_bytes());
@@ -1064,8 +1071,10 @@ impl TapeImage {
         // Every count must be backed by the bytes before a table is reserved for it.
         let column = |width: usize| nodes.checked_mul(width).ok_or("tape image length overflow");
         let blocks = nodes.div_ceil(CHECKPOINT_STRIDE).checked_mul(4).ok_or("tape image length overflow")?;
-        let fixed = [column(2)?, column(usize::from(widths[0]))?, blocks, column(usize::from(widths[1]))?, column(usize::from(widths[2] & !TAIL_FROM_START))?]
+        let lengths = [column(2)?, column(usize::from(widths[0]))?, blocks, column(usize::from(widths[1]))?, column(usize::from(widths[2] & !TAIL_FROM_START))?];
+        let fixed = lengths
             .into_iter()
+            .map(padded)
             .chain([code_bytes, alias_bytes])
             .try_fold(0_usize, |total, length| total.checked_add(length))
             .ok_or("tape image length overflow")?;
@@ -1081,11 +1090,17 @@ impl TapeImage {
         if alias_count > usize::from(SENTINEL) || alias_count.checked_mul(5).is_none_or(|minimum| minimum > alias_bytes) {
             return Err("invalid contextual grammar alias count".into());
         }
-        let code = reader.take(column(2)?)?.to_vec();
-        let size = reader.take(column(usize::from(widths[0]))?)?.to_vec();
-        let base = reader.take(blocks)?.to_vec();
-        let off = reader.take(column(usize::from(widths[1]))?)?.to_vec();
-        let tail = reader.take(column(usize::from(widths[2] & !TAIL_FROM_START))?)?.to_vec();
+        // Each column, then its padding to `COLUMN_ALIGN`, which must be zero.
+        let mut columns = lengths.into_iter().map(|length| {
+            let column = reader.take(length)?.to_vec();
+            if reader.take(padded(length) - length)?.iter().any(|&byte| byte != 0) {
+                return Err("noncanonical tape column padding".to_owned());
+            }
+            Ok(column)
+        });
+        let mut next = || columns.next().expect("five columns");
+        let (code, size, base, off, tail) = (next()?, next()?, next()?, next()?, next()?);
+        drop(columns);
         #[cfg(test)]
         note_table_reservation(code_count);
         let codes_end = reader.offset + code_bytes;

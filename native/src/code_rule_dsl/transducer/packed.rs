@@ -53,6 +53,8 @@ pub(in crate::code_rule_dsl) use metal_program_backend::set_steps;
 pub(in crate::code_rule_dsl) use metal_program_backend::lattice as metal_lattice;
 #[cfg(target_os = "macos")]
 pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::{RootJobs, RootsFound};
+#[cfg(target_os = "macos")]
+pub(in crate::code_rule_dsl) use metal_program_backend::label_passes::drop_pipelines as drop_label_pipelines;
 
 #[cfg(all(test, target_os = "macos"))]
 pub(in crate::code_rule_dsl) fn reset_metal_execution_metrics() {

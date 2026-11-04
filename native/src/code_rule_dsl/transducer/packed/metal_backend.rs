@@ -7,7 +7,6 @@ use metal::{
     Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLResourceOptions, MTLSize,
 };
 use sha2::{Digest, Sha256};
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of_val;
 use std::ptr::NonNull;
@@ -27,6 +26,11 @@ pub(super) const METAL_BUFFER_LIMIT: usize = 256 << 20;
 static METAL_BUFFER_BYTES: AtomicUsize = AtomicUsize::new(0);
 /// The most `METAL_BUFFER_BYTES` has held.
 static METAL_BUFFER_PEAK: AtomicUsize = AtomicUsize::new(0);
+
+/// The Metal buffer budget, in bytes.
+pub(in crate::code_rule_dsl) fn buffer_limit() -> usize {
+    METAL_BUFFER_LIMIT
+}
 
 /// The bytes of Metal buffers alive now (their reservations), in MB.
 pub(in crate::code_rule_dsl) fn reserved_mb() -> usize {
@@ -369,6 +373,25 @@ impl PrivateInputUpload {
 }
 
 impl MappedBuffer {
+    /// A residency slab (PIAT §20.2, §20.4): `length` bytes, page-rounded, of an anonymous mapping
+    /// with one retained no-copy shared buffer over it. Untouched pages stay unmapped, so a slab
+    /// costs what is written to it; its whole length is reserved against the buffer budget.
+    #[track_caller]
+    pub(in crate::code_rule_dsl) fn slab(length: usize) -> Result<Self, Error> {
+        let device = super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        Self::from_mapping(device, Arc::new(MappedRegion::zeroed(length)?))
+    }
+
+    /// The buffer's bytes as the host writes them.
+    pub(in crate::code_rule_dsl) fn host(&self) -> *mut u8 {
+        self.buffer.contents().cast()
+    }
+
+    /// The buffer's length in bytes.
+    pub(in crate::code_rule_dsl) fn byte_length(&self) -> usize {
+        self.buffer.length() as usize
+    }
+
     /// Another owner of `buffer` (Metal retains it), as a kept buffer is handed between runs.
     pub(super) fn wrap(buffer: Buffer) -> Self {
         Self { buffer }
@@ -649,9 +672,19 @@ pub(super) fn metal_execution_guard() -> Result<MetalExecutionGuard, Error> {
     })
 }
 
-thread_local! {
-    static PIPELINES: RefCell<HashMap<[u8; 32], ComputePipelineState>> = RefCell::new(HashMap::new());
-    static LIBRARIES: RefCell<HashMap<[u8;32],metal::Library>>=RefCell::new(HashMap::new());
+// Process-wide, so the residency's drop (`residency::slabs`, two minutes after a full execution)
+// releases every compiled pipeline with the slabs.
+static PIPELINES: LazyLock<Mutex<HashMap<[u8; 32], ComputePipelineState>>> = LazyLock::new(Default::default);
+static LIBRARIES: LazyLock<Mutex<HashMap<[u8; 32], metal::Library>>> = LazyLock::new(Default::default);
+
+/// Releases the compiled pipelines and libraries (the residency's drop).
+pub(in crate::code_rule_dsl) fn drop_pipelines() {
+    if let Ok(mut pipelines) = PIPELINES.lock() {
+        pipelines.clear();
+    }
+    if let Ok(mut libraries) = LIBRARIES.lock() {
+        libraries.clear();
+    }
 }
 
 pub(super) fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, Error> {
@@ -676,16 +709,15 @@ pub(super) fn pipeline_named_constant(
     }
     digest.update(source.as_bytes());
     let key: [u8; 32] = digest.finalize().into();
-    if let Some(cached) = PIPELINES.with_borrow(|pipelines| pipelines.get(&key).cloned()) {
+    if let Some(cached) = PIPELINES.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
         return Ok(cached);
     }
     let mut library_digest = Sha256::new();
     library_digest.update(device.registry_id().to_le_bytes());
     library_digest.update(source.as_bytes());
     let library_key: [u8; 32] = library_digest.finalize().into();
-    let library = if let Some(library) =
-        LIBRARIES.with_borrow(|libraries| libraries.get(&library_key).cloned())
-    {
+    let cached = LIBRARIES.lock().map_err(|_| Error::BackendFailure)?.get(&library_key).cloned();
+    let library = if let Some(library) = cached {
         library
     } else {
         let library = device
@@ -694,14 +726,14 @@ pub(super) fn pipeline_named_constant(
                 eprintln!("Metal library compilation failed: {error}");
                 Error::BackendFailure
             })?;
-        LIBRARIES.with_borrow_mut(|libraries| {
+        if let Ok(mut libraries) = LIBRARIES.lock() {
             if libraries.len() >= 16
                 && let Some(oldest) = libraries.keys().next().copied()
             {
                 libraries.remove(&oldest);
             }
             libraries.insert(library_key, library.clone());
-        });
+        }
         library
     };
     let constants = constant.map(|value| {
@@ -722,20 +754,20 @@ pub(super) fn pipeline_named_constant(
     let pipeline = device
         .new_compute_pipeline_state(&descriptor)
         .map_err(|_| Error::BackendFailure)?;
-    PIPELINES.with_borrow_mut(|pipelines| {
+    if let Ok(mut pipelines) = PIPELINES.lock() {
         if pipelines.len() >= 512
             && let Some(oldest) = pipelines.keys().next().copied()
         {
             pipelines.remove(&oldest);
         }
         pipelines.insert(key, pipeline.clone());
-    });
+    }
     Ok(pipeline)
 }
 
 #[cfg(test)]
 pub(super) fn pipeline_cache_len() -> usize {
-    PIPELINES.with_borrow(HashMap::len)
+    PIPELINES.lock().map_or(0, |pipelines| pipelines.len())
 }
 
 pub(super) struct PreparedAnchorScan {

@@ -14,7 +14,75 @@ use std::collections::{BTreeSet, HashMap};
 use std::io::Cursor;
 use std::sync::Arc;
 
+/// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd
+/// frames with their raw lengths, the source's SHA-256 and the tape's grammar.
+pub(crate) struct ResidentFrames {
+    pub(crate) grammar_id: i64,
+    pub(crate) tape_length: usize,
+    pub(crate) tape_frame: Vec<u8>,
+    pub(crate) source_length: usize,
+    pub(crate) source_frame: Vec<u8>,
+    pub(crate) source_sha256: [u8; 32],
+}
+
 impl ContentStore {
+    /// The frames of the tapes whose SHA-256 is each of `tapes`, in one read: `None` where no tape
+    /// has that digest. Frames are returned compressed, for the caller to decompress in place.
+    pub(crate) fn resident_frames(&self, tapes: &[[u8; 32]]) -> StoreResult<Vec<Option<ResidentFrames>>> {
+        let encoded = serde_json::to_string(
+            &tapes
+                .iter()
+                .enumerate()
+                .map(|(at, digest)| {
+                    let key = HashKey::from_sha256_digest(*digest);
+                    serde_json::json!([at, key.algorithm, key.lanes[0], key.lanes[1], key.lanes[2], key.lanes[3]])
+                })
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| StoreError::Invalid(error.to_string()))?;
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) at, \
+             CAST(json_extract(value,'$[1]') AS INTEGER) algorithm, CAST(json_extract(value,'$[2]') AS INTEGER) lane0, \
+             CAST(json_extract(value,'$[3]') AS INTEGER) lane1, CAST(json_extract(value,'$[4]') AS INTEGER) lane2, \
+             CAST(json_extract(value,'$[5]') AS INTEGER) lane3 FROM json_each(?1)) \
+             SELECT i.at,t.grammar_id,t.codec_id,t.raw_length,t.frame,s.codec_id,s.raw_length,s.frame,\
+             sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3 \
+             FROM input i CROSS JOIN hashes th INDEXED BY hashes_by_prefix ON th.algorithm_id=i.algorithm AND th.lane0=i.lane0 \
+             AND th.lane1=i.lane1 AND th.lane2=i.lane2 AND th.lane3=i.lane3 \
+             JOIN tape_objects t ON t.canonical_hash_id=th.hash_id \
+             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id",
+        )?;
+        let mut out = (0..tapes.len()).map(|_| None).collect::<Vec<_>>();
+        let rows = statement.query_map([encoded], |row| {
+            let length = |at: usize| row.get::<_, i64>(at).map(|length| usize::try_from(length).unwrap_or(usize::MAX));
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(5)?,
+                ResidentFrames {
+                    grammar_id: row.get(1)?,
+                    tape_length: length(3)?,
+                    tape_frame: row.get(4)?,
+                    source_length: length(6)?,
+                    source_frame: row.get(7)?,
+                    source_sha256: HashKey { algorithm: row.get(8)?, lanes: [row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?] }
+                        .sha256_bytes()
+                        .unwrap_or_default(),
+                },
+            ))
+        })?;
+        for row in rows {
+            let (at, tape_codec, source_codec, frames) = row?;
+            if tape_codec != CODEC_ZSTD || source_codec != CODEC_ZSTD {
+                return Err(StoreError::Invalid(format!("unsupported codecs {tape_codec}, {source_codec}")));
+            }
+            if let Some(slot) = usize::try_from(at).ok().and_then(|at| out.get_mut(at)) {
+                *slot = Some(frames);
+            }
+        }
+        Ok(out)
+    }
     pub fn put_source(&self, source: &[u8], aliases: &[HashKey]) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
         let canonical = HashKey::sha256(source);

@@ -10,7 +10,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 10);
+    assert_eq!(TAPE_FORMAT_VERSION, 11);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
@@ -233,11 +233,12 @@ fn persisted_image_round_trips_without_parsing() {
     // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
     // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
     // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
-    // document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes) changes
+    // document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes; 11: columns at 16 bytes,
+    // decision 0032) changes
     // the bytes.
     assert_eq!(
         digest,
-        "64eb081472ae83e03dbbf108d102bc4c84f06df899c47586db2acf23cde7ea3f"
+        "bc05feccadd8b7779a4c39a2e056f2cd821fdadf580cbf4e1ffcd4d2e60d526c"
     );
 }
 
@@ -273,11 +274,11 @@ fn file_documents_persist_apart_and_are_checked() {
     assert_eq!(
         primary.len(),
         HEADER_BYTES
-            + tables.code.len()
-            + tables.size.len()
-            + tables.base.len()
-            + tables.off.len()
-            + tables.tail.len()
+            + padded(tables.code.len())
+            + padded(tables.size.len())
+            + padded(tables.base.len())
+            + padded(tables.off.len())
+            + padded(tables.tail.len())
             + tables.code_table_bytes()
             + aliases
     );

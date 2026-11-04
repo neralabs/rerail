@@ -644,8 +644,22 @@ pub(in crate::code_rule_dsl) fn warm() {
     });
 }
 
+/// The label kernels, compiled once (until the residency's drop).
+static PIPELINES: Mutex<Option<Vec<ComputePipelineState>>> = Mutex::new(None);
+/// The clauses' pattern kernels, by source (until the residency's drop).
+static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<String, ComputePipelineState>>> = LazyLock::new(Default::default);
+
+/// Releases the compiled label and pattern kernels (the residency's drop).
+pub(in crate::code_rule_dsl) fn drop_pipelines() {
+    if let Ok(mut pipelines) = PIPELINES.lock() {
+        *pipelines = None;
+    }
+    if let Ok(mut pipelines) = PATTERN_PIPELINES.lock() {
+        pipelines.clear();
+    }
+}
+
 fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
-    static PIPELINES: Mutex<Option<Vec<ComputePipelineState>>> = Mutex::new(None);
     let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipelines) = &*cached {
         return Ok(pipelines.clone());
@@ -660,12 +674,11 @@ fn pipelines() -> Result<Vec<ComputePipelineState>, Error> {
 
 /// The clause's pattern kernel, compiled once per distinct source.
 fn pattern_pipeline(patterns: &[&PackedPattern], facts: bool) -> Result<Option<(ComputePipelineState, Vec<Vec<String>>)>, Error> {
-    static PIPELINES: LazyLock<Mutex<HashMap<String, ComputePipelineState>>> = LazyLock::new(Default::default);
     if patterns.is_empty() && !facts {
         return Ok(None);
     }
     let (source, names) = patterns::source(patterns);
-    let mut cached = PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
+    let mut cached = PATTERN_PIPELINES.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = cached.get(&source) {
         return Ok(Some((pipeline.clone(), names)));
     }

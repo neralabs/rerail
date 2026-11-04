@@ -14,6 +14,7 @@ pub(crate) use connection::sqlite_on_jemalloc;
 mod derivation;
 mod facts_memo;
 mod objects;
+pub(crate) use objects::ResidentFrames;
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(test)]

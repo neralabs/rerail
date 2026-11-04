@@ -3,3 +3,5 @@
 pub(crate) mod admission;
 #[cfg(target_os = "macos")]
 pub(crate) mod metal;
+#[cfg(target_os = "macos")]
+pub(crate) mod slabs;

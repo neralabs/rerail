@@ -36,6 +36,9 @@ pub(super) fn metrics() -> (usize, usize) {
 
 #[path = "metal_label_passes.rs"]
 pub(super) mod label_passes;
+#[cfg(test)]
+#[path = "metal_tape_tests.rs"]
+mod tape_tests;
 #[path = "metal_set_steps.rs"]
 pub(in crate::code_rule_dsl) mod set_steps;
 #[path = "metal_work_queue.rs"]
