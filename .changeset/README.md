@@ -1,6 +1,6 @@
 # Changesets
 
-Packs under `packs/` are versioned with [changesets](https://github.com/changesets/changesets). A pull request that
+Published packs under `packs/` are versioned with [changesets](https://github.com/changesets/changesets). A pull request that
 changes what a pack publishes (its `package.json`, `pack.json`, `rules/`, `licenses/`, `LICENSE`, `NOTICE` or
 `README.md`) adds one changeset, and CI fails it otherwise: run `npx changeset`, pick the pack, and choose `patch`
 while the pack is below 1.0.0, else the bump from the table in
@@ -30,7 +30,8 @@ a rule shipped or a README reworded, leaves the summary empty: the changeset sti
 Do not edit a pack's `version` or `CHANGELOG.md` by hand: the **Release** pull request (`npm run version:packs` for the
 version, `scripts/release/pack-changelog.mjs` for the changelog, in the format of core's) writes both, and merging it
 publishes the packs
-([release](../docs/pack-format.md#release)).
+([release](../docs/pack-format.md#release)). A private pack (`"private": true` in its `package.json`) is never
+released: it takes no changeset, and `npm test` and CI refuse a changeset naming it.
 
 The core package at the repository root takes no changeset: the same Release pull request bumps it when what it ships
 changes, and its notes are files in `.changelog/` ([.changelog/README.md](../.changelog/README.md)).

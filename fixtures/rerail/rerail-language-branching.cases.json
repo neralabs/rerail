@@ -1,0 +1,190 @@
+{
+  "caught": [
+    {
+      "path": "native/src/code_rule_dsl/tape.rs",
+      "content": "impl FileImage {\n    pub(super) fn parse(\n        grammar: &Grammar,\n        source: &str,\n        budget: &impl Fn() -> bool,\n    ) -> Option<Result<FileImage, String>> {\n        if grammar.lang == GrammarDialect::Blade {\n            return Some(Self::encode_template(grammar, source, budget));\n        }\n        None\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/evaluate.rs",
+      "content": "fn encode_tape(language: GrammarDialect, file: &File) -> Image {\n    let image = if language == GrammarDialect::Blade {\n        // Forte's step budget bounds the parse; ...\n        let parsed = parse_tree(file.input.source.as_bytes());\n        encode(parsed)\n    } else {\n        tree_sitter(file)\n    };\n    image\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/import_target.rs",
+      "content": "pub(super) fn compile_import_target(value: &Value, language: GrammarDialect, path: &str) -> Result<AstMatcher> {\n    if Family::of(language) != Family::Ecma {\n        return Err(invalid(format!(\n            \"{path}: import targets are eslint-plugin-n's, read in JavaScript and TypeScript files\"\n        )));\n    }\n    Ok(build(value))\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/mod.rs",
+      "content": "fn seeds(language: GrammarDialect, references: bool, definition: bool) -> bool {\n    if (references || definition) && Family::of(language) != Family::Python {\n        return false;\n    }\n    true\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/eval/mod.rs",
+      "content": "fn taped(language: GrammarDialect) -> bool {\n    match Family::of(language) {\n        Family::Blade => false,\n        Family::Python | Family::Php | Family::Ecma => true,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/resolve.rs",
+      "content": "fn reads_php(language: GrammarDialect) -> bool {\n    matches!(Family::of(language), Family::Php | Family::Blade)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/run.rs",
+      "content": "fn run(language: GrammarDialect) {\n    if let GrammarDialect::Blade = language {\n        return;\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/model.rs",
+      "content": "fn module(language: &str, path: &str) -> Option<ModulePath> {\n    match package(path) {\n        Some(found) => Some(found),\n        None if language == \"python\" => ModulePath::stem(&path),\n        None => None,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/ingest.rs",
+      "content": "fn kind(label: &str) -> Kind {\n    match label {\n        \"blade\" | \"php\" => Kind::Php,\n        _ => Kind::Other,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/binds.rs",
+      "content": "fn reads(node: &Node, via: Option<Via>) -> bool {\n    via == Some(crate::code_rule_dsl::language::Via::CompiledView)\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-schema.ts",
+      "content": "export function foreignStyle(language: string, style: string): boolean {\n  if (language === \"python\" && style === \"printf\") return true;\n  return false;\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-enforcer.ts",
+      "content": "const readsPhp = (family: string) => family === PHP_FAMILY || family === BLADE_FAMILY;\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-languages.ts",
+      "content": "export function suppressions(entry: { family: string }): string[] {\n  switch (entry.family) {\n    case \"python\":\n      return [\"noqa\"];\n    default:\n      return [];\n  }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php.rs",
+      "content": "/// Whether `node` is a node of a Blade template's embedded program (`compiled-view`).\npub(crate) fn compiled_view<D: Doc>(node: &Node<'_, D>) -> bool {\n    let doc: &dyn std::any::Any = node.get_doc();\n    doc.downcast_ref::<crate::code_rule_dsl::tape::TapeDoc>()\n        .and_then(crate::code_rule_dsl::tape::TapeDoc::via)\n        == Some(crate::code_rule_dsl::language::Via::CompiledView)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/value/mod.rs",
+      "content": "impl Value {\n    fn identical(&self, other: &Value, lang: Lang) -> bool {\n        match lang { Lang::Python => python_equals(self, other), Lang::Js => js_same_value(self, other), Lang::Php => php::identical(self, other) }\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/mod.rs",
+      "content": "fn module_of(language: GrammarDialect) -> Option<&'static str> {\n    let Family::Python = Family::of(language) else {\n        return None;\n    };\n    Some(\"module\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/relation.rs",
+      "content": "fn reads_php(language: &str) -> bool {\n    !matches!(language, \"php\" | \"blade\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/global.rs",
+      "content": "fn forte(grammar: &Grammar) -> bool {\n    label(grammar.lang) == Some(\"blade\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/query/mod.rs",
+      "content": "fn blade(language: GrammarDialect) -> bool {\n    dialect_by_label(\"blade\") == Some(language)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/anchors/semantic.rs",
+      "content": "fn anchor(resolves: &Resolves) -> usize {\n    if resolves.language == GrammarDialect::Python {\n        return 1;\n    }\n    0\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-compile.ts",
+      "content": "export function readsPhp(language: string): boolean {\n  return [\"php\", \"blade\"].includes(language);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/summary_links.rs",
+      "content": "fn python_file(path: &str) -> bool {\n    label_of_path(path) == Some(\"python\")\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-language-support.ts",
+      "content": "export function isPhp(path: string): boolean {\n  return codeRuleDialectForPath(path) === \"php\";\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/identifier.rs",
+      "content": "fn php(language: GrammarDialect) -> bool {\n    language == GrammarDialect::Php\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/compare/semantic.rs",
+      "content": "fn relation(lang: Lang, op: Op, a: &Value, b: &Value) -> Option<bool> {\n    match op {\n        op if lang == Lang::Js => ops::relation(op, a, b),\n        _ => None,\n    }\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "native/src/code_rule_dsl/tape/image.rs",
+      "content": "impl FileImage {\n    pub(super) fn parse(grammar: &Grammar, source: &str) -> Option<Result<FileImage, String>> {\n        with_adapter!(Family::of(grammar.lang), A => A::parse(grammar, source))\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/closure.rs",
+      "content": "pub(crate) fn taped(language: GrammarDialect) -> bool {\n    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::TAPED)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/format_args.rs",
+      "content": "fn style(name: &str) -> Result<Style> {\n    match name {\n        \"brace\" => Ok(Style::Brace),\n        \"rust\" => Ok(Style::Rust),\n        _ => Err(invalid(name)),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/transform.rs",
+      "content": "pub(crate) fn apply(text: &str) -> String { text.to_owned() }\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn reads_each_language() {\n        for language in [\"python\", \"typescript\"] {\n            let path = if language == \"python\" { \"a.py\" } else { \"a.ts\" };\n            assert!(!path.is_empty());\n        }\n        assert!(GrammarDialect::Python != GrammarDialect::Php);\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/language/adapter.rs",
+      "content": "impl Adapter for Blade {\n    fn parse(grammar: &Grammar, source: &str) -> Option<Result<FileImage, String>> {\n        if grammar.lang == GrammarDialect::Blade { encode(grammar, source) } else { None }\n    }\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-lint-config.ts",
+      "content": "export function pluginOf(plugin: string, name: string) {\n  return { plugin: plugin === \"typescript\" && OXLINT_TYPESCRIPT_AS_ESLINT.has(name) ? \"eslint\" : plugin, name };\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-pack-matcher.ts",
+      "content": "function dependencyNames(key: string | undefined): string[] {\n  return key === undefined || key === \"python\" ? [] : [normalizePythonName(key)];\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-language-entries.ts",
+      "content": "export function familyOf(language: CodeRuleLanguage): string {\n  return ENTRIES[language].family;\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/index.rs",
+      "content": "fn label(language: Option<&str>) -> &str {\n    match language {\n        None => \"text\",\n        Some(label) => label,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/ecma.rs",
+      "content": "fn jsx(language: GrammarDialect) -> bool {\n    language == GrammarDialect::Tsx || language == GrammarDialect::JavaScript\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/embed/compiled_view.rs",
+      "content": "impl Embedder for CompiledView {\n    fn owns(via: Option<Via>) -> bool {\n        via == Some(Via::CompiledView)\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php/blade.rs",
+      "content": "pub(crate) fn visit_blade_program<D: Doc>(builder: &mut Builder, root: &Node<'_, D>) -> Visit<()> {\n    visit(builder, root, true)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/python_facts.rs",
+      "content": "fn ready(table: &Table) -> bool {\n    if table.language != GrammarDialect::Python || table.family != Family::Python {\n        return false;\n    }\n    true\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/literal/rust_format.rs",
+      "content": "fn reads(language: GrammarDialect) -> bool {\n    language == GrammarDialect::Rust\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/blade/view.rs",
+      "content": "fn directive(child: &Node) -> bool {\n    matches!(&*child.kind(), \"directive_name\" | \"php\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/names.rs",
+      "content": "fn alternate(alternate: &str) -> Name {\n    // A path's module name (`path_module`) is Python's.\n    Name::new(Family::Python, alternate)\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/eslint-flat-config.ts",
+      "content": "export function pluginFor(pluginLabel: string): string {\n  return pluginLabel === \"typescript\" ? \"eslint\" : pluginLabel;\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/format_args/style.rs",
+      "content": "fn rust(style_label: &str) -> bool {\n    style_label == \"rust\"\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/collate.rs",
+      "content": "#[cfg(all(test, feature = \"code-rule-profile\"))]\nmod bench {\n    fn reads(language: GrammarDialect) -> bool {\n        language == GrammarDialect::Python\n    }\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/repository-plugins.ts",
+      "content": "export function known(plugin: string): boolean {\n  return [\"typescript\", \"vue\"].includes(plugin);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/identifier_index.rs",
+      "content": "fn reads(names: &Names) -> usize { names.len() }\n"
+    }
+  ]
+}

@@ -244,8 +244,9 @@ jobs:
               - 'tsconfig.json'
               - 'tsconfig.build.json'
             # The conformance shards, the tools job's conformance steps and the comment: the runner's import closure
-            # (conformance/, the engine's TypeScript side, the test data and samples readers), the packs with their
-            # rules, gates and the locks naming their test data, and the native engine. tsx reads tsconfig.json.
+            # (conformance/, the engine's TypeScript side, the test data and samples readers, the release scripts'
+            # private-pack predicate), the packs with their rules, gates and the locks naming their test data, and the
+            # native engine. tsx reads tsconfig.json.
             conformance:
               - *common
               - *engine
@@ -254,6 +255,10 @@ jobs:
               - 'src/engine/**'
               - 'scripts/s3/**'
               - 'scripts/samples/**'
+              - 'scripts/release/packs.mjs'
+              - 'scripts/release/dist-tags.mjs'
+              - 'scripts/release/release-notes.mjs'
+              - 'scripts/check/check-internal-refs.mjs'
               - 'tsconfig.json'
             # The dashboard browser tests: the specs and their scenario seeding, the daemon from source, and the packs
             # the scenarios install from this checkout (INSTALLED_PACKS in e2e/support/scenarios.ts).

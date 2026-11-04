@@ -59,8 +59,8 @@ function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): 
  */
 function gitDiffPaths(workspaceRoot: string, isRecordedCheckout: (path: string) => boolean, prefix = ""): string[] {
   const entries = new Set([
-    ...gitPaths(workspaceRoot, ["diff", "--name-only", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
-    ...gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
+    ...gitPaths(workspaceRoot, ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
+    ...gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
     ...gitPaths(workspaceRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--"]),
   ].map(entry => entry.endsWith("/") ? entry.slice(0, -1) : entry));
   const folders = [...entries].filter(path => isDirectory(join(workspaceRoot, path)));

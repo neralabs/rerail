@@ -308,8 +308,8 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
-- A change to a pack under `packs/` adds a changeset, its name opening with its change type
-  ([.changeset/README.md](.changeset/README.md)), and stages the
+- A change to a published pack under `packs/` adds a changeset, its name opening with its change type
+  ([.changeset/README.md](.changeset/README.md)); a private pack takes none. It also stages the
   pack data it adds, changes or removes ([Adding or changing a pack](#adding-or-changing-a-pack)).
 - A change to what the core package ships adds an entry as a file of its own in `.changelog/`, its name opening with
   its change type ([.changelog/README.md](.changelog/README.md)), never under `## Unreleased` in `CHANGELOG.md`.
@@ -368,7 +368,7 @@ the files and the lock format are in [docs/pack-format.md, "Pack data"](docs/pac
 
 ### Adding or changing a pack
 
-Each change is one pull request, with a changeset for the pack ([.changeset/README.md](.changeset/README.md)).
+Each change is one pull request, with a changeset for the pack unless it is private ([.changeset/README.md](.changeset/README.md)).
 The steps for adding a rule, written for Rerail or ported from a tool, with what each has needed in practice, are
 [docs/adding-rules-to-a-pack.md](docs/adding-rules-to-a-pack.md).
 
@@ -444,10 +444,12 @@ Pack check 6 (`npm test`) and the publish decide each file's licence the same wa
 [docs/pack-format.md, "provenance.json and LICENSES.md"](docs/pack-format.md#provenancejson-and-licensesmd).
 
 Real-code samples are whole files of other repositories. Each sample's labels declare its repository's licence, and
-publish takes it only when `scripts/samples/licences.ts` records that licence for the repository: a repository with
-no entry, a declared licence that is not its entry, and a copyleft repository are refused. A samples archive's
+publish takes it only when `scripts/samples/licences.ts` records that licence for the repository at the sample's
+commit and the licence files it records there read as that licence: a repository with no entry, a declared licence
+that is not its entry, a commit with no licence, and a copyleft repository are refused. A samples archive's
 `LICENSES.md` lists every file with its repository's licence, and holds a licence text only where one was read at the
-samples' commits (samples from the ESLint test set carry the licence it recorded, and no text); `SAMPLES.md` says which
+samples' commits (a set converted from a test set with only the licence it recorded, as the ESLint test set's were,
+carries that licence and no text); `SAMPLES.md` says which
 ([docs/upstream.md, "Sample licences"](docs/upstream.md#sample-licences)).
 
 The checks confirm that licences are declared, permitted and cover every file; they cannot confirm that an

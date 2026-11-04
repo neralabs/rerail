@@ -471,7 +471,7 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     awaitingApproval: counts?.awaitingApproval ?? null,
     rulesUrl,
     repositoryName: repositoryName(cwd),
-    sigil: host === "codex" ? "$" : "/",
+    sigil: ADAPTER_CAPABILITIES[host as RerailHost].commandSigil,
   })}\n`);
   if (!open) return 0;
   const page = presentation?.url ?? rulesUrl;

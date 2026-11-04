@@ -39,6 +39,7 @@ import {
   lookupDaemon,
 } from "../runtime/daemon-control.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
+import { defaultStorageRoot } from "../runtime/session-paths.js";
 import { SqliteSessionReader, type SessionGaps } from "../runtime/session-store.js";
 import { seenCodingAgents } from "../setup/coding-agents.js";
 
@@ -345,7 +346,7 @@ function readTimeline(database: RerailDatabase, sessionId: string): SupportBundl
 /** The steers as delivered, from the session's ledger: the one thing in it that leaves. Its samples and preimages hold the person's files. */
 function readSteers(roots: readonly string[], sessionId: string): { steers: SupportBundleSteer[]; total: number; found: boolean } {
   const directory = createHash("sha256").update(sessionId).digest("hex");
-  const ledger = roots.map(root => readQuietly(join(root, ".rerail", "sessions", directory, "events.jsonl"))).find(text => text !== undefined);
+  const ledger = roots.map(root => readQuietly(join(defaultStorageRoot(root), directory, "events.jsonl"))).find(text => text !== undefined);
   if (ledger === undefined) return { steers: [], total: 0, found: false };
   const steers: SupportBundleSteer[] = [];
   for (const line of ledger.split("\n")) {

@@ -25,7 +25,8 @@ import {
   type AdapterEvent,
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
-import { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT } from "../../engine/package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT } from "../../engine/package-root.js";
+import { resolveSessionPaths } from "../../runtime/session-paths.js";
 import { registerConversationRulesCommand } from "./command.js";
 import { nodeExecutable } from "../../runtime/daemon-control.js";
 import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
@@ -456,9 +457,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       }
       const activation = await createNativeSession(nativeHost, ctx, session, options_.rebuild === true, {
         ...options,
-        modelPath: resolve(options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath()),
         ...(databasePath === undefined ? {} : { databasePath }),
-        storageRoot: resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT ?? ".rerail/sessions"),
+        ...resolveSessionPaths(ctx.cwd, { modelPath: options.modelPath }),
       });
       if (activation !== "attached") throw new Error("OMP Rerail routing did not attach a runtime");
       guardCompactions();

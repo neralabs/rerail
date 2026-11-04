@@ -1,0 +1,162 @@
+{
+  "caught": [
+    {
+      "path": "src/engine/audit/audit-control.ts",
+      "content": "function isScanLimitMarker(failure: { stage?: string | undefined; code: string; message: string }): boolean {\n  return failure.stage === \"scan\" && failure.code === \"budget-exceeded\"\n    && /^Repository scan stopped after reaching \\d+ failures$/u.test(failure.message);\n}\n"
+    },
+    {
+      "path": "src/engine/audit/audit.ts",
+      "content": "export function isSourceGap(failure: AuditFailure): boolean {\n  if (failure.path === undefined) return false;\n  return failure.code === \"source-incomplete\"\n    && (failure.message === BINARY_SOURCE_MESSAGE || failure.message.startsWith(\"file has syntax errors\") || isUnreadFailure(failure));\n}\n"
+    },
+    {
+      "path": "src/engine/audit/audit-summary.ts",
+      "content": "export function isOmittedFailuresSummary(failure: Pick<AuditFailure, \"stage\" | \"code\" | \"message\">): boolean {\n  return failure.stage === \"scan\" && failure.code === \"budget-exceeded\" && /^\\d+ further failures? not recorded$/u.test(failure.message);\n}\n"
+    },
+    {
+      "path": "src/harness/native-session-client.ts",
+      "content": "function permanentRejection(error: unknown): boolean {\n  if (!(error instanceof NativeRequestError) || (error.status !== 400 && error.status !== 404 && error.status !== 422)) return false;\n  return !sessionMissing(error) && !unrecoverable(error) && !/Unknown session|busy|locked/iu.test(error.message);\n}\n"
+    },
+    {
+      "path": "src/harness/native-session-faults.ts",
+      "content": "function sessionMissing(error: unknown): boolean {\n  return errorText(error).includes(\"native session is not initialized\");\n}\n\nfunction unrecoverable(error: unknown): boolean {\n  const message = errorText(error);\n  return message.includes(\"native-authorization-invalid\")\n    || message.includes(\"native session owner mismatch\");\n}\n"
+    },
+    {
+      "path": "src/harness/event-stream.ts",
+      "content": "function errorFrame(line: string, error: unknown): RerailEventErrorFrame {\n  const message = error instanceof Error ? error.message : String(error);\n  const code = message.startsWith(\"Inactive session:\") ? \"inactive-session\" : \"invalid-event\";\n  return { eventId: eventIdFromLine(line), error: { code, message } };\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-enforcer.ts",
+      "content": "async function withWorkspace(): Promise<void> {\n  for (;;) {\n    try {\n      return await open();\n    } catch (error) {\n      if (!(error instanceof Error) || error.message !== \"WORKSPACE_BUSY\") throw error;\n      await pause(backoff);\n    }\n  }\n}\n"
+    },
+    {
+      "path": "src/daemon/retry.ts",
+      "content": "export function isBusy(error: unknown): boolean {\n  if (\"database is locked\" === String(error)) return true;\n  return error instanceof Error && (error?.message.endsWith(`is busy`) || /owner mismatch/u.exec(error.message) !== null);\n}\n"
+    },
+    {
+      "path": "src/runtime/failure-kind.ts",
+      "content": "export function failureKind(failure: { code: string; message: string } | undefined): string {\n  return failure?.message?.includes(\"further failures\") ? \"summary\" : failure?.message.match(/^Repository scan/u) ? \"limit\" : \"other\";\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/rerail-steer.ts",
+      "content": "const RESTEER_LEAD = \"Rerail re-checked; still open:\";\nconst EDIT_LEAD = /^Rerail found \\d+ problems? in your last edit:$/u;\n\nexport function asLateSteer(content: string): string {\n  const end = content.indexOf(\"\\n\");\n  const lead = end === -1 ? content : content.slice(0, end);\n  if (!EDIT_LEAD.test(lead) && lead !== RESTEER_LEAD) return content;\n  return `${LATE_LEAD}${content.slice(end)}`;\n}\n"
+    },
+    {
+      "path": "src/hosts/omp/steer-renderer.ts",
+      "content": "const HEADER = /^(\\S+) Rerail · (.+) {2}(\\S+)$/u;\nconst WHY_LINE = /^Why\\? → /u;\n\nfunction steerBlocks(content: string): DrawnBlock[] {\n  for (const line of content.split(\"\\n\")) {\n    if (WHY_LINE.test(line)) open = undefined;\n  }\n}\n"
+    },
+    {
+      "path": "src/hosts/codex/codex-hook-adapter.ts",
+      "content": "export function shown(content: string): boolean {\n  return content.split(\"\\n\").some(line => line.startsWith(\"Why? → \") || line.includes(\"Rerail found\"));\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/results.rs",
+      "content": "fn blind_file(file: &FileState) -> Option<Blind> {\n    let (mut budget, mut syntax) = (None, None);\n    for id in &clauses {\n        let (code, message) = file.failures.get(id)?;\n        let first = match (*code, *message) {\n            (\"budget-exceeded\" | crate::code_rule_dsl::model::FILE_BUDGET_EXCEEDED, _) => {\n                &mut budget\n            }\n            (\"source-incomplete\", \"file has syntax errors\" | UNREAD) => &mut syntax,\n            _ => return None,\n        };\n        first.get_or_insert(*message);\n    }\n    None\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/sql/exec.rs",
+      "content": "impl From<rusqlite::Error> for SqlError {\n    fn from(error: rusqlite::Error) -> Self {\n        let message = error.to_string();\n        if message.contains(\"recursion whose reads loop back\") {\n            Self::unsupported(\"recursion whose reads loop back\")\n        } else if message.contains(\"rerail: recursion deeper than 256 levels\") {\n            Self::unsupported(\"recursion deeper than 256 levels\")\n        } else {\n            Self::Sql(message)\n        }\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/sql/relational/outcomes/mod.rs",
+      "content": "fn resource_refusal(error: &str) -> bool {\n    error.contains(\"operator count exceeds\") || error.contains(\"SQL text exceeds\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/persisted.rs",
+      "content": "fn syntax_blind(failure: &Failure, message: &str) -> bool {\n    if message == \"file has syntax errors\" { return true; }\n    match message {\n        \"Binary source cannot be evaluated\" => true,\n        _ => failure.message.starts_with(\"file did not parse\"),\n    }\n}\n"
+    },
+    {
+      "path": "src/harness/daemon-busy.ts",
+      "content": "export function busyKind(error: Error): \"busy\" | \"gone\" | \"other\" {\n  if ([\"WORKSPACE_BUSY\", \"database is locked\"].includes(error.message)) return \"busy\";\n  switch (error.message) {\n    case \"Unknown session\": return \"gone\";\n    default: return \"other\";\n  }\n}\n"
+    },
+    {
+      "path": "src/engine/audit/source-gap.ts",
+      "content": "const SYNTAX_ERRORS = \"file has syntax errors\";\n\nexport function isSyntaxGap(failure: AuditFailure): boolean {\n  return failure.code === \"source-incomplete\" && failure.message.toLowerCase().indexOf(SYNTAX_ERRORS) === 0;\n}\n"
+    },
+    {
+      "path": "src/hosts/claude/late-steer.ts",
+      "content": "export function isResteer(content: string): boolean {\n  const lead = content.split(\"\\n\", 1)[0];\n  return lead === \"Rerail re-checked; still open:\";\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/failure_kind.rs",
+      "content": "fn kind(message: &str, code: &str) -> Kind {\n    match (message, code) {\n        (\"Binary source cannot be evaluated\", _) => Kind::Binary,\n        (_, \"budget-exceeded\") => Kind::Budget,\n        _ => Kind::Other,\n    }\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/hosts/claude/claude-hook-adapter.ts",
+      "content": "function steerLines(deliveries: readonly HeldDelivery[], links: HeadlineLinkStyle, mark: string | undefined): { systemMessage: string } | Record<string, never> {\n  const lines = steerHeadlines(deliveryRules(deliveries.filter(delivery => delivery.shown !== true)))\n    .map(headline => headlineText(headline, links, mark));\n  if (lines.length === 0) return {};\n  return { systemMessage: lines.length === 1 ? lines[0]! : `\\n${lines.join(\"\\n\")}` };\n}\n"
+    },
+    {
+      "path": "src/engine/audit/unread.ts",
+      "content": "export const UNREAD_FAILURE_HEAD = \"file did not parse\";\n\nexport function isUnreadFailure(failure: { code: string; message: string }): boolean {\n  return failure.code === \"source-incomplete\" && failure.message.startsWith(`${UNREAD_FAILURE_HEAD}: `);\n}\n\nexport function isSourceGap(failure: AuditFailure): boolean {\n  if (failure.blind === \"syntax\" || failure.code === \"source-partial\") return true;\n  return failure.code === \"source-incomplete\" && (failure.message === BINARY_SOURCE_MESSAGE || isUnreadFailure(failure));\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-language-support.ts",
+      "content": "export function languageNotSupportedOf(message: string): { code: string; reason: string } | undefined {\n  const prefix = `${LANGUAGE_NOT_SUPPORTED}: `;\n  const at = message.indexOf(prefix);\n  return at < 0 ? undefined : { code: LANGUAGE_NOT_SUPPORTED, reason: message.slice(at + prefix.length) };\n}\n"
+    },
+    {
+      "path": "src/cli/cli.ts",
+      "content": "function printError(node: { message?: string }): void {\n  if (node.message === undefined || node.message === \"\") return;\n  process.stderr.write(`${node.message.replace(/\\n$/u, \"\")}\\n`);\n  const lines = node.message.split(\"\\n\");\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/steer-headline.ts",
+      "content": "export function headlineText(header: string, mark: string | undefined): string {\n  const plain = header.replace(CONTROL, \"\");\n  return mark === undefined ? plain : plain.replace(/^([○◆]) Rerail · /u, (_, glyph: string) => `${glyph} ${mark} · `);\n}\n"
+    },
+    {
+      "path": "src/setup/updater.ts",
+      "content": "async function startAnswer(stderr: string, error: Error): Promise<void> {\n  if (!stderr.includes(\"Unknown start option: --answer\")) throw error;\n}\n"
+    },
+    {
+      "path": "src/runtime/npm.ts",
+      "content": "try {\n  await run();\n} catch (error) {\n  if (!(error instanceof Error) || !/\\bENOTCACHED\\b/u.test(error.message)) throw error;\n}\n"
+    },
+    {
+      "path": "test/harness/native-session-client.test.ts",
+      "content": "expect(error.message.startsWith(\"native session is not initialized\")).toBe(true);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/blind.rs",
+      "content": "fn blind_file(code: &str, message: &str) -> Option<Blind> {\n    match code {\n        \"budget-exceeded\" => Some(Blind::Budget),\n        \"source-incomplete\" if message == SYNTAX_ERRORS || message == UNREAD => Some(Blind::Syntax),\n        _ => None,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/language.rs",
+      "content": "fn jsx_comment(text: &str) -> Option<&str> {\n    match text.strip_prefix(\"//\") {\n        Some(line) => Some(line),\n        None => text.strip_prefix(\"/*\"),\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/order.rs",
+      "content": "fn order(rule: &Rule) -> Result<(), String> {\n    Ok(())\n}\n\n#[cfg(test)]\n#[allow(clippy::unwrap_used)]\nmod tests {\n    fn rejected(reason: &str) -> bool {\n        reason.contains(\"no order binds both first\")\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/budget.rs",
+      "content": "fn first(code: &str, message: &str) -> Kind {\n    match (code, message) {\n        (\"budget-exceeded\", _) => Kind::Budget,\n        (FILE_BUDGET_EXCEEDED, _) => Kind::Budget,\n        _ => Kind::Other,\n    }\n}\n"
+    },
+    {
+      "path": "src/harness/failure-codes.ts",
+      "content": "export function gapKind(failure: { code: string; message: string }): string {\n  if ([\"source-partial\", \"source-incomplete\"].includes(failure.code)) return \"gap\";\n  switch (failure.code) {\n    case \"budget-exceeded\": return failure.message;\n    default: return \"other\";\n  }\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-schema.ts",
+      "content": "function messageVariables(message: string): string[] {\n  const names: string[] = [];\n  let index = message.indexOf(\"$\");\n  const line = message.endsWith(\"\\n\") ? message.slice(0, -1) : message;\n  return names;\n}\n"
+    },
+    {
+      "path": "src/hosts/omp/steer-dim.ts",
+      "content": "const HEADER = /^([○◆]) Rerail · /u;\n\nexport function dimmed(plain: string, mark: string): string {\n  return plain.replace(HEADER, (_, glyph: string) => `${glyph} ${mark} · `);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/budget.rs",
+      "content": "fn first_line(message: &str) -> &str {\n    if message == \"\" { return message; }\n    message.strip_suffix(\".\").unwrap_or(message)\n}\n\n#[cfg(test)]\nfn refused(reason: &str) -> bool {\n    reason.contains(\"no order binds both first\")\n}\n"
+    },
+    {
+      "path": "src/runtime/inactive-session.ts",
+      "content": "export const INACTIVE_SESSION_HEAD = \"Inactive session:\";\n\nexport function isInactive(message: string): boolean {\n  return message.startsWith(INACTIVE_SESSION_HEAD);\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/blind_reason.rs",
+      "content": "fn weight(reason: &str, error: &str) -> u8 {\n    let status = match error { \"native-session-missing\" => 4, _ => 0 };\n    match reason {\n        \"budget\" => 1,\n        \"syntax\" => 2,\n        _ => status,\n    }\n}\n\n#[cfg(test)]\nimpl Dense {\n    fn refused(reason: &str) -> bool { reason.contains(\"no order binds both first\") }\n}\n"
+    },
+    {
+      "path": "src/harness/status-line.ts",
+      "content": "const INDEXING = \"Rerail · indexing\";\n\nexport function isIndexing(next: readonly string[]): boolean {\n  return next[0] === INDEXING;\n}\n"
+    }
+  ]
+}

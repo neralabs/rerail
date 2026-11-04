@@ -1,0 +1,90 @@
+{
+  "caught": [
+    {
+      "path": "src/daemon/daemon.ts",
+      "content": "import { join } from \"node:path\";\nimport { bundledModelPath } from \"../engine/package-root.js\";\n\nexport function sessionFor(workspaceRoot: string) {\n    const storageRoot = join(workspaceRoot, \".rerail\", \"sessions\");\n    const modelPath = bundledModelPath();\n    return { storageRoot, modelPath };\n}\n"
+    },
+    {
+      "path": "src/rule-draft.ts",
+      "content": "import { resolve } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\n\nexport const options = {\n  modelPath: process.env.RERAIL_MODEL_PATH ?? resolve(fileURLToPath(import.meta.url), \"..\", \"..\", \"model\"),\n};\n"
+    },
+    {
+      "path": "src/daemon.ts",
+      "content": "import { dirname, resolve } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\n\nconst modelPath = resolve(dirname(fileURLToPath(import.meta.url)), \"..\", \"model\");\n"
+    },
+    {
+      "path": "src/event-stream.ts",
+      "content": "import { join, resolve } from \"node:path\";\n\nexport function root(options: { storageRoot?: string }) {\n  return resolve(options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(process.cwd(), \".rerail\", \"sessions\"));\n}\n"
+    },
+    {
+      "path": "src/hosts/omp/extension.ts",
+      "content": "import { resolve } from \"node:path\";\n\nexport const start = (ctx: { cwd: string }) => ({\n  storageRoot: resolve(ctx.cwd, process.env[\"RERAIL_STORAGE_ROOT\"] ?? \".rerail/sessions\"),\n});\n"
+    },
+    {
+      "path": "src/runtime/runtime.ts",
+      "content": "import { basename, dirname, join } from \"node:path\";\nimport { writeFile } from \"node:fs/promises\";\n\nexport async function ignoreStorageRoot(storageRoot: string): Promise<void> {\n  if (basename(dirname(storageRoot)) !== \".rerail\") return;\n  await writeFile(join(storageRoot, \".gitignore\"), \"*\\n\", { flag: \"wx\" });\n}\n"
+    },
+    {
+      "path": "src/harness/session-env.ts",
+      "content": "export function sessionPaths(env: NodeJS.ProcessEnv = process.env, cwd: string) {\n  const { RERAIL_STORAGE_ROOT, RERAIL_MODEL_PATH } = process.env;\n  const root = env.RERAIL_STORAGE_ROOT ?? `${cwd}/.rerail/sessions`;\n  return { root, model: RERAIL_MODEL_PATH };\n}\n"
+    },
+    {
+      "path": "src/hosts/pi/model-env.ts",
+      "content": "import { join, resolve } from \"node:path\";\nimport { bundledModelPath } from \"../engine/package-root.js\";\n\nexport function modelPath(environment: NodeJS.ProcessEnv): string {\n  return environment.RERAIL_MODEL_PATH === undefined ? bundledModelPath() : resolve(environment.RERAIL_MODEL_PATH);\n}\n"
+    },
+    {
+      "path": "src/harness/package-model.ts",
+      "content": "import { resolve } from \"node:path\";\nimport { PACKAGE_ROOT } from \"../engine/package-root.js\";\n\nexport const modelPath = resolve(PACKAGE_ROOT, \"model\");\n"
+    },
+    {
+      "path": "src/daemon/here-model.ts",
+      "content": "import { dirname, resolve } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\n\nconst here = dirname(fileURLToPath(import.meta.url));\nexport const modelPath = resolve(here, \"..\", \"..\", \"model\");\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/cli/rule-draft-fixed.ts",
+      "content": "import { bundledModelPath } from \"../engine/package-root.js\";\n\nexport function draftOptions(modelPath: string = bundledModelPath()) {\n  return { modelPath };\n}\n"
+    },
+    {
+      "path": "src/setup/updater.ts",
+      "content": "import { join } from \"node:path\";\n\nexport function childEnv(root: string) {\n  const storageRoot = join(root, \"sessions\");\n  return { ...process.env, RERAIL_HOME: join(root, \"home\"), RERAIL_STORAGE_ROOT: storageRoot };\n}\n"
+    },
+    {
+      "path": "src/runtime/pre-setup-health-check.ts",
+      "content": "/** Runs with its own `RERAIL_STORAGE_ROOT`; the root defaults to `<checkout>/.rerail/sessions`. */\nexport function isHealthCheck(env: NodeJS.ProcessEnv): boolean {\n  return env.RERAIL_AUTOSTART === \"0\" && env.RERAIL_STORAGE_ROOT !== undefined;\n}\n"
+    },
+    {
+      "path": "src/engine/package-root.ts",
+      "content": "import { resolve } from \"node:path\";\nconst PACKAGE_ROOT = resolve(\"/pkg\");\nexport function bundledModelPath(): string {\n  return resolve(PACKAGE_ROOT, \"model\");\n}\n"
+    },
+    {
+      "path": "src/harness/hook-host.test.ts",
+      "content": "import { join } from \"node:path\";\nconst storageRoot = process.env.RERAIL_STORAGE_ROOT ?? join(\"/tmp\", \".rerail\", \"sessions\");\n"
+    },
+    {
+      "path": "src/daemon/model-ops.ts",
+      "content": "export function op(operation: string) {\n  if (operation === \"model\") return { operation };\n  return { sessions: \"sessions\", dir: \".rerail\" };\n}\n"
+    },
+    {
+      "path": "src/setup/child-env.ts",
+      "content": "export function prepare(storageRoot: string): void {\n  process.env.RERAIL_STORAGE_ROOT = storageRoot;\n}\n"
+    },
+    {
+      "path": "src/runtime/health-check-env.ts",
+      "content": "export function isHealthCheck(): boolean {\n  return process.env.RERAIL_AUTOSTART === \"0\" && process.env.RERAIL_STORAGE_ROOT !== undefined;\n}\n"
+    },
+    {
+      "path": "src/runtime/help.ts",
+      "content": "/** Session records default to `.rerail/sessions` under the checkout. */\nexport const help = \"Session records stay in `.rerail/sessions` unless you move them.\";\n"
+    },
+    {
+      "path": "src/daemon/daemon.ts",
+      "content": "import { resolveSessionPaths } from \"../runtime/session-paths.js\";\n\nexport function sessionPaths(workspaceRoot: string) {\n  const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);\n  return { storageRoot, modelPath };\n}\n"
+    },
+    {
+      "path": "src/cli/scrub-sessions.ts",
+      "content": "import { defaultStorageRoot } from \"../runtime/session-paths.js\";\n\nexport function ledgers(checkout: string): string {\n  const sessions = defaultStorageRoot(checkout);\n  return sessions;\n}\n"
+    }
+  ]
+}

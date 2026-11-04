@@ -1,0 +1,1 @@
+`rerail install --remove` counts the daemon's `access-token` as Rerail's own: a Rerail home holding it and nothing of yours is again offered for deletion as a whole, and a shared home lists `access-token` among Rerail's files instead of calling it a file that is not Rerail's.

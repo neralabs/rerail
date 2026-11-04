@@ -89,8 +89,9 @@ th, td { text-align: left; vertical-align: top; padding: 6px 9px; border-bottom:
 th { font-weight: 620; color: var(--muted); font-size: 13px; background: var(--code-bg); }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--card); margin: 12px 0; }
 .table-wrap table { margin: 0; }
-.table-wrap td, .table-wrap th, .table-wrap code { overflow-wrap: anywhere; }
-main > p, .card > p, .card .semantics li, dl.facets > dd, .note p { text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+td, th, td code, th code { overflow-wrap: break-word; }
+@media (min-width: 1024px) { :is(main > p, .card > p, .note p):not(:has(code)) { text-align: justify; hyphens: auto; -webkit-hyphens: auto; } }
+code { hyphens: manual; -webkit-hyphens: manual; }
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow);
   padding: 4px 22px 16px; margin: 22px 0; scroll-margin-top: 12px;
@@ -101,21 +102,22 @@ main > p, .card > p, .card .semantics li, dl.facets > dd, .note p { text-align: 
 h2:hover .anchor, h3:hover .anchor, h4:hover .anchor { opacity: 1; }
 dl.facets { display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 0; margin: 10px 0 6px; border-top: 1px solid var(--rule); }
 dl.facets > dt, dl.facets > dd { padding: 8px 0; border-bottom: 1px solid var(--rule); margin: 0; }
-dl.facets > dt { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); font-weight: 600; padding-top: 10px; }
+dl.facets > dt { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; padding-top: 10px; }
 dl.facets > dd > :first-child { margin-top: 0; } dl.facets > dd > :last-child { margin-bottom: 0; }
 dl.facets ul { padding-left: 1.1em; }
-.b { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin: 0 4px 2px 0; white-space: nowrap; }
+.b { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; margin: 0 4px 2px 0; white-space: nowrap; background: var(--code-bg); color: var(--fg); }
 .b.ok { background: var(--ok-soft); color: var(--ok); }
 .b.bad { background: var(--bad-soft); color: var(--bad); }
 .b.warn { background: var(--warn-soft); color: var(--warn); }
 .b.info { background: var(--info-soft); color: var(--info); }
 .b.py { background: var(--accent-soft); color: var(--accent-ink); }
 .b.ts { background: var(--warn-soft); color: var(--warn); }
-.shape { background: var(--code-bg); border-radius: 8px; padding: 8px 12px; margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.shape { background: var(--code-bg); border-radius: 8px; padding: 8px 12px; margin: 4px 0; white-space: pre; overflow-x: auto; text-align: left; hyphens: manual; -webkit-hyphens: manual; font-size: 13px; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .card .card-grammar { margin: 4px 0 10px; font-size: 13.5px; color: var(--muted); }
 .card .card-grammar a.nt { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 .card .semantics { margin: 6px 0 10px; }
 .card .semantics > :first-child { margin-top: 0; }
+.card .semantics > pre.ex { border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
 .card .semantics ul { padding-left: 1.2em; }
 .card .semantics li + li { margin-top: 6px; }
 .card details.facets-more, .card details.more-examples { border: 1px solid var(--rule); border-radius: 10px; margin: 12px 0; }
@@ -134,15 +136,34 @@ figure.ex-fig > figcaption { padding: 8px 12px 6px; font-size: 13.5px; backgroun
 figure.ex-fig .src { padding: 5px 12px; font-size: 12px; color: var(--muted); background: var(--card); border-bottom: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 2px 10px; }
 figure.ex-fig .src .src-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); overflow-wrap: anywhere; }
 figure.ex-fig .src code { background: none; padding: 0; }
-pre.ex { margin: 0; padding: 12px 14px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; line-height: 1.5; color: var(--code-fg); tab-size: 2; position: relative; }
+pre.ex {
+  margin: 0; padding: 12px 14px; overflow-x: auto; white-space: pre; font-size: 12.5px; line-height: 1.5; color: var(--code-fg); tab-size: 2; position: relative; text-align: left;
+  background:
+    linear-gradient(to right, var(--code-bg) 40%, transparent) left / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--code-bg) 40%, transparent) right / 40px 100% no-repeat local,
+    linear-gradient(to right, color-mix(in srgb, var(--fg) 16%, transparent), transparent) left / 16px 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--fg) 16%, transparent), transparent) right / 16px 100% no-repeat scroll,
+    var(--code-bg);
+}
 pre.ex[data-kind="fragment"]::before { content: "fragment"; float: right; font-size: 11px; font-family: ui-sans-serif, system-ui, sans-serif; color: var(--warn); background: var(--warn-soft); padding: 0 7px; border-radius: 999px; margin: -2px -4px 0 8px; }
 pre.ex .jk { color: var(--key); } pre.ex .js { color: var(--str); } pre.ex .jn { color: var(--num); } pre.ex .jl { color: var(--lit); }
-.copy { float: right; font: 11.5px ui-sans-serif, system-ui, sans-serif; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; margin: 6px 8px 0 0; cursor: pointer; }
+.copy { flex: none; font: 11.5px ui-sans-serif, system-ui, sans-serif; color: var(--muted); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; margin: 0 0 0 auto; cursor: pointer; }
+.ex-bar { display: flex; padding: 4px 8px; background: var(--card); border-bottom: 1px solid var(--rule); }
+.semantics > .ex-bar { border: 1px solid var(--border); border-radius: 10px 10px 0 0; margin-top: 8px; }
+.semantics > .ex-bar + pre.ex { border-radius: 0 0 10px 10px; margin-top: 0; border-top: 0; }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .pair > figure { margin: 8px 0; min-width: 0; }
 .before-after { border: 1px dashed var(--border); border-radius: 10px; padding: 4px 14px 10px; margin: 14px 0; }
 .before-after h4 { margin-top: 10px; }
-.figure-wrap { overflow-x: auto; margin: 14px 0; background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.figure-wrap {
+  overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px;
+  background:
+    linear-gradient(to right, var(--card) 40%, transparent) left / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--card) 40%, transparent) right / 40px 100% no-repeat local,
+    linear-gradient(to right, color-mix(in srgb, var(--fg) 16%, transparent), transparent) left / 16px 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in srgb, var(--fg) 16%, transparent), transparent) right / 16px 100% no-repeat scroll,
+    var(--card);
+}
 svg.figure { display: block; width: 100%; height: auto; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
 svg.figure.heatmap { max-width: 640px; margin: 0 auto; }
 svg .ln { stroke: var(--fig-line); fill: none; stroke-width: 1.4; }
@@ -191,6 +212,7 @@ svg text.hm-sub { font-size: 10.5px; text-anchor: middle; fill: var(--muted); }
 .grammar .about, .grammar .d, .grammar .gnote { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
 .grammar summary .about { font-size: 13.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .grammar details.prod[open] > summary .about { white-space: normal; }
+@media (max-width: 1024px) { .grammar summary .about { white-space: normal; } }
 .grammar .prod.value .about { display: block; font-size: 13px; color: var(--muted); }
 .grammar .keys > li > .d { grid-column: 2; font-size: 13px; line-height: 1.45; color: var(--muted); margin: 0 0 5px; }
 .grammar .keys > li.inline > .d, .grammar .vlabel > .d { display: block; text-indent: 0; font-size: 13px; color: var(--muted); }
@@ -6555,29 +6577,47 @@ A ported rule carries <code>suppress</code>, naming the upstream rule, when its 
       try { await navigator.clipboard.writeText(text); button.textContent = "Copied"; } catch { button.textContent = "Select and copy"; }
       setTimeout(() => { button.textContent = "Copy"; }, 1400);
     });
-    pre.parentElement.insertBefore(button, pre);
+    // The button sits in the example's source bar, or in a bar of its own above the code, never beside or over it.
+    const source = pre.closest("figure")?.querySelector(".src");
+    if (source) {
+      source.append(button);
+    } else {
+      const bar = document.createElement("div");
+      bar.className = "ex-bar";
+      bar.append(button);
+      pre.parentElement.insertBefore(bar, pre);
+    }
   }
 
-  // Table of contents: highlight the section in view; collapse on phones after a jump.
+  // Table of contents: highlight the last section whose heading is above the top quarter of the screen (or the last one
+  // at the end of the page); collapse on phones after a jump, and open again when the screen widens.
   const links = [...document.querySelectorAll("#toc a[href^='#']")];
   const byId = new Map(links.map(link => [link.getAttribute("href").slice(1), link]));
   const targets = [...byId.keys()].map(id => document.getElementById(id)).filter(Boolean);
   const details = document.getElementById("toc-details");
   const phone = matchMedia("(max-width: 960px)");
-  if (phone.matches) details.open = false;
+  details.open = !phone.matches;
+  phone.addEventListener("change", () => { details.open = !phone.matches; });
   let current = null;
-  const observer = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const link = byId.get(entry.target.id);
-      if (link === undefined || link === current) continue;
-      current?.classList.remove("active");
-      link.classList.add("active");
-      current = link;
-      if (!phone.matches) link.scrollIntoView({ block: "nearest" });
+  let frame = 0;
+  const mark = () => {
+    frame = 0;
+    const line = innerHeight / 4;
+    const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+    let found = null;
+    for (const target of targets) {
+      if (target.offsetParent === null) continue;
+      if (atEnd || target.getBoundingClientRect().top < line) found = target;
     }
-  }, { rootMargin: "0px 0px -75% 0px" });
-  targets.forEach(target => observer.observe(target));
+    const link = found ? byId.get(found.id) : null;
+    if (link === current) return;
+    current?.classList.remove("active");
+    link?.classList.add("active");
+    current = link;
+    if (link && !phone.matches) link.scrollIntoView({ block: "nearest" });
+  };
+  addEventListener("scroll", () => { frame ||= requestAnimationFrame(mark); }, { passive: true });
+  mark();
   links.forEach(link => link.addEventListener("click", () => { if (phone.matches) details.open = false; }));
 
   // Folded parts (grammar productions, a card's details, more examples): open every one around what a link or the

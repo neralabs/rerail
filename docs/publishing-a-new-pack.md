@@ -27,6 +27,8 @@ This runbook is the last step:
 
 Confirm the pack is ready and your accounts can publish it.
 
+- **Not private:** its `package.json` has no `"private": true` (remove it, add `publishConfig` with `access`
+  `public`, and add the pack's changeset in one pull request).
 - **Merged** on `main` at `0.1.0` with a `patch` changeset, and listed in `src/engine/catalog/pack-list.generated.ts`.
 - **Pack data published** (ported packs only), and shipped rules pass the conformance check.
 - **AWS** (ported packs only): read access to the test data bucket.
