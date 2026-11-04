@@ -1,0 +1,170 @@
+{
+  "caught": [
+    {
+      "path": "ui/derive.js",
+      "content": "/** Whether pack `packId`'s setting, written as `owner`, would decide that folder's suppressions. */\nexport function packSettingDecides(state, packId, owner, checkoutPath) {\n  if (state.source?.kind !== \"pack\" || state.source.id !== packId) return false;\n  const source = state.suppressionsSource;\n  if (source?.by !== \"checkout\" && source?.by !== \"repository\") return true;\n  // Lower outranks: this worktree, a worktree containing it, the repository.\n  const ownerRank = owner === \"repository\" ? 2 : 0;\n  const sourceRank = source.by === \"repository\" ? 2 : source.checkoutPath === checkoutPath ? 0 : 1;\n  if (ownerRank !== sourceRank) return ownerRank < sourceRank;\n  if (state.folder.length !== source.folder.length) return state.folder.length > source.folder.length;\n  return source.target === \"pack\";\n}\n"
+    },
+    {
+      "path": "ui/settings-writes.js",
+      "content": "const decider = (owner, target) => state => (owner === \"checkout\"\n  ? { by: \"checkout\", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }\n  : { by: \"repository\", folder: state.folder, target });\n\nconst showSuppressions = (suppressions, changes, source) => r => {\n  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions, suppressionsSource: source(state) } : state));\n  r.suppressions = r.folderStates[0]?.suppressions ?? suppressions;\n};\n"
+    },
+    {
+      "path": "ui/pack-switch.js",
+      "content": "export function setPackSuppressions(packId, suppressions, by) {\n  const followsPack = r => r.suppressionsSource?.target !== \"rule\" && !(by === \"repository\" && r.suppressionsSource?.by === \"checkout\");\n  const rules = [...data.rules.values()].filter(r => r.source.kind === \"pack\" && r.source.id === packId && followsPack(r));\n  return save(rules, suppressions);\n}\n"
+    },
+    {
+      "path": "ui/pack-model.js",
+      "content": "export const followsPack = (source, owner) =>\n  source?.target !== \"rule\" && !(owner === \"repository\" && source?.by === \"checkout\");\n"
+    },
+    {
+      "path": "ui/render/settings.js",
+      "content": "// The deeper folder's setting wins at one owner.\nconst deeper = (a, b) => a.folder.length > b.folder.length;\nconst wins = (state, decider) => state.folder.length >= decider?.folder.length;\n"
+    },
+    {
+      "path": "ui/state.js",
+      "content": "export function showMode(r, mode, owner) {\n  r.mode = mode;\n  r.modeSource = { by: owner, folder: \"\", target: \"rule\" };\n}\n"
+    },
+    {
+      "path": "ui/views/rules.js",
+      "content": "const overridden = rule => \"checkout\" === rule.onSource.by || \"pack\" === rule.onSource?.target;\n"
+    },
+    {
+      "path": "ui/repo-rules.js",
+      "content": "export function packStart(r, packId) {\n  r.suppressionsSource = startOf(packId);\n}\nconst startOf = packId => ({ by: \"pack-start\", packId });\n"
+    },
+    {
+      "path": "ui/rule-switch.js",
+      "content": "/** Whether a setting on `target` decides `state`: a rule's own setting before its pack's at one owner and folder. */\nexport function ruleSettingWins(state, target, owner) {\n  if (state.owner !== owner) return false;\n  return target === \"rule\" || state.target !== \"rule\";\n}\n"
+    },
+    {
+      "path": "ui/derive-2.js",
+      "content": "const deepest = states => [...states].sort((a, b) => b.folder.length - a.folder.length)[0];\n"
+    },
+    {
+      "path": "ui/derive-3.js",
+      "content": "const OWNER_RANK = { checkout: 0, repository: 2 };\nexport const wins = (a, b) => OWNER_RANK[a.by] < OWNER_RANK[b.by];\n"
+    },
+    {
+      "path": "ui/derive-4.js",
+      "content": "function ownerRank(decider) {\n  return decider.by === \"repository\" ? 2 : 0;\n}\n"
+    },
+    {
+      "path": "ui/derive-5.js",
+      "content": "const fromWorktree = (r, name) => r.configSource[name]?.by === \"checkout\";\n"
+    },
+    {
+      "path": "ui/settings-writes-2.js",
+      "content": "const decider = (by, target) => state => ({ by, folder: state.folder, target });\n"
+    },
+    {
+      "path": "ui/settings-writes-3.js",
+      "content": "const decider = (owner, target) => state => ({ by: owner, checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target });\n"
+    },
+    {
+      "path": "ui/derive-6.js",
+      "content": "const covers = (state, source) => state.folder.startsWith(source.folder);\n"
+    },
+    {
+      "path": "ui/derive-7.js",
+      "content": "function rank(source) {\n  switch (source.by) {\n    case \"checkout\": return 0;\n    case \"repository\": return 2;\n    default: return 3;\n  }\n}\n"
+    },
+    {
+      "path": "ui/derive-8.js",
+      "content": "const order = [\"checkout\", \"repository\"];\nconst outranks = (a, b) => order.indexOf(a.by) < order.indexOf(b.by);\n"
+    },
+    {
+      "path": "ui/derive-9.js",
+      "content": "const deeper = state.folder.length > source?.folder?.length;\n"
+    },
+    {
+      "path": "ui/derive-10.js",
+      "content": "const deeper = (state.folder.length > (source.folder?.length ?? -1));\n"
+    },
+    {
+      "path": "ui/derive-11.js",
+      "content": "const ruleFirst = source.target == \"rule\";\n"
+    },
+    {
+      "path": "ui/settings-writes-4.js",
+      "content": "const decider = (owner, target) => state => {\n  if (owner === \"checkout\") return { by: \"checkout\", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target };\n  return {\n    by: \"repository\",\n    folder: state.folder,\n    target,\n  };\n};\n"
+    },
+    {
+      "path": "ui/settings-writes-5.js",
+      "content": "const decider = target => state => ({ folder: state.folder, target, by: \"repository\" });\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "ui/poll.js",
+      "content": "const folderState = entry => ({\n  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,\n  source: entry.source,\n});\nrules.set(id, { onSource: entry.onSource, modeSource: entry.modeSource, configSource: entry.configSource });\n"
+    },
+    {
+      "path": "ui/render/panel.js",
+      "content": "export function deciderText(decider, checkoutPath) {\n  const at = \"folder\" in decider && decider.folder !== \"\" ? ` at ${decider.folder}` : \"\";\n  const forPack = decider.target === \"pack\" ? \" for its rule pack\" : \"\";\n  switch (decider.by) {\n    case \"checkout\": return `Set in ${decider.checkoutPath === checkoutPath ? \"this worktree\" : decider.checkoutPath}${at}${forPack}`;\n    case \"repository\": return `Set for the repository${at}${forPack}`;\n    case \"pack-start\": return `Rule pack ${decider.packId} default`;\n    default: return \"Rule default\";\n  }\n}\n"
+    },
+    {
+      "path": "ui/rule-undo.js",
+      "content": "function undo(r, was, shown) {\n  r.folderStates = r.folderStates.map((state, index) => (state === shown.folderStates[index] ? was.folderStates[index] : state));\n  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;\n}\n"
+    },
+    {
+      "path": "ui/attachments.js",
+      "content": "/** Whether a stored rule is in pack `packId` here: the pack added it at one of its folders. */\nexport const inPack = (rule, packId) => rule.folderStates.some(state => state.source?.kind === \"pack\" && state.source.id === packId);\nconst resource = { by: owner, target: \"pack\" };\nif (resource.target === \"pack\" && e.target === input) refresh();\n"
+    },
+    {
+      "path": "ui/frame/sidenav.js",
+      "content": "function packRank(pack) {\n  return pack.recommended ? 0 : 1;\n}\nconst sorted = packs.sort((a, b) => packRank(a.pack) - packRank(b.pack) || a.folder.length - b.folder.length);\n"
+    },
+    {
+      "path": "ui/settings-pack.js",
+      "content": "/**\n * A rule's own setting outranks its pack's at one owner and folder, so the pack switch clears the rules' own on.\n */\nexport function packSwitchWrites(packId, enabled) {\n  return packFolders(packId).flatMap(folder => [{ folder, targets: [{ kind: \"pack\", id: packId }], setting: { on: enabled } }]);\n}\n"
+    },
+    {
+      "path": "src/engine/catalog/rule-configuration.ts",
+      "content": "function deciderOf(owner: Owner, setting: SettingRow): Decider {\n  return owner.kind === \"checkout\"\n    ? { by: \"checkout\", checkoutPath: owner.id, folder: setting.folder, target: setting.targetKind }\n    : { by: \"repository\", folder: setting.folder, target: setting.targetKind };\n}\n"
+    },
+    {
+      "path": "ui/views/history.js",
+      "content": "const GROUPINGS = [{ by: \"repository\", label: \"By repository\" }, { by: \"rule\", label: \"By rule\" }];\nexport const grouping = (key) => GROUPINGS.find(g => g.by === key) ?? { by: \"checkout\" };\n"
+    },
+    {
+      "path": "ui/render/decider-where.js",
+      "content": "const where = r.onSource.by === \"checkout\" ? \"this worktree\" : \"the repository\";\n"
+    },
+    {
+      "path": "ui/render/decider-pack.js",
+      "content": "export function deciderText(source, checkoutPath) {\n  const forPack = source.target === \"pack\" ? \" for its rule pack\" : \"\";\n  return forPack;\n}\n"
+    },
+    {
+      "path": "ui/render/decider-text.js",
+      "content": "export function deciderText(decider) {\n  const { by, folder, target } = decider;\n  const forPack = target === \"pack\" ? \" for its rule pack\" : \"\";\n  return by + folder + forPack;\n}\n"
+    },
+    {
+      "path": "ui/render/mode-reset.js",
+      "content": "const canReset = r.modeSource.by !== \"rule-default\";\n"
+    },
+    {
+      "path": "ui/settings-writes-6.js",
+      "content": "const showSuppressions = (suppressions, changes = () => true, source = state => state.suppressionsSource) => r => {\n  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions, suppressionsSource: source(state) } : state));\n};\n"
+    },
+    {
+      "path": "ui/poll-2.js",
+      "content": "const copy = entry => ({ configSource: { ...entry.configSource }, onSource: structuredClone(entry.onSource), modeSource: (entry.modeSource) });\n"
+    },
+    {
+      "path": "ui/render/decider-doc.js",
+      "content": "/**\n * @param {{ by: \"checkout\", checkoutPath: string, folder: string } | { by: \"repository\", folder: string } | { by: \"rule-default\" }} decider\n */\nexport const label = decider => decider.by;\n"
+    },
+    {
+      "path": "ui/render/decider-comment.js",
+      "content": "// A worktree decides when suppressionsSource.by === \"checkout\".\nconst x = 1;\n"
+    },
+    {
+      "path": "ui/render/write-label.js",
+      "content": "const label = target === \"pack\" ? \"Change for the whole pack\" : \"Change this rule\";\n"
+    },
+    {
+      "path": "ui/views/folders.js",
+      "content": "// Folders under the one picked in the tree, for display only.\nconst under = (states, picked) => states.filter(state => state.folder.startsWith(picked));\n"
+    }
+  ]
+}

@@ -20,7 +20,7 @@ Hooks never deny a tool call; a `block` rule is delivered exactly like a `steer`
 running and reachable, it tells the agent when it breaks a rule.
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph Agent["Coding-agent process (same OS user)"]
     H[Hook / extension]
     B[MCP bridge]

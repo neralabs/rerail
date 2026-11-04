@@ -205,15 +205,25 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * `git -C <cwd> <args>` with fsmonitor and hooks disabled, no optional locks, and a 10 s default timeout; throws
- * {@link GitUnavailableError} when Git is missing, never on a non-zero exit.
+ * The environment of every Git process Rerail starts: no optional locks, and no lazy fetch of a partial clone's missing
+ * objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1,
+ * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ */
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+}
+
+/**
+ * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
+ * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
+ * missing, never on a non-zero exit.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    env: gitEnvironment(),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
@@ -298,7 +308,7 @@ export async function readGitBlobs(
   }
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
     timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
   });

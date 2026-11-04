@@ -1,0 +1,125 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-fixed-value-lists",
+  "revision": 1,
+  "mode": "log",
+  "description": "Derive host, audit scope, mode, status and failure code, rule mode and pack category lists from their shared constants instead of restating the values.",
+  "scope": {
+    "include": [
+      "src/**/*.ts",
+      "scripts/**/*.ts",
+      "integration/**/*.ts"
+    ],
+    "exclude": [
+      "src/engine/adapter-contract.ts",
+      "src/engine/catalog/rule-mode.ts",
+      "src/engine/audit/audit.ts",
+      "src/engine/catalog/rule-packs.ts",
+      "**/*.test.ts",
+      "**/test/**",
+      "**/*.generated.ts",
+      "src/engine/storage/baseline-schema.ts",
+      "src/engine/storage/migrations.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "hosts",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:[\\[(:=<]|^)\\s*[\"']omp[\"']\\s*[,|]\\s*[\"']pi[\"']\\s*[,|]\\s*[\"']claude-code[\"']\\s*[,|]\\s*[\"']codex[\"']\\s*[,|]\\s*[\"']cursor[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "HOST_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use RERAIL_HOSTS from src/engine/adapter-contract.ts (via src/engine outside src/): the array, z.enum(RERAIL_HOSTS) or its [number] type. Leave lists with other values alone."
+      }
+    },
+    {
+      "id": "audit-scopes",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:[\\[(:=<]|^)\\s*[\"']repository[\"']\\s*[,|]\\s*[\"']touched-files[\"']\\s*[,|]\\s*[\"']ai-output[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "AUDIT_SCOPE_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use AUDIT_SCOPES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_SCOPES) or its [number] type. Leave lists with other values alone."
+      }
+    },
+    {
+      "id": "audit-statuses",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:[\\[(:=<]|^)\\s*[\"']running[\"']\\s*[,|]\\s*[\"']completed[\"']\\s*[,|]\\s*[\"']failed[\"']\\s*[,|]\\s*[\"']interrupted[\"']\\s*[,|]\\s*[\"']superseded[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "AUDIT_STATUS_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use AUDIT_STATUSES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_STATUSES) or its [number] type. Leave lists with other values alone."
+      }
+    },
+    {
+      "id": "audit-modes",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:[\\[(:=<]|^)\\s*[\"'](?:steer|log)[\"']\\s*[,|]\\s*[\"'](?:log|steer)[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "AUDIT_MODE_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use AUDIT_MODES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_MODES) or its [number] type. Leave lists with other values alone."
+      }
+    },
+    {
+      "id": "rule-modes",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:[\\[(:=<]|^)\\s*[\"']log[\"']\\s*[,|]\\s*[\"']steer[\"']\\s*[,|]\\s*[\"']block[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "RULE_MODE_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use RULE_MODES from src/engine/catalog/rule-mode.ts (via src/engine outside src/): the array, z.enum(RULE_MODES) or its [number] type. Leave lists with other values alone."
+      }
+    },
+    {
+      "id": "pack-categories",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:[\\[(:=<]|^)\\s*[\"']language[\"']\\s*[,|]\\s*[\"']framework[\"']\\s*[,|]\\s*[\"']repository[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "PACK_CATEGORY_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use RULE_PACK_CATEGORIES from src/engine/catalog/rule-packs.ts (via src/engine outside src/): the array, z.enum(RULE_PACK_CATEGORIES) or its [number] type. Leave lists with other values alone."
+      }
+    },
+    {
+      "id": "audit-failure-codes",
+      "forbid": {
+        "regex": {
+          "pattern": "(?m)(?:(?:[\\[(:=<]|^)\\s*[\"']budget-exceeded[\"']\\s*[,|]\\s*[\"']file-budget-exceeded[\"']\\s*[,|]\\s*[\"']witness-limit[\"']\\s*[,|]\\s*[\"']input-limit[\"']\\s*[,|]\\s*[\"']missing-capability[\"']\\s*[,|]\\s*[\"']source-incomplete[\"']\\s*[,|]\\s*[\"']source-partial[\"']\\s*[,|]\\s*[\"']adapter-error[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b)|(?:[\\[(:=<]|^)\\s*[\"']budget-exceeded[\"']\\s*[,|]\\s*[\"']missing-capability[\"']\\s*[,|]\\s*[\"']source-incomplete[\"']\\s*[,|]\\s*[\"']source-partial[\"']\\s*[,|]\\s*[\"']adapter-error[\"'](?:\\s*,?\\s*\\]|\\s*(?:[;)>=}]|$)|\\s*,\\s*[^\"\\'\\s]|\\s*\\|\\s*(?:undefined|null)\\b))",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "AUDIT_FAILURE_CODE_LIST_RESTATED",
+        "anchor": "witness.span",
+        "message": "Use AUDIT_FAILURE_CODES from src/engine/audit/audit.ts (via src/engine outside src/): the array, z.enum(AUDIT_FAILURE_CODES) or its [number] type. Leave lists with other values alone."
+      }
+    }
+  ]
+}

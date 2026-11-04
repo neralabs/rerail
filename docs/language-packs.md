@@ -49,12 +49,12 @@ Each language family has one adapter type, and every engine call site asks it in
 | Family | Languages | Capabilities | Suppressions |
 |---|---|---|---|
 | `python` | `python` | all five | `noqa`, `nosec` |
-| `ecma` | `typescript`, `javascript` | `scope`, `value`, `arguments`; `calls`, `formatArgs` `Refused` | `eslint`, `oxlint`, `biome` |
+| `ecma` | `typescript`, `javascript` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint`, `oxlint`, `biome` |
 | `php` | `php` | all five | `phpstan`, `psalm`, `phpcs` |
 | `blade` | `blade` | all five | none |
 | `rust` | `rust` | all five | `clippy` |
-| `vue` | `vue` | `scope`, `value`, `arguments`; `calls`, `formatArgs` `Refused` | `eslint` |
-| `sql` | `sql` | `scope`, `value`, `arguments`; `calls`, `formatArgs` `Refused` | `sqlfluff` |
+| `vue` | `vue` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `eslint` |
+| `sql` | `sql` | `scope`, `value`, `arguments`; `calls` and `formatArgs` `Refused` | `sqlfluff` |
 
 <details>
 <summary>What each concern trait holds</summary>
@@ -514,7 +514,9 @@ npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces:
 npx vitest run test/engine/catalog/packs.test.ts -t "pack laravel"
 ```
 
-Add a changeset (`patch`, "Add the Laravel pack: …"). Every later pack change adds one too;
+Add a changeset (`patch`, "Add the Laravel pack: …"), unless the pack starts private (`"private": true` in its
+`package.json`, no `publishConfig`): a private pack is never published and takes no changeset until it goes public
+([package.json](pack-format.md#packagejson)). Every later change to a published pack adds one too;
 [versioning](pack-format.md#versioning-and-release) says which bump (`patch` until 1.0.0):
 
 ```sh

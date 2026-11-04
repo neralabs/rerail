@@ -4,7 +4,7 @@ A pack rule is either written for Rerail and proven by its examples, or ported f
 scanner, a complexity metric) and proven against that tool's tests.
 
 ```mermaid
-flowchart LR
+flowchart TD
   W["Write the rule"] --> PR["Open the pull request"]
   PR -- "own rule" --> C["Contract passes,<br/>reviewer agrees"] --> S["Shipped"]
   PR -- "ported rule" --> D["Maintainer publishes<br/>its test data"]

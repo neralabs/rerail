@@ -55,6 +55,7 @@ import {
 import { SAMPLE_ID } from "../../scripts/samples/format.ts";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
 import { provenanceFiles, restaged } from "./support/provenance.mjs";
+import { cacheLicence } from "../support/samples.ts";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
 const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;
@@ -1325,19 +1326,35 @@ describe("pack --from (the publish workflow's prep)", () => {
     );
   });
 
-  it("leaves a samples-only publish alone: no test data archive, so no provenance is asked of it", async () => {
-    const context = published();
+  /** Commits to the branch `name` of `context` a samples-only publish/ of one fastify/fastify sample. */
+  function stageSample(context, name) {
     const text = "export const a = 1;\n";
     const digest = sha256(Buffer.from(text));
     const sample = `demo-src-a-js-${digest.slice(0, 12)}`;
     const labels = { source: { repo: "fastify/fastify", commit: "0".repeat(40), path: "src/a.js", license: "MIT", sha256: digest }, labelledBy: { tool: "examplelint", version: "1.0.0", how: "hand-labelled" }, expected: {} };
-    branch(context.root, "samples-only", {
+    branch(context.root, name, {
       "packs/p/upstream/t/publish/samples/LICENSES.md": "# Licences\n\nfastify/fastify: MIT\n",
       [`packs/p/upstream/t/publish/samples/${sample}/src/a.js`]: text,
       [`packs/p/upstream/t/publish/samples/${sample}/src/a.js.expected.json`]: `${JSON.stringify(labels, null, 2)}\n`,
     });
+  }
+
+  it("leaves a samples-only publish alone: no test data archive, so no provenance is asked of it", async () => {
+    const context = published();
+    cacheLicence(context.root);
+    stageSample(context, "samples-only");
     const { manifest } = await packed(context, "samples-only");
     expect(manifest.objects.map(({ kind }) => kind)).toEqual(["samples"]);
+  });
+
+  it("refuses, before writing anything, a staged sample whose repository's licence file at its commit is not the recorded licence", async () => {
+    const context = published();
+    cacheLicence(context.root, { text: "Apache License, Version 2.0\n" });
+    stageSample(context, "wrong-licence");
+    const message = await packFailure(context, "wrong-licence");
+    expect(message).toContain("publish/samples/ holds samples whose licence does not hold at their commit:");
+    expect(message).toMatch(/fastify\/fastify at 0{40}: LICENSE do not read as MIT \(1 sample\(s\), such as demo-src-a-js-[0-9a-f]{12}\/src\/a\.js\)/u);
+    expect(existsSync(join(dirname(context.root), "out-wrong-licence"))).toBe(false);
   });
 
   it("refuses every file of a pack whose licences record misspells a Not copied line", async () => {
