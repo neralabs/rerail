@@ -1078,10 +1078,6 @@ fn local_levels(labels: &Labels, step: &[u16]) -> BTreeMap<u16, usize> {
     level
 }
 
-/// A pass's roots not yet built, by its placeholder list's address: (domain, program, clause).
-#[derive(Default)]
-struct RootRecipes<'a>(HashMap<usize, (Domain, Option<&'a Program>, usize)>);
-
 fn empty_sets(tapes: &[TapeDoc], labels: usize) -> Vec<Arc<Vec<Vec<u64>>>> {
     tapes
         .iter()
@@ -1207,7 +1203,7 @@ fn metal<'a>(
     active: Option<&[Vec<bool>]>,
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-    use metal_program_backend::label_passes::{Pass, Plan, run};
+    use metal_program_backend::label_passes::{Pass, Plan, Roots, run};
     let bases = tapes
         .iter()
         .scan(0_u32, |base, tape| {
@@ -1218,36 +1214,14 @@ fn metal<'a>(
         .collect::<Vec<_>>();
     let nodes = tapes.iter().map(TapeDoc::transducer_len).sum::<usize>();
     let words = nodes.div_ceil(32).max(1);
-    // A label domain is bounded by its kinds below (`Labels::bound`), so `domain` reads no labels
-    // here: none are held (dense empty sets were 34 MB through every run on S7; O30).
-    let no_labels = vec![Vec::<Vec<u64>>::new(); tapes.len()];
     // A pass's roots: its domain's nodes. A label domain's program tests the label first, so on
     // Metal, where the label is not known before the command buffer runs, it starts at the nodes
-    // of the kinds the label can have (`Labels::bound`).
-    // Shared by (domain, entry, the tapes the clause is active on): passes of one domain hold one
-    // list (06 S7: 605 passes, 70 M roots, of 264 such keys).
-    // A pass's roots are built when its run starts (`RootRecipes`) and freed with its plan: built
-    // in planning, every run's lists were held through all of them (06 S7: ~118 MB).
-    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Vec<Vec<u32>>>>::new();
-    let mut recipes = RootRecipes::default();
-    let build = |starts: &Domain, program: Option<&Program>, at: usize| -> Vec<Vec<u32>> {
-        use rayon::prelude::*;
-        let entry = program.map(Entry::of);
-        let list = tapes
-            .par_iter()
-            .zip(&no_labels)
-            .enumerate()
-            .map(|(tape_at, (tape, sets))| {
-                if active.is_some_and(|active| !active[at][tape_at]) {
-                    return Vec::new();
-                }
-                domain(starts, tape, sets).filter(|&node| entry.as_ref().is_none_or(|entry| entry.admits(tape, node))).collect()
-            })
-            .collect::<Vec<Vec<u32>>>();
-        crate::code_rule_dsl::prof::count("plan.roots", list.iter().map(Vec::len).sum());
-        list
-    };
-    let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>, now: bool| -> Arc<Vec<Vec<u32>>> {
+    // of the kinds the label can have (`Labels::bound`). They are a rule over each document's
+    // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
+    // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
+    // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
+    let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
+    let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>| -> Arc<Roots> {
         let entry = program.map(Entry::of);
         let bound = match starts {
             Domain::Label(_) => {
@@ -1256,22 +1230,17 @@ fn metal<'a>(
             _ => None,
         };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
-        let key = (
-            bound.clone().unwrap_or_else(|| starts.clone()),
-            entry.as_ref().map(|entry| entry.0.clone()),
-            (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>(),
-        );
+        let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
         let starts = bound.unwrap_or_else(|| starts.clone());
-        if now {
-            return Arc::new(build(&starts, program, at));
-        }
-        if let Some(list) = shared.get(&key) {
-            return Arc::clone(list);
-        }
-        let placeholder = Arc::new(Vec::new());
-        recipes.0.insert(Arc::as_ptr(&placeholder) as usize, (starts, program, at));
-        shared.insert(key, Arc::clone(&placeholder));
-        placeholder
+        let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
+        Arc::clone(shared.entry(key).or_insert_with(|| {
+            let kinds = match starts {
+                Domain::All => None,
+                Domain::Kinds(kinds) => Some(kinds),
+                Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
+            };
+            Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active })
+        }))
     };
     let index = |label: u16| u32::from(label - LABEL_BASE);
     // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
@@ -1307,18 +1276,14 @@ fn metal<'a>(
                 Pass::Pattern {
                     target,
                     pattern: patterns.len() - 1,
-                    roots: roots(clause, starts, None, true)
-                        .iter()
-                        .zip(&bases)
-                        .flat_map(|(roots, base)| roots.iter().map(move |node| base + node))
-                        .collect(),
+                    roots: roots(clause, starts, None),
                     constraints,
                 }
             }
             Label::Roots(program, starts) | Label::Targets(program, starts) => Pass::Program {
                 target,
                 program,
-                roots: roots(clause, starts, Some(program), false),
+                roots: roots(clause, starts, Some(program)),
                 captured: matches!(clause.labels.def(id), Label::Targets(..)),
             },
             Label::Count {
@@ -1333,7 +1298,7 @@ fn metal<'a>(
                     target,
                     slot: slots - 1,
                     program,
-                    roots: roots(clause, starts, Some(program), false),
+                    roots: roots(clause, starts, Some(program)),
                     captured: matches!(by, Tally::Capture),
                     min: u32::try_from(*min).unwrap_or(u32::MAX),
                     max: max.map_or(u32::MAX, |max| u32::try_from(max).unwrap_or(u32::MAX)),
@@ -1346,19 +1311,6 @@ fn metal<'a>(
     let (mut steps, mut chains) = crate::code_rule_dsl::prof::time("labels.plan", || levels(clauses, &mut pass))?;
     drop(pass);
     drop(shared);
-    // Each segment's roots, built as its run starts.
-    let materialize = |steps: &mut [(bool, Vec<Vec<Pass<'a>>>)]| {
-        let _built = crate::code_rule_dsl::prof::Stage::start("labels.roots");
-        let mut built = HashMap::<usize, Arc<Vec<Vec<u32>>>>::new();
-        for pass in steps.iter_mut().flat_map(|(_, levels)| levels).flatten() {
-            if let Pass::Program { roots, .. } | Pass::Count { roots, .. } = pass
-                && let Some((starts, program, at)) = recipes.0.get(&(Arc::as_ptr(roots) as usize))
-            {
-                let list = built.entry(Arc::as_ptr(roots) as usize).or_insert_with(|| Arc::new(build(starts, *program, *at)));
-                *roots = Arc::clone(list);
-            }
-        }
-    };
     crate::code_rule_dsl::prof::release();
     crate::code_rule_dsl::prof::peak("3a.plan");
     let all = clauses;
@@ -1376,7 +1328,7 @@ fn metal<'a>(
                 .map(|(at, (clause, roots))| Pass::Program {
                     target: (labels + at) as u32,
                     program: &clause.program,
-                    roots: Arc::new(roots.clone()),
+                    roots: Arc::new(Roots::Listed(roots.clone())),
                     captured: false,
                 })
                 .collect(),
@@ -1387,9 +1339,8 @@ fn metal<'a>(
     let outcome = match active {
         // The wave's labels: a recursive group that sweeps runs on the CPU's sweep, each file a
         // walk in node order, between the GPU's wide levels (O26).
-        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, &materialize, records)?,
+        Some(active) => apart(all, labels, slots as usize, patterns, steps, chains, tapes, active, records)?,
         None => {
-            materialize(&mut steps);
             run(&Plan { labels: labels + clauses.len(), counts: slots as usize, patterns, steps, chains, initial: Default::default(), rows: None, buffers: None, roots: records }, tapes)?
         }
     };
@@ -1442,7 +1393,6 @@ fn apart<'a>(
     chains: Vec<(Option<Vec<u16>>, bool)>,
     tapes: &[TapeDoc],
     active: &[Vec<bool>],
-    materialize: &dyn Fn(&mut [(bool, Vec<Vec<metal_program_backend::label_passes::Pass<'a>>>)]),
     roots: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
 ) -> Result<metal_program_backend::label_passes::Outcome, Error> {
     use metal_program_backend::label_passes::{Outcome, Plan, run};
@@ -1498,7 +1448,6 @@ fn apart<'a>(
         if segment.0.is_empty() && !(last && roots.is_some()) {
             return Ok(());
         }
-        materialize(&mut segment.0);
         let plan = Plan {
             labels,
             counts,
@@ -1513,31 +1462,6 @@ fn apart<'a>(
         };
         crate::code_rule_dsl::prof::release();
         let before = crate::code_rule_dsl::prof::footprint_mb();
-        if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-            let mut lists = std::collections::HashSet::new();
-            let mut root_bytes = 0;
-            let mut pattern_bytes = 0;
-            for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
-                match pass {
-                    metal_program_backend::label_passes::Pass::Program { roots, .. } | metal_program_backend::label_passes::Pass::Count { roots, .. } => {
-                        if lists.insert(Arc::as_ptr(roots) as usize) {
-                            root_bytes += roots.iter().map(|r| r.capacity() * 4).sum::<usize>();
-                        }
-                    }
-                    metal_program_backend::label_passes::Pass::Pattern { roots, .. } => pattern_bytes += roots.capacity() * 4,
-                    _ => {}
-                }
-            }
-            let text_bytes = rows.lock().map(|rows| rows.values().flatten().map(|row| row.len() * 4).sum::<usize>()).unwrap_or(0);
-            eprintln!(
-                "  SIZES: this run's root lists {} MB ({} lists), pattern roots {} MB, text rows {} MB, labels {} MB",
-                root_bytes >> 20,
-                lists.len(),
-                pattern_bytes >> 20,
-                text_bytes >> 20,
-                plan.initial.take().map(|labels| { let n = labels.capacity() * 4; plan.initial.set(Some(labels)); n }).unwrap_or(0) >> 20,
-            );
-        }
         mark("plan");
         let ran = crate::code_rule_dsl::prof::time("labels.gpu", || run(&plan, tapes))?;
         if std::env::var_os("RERAIL_FOOTPRINT").is_some() {

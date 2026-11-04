@@ -32,7 +32,7 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     Program {
         target: u32,
         program: &'a Program,
-        roots: std::sync::Arc<Vec<Vec<u32>>>,
+        roots: std::sync::Arc<Roots>,
         captured: bool,
     },
     /// The nodes with between `min` and `max` of a program's outputs, by root or captured node,
@@ -41,18 +41,18 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
         target: u32,
         slot: u32,
         program: &'a Program,
-        roots: std::sync::Arc<Vec<Vec<u32>>>,
+        roots: std::sync::Arc<Roots>,
         captured: bool,
         min: u32,
         max: u32,
     },
     Complement { target: u32, of: u32 },
-    /// The global `roots` where `plan.patterns[pattern]` matches and each named constraint's
+    /// The `roots` where `plan.patterns[pattern]` matches and each named constraint's
     /// single-node capture has its label (an unbound or multi-node capture is not checked).
     Pattern {
         target: u32,
         pattern: usize,
-        roots: Vec<u32>,
+        roots: std::sync::Arc<Roots>,
         constraints: Vec<(String, u32)>,
     },
     /// The global roots a semantic predicate's producer reported (O24, decision 0030) whose slots'
@@ -60,6 +60,117 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     /// fact case (`patterns::FACT`) tests them, so a fact settles from scratch as a pattern does.
     Fact { target: u32, rows: Vec<(u32, Vec<(u32, u32)>)> },
     Empty { target: u32 },
+}
+
+/// A pass's roots, as a rule over each document's codes (decision 0033): no node list is built.
+/// Every root test a pass's domain makes (its kinds, its program's leading kind and supertype
+/// tests, `matcher::Entry`) is a property of a node's code, so a pass's roots in a document are
+/// the nodes of the codes its rule admits, which the residency indexes (`DocView::by_code`). The
+/// run hands the device each pass's (document, code) runs (`RootSeg`); the device reads its root
+/// in place. Listed roots (a clause's prefilter candidates, few and scattered) are a list.
+#[derive(Debug)]
+pub(in crate::code_rule_dsl) enum Roots {
+    /// The nodes whose kind is one of `kinds` (any where `None`) and whose code passes `entry`
+    /// (`(KIND, kind)` or `(SUPERTYPE, class)`), in the files `active` marks.
+    Codes { kinds: Option<Vec<u16>>, entry: Vec<(u8, u16)>, active: Vec<bool> },
+    /// Per file, its listed nodes (document-local, ascending).
+    Listed(Vec<Vec<u32>>),
+}
+
+impl Roots {
+    fn admits(kinds: &Option<Vec<u16>>, entry: &[(u8, u16)], code: &crate::code_rule_dsl::tape::resident::DeviceCode) -> bool {
+        let class = |class: u16| code.classes[..usize::from(code.class_count)].contains(&class);
+        kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&code.kind).is_ok())
+            && entry.iter().all(|&(op, arg)| if op == super::super::KIND { code.kind == arg } else { class(arg) })
+    }
+
+    /// The roots in file `file` on the host, ascending (the CPU's readers and the counters).
+    pub(in crate::code_rule_dsl) fn nodes<'a>(&'a self, file: usize, tape: &'a TapeDoc) -> Box<dyn Iterator<Item = u32> + 'a> {
+        match self {
+            Self::Listed(lists) => Box::new(lists.get(file).into_iter().flatten().copied()),
+            Self::Codes { kinds, entry, active } => {
+                if !active.get(file).copied().unwrap_or(false) {
+                    return Box::new(std::iter::empty());
+                }
+                Box::new((0..tape.transducer_len() as u32).filter(move |&node| {
+                    kinds.as_ref().is_none_or(|kinds| kinds.binary_search(&tape.transducer_kind(node)).is_ok())
+                        && entry.iter().all(|&(op, arg)| if op == super::super::KIND { tape.transducer_kind(node) == arg } else { tape.transducer_has_supertype(node, arg) })
+                }))
+            }
+        }
+    }
+
+    /// This rule's segments over a batch's documents, appended to `segs` (in u32s, as `RootSeg`s
+    /// at 16-byte records): the header's index (in records) and the roots' count. Listed nodes go
+    /// after every segment, in `listed`, which the caller appends and offsets (`Segments`).
+    fn segments(&self, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>], segs: &mut Segments) -> (u32, u32) {
+        let header = segs.records.len();
+        segs.records.push([0; 4]);
+        let mut total = 0_u32;
+        for (doc, resident) in documents.iter().enumerate() {
+            match self {
+                Self::Listed(lists) => {
+                    let Some(list) = lists.get(doc).filter(|list| !list.is_empty()) else { continue };
+                    segs.records.push([doc as u32, ROOT_LISTED | segs.listed.len() as u32, list.len() as u32, total]);
+                    segs.listed.extend_from_slice(list);
+                    total += list.len() as u32;
+                }
+                Self::Codes { kinds, entry, active } => {
+                    if !active.get(doc).copied().unwrap_or(false) {
+                        continue;
+                    }
+                    let starts = resident.code_starts();
+                    for (code, device) in resident.codes().iter().enumerate() {
+                        let count = starts[code + 1] - starts[code];
+                        if count > 0 && Self::admits(kinds, entry, device) {
+                            segs.records.push([doc as u32, starts[code], count, total]);
+                            total += count;
+                        }
+                    }
+                }
+            }
+        }
+        segs.records[header] = [(segs.records.len() - header - 1) as u32, total, 0, 0];
+        (header as u32, total)
+    }
+}
+
+/// Bit 31 of a segment's start: its nodes are listed (`Roots::Listed`), not a code's.
+const ROOT_LISTED: u32 = 1 << 31;
+
+/// A run's root segments (`Roots::segments`): 16-byte records, then the listed nodes. One per
+/// distinct rule (by its `Arc`), so passes of one domain share them.
+#[derive(Default)]
+struct Segments {
+    records: Vec<[u32; 4]>,
+    listed: Vec<u32>,
+    by_rule: HashMap<usize, (u32, u32)>,
+}
+
+impl Segments {
+    fn of(&mut self, roots: &std::sync::Arc<Roots>, documents: &[std::sync::Arc<crate::code_rule_dsl::residency::slabs::Resident>]) -> (u32, u32) {
+        if let Some(found) = self.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)) {
+            return *found;
+        }
+        let found = roots.segments(documents, self);
+        self.by_rule.insert(std::sync::Arc::as_ptr(roots) as usize, found);
+        found
+    }
+
+    /// As the device reads them: listed starts offset past the records.
+    fn words(&self) -> Vec<u32> {
+        let offset = 4 * self.records.len() as u32;
+        let mut words = Vec::with_capacity(4 * self.records.len() + self.listed.len());
+        for record in &self.records {
+            let from = if record[1] & ROOT_LISTED != 0 && record[2] > 0 { ROOT_LISTED | ((record[1] & !ROOT_LISTED) + offset) } else { record[1] };
+            words.extend([record[0], from, record[2], record[3]]);
+        }
+        words.extend_from_slice(&self.listed);
+        if words.is_empty() {
+            words.push(0);
+        }
+        words
+    }
 }
 
 /// Whether a pass runs in the pattern kernel: a pattern's or a fact's.
@@ -730,7 +841,6 @@ struct Walks {
     /// Each text slot's bits (`Micro::texts`), one label's words a slot.
     texts: MappedBuffer,
     words: MappedBuffer,
-    items: MappedBuffer,
     steps: u32,
     /// Every walk's record and static depth, for a recursive group fused into one dispatch
     /// (`Runner::group`).
@@ -783,6 +893,9 @@ struct Runner<'a> {
     /// Whether the loop tier runs with 128-frame stacks (`label_micro_deep`).
     deep: bool,
     walks: HashMap<usize, Walks>,
+    /// Every pass's roots as segments (`Roots::segments`), one buffer for the run (`segs`).
+    segments: Segments,
+    segs: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1067,6 +1180,8 @@ fn encode(
         micro,
         deep,
         walks: HashMap::new(),
+        segments: Segments::default(),
+        segs: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: None,
         encoded: false,
@@ -1428,7 +1543,7 @@ impl Runner<'_> {
         for (key, mut passes, sweep) in batches {
             // A level's micro walks run as such (`label_micro`); its other programs are tasks.
             if self.micro && sweep.is_none() {
-                let (mut words, mut items) = (Vec::new(), Vec::new());
+                let mut words = Vec::new();
                 // Per tier, its passes; their threads counted from 0 in each.
                 let mut records: [Vec<[u32; 8]>; 3] = Default::default();
                 let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
@@ -1438,7 +1553,8 @@ impl Runner<'_> {
                 let files = self.files;
                 // Each distinct (value, kind)'s slot row, computed once for the run's levels.
                 let mut rows = HashMap::<String, Option<u32>>::new();
-                let mut ranges = HashMap::<usize, (u32, u32)>::new();
+                let documents = self.tapes.table.documents.clone();
+                let segments = &mut self.segments;
                 // Threads: a pass's from its own start, over its (shared) item range.
                 let mut threads = [0_u32; 3];
                 let mut fused = Vec::new();
@@ -1469,14 +1585,16 @@ impl Runner<'_> {
                     }
                     packs
                 };
-                let mut place = |program: &Program, roots: &std::sync::Arc<Vec<Vec<u32>>>, mode: u32, target: u32, table: Option<Vec<u32>>| -> bool {
+                let mut place = |program: &Program, roots: &std::sync::Arc<Roots>, mode: u32, target: u32, table: Option<Vec<u32>>| -> bool {
                     let Some(walk) = Micro::of(program) else { return true };
+                    // The rule's segments, shared by passes of its domain.
+                    let (start, count) = segments.of(roots, &documents);
                     if crate::code_rule_dsl::prof::on() {
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
                             eprintln!("LOOP {:?}", walk.ops());
                         }
-                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), roots.iter().map(Vec::len).sum());
+                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count as usize);
                     }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
@@ -1502,7 +1620,7 @@ impl Runner<'_> {
                         };
                         let Some(row) = row else {
                             if crate::code_rule_dsl::prof::on() {
-                                crate::code_rule_dsl::prof::count_named(format!("unslotted.{key}"), roots.iter().map(Vec::len).sum());
+                                crate::code_rule_dsl::prof::count_named(format!("unslotted.{key}"), count as usize);
                             }
                             return true;
                         };
@@ -1515,14 +1633,6 @@ impl Runner<'_> {
                         texts.extend_from_within(from..from + label_words);
                     }
                     slots += own.len() as u32;
-                    // One item range per shared root list.
-                    let (start, count) = *ranges.entry(std::sync::Arc::as_ptr(roots) as usize).or_insert_with(|| {
-                        let start = items.len() as u32;
-                        for (roots, base) in roots.iter().zip(&bases) {
-                            items.extend(roots.iter().map(|node| base + node));
-                        }
-                        (start, items.len() as u32 - start)
-                    });
                     let tier = tier(walk.depth());
                     // A pack's route has bit 2, its emit count and rows after its words.
                     let mode = if table.is_some() { mode | 4 } else { mode };
@@ -1574,8 +1684,7 @@ impl Runner<'_> {
                     placed += usize::from(!alone);
                     alone
                 });
-                crate::code_rule_dsl::prof::count("size.walks", items.len());
-                if !items.is_empty() {
+                if !words.is_empty() {
                     if texts.is_empty() {
                         texts.push(0);
                     }
@@ -1592,7 +1701,6 @@ impl Runner<'_> {
                         fused,
                         walked: placed,
                         words: MappedBuffer::from_slice(self.device, &words)?,
-                        items: MappedBuffer::from_slice(self.device, &items)?,
                     };
                     self.walks.insert(key, walks);
                 }
@@ -1602,9 +1710,9 @@ impl Runner<'_> {
             }
             if crate::code_rule_dsl::prof::on() {
                 crate::code_rule_dsl::prof::count(if sweep.is_some() { "size.sweep_batches" } else { "size.level_batches" }, 1);
-                for &(program, roots, _, _) in &passes {
+                for &(program, _, _, _) in &passes {
                     let reason = if sweep.is_some() && Micro::of(program).is_some() { "sweep" } else { Micro::refusal(program) };
-                    crate::code_rule_dsl::prof::count_named(format!("refused.{reason}"), roots.iter().map(Vec::len).sum());
+                    crate::code_rule_dsl::prof::count_named(format!("refused.{reason}"), 1);
                 }
             }
             let (programs, anchors) = self.batch_inputs(&passes);
@@ -1705,6 +1813,16 @@ impl Runner<'_> {
             };
             self.prepared.insert(key, Some(prepared));
         }
+        // The pattern passes' rules too, then every segment in one buffer.
+        let documents = self.tapes.table.documents.clone();
+        for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
+            if let Pass::Pattern { roots, .. } = pass {
+                self.segments.of(roots, &documents);
+            }
+        }
+        let segs = self.segments.words();
+        crate::code_rule_dsl::prof::count("size.segment_words", segs.len());
+        self.segs = Some(MappedBuffer::from_slice(self.device, &segs)?);
         if let Some((totals, scheduler_bytes, output_bytes, tasks)) = widest_seen {
             // Lanes times states is the arena: one over the buffer budget runs again with fewer states.
             let mut lease = crate::code_rule_dsl::prof::time("size.lease", || MetalWorkspaceLease::acquire(self.device, totals, scheduler_bytes, output_bytes, tasks))
@@ -1723,10 +1841,12 @@ impl Runner<'_> {
         Ok(())
     }
 
-    fn batch_inputs(&self, passes: &[(&Program, &std::sync::Arc<Vec<Vec<u32>>>, u32, u32)]) -> (Vec<Program>, Vec<Vec<Vec<u32>>>) {
+    /// The interpreted programs and their tasks' roots, per file (O39: a task per root, until the
+    /// interpreter takes its roots from segments as the walks do).
+    fn batch_inputs(&self, passes: &[(&Program, &std::sync::Arc<Roots>, u32, u32)]) -> (Vec<Program>, Vec<Vec<Vec<u32>>>) {
         let programs = passes.iter().map(|(program, ..)| (*program).clone()).collect::<Vec<_>>();
         let anchors = (0..self.files.len())
-            .map(|file| passes.iter().map(|(_, roots, ..)| roots[file].clone()).collect())
+            .map(|file| passes.iter().map(|(_, roots, ..)| roots.nodes(file, &self.files[file]).collect()).collect())
             .collect();
         (programs, anchors)
     }
@@ -1749,6 +1869,7 @@ impl Runner<'_> {
         let mut settles = Vec::new();
         let mut matches = Vec::new();
         let mut constraints = Vec::new();
+        let mut pattern_threads = 0_u32;
         let tallies = count_rows(passes);
         // A label's place in the prefix (`label_rows`).
         let rows = self.label_rows.clone();
@@ -1774,8 +1895,11 @@ impl Runner<'_> {
                         }
                     }
                     let count = (constraints.len() / 2) as u32 - start;
-                    for root in roots {
-                        matches.extend([*pattern as u32, row, *root, start, count]);
+                    // One item for the pass: its threads find their roots in its segments.
+                    let (segment, roots) = self.segments.by_rule.get(&(std::sync::Arc::as_ptr(roots) as usize)).copied().ok_or(Error::BackendFailure)?;
+                    if roots > 0 {
+                        matches.extend([*pattern as u32, row, segment, start, count, pattern_threads]);
+                        pattern_threads += roots;
                     }
                     Op {
                         target: place(target),
@@ -1789,7 +1913,8 @@ impl Runner<'_> {
                         for (node, label) in targets {
                             constraints.extend([*node, place(label)]);
                         }
-                        matches.extend([patterns::FACT, row, *root, start, targets.len() as u32]);
+                        matches.extend([patterns::FACT, row, *root, start, targets.len() as u32, pattern_threads]);
+                        pattern_threads += 1;
                     }
                     Op {
                         target: place(target),
@@ -1807,11 +1932,13 @@ impl Runner<'_> {
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
         if !matches.is_empty() {
-            let item_count = (matches.len() / 5) as u32;
+            let task_count = (matches.len() / 6) as u32;
             let (items, constraints) = (self.upload(&matches)?, self.upload(&constraints)?);
             let docs = self.tapes.docs.buffer.clone();
+            let segs = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
             let shape = Shape {
-                item_count,
+                item_count: pattern_threads,
+                task_count,
                 ..self.shape()
             };
             self.pattern_kernel(
@@ -1822,6 +1949,7 @@ impl Runner<'_> {
                     (&flags, 0),
                     (&items, 0),
                     (&constraints, 0),
+                    (&segs, 0),
                 ],
                 shape,
             )?;
@@ -1975,7 +2103,7 @@ impl Runner<'_> {
             return unfused("interpreted");
         }
         let place = |rows: &Option<Vec<u32>>, label: &u32| rows.as_ref().map_or(*label, |rows| rows[*label as usize]);
-        let (mut records, mut words, mut items, mut texts) = (Vec::<[u32; 8]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::<u32>::new());
+        let (mut records, mut words, mut texts) = (Vec::<[u32; 8]>::new(), Vec::<u32>::new(), Vec::<u32>::new());
         let (mut shape_levels, mut ops, mut steps, mut deepest) = (Vec::<[u32; 4]>::new(), Vec::<Op>::new(), 0_u32, 0_usize);
         let read = |buffer: &MappedBuffer| unsafe {
             std::slice::from_raw_parts(buffer.buffer.contents().cast::<u32>(), buffer.buffer.length() as usize / 4).to_vec()
@@ -2000,17 +2128,15 @@ impl Runner<'_> {
                 }
                 deepest = deepest.max(walks.fused.iter().filter_map(|(_, depth)| *depth).max().unwrap_or(0));
                 steps = steps.max(walks.steps);
-                let (word_at, item_at) = (words.len() as u32, items.len() as u32);
+                let word_at = words.len() as u32;
                 let text_at = (texts.len() / self.words) as u32;
                 records.extend(walks.fused.iter().map(|(record, _)| {
                     let mut record = *record;
                     record[0] += word_at;
-                    record[4] += item_at;
                     record[6] += text_at;
                     record
                 }));
                 words.extend(read(&walks.words));
-                items.extend(read(&walks.items));
                 // Whole text rows only: a level without any holds one placeholder word.
                 let own = read(&walks.texts);
                 texts.extend_from_slice(&own[..own.len() / self.words * self.words]);
@@ -2026,7 +2152,8 @@ impl Runner<'_> {
             shape_levels.push([pass_start, records.len() as u32 - pass_start, op_start, ops.len() as u32 - op_start]);
         }
         crate::code_rule_dsl::prof::count("gpu.fused_groups", 1);
-        let (passes, words, items) = (self.upload(&records)?, self.upload(&words)?, self.upload(&items)?);
+        let (passes, words) = (self.upload(&records)?, self.upload(&words)?);
+        let items = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
         let (group_levels, ops) = (self.upload(&shape_levels)?, self.upload(&ops)?);
         let shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
@@ -2273,7 +2400,8 @@ impl Runner<'_> {
     /// `label_sink` marks the tasks' results.
     fn walk(&mut self, level: usize) -> Result<(), Error> {
         let Some(walks) = self.walks.get(&level) else { return Ok(()) };
-        let (words, items) = (walks.words.buffer.clone(), walks.items.buffer.clone());
+        let words = walks.words.buffer.clone();
+        let items = self.segs.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = walks.texts.buffer.clone();
         let steps = walks.steps;
         let tiers = walks.tiers.iter().map(|(tier, passes, count, threads)| (*tier, passes.buffer.clone(), *count, *threads)).collect::<Vec<_>>();
@@ -2371,7 +2499,7 @@ impl Runner<'_> {
 /// A level's programs: (program, roots per file, sink mode, scratch label or count slot).
 /// A level's programs: (program, roots, mode, slot), the slot a program's scratch row
 /// (`scratch_rows`) where `rows`, else its label (a sweep's, `label_sweep`), or a count's slot.
-fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p std::sync::Arc<Vec<Vec<u32>>>, u32, u32)> {
+fn programs_of<'p>(passes: &'p [Pass<'_>], rows: bool) -> Vec<(&'p Program, &'p std::sync::Arc<Roots>, u32, u32)> {
     let tallies = count_rows(passes);
     passes
         .iter()

@@ -539,7 +539,11 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
 - **Label output is bits:** programs mark their bits as they publish, with no result records.
 - **Only a walk's frame overflow retries** deeper or interpreted (`WalkFrames`); a batch over a
   budget is split. S7 cold on Metal: 12.0 s CPU, peak 871 MB (was 3,017 MB), 1,259 keys.
-- **Left:** the peak over budget (O39) and the interpreted lanes' workspace (O38).
+- **Roots are rules over the codes** (decision 0033): the residency indexes nodes by code, a
+  pass's roots are segments of (document, code), and the device reads each root in place. No
+  root lists or walk items. S7 cold on Metal: 7.5 s CPU, 1,259 keys.
+- **Left:** the peak over budget (O39, now in the GPU run), and the interpreter's tasks from
+  segments through a lane pool (O38).
 
 **List step 27 (2026-11-03): the findings layer's SQL is typed (row 3, decision 0031).**
 - **One typed statement:** `emit::single` now composes the steps' checked `select::Query`s, not

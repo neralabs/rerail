@@ -5,7 +5,9 @@
 // kidStart, kids: each node's first child in its document's child lists, and the lists (the
 // interpreter's children by index); childBase, sourceBase, lineBase: the document's place in the
 // batch's numbering of children, source bytes and lines.
-struct DocView{uint slab,nodes,nodeBase,widths,code,size,base,off,tail,parent,codes,source,sourceLen,lines,lineCount,reserved,kidStart,kids,kidCount,childBase,sourceBase,lineBase,padding0,padding1;};
+// codeStart, byCode: each code's first entry in byCode, and the nodes of every code in node order
+// (a pass's roots: `RootSeg`).
+struct DocView{uint slab,nodes,nodeBase,widths,code,size,base,off,tail,parent,codes,source,sourceLen,lines,lineCount,codeCount,kidStart,kids,kidCount,childBase,sourceBase,lineBase,codeStart,byCode;};
 static_assert(sizeof(DocView)==96u,"document view layout");
 // `tape::resident::DeviceCode`: flags are named, extra<<1, missing<<2, error<<3.
 struct DeviceCode{ushort kind,field;uchar flags,classCount;ushort reserved;ushort classes[8];};
@@ -34,3 +36,19 @@ inline uint tape_child(thread const Slabs& s,DocView d,uint i,uint k){uint c=tap
 inline uchar tape_byte(thread const Slabs& s,DocView d,uint at){return (tape_slab(s,d.slab)+d.source)[at];}
 inline device const uchar* tape_source(thread const Slabs& s,DocView d){return tape_slab(s,d.slab)+d.source;}
 inline uint tape_line_start(thread const Slabs& s,DocView d,uint line){return ((device const uint*)(tape_slab(s,d.slab)+d.lines))[line];}
+// A pass's roots (`label_passes::Roots`, decision 0033): at `at` in `segs`, a header (x: the
+// segment count, y: the roots) and its segments, each a document's run of roots: x the document,
+// y where they start (in its nodes by code, or, bit 31 set, in `segs` as listed local nodes), z
+// how many, w the first root's index in the pass. Segments ascend by document, then index.
+struct RootSeg{uint doc,from,count,first;};
+constant uint ROOT_LISTED=0x80000000u;
+// The `i`-th root's segment, by binary search over the pass's segments.
+inline uint root_segment(device const uint4* segs,uint at,uint i){uint low=at+1u,high=at+1u+segs[at].x;while(high-low>1u){uint middle=(low+high)/2u;if(segs[middle].w<=i)low=middle;else high=middle;}return low;}
+// The node `k` of a segment (document-local).
+inline uint root_local(thread const Slabs& s,DocView d,device const uint4* segs,uint4 seg,uint k){
+  if((seg.y&ROOT_LISTED)!=0u)return ((device const uint*)segs)[(seg.y&~ROOT_LISTED)+k];
+  return ((device const uint*)(tape_slab(s,d.slab)+d.byCode))[seg.y+k];
+}
+// The first segment at or after document `doc` in the pass at `at`.
+inline uint root_doc_segment(device const uint4* segs,uint at,uint doc){uint low=at+1u,high=at+1u+segs[at].x;while(low<high){uint middle=(low+high)/2u;if(segs[middle].x<doc)low=middle+1u;else high=middle;}return low;}
+

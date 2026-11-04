@@ -17,7 +17,9 @@ using namespace metal;
 struct Var { uint mode,a,from,n,multi; };
 // The item's document (decision 0032): nodes are the batch's numbering, read at `node - d.nodeBase`.
 struct Ctx { Slabs s; DocView d; constant uchar* text; device atomic_uint* flags; };
-struct Item { uint pattern,target,root,constraintStart,constraintCount; };
+// A pattern pass (its roots: segments at `root` in `segs`, decision 0033) or a fact's root (`root`,
+// one thread); its threads from `threadStart`.
+struct Item { uint pattern,target,root,constraintStart,constraintCount,threadStart; };
 struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps; };
 inline uint c_local(Ctx c,uint node){return node-c.d.nodeBase;}
 inline uint c_global(Ctx c,uint local){return local==TAPE_NONE?TAPE_NONE:local+c.d.nodeBase;}
@@ -71,7 +73,7 @@ pub(super) fn source(patterns: &[&PackedPattern]) -> (String, Vec<Vec<String>>) 
     out.push_str(&bodies);
     let _ = write!(
         out,
-        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  Item item=items[tid];Ctx c;c.s=Slabs{{s0,s1,s2,s3}};c.d=doc_of(docs,shape.fileCount,item.root);c.text=TEXT;c.flags=flags;\n  switch(item.pattern){{\n"
+        "kernel void {KERNEL}(device const DocView* docs [[buffer(0)]],device const uint* labels [[buffer(1)]],device atomic_uint* scratch [[buffer(2)]],device atomic_uint* flags [[buffer(3)]],device const Item* items [[buffer(4)]],device const uint2* constraints [[buffer(5)]],device const uint4* segs [[buffer(6)]],constant Shape& shape [[buffer(7)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint tid [[thread_position_in_grid]]){{\n  if(tid>=shape.itemCount||atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;\n  uint low=0u,high=shape.taskCount;while(high-low>1u){{uint middle=(low+high)/2u;if(items[middle].threadStart<=tid)low=middle;else high=middle;}}\n  Item item=items[low];Ctx c;c.s=Slabs{{s0,s1,s2,s3}};c.text=TEXT;c.flags=flags;\n  if(item.pattern=={FACT}u)c.d=doc_of(docs,shape.fileCount,item.root);\n  else{{uint i=tid-item.threadStart;uint4 seg=segs[root_segment(segs,item.root,i)];c.d=docs[seg.x];item.root=c.d.nodeBase+root_local(c.s,c.d,segs,seg,i-seg.w);}}\n  switch(item.pattern){{\n"
     );
     for (index, vars) in names.iter().enumerate() {
         let _ = write!(

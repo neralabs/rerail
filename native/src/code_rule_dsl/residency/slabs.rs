@@ -73,7 +73,8 @@ pub(in crate::code_rule_dsl) struct DocView {
     /// Line starts (u32, document-local bytes), the first 0.
     pub(in crate::code_rule_dsl) lines: u32,
     pub(in crate::code_rule_dsl) line_count: u32,
-    pub(in crate::code_rule_dsl) reserved: u32,
+    /// The code table's length.
+    pub(in crate::code_rule_dsl) code_count: u32,
     /// Each node's first entry in `kids` (u32, `nodes + 1` of them), and the children of every
     /// node in node order (u32, document-local; `kid_count` of them, a tree's `nodes - 1`): the
     /// child lists a reader builds at admission, for the interpreter's child by index.
@@ -85,7 +86,11 @@ pub(in crate::code_rule_dsl) struct DocView {
     pub(in crate::code_rule_dsl) child_base: u32,
     pub(in crate::code_rule_dsl) source_base: u32,
     pub(in crate::code_rule_dsl) line_base: u32,
-    pub(in crate::code_rule_dsl) padding: [u32; 2],
+    /// Each code's first entry in `by_code` (u32, `code_count + 1` of them), and the nodes of
+    /// every code in node order (u32, document-local, `nodes` of them): a pass's roots in this
+    /// document are the nodes of the codes its rule admits (`label_passes::Roots`), read in place.
+    pub(in crate::code_rule_dsl) code_start: u32,
+    pub(in crate::code_rule_dsl) by_code: u32,
 }
 const _: () = assert!(std::mem::size_of::<DocView>() == 96);
 
@@ -115,6 +120,21 @@ impl Resident {
         // SAFETY: admission wrote these bytes before publishing the document, and nothing writes
         // them again: a slab is append-only and the document's range is its own.
         unsafe { std::slice::from_raw_parts(slab.host().add(offset as usize), length) }
+    }
+
+    /// The fixed-width code table (`DeviceCode`), as the device reads it.
+    pub(in crate::code_rule_dsl) fn codes(&self) -> &[DeviceCode] {
+        let bytes = self.bytes_at(self.view.codes, 24 * self.view.code_count as usize);
+        // SAFETY: admission wrote `code_count` `DeviceCode`s at this 16-byte offset.
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<DeviceCode>(), self.view.code_count as usize) }
+    }
+
+    /// Each code's first entry in the nodes by code, `code_count + 1` of them.
+    pub(in crate::code_rule_dsl) fn code_starts(&self) -> &[u32] {
+        let length = self.view.code_count as usize + 1;
+        let bytes = self.bytes_at(self.view.code_start, 4 * length);
+        // SAFETY: as `codes`, u32s at a 16-byte offset.
+        unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<u32>(), length) }
     }
 
     /// The tape image as stored.
@@ -231,9 +251,15 @@ impl Plan {
         aligned(self.tape) + aligned(self.source) + self.derived()
     }
 
-    /// The reader's state: parents, codes, line starts and child lists.
+    /// The reader's state: parents, codes, line starts, child lists and nodes by code.
     fn derived(&self) -> usize {
-        aligned(4 * self.nodes) + aligned(24 * self.codes) + aligned(4 * self.lines) + aligned(4 * (self.nodes + 1)) + aligned(4 * self.nodes.saturating_sub(1))
+        aligned(4 * self.nodes)
+            + aligned(24 * self.codes)
+            + aligned(4 * self.lines)
+            + aligned(4 * (self.nodes + 1))
+            + aligned(4 * self.nodes.saturating_sub(1))
+            + aligned(4 * (self.codes + 1))
+            + aligned(4 * self.nodes)
     }
 }
 
@@ -435,6 +461,8 @@ fn place(
     let lines_at = codes_at + aligned(24 * plan.codes);
     let kid_start_at = lines_at + aligned(4 * plan.lines);
     let kids_at = kid_start_at + aligned(4 * (plan.nodes + 1));
+    let code_start_at = kids_at + aligned(4 * plan.nodes.saturating_sub(1));
+    let by_code_at = code_start_at + aligned(4 * (plan.codes + 1));
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
     match parts {
@@ -509,6 +537,25 @@ fn place(
             fill[parent as usize] += 1;
         }
     }
+    // Nodes by code, as the child lists: counts, their prefix, then each node in node order.
+    // SAFETY: as the parents', `4 * (codes + 1)` and `4 * nodes` bytes; the code column is
+    // `nodes` u16s at a 16-byte offset in the image.
+    let node_codes = unsafe { std::slice::from_raw_parts(tape.as_ptr().add(layout.code).cast::<u16>(), plan.nodes) };
+    let code_start = unsafe { std::slice::from_raw_parts_mut(base.add(code_start_at).cast::<u32>(), plan.codes + 1) };
+    let by_code = unsafe { std::slice::from_raw_parts_mut(base.add(by_code_at).cast::<u32>(), plan.nodes) };
+    code_start.fill(0);
+    for &code in node_codes {
+        let slot = code_start.get_mut(usize::from(code) + 1).ok_or_else(|| invalid("a node's code past the table"))?;
+        *slot += 1;
+    }
+    for code in 0..plan.codes {
+        code_start[code + 1] += code_start[code];
+    }
+    let mut fill = code_start[..plan.codes].to_vec();
+    for (node, &code) in node_codes.iter().enumerate() {
+        by_code[fill[usize::from(code)] as usize] = node as u32;
+        fill[usize::from(code)] += 1;
+    }
     let widths = u32::from(layout.widths[0]) | u32::from(layout.widths[1]) << 4 | u32::from(layout.widths[2]) << 8 | u32::from(layout.from_start) << 12;
     let at = |offset: usize| u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"));
     let view = DocView {
@@ -527,14 +574,15 @@ fn place(
         source_len: at(plan.source)?,
         lines: at(lines_at)?,
         line_count: at(plan.lines)?,
-        reserved: 0,
+        code_count: at(plan.codes)?,
         kid_start: at(kid_start_at)?,
         kids: at(kids_at)?,
         kid_count: at(kid_count)?,
         child_base: 0,
         source_base: 0,
         line_base: 0,
-        padding: [0; 2],
+        code_start: at(code_start_at)?,
+        by_code: at(by_code_at)?,
     };
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);
     Ok(Resident {

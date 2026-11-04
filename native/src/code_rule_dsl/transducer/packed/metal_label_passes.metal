@@ -89,7 +89,8 @@ inline uint tree_next(thread const Tree& t,uint node,bool named){uint local=tree
 inline uint tree_first(thread const Tree& t,uint node){return tree_global(t,tape_first_child(t.s,t.d,tree_local(t,node)));}
 inline uint tree_end(thread const Tree& t,uint node){return node+tape_size(t.s,t.d,tree_local(t,node));}
 inline uint tree_parent(thread const Tree& t,uint node){return tree_global(t,tape_parent(t.s,t.d,tree_local(t,node)));}
-// A pass: its words, its scratch label, whether it marks captures, and its starts in `items`.
+// A pass: its words, its scratch label, whether it marks captures, and its roots: their segments
+// at `itemStart` in `items` (`RootSeg`, decision 0033) and how many.
 struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,textStart,threadStart; };
 // A path's state, and for a move's frame (resume 1 children, 2 descendants, 3 following
 // siblings; 0 a forked path) where its candidates continue: `next` the next candidate (a child or
@@ -124,11 +125,14 @@ template<uint FRAMES,typename Stack>
 static void micro_walk(device const DocView* docs,thread const Slabs& slabs,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   if(tid>=shape.itemCount)return;
-  // A pass's threads are contiguous from its threadStart; its items are a range that passes of
-  // one domain share.
+  // A pass's threads are contiguous from its threadStart; its roots are segments that passes of
+  // one domain share, read in place.
   uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=tid)low=middle;else high=middle;}
-  uint start=items[passes[low].itemStart+(tid-passes[low].threadStart)];
-  Tree t={slabs,doc_of(docs,shape.fileCount,start)};
+  device const uint4* segs=(device const uint4*)items;
+  uint i=tid-passes[low].threadStart;
+  uint4 seg=segs[root_segment(segs,passes[low].itemStart,i)];
+  Tree t={slabs,docs[seg.x]};
+  uint start=t.d.nodeBase+root_local(slabs,t.d,segs,seg,i-seg.w);
   micro_from<FRAMES>(t,head,passes[low],words,start,scratch,flags,texts,counts,shape,stack);
 }
 
@@ -244,13 +248,14 @@ static void label_group_run(Stack stack,device const DocView* docs,thread const 
       GroupLevel at=levels[level];
       for(uint p=0u;p<at.passCount;p++){
         MicroPass pass=passes[at.passStart+p];
-        // The pass's starts in this file: its items ascend by node.
-        uint low=0u,high=pass.itemCount;
-        while(low<high){uint middle=(low+high)/2u;if(items[pass.itemStart+middle]<first)low=middle+1u;else high=middle;}
-        uint from=low;high=pass.itemCount;
-        while(low<high){uint middle=(low+high)/2u;if(items[pass.itemStart+middle]<end)low=middle+1u;else high=middle;}
-        for(uint item=from+lane;item<low;item+=width){
-          micro_from<FRAMES>(t,head,pass,words,items[pass.itemStart+item],scratch,flags,texts,counts,shape,stack);
+        // The pass's roots in this file: its segments of this document.
+        device const uint4* segs=(device const uint4*)items;
+        uint last=pass.itemStart+1u+segs[pass.itemStart].x;
+        for(uint k=root_doc_segment(segs,pass.itemStart,file);k<last&&segs[k].x==file;k++){
+          uint4 seg=segs[k];
+          for(uint item=lane;item<seg.z;item+=width){
+            micro_from<FRAMES>(t,head,pass,words,own.nodeBase+root_local(slabs,own,segs,seg,item),scratch,flags,texts,counts,shape,stack);
+          }
         }
       }
       threadgroup_barrier(mem_flags::mem_device);
