@@ -98,10 +98,36 @@ after a reviewer approves.
 
 ### Manual runs and put-back
 
-`workflow_dispatch` builds a trial tarball, or puts `latest` back to an earlier version.
+`workflow_dispatch` builds a trial tarball, retries a failed release, or puts `latest` back to an earlier version.
 
 - **No inputs:** uploads the tarball as a run artifact, unpublished. Try it with `npm install <tarball>`.
+- **`publish` set to a version:** retries that version's release from `main`; see below.
 - **`latest` set to an earlier released version:** builds nothing and points `latest` back to it.
+
+<details>
+<summary>Retrying a failed release</summary>
+
+Release tags can't be moved or deleted, and re-running a failed run reuses the tag's scripts. So when a release fails
+before publishing because of something that doesn't ship, such as a workflow or a release script, fix that on `main`
+and run:
+
+```bash
+gh workflow run release.yml --ref main -f publish=<version>
+```
+
+The run builds `main`, runs every check and publishes behind the same approval. The tag stays where it is, and npm's
+provenance names the `main` commit. It is refused unless all of these hold, so `main` holds the package the tag and the
+notes describe:
+
+- it runs from `main`, and `main`'s `package.json` names that version;
+- the `v<version>` tag exists;
+- nothing core ships has changed since the tag (`publishRetryRefusal` in `scripts/release/core-paths.mjs`).
+
+If the fix changes what ships, it takes the next version: the Release pull request offers one as soon as the fix is on
+`main`. Say in that version's lead that the failed version was never published, since its notes won't reach anyone
+updating past it.
+
+</details>
 
 <details>
 <summary>What a put-back also does</summary>

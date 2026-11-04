@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
-import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
+import { coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
@@ -43,6 +43,32 @@ describe("lockChangesCore and coreChanges", () => {
     expect(reads).toEqual([]);
     expect(coreChanges(["package-lock.json", "src/a.ts", "packs/python/package.json"], readLock)).toEqual(["src/a.ts"]);
     expect(reads).toEqual(["release", "head"]);
+  });
+});
+
+describe("publishRetryRefusal", () => {
+  const retry = { version: "0.1.2", ref: "refs/heads/main", packageVersion: "0.1.2", tagged: true, shipped: [] };
+
+  it("retries the version main names, tagged, with nothing shipped changed since", () => {
+    expect(publishRetryRefusal(retry)).toBeNull();
+    expect(publishRetryRefusal({ ...retry, version: "0.2.0-next.1", packageVersion: "0.2.0-next.1" })).toBeNull();
+  });
+
+  it("refuses another branch, a malformed version and a version main has moved past", () => {
+    expect(publishRetryRefusal({ ...retry, ref: "refs/heads/fix" })).toBe("a retry runs from main, not refs/heads/fix");
+    expect(publishRetryRefusal({ ...retry, version: "v0.1.2" })).toBe("v0.1.2 is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N");
+    expect(publishRetryRefusal({ ...retry, version: "0.1.2-rc.1" })).toBe("0.1.2-rc.1 is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N");
+    expect(publishRetryRefusal({ ...retry, packageVersion: "0.1.3" })).toBe("main's package.json says 0.1.3, so 0.1.2 can't be retried from it");
+  });
+
+  it("refuses a version with no tag, which never went through the Release pull request", () => {
+    expect(publishRetryRefusal({ ...retry, tagged: false })).toContain("v0.1.2 has no tag");
+  });
+
+  it("refuses when what ships changed since the tag, naming the paths and the next version", () => {
+    const refusal = publishRetryRefusal({ ...retry, shipped: ["src/cli/cli.ts", "package-lock.json"] });
+    expect(refusal).toContain("src/cli/cli.ts, package-lock.json");
+    expect(refusal).toContain("the next version");
   });
 });
 

@@ -74,6 +74,22 @@ export function coreChanges(changed, readLock) {
   return changed.filter((path) => shipsWithCore(path) && (path !== "package-lock.json" || lockChangesCore(readLock("release"), readLock("head"))));
 }
 
+/**
+ * Why release.yml's `publish` input can't publish core's `version`, or null. It retries a release that failed before
+ * publishing, once whatever broke it is fixed on main, so a failed release never blocks its version: run from main
+ * (`ref`), for the version main's package.json names (`packageVersion`), whose tag exists (`tagged`), with no path
+ * that ships changed since that tag (`shipped`, as `coreChanges` gives). So what is published is what the tag and the
+ * version's notes describe. A fix to what ships takes the next version, which the Release pull request already offers.
+ */
+export function publishRetryRefusal({ version, ref, packageVersion, tagged, shipped }) {
+  if (ref !== "refs/heads/main") return `a retry runs from main, not ${ref}`;
+  if (!/^\d+\.\d+\.\d+(?:-(?:beta|next)\.\d+)?$/u.test(version)) return `${version} is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N`;
+  if (version !== packageVersion) return `main's package.json says ${packageVersion}, so ${version} can't be retried from it`;
+  if (!tagged) return `v${version} has no tag: a release starts from the Release pull request, and a retry only repeats one`;
+  if (shipped.length > 0) return `what core ships changed since v${version} (${shipped.join(", ")}): release it as the next version, through the Release pull request`;
+  return null;
+}
+
 /** What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it. */
 export const MATRIX_INPUTS = [
   ".github/workflows/env-matrix.yml",
