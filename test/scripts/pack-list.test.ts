@@ -17,4 +17,12 @@ describe("readPackList", () => {
 
     expect(readPackList(directory)).toEqual([{ id: "open", packageName: "@neralabs/rerail-pack-open" }]);
   });
+
+  it("refuses a private flag that is not a boolean, naming the file and the value", () => {
+    const directory = mkdtempSync(join(tmpdir(), "pack-list-"));
+    mkdirSync(join(directory, "odd"));
+    writeFileSync(join(directory, "odd", "package.json"), JSON.stringify({ name: "@neralabs/rerail-pack-odd", version: "0.1.0", private: "true" }));
+
+    expect(() => readPackList(directory)).toThrow(`${join(directory, "odd", "package.json")}: "private" must be true or false, not "true"`);
+  });
 });

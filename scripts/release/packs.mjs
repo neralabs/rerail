@@ -79,6 +79,19 @@ export async function releasePacks(manifest, tags, steps, held = []) {
 }
 
 /**
+ * Whether a pack's parsed package.json says `"private": true`: a pack never published, which the release steps, the
+ * generated pack list and the conformance gate leave out (docs/pack-format.md, "package.json"). `private` is a boolean
+ * or absent, as `rulePackPackageSchema` (src/engine/catalog/rule-packs.ts) has it; any other value throws, naming
+ * `where`, rather than being read as a published pack. The one reading of the flag: the release scripts run on plain
+ * Node, so this lives here, and the TypeScript checks import it.
+ */
+export function isPrivatePack(manifest, where = "package.json") {
+  const value = typeof manifest === "object" && manifest !== null ? manifest.private : undefined;
+  if (value === undefined || typeof value === "boolean") return value === true;
+  throw new TypeError(`${where}: "private" must be true or false, not ${JSON.stringify(value)}`);
+}
+
+/**
  * Every pack under `packsDirectory`: `{ id, name, version, private }`, sorted by id. A pack whose package.json says
  * `"private": true` is never published; release steps take `publishedPacks()` instead.
  */
@@ -86,8 +99,9 @@ export function listPacks(packsDirectory = PACKS) {
   return readdirSync(packsDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => {
-      const manifest = JSON.parse(readFileSync(join(packsDirectory, entry.name, "package.json"), "utf8"));
-      return { id: entry.name, name: manifest.name, version: manifest.version, private: manifest.private === true };
+      const path = join(packsDirectory, entry.name, "package.json");
+      const manifest = JSON.parse(readFileSync(path, "utf8"));
+      return { id: entry.name, name: manifest.name, version: manifest.version, private: isPrivatePack(manifest, path) };
     })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }

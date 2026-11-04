@@ -18,6 +18,7 @@ export const HELD_PUBLISH_TAG: string;
 export function releaseTag(name: string, version: string): string;
 export function releaseTags(): string[];
 export function createReleaseTag(tag: string, sha: string): string;
+export function isPrivatePack(manifest: unknown, where?: string): boolean;
 export function listPacks(packsDirectory?: string): ReleasePack[];
 export function publishedPacks(packsDirectory?: string): ReleasePack[];
 export function assertCommitOnGitHub(sha: string): void;

@@ -15,6 +15,7 @@ import {
   changesetSummary,
   gateFailures,
   heldPacks,
+  isPrivatePack,
   listPacks,
   manifestChanged,
   missingChangesets,
@@ -47,6 +48,15 @@ describe("listPacks and publishedPacks", () => {
     ]);
     expect(publishedPacks(packsDirectory).map((entry) => entry.id)).toEqual(["open"]);
     expect(planPacks(publishedPacks(packsDirectory), [])).toEqual({ publish: [], first: ["open"] });
+  });
+});
+
+describe("isPrivatePack", () => {
+  it("reads true as private, false or absent as published, and refuses anything else", () => {
+    expect(isPrivatePack({ private: true })).toBe(true);
+    expect(isPrivatePack({ private: false })).toBe(false);
+    expect(isPrivatePack({ name: "x" })).toBe(false);
+    expect(() => isPrivatePack({ private: "true" }, "packs/odd/package.json")).toThrow('packs/odd/package.json: "private" must be true or false, not "true"');
   });
 });
 

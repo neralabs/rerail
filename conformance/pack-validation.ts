@@ -25,6 +25,7 @@ import {
   ConversationRuleRegistry,
   type ConversationRule,
   engineRegexIssues,
+  type RegexIssue,
   parseConversationRule,
 } from "../src/engine/index.js";
 import { resolveModelPath } from "../src/runtime/index.js";
@@ -32,6 +33,7 @@ import { PACK_LIST_MODULE_PATH, PACKS_DIRECTORY, renderPackListModule } from "..
 import { CONFORMANCE_FILE, documentPath, loadPack, packSchema, RERAIL_ROOT, type LoadedPack } from "./languages/pack.js";
 import { reportFailures, runPack } from "./languages/runner.js";
 import { decidingPattern, inToolSubdirectory, licenceAllowed, licenceAlternatives, packFixtureAbsence, pathGlob, PUBLISH_DIRECTORY, readUpstreamSources } from "../scripts/s3/pack-fixtures.mjs";
+import { isPrivatePack } from "../scripts/release/packs.mjs";
 import { capabilitiesJson } from "./engine.js";
 import { BIOME_SAME_SOURCES } from "./biome-same-sources.generated.js";
 
@@ -304,7 +306,13 @@ function compileRuleDocument(text: string): Compiled {
   } catch (error) {
     return { kind: "failed", message: `is not a valid conversation rule: ${message(error)}` };
   }
-  const [issue] = engineRegexIssues(rule);
+  let issues: RegexIssue[];
+  try {
+    issues = engineRegexIssues(rule);
+  } catch (error) {
+    return { kind: "failed", message: `cannot be checked: ${message(error)}` };
+  }
+  const [issue] = issues;
   if (issue !== undefined) return { kind: "failed", message: `has a pattern the engine refuses at ${issue.path.join(".")}: ${issue.message}` };
   return { kind: "conversation", rule };
 }
@@ -688,11 +696,13 @@ export function textFailures(file: string, text: string): string[] {
   return failures;
 }
 
-/** Whether the pack's package.json says `"private": true`: never published. A package.json that does not parse is check 5's. */
+/**
+ * Whether the pack's package.json says `"private": true`: never published. A package.json that does not parse, or whose
+ * `private` is not a boolean, is check 5's to report.
+ */
 function declaresPrivate(directory: string): boolean {
   try {
-    const raw: unknown = JSON.parse(readFileSync(join(directory, "package.json"), "utf8"));
-    return typeof raw === "object" && raw !== null && "private" in raw && raw.private === true;
+    return isPrivatePack(JSON.parse(readFileSync(join(directory, "package.json"), "utf8")));
   } catch {
     return false;
   }
@@ -917,7 +927,7 @@ export async function validatePack(directory: string, options: ValidatePackOptio
         fail("package", `package.json: repository is ${JSON.stringify(manifest.repository) ?? "missing"}, not ${JSON.stringify(repository)}`);
       if (manifest.private === false)
         fail("package", "package.json: private is false; omit private for a published pack, so there is one way to say it");
-      if (manifest.private !== true && manifest.publishConfig?.access !== "public")
+      if (!isPrivatePack(manifest) && manifest.publishConfig?.access !== "public")
         fail("package", `package.json: publishConfig.access is ${manifest.publishConfig?.access ?? "missing"}; a published pack is public`);
       for (const material of VALIDATION_MATERIAL) {
         const entry = manifest.files.find(file => publishes(file, material));

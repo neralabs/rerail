@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { isPrivatePack } from "../../../scripts/release/packs.mjs";
 import { GATES_MANIFEST } from "../manifest.js";
 import type { CommandRunner } from "../../process.js";
 import type { Check } from "./check.js";
@@ -52,7 +53,7 @@ export function packStates(root: string): PackState[] {
       const gatedTools = tools.filter((tool) => existsSync(join(packs, pack, "upstream", tool, GATES_MANIFEST)));
       const toolOf = new Map((manifest.rules ?? []).filter((rule) => typeof rule.upstream?.tool === "string").map((rule) => [rule.id, rule.upstream!.tool!]));
       const packageJson = join(packs, pack, "package.json");
-      const isPrivate = existsSync(packageJson) && readJson<{ private?: unknown }>(packageJson).private === true;
+      const isPrivate = existsSync(packageJson) && isPrivatePack(readJson<unknown>(packageJson), packageJson);
       return { pack, tools, shipped, gatedTools, toolOf, isPrivate };
     });
 }

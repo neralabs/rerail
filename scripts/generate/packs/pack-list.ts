@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { isPrivatePack } from "../../release/packs.mjs";
 
 /**
  * The list of rule packs core knows by name (docs/rule-packs.md, "Installing packs"): each published `packs/<id>/`
@@ -14,7 +15,7 @@ const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 export const PACKS_DIRECTORY = resolve(ROOT, "packs");
 export const PACK_LIST_MODULE_PATH = resolve(ROOT, "src", "engine", "catalog", "pack-list.generated.ts");
 
-const packageSchema = z.looseObject({ name: z.string(), private: z.boolean().optional() });
+const packageSchema = z.looseObject({ name: z.string() });
 
 /** Every published pack directory's id and package name, by id. */
 export function readPackList(directory = PACKS_DIRECTORY): { id: string; packageName: string }[] {
@@ -22,9 +23,13 @@ export function readPackList(directory = PACKS_DIRECTORY): { id: string; package
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
     .sort()
-    .map(id => ({ id, manifest: packageSchema.parse(JSON.parse(readFileSync(resolve(directory, id, "package.json"), "utf8"))) }))
-    .filter(({ manifest }) => manifest.private !== true)
-    .map(({ id, manifest }) => ({ id, packageName: manifest.name }));
+    .map(id => {
+      const path = resolve(directory, id, "package.json");
+      const manifest: unknown = JSON.parse(readFileSync(path, "utf8"));
+      return { id, manifest, isPrivate: isPrivatePack(manifest, path) };
+    })
+    .filter(({ isPrivate }) => !isPrivate)
+    .map(({ id, manifest }) => ({ id, packageName: packageSchema.parse(manifest).name }));
 }
 
 export function renderPackListModule(packs: readonly { id: string; packageName: string }[] = readPackList()): string {
