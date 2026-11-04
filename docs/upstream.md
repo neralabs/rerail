@@ -67,18 +67,12 @@ To add, relabel or drop samples, or rename or drop a label's rule key, write a o
 
 A sample is a whole file of another repository, so its licence comes from a recorded table, not its labels.
 
-`RECORDED_LICENCES` (`scripts/samples/licences.ts`) names every repository samples may come from (`owner/name`) with its
-SPDX licence. Taking samples from a new repository adds its entry; the reviewer reads its licence file at the samples'
-commits.
+`SOURCE_LICENCES` (`scripts/samples/licences.ts`) names every repository samples may come from (`owner/name`) with its
+SPDX licence and the licence files that state it. Taking samples from a new repository adds its entry; the reviewer
+reads its licence file at the samples' commits.
 
 <details>
 <summary>What the table records</summary>
-
-`RECORDED_LICENCES` covers two kinds of repository:
-
-- **`SOURCE_LICENCES`:** repositories whose licence files the builders read at the samples' commits, checked against
-  the text on every build.
-- **Test set sources:** the ESLint and React test sets' sources, with the licence the test set recorded.
 
 `COPYLEFT_SOURCES` lists repositories found copyleft, with the evidence.
 
@@ -93,8 +87,9 @@ staging it is refused, whatever the repository's licence is today.
 
 </details>
 
-On publish, `publishedSamples` (`scripts/samples/publish.ts`) refuses samples that break the table. The licence check
-then judges each recorded licence against `scripts/check/licence-allowlist.json`.
+On publish, `publishedSamples` (`scripts/samples/publish.ts`) refuses samples that break the table, and
+`checkLicenceTexts` refuses samples whose licence files at their commit do not say what the table records. The licence
+check then judges each recorded licence against `scripts/check/licence-allowlist.json`.
 
 <details>
 <summary>What publish refuses, and LICENSES.md</summary>
@@ -107,12 +102,18 @@ then judges each recorded licence against `scripts/check/licence-allowlist.json`
 - a path that is neither `LICENSES.md` nor `<sample-id>/<path>`, or a sample not staged whole: its file beside its
   labels, the file's sha256 equal to the labels' `source.sha256`.
 
+`checkLicenceTexts` reads, for each repository and commit the staged samples name, the licence files `SOURCE_LICENCES`
+records for that commit, from GitHub (`gh api`, cached in `.rerail/pack-data/licences/`). It refuses the commit when a
+file is not there, the files do not read as the recorded licence, they name a copyleft licence, or the commit has no
+licence (`NONE`). Both checks run when `writeSampleSet` stages a set and again in the publish workflow's prep, the only
+way a sample reaches S3.
+
 The approver's summary lists every repository the archive takes files from, with its licence.
 
 The archive's `LICENSES.md` lists each repository, its licence, its files, and the licence texts read at the samples'
-commits. The ESLint test set's sources carry only the licence id the test set recorded, with no text. So an archive
-holds licence texts only for repositories whose licence files were read, and `SAMPLES.md` says which: all, none, or the
-ones it names.
+commits. A set converted from a test set without reading licence texts (the ESLint test set's) carries only the licence
+id the test set recorded, with no text. So an archive holds licence texts only for repositories whose licence files
+were read, and `SAMPLES.md` says which: all, none, or the ones it names.
 
 </details>
 
@@ -396,8 +397,9 @@ nothing; its token can only write pull request comments.
   repository, a head on the default or a protected branch.
 - It fetches `refs/pull/<n>/head` as objects (it must be the head GitHub names). It packs each `publish/` from those
   git blobs (`scripts/s3/pack-fixtures.mjs pack --from`), never checking the pull request out.
-- Staged samples go through `publishedSamples` ([Sample licences](#sample-licences)). Every file bound for S3 must
-  pass the licence rules ([pack-format.md, "Licensing"](pack-format.md#licensing)), samples by their recorded licence.
+- Staged samples go through `publishedSamples` and `checkLicenceTexts` ([Sample licences](#sample-licences)), the
+  second reading their licence files from GitHub with the workflow's token. Every file bound for S3 must pass the
+  licence rules ([pack-format.md, "Licensing"](pack-format.md#licensing)), samples by their recorded licence.
 - A refusal fails prep without asking for approval. The log says why: fix the pull request and dispatch again.
 - The approver's summary, per archive: kind, tool-pack, sha256, files, bytes, licences with file counts, and Sources (a
   samples archive's repositories and licences; for test data, the `licenses/*/UPSTREAM.md` records).
