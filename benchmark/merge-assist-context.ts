@@ -74,6 +74,7 @@ import {
   loadEmbedder,
   ONLY,
   ORIENTS,
+  AREA_RANKS,
   RANKS,
   render,
   scopeMatcher,
@@ -94,7 +95,7 @@ const KINDS = ["tempt", "neutral", "conflict"] as const;
 // ---------------------------------------------------------------------------------------------------------- variants
 
 /** One selection channel: everything but `hybrid`. */
-const SINGLE = { channels: "single", orient: null, guard: null, embedThreshold: null, guardCap: null } as const;
+const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null } as const;
 /** Round one's protocol defaults: directories trigger, no budget per run, the agent is asked to tell the user. */
 const LISTINGS = { ...SINGLE, dirs: true, sessionCap: null, conflict: "tell", budget: "session", threshold: null } as const;
 /** Only files read or edited trigger, each new file at most two items, the conflict as a line to end with. */
@@ -110,8 +111,11 @@ export const EMBED_THRESHOLD: number | null = 0.8;
 const GUARD = { ...PER_FILE, rank: "scope-specificity", threshold: null, channels: "hybrid", orient: "conflicts", guardCap: 3 } as const;
 /** Everything upfront, one terse line each, conflict pairs first. */
 const UPFRONT = { ...LISTINGS, when: "upfront", cap: null, dedupe: "session", format: "terse", rank: "conflict-first", only: "all" } as const;
-/** On the first touch of an area, every decision covering it (at most 12), one terse line each, conflict pairs first with the line to end with. */
-const AREA = { ...PER_FILE, format: "terse", rank: "scope-specificity", threshold: null, channels: "hybrid", orient: "area", cap: 12, guardCap: 3, embedThreshold: null } as const;
+/**
+ * On the first touch of an area, every decision covering it, ranked by `areaRank` with conflict pairs first, at most 12
+ * decisions, one terse line each, the conflict's line to end with last.
+ */
+const AREA = { ...PER_FILE, format: "terse", rank: "scope-specificity", threshold: null, channels: "hybrid", orient: "area", areaRank: "index", cap: 12, guardCap: 3, guard: null, embedThreshold: null } as const;
 
 /**
  * The protocols to compare, by name. `none` is the control: the hook runs and logs (each patch's guard scores
@@ -125,8 +129,15 @@ const VARIANTS: Readonly<Record<string, VariantParameters | null>> = {
   "guard-signals": { ...GUARD, guard: "signals", embedThreshold: null },
   "guard-embed": { ...GUARD, guard: "embed", embedThreshold: EMBED_THRESHOLD },
   "guard-both": { ...GUARD, guard: "both", embedThreshold: EMBED_THRESHOLD },
-  "area-orient": { ...AREA, guard: null },
-  /** `area-orient`, plus the signals guard at a patch for what orientation did not deliver. */
+  /** Area orientation with each area's decisions in index order, grouped by source (team, then peer). */
+  "area-index": AREA,
+  /** Area orientation, the narrowest scopes first. */
+  "area-specific": { ...AREA, areaRank: "specificity" },
+  /** Area orientation, ranked by BM25 between the task prompt and each decision. */
+  "area-lex": { ...AREA, areaRank: "prompt-lexical" },
+  /** Area orientation, ranked by the cosine between the task prompt's embedding and each decision's. */
+  "area-embed": { ...AREA, areaRank: "prompt-embed" },
+  /** `area-index`, plus the signals guard at a patch for what orientation did not deliver. */
   "area-guard": { ...AREA, guard: "signals" },
 };
 const CONTROL = "none";
@@ -134,7 +145,7 @@ const CONTROL = "none";
 function describeVariant(parameters: VariantParameters | null): string {
   if (parameters === null) return "control: no injection (the hook only logs)";
   const embed = parameters.guard === "embed" || parameters.guard === "both" ? ` embedThreshold=${parameters.embedThreshold ?? "NOT FROZEN"}` : "";
-  const channels = parameters.channels === "hybrid" ? ` channels=hybrid orient=${parameters.orient} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap}${embed}` : "";
+  const channels = parameters.channels === "hybrid" ? ` channels=hybrid orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap}${embed}` : "";
   return `when=${parameters.when} budget=${parameters.budget} cap=${parameters.cap ?? "all"} sessionCap=${parameters.sessionCap ?? "all"} dirs=${parameters.dirs} dedupe=${parameters.dedupe} format=${parameters.format} rank=${parameters.rank} threshold=${parameters.threshold ?? "none"} only=${parameters.only} conflict=${parameters.conflict}${channels}`;
 }
 
@@ -978,6 +989,10 @@ interface TargetDelivery {
   readonly timely: boolean;
   /** `hybrid`: the channel that first delivered it; null otherwise. */
   readonly via: Channel | null;
+  /** Area orientation: in the run's first orientation injection. */
+  readonly firstArea: boolean;
+  /** A candidate at a call whose orientation injected, not yet delivered, and not injected: the cap cut it. */
+  readonly cut: boolean;
 }
 
 interface RunResult {
@@ -1158,7 +1173,13 @@ function deliveries(log: readonly HookLogEntry[], targets: readonly string[], da
     const injectedAt = log.findIndex(call => call.injected.some(item => item.decisionId === decisionId));
     const editAt = log.findIndex(call => call.event === "PreToolUse" && call.kind === "edit" && call.paths.some(path => scope.specificity(path, false) >= 0));
     const via = injectedAt === -1 ? null : log[injectedAt]!.injected.find(item => item.decisionId === decisionId)!.channel ?? null;
-    return { decisionId, injected: injectedAt !== -1, timely: injectedAt !== -1 && (editAt === -1 || injectedAt < editAt), via };
+    const orienting = (call: HookLogEntry) => call.injected.some(item => item.channel === "orientation");
+    const firstArea = log.find(orienting)?.injected.some(item => item.decisionId === decisionId) ?? false;
+    const cut = log.some((call, position) => orienting(call)
+      && (injectedAt === -1 || injectedAt >= position)
+      && !call.injected.some(item => item.decisionId === decisionId)
+      && (call.candidates ?? []).some(candidate => candidate.channel === "orientation" && candidate.ids.includes(decisionId)));
+    return { decisionId, injected: injectedAt !== -1, timely: injectedAt !== -1 && (editAt === -1 || injectedAt < editAt), via, firstArea, cut };
   });
 }
 
@@ -1319,6 +1340,13 @@ function wilson(value: Ratio): [number, number] {
   return [Math.max(0, centre - half), Math.min(1, centre + half)];
 }
 
+/** The `fraction` percentile of `values` by the nearest-rank method. */
+function percentile(values: readonly number[], fraction: number): number {
+  if (values.length === 0) return Number.NaN;
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)]!;
+}
+
 function median(values: readonly number[]): number {
   if (values.length === 0) return Number.NaN;
   const sorted = [...values].sort((left, right) => left - right);
@@ -1350,10 +1378,14 @@ interface VariantSummary {
   readonly targetComplied: Ratio;
   readonly targetViaOrientation: Ratio;
   readonly targetViaGuard: Ratio;
+  readonly targetFirstArea: Ratio;
+  readonly targetCut: Ratio;
   readonly irrelevantPerRun: number;
   /** Decisions injected per run, repeats included: median and max. */
   readonly decisionsMedian: number;
   readonly decisionsMax: number;
+  /** Injected tokens per run: the 90th percentile. */
+  readonly tokensP90: number;
   readonly landed: Ratio;
   readonly meanInput: number;
   readonly meanCached: number;
@@ -1392,6 +1424,8 @@ function summarize(variant: string, runs: readonly RunResult[], control: Variant
   const targetComplied = ratio(timely.filter(({ run, delivery }) => (run.hits[delivery.decisionId] ?? []).length === 0).length, targeted.length);
   const targetViaOrientation = ratio(targeted.filter(({ delivery }) => delivery.via === "orientation").length, targeted.length);
   const targetViaGuard = ratio(targeted.filter(({ delivery }) => delivery.via === "guard").length, targeted.length);
+  const targetFirstArea = ratio(targeted.filter(({ delivery }) => delivery.firstArea).length, targeted.length);
+  const targetCut = ratio(targeted.filter(({ delivery }) => delivery.cut).length, targeted.length);
   const landedRuns = ran.filter(run => run.landed !== null);
   const landed = ratio(landedRuns.reduce((sum, run) => sum + run.landed!, 0), landedRuns.reduce((sum, run) => sum + run.injections, 0));
   const at = (value: number, bound: number, op: ">=" | "<="): boolean | null => (Number.isNaN(value) || Number.isNaN(bound) ? null : op === ">=" ? value >= bound - 1e-9 : value <= bound + 1e-9);
@@ -1429,9 +1463,12 @@ function summarize(variant: string, runs: readonly RunResult[], control: Variant
     targetComplied,
     targetViaOrientation,
     targetViaGuard,
+    targetFirstArea,
+    targetCut,
     irrelevantPerRun: mean(ran.map(run => run.irrelevant)),
     decisionsMedian: median(ran.map(run => run.injectedDecisions.length)),
     decisionsMax: ran.length === 0 ? Number.NaN : Math.max(...ran.map(run => run.injectedDecisions.length)),
+    tokensP90: percentile(ran.map(run => run.injectedTokens), 0.9),
     landed,
     meanInput: mean(ran.flatMap(run => (run.usage === null ? [] : [run.usage.input]))),
     meanCached: mean(ran.flatMap(run => (run.usage === null ? [] : [run.usage.cached]))),
@@ -1483,8 +1520,11 @@ function printSummary(summaries: readonly VariantSummary[]): void {
     ["funnel: timely and complied", summary => rate(summary.targetComplied)],
     ["  target injected via orientation", summary => rate(summary.targetViaOrientation)],
     ["  target injected via guard", summary => rate(summary.targetViaGuard)],
+    ["  target in first area injection", summary => rate(summary.targetFirstArea)],
+    ["  target cut by the cap", summary => rate(summary.targetCut)],
     ["irrelevant injections per run", summary => fixed(summary.irrelevantPerRun)],
     ["decisions injected per run (median / max)", summary => `${fixed(summary.decisionsMedian, 1)} / ${fixed(summary.decisionsMax, 0)}`],
+    ["injected tokens per run (median / p90)", summary => `${fixed(summary.medianTokens, 0)} / ${fixed(summary.tokensP90, 0)}`],
     ["injections found in transcript", summary => rate(summary.landed)],
     ["mean input tokens (Δ control)", summary => `${fixed(summary.meanInput, 0)} (${delta(summary.meanInput, control?.meanInput ?? Number.NaN)})`],
     ["mean cached input (Δ control)", summary => `${fixed(summary.meanCached, 0)} (${delta(summary.meanCached, control?.meanCached ?? Number.NaN)})`],
@@ -1927,7 +1967,7 @@ async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   if (options.listVariants) {
     console.log(table(["variant", "parameters"], Object.entries(VARIANTS).map(([name, parameters]) => [name, describeVariant(parameters)])));
-    console.log(`\nParameters: when ${WHEN.join("|")}; budget ${BUDGETS.join("|")}; cap N|all; sessionCap N|all; dirs true|false; dedupe ${DEDUPE.join("|")}; format ${FORMATS.join("|")}; rank ${RANKS.join("|")}; threshold 0–1|none; only ${ONLY.join("|")}; conflict ${CONFLICT.join("|")}; channels ${CHANNELS.join("|")}; orient ${ORIENTS.join("|")}; guard ${GUARDS.join("|")}; embedThreshold 0–1; guardCap N`);
+    console.log(`\nParameters: when ${WHEN.join("|")}; budget ${BUDGETS.join("|")}; cap N|all; sessionCap N|all; dirs true|false; dedupe ${DEDUPE.join("|")}; format ${FORMATS.join("|")}; rank ${RANKS.join("|")}; threshold 0–1|none; only ${ONLY.join("|")}; conflict ${CONFLICT.join("|")}; channels ${CHANNELS.join("|")}; orient ${ORIENTS.join("|")}; areaRank ${AREA_RANKS.join("|")}; guard ${GUARDS.join("|")}; embedThreshold 0–1; guardCap N`);
     return;
   }
   const dataset = loadDataset();

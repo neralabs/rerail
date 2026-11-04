@@ -430,6 +430,12 @@ describe("deriveSignals", () => {
     expect(judge.tasks[0]!.prompt).not.toContain("remote:github.com/acme/app");
   });
 
+  it("keeps the rest of an answer that carries a malformed signal", async () => {
+    const judge = new FakeJudge(() => ({ signals: ["toFixed(", "x", "Math.\nround("] }));
+    const signals = await deriveSignals(judge, { repositoryKey: "local:app", decision: "Format money with formatCents.", scope: ["src/**"], example: null });
+    expect(signals).toEqual(["toFixed"]);
+  });
+
   it("throws when the judge cannot answer, so a failure never reads as no signals", async () => {
     const judge = new FakeJudge(() => ({ ok: false, reason: "unavailable", detail: "no agent CLI is signed in" }));
     await expect(deriveSignals(judge, { repositoryKey: "local:app", decision: "Log through logger.", scope: ["src/**"], example: null }))

@@ -52,10 +52,14 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   decision's signal hits and similarity and the lines added; `--sweep control.json` labels a dev control run's patches
   with their task's oracle and prints recall and fires per clean patch per source and threshold, the threshold to
   freeze in `EMBED_THRESHOLD` (the embed presets refuse to run until it is). `upfront-final` is `upfront-all` with a
-  conflict's exact line to end the final message with. `area-orient` injects, on the first touch of an area (a file's
-  folder cut to two segments: `src/ui`, `src`), every undelivered decision whose scope covers the file or any project
-  file in that area, one terse line each, conflict pairs first, at most 12 per injection (an area the cap left out
-  keeps its turn); `area-guard` adds the signals guard for what orientation did not deliver. `--replay run.json`
+  conflict's exact line to end the final message with. The `area-*` presets inject, on the first touch of an area (a
+  file's folder cut to two segments: `src/ui`, `src`), the undelivered decisions whose scope covers the file or any
+  project file in that area, one terse line each, conflict pairs first and the conflict's line to end with last, at
+  most 12 per injection (an area the cap left out keeps its turn). They differ in how an area's decisions are ranked
+  before the cap: `area-index` by source, then index order; `area-specific` narrowest scope first; `area-lex` by BM25
+  between the task prompt and the decision; `area-embed` by the cosine between their embeddings (the prompt embedded
+  once per run). `area-guard` is `area-index` plus the signals guard for what orientation did not deliver. The funnel
+  reports how often the target was in the first area injection and how often the cap cut it. `--replay run.json`
   re-chooses a report's injections from its logs. Deterministic oracles grade `git diff main`, and every oracle is
   first checked against the labelled files in cases.json (`--validate-oracles` alone needs no model). It prints, per
   variant: the tempt-task violation rate with a Wilson interval and its reduction against the control, the guardrails

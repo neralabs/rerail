@@ -185,6 +185,9 @@ With it, agents without Rerail follow merged decisions too, as guidance.
    judge once, with the concrete failure (compile error, failing case, or up to three matches as `path:line: text`);
    a match in a place the decision allows becomes a `scope.exclude` entry rather than a narrower scope. A rule that
    still fails is kept as guidance, with the reason.
+   **Signals** are kept with every decision: short code fragments whose presence in new code means the decision is at
+   stake. Rerail takes the judge's fragments plus those the correction removed, widens each to its most general form,
+   and drops any that occur in the corrected code or in more than 20% of the files in scope.
 4. Rerail writes the file and tells the agent, which tells the person in one line and includes the file in the commit
    it is making:
 
@@ -195,11 +198,59 @@ wrap requests in retry loops." It is in .rerail/rules/retries-in-transport.json;
 
 ### 6.3 Decisions when they are relevant
 
-When the agent reads or edits a file, Rerail looks its path up in the index ([§7.2](#72-the-decision-index)) and
-gives the agent, once per session, the decisions in force whose scope covers it: team decisions, this branch's, and
-absorbed peer decisions. Code rules among them already steer the way every rule does; guidance goes out under the
-existing "Rerail has guidance for this step" lead. A decision without a scope covers the repository and is given once
-at session start.
+Decisions reach the agent as context, injected into its loop; code rules are optional on top. The protocol, chosen by
+the context-injection eval ([§6.3.1](#631-what-the-eval-showed)):
+
+- **Area orientation.** The first time the agent reads or edits a file in an *area* (the file's folder cut to two
+  segments, such as `src/ui`), Rerail gives it, once, the decisions in force whose scope covers that file or any file
+  in the area: team decisions, this branch's, and absorbed peer decisions. One line each, at most 12 per injection,
+  **ranked by how close each decision is to the session's task**: the cosine between the bundled embedding model's
+  vectors for the person's prompt and for the decision's text. Directory listings and searches do not count as
+  touching.
+- **Conflicts first, the ask last.** A decision this branch contradicts comes first, with this branch's own; the last
+  line asks the agent to end its final message with one line naming who decided differently and where.
+- **Signals as a backup.** At an edit, a decision not yet given whose signals (code fragments capture produced,
+  [§6.2](#62-capturing-a-decision)) appear in the patch's added lines is given then. It arrives after the edit, so the
+  agent fixes rather than avoids; it is a backup, not the main channel.
+- A decision without a scope covers the repository and is given once at session start.
+
+#### 6.3.1 What the eval showed
+
+`benchmark/merge-assist-context.ts` runs Codex on real tasks in a fixture project with a hook that injects as above,
+against a decision index the product built (capture's decision text, scope and signals; nothing hand-written on the
+protocol side), plus distractor decisions. Choices were made on a dev split; the numbers are the held-out split
+(9 tempting tasks, 2 neutral, 2 conflict, 3 trials).
+
+With 40 decisions in the index:
+
+| Protocol | Violations of the decision | Injected tokens | Conflict named in the final message |
+| --- | --- | --- | --- |
+| None | 15/27 | 0 | 0/6 |
+| Every decision at session start | 0/27 | 1,221 | 6/6 |
+| Area orientation, index order | 2/27 | 485 | 6/6 |
+| Signals at the edit only | 9/27 | 61 | 5/6 |
+
+With 224 decisions in the index (about 40 in `src/ui` alone, more than the cap):
+
+| Protocol | Violations | Target delivered before the edit | Injected tokens (median) | Total tokens vs none |
+| --- | --- | --- | --- | --- |
+| None | 13/27 | — | 0 | — |
+| Area orientation, index order | 8/27 | 15/33 | 734 | +17k |
+| Area orientation, ranked by prompt words (BM25) | 7/27 | 21/33 | 747 | +20k |
+| Area orientation, ranked by prompt embedding | 2/27 | 31/33 | 757 | +8k |
+
+- A decision that reached the agent before it wrote the code was followed almost every time; delivery, not
+  compliance, is the problem.
+- Every decision at session start stops working at scale: at 224 decisions it is about 6,700 tokens, past Codex's
+  per-hook limit of about 2,500 tokens, so Codex saves it to disk and shows the model a preview. On dev it did worse
+  than no injection. An injection must stay under the host's limit.
+- Ranking by prompt words won on dev (0/27) and lost on held-out (7/27): it fitted the dev prompts' wording. The
+  embedding ranking held up (dev 0/27, held-out 2/27).
+- Signals at the edit deliver late and fix after the fact: fewest injected tokens, most total tokens.
+- An embedding match between the decision and *code* (the patch) found nothing within the noise budget; between the
+  decision and the person's *prompt* it is what makes ranking work.
+- Open: about 24 of the ~25 decisions injected per run are not the target. Precision (a similarity floor, a smaller
+  cap once ranking is good) is the next thing to tune.
 
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.

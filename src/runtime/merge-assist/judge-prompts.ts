@@ -146,7 +146,14 @@ export interface CaptureVerdict {
   signals: string[];
 }
 
-const signalsSchema = z.array(signalSchema).max(MAX_SIGNALS);
+/**
+ * A judge's signals: each trimmed, an invalid one (too short, too long, more than one line) or a repeat dropped, at most
+ * {@link MAX_SIGNALS} kept. One bad fragment never costs the rest of the answer.
+ */
+const signalsSchema = z.array(z.string()).transform(raw => [...new Set(raw.flatMap(signal => {
+  const parsed = signalSchema.safeParse(signal);
+  return parsed.success ? [parsed.data] : [];
+}))].slice(0, MAX_SIGNALS));
 
 export const captureVerdictSchema: z.ZodType<CaptureVerdict> = z.object({
   generality: z.enum(["one-off", "branch", "repository"]),

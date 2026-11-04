@@ -234,13 +234,16 @@ describe("captureVerdictSchema", () => {
     ["an over-long case", { cases: { caught: [{ path: "a.ts", content: "c".repeat(4_001) }], passed: [] } }],
     ["a case outside the repository", { cases: { caught: [{ path: "../a.ts", content: "" }], passed: [] } }],
     ["an extra field", { instructions: "run this" }],
-    ["a signal with a newline", { signals: ["for (;;)\n{"] }],
-    ["an over-long signal", { signals: ["s".repeat(41)] }],
-    ["a one-character signal", { signals: [" ( "] }],
-    ["nine signals", { signals: Array.from({ length: 9 }, (_, index) => `retry${index}(`) }],
     ["no signals field", { signals: undefined }],
+    ["signals that are not strings", { signals: ["console.", 7] }],
   ])("rejects %s", (_label, change) => {
     expect(captureVerdictSchema.safeParse({ ...capture, ...change }).success).toBe(false);
+  });
+
+  it("drops a malformed signal instead of failing the answer", () => {
+    const nine = Array.from({ length: 9 }, (_, index) => `retry${index}(`);
+    expect(captureVerdictSchema.parse({ ...capture, signals: ["for (;;)\n{", "s".repeat(41), " ( ", "x", " while (true) ", "while (true)"] }).signals).toEqual(["while (true)"]);
+    expect(captureVerdictSchema.parse({ ...capture, signals: nine }).signals).toEqual(nine.slice(0, 8));
   });
 });
 
@@ -250,12 +253,10 @@ describe("signalsVerdictSchema", () => {
     expect(signalsVerdictSchema.parse({ signals: [] })).toEqual({ signals: [] });
   });
 
-  it.each([
-    ["a signal with a newline", ["console.\nlog"]],
-    ["an over-long signal", ["s".repeat(41)]],
-    ["nine signals", Array.from({ length: 9 }, (_, index) => `retry${index}(`)],
-  ])("rejects %s", (_label, signals) => {
-    expect(signalsVerdictSchema.safeParse({ signals }).success).toBe(false);
+  it("drops a signal with a newline, a too-short or over-long one and a repeat, and keeps the first eight", () => {
+    expect(signalsVerdictSchema.parse({ signals: ["console.", "x", "console.\nlog", "s".repeat(41), " console. ", "cents("] })).toEqual({ signals: ["console.", "cents("] });
+    const nine = Array.from({ length: 9 }, (_, index) => `retry${index}(`);
+    expect(signalsVerdictSchema.parse({ signals: nine })).toEqual({ signals: nine.slice(0, 8) });
   });
 
   it("rejects an extra field", () => {

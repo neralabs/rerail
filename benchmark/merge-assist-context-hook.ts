@@ -35,6 +35,12 @@ export type GuardSource = (typeof GUARDS)[number];
 
 /** What `hybrid` orientation offers: conflict pairs on a file's first touch, or every decision of an area's first touch. */
 export const ORIENTS = ["conflicts", "area"] as const;
+/**
+ * How area orientation ranks an area's decisions before the cap. `index`: by source, then index order. `specificity`:
+ * the narrowest scope first. `prompt-lexical`: BM25 of the task prompt against the decision text. `prompt-embed`: the
+ * cosine between the prompt's and the decision's embeddings. The prompt rankers break ties by breadth.
+ */
+export const AREA_RANKS = ["index", "specificity", "prompt-lexical", "prompt-embed"] as const;
 /** One protocol: when it injects, how many decisions at once and per run, how often, how they read, in what order, and which. */
 export interface VariantParameters {
   readonly when: (typeof WHEN)[number];
@@ -66,6 +72,8 @@ export interface VariantParameters {
    * project file in that area, conflict pairs first, at most `cap` decisions per injection.
    */
   readonly orient: (typeof ORIENTS)[number] | null;
+  /** `orient: area`: how an area's decisions are ranked before the cap. */
+  readonly areaRank: (typeof AREA_RANKS)[number] | null;
   /** `hybrid`: what the guard fires on; null for no guard. */
   readonly guard: GuardSource | null;
   /** `hybrid` with `embed` or `both`: the least similarity (cosine, 0–1) that fires; frozen from `--sweep` on the dev split. */
@@ -139,6 +147,8 @@ export interface HookLogEntry {
   readonly added?: Readonly<Record<string, string>>;
   /** At a patch the hook embedded: the model load and the blocks' embedding, in milliseconds, and the block count. */
   readonly embedding?: { readonly loadMs: number; readonly embedMs: number; readonly blocks: number };
+  /** At the call that embedded the task prompt (`prompt-embed`): the model load and the prompt's embedding, in milliseconds. */
+  readonly promptEmbedding?: { readonly loadMs: number; readonly embedMs: number };
   readonly error?: string;
 }
 
@@ -154,9 +164,11 @@ export interface HookState {
   seenFiles: string[];
   /** Areas (`areaOf`) a triggering file was already in. */
   seenAreas: string[];
+  /** `prompt-embed`: the task prompt's embedding, computed once per run. */
+  promptVector: number[] | null;
 }
 
-export const INITIAL_STATE: HookState = { calls: 0, delivered: [], injected: 0, seenFiles: [], seenAreas: [] };
+export const INITIAL_STATE: HookState = { calls: 0, delivered: [], injected: 0, seenFiles: [], seenAreas: [], promptVector: null };
 
 /** A file's area: its folder, cut to the first two segments (`src/ui` for `src/ui/forms/X.tsx`, `src` for `src/config.ts`, `` at the root). */
 export function areaOf(path: string): string {
@@ -326,6 +338,28 @@ function relevance(weights: ReadonlyMap<string, number>, context: ReadonlySet<st
   return total === 0 ? 0 : overlap / total;
 }
 
+/**
+ * BM25 (k1 1.2, b 0.75) of `query` against each document, IDF over all of them. Terms are `relevanceTokens`, counted
+ * once per document: decisions are one or two sentences, so a repeated term says little.
+ */
+export function bm25(query: string, documents: ReadonlyMap<string, string>): Map<string, number> {
+  const terms = new Map([...documents].map(([id, text]) => [id, relevanceTokens(text)]));
+  const frequency = new Map<string, number>();
+  for (const set of terms.values()) for (const term of set) frequency.set(term, (frequency.get(term) ?? 0) + 1);
+  const average = [...terms.values()].reduce((sum, set) => sum + set.size, 0) / Math.max(terms.size, 1);
+  const asked = relevanceTokens(query);
+  return new Map([...terms].map(([id, set]) => {
+    let score = 0;
+    for (const term of asked) {
+      if (!set.has(term)) continue;
+      const containing = frequency.get(term)!;
+      const idf = Math.log(1 + (terms.size - containing + 0.5) / (containing + 0.5));
+      score += (idf * 2.2) / (1 + 1.2 * (0.25 + (0.75 * set.size) / average));
+    }
+    return [id, score];
+  }));
+}
+
 // ---------------------------------------------------------------------------------------------------------- guard
 
 /** The most added lines one embedded block holds. */
@@ -349,6 +383,15 @@ export function loadEmbedder(modelPath: string): { embedder: NativeSemanticEmbed
   const started = performance.now();
   const embedder = new NativeSemanticEmbedder(modelPath, EMBED_MAX_TOKENS);
   return { embedder, loadMs: performance.now() - started };
+}
+
+let loaded: { embedder: NativeSemanticEmbedder; loadMs: number } | undefined;
+
+/** The model, loaded at most once per hook call: the first caller's load time, 0 for later ones. */
+function sharedEmbedder(modelPath: string): { embedder: NativeSemanticEmbedder; loadMs: number } {
+  if (loaded !== undefined) return { embedder: loaded.embedder, loadMs: 0 };
+  loaded = loadEmbedder(modelPath);
+  return loaded;
 }
 
 const round4 = (value: number): number => Math.round(value * 10_000) / 10_000;
@@ -398,7 +441,7 @@ async function guardScores(config: HookConfig, patched: ReadonlyArray<{ path: st
   const relevant = patched.filter(({ path }) => itemsInScope(config.index, path).length > 0);
   if (relevant.length === 0) return { scores: [] };
   const blocks = relevant.map(({ path, added }) => guardBlocks(path, added));
-  const { embedder, loadMs } = loadEmbedder(config.modelPath);
+  const { embedder, loadMs } = sharedEmbedder(config.modelPath);
   const started = performance.now();
   const vectors = await embedder.embed(blocks.flat());
   const embedMs = performance.now() - started;
@@ -431,6 +474,8 @@ export interface Candidate {
   readonly similarity?: number | null;
   /** `hybrid` orientation: the order its group comes in (conflict pairs 0, then team, peer and this branch's decisions). */
   readonly group?: number;
+  /** Area orientation: the share of the project's files the item's scope covers. */
+  readonly breadth?: number;
 }
 
 /** A match on a file the call names beats one on a directory it lists; then the narrower scope wins. */
@@ -474,12 +519,20 @@ const AREA_GROUPS: Readonly<Record<DecisionSource, number>> = { team: 1, peer: 2
 /**
  * `hybrid`'s candidates. Orientation, `conflicts`: a match for every eligible conflict pair on each path read or
  * patched. `area`: on each such path, a match for every eligible item whose scope covers the path or any project file
- * in its area. And at a patch, a guard match for every eligible item in scope the variant's guard source fires on.
+ * in its area, with its breadth and its `areaRank` score (`promptVector` for `prompt-embed`). And at a patch, a guard
+ * match for every eligible item in scope the variant's guard source fires on.
  */
-function hybridCandidates(config: HookConfig, variant: VariantParameters, triggering: readonly Touched[], trigger: string, scores: readonly GuardScore[]): Candidate[] {
+function hybridCandidates(config: HookConfig, variant: VariantParameters, triggering: readonly Touched[], trigger: string, scores: readonly GuardScore[], promptVector: readonly number[] | null): Candidate[] {
   const found = new Map<string, Candidate>();
   const paths = triggering.filter(touched => touched.edit !== "delete").map(touched => touched.path);
   const areaFiles = new Map(paths.map(path => [path, [path, ...config.files.filter(file => file !== path && areaOf(file) === areaOf(path))]]));
+  const lexical = variant.areaRank === "prompt-lexical" ? bm25(config.prompt, new Map(config.index.map(entry => [entry.id, entry.decision]))) : undefined;
+  const prompt = promptVector === null ? undefined : Float32Array.from(promptVector);
+  const rankScore = (id: string): number => {
+    if (lexical !== undefined) return lexical.get(id) ?? 0;
+    const vector = config.embeddings[id];
+    return prompt === undefined || vector === undefined ? 0 : cosineSimilarity(prompt, Float32Array.from(vector));
+  };
   config.index.forEach((entry, order) => {
     if (!eligible(entry, variant.only)) return;
     const members = itemEntries(entry, config.index);
@@ -487,12 +540,14 @@ function hybridCandidates(config: HookConfig, variant: VariantParameters, trigge
     const conflict = ids.length > 1;
     if (variant.orient !== "area" && !conflict) return;
     const matcher = scopeMatcher(entry.scope);
+    const breadth = config.files.length === 0 ? 1 : config.files.filter(file => matcher.specificity(file, false) >= 0).length / config.files.length;
+    const score = variant.orient === "area" ? round4(Math.max(...ids.map(rankScore))) : 0;
     for (const path of paths) {
       const specificity = matcher.specificity(path, false);
       const covered = specificity >= 0 || (variant.orient === "area" && areaFiles.get(path)!.some(file => matcher.specificity(file, false) >= 0));
       if (!covered) continue;
       const group = conflict ? 0 : AREA_GROUPS[members[0]!.source];
-      found.set(`orientation ${ids.join("+")} ${path}`, { ids, path, direct: true, specificity: Math.max(specificity, 0), order, conflict, score: 0, channel: "orientation", group });
+      found.set(`orientation ${ids.join("+")} ${path}`, { ids, path, direct: true, specificity: Math.max(specificity, 0), order, conflict, score, channel: "orientation", group, breadth: round4(breadth) });
     }
   });
   if (trigger !== "pre-edit" || variant.guard === null) return [...found.values()];
@@ -517,11 +572,22 @@ function hybridCandidates(config: HookConfig, variant: VariantParameters, trigge
   return [...found.values()];
 }
 
+/** How area orientation orders an area's items before the cap: conflict pairs always first. */
+function areaOrder(rank: VariantParameters["areaRank"]): (left: Candidate, right: Candidate) => number {
+  const breadth = (candidate: Candidate) => candidate.breadth ?? 1;
+  return (left, right) => {
+    if (left.conflict !== right.conflict) return Number(right.conflict) - Number(left.conflict);
+    if (rank === "index" || rank === null) return (left.group ?? 0) - (right.group ?? 0) || left.order - right.order;
+    if (rank === "specificity") return breadth(left) - breadth(right) || left.order - right.order;
+    return right.score - left.score || breadth(left) - breadth(right) || left.order - right.order;
+  };
+}
+
 /**
  * `hybrid`'s choice. Orientation, `conflicts`: each path not seen before gets up to `cap` conflict pairs. `area`: each
- * area not seen before gets its undelivered items, conflict pairs first, then by source, at most `cap` decisions in all.
- * Guard: up to `guardCap` items it fires on, those with more signal hits first, then the more similar. Each decision at
- * most once per run.
+ * area not seen before gets its undelivered items ranked by `areaRank`, conflict pairs first, at most `cap` decisions
+ * in all, then shown grouped by source. Guard: up to `guardCap` items it fires on, those with more signal hits first,
+ * then the more similar. Each decision at most once per run.
  */
 function chooseHybrid(candidates: readonly Candidate[], triggerPaths: readonly string[], state: HookState, variant: VariantParameters): Candidate[] {
   const delivered = new Set(state.delivered);
@@ -540,15 +606,16 @@ function chooseHybrid(candidates: readonly Candidate[], triggerPaths: readonly s
     seen.add(turn);
     const ranked = open
       .filter(candidate => candidate.channel === "orientation" && candidate.path === path && !taken.has(key(candidate)))
-      .sort((left, right) => (left.group ?? 0) - (right.group ?? 0) || left.order - right.order);
-    let perFile = 0;
+      .sort(area ? areaOrder(variant.areaRank) : (left, right) => left.order - right.order);
+    const turnChosen: Candidate[] = [];
     for (const candidate of ranked) {
-      if (area ? variant.cap !== null && decisions + candidate.ids.length > variant.cap : variant.cap !== null && perFile >= variant.cap) continue;
+      if (area ? variant.cap !== null && decisions + candidate.ids.length > variant.cap : variant.cap !== null && turnChosen.length >= variant.cap) continue;
       taken.add(key(candidate));
-      chosen.push(candidate);
+      turnChosen.push(candidate);
       decisions += candidate.ids.length;
-      perFile++;
     }
+    // Shown grouped: conflict pairs, then team, peer and this branch's decisions, each group in rank order.
+    chosen.push(...turnChosen.map((candidate, position) => ({ candidate, position })).sort((left, right) => (left.candidate.group ?? 0) - (right.candidate.group ?? 0) || left.position - right.position).map(({ candidate }) => candidate));
   }
   const guardOrder = (left: Candidate, right: Candidate) => hits(right) - hits(left) || similarity(right) - similarity(left) || left.order - right.order;
   const guard = new Map<string, Candidate>();
@@ -646,6 +713,7 @@ export function advance(state: HookState, candidates: readonly Candidate[], chos
     injected: state.injected + ids.length,
     seenFiles: [...new Set([...state.seenFiles, ...triggerPaths])],
     seenAreas: [...new Set([...state.seenAreas, ...triggerPaths.map(areaOf).filter(area => !starved.has(area))])],
+    promptVector: state.promptVector,
   };
 }
 
@@ -747,7 +815,7 @@ async function main(): Promise<void> {
     event = typeof input.hook_event_name === "string" ? input.hook_event_name : event;
     tool = typeof input.tool_name === "string" ? input.tool_name : tool;
     const { kind, touched, context } = touchedPaths(input, config.root);
-    const state = readState(config.state);
+    let state = readState(config.state);
     const variant = config.variant;
     let trigger = variant === null ? "" : triggerOf(variant, state, event, kind);
     // Without `dirs`, only files a command reads (or a patch edits) trigger: no listed directories, no files about to be created.
@@ -758,10 +826,19 @@ async function main(): Promise<void> {
     // Every patch is scored for the guard, whatever the variant, so control runs can tune its thresholds offline.
     const patched = event === "PreToolUse" && kind === "edit" ? touched.filter(item => item.edit !== "delete" && item.added !== "").map(({ path, added }) => ({ path, added })) : [];
     const { scores, embedding } = patched.length === 0 ? { scores: [], embedding: undefined } : await guardScores(config, patched);
+    // `prompt-embed` embeds the task prompt at the first call that can inject, and keeps it for the rest of the run.
+    let promptEmbedding: HookLogEntry["promptEmbedding"] | undefined;
+    if (variant?.areaRank === "prompt-embed" && trigger !== "" && state.promptVector === null) {
+      const { embedder, loadMs } = sharedEmbedder(config.modelPath);
+      const started = performance.now();
+      const [vector] = await embedder.embed([config.prompt]);
+      promptEmbedding = { loadMs: round4(loadMs), embedMs: round4(performance.now() - started) };
+      state = { ...state, promptVector: [...vector!].map(value => Math.round(value * 1e6) / 1e6) };
+    }
     const candidates = variant === null || trigger === ""
       ? []
       : variant.channels === "hybrid"
-        ? hybridCandidates(config, variant, triggering, trigger, scores)
+        ? hybridCandidates(config, variant, triggering, trigger, scores, state.promptVector)
         : candidatesFor(config, variant, trigger === "upfront" ? null : triggering, `${config.prompt}\n${context}`);
     const chosen = variant === null || trigger === "" ? [] : choose(candidates, triggerPaths, state, variant, trigger);
     const text = chosen.length === 0 ? "" : render(chosen, config.index, variant!, trigger === "upfront");
@@ -786,6 +863,7 @@ async function main(): Promise<void> {
       ...(trigger === "" ? {} : { trigger, triggerPaths, candidates }),
       ...(patched.length === 0 ? {} : { guard: scores, added: Object.fromEntries(patched.map(({ path, added }) => [path, added])) }),
       ...(embedding === undefined ? {} : { embedding }),
+      ...(promptEmbedding === undefined ? {} : { promptEmbedding }),
     };
     appendFileSync(config.log, `${JSON.stringify(entry)}\n`);
   } catch (error) {
