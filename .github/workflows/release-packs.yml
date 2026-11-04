@@ -253,7 +253,8 @@ jobs:
     needs: [plan, pack]
     if: github.event_name == 'push' && needs.plan.outputs.publish != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Each publish waits up to three minutes for npm to serve the version anonymously (packs-publish.mjs).
+    timeout-minutes: 45
     environment: release
     permissions:
       contents: write
