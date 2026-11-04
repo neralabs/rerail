@@ -74,7 +74,6 @@ it("identifies incomplete relational input tables and source files", () => {
 
 it("returns canonical annotation spelling and Python repr as typed facts", () => {
   const authored = policy();
-  authored.clauses[0]!.relational.syntax.columns.push("kind");
   Object.assign(authored.clauses[0]!.relational.stages[0]!.pythonAst, {
     roots: "SELECT __path,id FROM nodes WHERE kind='type'", fields: ["unparse", "repr_unparse"],
   });

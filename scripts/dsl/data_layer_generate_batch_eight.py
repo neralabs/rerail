@@ -20,5 +20,6 @@ def main():
     parser.add_argument('--source',type=Path,required=True);parser.add_argument('--output',type=Path,default=Path('packs/data-layer/candidates/rules'))
     args=parser.parse_args();args.output.mkdir(parents=True,exist_ok=True)
     for item in [candidate(args.source,policy),authentication(args.source,policy),callbacks(args.source,policy),adapters(args.source,policy),plan_helpers(args.source,policy),sql_surface(args.source,policy),purity(args.source,policy),eager(args.source,policy),lazy(args.source,policy),cached(args.source,policy)]:
+        item['scope']['exclude'].append('**/test_*.py')
         path=args.output/(item['id']+'.json');path.write_text(json.dumps(item,indent=2)+'\n');print(path)
 if __name__=='__main__':main()

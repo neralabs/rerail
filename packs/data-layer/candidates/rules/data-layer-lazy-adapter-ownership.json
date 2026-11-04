@@ -23,7 +23,8 @@
       "**/.pytest_cache/**",
       "**/node_modules/**",
       "**/tmp/**",
-      "**/browser_build/**"
+      "**/browser_build/**",
+      "**/test_*.py"
     ]
   },
   "clauses": [
@@ -215,7 +216,7 @@
           },
           {
             "name": "parameters",
-            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"kind\",NULL AS \"text\",\"name\",\"annotation\",NULL AS \"position\" FROM (SELECT f.__path,f.id AS fn,p.id,p.kind,p.text,n.text AS name,p.type_id AS annotation,\n row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.__path=f.__path AND p.parent=f.parameters_id JOIN nodes n ON n.__path=p.__path AND (n.id=p.id AND p.kind='identifier' OR n.parent=p.id AND n.ordinal=0 AND n.kind='identifier')\n WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter'))",
+            "query": "SELECT \"__path\",\"fn\",NULL AS \"id\",\"kind\",NULL AS \"text\",\"name\",\"annotation\",NULL AS \"position\" FROM (SELECT f.__path,f.id AS fn,p.id,p.kind,p.text,n.text AS name,p.type_id AS annotation,\n row_number() OVER(PARTITION BY f.__path,f.id ORDER BY p.__start)-1 AS position FROM functions f JOIN nodes p ON p.__path=f.__path AND p.parent=f.parameters_id JOIN nodes n ON n.__path=p.__path AND n.id=CASE WHEN p.kind='identifier' THEN p.id ELSE (SELECT child.id FROM nodes child WHERE child.__path=p.__path AND child.parent=p.id AND child.ordinal=0 AND child.kind='identifier' LIMIT 1) END\n WHERE p.kind IN ('identifier','typed_parameter','default_parameter','typed_default_parameter'))",
             "indexes": [
               [
                 "__path",

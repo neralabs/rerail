@@ -20,7 +20,8 @@
       "**/.pytest_cache/**",
       "**/node_modules/**",
       "**/tmp/**",
-      "**/browser_build/**"
+      "**/browser_build/**",
+      "**/test_*.py"
     ]
   },
   "clauses": [

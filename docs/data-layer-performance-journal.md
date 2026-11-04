@@ -5910,3 +5910,37 @@ A reduced public-API test uses three individually admitted files whose total exc
 This test must pass snapshot and workspace execution without raising any configured limit.
 Canonical byte columns replace cache-policy source-prefix reads, so those queries no longer request a whole source snapshot.
 The corrections and repository rerun remain in progress.
+
+### Batch eight: repository recovery, remaining indexed joins
+
+The next three fixed-domain runs also fail acceptance. Expected source findings remain 269.
+
+| Run | Findings | Extra | Missing | Failures | Cold wall | Parent CPU | Maximum RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Per-file source caps | 37 | 3 | 235 | 2 | 468.398 s | 457.177 s | 4.022 GB |
+| Instrumented, narrowed string inputs | 34 | 0 | 235 | 4 | 1,042.290 s | 931.098 s | 5.543 GB |
+| Scoped node lookups | 34 | 0 | 235 | 16 | 579.057 s | 559.135 s | 6.322 GB |
+
+The external receipts report 470.32, 1,045.46 and 580.97 seconds wall time, respectively.
+Their process-family CPU totals are 459.38, 932.91 and 561.15 seconds.
+The first two runs include diagnostic overlap. The instrumented run also enables detailed SQL tracing.
+These failed runs establish no performance improvement or repository acceptance.
+
+The scoped lookup engine is `fd2100081`. Its addon SHA-256 is `b6ab5e8b89f0049bbf1ab3cb5ea8a36d471f44965c8e4b58f539604c9e0594aa`.
+It caches cardinality estimates and applies file and node demands together.
+A 128-file regression requires fewer than 1,024 candidates for 128 parent lookups.
+Both file and node `IN` constraints retain whole-batch handling.
+The broader native gate passes 2,523 tests, with the same inherited exclusion and 67 ignores.
+
+The instrumented trace exposes further query-shape faults.
+Lazy call construction consumes 177.94 seconds CPU and 716 million VM steps.
+Cached keyword construction reaches about one billion VM steps.
+A condition on the output of an `OR` join does not prevent candidate enumeration.
+The authored expression, parameter, argument and terminal relations now select their lookup key before the join.
+Annotation analysis follows indexed child edges. Lazy body selection follows the same edges with explicit visitor pruning.
+The rerun remains open until all expected findings appear without execution failures.
+
+Four new oracle probes cover Unicode names and quoted annotations.
+The selected correction uses canonical token facts and canonical annotation formatting.
+The canonical name relation has one admitted scope and several consumers. It does not combine unrelated rule scopes.
+No new Linear issues or optional backends were introduced.

@@ -198,7 +198,7 @@ export interface CodeRuleDslRelational {
   references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
-    | { pythonAst: { roots: string; syntax: string; fields: ("dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256")[] }; query?: never; indexes?: never; deferred?: never; reachability?: never }
+    | { pythonAst: { roots: string; syntax: string; fields: ("dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256" | "column" | "repr_unparse")[] }; query?: never; indexes?: never; deferred?: never; reachability?: never }
     | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;

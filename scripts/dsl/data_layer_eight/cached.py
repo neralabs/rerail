@@ -4,7 +4,7 @@
 Canonical syntax facts come from the generic batched CPython producer. Policy
 entries are configuration metadata; they are decoded into columns once.
 """
-import ast,json
+import ast,json,re,unicodedata
 from data_layer_six.common import S,q,literals,A,O,K,P,E
 from data_layer_eight.relations import clause
 from data_layer_eight.model import stages as model
@@ -25,6 +25,19 @@ def configured(name,sql,default):
     return {'$option':name,'escape':'sql','template':sql.format('{}'),'default':default}
 
 
+def normalized_trigger(words):
+    """Match the verifier's ASCII trigger words through Unicode compatibility forms.
+
+    These words contain no multi-letter compatibility ligatures. Building the
+    character classes once avoids admitting every file with a Unicode comment.
+    """
+    alphabet=set(''.join(words));variants={char:[char] for char in alphabet}
+    for number in range(128,0x110000):
+        char=chr(number);normalized=unicodedata.normalize('NFKC',char)
+        if normalized in alphabet:variants[normalized].append(char)
+    return '(?:'+'|'.join(''.join('['+''.join(re.escape(c) for c in variants[char])+']' if len(variants[char])>1 else re.escape(char) for char in word) for word in words)+')'
+
+
 def build(stages,query,name,producers):
     # Placeholder SELECTs declare the typed producer schemas to column demand
     # analysis. The authored runtime receives producer contracts, not these SQLs.
@@ -33,7 +46,7 @@ def build(stages,query,name,producers):
     if name=='cached-runtime-contract':
         gate={'filePath':{'regex':r'(?:^|/)(?:l2055_lazy_result/(?:purity|cached_pure_lazy_policy)|l2070_batching/optimizer_run_cache)\.py$'}}
     else:
-        gate={'regex':r'(?s)(?:cached_pure_lazy|cache_args|[^\x00-\x7f])' if name=='cached-policy' else r'(?s)(?:memoized_pure_lazy|[^\x00-\x7f])'}
+        gate={'regex':normalized_trigger(['cached_pure_lazy','cache_args'] if name=='cached-policy' else ['memoized_pure_lazy'])}
     plan['inputs']['syntax_gate']['evidence']['query']['ast']['rule']['all'].append(gate)
     if name!='cached-policy':plan['inputs'].pop('strings',None)
     else:plan['inputs']['strings']['evidence']['query']['ast']['rule']['all'].append({'inside':{'kind':'module',**gate,'stopBy':'end'}})
@@ -41,6 +54,23 @@ def build(stages,query,name,producers):
         if stage['name'] in producers:
             roots,fields=producers[stage['name']]
             stage.clear();stage.update(name=next(k for k,v in producers.items() if v==(roots,fields)),pythonAst={'syntax':'nodes','roots':roots,'fields':fields})
+    if name!='cached-runtime-contract':
+        # Every consumer reads the same admitted scope. Canonicalize only name
+        # tokens, then publish one indexed relation for all syntax consumers.
+        plan['syntax']['name']='syntax_nodes'
+        for stage in plan['stages']:
+            if 'pythonAst' in stage:stage['pythonAst']['syntax']='syntax_nodes'
+        columns=plan['syntax']['columns'];projection=[]
+        for column in columns:
+            if column=='text':expression='coalesce(c.identifier,n.text)'
+            elif column.endswith('_source') and column[:-7]+'_id' in columns:
+                expression="coalesce((SELECT identifier FROM canonical_names c WHERE c.__path=n.__path AND c.id=n."+column[:-7]+"_id),n."+column+")"
+            else:expression='n.'+column
+            projection.append(expression+' AS '+column)
+        plan['stages'][:0]=[
+          {'name':'canonical_names','pythonAst':{'syntax':'syntax_nodes','roots':"SELECT __path,id FROM syntax_nodes WHERE kind IN ('identifier','dotted_name','relative_import') AND rx_matches(text,'[^\\x00-\\x7f]')",'fields':['identifier']}},
+          S('nodes','SELECT '+','.join(projection)+' FROM syntax_nodes n LEFT JOIN canonical_names c ON c.__path=n.__path AND c.id=n.id',('__path','id'),('__path','parent'),('__path','kind')),
+        ]
     return item
 
 
@@ -97,7 +127,11 @@ def cached(source):
     ]+declaration_facts('cached')+[
       S('cache_arguments',"SELECT f.__path,f.id fn,CAST(x.ordinal AS INTEGER) ordinal,s.value name FROM selected_functions f JOIN keywords k ON k.__path=f.__path AND k.call=f.decorator AND k.name='cache_args' JOIN nodes container ON container.__path=k.__path AND container.id=k.value AND container.kind IN ('tuple','list') JOIN nodes x ON x.__path=container.__path AND x.parent=container.id JOIN strings s ON s.__path=x.__path AND s.__start=x.__start WHERE NOT EXISTS(SELECT 1 FROM arguments a WHERE a.__path=f.__path AND a.call=f.decorator) AND (SELECT count(*) FROM keywords kw WHERE kw.__path=f.__path AND kw.call=f.decorator)=1 AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.__path=container.__path AND n.parent=container.id AND n.kind NOT IN ('string','concatenated_string','comment'))",('__path','fn','name')),
       S('cache_names',"SELECT f.__path,f.id fn,n.* FROM selected_functions f JOIN nodes n ON n.__path=f.__path AND n.__start>=f.body_start AND n.__end<=f.body_end JOIN cache_arguments a ON a.__path=f.__path AND a.fn=f.id AND a.name=n.text LEFT JOIN nodes par ON par.__path=n.__path AND par.id=n.parent WHERE n.kind='identifier' AND NOT (par.kind='attribute' AND n.id=par.attribute_kind||':'||par.attribute_start||':'||par.attribute_end)",('__path','fn','id')),
-      S('cache_attributes',"SELECT f.__path,f.id fn,a.*,substr(a.text,length(root.name)+2) member,par.kind parent_kind,par.id parent_id,CASE WHEN EXISTS(SELECT 1 FROM calls c WHERE c.__path=a.__path AND c.callee_id=a.id) THEN 'call' WHEN EXISTS(SELECT 1 FROM calls c JOIN arguments arg ON arg.__path=c.__path AND arg.call=c.id WHERE c.__path=a.__path AND arg.id=a.id) THEN 'resolver' ELSE 'read' END mode FROM selected_functions f JOIN attributes a ON a.__path=f.__path AND a.__start>=f.body_start AND a.__end<=f.body_end JOIN expression_roots root ON root.__path=a.__path AND root.expression=a.id AND NOT root.through_call JOIN cache_arguments arg ON arg.__path=f.__path AND arg.fn=f.id AND arg.name=root.name JOIN nodes par ON par.__path=a.__path AND par.id=a.parent WHERE NOT (par.kind='attribute' AND par.object_kind||':'||par.object_start||':'||par.object_end=a.id)",('__path','fn','id')),
+      S('attribute_paths',"""WITH RECURSIVE path(__path,id,name,member) AS (
+        SELECT a.__path,a.id,n.text,a.attr FROM attributes a JOIN nodes n ON n.__path=a.__path AND n.id=a.object WHERE n.kind='identifier'
+        UNION ALL SELECT a.__path,a.id,p.name,p.member||'.'||a.attr FROM path p JOIN attributes a ON a.__path=p.__path AND a.object=p.id)
+        SELECT * FROM path""",('__path','id')),
+      S('cache_attributes',"SELECT f.__path,f.id fn,a.*,root.member,par.kind parent_kind,par.id parent_id,CASE WHEN EXISTS(SELECT 1 FROM calls c WHERE c.__path=a.__path AND c.callee_id=a.id) THEN 'call' WHEN EXISTS(SELECT 1 FROM calls c JOIN arguments arg ON arg.__path=c.__path AND arg.call=c.id WHERE c.__path=a.__path AND arg.id=a.id) THEN 'resolver' ELSE 'read' END mode FROM selected_functions f JOIN attributes a ON a.__path=f.__path AND a.__start>=f.body_start AND a.__end<=f.body_end JOIN attribute_paths root ON root.__path=a.__path AND root.id=a.id JOIN cache_arguments arg ON arg.__path=f.__path AND arg.fn=f.id AND arg.name=root.name JOIN nodes par ON par.__path=a.__path AND par.id=a.parent WHERE NOT (par.kind='attribute' AND par.object_kind||':'||par.object_start||':'||par.object_end=a.id)",('__path','fn','id')),
       S('mutations',"SELECT a.__path,a.fn,a.id FROM cache_attributes a WHERE EXISTS(SELECT 1 FROM assignments x WHERE x.__path=a.__path AND x.target=a.id) OR a.parent_kind='delete_statement'",('__path','id')),
       S('member_aliases',"SELECT a.__path,a.fn,a.id FROM cache_attributes a WHERE EXISTS(SELECT 1 FROM assignments x WHERE x.__path=a.__path AND x.value=a.id)",('__path','id')),
       S('cache_members',"SELECT DISTINCT a.__path,a.fn,rx_replace(a.member,'\\s+','') member,a.mode FROM cache_attributes a WHERE NOT EXISTS(SELECT 1 FROM mutations x WHERE x.__path=a.__path AND x.id=a.id) AND NOT EXISTS(SELECT 1 FROM member_aliases x WHERE x.__path=a.__path AND x.id=a.id) AND a.member NOT IN ('__class__','__delattr__','__dict__','__getattribute__','__setattr__')",('__path','fn')),
@@ -108,7 +142,8 @@ def cached(source):
       S('policy_types',"SELECT p.function,x.key ordinal,json_extract(x.value,'$[0]') name,json_extract(x.value,'$[1]') type FROM policy_entries p,json_each(p.data,'$.cache_types') x",('function','name')),
       S('policy_members',"SELECT p.function,x.key ordinal,json_extract(x.value,'$[0]') member,json_extract(x.value,'$[1]') mode FROM policy_entries p,json_each(p.data,'$.allowed_cache_members') x",('function',)),
       S('member_reprs',"SELECT f.function,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM cache_members m WHERE m.__path=f.__path AND m.fn=f.id ORDER BY member,mode)),'()') actual,coalesce((SELECT '('||group_concat(pair,', ')||CASE WHEN count(*)=1 THEN ',' ELSE '' END||')' FROM (SELECT '('||quote(member)||', '||quote(mode)||')' pair FROM policy_members m WHERE m.function=f.function ORDER BY ordinal)),'()') policy FROM actual_functions f",('function',)),
-      S('cached_comparisons',"SELECT f.function,e.error FROM actual_functions f JOIN policy_entries p ON p.function=f.function JOIN (SELECT * FROM cached_errors UNION SELECT * FROM extra_cached_errors) e ON e.__path=f.__path AND e.fn=f.id UNION SELECT f.function,'decorator cache arguments changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT ordinal,name FROM cache_arguments a WHERE a.__path=f.__path AND a.fn=f.id EXCEPT SELECT ordinal,name FROM policy_args a WHERE a.function=f.function) OR EXISTS(SELECT ordinal,name FROM policy_args a WHERE a.function=f.function EXCEPT SELECT ordinal,name FROM cache_arguments a WHERE a.__path=f.__path AND a.fn=f.id) UNION SELECT f.function,'cache type metadata must name each cache argument exactly once' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT name FROM policy_types t WHERE t.function=f.function GROUP BY name HAVING count(*)>1) OR EXISTS(SELECT name FROM policy_args a WHERE a.function=f.function EXCEPT SELECT name FROM policy_types t WHERE t.function=f.function) OR EXISTS(SELECT name FROM policy_types t WHERE t.function=f.function EXCEPT SELECT name FROM policy_args a WHERE a.function=f.function) UNION SELECT f.function,'cache type '||quote(t.type)||' is not approved' FROM actual_functions f JOIN policy_types t ON t.function=f.function WHERE t.type!="+q(TYPE)+" UNION SELECT f.function,'cache argument '||quote(t.name)||' annotation '||CASE WHEN annotation.text IS NULL THEN 'None' ELSE quote(annotation.text) END||' does not match cache type '||quote(t.type) FROM actual_functions f JOIN policy_types t ON t.function=f.function LEFT JOIN parameters a ON a.__path=f.__path AND a.fn=f.id AND a.name=t.name LEFT JOIN nodes annotation ON annotation.__path=a.__path AND annotation.id=a.annotation WHERE annotation.text IS NOT rx_replace(t.type,'^.*\\.','') UNION SELECT f.function,'owner scope '||quote(json_extract(p.data,'$.owner_scope'))||' is not approved' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE json_extract(p.data,'$.owner_scope')!='optimizer_run' UNION SELECT f.function,'review rationale is required' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE trim(p.rationale)='' UNION SELECT f.function,'cache member access modes are invalid: ['||(SELECT group_concat(quote(mode),', ') FROM (SELECT DISTINCT mode FROM policy_members m WHERE m.function=f.function AND mode NOT IN ('call','read','resolver') ORDER BY mode))||']' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT 1 FROM policy_members m WHERE m.function=f.function AND mode NOT IN ('call','read','resolver')) UNION SELECT f.function,'function body hash changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE f.body_sha256!=p.body_hash UNION SELECT f.function,'function signature hash changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE f.signature_sha256!=p.signature_hash UNION SELECT f.function,'cache member access changed: actual='||r.actual||' policy='||r.policy FROM actual_functions f JOIN policy_entries p ON p.function=f.function JOIN member_reprs r ON r.function=f.function WHERE r.actual!=r.policy"),
+      S('annotation_values',"SELECT p.__path,p.annotation id,'' unparse,'' repr_unparse FROM parameters p JOIN cache_arguments a ON a.__path=p.__path AND a.fn=p.fn AND a.name=p.name WHERE p.annotation IS NOT NULL",('__path','id')),
+      S('cached_comparisons',"SELECT f.function,e.error FROM actual_functions f JOIN policy_entries p ON p.function=f.function JOIN (SELECT * FROM cached_errors UNION SELECT * FROM extra_cached_errors) e ON e.__path=f.__path AND e.fn=f.id UNION SELECT f.function,'decorator cache arguments changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT ordinal,name FROM cache_arguments a WHERE a.__path=f.__path AND a.fn=f.id EXCEPT SELECT ordinal,name FROM policy_args a WHERE a.function=f.function) OR EXISTS(SELECT ordinal,name FROM policy_args a WHERE a.function=f.function EXCEPT SELECT ordinal,name FROM cache_arguments a WHERE a.__path=f.__path AND a.fn=f.id) UNION SELECT f.function,'cache type metadata must name each cache argument exactly once' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT name FROM policy_types t WHERE t.function=f.function GROUP BY name HAVING count(*)>1) OR EXISTS(SELECT name FROM policy_args a WHERE a.function=f.function EXCEPT SELECT name FROM policy_types t WHERE t.function=f.function) OR EXISTS(SELECT name FROM policy_types t WHERE t.function=f.function EXCEPT SELECT name FROM policy_args a WHERE a.function=f.function) UNION SELECT f.function,'cache type '||quote(t.type)||' is not approved' FROM actual_functions f JOIN policy_types t ON t.function=f.function WHERE t.type!="+q(TYPE)+" UNION SELECT f.function,'cache argument '||quote(t.name)||' annotation '||coalesce(annotation.repr_unparse,'None')||' does not match cache type '||quote(t.type) FROM actual_functions f JOIN policy_types t ON t.function=f.function LEFT JOIN parameters a ON a.__path=f.__path AND a.fn=f.id AND a.name=t.name LEFT JOIN annotation_values annotation ON annotation.__path=a.__path AND annotation.id=a.annotation WHERE annotation.unparse IS NOT rx_replace(t.type,'^.*\\.','') UNION SELECT f.function,'owner scope '||quote(json_extract(p.data,'$.owner_scope'))||' is not approved' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE json_extract(p.data,'$.owner_scope')!='optimizer_run' UNION SELECT f.function,'review rationale is required' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE trim(p.rationale)='' UNION SELECT f.function,'cache member access modes are invalid: ['||(SELECT group_concat(quote(mode),', ') FROM (SELECT DISTINCT mode FROM policy_members m WHERE m.function=f.function AND mode NOT IN ('call','read','resolver') ORDER BY mode))||']' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE EXISTS(SELECT 1 FROM policy_members m WHERE m.function=f.function AND mode NOT IN ('call','read','resolver')) UNION SELECT f.function,'function body hash changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE f.body_sha256!=p.body_hash UNION SELECT f.function,'function signature hash changed' FROM actual_functions f JOIN policy_entries p ON p.function=f.function WHERE f.signature_sha256!=p.signature_hash UNION SELECT f.function,'cache member access changed: actual='||r.actual||' policy='||r.policy FROM actual_functions f JOIN policy_entries p ON p.function=f.function JOIN member_reprs r ON r.function=f.function WHERE r.actual!=r.policy"),
       S('diagnostics',"SELECT 'unsigned cached pure-lazy function: '||f.function issue FROM actual_functions f WHERE NOT EXISTS(SELECT 1 FROM policy_entries p WHERE p.function=f.function) UNION ALL SELECT 'stale cached pure-lazy policy entry: '||p.function FROM policy_entries p WHERE NOT EXISTS(SELECT 1 FROM actual_functions f WHERE f.function=p.function) UNION ALL SELECT function||': '||error FROM cached_comparisons UNION ALL SELECT 'duplicate decorator entry: '||function FROM actual_functions GROUP BY function HAVING count(*)>1 UNION ALL SELECT 'duplicate policy entry: '||function FROM policy_records GROUP BY function HAVING count(*)>1"),
     ]
     # Unsupported calls and escaped decorator values are declarations in the
@@ -124,7 +159,7 @@ def cached(source):
     stages[index+len(pseudo)]['query']+=" UNION ALL SELECT p.__path,p.id,p.function,h.dump_sha256,h.dump_sha256 FROM pseudo_cached p JOIN pseudo_fingerprints h ON h.__path=p.__path AND h.id=p.id"
     extra=next(stage for stage in stages if stage['name']=='extra_cached_errors')
     extra['query']+=" UNION ALL SELECT __path,id,error FROM pseudo_cached"
-    return build(stages,output('diagnostics','policy_violations'),'cached-policy',{'coordinates':('SELECT __path,id FROM coordinate_roots',['column']),'fingerprints':('SELECT __path,id FROM selected_functions',['body_sha256','signature_sha256']),'pseudo_fingerprints':('SELECT __path,id FROM pseudo_cached',['dump_sha256'])})
+    return build(stages,output('diagnostics','policy_violations'),'cached-policy',{'annotation_values':('SELECT p.__path,p.annotation id FROM parameters p JOIN cache_arguments a ON a.__path=p.__path AND a.fn=p.fn AND a.name=p.name WHERE p.annotation IS NOT NULL',['unparse','repr_unparse']),'coordinates':('SELECT __path,id FROM coordinate_roots',['column']),'fingerprints':('SELECT __path,id FROM selected_functions',['body_sha256','signature_sha256']),'pseudo_fingerprints':('SELECT __path,id FROM pseudo_cached',['dump_sha256'])})
 
 
 def runtime_contract(source):
