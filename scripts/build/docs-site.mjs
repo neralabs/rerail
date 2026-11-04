@@ -488,9 +488,14 @@ main > hr, main > hr + * { margin-top: var(--subsection); }
 .agent-note a { color: inherit; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
 main > .agent-note + * { margin-top: 0.75rem; }
 `;
-/** The DSL reference under the site's top bar: its sidebar and every jump stop below the bar. */
+/**
+ * The DSL reference under the site's top bar: its sidebar and every jump stop below the bar. At the page's own narrow
+ * breakpoint (960px) the sidebar is a collapsed bar above the text, so it keeps its height and scrolls away: full height
+ * it would cover the page, and stuck it would cover the top bar, which wraps there.
+ */
 const REFERENCE_UNDER_HEADER = `
-#toc { top: 3.15rem; height: calc(100vh - 3.15rem); }
+@media (min-width: 961px) { #toc { top: 3.15rem; height: calc(100vh - 3.15rem); } }
+@media (max-width: 960px) { #toc { position: static; } }
 .site-header nav { max-width: 1320px; padding-left: 18px; }
 html { scroll-padding-top: 4rem; }
 .card, h2, h3, h4 { scroll-margin-top: 4rem; }
