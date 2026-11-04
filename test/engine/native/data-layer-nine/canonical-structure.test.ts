@@ -46,13 +46,24 @@ it("anchors canonical variadic parameters whose spans differ from CST parameter 
   const authored = { format: "rerail.policy/v1", id: "canonical-parameter-spans", revision: 1, mode: "log", clauses: [{ id: "args", relational: {
     inputs: { gate: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
     syntax: { name: "nodes", gate: "gate", columns: ["__path", "id", "kind", "__start", "__end"] },
-    stages: [{ name: "canonical", pythonAst: { syntax: "nodes", roots: "SELECT __path,id FROM nodes WHERE kind='module'", fields: ["ast_kind", "ast_start", "ast_stop", "ast_name"], expand: "nodes" } }],
-    query: "SELECT __path path,CAST(ast_start AS INTEGER) start_byte,CAST(ast_stop AS INTEGER) end_byte,ast_name identity FROM canonical WHERE ast_kind='arg'", key: ["identity"],
+    stages: [{ name: "canonical", pythonAst: { syntax: "nodes", roots: "SELECT __path,id FROM nodes WHERE kind='module'", fields: ["ast_kind", "ast_start", "ast_stop", "ast_name"], expand: "nodes" } }, { name: "copied", query: "SELECT * FROM canonical", indexes: [["__path", "ast_kind"]] }],
+    query: "SELECT __path path,CAST(ast_start AS INTEGER) start_byte,CAST(ast_stop AS INTEGER) end_byte,ast_name identity FROM copied WHERE ast_kind='arg'", key: ["identity"],
   }, violation: { code: "PARAM", message: "Canonical parameter", anchor: "witness.span" } }] };
   const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", capabilities);
-  const result = JSON.parse(rule.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }] }), "report"));
+  const Execution = loadNativeBinding().CodeRuleDslExecution;
+  if (Execution === undefined) throw new Error("The default addon must expose its execution owner");
+  const execution = new Execution();
+  const result = JSON.parse(execution.evaluate(rule, JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }] }), "report"));
   expect(result.failures).toEqual([]);
   expect(result.violations.map((v: { span: { startByte: number; endByte: number } }) => source.slice(v.span.startByte, v.span.endByte))).toEqual(["args: int", "kwargs: str"]);
+  const workspace = execution.createWorkspace();
+  try {
+    workspace.addCodeRule(rule);
+    await workspace.applyAsync(JSON.stringify({ revision: 1, files: [{ path: "a.py", source, language: "python" }], removed: [], quiet: true }));
+    const resident = JSON.parse(await workspace.resultPageAsync(0, 1024 * 1024));
+    expect(resident.failures).toEqual([]);
+    expect(resident.violations.map((v: { span: { startByte: number; endByte: number } }) => source.slice(v.span.startByte, v.span.endByte))).toEqual(["args: int", "kwargs: str"]);
+  } finally { workspace.close(); execution.close(); }
   authored.clauses[0]!.relational.query = authored.clauses[0]!.relational.query.replace("CAST(ast_start AS INTEGER) start_byte", "CAST(ast_start AS INTEGER)+1 start_byte");
   const fabricated = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(authored), "json", capabilities);
   const rejected = JSON.parse(fabricated.evaluate(JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source, language: "python" }] }), "report"));

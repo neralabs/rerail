@@ -68,3 +68,20 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 | `packs/typescript/candidates/rules/vitest-no-disabled-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
 | `packs/typescript/candidates/rules/vitest-no-focused-tests.json` | `scripts/generate/packs/typescript-vitest-policies.mjs` | as `vitest-expect-expect.json` |
 | `conformance/biome-same-sources.generated.ts` | `scripts/generate/packs/biome-suppression.mjs` | as `native/src/code_rule_dsl/suppress/biome_registry.generated.rs`; the run also sets `suppress.biome` on every violation of `packs/<id>/rules/` and `packs/<id>/candidates/` that carries `suppress.eslint`, bumping a shipped document's revision when it changes |
+
+## Data-layer batch nine
+
+Use the pinned data-layer checkout as `<upstream>`. Set `PYTHONHASHSEED=0` for reproducible diagnostic ordering.
+
+| Generated file | Generator | Command |
+|---|---|---|
+| `packs/data-layer/rules/data-layer-connection-mode-split.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-connection-structural-boundaries.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-connection-service-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-schema-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-schema-bootstrap-contracts.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-bootstrap-cache-health.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |
+| `packs/data-layer/rules/data-layer-plan-composition-architecture.json` | `scripts/generate/packs/data_layer_batch_nine.py` | `PYTHONHASHSEED=0 python3.13 scripts/generate/packs/data_layer_batch_nine.py --source <upstream>` |

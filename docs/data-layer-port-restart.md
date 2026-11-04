@@ -1,13 +1,16 @@
 # Restart the data-layer rule ports
 
-Updated: 2026-11-04. Status: 80 candidates have focused parity evidence and a historical complete repository result.
+Updated: 2026-11-04. Status: 90 ports have focused parity evidence. The historical complete repository result covers 80.
 
 The recovery survey below describes the original 60-rule restart point.
 Batch seven now passes 217 source observations and 50 edit/removal transitions.
 Integrated-engine compatibility is included, as requested.
 The first cumulative run failed with 22 engine errors; its results are not a parity pass.
 The admission and legacy-query regressions now pass. The corrected 70-rule repository gate matches all findings with zero engine failures.
-There are now 80 candidates and 62 checks left in the pinned scope.
+There are now 90 ports and 52 checks left in the pinned scope.
+Twenty documents ship in the opt-in pack; seventy earlier ports remain candidates.
+Batch nine adds 198 assertion cases and 240 recorded API results.
+See [its report](data-layer-batch-nine.md) for native coverage and runtime contracts.
 Batch eight now matches 534 source observations and 15 exact cached-discovery observations.
 Its 50 edit/removal transitions also pass.
 The prior 80-rule run matched the complete 9,021-file repository with 25,262 findings and no engine failures.
@@ -31,7 +34,8 @@ These are fresh inventory checks, not fresh oracle or native test passes.
 The pin is the original project scope. It is not claimed to be current upstream main.
 Complete that pinned scope and track subsequent upstream drift separately.
 
-The pack remains private and inactive: `packs/data-layer/pack.json` has an empty `rules` list.
+At this original restart point, the private pack had an empty `rules` list.
+The current opt-in pack now ships twenty documents.
 Its old description incorrectly said 48 candidates and incomplete fifth-batch parity; the restart corrects that metadata.
 Passing recorded detection tests does not certify reporters, signing, ratchets, CLI behavior, or activation.
 

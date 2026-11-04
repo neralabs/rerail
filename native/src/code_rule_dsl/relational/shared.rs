@@ -192,6 +192,7 @@ pub(super) struct Bindings {
     fingerprints: Fingerprints,
     definitions: HashMap<Key, usize>,
     retained: HashSet<(u8, usize)>,
+    canonical_spans: HashMap<(u32, [u8; 32]), Arc<Vec<(u32, u32)>>>,
     next_lease: usize,
     next_id: usize,
     bytes: usize,
@@ -205,9 +206,25 @@ impl Bindings {
     }
     pub fn forget(&mut self) {
         self.definitions.clear();
+        self.canonical_spans.clear();
         self.fingerprints.clear();
         self.retained.clear();
         self.bytes = 0;
+    }
+    /// SQL rows and their canonical anchor proofs have the same bounded owner.
+    /// A new workspace document can reuse SQL rows without rerunning Python.
+    pub fn canonical_spans(&mut self, files: &syntax::Files) {
+        for (_, facts) in files {
+            let version = facts.version();
+            if let Some(spans) = self.canonical_spans.get(&version) {
+                facts.restore_python_spans(Arc::clone(spans));
+            } else if let Some(spans) = facts.python_spans() {
+                self.bytes = self
+                    .bytes
+                    .saturating_add(spans.capacity() * std::mem::size_of::<(u32, u32)>() + 96);
+                self.canonical_spans.insert(version, spans);
+            }
+        }
     }
     pub fn lease(&mut self) -> usize {
         self.next_lease += 1;

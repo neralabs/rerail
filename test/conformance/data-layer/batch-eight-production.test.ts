@@ -5,10 +5,10 @@ import { expect, it, vi } from "vitest";
 import { readBundledCatalog, NativeCodeRuleEnforcer, type CodeRule } from "../../../src/engine/index.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 
-it("loads the ten opt-in documents through the public pack catalog with one document per rule id", async () => {
+it("loads the twenty opt-in documents through the public pack catalog with one document per rule id", async () => {
   const catalog = readBundledCatalog(["packs/data-layer"]);
-  expect(catalog.packs.get("data-layer")!.rules).toHaveLength(10);
-  expect(catalog.documents.size).toBe(10);
+  expect(catalog.packs.get("data-layer")!.rules).toHaveLength(20);
+  expect(catalog.documents.size).toBe(20);
   const candidates = await readdir("packs/data-layer/candidates/rules");
   expect(candidates).toHaveLength(70);
   for (const id of catalog.documents.keys()) expect(candidates).not.toContain(`${id}.json`);

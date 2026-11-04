@@ -29,7 +29,10 @@ def main():
         manifest=json.loads((pack/'pack.json').read_text())
         manifest['covers']='Ten batch-eight data-layer architecture rules. Seventy earlier ports remain candidates.'
         manifest['reason']='Repository-specific rules for explicit installation in nera-data-layer.'
-        manifest['rules']=[dict(id=item['id'],document='rules/'+item['id']+'.json',title=item['id'].removeprefix('data-layer-').replace('-',' ').capitalize(),group='Data-layer architecture') for item in items]
+        existing={rule['id']:rule for rule in manifest['rules']}
+        current=[dict(id=item['id'],document='rules/'+item['id']+'.json',title=item['id'].removeprefix('data-layer-').replace('-',' ').capitalize(),group='Data-layer architecture') for item in items]
+        existing.update({rule['id']:rule for rule in current});manifest['rules']=list(existing.values())
+        manifest['covers']=str(len(existing))+' shipped data-layer architecture rules. Seventy earlier ports remain candidates.'
         (pack/'pack.json').write_text(json.dumps(manifest,indent=2)+'\n')
     from data_layer_eight.analyzed_facts import candidate as analyzed_facts
     facts=Path('packs/data-layer/candidates/facts') if args.output.resolve()==Path('packs/data-layer/rules').resolve() else args.output.parent/'facts';facts.mkdir(parents=True,exist_ok=True)

@@ -94,7 +94,7 @@ pub(in crate::code_rule_dsl) struct Facts {
     children: Postings,
     kinds: Postings,
     fields: Fields,
-    python_spans: parking_lot::Mutex<Option<Vec<(u32, u32)>>>,
+    python_spans: parking_lot::Mutex<Option<Arc<Vec<(u32, u32)>>>>,
     owners: parking_lot::Mutex<HashMap<(String, bool), Arc<OwnerIndex>>>,
     selections: Selections,
 }
@@ -252,8 +252,15 @@ impl Facts {
         }
         spans.sort_unstable();
         spans.dedup();
-        *published = Some(spans);
+        *published = Some(Arc::new(spans));
         Ok(())
+    }
+    pub(super) fn python_spans(&self) -> Option<Arc<Vec<(u32, u32)>>> {
+        self.python_spans.lock().clone()
+    }
+    /// Restored only from this SQL owner's proof cache for the exact source version.
+    pub(super) fn restore_python_spans(&self, spans: Arc<Vec<(u32, u32)>>) {
+        self.python_spans.lock().get_or_insert(spans);
     }
     pub(super) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
         // The preorder table is ordered by source start. Check only equal-start nodes.

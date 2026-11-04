@@ -620,6 +620,7 @@ impl<'a> Session<'a> {
         } else {
             Vec::new()
         };
+        db.bindings.borrow_mut().canonical_spans(&syntax_files);
         let count = rows.iter().map(|r| r.witnesses.len()).sum::<usize>()
             + syntax_files.iter().map(|(_, f)| f.len()).sum::<usize>();
         let syntax_trees = match &plan.syntax {
@@ -1130,6 +1131,10 @@ impl<'a> Session<'a> {
         Ok(Step::Done)
     }
     fn publish(&mut self, output: producer::Completed) -> Result<()> {
+        self.db
+            .bindings
+            .borrow_mut()
+            .canonical_spans(&self.syntax_files);
         let source = output.into_source(Arc::clone(&self.work))?;
         self.publish_source(source)
     }
