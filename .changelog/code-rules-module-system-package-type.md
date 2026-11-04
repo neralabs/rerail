@@ -1,0 +1,1 @@
+`languageOptions.moduleSystem: "package-type"` reads each JavaScript file's module system from its extension and its nearest `package.json`'s `type`, as eslint-plugin-n's configs do. `file.byteOrderMark` says whether a file opens with U+FEFF, and `file.package.nodeVersion.notSubsetOf` holds where the file's configured Node range is not within the given one.
