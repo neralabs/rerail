@@ -56,6 +56,7 @@ mod slice;
 mod soundness;
 mod suppress;
 mod tape;
+mod text;
 #[cfg(test)]
 mod test_support;
 pub mod tools;

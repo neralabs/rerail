@@ -528,6 +528,34 @@ CREATE TABLE IF NOT EXISTS vocabulary_pending (
 CREATE TRIGGER IF NOT EXISTS vocabulary_added AFTER INSERT ON term_freq BEGIN
     INSERT OR IGNORE INTO vocabulary_pending VALUES(NEW.lang, NEW.term);
 END;
+-- The text layer's vocabulary (code_rule_dsl/text, decision 0039): each kept plan's matching
+-- terms by the plan's key. A key is filled over the whole vocabulary when first seen, then over
+-- the terms added since: `text_pending` is a log of added terms in order, and `upto` the last
+-- entry a key has read. Entries every key has read are dropped.
+CREATE TABLE IF NOT EXISTS text_matcher (
+    lang INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    upto INTEGER NOT NULL,
+    PRIMARY KEY (lang, key)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS text_term (
+    lang INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, key, term),
+    FOREIGN KEY (lang, key) REFERENCES text_matcher(lang, key) ON DELETE CASCADE,
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS text_term_deleted ON text_term(lang, term);
+CREATE TABLE IF NOT EXISTS text_pending (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
+    INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
+END;
 "#;
 
 impl ContentStore {
