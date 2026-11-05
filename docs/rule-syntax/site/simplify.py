@@ -12,6 +12,7 @@ need to be. This pass removes what the correspondence alone put there:
   3. repeats: a literal repeated in one body is kept once.
   4. bound: `node(_, x, _, _, _)` is dropped wherever x is bound otherwise; translate.py's grounding check
      puts it back where it is needed.
+  5. families: relations alike up to their strings fold into one relation with a key and a table (fold.py).
 
 Every step rewrites a Datalog program into an equivalent one: identical definitions are interchangeable,
 and a non-recursive relation with one use can be unfolded at that use. Helper bodies here have only the
@@ -27,13 +28,30 @@ MAX_INLINE_LEN = 400  # and only when the inlined text stays readable
 GENERATED = re.compile(r"^(alt|stop|option|set)_\d+$")
 MEANINGLESS = re.compile(r"^[a-z]{1,2}_?\d+$")   # utils named r12, c1746, m_3
 
-_STR = re.compile(r'"(?:[^"\\]|\\.)*"|`+[^`]*`+')
+# A string, or a backtick pattern fenced by n backticks (`` f(`a`) `` holds single backticks inside).
+_PROT = re.compile(r'"(?:[^"\\]|\\.)*"|(?P<f>`+)[\s\S]*?(?<!`)(?P=f)(?!`)')
+_CAP = re.compile(r"(?<![\w@])\$*[A-Z][A-Z0-9_]*\b")
 _VAR = re.compile(r"(?<![\w@$])([a-z][a-z]*\d+|[a-z])\b(?!\s*\()")
 
 
 def _split_protected(s):
     """Alternate pieces: even indices are code, odd ones string or backtick literals (left untouched)."""
-    return re.split(r'("(?:[^"\\]|\\.)*"|`+[^`]*`+)', s)
+    out, at = [], 0
+    for m in _PROT.finditer(s):
+        out += [s[at:m.start()], m.group(0)]
+        at = m.end()
+    return out + [s[at:]]
+
+
+def _mentions_metavariable(lits):
+    """A capital in code, or `$X` in a pattern: an ast-grep metavariable, shared across the whole match."""
+    for l in lits:
+        for i, p in enumerate(_split_protected(l)):
+            if i % 2 == 0 and _CAP.search(p):
+                return True
+            if i % 2 and p.startswith("`") and re.search(r"\$+[A-Z_]", p):
+                return True
+    return False
 
 
 def _code(s):
@@ -112,15 +130,19 @@ class Rules:
         return d
 
     def rename_calls(self, mapping):
+        """Rename relations. A generated name (alt_3) is renamed wherever it appears, as a call or as a relation
+        argument; a short one (c5) only where it is called, because variables have names like that too."""
         if not mapping:
             return
-        pat = re.compile(r"(?<![\w.@$])(" + "|".join(map(re.escape, mapping)) + r")\b")
+        bare = [k for k in mapping if GENERATED.match(k)]
+        alts = "|".join(map(re.escape, mapping))
+        pat = re.compile(r"(?<![\w.@$])(" + alts + r")(?=\s*\()" + (r"|(?<![\w.@$])(" + "|".join(map(re.escape, bare)) + r")\b" if bare else ""))
         for r in self.all():
             new = []
             for l in self.lits(r):
                 parts = _split_protected(l)
                 for i in range(0, len(parts), 2):
-                    parts[i] = pat.sub(lambda m: mapping[m.group(1)], parts[i])
+                    parts[i] = pat.sub(lambda m: mapping[m.group(1) or m.group(2)], parts[i])
                 new.append("".join(parts))
             self.set_lits(r, new)
 
@@ -140,6 +162,7 @@ def merge(rs, decls):
             else:
                 seen[key] = name
         defs = rs.defs()
+        bare_used = _bare_names(rs, {n for n in defs if MEANINGLESS.match(n)})
         seen = {}
         for name in sorted(defs, key=lambda x: (not (x not in rs.protected and not GENERATED.match(x)), x)):
             if name in rs.protected or name in mapping:
@@ -149,7 +172,7 @@ def merge(rs, decls):
                 continue
             key = _canon([("n", rs.lits(r)) for r in rules])
             if key in seen:
-                if GENERATED.match(name) or MEANINGLESS.match(name):
+                if GENERATED.match(name) or (MEANINGLESS.match(name) and name not in bare_used):
                     mapping[name] = seen[key]
                 continue
             seen[key] = name
@@ -164,6 +187,15 @@ def merge(rs, decls):
                 rs.facts.pop(n, None)
                 decls.pop(n, None)
     return merged
+
+
+def _bare_names(rs, names):
+    """Names among `names` that appear somewhere not as a call: as a relation argument, or as a variable."""
+    out = set()
+    for r in rs.all():
+        for l in rs.lits(r):
+            out |= set(re.findall(r"(?<![\w.@$])([a-z]\w*)\b(?!\s*\()", _code(l))) & names
+    return out
 
 
 def _recursive(defs, rs):
@@ -200,6 +232,11 @@ def inline(rs, decls):
             if name in rs.protected or name in rec or not (GENERATED.match(name) or MEANINGLESS.match(name)):
                 continue
             if len(uses.get(name, [])) != 1 or len(rules) > MAX_DISJ or not all(rs.head(r) == f"{name}(n)" for r in rules):
+                continue
+            # A metavariable in the helper stays there. Inlined, it would meet the caller's metavariables of the
+            # same name (two `any` branches that each bind $X separately would have to agree), and the `unset(X)`
+            # translate.py adds where X is unbound would apply to the whole rule, not to one branch.
+            if any(_mentions_metavariable(rs.lits(r)) for r in rules):
                 continue
             r, lit = uses[name][0]
             m = re.fullmatch(rf"{re.escape(name)}\(([a-zA-Z_]\w*)\)", lit.strip())
@@ -295,12 +332,18 @@ def simplify(entries, prog, protected):
     facts = {r[1]: r[2] for r in prog.rules if r[0] == "#facts"}
     rs = Rules(entries, helper_rules, facts, protected)
     stats = {"merged": 0, "inlined": 0}
-    for _ in range(10):
+    from fold import fold  # fold.py imports helpers from here
+    for rnd in range(10):
         a = merge(rs, prog.decls)
         b = inline(rs, prog.decls)
         stats["merged"] += a
         stats["inlined"] += b
         if not a and not b:
+            # 5. families: copies alike up to their strings become one relation and a table (fold.py), once.
+            if rnd < 9 and "folded" not in stats:
+                stats["folded"] = fold(rs, prog.decls, prog.notes)
+                if stats["folded"]:
+                    continue
             break
     dedup_literals(rs)
     drop_node_atoms(rs)
