@@ -3,12 +3,12 @@ name: Stale issues
 # An issue a maintainer has labelled `needs-info` is waiting on its reporter (docs/GOVERNANCE.md, "Issues that wait on
 # their reporter"). Every day this asks once on any such issue that has had no activity for 14 days, labelling it
 # `stale`, and closes it as not planned 7 days after that if nobody has said anything since. A comment or edit removes
-# `stale`. A comment from the reporter swaps `needs-info` (and `stale`) for `needs-triage`, and reopens the issue if the
-# bot had closed it (the `reporter-replied` job), so an answered question is back in the maintainers' queue and the bot
-# leaves it alone until a maintainer asks for something again. Nothing else is closed for age: issues without
-# `needs-info` (triaged bugs, misfires, requests, anything still in `needs-triage`), assigned issues, issues on a
-# milestone and pull requests are never touched. Run it by hand with `dry-run` on to see in the run log what it would
-# do without doing it.
+# `stale` at the next run. A comment from the reporter does it at once, swapping `needs-info` (and `stale`) for
+# `needs-triage` and reopening the issue if the bot had closed it (the `reporter-replied` job), so an answered question
+# is back in the maintainers' queue and the bot leaves it alone until a maintainer asks for something again. An issue a
+# maintainer closed stays closed. Nothing else is closed for age: issues without `needs-info` (triaged bugs, misfires,
+# requests, anything still in `needs-triage`), assigned issues, issues on a milestone and pull requests are never
+# touched. Run it by hand with `dry-run` on to see in the run log what it would do without doing it.
 #
 # actions/stale keeps its place between runs in the Actions cache (hence `actions: write`), and `operations-per-run`
 # (default 30) is the number of API calls one run spends before it stops and leaves the rest to the next.
@@ -56,10 +56,12 @@ jobs:
           close-issue-reason: not_planned
           stale-issue-message: >-
             Still seeing this on the current release? A reply with the version you're on, or with what was asked for
-            above, keeps this open. Without one, this is closed as not planned in 7 days. You can reopen it at any time.
+            above, keeps this open. Without one, this is closed as not planned in 7 days. A comment from whoever opened
+            it reopens it after that.
           close-issue-message: >-
             Closed as not planned: we couldn't get the details needed to look into it. That doesn't mean it isn't real.
-            Comment here with what you're seeing and it reopens, or open a new issue if the details have changed.
+            If you opened this issue, comment here with what you're seeing and it reopens. Anyone else, or if the
+            details have changed, please open a new issue.
           debug-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
 
   reporter-replied:
@@ -85,10 +87,13 @@ jobs:
           STATE: ${{ github.event.issue.state }}
           HAS_STALE: ${{ contains(github.event.issue.labels.*.name, 'stale') }}
         run: |
-          labels=needs-info
-          if [ "$HAS_STALE" = true ]; then
-            labels="$labels,stale"
-            # `stale` on a closed issue means the bot closed it; a maintainer's close stays closed.
-            if [ "$STATE" = closed ]; then gh issue reopen "$ISSUE" --repo "$GITHUB_REPOSITORY"; fi
+          if [ "$STATE" = closed ]; then
+            # A maintainer's close stays closed, and stays out of the needs-triage queue. `state_reason` can't tell the
+            # two apart: a maintainer declining an issue also closes it as not planned.
+            closed_by=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" --jq .closed_by.login)
+            if [ "$closed_by" != "github-actions[bot]" ]; then exit 0; fi
+            gh issue reopen "$ISSUE" --repo "$GITHUB_REPOSITORY"
           fi
+          labels=needs-info
+          if [ "$HAS_STALE" = true ]; then labels="$labels,stale"; fi
           gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label "$labels" --add-label needs-triage

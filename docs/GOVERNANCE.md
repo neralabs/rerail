@@ -54,9 +54,10 @@ concerns, they ask for it in the issue and label it `needs-info`. From then on t
 - A comment from the reporter swaps `needs-info` for `needs-triage`. The issue is back in the maintainers' queue, and
   the [response times](../CONTRIBUTING.md#response-times) apply from that comment.
 - After 14 days with no activity, the bot asks once more and labels the issue `stale`. Any comment or edit removes
-  `stale`.
-- 7 days after that, it closes the issue as not planned, saying how to get it reopened: comment there, or open a new
-  issue if the details have changed. A comment from the reporter reopens it and puts it back in `needs-triage`.
+  `stale` at the bot's next daily run; a comment from the reporter removes it at once.
+- 7 days after that, it closes the issue as not planned, saying how to get it reopened: the reporter comments there;
+  anyone else, or a reporter whose details have changed, opens a new issue. The reporter's comment reopens it and puts
+  it back in `needs-triage`. An issue a maintainer closed by hand stays closed.
 
 Nothing else is closed for age. An issue a maintainer has confirmed (`bug`, `rule-misfire`, `known-issue`,
 `enhancement`) stays open until it is fixed or declined with a reason ([Saying no](#how-decisions-are-made)), however
