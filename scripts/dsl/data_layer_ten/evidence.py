@@ -10,6 +10,20 @@ from data_layer_ten.common import CHECKS,PIN
 def read_report(path):
  return json.loads(gzip.decompress(path.read_bytes()) if path.suffix=='.gz' else path.read_bytes())
 
+def verify_contracts(oracle,reports):
+ expected={'preserves raw files and complete original results: '+case['test'] for case in oracle['cases']}
+ if len(expected)!=len(oracle['cases']):raise ValueError('Duplicate focused input identity')
+ expected.add('retains canonical source proofs when SQL reuses prepared rows');seen=set()
+ for report in reports:
+  if report['numFailedTests'] or report.get('numRuntimeErrorTestSuites',0):raise ValueError('Focused native assertions failed')
+  for suite in report['testResults']:
+   for case in suite['assertionResults']:
+    if case['status']=='passed':
+     if case['fullName'] in seen:raise ValueError('Duplicate focused assertion')
+     seen.add(case['fullName'])
+ if seen!=expected:raise ValueError('Missing or extra focused native assertions: '+str(expected^seen))
+ return dict(inputs=len(oracle['cases']),positiveInputs=sum(bool(case['expected']) for case in oracle['cases']),apiComparisons=2*len(oracle['cases']),assertions=len(seen))
+
 def verify_configured(oracle,reports):
  expected=set();selected=0
  for index,record in enumerate(oracle['records']):
@@ -71,11 +85,12 @@ def verify(oracle,reports,controls=False,mode=None,policies=None):
  unique={json.dumps({k:v for k,v in normalized(r).items() if k!='test'},sort_keys=True):r for r in wanted}
  return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),retainedPythonCases=len(seen-{r['test'] for r in records}),retainedPythonCaseIds=sorted(seen-{r['test'] for r in records}),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
 
-def receipt(oracle_path,snapshot,workspace,controls,configured):
+def receipt(oracle_path,snapshot,workspace,controls,configured,contracts):
  policies={c:hashlib.sha256((Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json')).read_bytes()).hexdigest() for c in CHECKS}
  oracle=read_report(oracle_path);paths={mode:verify(oracle,[read_report(path) for path in reports],mode=mode,policies=policies) for mode,reports in [('snapshot',snapshot),('workspace',workspace)]};negative=verify(oracle,[read_report(path) for path in controls],True,mode='snapshot')
  assert paths['snapshot']['engineSha256']==paths['workspace']['engineSha256']==negative['engineSha256']
  configured_path=Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz');configured_summary=verify_configured(read_report(configured_path),[read_report(p) for p in configured])
+ contracts_path=Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json');contract_summary=verify_contracts(read_report(contracts_path),[read_report(p) for p in contracts])
  files=set(Path('scripts/dsl/data_layer_ten').glob('*.py'))|{Path('scripts/generate/packs/data_layer_batch_ten.py'),oracle_path,configured_path,Path('conformance/data-layer/batch-ten.ts'),Path('conformance/data-layer/native-worker.ts'),Path('conformance/data-layer/execution.ts'),Path('conformance/data-layer/policies.ts'),Path('test/conformance/data-layer/batch-ten.test.ts'),Path('test/conformance/data-layer/batch-ten-defaults.test.ts')}
  files|={Path('test/conformance/data-layer')/name for name in ['batch-ten-file-contracts.test.ts','batch-ten-families.test.ts','batch-ten-configured-repository.test.ts']}
  files|={Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json')}
@@ -87,7 +102,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured):
  files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
- return dict(format='rerail.data-layer-batch-ten-assertions/v3',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
+ return dict(format='rerail.data-layer-batch-ten-assertions/v4',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,focusedContracts=contract_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
 def main():
- p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured),indent=2)+'\n')
+ p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--contracts',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured,a.contracts),indent=2)+'\n')
 if __name__=='__main__':main()
