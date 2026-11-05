@@ -354,7 +354,7 @@ router_el(e) :- tag(e, t), kind(t, &quot;identifier&quot;), ref_site(t, s),
 stop(n) :- kind(n, k), barrier(k).
 stop(n) :- router_el(n).
 stop(e) :- kind(e, &quot;jsx_element&quot;), !router_el(e), tag(e, t),     // not &lt;div&gt;, &lt;main&gt;, …
-    count : { kind(t, &quot;identifier&quot;), text(t, s), match(&quot;[a-z].*&quot;, s) } = 0.
+    count : { kind(t, &quot;identifier&quot;), text(t, s), glob(&quot;[a-z]*&quot;, s) } = 0.
 
 // 3. The finding: the nearest stop above a router is a router.
 NESTED_ROUTER_JSX(inner) :- router_el(inner),

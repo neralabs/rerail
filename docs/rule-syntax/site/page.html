@@ -72,10 +72,10 @@ main { flex: 1; min-height: 0; display: flex; }
 .read h1 { font: 600 32px/1.15 var(--font-display); margin: 0; text-wrap: balance; }
 .read h2 { font: 600 22px/1.2 var(--font-display); margin: 0 0 4px; text-wrap: balance; }
 .read h3 { font: 600 16px/1.3 var(--font-display); margin: 0; }
-.snips .code pre.code { max-height: 360px; overflow: auto; }
+.snips .code .cv { max-height: 360px; overflow: auto; }
 .read > .col > h2 { margin-top: 18px; }
 .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.pair pre.code { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; max-height: 640px; }
+.pair .cv { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; max-height: 640px; overflow: auto; }
 @media (max-width: 860px) { .pair { grid-template-columns: 1fr; } }
 .read p { margin: 0; max-width: 68ch; }
 .lede { color: var(--muted); font-size: 16px; max-width: 70ch; }
@@ -148,6 +148,16 @@ pre.code .l.flash { background: var(--flash); transition: background 1.2s; }
 .wrap pre.code .l { white-space: pre-wrap; word-break: break-word; }
 .show-all { margin: 8px 16px 16px 56px; font: 500 13px var(--font-body); padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; }
 .c-com { color: var(--muted); font-style: italic; }
+/* A code box that scrolls gets a map of the whole file on its right, with the visible part outlined, and a bar
+   at the bottom counting the lines below. Click or drag the map to move. */
+.cv { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.cv > pre.code { grid-column: 1; grid-row: 1; min-width: 0; }
+.cv .mm { display: none; grid-column: 2; grid-row: 1 / span 2; position: sticky; top: 0; width: 72px; cursor: pointer;
+  border-left: 1px solid var(--line); background: var(--code-bg); touch-action: none; }
+.cv .more { display: none; grid-column: 1; grid-row: 2; position: sticky; bottom: 0; padding: 5px 16px 5px 56px;
+  font: 500 12px var(--font-body); color: var(--muted); background: var(--surface);
+  border-top: 1px solid var(--line); }
+.cv.scrolls .mm, .cv.scrolls .more.on { display: block; }
 .d-add { background: color-mix(in srgb, var(--t-str) 14%, transparent); display: block; }
 .d-del { background: color-mix(in srgb, var(--accent, #8c2a3c) 12%, transparent); display: block; }
 .c-mark { color: var(--accent, #8c2a3c); font-weight: 600; font-style: normal; }
@@ -170,7 +180,7 @@ a.rel { color: inherit; text-decoration: underline dotted var(--accent-2); text-
 a.rel:hover { color: var(--accent-2); text-decoration-style: solid; }
 a.rel.lib { color: var(--accent-2); }
 a.rel.nat { color: var(--t-builtin); text-decoration-color: var(--t-builtin); }
-.sect .code pre.code, .snip pre.code { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.sect .code .cv, .snip .cv { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
 .snip pre.code .l { padding-left: calc(16px + var(--ind, 0ch) + 4ch); }
 .snip pre.code .l::before { display: none; }
 
@@ -427,14 +437,80 @@ function renderCode(el, text, lang, opts = {}) {
       const ind = lines[i].match(/^[ \t]*/)[0].replace(/\t/g, "    ").length;
       html += `<span class="l" data-l="${i}"${ind ? ` style="--ind:${ind}ch"` : ""}>${hl(lines[i])}</span>`;
     }
-    html += "</pre>";
+    html += `</pre><canvas class="mm" aria-hidden="true"></canvas><div class="more" aria-live="polite"></div>`;
     if (lines.length > n) html += `<button class="show-all" type="button">Show all ${lines.length.toLocaleString()} lines</button>`;
     el.innerHTML = html;
     const b = el.querySelector(".show-all");
     if (b) b.addEventListener("click", () => draw(Infinity));
+    mapCode(el);
   };
+  el.classList.add("cv");
   draw(opts.all ? Infinity : MAX_LINES);
   el._ctx = { text, lang };
+}
+
+// ---------- code map ----------
+// The scrolling element is the box itself (.pair, .snips) or, in the workbench panes, the pane's .scroll.
+function mapCode(el) {
+  const cv = el.querySelector("canvas.mm"), more = el.querySelector(".more"), pre = el.querySelector("pre.code");
+  if (!cv || !pre) return;
+  const rows = [...pre.querySelectorAll(".l")];
+  const style = getComputedStyle(document.documentElement);
+  const col = v => style.getPropertyValue(v).trim();
+  const tone = l => {
+    const f = l.querySelector("[class^='c-'], a.rel");
+    if (!f) return col("--ink");
+    const c = f.className;
+    return c.includes("c-com") ? col("--muted") : c.includes("c-str") ? col("--t-str") : c.includes("c-key") || c.includes("c-kw") ? col("--accent-2")
+      : c.includes("c-dir") ? col("--accent") : c.includes("c-bi") || c.includes("c-atom") ? col("--t-builtin") : col("--ink");
+  };
+  const lines = rows.map(l => { const t = l.textContent; const ind = t.match(/^\s*/)[0].length; return { ind, len: t.trimEnd().length - ind, tone: tone(l) }; });
+  const below = () => {
+    const bottom = el.scrollTop + el.clientHeight;
+    let lo = 0, hi = rows.length;                          // first row starting below the visible part
+    while (lo < hi) { const m = (lo + hi) >> 1; if (rows[m].offsetTop < bottom) lo = m + 1; else hi = m; }
+    return rows.length - lo;
+  };
+  const paint = () => {
+    const H = el.clientHeight, S = el.scrollHeight;
+    const scrolls = S > H + 4 && H > 0;
+    el.classList.toggle("scrolls", scrolls);
+    if (!scrolls) return;
+    const dpr = window.devicePixelRatio || 1, W = 72;
+    cv.style.height = H + "px";
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const k = H / S, cw = 0.9;                             // map pixels per content pixel; per character
+    rows.forEach((l, i) => {
+      const L = lines[i]; if (L.len <= 0) return;
+      const y = l.offsetTop * k, h = Math.max(1, Math.min(3, l.offsetHeight * k * 0.7));
+      g.globalAlpha = 0.75; g.fillStyle = L.tone;
+      g.fillRect(4 + Math.min(L.ind, 30) * cw, y, Math.max(1.5, Math.min(L.len * cw, W - 8 - L.ind * cw)), h);
+    });
+    g.globalAlpha = 1;
+    const vy = el.scrollTop * k, vh = Math.max(8, H * k);
+    g.fillStyle = col("--ink"); g.globalAlpha = 0.10; g.fillRect(0, vy, W, vh);
+    g.globalAlpha = 0.55; g.strokeStyle = col("--accent-2"); g.lineWidth = 1; g.strokeRect(0.5, vy + 0.5, W - 1, vh - 1);
+    g.globalAlpha = 1;
+    const n = below();
+    more.classList.toggle("on", n > 0);
+    more.textContent = n > 0 ? `${n.toLocaleString()} more line${n === 1 ? "" : "s"} below, of ${rows.length.toLocaleString()}. Scroll, or use the map on the right.` : "";
+  };
+  const seek = e => {
+    const r = cv.getBoundingClientRect();
+    el.scrollTop = ((e.clientY - r.top) / r.height) * el.scrollHeight - el.clientHeight / 2;
+  };
+  cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); seek(e); cv.onpointermove = seek; });
+  cv.addEventListener("pointerup", () => { cv.onpointermove = null; });
+  let queued = false;
+  const later = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; paint(); }); } };
+  if (!el._mapped) {                                       // once per element: redraws replace the canvas, not the listeners
+    el._mapped = true;
+    el.addEventListener("scroll", () => el._paint && el._paint(), { passive: true });
+    new ResizeObserver(() => el._paint && el._paint()).observe(el);
+  }
+  el._paint = later;
+  later();
 }
 
 // ---------- definition drawer ----------
