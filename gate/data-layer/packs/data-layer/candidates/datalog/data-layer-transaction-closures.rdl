@@ -7,34 +7,34 @@
 .kindset k0 = "lambda"
 .kindset k1 = "call"
 .kindset k2 = "function_definition"
-.decl blocked118(low: node, high: node)
-.decl blocked124(low: node, high: node)
-.decl blocked157(low: node, high: node)
-.decl blocked163(low: node, high: node)
-.decl blocked55(low: node, high: node)
-.decl blocked61(low: node, high: node)
-.decl blocked85(low: node, high: node)
-.decl blocked91(low: node, high: node)
+.decl blocked110(low: node, high: node)
+.decl blocked143(low: node, high: node)
+.decl blocked154(low: node, high: node)
+.decl blocked193(low: node, high: node)
+.decl blocked204(low: node, high: node)
+.decl blocked58(low: node, high: node)
+.decl blocked69(low: node, high: node)
+.decl blocked99(low: node, high: node)
 .decl in_scope(d: int)
-.decl m104(n: node)
-.decl m137(n: node)
-.decl m143(n: node)
-.decl m145(n: node)
-.decl m149(n: node)
-.decl m176(n: node)
-.decl m24(n: node)
-.decl m26(n: node)
-.decl m30(n: node)
-.decl m74(n: node)
+.decl m128(n: node)
+.decl m172(n: node)
+.decl m178(n: node)
+.decl m180(n: node)
+.decl m184(n: node)
+.decl m222(n: node)
+.decl m25(n: node)
+.decl m27(n: node)
+.decl m31(n: node)
+.decl m87(n: node)
 .decl out_scope(d: int)
-.decl u111(n: node)
-.decl u141(n: node)
-.decl u150(n: node)
-.decl u22(n: node)
-.decl u31(n: node)
-.decl u48(n: node)
+.decl u135(n: node)
+.decl u176(n: node)
+.decl u185(n: node)
+.decl u23(n: node)
+.decl u32(n: node)
 .decl u5(n: node)
-.decl u78(n: node)
+.decl u50(n: node)
+.decl u91(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
@@ -48,46 +48,46 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
-m24($n) :- node(_, $n, "assignment", _, _).
-m24($n) :- node(_, $n, "augmented_assignment", _, _).
-m24($n) :- node(_, $n, "for_statement", _, _).
-m24($n) :- node(_, $n, "for_in_clause", _, _).
-m26($n) :- node(_, $n, "pattern_list", _, _).
-m26($n) :- node(_, $n, "tuple_pattern", _, _).
-m26($n) :- node(_, $n, "list_pattern", _, _).
-m26($n) :- node(_, $n, "tuple", _, _).
-m26($n) :- node(_, $n, "list", _, _).
-m26($n) :- node(_, $n, "list_splat_pattern", _, _).
-m26($n) :- node(_, $n, "parenthesized_expression", _, _).
-m30($n) :- field($v23, "left", $n), m24($v23).
-m30($n) :- child($v25, $n, _), m26($v25), u22($v25).
-m30($n) :- child($v27, $n, _), node(_, $v27, "as_pattern_target", _, _), field($v28, "alias", $v27), node(_, $v28, "as_pattern", _, _), child($v29, $v28, _), node(_, $v29, "with_item", _, _).
-u22($n) :- m30($n).
-blocked55($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
-blocked61($low, $high) :- nearest($low, $s, k2), inside($s, $high, k1).
-m74($n) :- child($n, $v71, _), node(_, $v71, "keyword_argument", _, _), field($v71, "name", $v72), node(_, $v72, "identifier", _, _), text($v72, $v73), $v73 = "fn".
-blocked85($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
-blocked91($low, $high) :- nearest($low, $s, k2), inside($s, $high, k1).
-m104($n) :- child($n, $v101, _), node(_, $v101, "keyword_argument", _, _), field($v101, "name", $v102), node(_, $v102, "identifier", _, _), text($v102, $v103), $v103 = "fn".
-blocked118($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
-blocked124($low, $high) :- nearest($low, $s, k2), inside($s, $high, k1).
-m137($n) :- child($n, $v134, _), node(_, $v134, "keyword_argument", _, _), field($v134, "name", $v135), node(_, $v135, "identifier", _, _), text($v135, $v136), $v136 = "fn".
-m143($n) :- node(_, $n, "assignment", _, _).
-m143($n) :- node(_, $n, "augmented_assignment", _, _).
-m143($n) :- node(_, $n, "for_statement", _, _).
-m143($n) :- node(_, $n, "for_in_clause", _, _).
-m145($n) :- node(_, $n, "pattern_list", _, _).
-m145($n) :- node(_, $n, "tuple_pattern", _, _).
-m145($n) :- node(_, $n, "list_pattern", _, _).
-m145($n) :- node(_, $n, "tuple", _, _).
-m145($n) :- node(_, $n, "list", _, _).
-m145($n) :- node(_, $n, "list_splat_pattern", _, _).
-m145($n) :- node(_, $n, "parenthesized_expression", _, _).
-m149($n) :- field($v142, "left", $n), m143($v142).
-m149($n) :- child($v144, $n, _), m145($v144), u141($v144).
-m149($n) :- child($v146, $n, _), node(_, $v146, "as_pattern_target", _, _), field($v147, "alias", $v146), node(_, $v147, "as_pattern", _, _), child($v148, $v147, _), node(_, $v148, "with_item", _, _).
-u141($n) :- m149($n).
-blocked157($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
-blocked163($low, $high) :- nearest($low, $s, k2), inside($s, $high, k1).
-m176($n) :- child($n, $v173, _), node(_, $v173, "keyword_argument", _, _), field($v173, "name", $v174), node(_, $v174, "identifier", _, _), text($v174, $v175), $v175 = "fn".
+m25($n) :- node(_, $n, "assignment", _, _).
+m25($n) :- node(_, $n, "augmented_assignment", _, _).
+m25($n) :- node(_, $n, "for_statement", _, _).
+m25($n) :- node(_, $n, "for_in_clause", _, _).
+m27($n) :- node(_, $n, "pattern_list", _, _).
+m27($n) :- node(_, $n, "tuple_pattern", _, _).
+m27($n) :- node(_, $n, "list_pattern", _, _).
+m27($n) :- node(_, $n, "tuple", _, _).
+m27($n) :- node(_, $n, "list", _, _).
+m27($n) :- node(_, $n, "list_splat_pattern", _, _).
+m27($n) :- node(_, $n, "parenthesized_expression", _, _).
+m31($n) :- field($v24, "left", $n), m25($v24).
+m31($n) :- child($v26, $n, _), m27($v26), u23($v26).
+m31($n) :- child($v28, $n, _), node(_, $v28, "as_pattern_target", _, _), field($v29, "alias", $v28), node(_, $v29, "as_pattern", _, _), child($v30, $v29, _), node(_, $v30, "with_item", _, _).
+u23($n) :- m31($n).
+blocked58($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
+blocked69($low, $high) :- nearest($low, $s, k2), node($v70, $s, _, $v71, $v72), node($v70, $high, _, $v73, $v74), $v73 <= $v71, $v72 <= $v74, $s != $high.
+m87($n) :- child($n, $v84, _), node(_, $v84, "keyword_argument", _, _), field($v84, "name", $v85), node(_, $v85, "identifier", _, _), text($v85, $v86), $v86 = "fn".
+blocked99($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
+blocked110($low, $high) :- nearest($low, $s, k2), node($v111, $s, _, $v112, $v113), node($v111, $high, _, $v114, $v115), $v114 <= $v112, $v113 <= $v115, $s != $high.
+m128($n) :- child($n, $v125, _), node(_, $v125, "keyword_argument", _, _), field($v125, "name", $v126), node(_, $v126, "identifier", _, _), text($v126, $v127), $v127 = "fn".
+blocked143($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
+blocked154($low, $high) :- nearest($low, $s, k2), node($v155, $s, _, $v156, $v157), node($v155, $high, _, $v158, $v159), $v158 <= $v156, $v157 <= $v159, $s != $high.
+m172($n) :- child($n, $v169, _), node(_, $v169, "keyword_argument", _, _), field($v169, "name", $v170), node(_, $v170, "identifier", _, _), text($v170, $v171), $v171 = "fn".
+m178($n) :- node(_, $n, "assignment", _, _).
+m178($n) :- node(_, $n, "augmented_assignment", _, _).
+m178($n) :- node(_, $n, "for_statement", _, _).
+m178($n) :- node(_, $n, "for_in_clause", _, _).
+m180($n) :- node(_, $n, "pattern_list", _, _).
+m180($n) :- node(_, $n, "tuple_pattern", _, _).
+m180($n) :- node(_, $n, "list_pattern", _, _).
+m180($n) :- node(_, $n, "tuple", _, _).
+m180($n) :- node(_, $n, "list", _, _).
+m180($n) :- node(_, $n, "list_splat_pattern", _, _).
+m180($n) :- node(_, $n, "parenthesized_expression", _, _).
+m184($n) :- field($v177, "left", $n), m178($v177).
+m184($n) :- child($v179, $n, _), m180($v179), u176($v179).
+m184($n) :- child($v181, $n, _), node(_, $v181, "as_pattern_target", _, _), field($v182, "alias", $v181), node(_, $v182, "as_pattern", _, _), child($v183, $v182, _), node(_, $v183, "with_item", _, _).
+u176($n) :- m184($n).
+blocked193($low, $high) :- nearest($low, $s, k0), inside($s, $high, k2).
+blocked204($low, $high) :- nearest($low, $s, k2), node($v205, $s, _, $v206, $v207), node($v205, $high, _, $v208, $v209), $v208 <= $v206, $v207 <= $v209, $s != $high.
+m222($n) :- child($n, $v219, _), node(_, $v219, "keyword_argument", _, _), field($v219, "name", $v220), node(_, $v220, "identifier", _, _), text($v220, $v221), $v221 = "fn".
 .output violation

@@ -8,7 +8,8 @@
 .decl syntax_error(d: int)
 .input doc, node, child, field, text, name, line, syntax_error
 .kindset k0 = "attribute" | "call" | "identifier"
-.kindset k1 = "concatenated_string" | "string"
+.kindset k1 = "comparison_operator"
+.kindset k2 = "concatenated_string" | "string"
 .decl in_scope(d: int)
 .decl m10(n: node)
 .decl m100(n: node)
@@ -96,7 +97,7 @@ m50($n) :- node(_, $n, "identifier", _, _), text($n, $v40), $v40 = "backend_type
 m50($n) :- node(_, $n, "attribute", _, _), m44($n).
 m50($n) :- node(_, $n, "call", _, _), field($n, "function", $v45), m49($v45).
 m51($n) :- m38($n).
-m51($n) :- inside($v39, $n, k0), m50($v39).
+m51($n) :- inside($v39, $n, k1), m50($v39).
 m54($n) :- node(_, $n, "string", _, _).
 m54($n) :- node(_, $n, "concatenated_string", _, _).
 m59($n) :- node($v57, $n, _, _, _), doc($v57, $v58, _), $v58 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
