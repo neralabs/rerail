@@ -260,6 +260,35 @@ finished, so its large tasks joined `size` as tuning data for this one.
   focus-area5,posthoc,focus-pool` (add `oracle-area` as a fourth arm with `--diagnostic` for the headroom lines). Runs
   with errors count as failures for their arm and are reported.
 
+## Merge Assist precise ranking on large tasks: pre-registration
+
+Fixed before any agent runs on `--split heldout-large2`, and not changed after. Every large task in `size`,
+`confirm` and `heldout-large` (25) is tuning data for it.
+
+- **Question.** On large tasks, does ranking each area with the session's picks listed first (`focus-precise3`)
+  beat today's session focus, and still beat fixing after the fact?
+- **What changed since the last comparison.** The dates decision was amended through capture (a person's correction
+  drafted by the product into a decision that supersedes it, `--amend`): index v4. On the 25 tuning tasks with v4
+  (50 runs per arm), delivered decisions were almost never broken (session focus 0/125, `focus-precise3` 0/153); what
+  is left is which decisions arrive. `focus-precise3` delivered 153/194 target decisions against 125/194 (12 against 8
+  per run), first pass clean 39/50 against 33/50 (+0.12, p 0.084, not significant on tuning data).
+- **Arms.** `focus-precise3` (treatment: at an area's first touch, a background ranking of that area's decisions
+  with the session ranker's 12 picks listed first, 3 picks), `posthoc`, `focus-pool`. Same fix rounds (at most 3).
+- **Fixed settings.** Index `/tmp/ma-ctx/index-v4.json` (210 distractors), seed 1, Codex 0.158 with its default
+  model, `--timeout-min 20`, the 16 `heldout-large2` tasks.
+- **Primary hypotheses** (one-sided, stratified by task, Holm across the four):
+  - L1: first pass clean is higher with `focus-precise3` than with `posthoc`.
+  - L2: total tokens to completion are lower with `focus-precise3` than with `posthoc`.
+  - L3: time to completion with `focus-precise3` is not worse than ×1.10 that of `posthoc`.
+  - L4: first pass clean is higher with `focus-precise3` than with `focus-pool`.
+- **Secondary** (reported, not used for stopping): `focus-precise3` against `focus-pool` on tokens, time and runs
+  needing a fix round; uncached tokens and churn against `posthoc`; delivered targets and delivered-but-broken per arm.
+- **Looks.** Look 1: 3 trials per task and arm. Looks 2 and 3 add 3 trials each. Stop for success when all four
+  primaries reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks). Stop after look 3 whatever the result, and
+  report every primary's effect and CI.
+- **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze <look reports...> --family large --arms
+  focus-precise3,posthoc,focus-pool`. Runs with errors count as failures for their arm and are reported.
+
 ## Steer strategies
 
 ```sh
