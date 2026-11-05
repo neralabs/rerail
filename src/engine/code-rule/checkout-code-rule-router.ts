@@ -9,8 +9,11 @@
  * `.git` entry, is judged with the checkout around it, so a `.git` never exempts files from that checkout's rules. A
  * declared submodule that is not set up runs nothing.
  */
+import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { physicalPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
+import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -123,6 +126,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   sourceRoot(path: string): string | undefined {
     return this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot;
+  }
+
+  /**
+   * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
+   * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
+   * session wrote a file, so every session walking a worktree is steered on what it finds there.
+   */
+  worktreeRoots(): string[] {
+    const starting = this.#options.startingCheckout;
+    return (worktreeRegistry(starting)?.worktrees ?? [])
+      .map(worktree => physicalPath(worktree))
+      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
   }
 
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {

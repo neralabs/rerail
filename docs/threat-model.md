@@ -770,7 +770,8 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   such thing: a checkout is recorded from one only when a recorded checkout of that clone shares its common directory and
   its `git worktree list` names it (`recordStartedWorktree`), and only in a started repository. Registering a worktree takes a write under
   `.git/worktrees/`, as `git worktree add` makes. The recorded worktree runs the repository's rules, its own
-  `.rerail/rules` in Log until approved.
+  `.rerail/rules` in Log until approved. Each session walks and reads the files of every such worktree of its repository,
+  so another session's work there can steer it.
 
 </details>
 

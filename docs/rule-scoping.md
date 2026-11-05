@@ -243,7 +243,7 @@ The owner is the nearest folder above the file holding a `.git` entry that Git c
 
 A worktree of a repository where Rerail runs is recorded the first time a session's path falls in it, wherever it sits and whichever folder the session started in, and judges its files itself. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
 
-Shell writes are found by walking the session's folder, which skips what Git ignores and ends at that folder. A shell write in a worktree outside it, or in one its checkout ignores (as `.claude/worktrees/` usually is), is not seen unless a session started there.
+Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this: a finding there reaches the agent at a later tool call. The walk can't tell who wrote a file, so every active session of the repository is steered on it and keeps its own record. What Git wrote is left out, as in the session's own folder.
 
 <details>
 <summary>Nested checkouts and symlinks</summary>

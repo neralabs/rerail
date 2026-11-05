@@ -504,6 +504,29 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(recordedCheckouts(databasePath)).toEqual([session]);
   });
 
+  it("names the repository's other worktrees that may run rules for the session's walk, and no other folder", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const stopped = join(root, "elsewhere", "stopped");
+    git(session, "worktree", "add", "--quiet", "-b", "stopped", stopped);
+    const removed = join(root, "elsewhere", "removed");
+    git(session, "worktree", "add", "--quiet", "-b", "removed", removed);
+    await rm(removed, { recursive: true });
+    await mkdir(join(session, "forged"));
+    await writeFile(join(session, "forged", ".git"), `gitdir: ${join(session, ".git")}\n`);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, stopped), false);
+    } finally {
+      database.$client.close();
+    }
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("roots");
+
+    expect(auditor.worktreeRoots()).toEqual([worktree]);
+  });
+
   it("gives no lane to a .git file outside the checkout that names the repository's Git folder", async () => {
     const { root, databasePath, session } = await repositoryWithWorktree(outside);
     const forged = join(root, "forged");
