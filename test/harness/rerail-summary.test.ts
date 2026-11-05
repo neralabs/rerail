@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderRerailSummary, type RerailSummaryInput } from "../../src/harness/rerail-summary.js";
-import type { SessionPresentation } from "../../src/presentation/session-presentation.js";
+
+type SessionPresentation = NonNullable<RerailSummaryInput["presentation"]>;
 
 const summary = (status: SessionPresentation["status"]): string =>
   renderRerailSummary({
