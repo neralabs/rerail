@@ -1,0 +1,361 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-data-layer-compat-aliases",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer data_layer_compat_aliases at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "data_layer/**/*.py"
+    ],
+    "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/tmp/**",
+      "**/__pycache__/**",
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          },
+          "sourceGate": {
+            "type": "boolean",
+            "default": true
+          }
+        },
+        "language": "python",
+        "utils": {
+          "alias-value": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "pattern": "$SOURCE"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "kind": "attribute"
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "pattern": "$SOURCE"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "attribute"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "final-alias": {
+            "any": [
+              {
+                "matches": "alias-value"
+              },
+              {
+                "all": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "has": {
+                      "matches": "final-alias",
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "import-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "import_statement"
+                      },
+                      {
+                        "kind": "import_from_statement"
+                      }
+                    ]
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "aliased_import"
+                            },
+                            {
+                              "has": {
+                                "all": [
+                                  {
+                                    "all": [
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "not": {
+                                          "regex": "^_"
+                                        }
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "pattern": "$ALIAS"
+                                  }
+                                ],
+                                "stopBy": "neighbor",
+                                "field": "alias"
+                              }
+                            },
+                            {
+                              "has": {
+                                "pattern": "$SOURCE",
+                                "stopBy": "neighbor",
+                                "field": "name"
+                              }
+                            },
+                            {
+                              "compare": {
+                                "left": "ALIAS",
+                                "right": "LEAF",
+                                "op": "ne"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$ALIAS_NODE"
+                        }
+                      ],
+                      "stopBy": "neighbor"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "\\ as\\ |=",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "\\ as\\ |=",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "transform": {
+            "LEAF": {
+              "replace": {
+                "source": "$SOURCE",
+                "replace": "^.*\\.",
+                "by": ""
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "DLA001",
+        "anchor": "witness.span",
+        "message": "DLA001: import-alias",
+        "each": "ALIAS_NODE"
+      }
+    },
+    {
+      "id": "assignment-alias",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "valid",
+          "rule": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "kind": "assignment"
+                  },
+                  {
+                    "not": {
+                      "inside": {
+                        "any": [
+                          {
+                            "kind": "function_definition"
+                          },
+                          {
+                            "kind": "class_definition"
+                          }
+                        ],
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "has": {
+                      "all": [
+                        {
+                          "all": [
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "not": {
+                                "regex": "^_"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "pattern": "$TARGET"
+                        }
+                      ],
+                      "stopBy": "neighbor",
+                      "field": "left"
+                    }
+                  },
+                  {
+                    "has": {
+                      "matches": "final-alias",
+                      "stopBy": "neighbor",
+                      "field": "right"
+                    }
+                  },
+                  {
+                    "compare": {
+                      "left": "TARGET",
+                      "right": "SOURCE",
+                      "op": "ne"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": {
+                          "$option": "sourceGate",
+                          "cases": {
+                            "true": "\\ as\\ |=",
+                            "false": "(?s).*"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "all": [
+                        {
+                          "kind": "module"
+                        },
+                        {
+                          "regex": {
+                            "$option": "sourceGate",
+                            "cases": {
+                              "true": "\\ as\\ |=",
+                              "false": "(?s).*"
+                            }
+                          }
+                        }
+                      ],
+                      "stopBy": "end"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "DLA002",
+        "anchor": "witness.span",
+        "message": "DLA002: assignment-alias"
+      }
+    }
+  ]
+}
