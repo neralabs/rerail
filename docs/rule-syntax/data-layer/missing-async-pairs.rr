@@ -1,0 +1,158 @@
+.policy "data-layer:missing-async-pairs" revision 1
+.description "Transaction-class methods that do I/O come in sync/async pairs with the same parameters."
+.language python
+.mode block
+.scope include "l2050_transaction/**", "l7200_versioned_transactions/**",            // api/… before the move
+               "impl/common/l7300_sql_versioned_transactions/**", "impl/common/l7248_sparse_versioned_transactions/**"
+.scope exclude "**/*test_*", "**/tests/**"
+.scope tests false
+.budget * { "total": 0 }    // .ratchet-baselines/lint_missing_async_pairs.json (signed): issues 0
+// Python linter: scripts/lint_missing_async_pairs.py. Methods defined directly in a class body (not inside a function),
+// public or `_…_async`, minus the exempt names and `…_lazy`; def foo and async def foo_async pair up per class.
+//   missing_pair        one side exists and does I/O (an I/O method call, or a conn/session/txn… parameter);
+//                       the other side does not exist
+//   signature_mismatch  both sides exist and their parameters, self aside, differ
+// Improves on the Python linter:
+//   a counterpart inherited from a base class counts, across files (the Python linter looks only in the same class body);
+//   classes are told apart by definition, not by name (same-named classes in one file no longer merge);
+//   the whole parameter list is compared, keyword-only parameters included (the Python linter compares positional ones).
+//
+// How to read this file
+//   1. named / side: each def that can take part in a pair, with its base name and side ("sync" or "async").
+//   2. own: the def sits directly in a class body. sees: the class has that side, own or inherited.
+//   3. io: the def does I/O (a connection-like parameter, or an I/O method call in its body).
+//   4. missing_pair: an own I/O def whose class sees no counterpart.
+//   5. pair / differ / signature_mismatch: both sides exist and their parameter lists differ.
+// Base names join the two sides: def foo and async def foo_async share base "foo".
+
+#include "python/names.rr"
+#include "python/calls.rr"
+
+// fdef (python/names) and cdef: def and class nodes, for nearest(): "the closest enclosing def" and "the closest
+// enclosing class".
+.decl cdef(kind: symbol)
+cdef("class_definition").
+// Parameter names that mean "this method talks to the database" (the Python linter's _IO_PARAM_NAMES).
+.decl io_param(v: symbol)
+io_param("conn"). io_param("connection"). io_param("db"). io_param("session").
+io_param("txn"). io_param("transaction"). io_param("session_id").
+// Method names whose call counts as I/O: the Python linter's _IO_METHOD_NAMES plus execute / execute_async.
+.decl io_method(v: symbol)
+io_method("read"). io_method("write"). io_method("read_version").
+io_method("write_version"). io_method("read_async"). io_method("write_async").
+io_method("read_version_async"). io_method("write_version_async"). io_method("insert").
+io_method("insert_async"). io_method("insert_many"). io_method("insert_many_async").
+io_method("update"). io_method("update_async"). io_method("update_many").
+io_method("update_many_async"). io_method("delete_by_id").
+io_method("delete_by_id_async"). io_method("delete_many").
+io_method("delete_many_async"). io_method("select_one"). io_method("select_one_async").
+io_method("select_many"). io_method("select_many_async"). io_method("upsert").
+io_method("upsert_async"). io_method("commit"). io_method("commit_async").
+io_method("execute"). io_method("execute_async"). io_method("first").
+io_method("first_async"). io_method("count"). io_method("count_async").
+// Names never paired: builders, accessors, context-manager and dunder methods, raw and internal helpers.
+// An async def is exempt when its base is (execute_raw_async because of execute_raw), as in the Python linter.
+.decl exempt(v: symbol)
+exempt("query"). exempt("query_unfiltered"). exempt("filter"). exempt("order_by").
+exempt("limit"). exempt("offset"). exempt("for_object"). exempt("for_objects").
+exempt("filter_revision"). exempt("between_revisions"). exempt("since").
+exempt("by_session"). exempt("filter_eq"). exempt("filter_ne"). exempt("filter_gt").
+exempt("filter_gte"). exempt("filter_lt"). exempt("filter_lte"). exempt("filter_in").
+exempt("where"). exempt("group_by"). exempt("aggregate"). exempt("window").
+exempt("having"). exempt("keyset_paginate"). exempt("replacing"). exempt("excluding").
+exempt("insert_into"). exempt("include_deleted"). exempt("distinct").
+exempt("select_tuple"). exempt("cursor_paginate"). exempt("cached_mapping").
+exempt("for_update"). exempt("sort_key"). exempt("final_sort_key").
+exempt("_sort_key"). exempt("add_param"). exempt("reorder_for_update").
+exempt("get_sparse_column"). exempt("__enter__"). exempt("__exit__").
+exempt("__aenter__"). exempt("__aexit__"). exempt("__init__"). exempt("__repr__").
+exempt("__str__"). exempt("session_id"). exempt("original_session_id").
+exempt("revision_id"). exempt("branch_id"). exempt("is_active").
+exempt("is_committed"). exempt("is_rolled_back"). exempt("is_cancelled").
+exempt("mode"). exempt("is_determined"). exempt("violation_count").
+exempt("base_read_transaction"). exempt("base_write_transaction"). exempt("cache").
+exempt("domain"). exempt("branch_anchor"). exempt("connection_id").
+exempt("base_revision_id"). exempt("quote_col"). exempt("get_cached").
+exempt("extract_fields_from_expression"). exempt("set_disable_thread_checks").
+exempt("get_thread_checks_disabled"). exempt("disable_thread_affinity_checks").
+exempt("record_sync_operation"). exempt("record_async_operation"). exempt("reset").
+exempt("set_session_id"). exempt("cancel"). exempt("authorize_internal_access").
+exempt("ensure_internal_raw_access"). exempt("wrapper").
+exempt("get_strict_mode_setting"). exempt("set_strict_mode_setting").
+exempt("deferred"). exempt("plan"). exempt("cross_branch").
+exempt("revision_history_query"). exempt("branch"). exempt("branches").
+exempt("revisions"). exempt("graph_query_builder"). exempt("graph").
+exempt("read_blob_range"). exempt("iter_blob_chunks"). exempt("table_exists").
+exempt("execute_fire_and_forget"). exempt("execute_later"). exempt("diff_bytes").
+exempt("execute_raw"). exempt("fetchone_raw"). exempt("fetchall_raw").
+exempt("versioned_read"). exempt("versioned_write"). exempt("search").
+exempt("get_session_id_sql"). exempt("build_versioning_where_conditions").
+exempt("execute_runtime"). exempt("speculative_publish_table_names_hint").
+exempt("execute_returning").
+.decl exempt_class(v: symbol)  // operates on an in-memory dict
+exempt_class("_CachedQuery").
+
+// side(f, b, k): def f is the k side ("sync" | "async") of base name b. An async def's base drops `_async`.
+// Every base starting with `_` is skipped: the Python linter's private-name filter keeps none of them in the end.
+// named(f, n, b0): def f, named n with base b0 (n without a trailing _async), is not exempt and not a …_lazy member.
+// The non-greedy `.*?` lets the optional (?:_async)? group take the suffix when it is there.
+.decl named(f: node, n: symbol, b0: symbol)
+named(f, n, b0) :- def_name(f, n), !exempt(n), !suffix("_lazy", n),
+    match("(?<b0>.*?)(?:_async)?", n), !exempt(b0).
+.decl side(f: node, b: symbol, k: symbol)
+// A plain def's base is its whole name, as in the Python linter's sync_methods[m.name]: a sync def foo_async has base
+// "foo_async" and is not the async side of foo.
+side(f, n, "sync")   :- named(f, n, _), !is_async(f), !prefix("_", n).
+// An async def's base drops _async: async def foo_async and async def foo both have base "foo".
+side(f, b, "async")  :- named(f, _, b), is_async(f), !prefix("_", b).
+
+// own(c, b, k, f): f sits directly in class c's body. sees(c, b, k, f): c has f as that side, own or inherited.
+.decl own(c: node, b: symbol, k: symbol, f: node)
+// nearest(f, c, cdef): c is f's closest class. !nearest(f, _, fdef): f is not inside any def, so a def nested in a
+// method is not a method (the Python linter records only when its function stack is empty). _CachedQuery is skipped.
+own(c, b, k, f) :- side(f, b, k), nearest(f, c, cdef), !nearest(f, _, fdef), def_name(c, x), !exempt_class(x).
+.decl sees(c: node, b: symbol, k: symbol, f: node)
+// Own methods.
+sees(c, b, k, f) :- own(c, b, k, f).
+// Inherited: mro_method lists every method c has through its bases (python/names), in any file. own(c, …) limits
+// this to classes that have at least one candidate method of their own, so only those classes are examined.
+sees(c, b, k, f) :- own(c, _, _, _), class_def(c, cq), mro_method(cq, _, f), side(f, b, k).
+
+// The Python linter's has_io: set from parameters at entry, and by any I/O call anywhere below, nested defs included.
+// io(f): f takes a connection-like parameter, or calls an I/O method anywhere in its body.
+.decl io(f: node)
+// A parameter named conn, session, txn, … (any parameter; the Python linter reads positional ones only).
+io(f) :- own(_, _, _, f), params(f, x, _), io_param(x).
+// A call `….name(…)` anywhere in f's body, with name an I/O method.
+io(f) :- own(_, _, _, f), within(c, f), callee(c, n), kind(n, "attribute"), field(n, "attribute", a),
+    text(a, x), io_method(x).
+
+// missing_pair: f is the class's own def on one side, does I/O, and the class has no def on the other side, neither
+// own nor inherited. `direction` names the side that is missing. A def without I/O needs no counterpart.
+.violation missing_pair(at: node, cls: symbol, direction: symbol) "{cls}.{at.name} missing {direction} counterpart"
+missing_pair(f, x, "async") :- own(c, b, "sync", f), io(f), !sees(c, b, "async", _), def_name(c, x).
+missing_pair(f, x, "sync")  :- own(c, b, "async", f), io(f), !sees(c, b, "sync", _), def_name(c, x).
+
+// Requiring one side to be own keeps a pair that is wholly inherited from being reported again in every subclass.
+// pair(c, s, a): c pairs sync s with async a, at least one of them its own.
+.decl pair(c: node, s: node, a: node)
+pair(c, s, a) :- own(c, b, "sync", s), sees(c, b, "async", a).
+pair(c, s, a) :- own(c, b, "async", a), sees(c, b, "sync", s).
+// differ(s, a): some parameter, self aside, is at a position in one def that the other does not have under the same
+// name. The two rules check both directions, so a longer list on either side is a difference.
+.decl differ(s: node, a: node)
+differ(s, a) :- pair(_, s, a), params(s, x, i), x != "self", !params(a, x, i).
+differ(s, a) :- pair(_, s, a), params(a, x, i), x != "self", !params(s, x, i).
+
+// signature_mismatch: reported at the sync def, naming the async def as `other`.
+.violation signature_mismatch(at: node, cls: symbol, other: node) "{cls}.{at.name}/{other.name}: Argument mismatch"
+    fix match_sync "Give {other.name} the parameters of {at.name}"
+    fix match_async "Give {at.name} the parameters of {other.name}"
+signature_mismatch(s, x, a) :- pair(c, s, a), differ(s, a), def_name(c, x).
+
+// Two alternative fixes, both suggestions: the rule cannot know which side is right, so the person or agent picks.
+// Each copies one def's whole parameter list, annotations and defaults included, onto the other. `$sp` in the
+// template is the source text of the parameters node `(self, txn: Txn, key: str)`. Callers and the edited body
+// may still use the old names; that is why these are not `safe`.
+match_sync(s, _, a) :- field(s, "parameters", sp), field(a, "parameters", ap) => replace(ap, `$sp`).
+match_async(s, _, a) :- field(s, "parameters", sp), field(a, "parameters", ap) => replace(sp, `$ap`).

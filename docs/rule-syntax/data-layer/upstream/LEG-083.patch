@@ -1,0 +1,282 @@
+--- a/scripts/lint_legacy_execution_surfaces.py	2026-11-05 12:27:08
++++ b/scripts/lint_legacy_execution_surfaces.py	2026-11-05 12:27:43
+@@ -403,6 +403,7 @@
+         self.functions: dict[str, FunctionExecutionFacts] = {}
+         self._class_stack: list[str] = []
+         self._function_stack: list[str] = []
++        self._path_scope_stack: list[_PathScope] = []
+         self._function_legacy_stack: list[bool] = []
+         self._plan_scope_name_stack: list[set[str]] = []
+         self._with_previous_plan_scope_stack: list[set[str] | None] = []
+@@ -440,14 +441,14 @@
+     def on_exit_ClassDef(self, _node: ast.ClassDef, _context: AstTraversalContext) -> None:
+         self._class_stack.pop()
+ 
+-    def on_FunctionDef(self, node: ast.FunctionDef, _context: AstTraversalContext) -> None:
+-        self._enter_function(node)
++    def on_FunctionDef(self, node: ast.FunctionDef, context: AstTraversalContext) -> None:
++        self._enter_function(node, context)
+ 
+     def on_exit_FunctionDef(self, _node: ast.FunctionDef, _context: AstTraversalContext) -> None:
+         self._exit_function()
+ 
+-    def on_AsyncFunctionDef(self, node: ast.AsyncFunctionDef, _context: AstTraversalContext) -> None:
+-        self._enter_function(node)
++    def on_AsyncFunctionDef(self, node: ast.AsyncFunctionDef, context: AstTraversalContext) -> None:
++        self._enter_function(node, context)
+ 
+     def on_exit_AsyncFunctionDef(self, _node: ast.AsyncFunctionDef, _context: AstTraversalContext) -> None:
+         self._exit_function()
+@@ -484,9 +485,10 @@
+         elif isinstance(func, ast.Attribute):
+             if self._function_stack:
+                 if func.attr in {"resolve", "resolve_async"}:
+-                    self.functions[self._function_stack[-1]].eager_resolve_lines.append(
+-                        (node.lineno, func.attr),
+-                    )
++                    if _is_lazy_terminal_call(node, self._path_scope_stack[-1] if self._path_scope_stack else None):
++                        self.functions[self._function_stack[-1]].eager_resolve_lines.append(
++                            (node.lineno, func.attr),
++                        )
+                 else:
+                     for candidate in _call_target_candidates(func, self._class_stack):
+                         self.functions[self._function_stack[-1]].call_candidates.append(
+@@ -509,7 +511,14 @@
+         if _is_graph_fallback_guard(node):
+             self._graph_fallback_guard_lines.append(node.lineno)
+ 
+-    def _enter_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
++    def _enter_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, context: AstTraversalContext) -> None:
++        if not self._path_scope_stack:
++            module = context.ancestors(node)[-1]
++            if isinstance(module, ast.Module):
++                self._path_scope_stack.append(_PathScope.build(module, None))
++        self._path_scope_stack.append(
++            _PathScope.build(node, self._path_scope_stack[-1] if self._path_scope_stack else None),
++        )
+         self.function_names.add(node.name)
+         self._record_function(node.name, node.lineno)
+         is_legacy_surface = _is_explicit_legacy_surface(node)
+@@ -543,6 +552,7 @@
+         ):
+             self.legacy_delegate_calls_in_boundary_wrappers.update(boundary_state.delegate_call_lines)
+         is_legacy_surface = self._function_legacy_stack.pop()
++        self._path_scope_stack.pop()
+         self._plan_scope_name_stack.pop()
+         self._function_stack.pop()
+         if is_legacy_surface:
+@@ -609,6 +619,132 @@
+     return []
+ 
+ 
++_PATH_CLASSES = frozenset({"Path", "PurePath", "PosixPath", "WindowsPath", "PurePosixPath", "PureWindowsPath"})
++_PATH_METHODS = frozenset(
++    {"absolute", "cwd", "expanduser", "home", "joinpath", "readlink", "relative_to", "resolve", "with_name", "with_stem", "with_suffix"},
++)
++_PATH_ATTRS = frozenset({"parent", "parents"})
++
++
++def _scope_nodes(body: list[ast.stmt]) -> list[ast.AST]:
++    """Nodes under `body` that belong to its scope: not inside a nested def, class or lambda."""
++    out: list[ast.AST] = []
++    stack: list[ast.AST] = list(reversed(body))
++    while stack:
++        node = stack.pop()
++        out.append(node)
++        stack.extend(
++            child
++            for child in reversed(list(ast.iter_child_nodes(node)))
++            if not isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef | ast.Lambda)
++        )
++    return out
++
++
++@dataclass
++class _PathScope:
++    """Names that hold a pathlib path in one scope: approximate and flow-insensitive.
++
++    A name is a path if some binding of it in the scope is a parameter or annotated assignment whose
++    annotation mentions a path class, or an assignment from a path expression. Enclosing function
++    scopes and the module are consulted as Python's name lookup would.
++    """
++
++    outer: _PathScope | None
++    classes: frozenset[str]
++    modules: frozenset[str]
++    names: set[str]
++
++    @classmethod
++    def build(
++        cls: type[_PathScope],
++        node: ast.Module | ast.FunctionDef | ast.AsyncFunctionDef,
++        outer: _PathScope | None,
++    ) -> _PathScope:
++        if outer is None:
++            classes: set[str] = set()
++            modules: set[str] = set()
++            for item in ast.walk(node):
++                if isinstance(item, ast.ImportFrom) and item.module == "pathlib":
++                    classes.update(alias.asname or alias.name for alias in item.names if alias.name in _PATH_CLASSES)
++                elif isinstance(item, ast.Import):
++                    modules.update(alias.asname or "pathlib" for alias in item.names if alias.name == "pathlib")
++            scope = cls(None, frozenset(classes), frozenset(modules), set())
++        else:
++            scope = cls(outer, outer.classes, outer.modules, set())
++        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
++            arguments = node.args
++            for arg in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs, arguments.vararg, arguments.kwarg]:
++                if arg is not None and arg.annotation is not None and scope._mentions_path(arg.annotation):
++                    scope.names.add(arg.arg)
++        bindings: list[tuple[str, ast.expr | None, ast.expr | None]] = []
++        for item in _scope_nodes(node.body):
++            if isinstance(item, ast.Assign):
++                bindings.extend((target.id, item.value, None) for target in item.targets if isinstance(target, ast.Name))
++            elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
++                bindings.append((item.target.id, item.value, item.annotation))
++            elif isinstance(item, ast.NamedExpr):
++                bindings.append((item.target.id, item.value, None))
++        changed = True
++        while changed:
++            changed = False
++            for name, value, annotation in bindings:
++                if name in scope.names:
++                    continue
++                if (annotation is not None and scope._mentions_path(annotation)) or (value is not None and scope.is_path(value)):
++                    scope.names.add(name)
++                    changed = True
++        return scope
++
++    def _is_class(self: _PathScope, node: ast.expr) -> bool:
++        if isinstance(node, ast.Name):
++            return node.id in self.classes
++        return isinstance(node, ast.Attribute) and node.attr in _PATH_CLASSES and isinstance(node.value, ast.Name) and node.value.id in self.modules
++
++    def _mentions_path(self: _PathScope, annotation: ast.expr) -> bool:
++        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
++            try:
++                annotation = ast.parse(annotation.value, mode="eval").body
++            except SyntaxError:
++                return False
++        return any(isinstance(item, ast.expr) and self._is_class(item) for item in ast.walk(annotation))
++
++    def _has(self: _PathScope, name: str) -> bool:
++        scope: _PathScope | None = self
++        while scope is not None:
++            if name in scope.names:
++                return True
++            scope = scope.outer
++        return False
++
++    def is_path(self: _PathScope, node: ast.expr) -> bool:
++        if isinstance(node, ast.Name):
++            return self._has(node.id)
++        if isinstance(node, ast.Call):
++            func = node.func
++            if self._is_class(func):
++                return True
++            return isinstance(func, ast.Attribute) and func.attr in _PATH_METHODS and (self.is_path(func.value) or self._is_class(func.value))
++        if isinstance(node, ast.Attribute):
++            return node.attr in _PATH_ATTRS and self.is_path(node.value)
++        if isinstance(node, ast.Subscript):
++            return isinstance(node.value, ast.Attribute) and node.value.attr == "parents" and self.is_path(node.value.value)
++        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
++            return self.is_path(node.left)
++        if isinstance(node, ast.IfExp):
++            return self.is_path(node.body) or self.is_path(node.orelse)
++        return False
++
++
++def _is_lazy_terminal_call(node: ast.Call, scope: _PathScope | None) -> bool:
++    """LazyResult/LazySeq `resolve(self)` and `resolve_async(self)` take no arguments; a pathlib path's
++    `resolve()` is not a lazy terminal."""
++    if node.args or node.keywords:
++        return False
++    func = node.func
++    return not (isinstance(func, ast.Attribute) and scope is not None and scope.is_path(func.value))
++
++
+ def _call_target_candidates(func: ast.Attribute, class_stack: list[str]) -> list[str]:
+     candidates = [func.attr]
+     if class_stack and isinstance(func.value, ast.Name) and func.value.id in {"self", "cls"}:
+@@ -1232,7 +1368,6 @@
+ 
+     if _is_internal_execution_path(policy_rel_path):
+         resolved_calls = _resolved_function_calls(visitor.functions)
+-        eager_memo: dict[str, tuple[int, str, str] | None] = {}
+         for symbol, facts in sorted(visitor.functions.items()):
+             if facts.is_legacy_surface or visitor._is_admin_allowlisted_eager_terminal(symbol):
+                 continue
+@@ -1240,7 +1375,7 @@
+                 visitor.functions,
+                 resolved_calls,
+                 symbol,
+-                eager_memo,
++                {},
+                 set(),
+             )
+             if eager_match is None:
+--- a/scripts/tests/test_lint_legacy_execution_surfaces.py	2026-11-05 12:27:08
++++ b/scripts/tests/test_lint_legacy_execution_surfaces.py	2026-11-05 12:28:05
+@@ -1831,3 +1831,62 @@
+     data = legacy_lint._get_allowlists_for_signing()
+     for entry in data["raw_txn_scope_allowlists"]:
+         assert ":" in entry
++
++
++def test_allows_pathlib_resolve_on_annotated_parameter() -> None:
++    source = """
++from pathlib import Path
++
++def load(path: Path) -> Path:
++    return path.resolve()
++
++def run(path: Path) -> Path:
++    return load(path)
++"""
++    violations = scan_file_content("l1100_exceptions/files.py", source)
++    assert not any(violation.code == "LEG-083" for violation in violations)
++
++
++def test_allows_pathlib_resolve_on_constructed_and_module_paths() -> None:
++    source = """
++from pathlib import Path
++
++ROOT = Path(__file__).with_name("data")
++
++def root() -> Path:
++    return ROOT.resolve()
++
++def child(name: str) -> str:
++    base = Path(name)
++    return str((base / "x").resolve())
++"""
++    violations = scan_file_content("impl/sqlite/files.py", source)
++    assert not any(violation.code == "LEG-083" for violation in violations)
++
++
++def test_allows_resolve_with_arguments() -> None:
++    source = """
++def lookup(catalog, ref):
++    return catalog.resolve(ref)
++"""
++    violations = scan_file_content("l1470_matching_contracts/registry.py", source)
++    assert not any(violation.code == "LEG-083" for violation in violations)
++
++
++def test_flags_every_function_on_a_call_cycle_whatever_the_name_order() -> None:
++    # a calls b, then eager; b calls only a. With one memo shared by all roots, searching a first
++    # skips a inside b (a is still open), records b as reaching nothing, and b goes unreported.
++    source = """
++def a(server_plan):
++    b(server_plan)
++    return eager(server_plan)
++
++def b(server_plan):
++    return a(server_plan)
++
++def eager(server_plan):
++    return server_plan.execute_lazy().resolve()
++"""
++    violations = scan_file_content("l9750_graphql/executor.py", source)
++    reported = {violation.message.split(" ", 1)[0] for violation in violations if violation.code == "LEG-083"}
++    assert reported == {"a", "b", "eager"}

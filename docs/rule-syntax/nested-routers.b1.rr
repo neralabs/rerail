@@ -1,0 +1,107 @@
+.policy "local:no-explicitly-nested-routers" revision 1
+.description "Avoid explicitly nesting imported routers through host JSX elements and fragments."
+.language typescript
+.mode log
+.scope include "src/**/*.tsx", "src/**/*.jsx"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
+// Same-meaning version: the JSON rule's meaning, unchanged.
+// Inputs: the tape relations (kind, field, text, str), plus
+// ref_site(ref, site) from the TypeScript scope table (the fact
+// behind resolves.binding.site).
+//
+// How to read this file
+//   1. tag() reads an element's tag name; imported() lists the
+//      `import { … } from "…"` specifiers.
+//   2. router_el() joins them: an element whose tag resolves to a
+//      router imported from react-router.
+//   3. stop() is the set of nodes where the climb upwards from a
+//      router ends.
+//   4. NESTED_ROUTER_JSX: a router whose nearest stop node above
+//      it is another router.
+// Each relation corresponds to one part of nested-routers.json:
+// router-name and router-element are its utils, stop is its stopBy
+// list, and the violation is its top-level rule.
+
+// The packages and export names that count as a router: the JSON's
+// string list and its name regex, as sets.
+.decl router_module(v: symbol)
+router_module("react-router"). router_module("react-router-dom").
+router_module("react-router/dom").
+router_module("react-router-dom/server").
+router_module("react-router/dom/server").
+router_module("react-router/server").
+.decl router_export(v: symbol)
+router_export("BrowserRouter"). router_export("HashRouter").
+router_export("MemoryRouter"). router_export("Router").
+router_export("RouterProvider"). router_export("HistoryRouter").
+router_export("unstable_HistoryRouter").
+router_export("StaticRouter").
+// Kind sets: grammar node kinds, as one-column relations, usable
+// with nearest() and as atoms.
+.decl import_stmt(kind: symbol)
+import_stmt("import_statement").
+// Nodes that end the climb. Entering a function or a JSX attribute
+// means the inner router is no longer rendered as a direct child
+// (it is in a callback or a prop), so the JSON stops there.
+.decl barrier(kind: symbol)
+barrier("arrow_function"). barrier("function_expression").
+barrier("function_declaration"). barrier("method_definition").
+barrier("jsx_attribute").
+
+// The tag name of a JSX element. Fragments (<>…</>) have none.
+// `<X>…</X>` keeps its name under the opening tag; `<X/>` has it
+// directly. These are the JSON's two router-element branches.
+.decl tag(e: node, t: node)
+tag(e, t) :- kind(e, "jsx_element"), field(e, "open_tag", o),
+    field(o, "name", t).
+tag(e, t) :- kind(e, "jsx_self_closing_element"),
+    field(e, "name", t).
+
+// `import { x as y } from "m"`: the specifier binds y to m's
+// export x. x is the imported name (the specifier's `name` field),
+// so an alias such as `BrowserRouter as R` still counts.
+// nearest(…, import_stmt) climbs from the specifier to its import
+// statement: the JSON's `inside … stopBy: end`.
+.decl imported(spec: node, m: symbol, x: symbol)
+imported(s, m, x) :- kind(s, "import_specifier"),
+    field(s, "name", n), text(n, x),
+    nearest(s, i, import_stmt), field(i, "source", src),
+    str(src, m).
+
+// router_el(e): e is a JSX element whose tag is an identifier
+// bound by an import of a router export. ref_site follows the tag
+// to the specifier that declares it, so a local variable named
+// BrowserRouter does not count. Member tags such as
+// <RR.BrowserRouter> are not identifiers, so this version misses
+// them, as the JSON does.
+.decl router_el(e: node)
+router_el(e) :- tag(e, t), kind(t, "identifier"), ref_site(t, s),
+    imported(s, m, x), router_module(m), router_export(x).
+
+// Climbing from a router, the first of these ends the climb. The
+// stop node itself is tested, as stopBy does.
+//   - A barrier ends it without a finding.
+//   - A router ends it with one.
+//   - A composite (component) element ends it, because what a
+//     component does with its children is unknown here.
+//   - Host elements (<div>) and fragments let the climb pass.
+.decl stop(n: node)
+stop(n) :- kind(n, k), barrier(k).
+stop(n) :- router_el(n).
+// The negated group reads "the tag is not an identifier starting
+// with a lowercase letter": component tags (<Layout>) and member
+// tags (<Foo.Bar>) stop the climb; <div> does not. Fragments have
+// no tag, so tag() fails and they pass.
+stop(e) :- kind(e, "jsx_element"), !router_el(e), tag(e, t),
+    // a composite element: not a lowercase host tag
+    count : { kind(t, "identifier"), text(t, s),
+              glob("[a-z]*", s) } = 0.
+
+// The finding: an inner router whose closest stop ancestor is a
+// router. nearest() returns only the first stop node above inner,
+// so a router inside <Layout> inside another router is not
+// reported (the accurate version handles that case).
+.violation NESTED_ROUTER_JSX(at: node)
+    "Remove this inner router and use the outer router for its children."
+NESTED_ROUTER_JSX(inner) :- router_el(inner),
+    nearest(inner, outer, stop), router_el(outer).
