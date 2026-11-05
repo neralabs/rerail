@@ -9,6 +9,7 @@ import {
   mkdirSync,
   openSync,
   readSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -51,16 +52,35 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
   return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
 }
 
+/** Each common directory's registered worktrees, as `git worktree list` last gave them, and when `worktrees/` then changed. */
+const worktreeRegistries = new Map<string, { readonly changedAt: number | undefined; readonly worktrees: readonly string[] }>();
+
+function changedAt(path: string): number | undefined {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * The checkouts Git registered in `checkout`'s common directory, as it reports them: the main checkout and each linked
- * worktree `git worktree add` made. Undefined when Git cannot answer in `checkout` (it is gone, say). A `.git` file
- * naming that directory is not among them, nor is a worktree moved without `git worktree move` or `repair`. Line output
- * because `-z` needs Git 2.36, which distributions Rerail runs on do not have yet.
+ * The checkouts Git registered in `commonDirectory`, asked of `checkout` (one of its checkouts): the main checkout and
+ * each linked worktree `git worktree add` made. Undefined when Git cannot answer in `checkout` (it is gone, say). A
+ * `.git` file naming that directory is not among them, nor is a worktree moved without `git worktree move` or `repair`.
+ * The answer is kept until `worktrees/` changes, as adding or removing a worktree does, so `.git` files a repository
+ * plants cost Git one call, not one per file per tool call. Line output because `-z` needs Git 2.36, which distributions
+ * Rerail runs on do not have yet.
  */
-export function registeredWorktrees(checkout: string): readonly string[] | undefined {
+export function registeredWorktrees(commonDirectory: string, checkout: string): readonly string[] | undefined {
+  // Read before Git runs: a worktree added meanwhile changes it, and Git is asked again next time.
+  const changed = changedAt(join(commonDirectory, "worktrees"));
+  const known = worktreeRegistries.get(commonDirectory);
+  if (known !== undefined && known.changedAt === changed) return known.worktrees;
   const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
   if (result.status !== 0) return undefined;
-  return result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+  const worktrees = result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+  worktreeRegistries.set(commonDirectory, { changedAt: changed, worktrees });
+  return worktrees;
 }
 
 /** The repository's own folder name: the main checkout's folder for a linked worktree, else the checkout's folder. */

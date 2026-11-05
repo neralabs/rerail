@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { parse } from "node:path";
+import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -145,7 +145,7 @@ export function recordStartedWorktree(db: RerailDatabase, root: string, location
   if (peer === undefined || !checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started) return false;
   // Every checkout of a clone reads one registry, so the first that answers decides; a recorded folder may be gone.
   for (const { path } of recorded) {
-    const worktrees = registeredWorktrees(path);
+    const worktrees = registeredWorktrees(dirname(location.identityPath), path);
     if (worktrees === undefined) continue;
     if (!worktrees.some(worktree => physicalPath(worktree) === root)) return false;
     recordCheckout(db, root);
