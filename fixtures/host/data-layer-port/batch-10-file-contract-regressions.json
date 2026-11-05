@@ -4678,6 +4678,49 @@
       ]
     },
     {
+      "test": "structural-hnsw-outside-cwd-clean",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {
+        "inventoryExcludedPaths": [
+          "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+          "source": "pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-hnsw-outside-cwd-positive",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {
+        "inventoryExcludedPaths": [
+          "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+          "source": "# hnsw\nscored_pairs_query()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py",
+          "line": 2,
+          "code": "HNSW001",
+          "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+        }
+      ]
+    },
+    {
       "test": "collector-graph_lazy_sql_plan-decorator-call",
       "check": "graph_lazy_sql_plan",
       "entry": "_violations_for_sources",

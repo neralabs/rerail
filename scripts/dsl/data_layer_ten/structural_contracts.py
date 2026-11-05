@@ -91,4 +91,18 @@ def record(source):
         cases.append(dict(test='structural-hnsw-' + label, check='hnsw_architecture',
                           entry='find_hnsw_architecture_findings', parameters={}, production=False,
                           files=[dict(path=path, source=text)], expected=expected))
+    # The original standalone inventory check is relative to cwd, not to an
+    # arbitrary temporary root used to transport an absolute input filename.
+    for label, text in [('clean', 'pass\n'), ('positive', '# hnsw\nscored_pairs_query()\n')]:
+        path = 'impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py'
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / path
+            target.parent.mkdir(parents=True)
+            target.write_bytes(text.encode())
+            expected = normalize(hnsw.find_hnsw_architecture_findings((target,)), root)
+        cases.append(dict(test='structural-hnsw-outside-cwd-' + label, check='hnsw_architecture',
+                          entry='find_hnsw_architecture_findings',
+                          parameters={'inventoryExcludedPaths': [path]}, production=False,
+                          files=[dict(path=path, source=text)], expected=expected))
     return cases
