@@ -3,15 +3,15 @@
 //!
 //! `nearest($n, $a, set)` holds when `$a` is `$n`'s nearest strict ancestor whose kind is in the set. Tree
 //! structure is not a relation (§12), so the strata do not climb the tree: the relation is made per chunk,
-//! file-locally, as a flat-lattice system the transducer's file-local FIX solves (list step 17,
-//! `transducer::packed::metal_lattice`, on the device work queue), and the strata read its rows as an input
-//! (`nearest_<set>(n, a)`, `facts::vtab::syntax::with_nearest`).
+//! file-locally, and the strata read its rows as an input (`nearest_<set>(n, a)`,
+//! `facts::vtab::syntax::with_nearest`).
 //!
-//! The system has a cell per (set, node). A node whose parent's kind is in the set is seeded with its parent;
-//! any other node with a parent copies its parent's cell; a root has no value. Each cell has one input, so the
-//! flat lattice never reaches TOP, and the least fixpoint is each node's nearest ancestor in the set. Every
-//! set of the program is one system and one launch. The CPU solves the same system (`solve_cpu`), the
-//! reference the device's must equal.
+//! It is a pure function of the tree, solved per (set, node) cell (decision 0038). On the device by pointer
+//! jumping (`transducer::packed::metal_nearest`): each cell's target starts at its parent and jumps to its
+//! target's target until final, ceil(log2(depth)) rounds in one command buffer. On the CPU by one pass in
+//! preorder, which is the reference. It was a flat-lattice system on the device work queue (list step 17), at
+//! about 2.5 us a cell visit, one tree level at a time; `system` and `solve_cpu` remain for a piece whose
+//! parents do not precede their children, and for comparison (`nearest_costs_by_solver`).
 
 use crate::content_store::{StoreError, StoreResult};
 
@@ -106,29 +106,6 @@ fn solve_cpu(system: &System) -> Vec<i64> {
     values
 }
 
-#[cfg(target_os = "macos")]
-fn solve_device(system: &System) -> StoreResult<Option<Vec<i64>>> {
-    use crate::code_rule_dsl::transducer::packed::metal_lattice;
-    let device = metal_lattice::System { seeds: &system.seeds, copies: &system.copies, bins: &[] };
-    match metal_lattice::solve(&device) {
-        Ok(solved) => {
-            crate::code_rule_dsl::prof::count("nearest.device_launches", solved.launches);
-            crate::code_rule_dsl::logic::profile::device("nearest ancestors (work queue, lattice FIX)", solved.launches as u64, solved.gpu, solved.wall, system.seeds.len() as u64);
-            Ok(Some(solved.values))
-        }
-        Err(crate::code_rule_dsl::transducer::packed::Error::UnsupportedBackend) => {
-            crate::code_rule_dsl::logic::profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
-            Ok(None)
-        }
-        Err(error) => Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn solve_device(_: &System) -> StoreResult<Option<Vec<i64>>> {
-    Ok(None)
-}
-
 /// Cells of one system at most: a chunk's (list step 17's queue is sized per launch). Larger batches are split at
 /// their documents' roots, a system and a launch each.
 const CELLS: usize = 1 << 18;
@@ -158,25 +135,59 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
     Ok(out)
 }
 
-/// `nearest` of one system.
+/// `nearest` of one piece (decision 0038). On the device: pointer jumping, a cell per (set, node) whose target
+/// starts at the parent and jumps to its target's target until final (`metal_nearest`). On the CPU: one pass in
+/// preorder, where a node reads its parent's answer once; the worklist over the lattice system where a parent does
+/// not precede its children.
 fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+    use crate::code_rule_dsl::logic::profile;
     let n = trees.parent.len();
-    let system = system(trees, sets)?;
-    crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells, {}", match binding {
-        Binding::Metal => "on the Metal work queue (one persistent dispatch per piece)",
-        Binding::Cpu => "on the CPU (binding cpu)",
-    }));
-    let values = match binding {
-        Binding::Metal => {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "nearest on the Metal work queue".into());
-            solve_device(&system)?.map_or_else(|| solve_cpu(&system), |values| values)
+    let member = |k: usize, node: u32| sets[k].contains(&trees.kind[node as usize]);
+    crate::code_rule_dsl::prof::count("nearest.cells", n * sets.len());
+    #[cfg(target_os = "macos")]
+    if binding == Binding::Metal {
+        let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
+        profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping (rounds in one command buffer)"));
+        let mut target = Vec::with_capacity(n * sets.len());
+        let mut done = Vec::with_capacity(n * sets.len());
+        for k in 0..sets.len() {
+            for &p in trees.parent {
+                target.push(p);
+                done.push(u8::from(p == NONE || member(k, p)));
+            }
         }
-        Binding::Cpu => {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "nearest on the CPU".into());
-            solve_cpu(&system)
+        use crate::code_rule_dsl::transducer::packed::{Error, metal_nearest};
+        match metal_nearest::solve(n, &target, &done) {
+            Ok(solved) => {
+                profile::device("nearest ancestors (pointer jumping)", solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
+                crate::code_rule_dsl::prof::count("nearest.device_rounds", solved.rounds as usize);
+                return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
+            }
+            Err(Error::UnsupportedBackend) => {
+                profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
+            }
+            Err(error) => return Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
         }
-    };
-    crate::code_rule_dsl::prof::count("nearest.cells", values.len());
+    }
+    let _ = binding;
+    let _span = profile::span(|| "nearest on the CPU".into());
+    if trees.parent.iter().enumerate().all(|(v, &p)| p == NONE || (p as usize) < v) {
+        profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on the CPU, one pass in preorder"));
+        return Ok((0..sets.len())
+            .map(|k| {
+                let mut found = vec![NONE; n];
+                for v in 0..n {
+                    let p = trees.parent[v];
+                    if p != NONE {
+                        found[v] = if member(k, p) { p } else { found[p as usize] };
+                    }
+                }
+                found
+            })
+            .collect());
+    }
+    profile::decision("nearest ancestors", || "a piece whose parents do not precede their children: the CPU worklist".into());
+    let values = solve_cpu(&system(trees, sets)?);
     values
         .chunks(n)
         .map(|set| {

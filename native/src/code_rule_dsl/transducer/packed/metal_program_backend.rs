@@ -45,6 +45,8 @@ pub(in crate::code_rule_dsl) mod set_steps;
 pub(in crate::code_rule_dsl) mod work_queue;
 #[path = "metal_lattice.rs"]
 pub(in crate::code_rule_dsl) mod lattice;
+#[path = "metal_nearest.rs"]
+pub(in crate::code_rule_dsl) mod nearest;
 
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;

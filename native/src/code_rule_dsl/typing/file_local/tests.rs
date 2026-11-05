@@ -136,6 +136,22 @@ fn nearest_costs(cap: usize) {
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(target_os = "macos")]
     for round in 0..3 {
+        use crate::code_rule_dsl::transducer::packed::metal_nearest;
+        let target: Vec<u32> = parent.clone();
+        let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
+        let t = std::time::Instant::now();
+        let solved = metal_nearest::solve(n, &target, &done).unwrap();
+        println!(
+            "JUMP round {round}: host {:.2} ms, GPU {:.3} ms, wait {:.3} ms, {} rounds",
+            t.elapsed().as_secs_f64() * 1e3,
+            solved.gpu * 1e3,
+            solved.wall * 1e3,
+            solved.rounds
+        );
+        assert_eq!(solved.targets, one);
+    }
+    #[cfg(target_os = "macos")]
+    for round in 0..3 {
         use crate::code_rule_dsl::transducer::packed::metal_lattice;
         let device = metal_lattice::System { seeds: &sys.seeds, copies: &sys.copies, bins: &[] };
         let t = std::time::Instant::now();

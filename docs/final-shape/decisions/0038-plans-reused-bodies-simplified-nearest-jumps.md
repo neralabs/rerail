@@ -1,6 +1,6 @@
 # 0038: Rule bodies are simplified, plans are reused across chunks, and nearest ancestors are found by pointer jumping
 
-Status: accepted (2026-11-05, the user; list step 30)
+Status: accepted and built (2026-11-05, the user; list step 30)
 
 ## Intro
 
@@ -114,8 +114,8 @@ given, so a hand-written rule gets the same treatment.
 
 - Each node holds a target, starting at its parent. In each round, a node whose target is not in
   the set takes its target's target.
-- The rounds are dispatches in one command buffer. About 11 rounds cover depth 2,048, and the
-  host checks a done flag to add rounds for deeper trees.
+- The rounds are dispatches in one command buffer: 6 at a time, which covers depth 64. The host
+  checks the last round's flag and adds a batch for deeper trees.
 - One kernel serves all sets: cells are (set, node), as now.
 - The work queue stays for real lattice fixpoints (`lattice_fixpoint`).
 - The CPU's one preorder pass is the reference the device must equal (0.3 ms a chunk), and it is
@@ -137,3 +137,39 @@ Each step is checked against the replayed findings (`convert::tests`) and re-pro
 - **Pointer jumping on the CPU.** One preorder pass is already linear and touches each node once.
 - **Making the work queue faster.** Its per-item cost is the shared counters and fences. Nearest
   ancestors need neither, because the answer is a pure function of the tree.
+
+## Built (2026-11-05)
+
+async-sync-boundary on 1 in 8 files (1,127 files, 14 chunks). CPU is user + system; the load is
+given for each run. Findings are unchanged throughout: the replay gives 155 converted events, 153
+exact, and coverage stays at 315/650 clauses.
+
+| Step | CPU | Peak RSS | Load | What changed |
+|---|---|---|---|---|
+| Before | 74.9 s (44.7 s at load 72) | 643 MB | 120 | 61 s planning; 117 `blocked*` relations |
+| 1. Simplified bodies | 14.8 s | 168 MB | 19 | 0 `blocked*`; 175 relations merged; 60 implied atoms and 117 kind tests dropped |
+| 2. Plans reused | 6.7 s | 167 MB | 54–88 | 1,240 plans reused, 100 planned, 60 replanned; planning under 1 s |
+| 3. Pointer jumping (device) | 8.7 s | 193 MB | 155 | nearest ancestors: 13.4 ms GPU for the run (was 5,352 ms), 84 dispatches |
+
+`nearest_costs_by_solver` (one 172K-node piece):
+
+| Solver | Depth 39 | Depth 1191 |
+|---|---|---|
+| One pass in preorder (CPU, now the CPU binding) | 0.41 ms | 0.38 ms |
+| Pointer jumping, GPU time | 2.5–2.7 ms (6 rounds) | 3.4 ms (12 rounds) |
+| The work queue (before), GPU time | 45–71 ms | 300–483 ms |
+
+What changed from the plan as written:
+
+- The full search does not require connected steps, and does not clamp estimates. Both changed
+  T's golden plans (`t_programs_plan_and_run_like_t`): one plan's work went from 67 to 7,001, and
+  one climb became a descent. Plan reuse covers the empty-test hazard.
+- The plan cache is per thread and held for one corpus run (`KeepPlans`), so no plan crosses
+  runs, programs or tests.
+
+Left:
+
+- On the device run the host waited 287 ms in all for 13.4 ms of GPU work, about 20 ms per
+  piece at load 155. That is scheduling on a shared GPU, not the kernel. Batching every piece of a
+  chunk into one command buffer would pay it once a chunk.
+- Parsing (2.5 s) and measuring each chunk's statistics are now the largest costs.
