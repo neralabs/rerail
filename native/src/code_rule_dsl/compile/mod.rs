@@ -828,9 +828,9 @@ fn compile_query_as(
             .map_err(|error| invalid(error.to_string()))?;
             let calls = crate::code_rule_dsl::calls::CallsCollector::new(salt, seed);
             let mut bindable = BTreeSet::new();
-            // A query with no utilities of its own, no transform and one document compiles the
-            // shared utilities it reaches as every such query of its `languageOptions` does: once,
-            // in the document's table (`shared`).
+            // A query that reaches shared utilities and has no utilities of its own, no transform
+            // and no `calls` seed, in a language that embeds no program, compiles them as every
+            // such query of its `languageOptions` does: once, in the document's table (`shared`).
             let context = (local.is_empty()
                 && !utils.is_empty()
                 && transform.is_none()

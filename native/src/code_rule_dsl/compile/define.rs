@@ -435,6 +435,39 @@ mod tests {
     }
 
     #[test]
+    fn a_shared_utility_with_a_calls_term_reports_as_if_each_query_listed_it() {
+        let sleeps = json!({ "kind": "call", "calls": { "has": {
+            "stopBy": "end", "kind": "call", "has": { "field": "function", "regex": "^sleep$" }
+        } } });
+        let define = json!({ "id": "shared", "define": { "language": "python", "utils": { "sleeps": sleeps } } });
+        // Two queries the shared table would serve (the second finds it given up), and one that
+        // lists the utility itself.
+        let first = query(
+            "first",
+            "python",
+            json!({ "rule": { "matches": "sleeps" } }),
+        );
+        let second = query(
+            "second",
+            "python",
+            json!({ "rule": { "matches": "sleeps" } }),
+        );
+        let listed = query(
+            "listed",
+            "python",
+            json!({ "rule": { "matches": "own" }, "utils": { "own": sleeps } }),
+        );
+        let compiled = compile(json!([define, first, second, listed]))
+            .unwrap_or_else(|error| panic!("{}", error.reason));
+        let source = "def pause():\n    sleep(1)\n\ndef rest():\n    pass\n\npause()\nrest()\n";
+        let result = evaluate_file(&compiled, "python", "a.py", source);
+        // Each reports the one call that reaches `sleep`: `pause()`, not `rest()` or `sleep(1)`.
+        let mut ids = clause_ids(&result);
+        ids.sort();
+        assert_eq!(ids, ["first", "listed", "second"], "{result}");
+    }
+
+    #[test]
     fn a_shared_utility_is_invisible_to_another_language_and_reports_nothing() {
         let define = json!({ "id": "shared", "define": { "language": "typescript", "utils": { "u": { "kind": "identifier" } } } });
         assert_eq!(
