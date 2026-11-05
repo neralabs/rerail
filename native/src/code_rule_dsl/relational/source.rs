@@ -72,6 +72,31 @@ pub(super) fn bind(
     Ok(())
 }
 fn install_bound(db: &Connection, binding: SharedBinding) -> Result<()> {
+    let full_binding = binding.clone();
+    db.create_scalar_function(
+        c"source_text",
+        1,
+        FunctionFlags::SQLITE_UTF8
+            | FunctionFlags::SQLITE_DETERMINISTIC
+            | FunctionFlags::SQLITE_INNOCUOUS,
+        move |ctx| {
+            let binding = full_binding.read();
+            charge(&binding.work, 1)
+                .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
+            let path = ctx.get::<Option<String>>(0)?;
+            let source = path.as_ref().and_then(|path| binding.files.get(path));
+            if let Some(source) = source {
+                charge(&binding.work, source.len().div_ceil(256))
+                    .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
+            }
+            Ok(source.map(|source| Slice {
+                source: Arc::clone(source),
+                start: 0,
+                end: source.len(),
+            }))
+        },
+    )
+    .map_err(sql_error)?;
     db.create_scalar_function(
         c"source_text",
         3,

@@ -206,7 +206,7 @@ export interface CodeRuleDslRelational {
   code?: string;
   /** Output column containing the exact diagnostic message. */
   message?: string;
-  /** One-based diagnostic line within the result's proven input witness span. Requires syntax. */
+  /** One-based diagnostic line within the result's proven input witness span. */
   line?: string;
 }
 
@@ -587,7 +587,7 @@ export interface CodeRuleDslEvidenceQuery {
   evidence: {
     as: string;
     paths?: { include?: string[]; exclude?: string[] };
-    query: CodeRuleDslAstQuery;
+    query: CodeRuleDslAstQuery | CodeRuleDslRegexQuery;
     project: Record<string, string | { source: string; regex: string; group: number }>;
     where?: CodeRuleDslPredicate;
     /** Ordered, cycle-safe name closures over raw projected fields. */

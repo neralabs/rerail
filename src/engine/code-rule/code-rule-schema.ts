@@ -1251,7 +1251,7 @@ export const codeRuleEvidenceQuerySchema = z
           .object({ include: z.array(nonEmptyString).optional(), exclude: z.array(nonEmptyString).optional() })
           .strict()
           .optional(),
-        query: z.lazy(() => codeRuleQuerySchema).refine(query => "ast" in query, "An evidence query is an ast query."),
+        query: z.lazy(() => codeRuleQuerySchema).refine(query => "ast" in query || "regex" in query && query.regex.source === "file.content", "Evidence requires an AST or file.content regex query."),
         project: z
           .record(nonEmptyString, z.union([
             z.string().regex(PROJECTION_SOURCE, "expected capture.<NAME> or file.path|directory|name|stem|module|package"),

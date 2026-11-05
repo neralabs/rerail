@@ -1211,6 +1211,7 @@ impl<'a> Session<'a> {
         let mut findings = Vec::new();
         let mut identities = BTreeSet::new();
         let mut syntax_ignores = HashMap::new();
+        let mut text_lines = HashMap::new();
         while let Some(row) = query.next().map_err(sql_error)? {
             if findings.len() >= code_rule.capabilities.limits.max_witnesses {
                 return Err(invalid("relational witness budget exceeded"));
@@ -1280,6 +1281,18 @@ impl<'a> Session<'a> {
                     .ok_or_else(|| invalid("relational diagnostic line must be a positive integer"))?;
                 syntax_files.iter().find(|(p, _)| p == path)
                     .and_then(|(_, facts)| facts.diagnostic_line(span, line))
+                    .or_else(|| {
+                        if line < span.start_line || line > span.end_line { return None; }
+                        let file = self.visible.files.iter().find(|file| file.path == path)?;
+                        let lines = text_lines.entry(path.to_owned()).or_insert_with(|| {
+                            crate::code_rule_dsl::lines::LineTable::new(&file.source,
+                                crate::code_rule_dsl::language::dialect_by_label(&file.language)
+                                    .map(crate::code_rule_dsl::lines::Terminators::of)
+                                    .unwrap_or(crate::code_rule_dsl::lines::Terminators::Eslint))
+                        });
+                        let start = lines.start(line).max(span.start_byte);
+                        (start <= span.end_byte).then(|| lines.span(start,start))
+                    })
                     .ok_or_else(|| invalid("relational diagnostic line must lie within its input witness span"))?
             } else { span };
             let mut output_clause = (*clause).clone();

@@ -59,17 +59,43 @@ pub(crate) fn producer_violation(
         Side::Evidence => violation.ignored_by = None,
         Side::Counted => violation.ignore_marks = true,
     }
-    let Query::Ast { matchers, .. } = &relation.ast.query else {
-        unreachable!("evidence relations always use ast queries");
-    };
-    violation.node_regexes = matchers
+    if let Query::Ast { matchers, .. } = &relation.ast.query {
+      violation.node_regexes = matchers
         .iter()
         .filter_map(|grammar| {
             let regexes = violations::witness_regexes(&grammar.matcher, &grammar.utils);
             (!regexes.is_empty()).then_some((grammar.language, regexes))
         })
         .collect();
+    }
     violation
+}
+
+/// Typed projections for text matches retain shared source slices, as AST evidence does.
+pub(super) fn project_text(project: &[Projection], file: &FileInput, witness: &Witness) -> violations::projection::Row {
+    use std::{borrow::Cow, sync::Arc};
+    use violations::projection::{self, Input};
+    let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
+    let values = project.iter().map(|column| {
+        let capture = |name: &str| witness.captures.get(name).and_then(|spans| Some((spans.first()?, spans.last()?)));
+        let value = match &column.source {
+            ProjectionSource::Path => Input::Text(Cow::Borrowed(&file.path)),
+            ProjectionSource::Directory => Input::Text(Cow::Borrowed(directory)),
+            ProjectionSource::Name => Input::Text(Cow::Borrowed(name)),
+            ProjectionSource::Stem => Input::Text(Cow::Borrowed(name.split_once('.').map_or(name, |(stem,_)| stem))),
+            ProjectionSource::Module => file.module.as_deref().map_or(Input::Null, |m| Input::Text(Cow::Owned(m.text()))),
+            ProjectionSource::Package => file.module.as_deref().map_or(Input::Null, |m| Input::Text(Cow::Owned(m.package_text()))),
+            ProjectionSource::Capture(name) | ProjectionSource::CaptureText(name) => capture(name).map_or(Input::Null, |(first,last)| Input::Source(&file.source,first.start_byte..last.end_byte)),
+            ProjectionSource::CaptureStart(name) => capture(name).map_or(Input::Null, |(first,_)| Input::Integer(first.start_byte as i64)),
+            ProjectionSource::CaptureEnd(name) => capture(name).map_or(Input::Null, |(_,last)| Input::Integer(last.end_byte as i64)),
+            ProjectionSource::CaptureLine(name) => capture(name).map_or(Input::Null, |(first,_)| Input::Integer(first.start_line as i64)),
+            ProjectionSource::CaptureKind(_) => Input::Null,
+        };
+        if let Some((regex,group)) = &column.extract {
+            value.text().and_then(|text| regex.captures(text)).and_then(|found| found.get(*group).map(|m|m.range())).map_or(Input::Null,|range|value.slice(range))
+        } else { value }
+    });
+    projection::append((project.as_ptr() as usize,Arc::as_ptr(&file.source) as usize,file.path.as_ptr() as usize),||project.iter().map(|p|p.field.clone()).collect(),values)
 }
 
 /// Project directly into typed columns; capture text retains a shared source slice.
