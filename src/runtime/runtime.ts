@@ -514,6 +514,34 @@ interface RuntimeSessionState {
   closed: boolean;
 }
 
+/** A session's ledger as read back when the session opens. */
+interface OpenedLedger {
+  readonly directory: string;
+  readonly path: string;
+  readonly entries: readonly LedgerEntry[];
+  readonly appendState: JsonlAppendState;
+  /** Whether this opening is the session's first observed Rerail participation. */
+  readonly completeTracking: boolean;
+}
+
+/** The conversation rules and turn a session opens with. */
+interface RestoredRegistry {
+  registry: ConversationRuleRegistry | undefined;
+  turn: number;
+  ruleSync?: LiveConversationRules | undefined;
+}
+
+/** What a session's initial state is built from. */
+interface SessionStart {
+  readonly session: AdapterSession;
+  readonly checkout: StartingCheckout;
+  readonly startedAt: number;
+  readonly ledger: OpenedLedger;
+  readonly restored: RestoredRegistry;
+  readonly watermarks: WatermarkStore;
+  readonly steerStrategy: SteerStrategy;
+}
+
 async function readLines(path: string): Promise<JsonlReadResult> {
   let content = await readLedgerFile(path, dirname(path));
   if (content === undefined) return { values: [], appendState: { prefix: "", truncateTo: null } };
@@ -1193,66 +1221,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
-    const directory = sessionDirectory(this.#storageRoot, session.sessionId);
-    await makeLedgerFolder(directory);
-    keepPrivate(directory);
-    if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
-    const ledgerPath = join(directory, "events.jsonl");
-    const { values, appendState } = await readLines(ledgerPath);
-    const ledger = validatedLedger(values);
-    // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
-    // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
-    const completeTracking = recordedSession === undefined && values.length === 0 && (this.#nativeSession?.turn ?? 0) === 0;
-    if (!ledger.some(entry => entry.type === "hud-tracking-start")) {
-      await appendJsonLine(ledgerPath, { type: "hud-tracking-start" }, appendState);
-    }
-    const processed = processedEventIds(ledger);
+    const ledger = await this.#openLedger(session, recordedSession === undefined);
     const checkout = this.#startingCheckout(session);
-    const { registry, turn, ruleSync } = await this.#restoreRegistry(session, ledger, checkout);
-    const items = ledger.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
-    const source = new MutableContentSource(items);
-    const watermarks = await JsonlWatermarkStore.open(join(directory, "watermarks.jsonl"));
+    const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
+    const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
     // Saved settings win over the runtime's defaults; `#scheduleAuditRequests` keeps the strategy current.
     const auditSettings = this.#controls.getWorkspaceSettings(checkout.cwd);
-    const secrets = secretCallsOf(ledger);
-    const opened: RuntimeSessionState = {
-      descriptor: session,
-      checkout,
-      startedAt,
-      processed,
-      source,
-      workspace: new SemanticWorkspace({ sources: [source], watermarks, embedder: this.#embedder }),
-      selections: new Map(),
-      projections: new Map(),
-      ledgerPath,
-      ledgerAppendState: appendState,
-      sampleSequence: items.length,
-      ...(registry === undefined ? {} : { registry }),
-      ruleSync,
-      turn,
-      eventDeliveries: new Map(),
-      pendingSteers: [],
-      steerStrategy: effectiveSteerStrategy(auditSettings ?? this.#auditSettings),
-      resultWindow: undefined,
-      codeRuleRevision: 0,
-      codeRuleSourceVersions: new Map(),
-      undeliveredSources: new Set(),
-      ownerClaim: undefined,
-      codeRuleWorkspace: Promise.resolve(undefined),
-      codeRuleReady: false,
-      codeRuleOpening: false,
-      auditRequestWork: undefined,
-      repositoryAudit: undefined,
-      // Restored whether or not the evaluator opens, so their results still close them in the ledger.
-      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
-      overdueEditChecks: undefined,
-      editCheckWaits: 0,
-      yieldWaits: 0,
-      missedFindings: [],
-      secretCalls: secrets.calls,
-      withheldResults: secrets.results,
-      closed: false,
-    };
+    const steerStrategy = effectiveSteerStrategy(auditSettings ?? this.#auditSettings);
+    const opened = this.#initialSessionState({ session, checkout, startedAt, ledger, restored, watermarks, steerStrategy });
     // Set when the evaluator failed to open: what it observed while opening belongs to no live evaluator.
     let retired = false;
     const steerDelivery: RuleSteerDelivery = {
@@ -1347,7 +1323,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#beforeSessionPublish?.(session);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
-      this.#sessionStore.startHudTracking(session, completeTracking);
+      this.#sessionStore.startHudTracking(session, ledger.completeTracking);
       opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
     } catch (error) {
       await this.#abandonSession(session.sessionId, opened, auditor);
@@ -1355,7 +1331,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     const settings = { ...this.#auditSettings, ...auditSettings };
     opened.codeRuleOpening = true;
-    opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger, settings).then(open => {
+    opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger.entries, settings).then(open => {
       if (open === undefined) {
         retired = true;
         opened.pendingSteers = [];
@@ -1387,7 +1363,71 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#evaluatorOpens.add(workspace);
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
-    return { processedEventIds: [...processed] };
+    return { processedEventIds: [...opened.processed] };
+  }
+
+  /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
+  async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
+    const directory = sessionDirectory(this.#storageRoot, session.sessionId);
+    await makeLedgerFolder(directory);
+    keepPrivate(directory);
+    if (this.#storageRootIsDefault) await ignoreInGit(this.#storageRoot);
+    const path = join(directory, "events.jsonl");
+    const { values, appendState } = await readLines(path);
+    const entries = validatedLedger(values);
+    // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
+    // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
+    const completeTracking = unrecorded && values.length === 0 && (this.#nativeSession?.turn ?? 0) === 0;
+    if (!entries.some(entry => entry.type === "hud-tracking-start")) {
+      await appendJsonLine(path, { type: "hud-tracking-start" }, appendState);
+    }
+    return { directory, path, entries, appendState, completeTracking };
+  }
+
+  /** A session's state as its ledger restores it, before anything of the session is live. */
+  #initialSessionState({ session, checkout, startedAt, ledger, restored, watermarks, steerStrategy }: SessionStart): RuntimeSessionState {
+    const { registry, turn, ruleSync } = restored;
+    const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
+    const source = new MutableContentSource(items);
+    const secrets = secretCallsOf(ledger.entries);
+    return {
+      descriptor: session,
+      checkout,
+      startedAt,
+      processed: processedEventIds(ledger.entries),
+      source,
+      workspace: new SemanticWorkspace({ sources: [source], watermarks, embedder: this.#embedder }),
+      selections: new Map(),
+      projections: new Map(),
+      ledgerPath: ledger.path,
+      ledgerAppendState: ledger.appendState,
+      sampleSequence: items.length,
+      ...(registry === undefined ? {} : { registry }),
+      ruleSync,
+      turn,
+      eventDeliveries: new Map(),
+      pendingSteers: [],
+      steerStrategy,
+      resultWindow: undefined,
+      codeRuleRevision: 0,
+      codeRuleSourceVersions: new Map(),
+      undeliveredSources: new Set(),
+      ownerClaim: undefined,
+      codeRuleWorkspace: Promise.resolve(undefined),
+      codeRuleReady: false,
+      codeRuleOpening: false,
+      auditRequestWork: undefined,
+      repositoryAudit: undefined,
+      // Restored whether or not the evaluator opens, so their results still close them in the ledger.
+      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
+      overdueEditChecks: undefined,
+      editCheckWaits: 0,
+      yieldWaits: 0,
+      missedFindings: [],
+      secretCalls: secrets.calls,
+      withheldResults: secrets.results,
+      closed: false,
+    };
   }
 
   /**
@@ -1906,11 +1946,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     session: AdapterSession,
     ledger: readonly LedgerEntry[],
     checkout: StartingCheckout,
-  ): Promise<{
-    registry: ConversationRuleRegistry | undefined;
-    turn: number;
-    ruleSync?: LiveConversationRules | undefined;
-  }> {
+  ): Promise<RestoredRegistry> {
     if (this.#nativeSession !== undefined) return this.#nativeSession;
     const registry = this.#modelPath === undefined ? undefined : new ConversationRuleRegistry({ modelPath: this.#modelPath });
     if (registry === undefined) {
