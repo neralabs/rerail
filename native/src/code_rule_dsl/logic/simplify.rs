@@ -4,6 +4,10 @@
 //!   position, the same term, or any term where it has `_`: `doc($d, $p, _)` beside `doc($d, $p, $m)`.
 //! - **A kind test on a set member drops.** `node(_, $a, "k", _, _)` goes where `$a` is the ancestor of a
 //!   `nearest($n, $a, set)` or `inside_<set>($n, $a)` of the same rule and the set is exactly `{k}`.
+//! - **A variable equal to a constant is the constant.** `text($n, $v), $v = "get"` is `text($n, "get")`: the
+//!   planner then reads the atom by its constant column (a lookup by string), where a separate `$v = "get"` binds
+//!   `$v` only after the atom is scanned some other way. A variable the head names stays (a head column filled from a
+//!   text column keeps its relation a string filter, decision 0037), as does one an aggregate, `nearest` or `ast` names.
 //! - **Identical relations merge.** Derived relations whose rules are equal once their heads and variables are
 //!   renamed in order are one relation; readers read the first. Repeated to a fixpoint, so relations over merged
 //!   ones merge too. Outputs, inputs, lattices, relations with facts and demanded relations are kept as they are.
@@ -16,6 +20,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) implied: usize,
     pub(in crate::code_rule_dsl) kind_tests: usize,
+    /// Variables equal to a constant, replaced by it.
+    pub(in crate::code_rule_dsl) constants: usize,
     /// Merged relations: (kept, merged into it).
     pub(in crate::code_rule_dsl) merged: Vec<(String, String)>,
 }
@@ -23,6 +29,7 @@ pub(in crate::code_rule_dsl) struct Report {
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
     for rule in &mut prog.rules {
+        report.constants += fold_constants(rule);
         report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
         report.implied += drop_implied(rule);
     }
@@ -33,12 +40,71 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         }
     }
     if super::profile::on() {
-        let (i, k, m) = (report.implied, report.kind_tests, report.merged.len());
+        let (i, k, c, m) = (report.implied, report.kind_tests, report.constants, report.merged.len());
         super::profile::decision("simplified bodies (decision 0038)", || {
-            format!("{i} implied atoms and {k} kind tests on set members dropped; {m} relations merged into an identical one")
+            format!("{i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one")
         });
     }
     report
+}
+
+/// Replaces each variable the body equates to a constant (`$v = "s"`, `$v = 3`) by the constant, in the head and
+/// every literal, and drops the equation. Returns how many variables went.
+fn fold_constants(rule: &mut Rule) -> usize {
+    let constant = |t: &Term| matches!(t, Term::Str(_) | Term::Int(_));
+    // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
+    // variables. A head column the rule fills from a text column is what keeps its relation a string filter, run per
+    // chunk (`typing::file_local::split`); `t($s) :- doc(_, $s, _), $s = "a.py"` stays as it is.
+    let mut named = rule.head.vars();
+    for l in &rule.body {
+        match l {
+            Literal::Agg { var, over, .. } => {
+                named.insert(var.clone());
+                named.extend(over.iter().cloned());
+            }
+            Literal::Nearest { n, a, .. } => {
+                named.insert(n.clone());
+                named.insert(a.clone());
+            }
+            Literal::Ast { document, node, captures, .. } => {
+                named.insert(document.clone());
+                named.insert(node.clone());
+                named.extend(captures.iter().map(|(_, v)| v.clone()));
+            }
+            _ => {}
+        }
+    }
+    let mut folded = 0;
+    loop {
+        let found = rule.body.iter().position(|l| match l {
+            Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } => constant(r) && !named.contains(v),
+            _ => false,
+        });
+        let Some(at) = found else { return folded };
+        let (var, value) = match rule.body.remove(at) {
+            Literal::Cmp { l: Term::Var(v), r, .. } if constant(&r) => (v, r),
+            Literal::Cmp { l, r: Term::Var(v), .. } => (v, l),
+            _ => unreachable!("an equation of a variable and a constant"),
+        };
+        fn put(t: &mut Term, var: &str, value: &Term) {
+            match t {
+                Term::Var(v) if v == var => *t = value.clone(),
+                Term::Call(_, args) => args.iter_mut().for_each(|a| put(a, var, value)),
+                _ => {}
+            }
+        }
+        for l in &mut rule.body {
+            match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => a.args.iter_mut().for_each(|t| put(t, &var, &value)),
+                Literal::Cmp { l, r, .. } => {
+                    put(l, &var, &value);
+                    put(r, &var, &value);
+                }
+                Literal::Nearest { .. } | Literal::Ast { .. } => {}
+            }
+        }
+        folded += 1;
+    }
 }
 
 /// Whether `b` implies `a`: the same relation, both positive, and at each position the same term or `_` in `a`.
@@ -246,5 +312,33 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].contains("!m1($n), doc") && !out[0].contains("m2") && !out[0].contains("doc($d, $p, _)"), "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
+    }
+
+    #[test]
+    fn a_variable_equal_to_a_constant_is_the_constant() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .decl text(n: node, s: sym)
+            .input node
+            .input text
+            .decl m(n: node)
+            .output m
+            m($n) :- node(_, $n, "identifier", _, _), text($n, $v), $v = "get".
+            m($n) :- node(_, $n, "identifier", _, _), text($n, $v), "set" = $v.
+            .decl t(s: sym)
+            .decl doc(d: int, path: sym, module: sym)
+            .input doc
+            t($s) :- doc(_, $s, _), $s = "a.py".
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.constants, 2);
+        let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        assert!(rules[0].contains(r#"text($n, "get")"#) && !rules[0].contains("$v"), "{}", rules[0]);
+        assert!(rules[1].contains(r#"text($n, "set")"#) && !rules[1].contains("$v"), "{}", rules[1]);
+        // A head variable stays: the head is filled from a text column.
+        assert!(rules[2].contains(r#"doc(_, $s, _), $s = "a.py""#), "{}", rules[2]);
     }
 }
