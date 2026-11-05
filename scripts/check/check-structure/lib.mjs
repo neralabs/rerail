@@ -252,60 +252,103 @@ export function resolveImport(repo, fromFile, specifier) {
   return candidates.find((path) => repo.has(path)) ?? resolved;
 }
 
+const COMMAND_ENDS = new Set(["\n", ";", "&", "|"]);
+const REDIRECTS = new Set([">", "<"]);
+
+/** A character outside any quote: what it does to the tokens and commands so far, and the index of the last character it takes. */
+function scanShellChar(script, i, parser) {
+  const char = script[i];
+  if (isLineContinuation(script, i)) return i + 1;
+  if (char === "#" && !parser.inToken) return commentEnd(script, i);
+  if (COMMAND_ENDS.has(char)) {
+    parser.endCommand();
+    return commandEnd(script, i);
+  }
+  if (REDIRECTS.has(char)) {
+    parser.endToken();
+    return redirectEnd(script, i);
+  }
+  parser.wordChar(char);
+  return i;
+}
+
+const isLineContinuation = (script, i) => script[i] === "\\" && script[i + 1] === "\n";
+
+/** The last character of the separator at `i`: `&&` and `||` are one. */
+function commandEnd(script, i) {
+  const char = script[i];
+  return (char === "&" || char === "|") && script[i + 1] === char ? i + 1 : i;
+}
+
+/** The last character of the comment that starts at `i`: the newline after it ends the command. */
+function commentEnd(script, i) {
+  let end = i;
+  while (end + 1 < script.length && script[end + 1] !== "\n") end += 1;
+  return end;
+}
+
+/** The last character of a redirect's target: the target is skipped. */
+function redirectEnd(script, i) {
+  let end = i;
+  while (script[end + 1] === ">" || script[end + 1] === "&" || script[end + 1] === " ") end += 1;
+  while (end + 1 < script.length && !/[\s;&|]/.test(script[end + 1])) end += 1;
+  return end;
+}
+
+/** A character inside a `quote`: returns the index of the last character it takes. */
+function scanQuotedChar(script, i, parser) {
+  const char = script[i];
+  if (char === parser.quote) parser.quote = null;
+  else if (char === "\\" && parser.quote === '"' && i + 1 < script.length) {
+    parser.token += script[i + 1];
+    return i + 1;
+  } else parser.token += char;
+  return i;
+}
+
+/** The tokens and commands of a shell script as they are read. */
+function shellParser() {
+  const parser = {
+    commands: [],
+    tokens: [],
+    token: "",
+    quote: null,
+    inToken: false,
+    endToken() {
+      if (parser.inToken) parser.tokens.push(parser.token);
+      parser.token = "";
+      parser.inToken = false;
+    },
+    endCommand() {
+      parser.endToken();
+      if (parser.tokens.length > 0) parser.commands.push(parser.tokens);
+      parser.tokens = [];
+    },
+    wordChar(char) {
+      if (char === '"' || char === "'") parser.quote = char;
+      else if (char === " " || char === "\t") {
+        parser.endToken();
+        return;
+      } else parser.token += char;
+      parser.inToken = true;
+    },
+  };
+  return parser;
+}
+
+/** Leading environment assignments and wrappers do not change what runs. */
+function withoutAssignments(command) {
+  let start = 0;
+  while (start < command.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(command[start])) start += 1;
+  return command.slice(start);
+}
+
 /** Shell command lines split into simple commands (on `&&`, `||`, `;`, `|`, `&`, newlines), tokenised. */
 export function shellCommands(script) {
-  const commands = [];
-  let tokens = [];
-  let token = "";
-  let quote = null;
-  let inToken = false;
-  const endToken = () => {
-    if (inToken) tokens.push(token);
-    token = "";
-    inToken = false;
-  };
-  const endCommand = () => {
-    endToken();
-    if (tokens.length > 0) commands.push(tokens);
-    tokens = [];
-  };
-  for (let i = 0; i < script.length; i += 1) {
-    const char = script[i];
-    if (quote) {
-      if (char === quote) quote = null;
-      else if (char === "\\" && quote === '"' && i + 1 < script.length) token += script[(i += 1)];
-      else token += char;
-      continue;
-    }
-    if (char === '"' || char === "'") {
-      quote = char;
-      inToken = true;
-    } else if (char === "\\" && script[i + 1] === "\n") {
-      i += 1;
-    } else if (char === "#" && !inToken) {
-      while (i + 1 < script.length && script[i + 1] !== "\n") i += 1;
-    } else if (char === "\n" || char === ";" || char === "&" || char === "|") {
-      if ((char === "&" || char === "|") && script[i + 1] === char) i += 1;
-      endCommand();
-    } else if (char === " " || char === "\t") {
-      endToken();
-    } else if (char === ">" || char === "<") {
-      endToken();
-      // Skip the redirect target.
-      while (script[i + 1] === ">" || script[i + 1] === "&" || script[i + 1] === " ") i += 1;
-      while (i + 1 < script.length && !/[\s;&|]/.test(script[i + 1])) i += 1;
-    } else {
-      token += char;
-      inToken = true;
-    }
-  }
-  endCommand();
-  return commands.map((command) => {
-    // Leading environment assignments and wrappers do not change what runs.
-    let start = 0;
-    while (start < command.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(command[start])) start += 1;
-    return command.slice(start);
-  });
+  const parser = shellParser();
+  for (let i = 0; i < script.length; i += 1) i = parser.quote ? scanQuotedChar(script, i, parser) : scanShellChar(script, i, parser);
+  parser.endCommand();
+  return parser.commands.map(withoutAssignments);
 }
 
 /**
