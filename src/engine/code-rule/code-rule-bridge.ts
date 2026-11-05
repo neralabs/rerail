@@ -1172,12 +1172,19 @@ export class CodeRuleBridge {
       if (text !== undefined && createHash("sha256").update(text).digest("hex") === digest) recovered.set(path, text);
       else unresolved.push(path);
     }
-    if (unresolved.length > 0) {
-      const revisions = unresolved.flatMap(path => [`:./${path}`, `HEAD:./${path}`]);
+    // Each file's blobs are in the Git of the checkout that owns it, which a worktree in the session's folder is not.
+    const byCheckout = new Map<string, string[]>();
+    for (const path of unresolved) {
+      const checkout = this.#auditor.sourceRoot?.(path) ?? root;
+      byCheckout.set(checkout, [...(byCheckout.get(checkout) ?? []), path]);
+    }
+    for (const [checkout, paths] of byCheckout) {
+      const named = paths.map(path => ({ path, inCheckout: sessionPath(checkout, resolve(root, path)) }));
+      const revisions = named.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
       // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-      const blobs = await readGitBlobs(root, revisions, { maxBlobBytes: MAX_SOURCE_BYTES });
-      for (const path of unresolved) {
-        const blob = [blobs.get(`:./${path}`), blobs.get(`HEAD:./${path}`)]
+      const blobs = await readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES });
+      for (const { path, inCheckout } of named) {
+        const blob = [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)]
           .find(candidate => candidate !== undefined && createHash("sha256").update(candidate).digest("hex") === uncaptured.get(path));
         if (blob !== undefined) recovered.set(path, blob.toString("utf8"));
       }

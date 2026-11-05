@@ -914,4 +914,17 @@ describe("CodeRuleBridge and Git's own writes", () => {
     await shell(bridge, () => git(root, "worktree", "add", "--quiet", "wt", "other"));
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
+
+  it("reports only its own line for a shell edit in a worktree inside the session's folder, from that worktree's blob", async () => {
+    const root = await twoBranches();
+    const worktree = join(root, "wt");
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      sourceRoot: path => resolve(root, path).startsWith(`${worktree}${sep}`) ? worktree : root,
+    });
+    await shell(bridge, () => git(root, "worktree", "add", "--quiet", "wt", "other"));
+    await shell(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "wt/src/a.py", language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
+    ]);
+  });
 });
