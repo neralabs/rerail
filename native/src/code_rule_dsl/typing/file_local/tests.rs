@@ -149,7 +149,7 @@ fn nearest_costs(cap: usize) {
             let solved = metal_nearest::solve_with(n, &target, &done, how).unwrap();
             let p: Vec<String> = solved.phases.iter().map(|s| format!("{:.3}", s * 1e3)).collect();
             println!(
-                "JUMP {how:?} round {round}: host {:.2} ms, GPU {:.3} ms, {} rounds; phases ms [made, queue, encode, submit, schedule, GPU, wake] = [{}]; {} KB made",
+                "JUMP {how:?} round {round}: host {:.2} ms, GPU {:.3} ms, {} steps at most; phases ms [made, queue, encode, submit, schedule, GPU, wake] = [{}]; {} KB made",
                 t.elapsed().as_secs_f64() * 1e3,
                 solved.gpu * 1e3,
                 solved.rounds,

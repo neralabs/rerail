@@ -1,28 +1,28 @@
-//! Nearest ancestors in a set on Metal by pointer jumping (decision 0038), not on the work queue:
-//! the answer is a pure function of the tree, so it needs no shared queue or fences. A cell is
-//! (set, node); its target starts at the node's parent and jumps to its target's target until it
-//! is final (`metal_nearest.metal`). All rounds are dispatches in one command buffer; where the
-//! last round's flag shows a cell still open (a tree deeper than the rounds reach), more rounds
-//! follow. The CPU's one pass in preorder (`typing::file_local`) is the reference.
+//! Nearest ancestors in a set on Metal, in one dispatch (decisions 0038, 0040): the answer is a
+//! pure function of the tree, so it needs no shared queue or fences. A cell is (set, node). Its
+//! state starts at its node's parent, final where the parent is the answer, and each thread
+//! takes its target's current state until its own is final (`metal_nearest.metal`). States other
+//! threads have already moved up let a thread skip ahead. One command buffer, one dispatch and
+//! one wait per call, whatever the depth. The CPU's one pass in preorder (`typing::file_local`)
+//! is the reference.
 use super::*;
 
 const SOURCE: &str = include_str!("metal_nearest.metal");
 /// No ancestor.
 pub(in crate::code_rule_dsl) const NONE: u32 = u32::MAX;
-/// Rounds encoded at a time: 2^6 = 64 levels, about what syntax trees reach; a deeper tree takes
-/// another batch (a commit and a wait, about 0.3 ms).
-const ROUNDS: u32 = 6;
+/// A state's bit for a final target (`metal_nearest.metal`).
+const FINAL: u32 = 1 << 31;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct Args {
     nodes: u32,
     cells: u32,
-    round: u32,
-    pad: u32,
+    pad: [u32; 2],
 }
 
-/// The solved targets per cell (set-major), the rounds run, the command buffers' GPU seconds, the
+/// The solved targets per cell (set-major), the most steps any cell took (`rounds`), the dispatches
+/// (`launches`, one), the command buffer's GPU seconds, the
 /// host's wall seconds from the first buffer made to the last completion, and where those went
 /// (`profile::PHASES`), with the buffer bytes made and reused.
 pub(in crate::code_rule_dsl) struct Solved {
@@ -59,11 +59,13 @@ impl Held {
         }
     }
 
-    fn host(&self) -> *mut u8 {
-        match self {
+    fn read(&self, count: usize) -> Vec<u32> {
+        let host = match self {
             Held::Fresh(b) => b.host(),
             Held::Block(b) => b.host(),
-        }
+        };
+        // SAFETY: the buffer holds at least `count` u32; the device is done with it.
+        unsafe { std::slice::from_raw_parts(host.cast::<u32>(), count).to_vec() }
     }
 }
 
@@ -91,7 +93,8 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     if cells == 0 {
         return Ok(Solved { targets: Vec::new(), rounds: 0, launches: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
     }
-    if cells >= u32::MAX as usize || nodes == 0 || cells % nodes != 0 {
+    // Node indices leave bit 31 free.
+    if cells >= u32::MAX as usize || nodes == 0 || nodes >= FINAL as usize || cells % nodes != 0 || done.len() != cells {
         return Err(Error::BackendCapacity);
     }
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
@@ -100,79 +103,59 @@ pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &
     let mut phases = [0.0f64; 7];
     let (mut made, mut reused) = (0u64, 0u64);
     let begun = host_seconds();
-    let at = host_seconds();
-    let (pairs, flags, queue) = match how {
+    let state: Vec<u32> = target.iter().zip(done).map(|(&t, &d)| if t == NONE { NONE } else if d != 0 { t | FINAL } else { t }).collect();
+    let (state, stats, queue) = match how {
         Buffers::Fresh => {
-            let made_now = |b: MappedBuffer| Held::Fresh(b);
-            let pairs = [
-                (made_now(MappedBuffer::from_slice(device, target)?), made_now(MappedBuffer::from_slice(device, done)?)),
-                (made_now(MappedBuffer::zeroed::<u32>(device, cells)?), made_now(MappedBuffer::zeroed::<u8>(device, cells)?)),
-            ];
-            let flags = Held::Fresh(MappedBuffer::zeroed::<u32>(device, ROUNDS as usize)?);
-            made += (cells * 10 + ROUNDS as usize * 4) as u64;
-            phases[0] += host_seconds() - at;
+            let state = Held::Fresh(MappedBuffer::from_slice(device, &state)?);
+            let stats = Held::Fresh(MappedBuffer::zeroed::<u32>(device, 1)?);
+            made += (cells * 4 + 4) as u64;
+            phases[0] += host_seconds() - begun;
             let at = host_seconds();
             let queue = device.new_command_queue();
             phases[1] += host_seconds() - at;
-            (pairs, flags, queue)
+            (state, stats, queue)
         }
         Buffers::Blocks => {
             use super::blocks;
-            let blocks = [blocks::upload(target)?, blocks::upload(done)?, blocks::lease(cells * 4)?, blocks::lease(cells)?, blocks::lease(ROUNDS as usize * 4)?];
+            let blocks = [blocks::upload(&state)?, blocks::zeroed::<u32>(1)?];
             for b in &blocks {
                 *if b.made { &mut made } else { &mut reused } += b.byte_length() as u64;
             }
-            let [t0, d0, t1, d1, f] = blocks;
-            phases[0] += host_seconds() - at;
+            let [state, stats] = blocks;
+            phases[0] += host_seconds() - begun;
             let at = host_seconds();
             let queue = blocks::queue(device)?;
             phases[1] += host_seconds() - at;
-            ([(Held::Block(t0), Held::Block(d0)), (Held::Block(t1), Held::Block(d1))], Held::Block(f), queue)
+            (Held::Block(state), Held::Block(stats), queue)
         }
     };
+    let at = host_seconds();
     let width = pipeline.thread_execution_width().max(1) * 4;
     let groups = (cells as u64).div_ceil(width);
-    let (mut gpu, mut round, mut launches) = (0.0, 0u32, 0usize);
-    loop {
-        let at = host_seconds();
-        // SAFETY: ROUNDS u32 flags; no command is using them.
-        unsafe { std::ptr::write_bytes(flags.host(), 0, ROUNDS as usize * 4) };
-        let command = queue.new_command_buffer();
-        command.set_label("Rerail nearest jump");
-        let encoder = command.new_compute_command_encoder();
-        encoder.set_compute_pipeline_state(&pipeline);
-        for r in 0..ROUNDS {
-            let (from, to) = (&pairs[(round % 2) as usize], &pairs[((round + 1) % 2) as usize]);
-            let args = Args { nodes: nodes as u32, cells: cells as u32, round: r, pad: 0 };
-            for (index, buffer) in [&from.0, &from.1, &to.0, &to.1, &flags].iter().enumerate() {
-                encoder.set_buffer(index as u64, Some(buffer.buffer()), 0);
-            }
-            encoder.set_bytes(5, std::mem::size_of::<Args>() as u64, std::ptr::from_ref(&args).cast());
-            encoder.checked_dispatch_thread_groups(command, MTLSize::new(groups, 1, 1), MTLSize::new(width, 1, 1));
-            round += 1;
-            launches += 1;
-        }
-        encoder.end_encoding();
-        let committed = host_seconds();
-        phases[2] += committed - at;
-        commit_checked(command)?;
-        wait_checked(command)?;
-        let woke = host_seconds();
-        let [kernel, start, end] = command_times(command);
-        phases[3] += (kernel - committed).max(0.0);
-        phases[4] += (start - kernel).max(0.0);
-        phases[5] += (end - start).max(0.0);
-        phases[6] += (woke - end).max(0.0);
-        gpu += end - start;
-        let open = unsafe { *flags.host().cast::<u32>().add(ROUNDS as usize - 1) };
-        if open == 0 {
-            break;
-        }
-        if round >= 64 {
-            return Err(Error::BackendFailure);
-        }
+    let command = queue.new_command_buffer();
+    command.set_label("Rerail nearest");
+    let encoder = command.new_compute_command_encoder();
+    encoder.set_compute_pipeline_state(&pipeline);
+    encoder.set_buffer(0, Some(state.buffer()), 0);
+    encoder.set_buffer(1, Some(stats.buffer()), 0);
+    let args = Args { nodes: nodes as u32, cells: cells as u32, pad: [0; 2] };
+    encoder.set_bytes(2, std::mem::size_of::<Args>() as u64, std::ptr::from_ref(&args).cast());
+    encoder.checked_dispatch_thread_groups(command, MTLSize::new(groups, 1, 1), MTLSize::new(width, 1, 1));
+    encoder.end_encoding();
+    let committed = host_seconds();
+    phases[2] += committed - at;
+    commit_checked(command)?;
+    wait_checked(command)?;
+    let woke = host_seconds();
+    let [kernel, start, end] = command_times(command);
+    phases[3] += (kernel - committed).max(0.0);
+    phases[4] += (start - kernel).max(0.0);
+    phases[5] += (end - start).max(0.0);
+    phases[6] += (woke - end).max(0.0);
+    let out = state.read(cells);
+    if out.iter().any(|&v| v & FINAL == 0) {
+        return Err(Error::BackendFailure);
     }
-    let out = &pairs[(round % 2) as usize].0;
-    let targets = unsafe { std::slice::from_raw_parts(out.host().cast::<u32>(), cells).to_vec() };
-    Ok(Solved { targets, rounds: round, launches, gpu, wall: host_seconds() - begun, phases, made, reused })
+    let targets = out.into_iter().map(|v| if v == NONE { NONE } else { v & !FINAL }).collect();
+    Ok(Solved { targets, rounds: stats.read(1)[0], launches: 1, gpu: end - start, wall: host_seconds() - begun, phases, made, reused })
 }

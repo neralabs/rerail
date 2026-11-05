@@ -38,3 +38,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0037 | Text tests are globs over typed text, run once per distinct string | accepted |
 | 0038 | Rule bodies simplified (nearest for inside-not-blocked, identical relations merged, implied atoms dropped); plans reused across chunks and re-priced; search bounded; estimates at least one row; nearest ancestors by pointer jumping on the device | accepted |
 | 0039 | Device scratch buffers come from pre-pinned blocks (one retained no-copy buffer each, pages written once, power-of-two sizes, 32 MiB kept) and one kept command queue; the profile splits device time into buffers made, queue, encode, submit, schedule, GPU and wake | accepted |
+| 0040 | Nearest ancestors in one dispatch per chunk: a cell's state (target, final bit) is read and advanced in place by its thread until final; one command buffer, one wait, any depth | accepted |

@@ -141,6 +141,7 @@ the pool built here.
 - **Submit and wake dominate under CPU load.** Under load the waits are mostly the host thread
   being rescheduled, twice per command buffer. The fix is fewer waits: encode every piece of a
   chunk into one command buffer and wait once per chunk. That pays submit, schedule and wake once
-  per chunk instead of once per piece.
+  per chunk instead of once per piece. Built as decision 0040: nearest now makes one dispatch, one command
+  buffer and one wait per chunk.
 - **The GPU wakes from idle once per chunk.** One command buffer per chunk also pays this once.
   Keeping the GPU busy across chunks would remove it.

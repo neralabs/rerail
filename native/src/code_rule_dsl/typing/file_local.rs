@@ -7,8 +7,8 @@
 //! `facts::vtab::syntax::with_nearest`).
 //!
 //! It is a pure function of the tree, solved per (set, node) cell (decision 0038). On the device by pointer
-//! jumping (`transducer::packed::metal_nearest`): each cell's target starts at its parent and jumps to its
-//! target's target until final, ceil(log2(depth)) rounds in one command buffer. On the CPU by one pass in
+//! jumping in one dispatch (`transducer::packed::metal_nearest`, decision 0040): each cell's target starts at
+//! its parent and takes its target's current state until final, one command buffer and one wait a chunk. On the CPU by one pass in
 //! preorder, which is the reference. It was a flat-lattice system on the device work queue (list step 17), at
 //! about 2.5 us a cell visit, one tree level at a time; `system` and `solve_cpu` remain for a piece whose
 //! parents do not precede their children, and for comparison (`nearest_costs_by_solver`).
@@ -147,7 +147,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
     #[cfg(target_os = "macos")]
     if binding == Binding::Metal {
         let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
-        profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping (rounds in one command buffer)"));
+        profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping, one dispatch and one wait"));
         let mut target = Vec::with_capacity(n * sets.len());
         let mut done = Vec::with_capacity(n * sets.len());
         for k in 0..sets.len() {
@@ -164,7 +164,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 let kernel = "nearest ancestors (pointer jumping)";
                 profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
                 profile::device_phases(kernel, solved.phases, solved.made, solved.reused);
-                crate::code_rule_dsl::prof::count("nearest.device_rounds", solved.rounds as usize);
+                crate::code_rule_dsl::prof::count("nearest.device_steps", solved.rounds as usize);
                 return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
             }
             Err(Error::UnsupportedBackend) => {
