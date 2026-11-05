@@ -207,10 +207,11 @@ the context-injection eval ([§6.3.1](#631-what-the-eval-showed)):
   session's *focus*. The session never waits for it; the answer usually arrives within the agent's first few tool calls
   (4–8 s).
 - **Area orientation.** The first time the agent reads or edits a file in an *area* (the file's folder cut to two
-  segments, such as `src/ui`), Rerail gives it, once, at most 3 focus decisions whose scope covers that file or that
-  area, in rank order, so a task spanning several areas gets each area's decisions. An area touched before the focus
-  arrived is served at the next tool call after it does. One line each. Directory listings and searches do not count
-  as touching.
+  segments, such as `src/ui`), Rerail ranks that area once more, in the background: the decisions whose scope covers
+  that file or a project file in its area, with the session focus's picks listed first, answered as at most 3 ids. It
+  gives the agent those decisions, once, so a task spanning several areas gets each area's own. An area touched
+  before its ranking arrived is served at the next tool call after it does. One line each. Directory listings and
+  searches do not count as touching.
 - **Fallback.** If the focus is not there when the agent is about to edit, Rerail waits up to 15 s, then ranks that
   area's decisions by the bundled embedding model's similarity to the prompt and gives the top 3. If the agent CLI is
   unavailable, the fallback serves the whole session.
@@ -328,6 +329,33 @@ focus.
 - Dates are broken even when delivered (10 of 64 at the ceiling). The tasks ask for formats such as "Tue 4 Nov,
   08:30", and the captured decision says to use `formatDate` without saying to add a format there. That is an
   amendment for the decision's author to make, not a delivery problem.
+
+#### 6.3.4 Ranking each area, session picks first
+
+After the dates decision was amended through capture (its author's correction "the format goes into formatDate, not
+into the screen", drafted by capture into a decision that supersedes the old one), delivered decisions were almost
+never broken; what was left was which decisions arrive. Ranking each area at its first touch, with the session's
+picks listed first and 3 per area, was tuned on the 25 large tasks above and pre-registered on 16 more unseen large
+tasks. The stopping rule fired for success at look 1 (3 trials per task and arm, 48 runs per arm, no errors):
+
+| Arm (48 runs each) | First pass clean | Needing a fix round | Target decisions delivered | Median time | Median tokens |
+| --- | --- | --- | --- | --- | --- |
+| Fix after | 5 | 43 | — | 112 s | 498k |
+| Session focus | 26 | 22 | 117/189 | 89 s | 246k |
+| Per-area ranking, session first | 36 | 12 | 145/189 | 94 s | 282k |
+
+| Primary (per-area ranking, session first) | Effect | 95% CI | Holm p |
+| --- | --- | --- | --- |
+| First pass clean, against fixing after | +0.65 | [+0.46, +0.81] | 0.0002 |
+| Total tokens, against fixing after | ×0.65 | [×0.51, ×0.81] | 0.0002 |
+| Time, not worse than ×1.10 fixing after | ×0.85 | [×0.68, ×1.03] | 0.0002 |
+| First pass clean, against session focus | +0.21 | [−0.02, +0.44] | 0.0149 |
+
+- Against session focus, tokens (×0.94) and time (×0.98) are about the same: it sends 11 decisions per run against
+  8, one more ranking call per area, and saves fix rounds (12 against 22 runs).
+- Of the decisions delivered, 3 of 145 were broken; the 14 violations left are mostly decisions no ranking picked.
+- The amendment did its job: with the old dates decision, delivered dates were broken 10 times in 64 even at the
+  ceiling; with the amendment, 3 in 24.
 
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
