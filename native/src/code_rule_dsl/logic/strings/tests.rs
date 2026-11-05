@@ -83,3 +83,17 @@ fn tests_on_text_relations_become_relations() {
     let rows = v.rows(&["_x".into(), "x_async".into(), "db".into(), "y".into()], &[1, 2, 3, 4]);
     assert_eq!(rows, [vec![1, 2], vec![2], vec![3]]);
 }
+
+#[test]
+fn regexes_and_their_rewrites_agree() {
+    assert!(test("rx", "_branch_cache_x", r"^_\w*cache\w*$"));
+    assert!(!test("rx", "branch_cache", r"^_\w*cache\w*$"));
+    assert!(test("irx", "SELECT x", r"^select\b"));
+    assert!(test("rx", "abca", r"(.).*\1"), "a backreference");
+    assert!(!test("rx", "x", "("), "a pattern that does not parse matches nothing");
+    assert!(test("iequals", "ConnectionId", "connectionid"));
+    assert!(test("isuffix", "RelationshipSpec", "spec"));
+    for (s, glob, rx) in [("impl/a/b.py", "impl/**/*.py", r"^impl/(?:.*/)?[^/]*\.py$"), ("fetch_async", "*_async", "_async$")] {
+        assert_eq!(test("glob", s, glob), test("rx", s, rx), "{s} {glob} {rx}");
+    }
+}

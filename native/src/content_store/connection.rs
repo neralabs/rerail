@@ -325,6 +325,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "temp_store", "MEMORY")?;
     super::postings::install(connection)?;
     super::vocabulary::install(connection)?;
+    crate::code_rule_dsl::text::install(connection)?;
     crate::code_rule_dsl::prefilter::tapes::install(connection)?;
     Ok(())
 }

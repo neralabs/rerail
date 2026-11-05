@@ -22,7 +22,7 @@
 //!   `file`, syntax and text gates, as W's `run_clause`), honouring linter comments when `h` is 1;
 //! - `around(c)`, `error(d, s, e)`: the clause reads around syntax errors, and `d`'s error regions
 //!   (`SyntaxErrors`); a witness meeting one is dropped;
-//! - `line(d, l, s, e)`: line `l` of `d` holds the bytes `s..e` (the last runs one past the end);
+//! - `line_span(d, l, s, e)` (not `line`, the syntax relation `line(n, l)`): line `l` of `d` holds the bytes `s..e` (the last runs one past the end);
 //! - `noqa(c, k)`, `parented(c)`, `stmt(d, s, e)`: the codes a `noqa` directive must name to
 //!   silence clause `c`, whether a directive at its enclosing statement's start does too, and `d`'s
 //!   statements that can enclose one (`PARENT_KINDS`);
@@ -76,7 +76,7 @@ const FINDINGS: &str = "
 .decl applies(c: int, d: int, h: int)
 .decl around(c: int)
 .decl error(d: int, s: int, e: int)
-.decl line(d: int, l: int, s: int, e: int)
+.decl line_span(d: int, l: int, s: int, e: int)
 .decl noqa(c: int, k: int)
 .decl parented(c: int)
 .decl stmt(d: int, s: int, e: int)
@@ -88,7 +88,7 @@ const FINDINGS: &str = "
 .decl after(d: int, l: int, p: int)
 .decl cover(d: int, i: int, s: int, e: int)
 .decl ceiling(r: int, m: int)
-.input forbidden, clause, span, shape, group, applies, around, error, line, noqa, parented, stmt, exempt, mapped, directive, nosec, bandit, after, cover, ceiling
+.input forbidden, clause, span, shape, group, applies, around, error, line_span, noqa, parented, stmt, exempt, mapped, directive, nosec, bandit, after, cover, ceiling
 .decl grouped(c: int, d: int, n: int)
 .decl kept(c: int, d: int, n: int)
 .decl anchored(c: int, d: int, n: int, b: int)
@@ -121,7 +121,7 @@ anchored($c, $d, $n, $s) :- kept($c, $d, $n), shape($c, _, _, 3, _, 0), span($d,
 broken($c, $d, $n) :- kept($c, $d, $n), around($c), span($d, $n, $w, $v), error($d, $s, $s), $w <= $s, $s <= $v.
 broken($c, $d, $n) :- kept($c, $d, $n), around($c), span($d, $n, $w, $w), error($d, $s, $e), $s < $e, $s <= $w, $w < $e.
 broken($c, $d, $n) :- kept($c, $d, $n), around($c), span($d, $n, $w, $v), $w < $v, error($d, $s, $e), $s < $e, $w < $e, $s < $v.
-lined($c, $d, $n, $b, $l) :- anchored($c, $d, $n, $b), line($d, $l, $s, $e), $s <= $b, $b < $e.
+lined($c, $d, $n, $b, $l) :- anchored($c, $d, $n, $b), line_span($d, $l, $s, $e), $s <= $b, $b < $e.
 honoured($c, $d, $n, $b) :- anchored($c, $d, $n, $b), applies($c, $d, 1), noqa($c, _).
 point($c, $d, $n, $b, $b) :- honoured($c, $d, $n, $b).
 outer($c, $d, $n, $b, $p) :- honoured($c, $d, $n, $b), parented($c), stmt($d, $p, $e), $p <= $b, $b < $e, stmt($d, $q, $f), $q <= $b, $b < $f, $p < $q.
@@ -129,8 +129,8 @@ point($c, $d, $n, $b, $p) :- honoured($c, $d, $n, $b), parented($c), stmt($d, $p
 remapped($c, $d, $n, $b, $o) :- point($c, $d, $n, $b, $o), mapped($d, $s, $e), $s <= $o, $o < $e.
 resolved($c, $d, $n, $b, $e) :- point($c, $d, $n, $b, $o), mapped($d, $s, $e), $s <= $o, $o < $e.
 resolved($c, $d, $n, $b, $o) :- point($c, $d, $n, $b, $o), !remapped($c, $d, $n, $b, $o).
-first($d, $n, $l) :- span($d, $n, $b, _), line($d, $l, $s, $e), $s <= $b, $b < $e.
-last($d, $n, $l) :- span($d, $n, $w, $v), $w < $v, line($d, $l, $s, $e), $s < $v, $v <= $e.
+first($d, $n, $l) :- span($d, $n, $b, _), line_span($d, $l, $s, $e), $s <= $b, $b < $e.
+last($d, $n, $l) :- span($d, $n, $w, $v), $w < $v, line_span($d, $l, $s, $e), $s < $v, $v <= $e.
 last($d, $n, $l) :- span($d, $n, $v, $v), first($d, $n, $l).
 guarded($c, $d, $n, $b) :- anchored($c, $d, $n, $b), applies($c, $d, 1), nosec($c, _).
 tested($c, $d, $n, $b, $l) :- guarded($c, $d, $n, $b), lined($c, $d, $n, $b, $l), bandit($d, $l, 0).
@@ -578,7 +578,7 @@ impl Layer {
             let starts = lines.starts();
             for (l, &s) in starts.iter().enumerate() {
                 let e = starts.get(l + 1).copied().unwrap_or(source.len() + 1);
-                insert("line", &[d, l as i64, s as i64, e as i64])?;
+                insert("line_span", &[d, l as i64, s as i64, e as i64])?;
             }
             if around {
                 for region in errors.regions() {

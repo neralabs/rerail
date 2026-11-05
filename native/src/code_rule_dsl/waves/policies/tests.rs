@@ -79,7 +79,7 @@ fn magic_sets_demand_each_clause_where_its_rules_read_it() {
     let mut wave = Program::default();
     declare_violation(&mut wave);
     let demand = demand_program(prog, &wave, 3).unwrap().unwrap();
-    let logic = Logic { rules: String::new(), demand: Some(demand) };
+    let logic = Logic { rules: String::new(), demand: Some(demand), bound: Vec::new() };
     let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch("CREATE TEMP TABLE wave_document(position INTEGER, d INTEGER); INSERT INTO temp.wave_document VALUES (0, 5), (1, 7)").unwrap();
@@ -103,7 +103,7 @@ fn py_families_narrow_demand_before_the_batch() {
     declare_py(&mut wave);
     assert_eq!(wave.decls["py_call"].iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["d", "call", "callee"]);
     let demand = demand_program(prog, &wave, 1).unwrap().unwrap();
-    let logic = Logic { rules: String::new(), demand: Some(demand) };
+    let logic = Logic { rules: String::new(), demand: Some(demand), bound: Vec::new() };
     let sql = logic.demand_statement(&store()).unwrap().expect("one statement");
     assert!(sql.contains("py_call"), "{sql}");
     let db = rusqlite::Connection::open_in_memory().unwrap();

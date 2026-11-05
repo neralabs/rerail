@@ -56,6 +56,7 @@ mod slice;
 mod soundness;
 mod suppress;
 mod tape;
+pub(crate) mod text;
 #[cfg(test)]
 mod test_support;
 pub mod tools;

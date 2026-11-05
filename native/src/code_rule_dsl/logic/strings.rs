@@ -17,25 +17,29 @@
 //! - **Words** are runs of ASCII letters, digits and `_`. `@word($s, "on delete")` holds when the words `on`, `delete`
 //!   appear one after the other in `$s`, whatever separates them.
 //!
+//! - **Regexes** (`@rx`, `@irx`, Rust `regex` syntax) are allowed and cost what their best rewrite costs: every test
+//!   is lowered by the text layer (`text`, decision 0042) to one canonical plan, so a regex that is a literal set or
+//!   a glob in disguise runs as one.
+//!
 //! **How they run.** A test is a relation over strings. The planner turns each test whose string comes from a text
 //! relation into an input relation (`as_relations`): the strings of the batch's vocabulary that pass it, each
-//! tested once (`Vocabulary`), by a `Matcher` that groups its patterns by the cheapest exact way to match them
-//! (a hash set, one multi-string automaton, a glob set, word sets). Rules join on symbols. A test that stays in a
-//! rule (its string is computed in the rule, as `@cat`'s) runs per row in SQL as `str_test(op, s, patterns)`, the
-//! patterns joined by `SET_SEP`.
+//! tested once (`Vocabulary`), all tests' plans together by the text layer's vocabulary engine (one multi-literal
+//! searcher per anchor, automata in small groups). Rules join on symbols. A test that stays in a rule (its string is
+//! computed in the rule, as `@cat`'s) runs per row in SQL as `str_test(op, s, patterns)`, the patterns joined by
+//! `SET_SEP`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use aho_corasick::AhoCorasick;
-use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use crate::code_rule_dsl::text::{Domain, Lowered, Source, Spelling, lower};
 use rusqlite::Connection;
 
 use super::front::{Atom, Literal, Program, Term};
 
-/// The tests, by name. `i…`: the same, ignoring case (by lowercasing both sides).
-pub(in crate::code_rule_dsl) const TESTS: [&str; 12] =
-    ["equals", "prefix", "suffix", "contains", "glob", "word", "iequals", "iprefix", "isuffix", "icontains", "iglob", "iword"];
+/// The tests, by name. `i…`: the same, ignoring case (the text layer's case folding). `rx`: a regex in Rust `regex`
+/// syntax (with backreferences beyond it, as `value.regex`).
+pub(in crate::code_rule_dsl) const TESTS: [&str; 14] =
+    ["equals", "prefix", "suffix", "contains", "glob", "word", "rx", "iequals", "iprefix", "isuffix", "icontains", "iglob", "iword", "irx"];
 
 pub(in crate::code_rule_dsl) fn is_test(f: &str) -> bool {
     TESTS.contains(&f)
@@ -55,178 +59,67 @@ pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
 pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 7] =
     [("text", &[1]), ("name", &[1]), ("str", &[1]), ("strprefix", &[1]), ("op", &[1]), ("doc", &[1, 2]), ("pkg", &[1])];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Anchor {
-    Prefix,
-    Suffix,
-    Contains,
-}
-
-/// One test over a set of patterns, compiled once: the patterns grouped by the cheapest exact way to match them.
+/// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
+/// exact set, an affix set, an automaton), equal patterns' plans shared by key.
 pub(in crate::code_rule_dsl) struct Matcher {
-    /// Ignoring case: the string is lowercased once, and the patterns were.
-    fold: bool,
-    exact: HashSet<String>,
-    /// Literal prefix, suffix and substring patterns: one automaton for all, each pattern's anchor.
-    literals: Option<(AhoCorasick, Vec<Anchor>)>,
-    /// Literal shortcuts of globs (`a*`, `*a`, `*a*`) hold only where the string has no `/` (a glob's `*` stays in
-    /// a segment), so globs keep every pattern here too.
-    globs: Option<GlobSet>,
-    glob_literals: bool,
-    /// Some glob is not a literal shortcut: the glob set decides what the shortcuts do not.
-    glob_rest: bool,
-    /// Word tests: one-word needles by hash, longer ones as sequences.
-    words: HashSet<String>,
-    phrases: Vec<Vec<String>>,
+    pub(in crate::code_rule_dsl) plans: Vec<Arc<Lowered>>,
 }
 
-fn has_meta(p: &str) -> bool {
-    p.contains(['*', '?', '[', ']', '{', '}', '\\'])
-}
-
-/// The words of `s`: runs of ASCII letters, digits and `_`.
+/// The words of a phrase: runs of ASCII letters, digits and `_`.
 fn words(s: &str) -> impl Iterator<Item = &str> {
     s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).filter(|w| !w.is_empty())
 }
 
+/// `@word`'s pattern as a regex: the words one after the other, whole, whatever separates them.
+fn word_regex(phrase: &str) -> Option<String> {
+    let ws: Vec<String> = words(phrase).map(regex_syntax::escape).collect();
+    (!ws.is_empty()).then(|| format!("(?:^|[^A-Za-z0-9_]){}(?:[^A-Za-z0-9_]|$)", ws.join("[^A-Za-z0-9_]+")))
+}
+
 impl Matcher {
-    /// `op` (a test's name) over `patterns`. An invalid glob is an error.
+    /// `op` (a test's name) over `patterns`. A pattern that does not parse is an error.
     pub(in crate::code_rule_dsl) fn new(op: &str, patterns: &[String]) -> Result<Self, String> {
-        let fold = op.starts_with('i');
+        let fold = op.starts_with('i') && TESTS.contains(&&op[1..]);
         let base = if fold { &op[1..] } else { op };
-        let norm = |p: &String| if fold { p.to_lowercase() } else { p.clone() };
-        let mut m = Matcher { fold, exact: HashSet::new(), literals: None, globs: None, glob_literals: false, glob_rest: false, words: HashSet::new(), phrases: Vec::new() };
-        let mut lits: Vec<(String, Anchor)> = Vec::new();
-        match base {
-            "equals" => m.exact.extend(patterns.iter().map(norm)),
-            "prefix" => lits.extend(patterns.iter().map(|p| (norm(p), Anchor::Prefix))),
-            "suffix" => lits.extend(patterns.iter().map(|p| (norm(p), Anchor::Suffix))),
-            "contains" => lits.extend(patterns.iter().map(|p| (norm(p), Anchor::Contains))),
-            "word" => {
-                for p in patterns {
-                    let w: Vec<String> = words(&norm(p)).map(str::to_owned).collect();
-                    match w.len() {
-                        0 => {}
-                        1 => {
-                            m.words.insert(w.into_iter().next().expect("one word"));
-                        }
-                        _ => m.phrases.push(w),
-                    }
-                }
-            }
-            "glob" => {
-                let mut set = GlobSetBuilder::new();
-                for p in patterns {
-                    let p = norm(p);
-                    // `a`, `a*`, `*a`, `*a*` with a literal `a`: exact where the string has no `/`.
-                    let head = p.starts_with('*') && !p.starts_with("**");
-                    let tail = p.len() > 1 && p.ends_with('*') && !p.ends_with("**");
-                    let core = &p[usize::from(head)..p.len() - usize::from(tail)];
-                    if !has_meta(core) && !core.is_empty() {
-                        m.glob_literals = true;
-                        match (head, tail) {
-                            (false, false) => {
-                                m.exact.insert(core.to_owned());
-                            }
-                            (false, true) => lits.push((core.to_owned(), Anchor::Prefix)),
-                            (true, false) => lits.push((core.to_owned(), Anchor::Suffix)),
-                            (true, true) => lits.push((core.to_owned(), Anchor::Contains)),
-                        }
-                    } else {
-                        m.glob_rest = true;
-                    }
-                    let glob = GlobBuilder::new(&p).literal_separator(true).backslash_escape(true).build().map_err(|e| format!("glob {p}: {e}"))?;
-                    set.add(glob);
-                }
-                m.globs = Some(set.build().map_err(|e| e.to_string())?);
-            }
+        let sources: Vec<Source> = match base {
+            "equals" => vec![Source::of(Spelling::OneOf(patterns.to_vec()))],
+            "prefix" => patterns.iter().map(|p| Source::of(Spelling::Prefix(p.clone()))).collect(),
+            "suffix" => patterns.iter().map(|p| Source::of(Spelling::Suffix(p.clone()))).collect(),
+            "contains" => patterns.iter().map(|p| Source::of(Spelling::Contains(p.clone()))).collect(),
+            "glob" => patterns.iter().map(|p| Source::of(Spelling::PathGlob(p.clone()))).collect(),
+            "rx" => patterns.iter().map(|p| Source::of(Spelling::Regex(p.clone()))).collect(),
+            "word" => patterns.iter().filter_map(|p| word_regex(p)).map(|r| Source::of(Spelling::Regex(r))).collect(),
             _ => return Err(format!("no text test {op}")),
-        }
-        if !lits.is_empty() {
-            let ac = AhoCorasick::new(lits.iter().map(|(p, _)| p.as_str())).map_err(|e| e.to_string())?;
-            m.literals = Some((ac, lits.into_iter().map(|(_, a)| a).collect()));
-        }
-        Ok(m)
-    }
-
-    /// How the patterns are matched (EXPLAIN): the exact strings by hash, the literals by one Aho-Corasick automaton,
-    /// globs by a glob set (with literal shortcuts), words by hash and phrases in order.
-    pub(in crate::code_rule_dsl) fn describe(&self) -> String {
-        let mut parts = Vec::new();
-        if !self.exact.is_empty() {
-            parts.push(format!("hash set of {} strings", self.exact.len()));
-        }
-        if let Some((_, anchors)) = &self.literals {
-            parts.push(format!("one Aho-Corasick automaton over {} literals", anchors.len()));
-        }
-        if let Some(g) = &self.globs {
-            parts.push(format!(
-                "glob set of {}{}",
-                g.len(),
-                match (self.glob_literals, self.glob_rest) {
-                    (true, true) => ", literal shortcuts for some",
-                    (true, false) => ", all literal shortcuts (glob set only for strings with '/')",
-                    _ => "",
-                }
-            ));
-        }
-        if !self.words.is_empty() {
-            parts.push(format!("hash set of {} words", self.words.len()));
-        }
-        if !self.phrases.is_empty() {
-            parts.push(format!("{} phrases in order", self.phrases.len()));
-        }
-        format!("{}{}", parts.join(" + "), if self.fold { ", case folded once per string" } else { "" })
-    }
-
-    pub(in crate::code_rule_dsl) fn is_match(&self, s: &str) -> bool {
-        let folded;
-        let s = if self.fold {
-            folded = s.to_lowercase();
-            folded.as_str()
-        } else {
-            s
         };
-        if let Some(globs) = &self.globs
-            && (!self.glob_literals || s.contains('/'))
-        {
-            return globs.is_match(s);
-        }
-        if self.exact.contains(s) {
-            return true;
-        }
-        if let Some((ac, anchors)) = &self.literals {
-            for found in ac.find_overlapping_iter(s) {
-                let ok = match anchors[found.pattern().as_usize()] {
-                    Anchor::Contains => true,
-                    Anchor::Prefix => found.start() == 0,
-                    Anchor::Suffix => found.end() == s.len(),
-                };
-                if ok {
-                    return true;
-                }
+        let mut plans: Vec<Arc<Lowered>> = Vec::new();
+        for source in sources {
+            let source = if fold { source.folded() } else { source };
+            let lowered = lower(&source, Domain::ANY).map_err(|e| format!("@{op}: {}", e.0))?;
+            if !plans.iter().any(|p| p.key == lowered.key) {
+                plans.push(lowered);
             }
         }
-        if !self.words.is_empty() || !self.phrases.is_empty() {
-            let ws: Vec<&str> = words(s).collect();
-            if ws.iter().any(|w| self.words.contains(*w)) {
-                return true;
-            }
-            if self.phrases.iter().any(|p| ws.windows(p.len()).any(|w| w.iter().zip(p).all(|(a, b)| a == b))) {
-                return true;
-            }
+        Ok(Matcher { plans })
+    }
+
+    /// How the patterns are matched (EXPLAIN): each plan's production, with the rewrites that led to it.
+    pub(in crate::code_rule_dsl) fn describe(&self) -> String {
+        let mut by: BTreeMap<String, usize> = BTreeMap::new();
+        for p in &self.plans {
+            let how = if p.rewrites.is_empty() { p.production.to_owned() } else { format!("{} after {}", p.production, p.rewrites.join(", ")) };
+            *by.entry(how).or_default() += 1;
         }
-        // A glob set with literal shortcuts: the rest of its patterns.
-        if let Some(globs) = &self.globs
-            && self.glob_rest
-        {
-            return globs.is_match(s);
-        }
-        false
+        let parts: Vec<String> = by.into_iter().map(|(how, n)| if n == 1 { how } else { format!("{n} × {how}") }).collect();
+        format!("text layer: {}", parts.join(" + "))
+    }
+
+    /// A pattern undecided (a backtracking one past its limits) does not match.
+    pub(in crate::code_rule_dsl) fn is_match(&self, s: &str) -> bool {
+        self.plans.iter().any(|p| p.compiled().is_match(s.as_bytes()) == Some(true))
     }
 }
 
-/// The patterns of a test's second argument: one string, or a set of them.
+/// A test's patterns: one string, or a set `{a, b}`.
 pub(in crate::code_rule_dsl) fn patterns(t: &Term) -> Option<Vec<String>> {
     match t {
         Term::Str(s) => Some(vec![s.clone()]),
@@ -287,17 +180,33 @@ impl Vocabulary {
         let words = self.tests.len().div_ceil(64);
         let mut seen = self.seen.lock().unwrap();
         let (mut tested, t0) = (0, super::plan::corpus::thread_usage());
+        // The strings not seen before, tested by every test's plans at once (the text layer's vocabulary engine).
+        let mut fresh: Vec<(u32, &str)> = Vec::new();
+        let mut queued: HashSet<u32> = HashSet::new();
         for (s, &sym) in strings.iter().zip(symbols) {
-            let bits = seen.entry(sym).or_insert_with(|| {
-                tested += 1;
-                let mut bits = vec![0u64; words].into_boxed_slice();
-                for (k, (_, m)) in self.tests.iter().enumerate() {
-                    if m.is_match(s) {
-                        bits[k / 64] |= 1 << (k % 64);
-                    }
+            if !seen.contains_key(&sym) && queued.insert(sym) {
+                fresh.push((sym, s.as_str()));
+            }
+        }
+        if !fresh.is_empty() {
+            tested += fresh.len();
+            let (plans, owner): (Vec<&crate::code_rule_dsl::text::Plan>, Vec<usize>) =
+                self.tests.iter().enumerate().flat_map(|(k, (_, m))| m.plans.iter().map(move |p| (&p.plan, k))).unzip();
+            let terms: Vec<&[u8]> = fresh.iter().map(|(_, s)| s.as_bytes()).collect();
+            let (hits, _undecided) = crate::code_rule_dsl::text::vocabulary::evaluate(&plans, &terms);
+            let mut bits: Vec<Box<[u64]>> = vec![vec![0u64; words].into_boxed_slice(); fresh.len()];
+            for (p, matched) in hits.iter().enumerate() {
+                let k = owner[p];
+                for &t in matched {
+                    bits[t as usize][k / 64] |= 1 << (k % 64);
                 }
-                bits
-            });
+            }
+            for ((sym, _), b) in fresh.iter().zip(bits) {
+                seen.insert(*sym, b);
+            }
+        }
+        for &sym in symbols {
+            let bits = &seen[&sym];
             for (k, rows) in out.iter_mut().enumerate() {
                 if bits[k / 64] >> (k % 64) & 1 == 1 {
                     rows.push(i64::from(sym));

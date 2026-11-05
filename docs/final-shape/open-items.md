@@ -43,6 +43,12 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O42 | Phase 10 | Terms, declarations and dependency summaries wired into the corpus runner (`corpus::typing`); left: terms inside the engine's lattice, variance | closed (2026-11-04) |
 | O39 | Phase 9 | S7's sample, cold on Metal: the footprint peaks at 871 MB (budget 500 MB) in the label runs (`3a.plan` and the roots' partition), after `WalkFrames` removed the 3,017 MB of interpreted retries (decision 0032). 2026-11-04: the roots are rules over the codes (decision 0033), with no node lists (70 M roots before) and no walk items; the peak (889 MB) now rises in the GPU run and the roots' partition. Roots that are walks no longer size each file for a backend that never runs (one packed batch per file, ~130 MB over the GPU run's): 752 MB, in the GPU run. The kernels keep no thread memory (the driver's scratch, decision 0034): 603 MB, 335 MB after the audit | open |
 | O43 | Phase 10 (step 30) | Launch cost on the device: each chunk pays one GPU wake-up from idle (about 0.85 ms, 12 of 19–22 ms of host wait on async-sync-boundary at 1 in 8, decision 0040) because the GPU sits idle while the CPU runs the chunk's joins. The joins themselves are small (about 0.1 s of 7.7 s CPU, at most 245K rows into a step over the run), so the goal is not join speed: it is to keep the chunk on the device in one launch. Close by running a chunk's native joins on Metal in the same command buffer as its nearest ancestors (one command buffer, one wait a chunk): plan chosen on the host from statistics as now; each step a sort or hash join kernel over the shared relations, counting then writing (or writing into a reused block and retrying on overflow); negation as an anti-join; text tests as chunked matchers; aggregates and cross-file rounds stay as they are. Loading inputs, building indexes and the per-chunk statistics (about 2.8 s of CPU) are the same shape and move with it. Validated by the profile's device phases: one launch per chunk, schedule (GPU waking) no longer paid per chunk, findings unchanged | open |
+| O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
+| O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
+| O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
+| O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
+| O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
 ## O1. Stale-fact detection after a crash
 
@@ -1207,3 +1213,86 @@ Nothing calls them yet:
     ids, with `Terms::union` as its join, is the next shape: it carries generics and
     instantiation into the rules.
   - Variance is not modelled.
+
+## O60. The matcher atom's captures
+
+The data-layer rules' relational inputs and budget evidence project captures (`capture.X`, `.startByte`, regex
+groups, `transform` text): 1,672 projections in 54 clauses of 14 rules (`gate/data-layer/census/`). §12's atom
+binds only the document and the node. The front end now reads `ast($D, $N, {…}, NAME: $v)` (a match that leaves
+`NAME` unbound gives no row); `logic::plan` still refuses every `ast` literal. **Closure:** the §3 lowering returns
+exported captures with each match.
+
+## O61. A builtin catalogue
+
+The data-layer programs (`cr/logic/programs/data_layer/`) use 30 builtins; only `@cat` is built. They are SQL's
+scalars (`@rx_matches` 224 uses, `@concat` 66, `@substr` 60, …), three string helpers (`@drop_components`,
+`@join_nonempty`, `@glob`), and tape builtins (`@within`, `@depth`, `@line`, `@id`, `@qualname`, `@class_path`,
+`@class_prefix`). **Closure:** a fixed catalogue, each entry marked value-creating or not (§12's fourth
+exclusion needs that mark), with `@rx_*` on §16's regex path.
+
+## O62. The shortlex-least route lattice
+
+Of the 70 recursions in the data-layer rules, 4 need a lattice beyond `set`, `flat`, `min` and `max`: `hierarchy`
+(internal-dead-code, public-api-triples) and the two sink searches (serverplan-state-tripwires), each the least
+route under (length, text). The native lattices are `i64`-valued, and `Min`'s widening jumps to its top, losing the
+route. Without `widen` the declaration fails `UnboundedLattice` (`internal_dead_code.hierarchy_unwidened.rdl`).
+**Closure:** a catalogue lattice bounded by its edge relation, or the length as a `min` lattice with the route in
+the findings layer (t17 § 6).
+
+## O63. Tree built-ins beyond `nearest`
+
+28 recursions in the data-layer rules are tree walks that `nearest` alone does not express: subtrees, the
+outermost function, depth (t17 § 3). The programs write them as `@within($x, $r) = 1` and `@depth($x)`, since a
+new literal would change `logic/plan`'s exhaustive matches. Two walks through chosen kinds (dispatch `annotations`,
+steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
+kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
+
+## O64. The data-layer's regex forbid clauses
+
+109 forbid clauses regex the file's text (108 with line options, 8 with a line state machine) and 4 its path, in
+14 rules; 9 rules have nothing else. `yaml::add` refuses them. PIAT §5.1 (`notes/t1` :446) found 107 expressible as
+AST rules, 2 needing line positions, 4 path-only. **Closure:** the rewrite, done for the gate's pack.
+
+## O65. Two data-layer stages outside the fragment
+
+serverplan-quality's `call_paths` carries dotted text along attribute chains (`path || suffix`), a cycle through a
+value-creating builtin that the front end does not check. `block_results` folds a JSON map in block order; over the
+tree it is a negation of `raises` in its own component (`serverplan_quality.block_results.rdl`), stratified only by
+depth. Both are declared inputs in the programs. **Closure:** a tape builtin for attribute-chain text, and a
+bottom-up tree fold (or per-file lattice in the dispatch, §7) for `block_results`.
+
+## O66. Device text matching is still a byte-at-a-time NFA
+
+Decision 0038: text matching is chunk-at-a-time. The host slots are done. On the device, a text
+test is still a `ByteNfa` stepped per byte per path, under a work limit. **Closure:** a chunked
+automaton per file, where each workgroup computes its chunk's state map and the maps are composed
+by a prefix scan, differentially tested against the host's DFA.
+
+## O67. Memory over budget at 1,000 files
+
+serverplan_quality on 1,000 data-layer files peaks at 1,055 MB RSS (t18 § 3), over the 1 GB
+budget. The push and the first chunk's tapes reach 693 MB, the candidate sets (dense bitmaps, every
+intermediate kept) 900 MB, the label passes 1,033 MB. The scheduler's chunk budget counts core facts
+only. **Closure:** chunks sized by what a chunk holds (tapes, bitmaps, labels), candidate sets
+freed as their last reader runs, and a 1,000-file run under the budget.
+
+## O68. The Metal label path recomputes host facts per split
+
+On Metal, serverplan_quality's labels cost 22.6 s CPU at 1,000 files against 17.2 s on the CPU,
+with host facts 12.6 s against 5.2 s, and peak RSS 1.6 GB (t18 § 3). A batch whose label levels
+outgrow the device is split in halves, and each half recomputes its facts. **Closure:** facts
+computed once per batch and shared by its halves.
+
+## O69. Rules over derived relations plan without statistics
+
+The wave plans its rules once, before any chunk, and a derived relation is priced at 1,000 rows
+whatever it holds. Bound base relations now carry their vtab indexes and distinct counts (t18 § 5),
+but a rule joining derived relations still orders from that guess. **Closure:** the planner's
+observed cardinalities (`stats.obs`) fed back between chunks, or a replan after the first chunk.
+
+## O70. No ancestor relation over syntax ids
+
+Authored rules find a node's nearest enclosing scope by joining every scope's byte range in the
+file (t18 § 4): quadratic per file, 10 s of the authored logic's 24 s at 1,000 files. The wave's
+rules cannot use `nearest` or `tape`'s subtree intervals without arithmetic. **Closure:** with O63,
+an `ancestor`/`nearest` relation over syntax ids, bound with the chunk like the base relations.

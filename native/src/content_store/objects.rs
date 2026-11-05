@@ -9,7 +9,7 @@ use super::{
 };
 #[cfg(test)]
 use rusqlite::Connection;
-use rusqlite::{OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 use std::collections::{BTreeSet, HashMap};
 use std::io::Cursor;
 use std::sync::Arc;
@@ -89,45 +89,43 @@ impl ContentStore {
         let frame = compress(source, self.compression_level)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let canonical_hash_id = intern_hash(&transaction, canonical)?;
-        let generation = generation(&transaction)?;
-        transaction.execute(
-            "INSERT INTO source_objects(canonical_hash_id, raw_length, codec_id, frame, created_generation)\
-             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(canonical_hash_id) DO NOTHING",
-            params![canonical_hash_id, raw_length, CODEC_ZSTD, frame, generation],
-        )?;
-        let source_id: i64 = transaction.query_row(
-            "SELECT source_id FROM source_objects WHERE canonical_hash_id = ?1",
-            [canonical_hash_id],
-            |row| row.get(0),
-        )?;
-        for alias in aliases {
-            let alias_hash_id = intern_hash(&transaction, *alias)?;
-            let existing = transaction
-                .query_row(
-                    "SELECT source_id FROM source_aliases WHERE alias_hash_id = ?1",
-                    [alias_hash_id],
-                    |row| row.get::<_, i64>(0),
-                )
-                .optional()?;
-            if existing.is_some_and(|existing| existing != source_id) {
-                return Err(StoreError::Corrupt(
-                    "Git object alias maps to different source bytes".to_owned(),
-                ));
-            }
+        // Retried under `retry_busy`: the push writes sources while the overlay's writer holds
+        // the store, and one busy timeout behind it must not fail the push.
+        self.immediate_transaction(|transaction| {
+            let canonical_hash_id = intern_hash(transaction, canonical)?;
+            let generation = generation(transaction)?;
             transaction.execute(
-                "INSERT INTO source_aliases(alias_hash_id, source_id) VALUES (?1, ?2)\
-                 ON CONFLICT(alias_hash_id) DO NOTHING",
-                params![alias_hash_id, source_id],
+                "INSERT INTO source_objects(canonical_hash_id, raw_length, codec_id, frame, created_generation)\
+                 VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT(canonical_hash_id) DO NOTHING",
+                params![canonical_hash_id, raw_length, CODEC_ZSTD, frame, generation],
             )?;
-        }
-        transaction.commit()?;
-        Ok(SourceId(source_id))
+            let source_id: i64 = transaction.query_row(
+                "SELECT source_id FROM source_objects WHERE canonical_hash_id = ?1",
+                [canonical_hash_id],
+                |row| row.get(0),
+            )?;
+            for alias in aliases {
+                let alias_hash_id = intern_hash(transaction, *alias)?;
+                let existing = transaction
+                    .query_row(
+                        "SELECT source_id FROM source_aliases WHERE alias_hash_id = ?1",
+                        [alias_hash_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                if existing.is_some_and(|existing| existing != source_id) {
+                    return Err(StoreError::Corrupt(
+                        "Git object alias maps to different source bytes".to_owned(),
+                    ));
+                }
+                transaction.execute(
+                    "INSERT INTO source_aliases(alias_hash_id, source_id) VALUES (?1, ?2)\
+                     ON CONFLICT(alias_hash_id) DO NOTHING",
+                    params![alias_hash_id, source_id],
+                )?;
+            }
+            Ok(SourceId(source_id))
+        })
     }
 
     #[cfg(test)]
@@ -514,26 +512,22 @@ impl ContentStore {
             ));
         }
         let frame = compress(tape, self.compression_level)?;
-        let mut connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let tape_id = put_tape_tx(
-            &transaction,
-            source_id,
-            TapePayload {
-                grammar_id,
-                grammar_version,
-                tape_format_version,
-                bytes: tape,
-                documents: &[],
-            },
-            &frame,
-            &[],
-        )?;
-        transaction.commit()?;
-        Ok(tape_id)
+        // Retried under `retry_busy`, as `put_source` is.
+        self.immediate_transaction(|transaction| {
+            put_tape_tx(
+                transaction,
+                source_id,
+                TapePayload {
+                    grammar_id,
+                    grammar_version,
+                    tape_format_version,
+                    bytes: tape,
+                    documents: &[],
+                },
+                &frame,
+                &[],
+            )
+        })
     }
 
     pub fn get_tapes_bulk(

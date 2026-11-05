@@ -99,6 +99,18 @@ fn section_12_extensions_parse() {
     );
 }
 
+/// A matcher atom exports metavariables: each binds a variable to its captured node, and prints back as written.
+#[test]
+fn matcher_atom_exports_captures() {
+    let src = r#"f($n, $s) :- ast($d, $f, {"rule": {"kind": "function_definition", "has": {"field": "name", "pattern": "$FNAME"}}}, FNAME: $n), text($n, $s)."#;
+    let p = parse(src).unwrap();
+    let Literal::Ast { captures, .. } = &p.rules[0].body[0] else { panic!("not a matcher atom") };
+    assert_eq!(captures, &[("FNAME".to_owned(), "n".to_owned())]);
+    assert_eq!(p.rules[0].body[0].vars(), ["d", "f", "n"].map(String::from).into());
+    assert_eq!(format!("{}.", p.rules[0]), src);
+    assert!(matches!(parse("f($n) :- ast($d, $f, {}, FNAME $n)."), Err(Error::Syntax(_))));
+}
+
 #[test]
 fn named_errors() {
     let unbounded = parse(".decl hi(n: node; v: max)\n");

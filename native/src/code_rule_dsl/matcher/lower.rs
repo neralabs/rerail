@@ -75,7 +75,86 @@ pub(in crate::code_rule_dsl) struct Fact {
 /// One node a fact's producer reports: the node, and each slot's target.
 pub(in crate::code_rule_dsl) type FactRow = (u32, Vec<u32>);
 
+/// A fact's findings on one file: rows with their slots' targets, or (a fact with no slot) its
+/// nodes as bits.
+#[derive(Clone)]
+pub(in crate::code_rule_dsl) enum FactFound {
+    Rows(Vec<FactRow>),
+    Nodes(Vec<u64>),
+}
+
+impl FactFound {
+    /// Each row: a node and its slots' targets.
+    pub(in crate::code_rule_dsl) fn rows(&self) -> Box<dyn Iterator<Item = (u32, &[u32])> + '_> {
+        match self {
+            Self::Rows(rows) => Box::new(rows.iter().map(|(node, targets)| (*node, targets.as_slice()))),
+            Self::Nodes(bits) => Box::new(bits.iter().enumerate().flat_map(|(word, &bits)| {
+                (0..64).filter(move |bit| bits >> bit & 1 != 0).map(move |bit| (word as u32 * 64 + bit, &[][..]))
+            })),
+        }
+    }
+}
+
 impl Fact {
+    /// What the fact asks where its findings are bits (`nth_bits`): facts with equal questions find
+    /// the same nodes. `None`: it has slots, another producer, or an `ofRule` with no identity.
+    fn question(&self) -> Option<String> {
+        match &self.producer {
+            AstMatcher::NthChild(nth) if self.slots.is_empty() && (nth.of_rule.is_none() || nth.of_rule_key.is_some()) => {
+                Some(format!("{:?}|{}|{}|{}|{:?}", nth.of_rule_key, nth.reverse, nth.position.step, nth.position.offset, self.kinds))
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether its findings on a file are a node set (`nth_bits`): a position among siblings
+    /// (`nthChild`) with no slot.
+    pub(in crate::code_rule_dsl) fn is_node_set(&self) -> bool {
+        matches!(&self.producer, AstMatcher::NthChild(_)) && self.slots.is_empty()
+    }
+
+    /// Its nodes on `tape` where they are a node set (`is_node_set`), from the tape's sibling
+    /// positions; asked once per tape where another fact asks the same (`question`).
+    pub(in crate::code_rule_dsl) fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<Vec<u64>>> {
+        let AstMatcher::NthChild(nth) = &self.producer else { return None };
+        if !self.slots.is_empty() {
+            return None;
+        }
+        let answer = || {
+            let bits = nth.bits(tape, &siblings.of(nth, tape), self.kinds.as_ref());
+            // `RERAIL_SETS_CHECK`: the bits against W's rows.
+            static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
+            if *CHECK {
+                let file = ast_grep_core::AstGrep::doc(tape.clone());
+                let _scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                let starts = (0..tape.transducer_len() as u32).filter(|&node| self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))));
+                let rows = nth.rows(&file, starts);
+                let ones = bits.iter().enumerate().flat_map(|(w, &b)| (0..64u32).filter(move |i| b >> i & 1 != 0).map(move |i| w as u32 * 64 + i)).collect::<Vec<_>>();
+                if ones != rows {
+                    eprintln!("SETS_CHECK differs on nthChild {}", self.key);
+                }
+            }
+            bits
+        };
+        Some(match self.question() {
+            Some(question) => siblings.answer(&question, answer),
+            None => Arc::new(answer()),
+        })
+    }
+
+    /// The findings of `file` (`rows`), as bits where they are a node set (`nth_bits`).
+    pub(in crate::code_rule_dsl) fn found(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        starts: impl Iterator<Item = u32>,
+        siblings: &super::nth_child::SiblingPositions,
+    ) -> FactFound {
+        match self.nth_bits(file.root().get_doc(), siblings) {
+            Some(bits) => FactFound::Nodes(Arc::unwrap_or_clone(bits)),
+            None => FactFound::Rows(self.rows(file, starts)),
+        }
+    }
+
     /// The rows of `file`: every node the producer matches, with its slots' targets. The predicate's
     /// verdicts are read as W's matcher reads them (`match_root`'s settings): an unknown one is no row.
     pub(in crate::code_rule_dsl) fn rows(
@@ -85,6 +164,9 @@ impl Fact {
     ) -> Vec<FactRow> {
         use super::util::{THREE_VALUED, UNKNOWN, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
         use ast_grep_core::matcher::Matcher;
+        if let AstMatcher::NthChild(nth) = &self.producer {
+            return nth.rows(file, starts).into_iter().map(|node| (node, Vec::new())).collect();
+        }
         let mut rows = Vec::new();
         super::resolve::CURRENT_CLAUSE.set(self as *const Self as usize);
         THREE_VALUED.set(true);
@@ -184,11 +266,80 @@ pub(in crate::code_rule_dsl) struct Unsupported(pub(in crate::code_rule_dsl) &'s
 
 /// The match tree of a clause's matcher.
 pub(in crate::code_rule_dsl) fn match_tree(grammar: &GrammarMatcher) -> Result<MatchTree, Unsupported> {
+    tree_of(grammar, &grammar.matcher)
+}
+
+/// A condition on the whole document a matcher's rule holds as a conjunct of its root: one test per
+/// document, not per node. The wave tests it before its batch and runs the clause only on the
+/// documents where every one holds (03 §6, a file pre-filter).
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) enum DocumentGate {
+    /// `filePath: {regex, notRegex}`: the document's path relative to its root.
+    Path(Arc<crate::code_rule_dsl::language::TextCondition>),
+    /// `inside: {all: [{kind: module}, {regex: R}], stopBy: end}`: the file's text matches `R` (the
+    /// rule tests the module node's text, which every node but the module is inside). The ported
+    /// checkers' quick "does the file mention X" test.
+    Text(Regex),
+}
+
+impl DocumentGate {
+    pub(in crate::code_rule_dsl) fn holds(&self, path: &str, text: &str) -> bool {
+        match self {
+            Self::Path(condition) => condition.holds(path),
+            Self::Text(regex) => regex.is_match(text),
+        }
+    }
+}
+
+/// The document gates among the conjuncts of a matcher's root (`DocumentGate`), and the tree of the
+/// rest. A `filePath` anywhere else is still refused. A module text test holds for every node but
+/// the module, so it is a gate only where the rest cannot match the module itself: the conjuncts
+/// include a `kind` other than `module`.
+pub(in crate::code_rule_dsl) fn gated_match_tree(grammar: &GrammarMatcher) -> Result<(MatchTree, Vec<DocumentGate>), Unsupported> {
+    use super::Semantic;
+    let AstMatcher::All(_) = &grammar.matcher else { return Ok((match_tree(grammar)?, Vec::new())) };
+    // The root's conjuncts, nested `all`s flattened (an option's case is often an `all` of path tests).
+    fn conjuncts<'a>(matcher: &'a AstMatcher, out: &mut Vec<&'a AstMatcher>) {
+        match matcher {
+            AstMatcher::All(items) => items.iter().for_each(|item| conjuncts(item, out)),
+            other => out.push(other),
+        }
+    }
+    let mut items = Vec::new();
+    conjuncts(&grammar.matcher, &mut items);
+    let module = grammar.language.kind_id("module");
+    let is_module = |matcher: &AstMatcher| match matcher {
+        AstMatcher::Kind(kind) => kind.potential_kinds().is_some_and(|kinds| kinds.iter().eq([usize::from(module)])),
+        _ => false,
+    };
+    let kind_other_than_module = items.iter().any(|item| matches!(item, AstMatcher::Kind(_)) && !is_module(item));
+    let (mut gates, mut rest) = (Vec::new(), Vec::new());
+    for item in items {
+        match item {
+            AstMatcher::Semantic(Semantic::FilePath(condition)) => gates.push(DocumentGate::Path(Arc::clone(condition))),
+            AstMatcher::Inside(related, super::relation::StopBy::End) if kind_other_than_module => match related.rule() {
+                AstMatcher::All(parts) => match parts.as_slice() {
+                    [kind, AstMatcher::Regex(regex)] if is_module(kind) => gates.push(DocumentGate::Text(regex.clone())),
+                    _ => rest.push((*item).clone()),
+                },
+                _ => rest.push((*item).clone()),
+            },
+            other => rest.push((*other).clone()),
+        }
+    }
+    if gates.is_empty() {
+        return Ok((match_tree(grammar)?, gates));
+    }
+    let rest = if rest.len() == 1 { rest.pop().expect("one conjunct") } else { AstMatcher::All(rest) };
+    Ok((tree_of(grammar, &rest)?, gates))
+}
+
+fn tree_of(grammar: &GrammarMatcher, matcher: &AstMatcher) -> Result<MatchTree, Unsupported> {
     if grammar.transform.is_some() {
         return Err(Unsupported("transform"));
     }
     let mut lowering = Lowering { three_valued: grammar.three_valued, source: (grammar.source.0, Some(grammar.source.1)), ..Lowering::default() };
-    let tree = lowering.tree(&grammar.matcher, true)?;
+    let tree = lowering.tree(matcher, true)?;
     if lowering.binds.values().any(|&uses| uses > 1) {
         return Err(Unsupported("shared binding"));
     }
@@ -213,6 +364,8 @@ struct Lowering {
     /// far: a fact's key.
     source: ([u8; 32], Option<crate::code_rule_dsl::language::GrammarDialect>),
     facts: usize,
+    /// The kinds an `all`'s `kind` conjuncts allow, while its `nthChild` conjunct is lowered.
+    conjunct_kinds: Option<BTreeSet<u16>>,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -243,7 +396,29 @@ impl Lowering {
             }
             AstMatcher::Supertype(supertype) => MatchTree::Supertype(supertype.class, Arc::clone(&supertype.kinds)),
             AstMatcher::Regex(regex) => MatchTree::Regex(regex.clone()),
-            AstMatcher::All(matchers) => MatchTree::All(self.trees(matchers, shares)?),
+            AstMatcher::All(matchers) => {
+                // An `nthChild` beside a `kind` holds only at nodes of that kind: its fact's
+                // producer starts only there (not at every node).
+                let kinds = matchers
+                    .iter()
+                    .filter_map(|m| match m {
+                        AstMatcher::Kind(kind) => kind.potential_kinds().map(|ks| ks.iter().filter_map(|k| u16::try_from(k).ok()).collect::<BTreeSet<u16>>()),
+                        _ => None,
+                    })
+                    .reduce(|a, b| a.intersection(&b).copied().collect());
+                let trees = matchers
+                    .iter()
+                    .map(|matcher| {
+                        if matches!(matcher, AstMatcher::NthChild(_)) {
+                            self.conjunct_kinds = kinds.clone();
+                        }
+                        let tree = self.tree(matcher, shares);
+                        self.conjunct_kinds = None;
+                        tree
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                MatchTree::All(trees)
+            }
             AstMatcher::Any(matchers) => MatchTree::Any(self.trees(matchers, shares)?),
             AstMatcher::Not(matcher) => {
                 self.path.push(Step::Not);
@@ -293,7 +468,15 @@ impl Lowering {
                     None => tree,
                 }
             }
-            AstMatcher::NthChild(_) => return Err(Unsupported("nthChild")),
+            // A node's position among its parent's named children (of `ofRule`): a fact W's matcher
+            // reports per node (two-valued, binding nothing), read by the walks as a label.
+            AstMatcher::NthChild(_) => {
+                let (digest, dialect) = &self.source;
+                let key = format!("{}|{dialect:?}|{}", digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>(), self.facts);
+                self.facts += 1;
+                let kinds = self.conjunct_kinds.take();
+                MatchTree::Fact(Arc::new(Fact { producer: matcher.clone(), slots: Vec::new(), name: "nthChild", key, kinds }))
+            }
             AstMatcher::Call(_) => return Err(Unsupported("utility call")),
             AstMatcher::Constrained(constrained) => self.constrained(constrained, shares)?,
             AstMatcher::Compare(_) => return Err(Unsupported("compare")),

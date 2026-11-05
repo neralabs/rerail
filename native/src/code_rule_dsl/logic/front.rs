@@ -4,7 +4,9 @@
 //! done): `tokens`, `parse`, the AST classes, `strata`/`tarjan` and `prune`, with T's grammar. Added for §12:
 //! - lattices declared on any relation, `.decl r(k: t; v: L) merge @join widen k`, besides T's `.lattice`;
 //! - `min` and `max` aggregates, `$m = min $v : { atom }`, besides `count`;
-//! - the matcher atom `ast($D, $P, { … })`, whose matcher text is kept for the transducer lowering (§3);
+//! - the matcher atom `ast($D, $P, { … })`, whose matcher text is kept for the transducer lowering (§3), and which
+//!   exports matcher metavariables as variables, `ast($D, $P, { … }, NAME: $n)`, each bound to what it captured (a
+//!   node, or the text of a regex group or a transform); a match that leaves one unbound gives no row;
 //! - JSON strings, and `.policy { … }` for lint-rule documents (`yaml`, the second syntax of B12);
 //! - named errors for aggregation in recursion (unless the head is a monotone lattice) and unbounded lattices;
 //! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must move along the tree.
@@ -150,8 +152,9 @@ pub(in crate::code_rule_dsl) enum Literal {
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
     Nearest { n: String, a: String, kindset: String },
-    /// `ast($document, $node, { matcher })`: the matcher's text, lowered to a transducer program (§3).
-    Ast { document: String, node: String, matcher: String },
+    /// `ast($document, $node, { matcher }, NAME: $v, …)`: the matcher's text, lowered to a transducer program (§3),
+    /// and the metavariables it exports, each `(NAME, v)` binding `$v` to what `$NAME` captured.
+    Ast { document: String, node: String, matcher: String, captures: Vec<(String, String)> },
 }
 
 impl Literal {
@@ -169,7 +172,10 @@ impl Literal {
                 out.extend(over.clone());
             }
             Literal::Nearest { n, a, .. } => out.extend([n.clone(), a.clone()]),
-            Literal::Ast { document, node, .. } => out.extend([document.clone(), node.clone()]),
+            Literal::Ast { document, node, captures, .. } => {
+                out.extend([document.clone(), node.clone()]);
+                out.extend(captures.iter().map(|(_, v)| v.clone()));
+            }
         }
         out
     }
@@ -234,7 +240,11 @@ impl fmt::Display for Literal {
                 write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
             }
             Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
-            Literal::Ast { document, node, matcher } => write!(f, "ast(${document}, ${node}, {matcher})"),
+            Literal::Ast { document, node, matcher, captures } => {
+                write!(f, "ast(${document}, ${node}, {matcher}")?;
+                captures.iter().try_for_each(|(name, v)| write!(f, ", {name}: ${v}"))?;
+                f.write_str(")")
+            }
         }
     }
 }
@@ -516,8 +526,15 @@ impl Parser<'_> {
             let node = self.var()?;
             self.p(",")?;
             let matcher = self.braces()?;
+            let mut captures = Vec::new();
+            while self.is_p(",") {
+                self.i += 1;
+                let name = self.id()?;
+                self.p(":")?;
+                captures.push((name, self.var()?));
+            }
             self.p(")")?;
-            return Ok(Literal::Ast { document, node, matcher });
+            return Ok(Literal::Ast { document, node, matcher, captures });
         }
         if matches!(self.peek(), Tok::Id(_)) {
             return Ok(Literal::Atom(self.atom(false)?));
@@ -834,4 +851,8 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod data_layer_census_tests;
+#[cfg(test)]
+mod data_layer_tests;
 pub(in crate::code_rule_dsl) mod yaml;

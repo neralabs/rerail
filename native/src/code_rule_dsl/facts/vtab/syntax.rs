@@ -288,6 +288,9 @@ enum View {
     Child,
     Field,
     Tape,
+    /// `core_node(d, t, n)`: document `d`'s tape node `t` (the matcher's preorder id over every
+    /// node) is node `n`. The wave's matches are tape nodes; this joins them to the rows above.
+    Core,
 }
 
 impl Batch {
@@ -424,7 +427,7 @@ impl Batch {
 
     fn offsets(&self, view: View) -> &[usize] {
         match view {
-            View::Node | View::Line | View::Tape => &self.nodes,
+            View::Node | View::Line | View::Tape | View::Core => &self.nodes,
             View::Child => &self.children,
             View::Field => &self.fields,
         }
@@ -450,7 +453,7 @@ impl Batch {
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
         let p = &self.docs[doc];
         let within = match view {
-            View::Node | View::Line | View::Tape => Some(local as usize),
+            View::Node | View::Line | View::Tape | View::Core => Some(local as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => p.fielded.binary_search(&local).ok(),
         }?;
@@ -485,6 +488,7 @@ impl Viewed {
             View::Child => &["p", "c", "idx"],
             View::Field => &["p", "f", "c"],
             View::Tape => &["n", "par", "size", "depth"],
+            View::Core => &["d", "t", "n"],
         }
     }
     /// The column holding the row's own node, which ranges and direct lookups address.
@@ -492,7 +496,7 @@ impl Viewed {
         match self.view {
             View::Node | View::Child => 1,
             View::Line => 0,
-            View::Field => 2,
+            View::Field | View::Core => 2,
             View::Tape => 0,
         }
     }
@@ -501,7 +505,7 @@ impl Viewed {
         match self.view {
             View::Child | View::Field => Some(0),
             View::Tape => Some(1),
-            View::Node | View::Line => None,
+            View::Node | View::Line | View::Core => None,
         }
     }
 }
@@ -517,15 +521,21 @@ impl Source for Viewed {
             1
         } else if Some(column) == self.parent() {
             4
-        } else if matches!(self.view, View::Node) && column == 0 {
+        } else if matches!(self.view, View::Node | View::Core) && column == 0 {
             self.len() / self.batch.docs.len().max(1)
+        } else if matches!(self.view, View::Core) && column == 1 {
+            // One probe per document of the batch.
+            self.batch.docs.len()
         } else {
             (self.len() / 64).max(1)
         };
         if batch { per * 8 } else { per }
     }
     fn indexed(&self, column: usize) -> bool {
-        column == self.own() || Some(column) == self.parent() || matches!(self.view, View::Node) && matches!(column, 0 | 2)
+        column == self.own()
+            || Some(column) == self.parent()
+            || matches!(self.view, View::Node) && matches!(column, 0 | 2)
+            || matches!(self.view, View::Core) && matches!(column, 0 | 1)
     }
     fn range_indexed(&self, column: usize) -> bool {
         column == self.own()
@@ -556,8 +566,16 @@ impl Source for Viewed {
                 } else if let Some((doc, local)) = b.node(v) {
                     rows.extend(b.docs[doc].children(local).filter_map(|c| b.row(self.view, doc, c)));
                 }
-            } else if matches!(self.view, View::Node) && column == 0 {
+            } else if matches!(self.view, View::Node | View::Core) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
+            } else if matches!(self.view, View::Core) && column == 1 {
+                // A tape node of each document that has it as a node; the statement filters `d`.
+                let Ok(t) = usize::try_from(v) else { continue };
+                for (doc, p) in b.docs.iter().enumerate() {
+                    if let Some(&local) = p.local.get(t).filter(|&&local| local != NONE) {
+                        rows.push(b.nodes[doc] + local as usize);
+                    }
+                }
             } else if matches!(self.view, View::Node) && column == 2 {
                 let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
                     continue;
@@ -578,7 +596,7 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         let local = match self.view {
-            View::Node | View::Line | View::Tape => i as u32,
+            View::Node | View::Line | View::Tape | View::Core => i as u32,
             View::Child => i as u32 + 1,
             View::Field => p.fielded[i],
         };
@@ -586,7 +604,8 @@ impl Source for Viewed {
         let id = p.core[l] as usize;
         let parent = || if p.parent[l] == NONE { -1 } else { p.global(p.parent[l]) };
         match (self.view, column) {
-            (View::Node, 0) => i64::from(p.key),
+            (View::Node | View::Core, 0) => i64::from(p.key),
+            (View::Core, 1) => id as i64,
             (View::Node, 2) => {
                 let code = (p.facts.kind[id] % KIND_STRIDE) as usize;
                 i64::from(kind_atom(p.tag, self.batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
@@ -621,7 +640,7 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
 fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
-    for (name, view) in [("node", View::Node), ("line", View::Line), ("child", View::Child), ("field", View::Field), ("tape", View::Tape)] {
+    for (name, view) in [("node", View::Node), ("line", View::Line), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core)] {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
     }
     for (family, name) in PY.into_iter().enumerate() {
