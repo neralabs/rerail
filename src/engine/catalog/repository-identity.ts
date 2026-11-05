@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   chmodSync,
   closeSync,
   constants as fsConstants,
@@ -8,12 +9,14 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
+  readFileSync,
   readSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { physicalPath } from "./checkout-control.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -52,35 +55,60 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
   return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
 }
 
-/** Each common directory's registered worktrees, as `git worktree list` last gave them, and when `worktrees/` then changed. */
-const worktreeRegistries = new Map<string, { readonly changedAt: number | undefined; readonly worktrees: readonly string[] }>();
+/** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */
+const worktreeRegistries = new Map<string, WorktreeRegistry & { readonly contents: string }>();
 
-function changedAt(path: string): number | undefined {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return undefined;
-  }
+export interface WorktreeRegistry {
+  /** The common directory Git reads for the checkout that was asked, physical. */
+  readonly commonDirectory: string;
+  /** The main checkout and each linked worktree `git worktree add` made, as Git reports them. */
+  readonly worktrees: readonly string[];
 }
 
 /**
- * The checkouts Git registered in `commonDirectory`, asked of `checkout` (one of its checkouts): the main checkout and
- * each linked worktree `git worktree add` made. Undefined when Git cannot answer in `checkout` (it is gone, say). A
- * `.git` file naming that directory is not among them, nor is a worktree moved without `git worktree move` or `repair`.
- * The answer is kept until `worktrees/` changes, as adding or removing a worktree does, so `.git` files a repository
- * plants cost Git one call, not one per file per tool call. Line output because `-z` needs Git 2.36, which distributions
- * Rerail runs on do not have yet.
+ * Each registered worktree's name and where it says it is: `git worktree add`, `remove`, `move` and `repair` all change
+ * it. The `worktrees` folder's own time would miss the last two, which rewrite a file inside an entry.
  */
-export function registeredWorktrees(commonDirectory: string, checkout: string): readonly string[] | undefined {
+function registryContents(commonDirectory: string): string {
+  const folder = join(commonDirectory, "worktrees");
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return "";
+  }
+  return names.toSorted().map(name => {
+    try {
+      return `${name}\0${readFileSync(join(folder, name, "gitdir"), "utf8")}`;
+    } catch {
+      return name;
+    }
+  }).join("\0");
+}
+
+/**
+ * The registry of `checkout`, a recorded checkout: its own common directory and what Git lists there. Undefined when Git
+ * cannot answer in it (it is gone, say). A `.git` file naming that directory is not listed, nor is a worktree moved
+ * without `git worktree move` or `repair`. Git's answer is kept until the registry's contents change, so `.git` files a
+ * repository plants cost Git one call, not one per file per tool call; only the recorded checkout decides what is kept,
+ * never a folder asking to be listed. Line output because `-z` needs Git 2.36, which distributions Rerail runs on do not
+ * have yet.
+ */
+export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined {
+  if (!existsSync(checkout)) return undefined;
+  const known = worktreeRegistries.get(checkout);
+  const location = known === undefined ? repositoryIdentityLocation(checkout) : undefined;
+  if (location?.git === false) return undefined;
+  const commonDirectory = known?.commonDirectory ?? physicalPath(dirname(location!.identityPath));
   // Read before Git runs: a worktree added meanwhile changes it, and Git is asked again next time.
-  const changed = changedAt(join(commonDirectory, "worktrees"));
-  const known = worktreeRegistries.get(commonDirectory);
-  if (known !== undefined && known.changedAt === changed) return known.worktrees;
+  const contents = registryContents(commonDirectory);
+  if (known?.contents === contents) return known;
   const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
   if (result.status !== 0) return undefined;
   const worktrees = result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
-  worktreeRegistries.set(commonDirectory, { changedAt: changed, worktrees });
-  return worktrees;
+  const registry = { commonDirectory, worktrees, contents };
+  worktreeRegistries.set(checkout, registry);
+  return registry;
 }
 
 /** The repository's own folder name: the main checkout's folder for a linked worktree, else the checkout's folder. */

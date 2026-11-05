@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
@@ -69,5 +69,53 @@ describe("recordStartedWorktree", () => {
     await mkdir(join(root, "other"));
     await writeFile(join(root, "other", ".git"), `gitdir: ${join(main, ".git")}\n`);
     expect(recordStartedWorktree(database, join(root, "other"), repositoryIdentityLocation(join(root, "other")))).toBe(false);
+  });
+
+  it("sees a worktree `git worktree move` moved, which leaves the worktrees folder as it was, and not its old path", async () => {
+    const { root, main, database, forged } = await startedRepository();
+    const before = join(root, "before");
+    git(main, "worktree", "add", "--quiet", "-b", "linked", before);
+    expect(recordStartedWorktree(database, forged, repositoryIdentityLocation(forged))).toBe(false);
+
+    const after = join(root, "after");
+    git(main, "worktree", "move", before, after);
+    expect(recordStartedWorktree(database, after, repositoryIdentityLocation(after))).toBe(true);
+
+    await mkdir(before);
+    await writeFile(join(before, ".git"), `gitdir: ${join(main, ".git")}\n`);
+    expect(recordStartedWorktree(database, before, repositoryIdentityLocation(before))).toBe(false);
+  });
+
+  it("refuses a folder whose own Git folder claims the clone's id and names the folder as its worktree", async () => {
+    const { root, main, database } = await startedRepository();
+    // A Git folder of the attacker's, with the recorded clone's id copied in, that really does register `planted`.
+    const lookalike = join(root, "lookalike");
+    await mkdir(lookalike);
+    git(lookalike, "init", "--quiet");
+    git(lookalike, "commit", "--quiet", "--allow-empty", "-m", "seed");
+    const planted = join(root, "planted");
+    git(lookalike, "worktree", "add", "--quiet", "-b", "planted", planted);
+    await copyFile(join(main, ".git", "rerail-repository-id"), join(lookalike, ".git", "rerail-repository-id"));
+    git(main, "worktree", "add", "--quiet", "-b", "real", join(root, "real"));
+    const location = repositoryIdentityLocation(planted);
+    expect(dirname(location.identityPath)).toBe(join(lookalike, ".git"));
+
+    expect(recordStartedWorktree(database, planted, location)).toBe(false);
+    // The refusal leaves what the recorded checkout's registry says untouched.
+    expect(recordStartedWorktree(database, join(root, "real"), repositoryIdentityLocation(join(root, "real")))).toBe(true);
+  });
+
+  it("refuses a registered worktree of the recorded checkout when the location names another common directory", async () => {
+    const { root, main, database } = await startedRepository();
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "linked", worktree);
+    const genuine = repositoryIdentityLocation(worktree);
+    // The same clone id file, reached through a common directory the recorded checkout does not use.
+    const elsewhere = join(root, "elsewhere-common");
+    await mkdir(elsewhere);
+    await copyFile(genuine.identityPath, join(elsewhere, "rerail-repository-id"));
+
+    expect(recordStartedWorktree(database, worktree, { ...genuine, identityPath: join(elsewhere, "rerail-repository-id") })).toBe(false);
+    expect(recordStartedWorktree(database, worktree, genuine)).toBe(true);
   });
 });
