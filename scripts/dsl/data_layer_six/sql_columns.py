@@ -73,7 +73,7 @@ BASE = ['__path','__start','__end','id','parent','edge_parent','kind','line','te
 
 def schema(plan):
     db = sqlite3.connect(':memory:', cached_statements=0)
-    for name, arity in [('rx_matches',2),('rx_extract',3),('rx_replace',3),('source_text',3),('sha256',1),('verify_ed25519',3)]:
+    for name, arity in [('rx_matches',2),('rx_extract',3),('rx_replace',3),('source_text',3),('source_text',1),('sha256',1),('verify_ed25519',3)]:
         db.create_function(name, arity, lambda *args: None)
     tables = {}
     def create(name, columns):

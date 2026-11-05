@@ -1282,6 +1282,9 @@ impl<'a> Session<'a> {
                 syntax_files.iter().find(|(p, _)| p == path)
                     .and_then(|(_, facts)| facts.diagnostic_line(span, line))
                     .or_else(|| {
+                        if line == 0 && span.start_byte == 0 && span.end_byte == 0
+                            && self.plan.locations.iter().any(|location| location == path)
+                        { return Some(span.clone()); }
                         if line < span.start_line || line > span.end_line { return None; }
                         let file = self.visible.files.iter().find(|file| file.path == path)?;
                         let lines = text_lines.entry(path.to_owned()).or_insert_with(|| {
