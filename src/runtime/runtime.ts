@@ -1259,7 +1259,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       requestSteer: async (sessionId, requested, content, metadata) => {
         const activeState = this.#sessions.get(sessionId);
         if (activeState !== opened || activeState.closed || retired) return "discarded";
-        const revision = metadata?.revision ?? activeState.codeRuleRevision;
         const pending: PendingSteer = {
           delivery: {
             sessionId,
@@ -1270,59 +1269,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
             rules: metadata?.rules ?? [],
             strategy: "message",
           },
-          revision,
+          revision: metadata?.revision ?? activeState.codeRuleRevision,
           scope: metadata?.scope ?? [],
         };
-        if (!this.#isCurrentSteer(activeState, pending)) {
-          this.#recordUndelivered(activeState, pending);
-          return "discarded";
-        }
-        const strategy = activeState.steerStrategy;
-        if (strategy === "subagent")
-          pending.delivery = { ...pending.delivery, content: subagentSteer(content, activeState.descriptor.host), strategy };
-        const findings = metadata?.generatedEdit;
-        const window = activeState.resultWindow;
-        // The check of the very edit whose result is being ingested: the host can put the steer into that result.
-        const own = window !== undefined && findings !== undefined
-          && activeState.codeRuleBridge?.checks(window.toolCallId, metadata!.revision, metadata!.scope) === true;
-        if (own) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
-        if (strategy === "rewind" && own) {
-          // Queued before the result answers, so the steer goes out with the edit it rolled back.
-          const queued = Promise.withResolvers<void>();
-          window.steers.push(queued.promise);
-          try {
-            await this.#rewind(activeState, window.toolCallId, pending, metadata!);
-            if (activeState.closed || retired) return "discarded";
-            if (!this.#isCurrentSteer(activeState, pending)) {
-              this.#recordUndelivered(activeState, pending);
-              return "discarded";
-            }
-            activeState.pendingSteers.push(pending);
-          } finally {
-            queued.resolve();
-          }
-        } else {
-          const missed = activeState.editCheckWaits === 0 || (activeState.overdueEditChecks !== undefined && activeState.yieldWaits === 0);
-          if (findings !== undefined && missed && missedSteerDigestEnabled()) {
-            // Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would
-            // reach the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
-            const scope = new Set(pending.scope);
-            for (const violation of findings.violations) {
-              const own = violation.path !== undefined && scope.has(violation.path);
-              activeState.missedFindings.push({
-                violation, sourceOf: findings.sourceOf, revision, scope: own ? [violation.path!] : pending.scope,
-              });
-            }
-            return "queued";
-          }
-          activeState.pendingSteers.push(pending);
-        }
-        if (activeState.codeRuleReady && metadata?.background === true && this.#deliverBackground !== undefined) {
-          const inFlight = this.#deliverSteer(activeState, pending, true);
-          const waitsForNativeBoundary = metadata.generatedEdit !== undefined
-            && ADAPTER_CAPABILITIES[activeState.descriptor.host].toolSurface === "native";
-          if (waitsForNativeBoundary) await inFlight;
-        }
+        const placed = await this.#placeSteer(activeState, pending, content, metadata, () => retired);
+        if (placed !== undefined) return placed;
+        await this.#deliverInBackground(activeState, pending, metadata);
         return "queued";
       },
       revised: (sessionId, revision, paths) => {
@@ -1776,6 +1728,91 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       toolCallId,
       rewound: paths,
     };
+  }
+
+  /**
+   * Where a steer waits: for its rollback, in the pending steers (undefined, for the caller to deliver in the
+   * background), or with the findings held for the digest. A steer a newer revision has overtaken is discarded.
+   */
+  async #placeSteer(
+    state: RuntimeSessionState, pending: PendingSteer, content: string, metadata: SteerMetadata | undefined, isRetired: () => boolean,
+  ): Promise<"discarded" | "queued" | undefined> {
+    if (!this.#isCurrentSteer(state, pending)) {
+      this.#recordUndelivered(state, pending);
+      return "discarded";
+    }
+    const window = this.#ownResultWindow(state, pending, content, metadata);
+    if (state.steerStrategy === "rewind" && window !== undefined) return await this.#rewindSteer(state, window, pending, metadata!, isRetired);
+    if (this.#holdForDigest(state, pending, metadata)) return "queued";
+    state.pendingSteers.push(pending);
+    return undefined;
+  }
+
+  /** Sets how the steer goes out; the result window it comes back with is the one it rides, if it is the check of that very edit. */
+  #ownResultWindow(state: RuntimeSessionState, pending: PendingSteer, content: string, metadata: SteerMetadata | undefined): ResultWindow | undefined {
+    if (state.steerStrategy === "subagent")
+      pending.delivery = { ...pending.delivery, content: subagentSteer(content, state.descriptor.host), strategy: state.steerStrategy };
+    const window = state.resultWindow;
+    // The check of the very edit whose result is being ingested: the host can put the steer into that result.
+    const own = window !== undefined && metadata?.generatedEdit !== undefined
+      && state.codeRuleBridge?.checks(window.toolCallId, metadata.revision, metadata.scope) === true;
+    if (!own) return undefined;
+    pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
+    return window;
+  }
+
+  /** Rolls the edit back, then pends the steer; queued before the result answers, so the steer goes out with the edit it rolled back. */
+  async #rewindSteer(
+    state: RuntimeSessionState, window: ResultWindow, pending: PendingSteer, metadata: SteerMetadata, isRetired: () => boolean,
+  ): Promise<"discarded" | undefined> {
+    const queued = Promise.withResolvers<void>();
+    window.steers.push(queued.promise);
+    try {
+      await this.#rewind(state, window.toolCallId, pending, metadata);
+      if (state.closed || isRetired()) return "discarded";
+      if (!this.#isCurrentSteer(state, pending)) {
+        this.#recordUndelivered(state, pending);
+        return "discarded";
+      }
+      state.pendingSteers.push(pending);
+      return undefined;
+    } finally {
+      queued.resolve();
+    }
+  }
+
+  /** Whether the boundary that waited for this edit has already answered, so a steer now would reach the agent at some later step. */
+  #boundaryPassed(state: RuntimeSessionState): boolean {
+    return state.editCheckWaits === 0 || (state.overdueEditChecks !== undefined && state.yieldWaits === 0);
+  }
+
+  /**
+   * Experimental (off unless enabled): the boundary that waited for this edit has answered, so a steer now would reach
+   * the agent at some later, unrelated step; its findings wait for the digest at the end of the agent's run.
+   */
+  #holdForDigest(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): boolean {
+    const findings = metadata?.generatedEdit;
+    if (findings === undefined || !this.#boundaryPassed(state) || !missedSteerDigestEnabled()) return false;
+    this.#holdFindings(state, pending, findings);
+    return true;
+  }
+
+  #holdFindings(state: RuntimeSessionState, pending: PendingSteer, findings: NonNullable<SteerMetadata["generatedEdit"]>): void {
+    const scope = new Set(pending.scope);
+    for (const violation of findings.violations) {
+      const own = violation.path !== undefined && scope.has(violation.path);
+      state.missedFindings.push({
+        violation, sourceOf: findings.sourceOf, revision: pending.revision, scope: own ? [violation.path!] : pending.scope,
+      });
+    }
+  }
+
+  async #deliverInBackground(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): Promise<void> {
+    if (!state.codeRuleReady || metadata?.background !== true || this.#deliverBackground === undefined) return;
+    const inFlight = this.#deliverSteer(state, pending, true);
+    const waitsForNativeBoundary = metadata.generatedEdit !== undefined
+      && ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native";
+    if (waitsForNativeBoundary) await inFlight;
   }
 
   /** Marks the sources whose newer revision keeps a steer, or a held finding, from the agent (`undeliveredSources`). */
