@@ -29,7 +29,7 @@ import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catal
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { events, policySessionOwners, sessions } from "../engine/storage/schema.js";
 import {
   DAEMON_ACCESS_PARAM,
@@ -563,7 +563,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     rerail: {
       version: packageVersion,
       activeVersion: attempt("active version", () => activeCoreVersion(home), null),
-      managedInstall: existsSync(join(home, "current")),
+      managedInstall: existsSync(join(home, CURRENT_LINK)),
       installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
       skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
     },

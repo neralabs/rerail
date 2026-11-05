@@ -11,7 +11,7 @@ import { loadNativeBinding } from "../engine/native/native.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
 
@@ -55,8 +55,6 @@ export interface DaemonState {
 export const DAEMON_ACCESS_HEADER = "x-rerail-access";
 /** The query parameter of the dashboard link; the page keeps its value in its origin's storage and sends the header. */
 export const DAEMON_ACCESS_PARAM = "rerail-access";
-/** In the Rerail home: the capability a loopback daemon keeps across restarts. */
-export const DAEMON_ACCESS_TOKEN_FILE = "access-token";
 
 /** The headers that admit a request to the daemon `state` records: its access capability, when it has one. */
 export function daemonAccessHeaders(state: Pick<DaemonState, "accessToken">): Record<string, string> {
@@ -243,8 +241,7 @@ export function nodeExecutable(): string {
   return process.versions.bun === undefined ? process.execPath : resolveExecutable("node") ?? "node";
 }
 
-export const DAEMON_STATE_FILE = "daemon.json";
-export const DAEMON_LOG_FILE = "daemon.log";
+export { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE };
 /** In the Rerail home: the lock a daemon start holds. */
 export const START_LOCK_DIR = "start.lock";
 

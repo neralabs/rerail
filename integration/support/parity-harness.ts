@@ -1,4 +1,6 @@
-export const PARITY_HOSTS = ["omp", "pi", "claude-code", "codex", "cursor"] as const;
+import { RERAIL_HOSTS } from "../../src/engine/index.js";
+
+export const PARITY_HOSTS = RERAIL_HOSTS;
 export type ParityHost = (typeof PARITY_HOSTS)[number];
 
 export const REQUIRED_CAPABILITIES = [

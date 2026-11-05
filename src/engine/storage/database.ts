@@ -8,7 +8,7 @@ import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, pendingMigr
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
-import { defaultRerailHome } from "./rerail-home.js";
+import { defaultRerailHome, RERAIL_DATABASE_FILE } from "./rerail-home.js";
 import { keepFilesPrivate } from "./private-files.js";
 
 export type RerailDatabase = BetterSQLite3Database<typeof schema> & { readonly $client: Database.Database };
@@ -20,8 +20,7 @@ export interface OpenRerailDatabaseOptions {
   migrations?: readonly Migration[];
 }
 
-/** The one Rerail database: rules and every repository's history, in the Rerail home. */
-export const RERAIL_DATABASE_FILE = "rerail.sqlite";
+export { RERAIL_DATABASE_FILE };
 
 /** `$RERAIL_HOME/rerail.sqlite`, with the Rerail home defaulting to `~/.rerail`. */
 export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = process.env): string {
