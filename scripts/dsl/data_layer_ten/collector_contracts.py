@@ -54,6 +54,9 @@ def record(source):
         ('nested-init', 'def __init__():\n    def inner():\n        obj.value = 1\n'),
         ('nested-hint', 'def outer():\n    raise ValueError("bad")\n    def inner():\n        return "Fix producer"\n'),
         ('relative-imports', 'from .requests import get\nfrom requests import get\n'),
+        ('nul-count-string', 'value = "a\\x00_count"\n'),
+        ('nul-count-fstring', 'value = f"a\\x00_count{x}"\n'),
+        ('nul-after-count', 'value = "a_count\\x00"\n'),
     ]:
         observe('plan_optimizer_v2', label, optimizer_path, text, 'scan_file')
     for label, text in [
@@ -113,6 +116,10 @@ def record(source):
         ('source-other-annotation', 'def _generated_index(*, source: owner.IndexSource):\n    return Index(source=source)\n'),
         ('nested-function', 'def _generated_index(*, source: IndexSource):\n    def inner():\n        return Index(source=source)\n    return inner\n'),
         ('import-in-function', 'def outer():\n    from l1000_schema.schema_def import Index as Ix\nIx()\n# _generated_index\n'),
+        ('duplicate-first-parameter-valid', 'def _generated_index(source: IndexSource, *, source: Wrong):\n    return Index(source=source)\n'),
+        ('duplicate-first-parameter-invalid', 'def _generated_index(source: Wrong, *, source: IndexSource):\n    return Index(source=source)\n'),
+        ('duplicate-last-default-clean', 'def _generated_index(*, source: IndexSource = MODEL_DECLARED, source: IndexSource = None):\n    return Index(source=source)\n'),
+        ('duplicate-last-default-forbidden', 'def _generated_index(*, source: IndexSource = None, source: IndexSource = MODEL_DECLARED):\n    return Index(source=source)\n'),
     ]:
         observe('generated_index_sources', label, 'impl/common/l7245_versioned_backends/generic_sparse.py', text, 'check_file')
     return cases

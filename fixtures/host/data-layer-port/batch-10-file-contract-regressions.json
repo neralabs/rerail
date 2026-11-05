@@ -4712,6 +4712,100 @@
       ]
     },
     {
+      "test": "structural-matching-first-model-config-False-True",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=False)\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA014",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching Pydantic contracts must declare frozen=True"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-first-model-config-True-False",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=True)\n    model_config = ConfigDict(frozen=False)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-first-model-config-False-False",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=False)\n    model_config = ConfigDict(frozen=False)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA014",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching Pydantic contracts must declare frozen=True"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-first-model-config-True-True",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=True)\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-duplicate-delegate-parameter",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "application/probe.py",
+          "source": "def helper(spec, spec):\n    return match(txn, spec)\nhelper(value, \"lookup\")\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA011",
+          "path": "application/probe.py",
+          "line": 3,
+          "symbol": "helper",
+          "message": "Matching specifications cannot use string lookup"
+        }
+      ]
+    },
+    {
       "test": "structural-matching-order-conformance-separate-imports",
       "check": "matching_architecture",
       "entry": "scan_sources",
@@ -5623,6 +5717,62 @@
         {
           "path": "impl/common/l2065_plan_core/passes.py",
           "source": "from .requests import get\nfrom requests import get\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-plan_optimizer_v2-nul-count-string",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "value = \"a\\x00_count\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 1,
+          "code": "PV2-021",
+          "message": "String literal 'a\\x00_count' looks like a legacy *_count sibling ref. Counts are Cardinality.COUNT relations with one typed `count` column; use RelationSchema.count() instead of suffix-derived refs."
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-nul-count-fstring",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "value = f\"a\\x00_count{x}\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 1,
+          "code": "PV2-021",
+          "message": "f-string constructs a *_count sibling ref. Counts are Cardinality.COUNT relations; use RelationSchema.count() instead of suffix-derived refs."
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-nul-after-count",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "value = \"a_count\\x00\"\n"
         }
       ],
       "expected": []
@@ -6618,6 +6768,66 @@
       ],
       "expected": [
         "impl/common/l7245_versioned_backends/generic_sparse.py:3: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-duplicate-first-parameter-valid",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(source: IndexSource, *, source: Wrong):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-generated_index_sources-duplicate-first-parameter-invalid",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(source: Wrong, *, source: IndexSource):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index source parameter must be annotated as IndexSource"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-duplicate-last-default-clean",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*, source: IndexSource = MODEL_DECLARED, source: IndexSource = None):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-generated_index_sources-duplicate-last-default-forbidden",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*, source: IndexSource = None, source: IndexSource = MODEL_DECLARED):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index source must not default to MODEL_DECLARED"
       ]
     }
   ]

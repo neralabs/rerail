@@ -77,6 +77,11 @@ def record(source):
     match('order-implementation-aggregates', 'impl/common/l5250_matching/probe.py', 'SqlRaw("sql")\nbackend = BackendType.POSTGRES\n')
     match('order-assignment-and-counter', 'impl/common/l5250_matching/probe.py',
           'database_round_trips = planned_database_round_trips = len(database_receipts)\n')
+    for first, last in [(False, True), (True, False), (False, False), (True, True)]:
+        match('first-model-config-' + str(first) + '-' + str(last), 'l1470_matching_contracts/probe.py',
+              'class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=' + str(first) + ')\n    model_config = ConfigDict(frozen=' + str(last) + ')\n')
+    match('duplicate-delegate-parameter', 'application/probe.py',
+          'def helper(spec, spec):\n    return match(txn, spec)\nhelper(value, "lookup")\n')
     for owner, path, application in [('conformance', 'conform/l5250_matching/probe.py', False),
                                      ('consumer-conformance', 'conform/l5250_matching/probe.py', True),
                                      ('consumer-facade', 'data_layer/matching.py', True)]:
