@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Run altered syntax through original detectors and compare complete native results."""
-import ast,importlib,json
+import ast,copy,importlib,json
 from pathlib import Path
 import pytest
 
@@ -11,6 +11,17 @@ def altered(source,form):
  if form=='shift':return '# source offset regression\n\n'+source
  try:tree=ast.parse(source)
  except SyntaxError:return source
+ if form=='control':
+  tree.body=[ast.If(test=ast.Constant(True),body=tree.body or [ast.Pass()],orelse=[])]
+  return ast.unparse(ast.fix_missing_locations(tree))+'\n'
+ if form=='duplicate':
+  if tree.body:tree.body.insert(1,copy.deepcopy(tree.body[0]))
+  return ast.unparse(tree)+'\n'
+ if form=='shadow':
+  for node in tree.body:
+   if isinstance(node,(ast.ClassDef,ast.FunctionDef,ast.AsyncFunctionDef)):
+    replacement=copy.deepcopy(node);replacement.body=[ast.Pass()];tree.body.append(replacement);break
+  return ast.unparse(ast.fix_missing_locations(tree))+'\n'
  if form=='normalized':return ast.unparse(tree)+'\n'
  # Parentheses alter CST shape while preserving the Python expression structure.
  choices=[n for n in ast.walk(tree) if isinstance(n,(ast.Call,ast.Attribute,ast.Name)) and not isinstance(getattr(n,'ctx',None),(ast.Store,ast.Del))]
@@ -21,11 +32,11 @@ def altered(source,form):
  data=source.encode();return (data[:start]+b'('+data[start:end]+b')'+data[end:]).decode()
 
 @pytest.mark.parametrize('seed',payload['records'],ids=lambda seed:seed['test'])
-@pytest.mark.parametrize('form',['shift','normalized','parentheses'])
+@pytest.mark.parametrize('form',['shift','normalized','parentheses','control','duplicate','shadow'])
 def test_complete_shape_result(seed,form,tmp_path,monkeypatch):
  module=importlib.import_module('scripts.lint_'+seed['check']);files={f['path']:altered(payload['sources'][f['sourceSha256']],form) if f['path'].endswith('.py') else payload['sources'][f['sourceSha256']] for f in seed['files']}
  for name,source in files.items():
-  path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(source)
+  path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(source.encode())
  check=seed['check'];name,source=next(iter(files.items()),('empty.py',''))
  if check=='graph_lazy_sql_plan':result=module._violations_for_sources(files)
  elif check in {'bounded_composed_graph_paths','conditional_architecture'}:result=module.collect_violations(tmp_path)

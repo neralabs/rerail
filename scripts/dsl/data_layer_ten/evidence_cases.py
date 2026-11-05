@@ -24,3 +24,11 @@ def test_native_observations_require_executed_call_traces():
 def test_call_trace_result_count_must_match_the_recorded_result():
  oracle,report=pair();report['calls'][0]['findings']=1
  with pytest.raises(ValueError,match='native call'):verify(oracle,[report])
+
+def test_snapshot_results_cannot_be_claimed_as_workspace_execution():
+ oracle,report=pair()
+ with pytest.raises(ValueError,match='API mode'):verify(oracle,[report],mode='workspace')
+
+def test_report_for_an_old_policy_cannot_certify_the_current_policy():
+ oracle,report=pair();report['policySha256']={'graph_lazy_sql_plan':'old'}
+ with pytest.raises(ValueError,match='Changed policy'):verify(oracle,[report],policies={'graph_lazy_sql_plan':'current'})

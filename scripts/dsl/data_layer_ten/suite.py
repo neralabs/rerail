@@ -166,20 +166,24 @@ class Suite(NineSuite):
   items[:]=items[getattr(self,'part',0)::getattr(self,'parts',1)]
 def main():
  p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--repo',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--policies',type=Path,required=True);p.add_argument('--oracle',action='store_true');p.add_argument('--baseline',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot');p.add_argument('--checks',default=','.join(CHECKS));p.add_argument('--mutant',action='store_true');p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);p.add_argument('tests',nargs='*');args=p.parse_args()
- workspace=Path.cwd();root=args.source.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True);os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
+ workspace=Path.cwd();root=args.source.resolve();repo=args.repo.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True);os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
  from data_layer_ten.evidence import read_report
  baseline=expand(read_report(args.baseline)) if args.baseline else None
  if not args.oracle and baseline is None:p.error('A recorded original baseline is required')
  checks=tuple(args.checks.split(','));from data_layer_nine.discovery import upstream_tests,independent_collections
+ def policies():return {c:hashlib.sha256((args.policies.resolve()/('data-layer-'+c.replace('_','-')+'.json')).read_bytes()).hexdigest() for c in checks}
+ # Resolve before changing cwd; reject edits during a run instead of certifying mixed policies.
+ args.policies=args.policies.resolve();policy_hashes=policies()
  tests=args.tests or [*upstream_tests(root,checks),str(root/'scripts/tests/test_conditional_architecture_facts.py'),str(Path(__file__).with_name('optimizer_cases.py')),str(Path(__file__).with_name('audit_cases.py')),str(Path(__file__).with_name('repair_cases.py')),str(Path(__file__).with_name('shape_cases.py'))];os.chdir(root);backends=[];exitcodes=[]
  for index,collection in enumerate(independent_collections(tests)):
   backend=Suite(root,workspace,args.mode,output.with_name(output.stem+f'-{index}.json'),args.oracle,baseline['records'] if baseline else None);backend.checks=checks;backend.part=args.part;backend.parts=args.parts;backend.mutant=args.mutant
   exitcodes.append(int(pytest.main(['--rootdir',str(root),'-c',str(root/'pyproject.toml'),'-q',*collection],plugins=[backend])));backends.append(backend)
  records=[r for b in backends for r in b.records];cases={k:v for b in backends for k,v in b.outcomes.items()};calls=[r for b in backends for r in b.calls];fallbacks=[r for b in backends for r in b.semantic_fallbacks]
  code=max(exitcodes);wanted=[r for r in baseline['records'] if r['test'] in cases] if baseline else records
+ if policies()!=policy_hashes:code=1
  from collections import Counter
  missing=Counter((r['test'],r['check'],r['entry']) for r in wanted)-Counter((r['test'],r['check'],r['entry']) for r in records)
  if missing or fallbacks:code=1
- report=dict(format='rerail.data-layer-batch-ten/v1',oracle=args.oracle,mode=args.mode,exitCode=code,sourceFilesChecked=verify_sources(root,args.repo.resolve(),PIN),records=records,calls=calls,cases=cases,semanticFallbacks=fallbacks,originalCalls={k:sum(b.original_calls.get(k,0) for b in backends) for k in set().union(*(b.original_calls.keys() for b in backends))},retainedCaseIds=sorted(set(cases)-{r['test'] for r in records}),missingResults=list(missing.elements()),engineSha256=hashlib.sha256(backends[0].engine_path.read_bytes()).hexdigest())
+ report=dict(format='rerail.data-layer-batch-ten/v1',oracle=args.oracle,mode=args.mode,exitCode=code,policySha256=policy_hashes,sourceFilesChecked=verify_sources(root,repo,PIN),records=records,calls=calls,cases=cases,semanticFallbacks=fallbacks,originalCalls={k:sum(b.original_calls.get(k,0) for b in backends) for k in set().union(*(b.original_calls.keys() for b in backends))},retainedCaseIds=sorted(set(cases)-{r['test'] for r in records}),missingResults=list(missing.elements()),engineSha256=hashlib.sha256(backends[0].engine_path.read_bytes()).hexdigest())
  output.write_text(json.dumps(compact(report),indent=2)+'\n');raise SystemExit(code)
 if __name__=='__main__':main()
