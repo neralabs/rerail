@@ -93,14 +93,15 @@
                 "ast_start",
                 "ast_stop",
                 "ast_line",
-                "ast_value_repr"
+                "ast_value_repr",
+                "ast_level"
               ],
               "expand": "nodes"
             }
           },
           {
             "name": "a",
-            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,ast_module AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls FROM canonical",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,ast_module AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(ast_level,'') AS INTEGER) AS level FROM canonical",
             "indexes": [
               [
                 "__path",
@@ -180,7 +181,7 @@
           },
           {
             "name": "optimizer_imports",
-            "query": "SELECT n.*,CASE WHEN n.kind='ImportFrom' THEN n.module ELSE alias.name END imported,coalesce(alias.position,0) ordinal FROM a n LEFT JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' AND n.kind='Import' WHERE n.kind='Import' OR n.kind='ImportFrom' AND NOT rx_matches(source_text(n.__path,n.__start,n.__end),'^from\\s+[.]')",
+            "query": "SELECT n.*,CASE WHEN n.kind='ImportFrom' THEN n.module ELSE alias.name END imported,coalesce(alias.position,0) ordinal FROM a n LEFT JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' AND n.kind='Import' WHERE n.kind='Import' OR n.kind='ImportFrom' AND n.level=0",
             "indexes": [
               [
                 "__path",
@@ -351,7 +352,7 @@
           },
           {
             "name": "a",
-            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls FROM canonical",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(NULL,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
             "indexes": [
               [
                 "__path",

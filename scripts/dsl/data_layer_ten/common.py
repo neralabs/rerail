@@ -11,8 +11,8 @@ EXCLUDES=['**/'+part+'/**' for part in ['.git','.venv','venv','__pycache__','tmp
 def extended():
     stages=nine_base()
     for stage in stages:
-        if stage['name']=='canonical':stage['pythonAst']['fields'].append('ast_class')
-        if stage['name']=='a':stage['query']=stage['query'].replace(' FROM canonical',',CAST(NULLIF(ast_class,\'\') AS INTEGER) AS cls FROM canonical')
+        if stage['name']=='canonical':stage['pythonAst']['fields'].extend(['ast_class','ast_level'])
+        if stage['name']=='a':stage['query']=stage['query'].replace(' FROM canonical',',CAST(NULLIF(ast_class,\'\') AS INTEGER) AS cls,CAST(NULLIF(ast_level,\'\') AS INTEGER) AS level FROM canonical')
     stages += [S('classes',"SELECT * FROM a WHERE kind='ClassDef'",('__path','id')),
       S('single_decorators',"SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",('__path','fn','name')),
       S('qual_functions',"SELECT f.*,(SELECT group_concat(name,'.')||'.' FROM (SELECT name FROM classes c WHERE c.__path=f.__path AND f.id BETWEEN c.id AND c.last ORDER BY c.id))||f.name qualified FROM functions f",('__path','id')),
