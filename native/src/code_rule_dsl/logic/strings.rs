@@ -243,6 +243,8 @@ pub(in crate::code_rule_dsl) struct Vocabulary {
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
+    /// The strings tested, and the CPU (user + system seconds) testing them took.
+    pub(in crate::code_rule_dsl) tested: Mutex<(usize, f64)>,
 }
 
 impl Vocabulary {
@@ -254,8 +256,10 @@ impl Vocabulary {
         }
         let words = self.tests.len().div_ceil(64);
         let mut seen = self.seen.lock().unwrap();
+        let (mut tested, t0) = (0, super::plan::corpus::thread_usage());
         for (s, &sym) in strings.iter().zip(symbols) {
             let bits = seen.entry(sym).or_insert_with(|| {
+                tested += 1;
                 let mut bits = vec![0u64; words].into_boxed_slice();
                 for (k, (_, m)) in self.tests.iter().enumerate() {
                     if m.is_match(s) {
@@ -270,6 +274,10 @@ impl Vocabulary {
                 }
             }
         }
+        let t1 = super::plan::corpus::thread_usage();
+        let mut total = self.tested.lock().unwrap();
+        total.0 += tested;
+        total.1 += (t1.0 - t0.0) + (t1.1 - t0.1);
         out
     }
 }
@@ -319,7 +327,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel.clone());
         }
     }
-    Ok(Vocabulary { tests, seen: Mutex::default() })
+    Ok(Vocabulary { tests, seen: Mutex::default(), tested: Mutex::default() })
 }
 
 #[cfg(test)]

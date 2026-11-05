@@ -192,10 +192,11 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, and the document column of `node`, `doc` and `pkg`.
+    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg` and
+    // `syntax_error`.
     let base_locations = |rel: &str| -> Vec<usize> {
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if matches!(rel, "node" | "doc" | "pkg") {
+        if matches!(rel, "node" | "doc" | "pkg" | "syntax_error") {
             columns.push(0);
         }
         columns
@@ -237,6 +238,38 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
             }
         }
     }
+    // String filters (decision 0037): a text test's relation (`strtest_<k>`), and a derived relation whose every
+    // rule reads only text relations and such filters, each head string from a text column. A chunk's rows hold
+    // every string of the chunk that passes, so a rule that joins one on a string its chunk gave stays file-local.
+    let text_columns = |rel: &str| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c);
+    let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+    // To a fixpoint: a filter may read other filters.
+    let mut filters: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
+    loop {
+        let kept: BTreeSet<String> = filters
+            .iter()
+            .filter(|rel| {
+                prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
+                    let mut strings = BTreeSet::new();
+                    let reads_only_text = r.body.iter().all(|l| match l {
+                        Literal::Atom(a) if test_relation(&a.rel) || filters.contains(&a.rel) => true,
+                        Literal::Atom(a) if !a.neg && let Some(cols) = text_columns(&a.rel) => {
+                            strings.extend(cols.iter().filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None }));
+                            true
+                        }
+                        Literal::Cmp { .. } => true,
+                        _ => false,
+                    });
+                    reads_only_text && r.head.args.iter().all(|t| matches!(t, Term::Var(v) if strings.contains(v)))
+                })
+            })
+            .cloned()
+            .collect();
+        if kept == filters {
+            break;
+        }
+        filters = kept;
+    }
     let mut local: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
@@ -253,7 +286,7 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
                     Literal::Cmp { .. } => continue,
                 };
                 let constant = !derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel);
-                if constant {
+                if constant || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
                     continue;
                 }
                 if derived.contains(atom.rel.as_str()) && !local.contains(&atom.rel) {

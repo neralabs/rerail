@@ -366,3 +366,36 @@ fn converted_rules_give_the_recorded_findings() {
         println!("{m}");
     }
 }
+
+/// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus
+/// on disk (`RERAIL_MEASURE_CORPUS`), one run each. Prints each run's CPU (user + system) by phase, peak RSS, the
+/// violations, and the text tests' work (decision 0037): relations, distinct strings tested, their CPU.
+#[test]
+#[ignore = "a measurement over a corpus on disk"]
+fn measure_converted_rules() {
+    let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
+    let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
+    for id in rules.split(',') {
+        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rdl"))).unwrap();
+        // The relations the cross-file part derives, and the base relations it reads.
+        let mut parsed = crate::code_rule_dsl::logic::front::parse(&program).unwrap();
+        crate::code_rule_dsl::logic::strings::as_relations(&mut parsed).unwrap();
+        let split = crate::code_rule_dsl::typing::file_local::programs(&parsed);
+        let cross: BTreeSet<&str> = split.cross.rules.iter().map(|r| r.head.rel.as_str()).collect();
+        let local = crate::code_rule_dsl::typing::file_local::split(&parsed);
+        let not_local: BTreeSet<&str> = parsed.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| !local.contains(*r)).collect();
+        println!("CROSS {id}: derives {cross:?}, not file-local {not_local:?}, reads base {:?}", split.base);
+        let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{id}"));
+        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
+        let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
+        println!(
+            "MEASURE {id}: {} files, {} nodes, {} chunks, violations {}, CPU {cpu:.2} s, peak RSS {rss:.0} MB; text tests {} relations, {} strings, {:.3} s CPU",
+            r.files, r.nodes, r.chunks, r.rows.get("violation").copied().unwrap_or(0), r.text.0, r.text.1, r.text.2
+        );
+        for (name, user, sys, rss, statements) in &r.phases {
+            println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+        }
+        let _ = std::fs::remove_dir_all(&out);
+    }
+}

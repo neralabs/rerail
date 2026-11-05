@@ -164,6 +164,8 @@ pub(crate) struct Report {
     pub(crate) rounds: cross_rounds::Rounds,
     /// Declarations, summaries and terms (`corpus::typing`).
     pub(crate) typing: TypingReport,
+    /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
+    pub(crate) text: (usize, usize, f64),
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -523,7 +525,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let rss = usage().2;
     phases.insert(1, ("parse (worker)", parse_cpu.0, parse_cpu.1, rss, 0));
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed })
+    let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu) })
 }
 
 

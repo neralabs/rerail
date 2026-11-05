@@ -1,6 +1,6 @@
 # 0037: Text tests are globs over typed text; they run once per distinct string
 
-Status: proposed (2026-11-05; list step 30)
+Status: accepted and built (2026-11-05, the user; list step 30)
 
 ## Intro
 
@@ -221,3 +221,60 @@ That fits the gate's 1–2 s cold and milliseconds warm.
   for this corpus size". After lowering, regex.md §3 found it has no consumer in this ruleset.
 - **One combined automaton for every test.** It is slower: a `RegexSet` took 92.6 s against 0.52 s
   pattern by pattern (regex.md §1.1), and determinization blows up past about 450 patterns.
+
+## Built (2026-11-05)
+
+- **Syntax** (`logic::strings`, `logic::front`):
+  - `@glob`, `@iglob`, `@word`, `@iword`, `@equals`, `@prefix`, `@suffix`, `@contains`, and their `i` forms;
+  - each takes one pattern or a set `{a, b}`;
+  - `$s in {…}` and `!@test(…)`.
+- **Text relations** (`facts::vtab::syntax`): `name(n, s)` (an identifier, or an attribute's dotted text),
+  `str(n, s)` (the content between the quotes, where there is no interpolation) and `strprefix(n, p)`.
+  `comment` is not built yet; 4 clauses need it.
+- **Execution:**
+  - `strings::as_relations` turns each test whose string comes from a text relation into an input relation
+    `strtest_<k>(s)`, one per distinct (test, pattern set).
+  - Each batch fills those relations from its distinct strings. A per-symbol bit cache tests each string once
+    per run.
+  - Tests on strings a rule computes itself (`@cat`) stay per row in SQL.
+- **File-local split** (`typing::file_local`): test relations, and derived relations that only filter strings
+  from text relations, count as file-local. Otherwise a rule that reads them would run cross-file and hold
+  whole base relations in memory. `syntax_error`'s column is a document column.
+- **Converter:**
+  - It reads `rules-ast`, the sibling's rewritten pack.
+  - A regex becomes globs only where the result is exact for its kind of text. A test,
+    `regexes_become_exact_globs`, compares each glob set with its regex on sample strings.
+  - String-literal regexes become `strprefix` and `str` tests.
+  - Two forms are recorded as approximations:
+    - a module-text search for names becomes a search of the file's names;
+    - `_*` becomes at most three underscores.
+- **Coverage and replay:**
+  - Clauses converted: 165/562 before, 315/650 now.
+  - 155 recorded events now have all their clauses converted, and 153 of them give exactly the recorded
+    findings.
+  - One miss is a mention inside a string literal, which the structural rule ignores by design (§1.3 of the
+    sibling's regex.md).
+  - The other miss is a clause that is on only under `oracleAnalyzer`.
+
+### Measured on nera-data-layer `2b1504ad`
+
+Full corpus: 9,010 files, 28.2M nodes, 104 chunks. CPU only (user + system), at load 18–90.
+
+| Rule (all clauses converted) | Text test relations | Strings tested | Text test CPU | Run CPU | Peak RSS |
+|---|---:|---:|---:|---:|---:|
+| admin-async-purity | 10 | 594,447 | 0.50 s | 49.1 s | 227 MB |
+| plan-scope-side-effects | 19 | 594,447 | 0.42 s | 61.7 s | 330 MB |
+| serverplan-grammar-surface | 9 | 594,447 | 0.34 s | 52.5 s | 239 MB |
+| removed-compat-surfaces | 16 | 594,447 | 0.50 s | 51.0 s | 277 MB |
+| versioned-lifecycle-legacy-surfaces | 10 | 594,447 | 0.33 s | 43.4 s | 318 MB |
+
+- **Text tests.** They cost 0.3–0.5 s cold per rule, near the 0.1–0.3 s estimate given the load.
+- **The rest of each run.**
+  - Most of a run is parsing (13–24 s) and the rules' local plans (17–40 s), not text tests.
+  - Each rule is measured as its own run, so the parse is paid every time.
+- **The split fix.**
+  - Before it, admin-async-purity peaked at 2,245 MB and plan-scope-side-effects at 2,153 MB, both with a
+    cross-file part.
+  - After it, every rule above stays under 1 GB.
+- **async-sync-boundary** (63 clauses) now runs past the 2-minute cap. Its local plan is about 19,000
+  statements over 104 chunks. That is open: its plan shape, not text tests.
