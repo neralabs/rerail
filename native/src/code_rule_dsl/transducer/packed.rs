@@ -97,6 +97,9 @@ mod scm;
 #[cfg_attr(not(test), allow(dead_code))]
 mod compile_matcher;
 pub(in crate::code_rule_dsl) use compile_matcher::{LoweredMatcher, LoweredWave};
+// Label programs as node-set formulas (decision 0036).
+#[path = "packed/compile/sets.rs"]
+mod compile_sets;
 // A label program's walk without the interpreter's machinery (O28).
 #[path = "packed/compile/micro.rs"]
 mod compile_micro;
