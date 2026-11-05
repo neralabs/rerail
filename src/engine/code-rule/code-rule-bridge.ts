@@ -100,6 +100,181 @@ interface RewindableEdit {
   readonly preimages: ReadonlyMap<string, Preimage>;
   readonly after: ReadonlyMap<string, string | undefined>;
 }
+/** A source as a preimage: a file named like one holding secrets keeps only its digest and size. Undefined when it is none. */
+function preimageOf(source: Source): Preimage | undefined {
+  if (source.text !== undefined)
+    return sensitiveByName(source.path) ? { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } } : { text: source.text };
+  if (source.readError !== undefined) return { readError: source.readError };
+  return source.deleted === true ? {} : undefined;
+}
+/**
+ * The digest a tool edit's source had before it when its text was not captured: the one observed before a call whose start
+ * was not seen, or a secret-like file's, which finds it again where this session or Git holds it.
+ */
+function uncapturedPrior(edit: CodeRuleEdit, preimage: Preimage | undefined, before: string | undefined): string | undefined {
+  if (edit.generatedText === undefined) return undefined;
+  return preimage === undefined ? before : preimage.withheld?.sha256;
+}
+/** What Git decided about a change: it was Git's (`conflicted` when a stopped merge wrote it), or the text Git's move proves it was changed from. */
+interface GitVerdict {
+  readonly previousText?: string;
+  readonly conflicted?: boolean;
+}
+/** What Git holds for a walk's changes in one checkout, read once (`#gitVerdicts`). */
+interface GitBlobs {
+  /** Each change's index blob, its conflict stages, its `HEAD` blob and, when `HEAD` moved, its blob at `before`. */
+  readonly blobs: ReadonlyMap<string, Buffer>;
+  /** `HEAD` moved since the last walk... */
+  readonly moved: boolean;
+  /** ...only by commits, which write no file. */
+  readonly committed: boolean;
+  /** `HEAD` as the last walk saw it, when it moved since. */
+  readonly before: string | undefined;
+}
+interface GitView extends GitBlobs {
+  /** A merge, rebase or cherry-pick stopped on a conflict, having not moved `HEAD` for its work so far. */
+  readonly stopped: boolean;
+}
+async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
+  const head = await gitHead(checkout);
+  if (head === undefined) return undefined;
+  const from = discovery.heads.get(checkout);
+  if (from === undefined) discovery.heads.set(checkout, head);
+  const moved = from !== head;
+  const committed = moved && await headMovedOnlyByCommits(checkout, from);
+  const before = from === head ? undefined : from;
+  // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+  const blobs = await readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES });
+  return { blobs, moved, committed, before };
+}
+function gitRevisions(path: string, before: string | undefined): string[] {
+  const revisions = [`:./${path}`, `:2:./${path}`, `:3:./${path}`, `HEAD:./${path}`];
+  return before === undefined ? revisions : [...revisions, `${before}:./${path}`];
+}
+function blobDigest(view: GitBlobs, revision: string): string | undefined {
+  const blob = view.blobs.get(revision);
+  return blob === undefined ? undefined : sha256(blob);
+}
+function digestBefore(view: GitBlobs, path: string): string | undefined {
+  return view.before === undefined ? undefined : blobDigest(view, `${view.before}:./${path}`);
+}
+/** A file stays unmerged after the agent edits it: Git wrote it only if it changed from what Git started the merge on. */
+function conflictedByGit(view: GitBlobs, path: string, prior: string | undefined): boolean {
+  if (!view.blobs.has(`:2:./${path}`) && !view.blobs.has(`:3:./${path}`)) return false;
+  return prior === undefined || prior === blobDigest(view, `:2:./${path}`) || prior === digestBefore(view, path);
+}
+/** A file a move left absent from `HEAD` was removed by it; while a merge is stopped, so was one the index no longer has. */
+function removedByGit(view: GitView, path: string): boolean {
+  return (view.moved && !view.committed && !view.blobs.has(`HEAD:./${path}`)) || (view.stopped && !view.blobs.has(`:./${path}`));
+}
+/** A file holding `HEAD`'s blob, unless only commits moved `HEAD`; while a merge is stopped, one holding its index blob. */
+function holdsGitBlob(view: GitView, path: string, after: string): boolean {
+  return (!view.committed && after === blobDigest(view, `HEAD:./${path}`)) || (view.stopped && after === blobDigest(view, `:./${path}`));
+}
+/** The text the change was made from, when it held the file's blob at `before`: `HEAD`'s, unless only commits moved it, else that one. */
+function movedFromText(view: GitBlobs, path: string, prior: string | undefined): GitVerdict | undefined {
+  if (view.before === undefined || prior !== digestBefore(view, path)) return undefined;
+  const earlier = view.committed ? undefined : view.blobs.get(`HEAD:./${path}`);
+  const previous = earlier ?? view.blobs.get(`${view.before}:./${path}`);
+  return previous === undefined ? undefined : { previousText: previous.toString("utf8") };
+}
+/** The read error of a file too large to be a source or holding binary data, found once it was read. */
+const NOT_TEXT_ERROR = "Source exceeds its byte budget or contains binary data";
+function fileStamp(info: Stats): string {
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+}
+/** What a walk observes of every file it looks at, before any read. */
+type StampedSource = Pick<Source, "path" | "language"> & { readonly stamp: string; readonly observedAt: number; readonly modifiedAt: number };
+function knownDigest(previous: ObservedSource | undefined): Pick<Source, "digest"> {
+  return previous?.digest === undefined ? {} : { digest: previous.digest };
+}
+/** A file observed without a read: an unlisted binary one, with no read error, or one too large to be a source. Undefined to read it. */
+async function unreadFile(location: SourceLocation, info: Stats): Promise<Pick<Source, "readError"> | undefined> {
+  if (location.unlisted && await binaryPrefix(location.absolute)) return {};
+  return info.size > MAX_SOURCE_BYTES ? { readError: OVERSIZE_ERROR } : undefined;
+}
+/** A read file that is no source text: nothing, for an unlisted binary one, else a read error. Undefined for text. */
+function nonText(location: SourceLocation, source: Buffer): Pick<Source, "readError"> | undefined {
+  if (location.unlisted && source.includes(0)) return {};
+  return source.length > MAX_SOURCE_BYTES || source.includes(0) ? { readError: NOT_TEXT_ERROR } : undefined;
+}
+/** The latest stamp of a file a baseline walk read, which a shell may have written while it read. */
+async function modifiedSince(absolute: string, modifiedAt: number): Promise<number> {
+  const after = await lstat(absolute);
+  return Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
+}
+/** A text file as a walk observes it, with its text when it changed since the session's start. */
+function observedText(walk: SourceWalk, stamped: StampedSource, previous: ObservedSource | undefined, source: Buffer): Source {
+  const digest = sha256(source);
+  const changed = (walk.captureChanges || stamped.modifiedAt >= walk.discovery.startedAt) && previous?.digest !== digest;
+  return { ...stamped, digest, ...(changed ? { text: source.toString("utf8") } : {}) };
+}
+/** An unlisted file too large to read is unread, reported once per stamp (`newlyUnread`); any other read error is the walk's. */
+function recordReadError(scan: SourceScan, source: Source): void {
+  if (source.readError === undefined) return;
+  if (unreadOversize(source)) scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
+  else scan.errors.push(`${source.path}: ${source.readError}`);
+}
+function unreadOversize(source: Source): source is Source & { readonly stamp: string } {
+  return source.readError === OVERSIZE_ERROR && source.stamp !== undefined && sourceLanguageOfPath(source.path) === undefined;
+}
+/** A folder the walk could not read: its first sight next time is a baseline, and each source seen under it keeps the error. */
+function failFolder(walk: SourceWalk, path: string, readError: string): void {
+  const { previousSources, scan } = walk;
+  scan.errors.push(`${path || "."}: ${readError}`);
+  scan.failedRoots.add(path);
+  const failed = new Set([path]);
+  for (const [sourcePath, source] of previousSources)
+    if (underBaselineRoot(failed, sourcePath)) scan.sources.set(sourcePath, { path: sourcePath, language: source.language, readError });
+}
+/** Whether the tool call left the source as its preimage: the same text, or a secret-like file's same digest. */
+function unchangedSince(source: Source, preimage: Preimage | undefined): boolean {
+  return preimage?.withheld === undefined ? preimage?.text === source.text : preimage.withheld.sha256 === source.digest;
+}
+function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
+  return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;
+}
+/** What a tool edit's source was before it, as far as its preimage says. */
+function previousOf(preimage: Preimage | undefined): Pick<CodeRuleEdit, "previousText" | "previousReadError"> {
+  if (preimage === undefined) return { previousReadError: "Original source was not captured for this tool call" };
+  if (preimage.withheld !== undefined) return { previousReadError: "Rerail keeps no copy of a file holding secrets" };
+  return { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
+}
+/** `absolute` opened without following a final symlink; undefined when it is one. */
+async function openNoFollow(absolute: string): Promise<FileHandle | undefined> {
+  try {
+    return await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (hasErrorCode(error, "ELOOP")) return undefined;
+    throw error;
+  }
+}
+/** The opened file as a source: none for an unlisted binary one, a read error for one too large or binary. */
+async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+  if (location.unlisted && await binaryPrefix(handle)) return undefined;
+  if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
+  return textSource(location, info, await handle.readFile());
+}
+function textSource(location: SourceLocation, info: Stats, source: Buffer): Source | undefined {
+  const content = nonText(location, source);
+  if (content === undefined)
+    return { path: location.path, language: location.language, text: source.toString("utf8"), stamp: fileStamp(info), digest: sha256(source) };
+  return content.readError === undefined ? undefined : { path: location.path, language: location.language, readError: content.readError };
+}
+/** A file `rewind` puts back: where it is, what it held before the edit, and what it holds now. */
+interface RollbackTarget {
+  readonly location: SourceLocation;
+  readonly preimage: Preimage;
+  readonly current: Source;
+}
+/** Whether a steer over `scope` may roll the edit back: the scope lies within its captured paths, and each preimage was read. */
+function coversScope(preimages: ReadonlyMap<string, Preimage>, scope: readonly string[]): boolean {
+  return scope.length > 0 && scope.every(path => preimages.has(path)) && [...preimages.values()].every(preimage => preimage.readError === undefined);
+}
+/** The file holds what the edit left: it was read, with the digest the edit's finish saw (none when absent). */
+function holdsEditText(current: Source | undefined, digestAfter: string | undefined): current is Source {
+  return current !== undefined && current.readError === undefined && current.digest === digestAfter;
+}
 /** The paths `rewind` put back, and the revision that audited them back (in `log` mode). */
 export interface RewoundEdit extends RewoundPaths {
   readonly revision: number;
@@ -250,18 +425,15 @@ function staleStamp(previous: ObservedSource | undefined, stamp: string, modifie
 }
 
 function strings(value: unknown, output: string[]): void {
-  if (typeof value === "string") {
-    output.push(value);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) strings(item, output);
-    return;
-  }
-  if (value === null || typeof value !== "object") return;
-  for (const [key, item] of Object.entries(value)) {
-    if (/^(?:path|paths|file|filename|file_path|filePath|patch|input|command)$/u.test(key)) strings(item, output);
-  }
+  if (typeof value === "string") output.push(value);
+  else for (const item of nestedValues(value)) strings(item, output);
+}
+const PATH_LIKE_KEY = /^(?:path|paths|file|filename|file_path|filePath|patch|input|command)$/u;
+/** What `strings` looks in: an array's items, or an object's values under a path-like key. */
+function nestedValues(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value).filter(([key]) => PATH_LIKE_KEY.test(key)).map(([, item]) => item);
 }
 function patchPaths(text: string): string[] {
   return [
@@ -303,6 +475,20 @@ function discoveryGap(discovery: SourceDiscovery): string | undefined {
   if (errors.length > 0) return errors.join("; ");
   if (!discovery.baselineComplete) return "Initial source discovery is still pending";
   return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
+}
+function hasErrorCode(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+function sha256(data: string | Buffer): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+/** Whether `path`, an absolute path, is `folder` or lies below it. */
+function withinFolder(folder: string, path: string): boolean {
+  return path === folder || path.startsWith(`${folder}${sep}`);
+}
+/** `edit` without the reason its preimage was unknown, once one is known. */
+function withoutUncaptured({ previousReadError: _uncaptured, ...rest }: CodeRuleEdit): CodeRuleEdit {
+  return rest;
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -385,7 +571,10 @@ export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
  */
 export const WORKTREE_WALK_GAP_MS = 5_000;
 
-/** A boundary answered while a source walk was still running: its shell writes are checked later, or never for `close`. */
+/**
+ * A boundary answered while a source walk was still running: its shell writes are checked later, or never for `close`,
+ * which a worktree walk still due also makes pending.
+ */
 export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
 
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
@@ -542,75 +731,124 @@ export class CodeRuleBridge {
    * audit failing is logged, never a reason to lose what was rolled back. Undefined when nothing was rolled back.
    */
   async rewind(toolCallId: string, revision: number, scope: readonly string[]): Promise<RewoundEdit | undefined> {
+    const rewindable = this.#takeRewindable(toolCallId, revision, scope);
+    if (rewindable === undefined) return undefined;
+    const discovery = this.#discovery;
+    if (discovery === undefined || discovery.cancelled) return undefined;
+    return await this.#enqueue(async () => await this.#rollBack(discovery, toolCallId, rewindable));
+  }
+
+  /**
+   * The call's edit, out of the window `rewind` may roll it back in, when a steer at `revision` over `scope` may: the scope
+   * lies within its captured paths and each preimage was read. One holding secrets has no copy to put back, and throws.
+   */
+  #takeRewindable(toolCallId: string, revision: number, scope: readonly string[]): RewindableEdit | undefined {
     const rewindable = this.#rewindable.get(toolCallId);
     if (rewindable === undefined || rewindable.revision !== revision) return undefined;
     this.#rewindable.delete(toolCallId);
-    const { preimages, after } = rewindable;
-    if (scope.length === 0 || scope.some(path => !preimages.has(path))) return undefined;
-    if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return undefined;
-    const secret = [...preimages].find(([, preimage]) => preimage.withheld !== undefined);
+    if (!coversScope(rewindable.preimages, scope)) return undefined;
+    const secret = [...rewindable.preimages].find(([, preimage]) => preimage.withheld !== undefined);
     if (secret !== undefined)
       throw new Error(`${secret[0]} holds secrets, by its name or its text, so Rerail kept no copy of it to put back; the edit stays as it is`);
-    const discovery = this.#discovery;
-    if (discovery === undefined || discovery.cancelled) return undefined;
-    return await this.#enqueue(async () => {
-      if (this.#discovery !== discovery || discovery.cancelled) return undefined;
-      if (this.#shared(toolCallId, preimages.keys())) return undefined;
-      const root = await realpath(this.#cwd);
-      const targets: Array<{ location: SourceLocation; preimage: Preimage; current: Source }> = [];
-      for (const [path, preimage] of preimages) {
-        const location = this.#sourceLocation(root, path);
-        const current = await this.#readSource(root, path);
-        if (location === undefined || current === undefined || current.readError !== undefined) return undefined;
-        if (current.digest !== after.get(path)) return undefined;
-        if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
-        targets.push({ location, preimage, current });
+    return rewindable;
+  }
+
+  async #rollBack(discovery: SourceDiscovery, toolCallId: string, { preimages, after }: RewindableEdit): Promise<RewoundEdit | undefined> {
+    if (this.#abandoned(discovery) || this.#shared(toolCallId, preimages.keys())) return undefined;
+    const root = await realpath(this.#cwd);
+    const targets = await this.#rollbackTargets(root, preimages, after);
+    const written = targets === undefined ? undefined : await this.#writeRollback(toolCallId, targets);
+    if (written === undefined) return undefined;
+    await this.#auditRollback(discovery, toolCallId, root, written);
+    return {
+      revision: this.#revision,
+      restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
+      deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
+    };
+  }
+
+  /** Each file to put back, or undefined when one may not be: unread, no longer what the edit left, or in a folder outside its checkout. */
+  async #rollbackTargets(
+    root: string,
+    preimages: ReadonlyMap<string, Preimage>,
+    after: ReadonlyMap<string, string | undefined>,
+  ): Promise<RollbackTarget[] | undefined> {
+    const targets: RollbackTarget[] = [];
+    for (const [path, preimage] of preimages) {
+      const target = await this.#rollbackTarget(root, path, preimage, after.get(path));
+      if (target === undefined) return undefined;
+      targets.push(target);
+    }
+    return targets;
+  }
+
+  async #rollbackTarget(root: string, path: string, preimage: Preimage, digestAfter: string | undefined): Promise<RollbackTarget | undefined> {
+    const location = this.#sourceLocation(root, path);
+    const current = await this.#readSource(root, path);
+    if (location === undefined || !holdsEditText(current, digestAfter)) return undefined;
+    return await this.#mayRecreate(root, location, preimage, current) ? { location, preimage, current } : undefined;
+  }
+
+  /** A file the edit deleted is created again only in a folder of the checkout that owns it. */
+  async #mayRecreate(root: string, location: SourceLocation, preimage: Preimage, current: Source): Promise<boolean> {
+    return current.deleted !== true || preimage.text === undefined || await this.#ownsFolder(root, location);
+  }
+
+  /**
+   * Puts each target back, every file or none: when a write fails, what was already put back takes the edit's text again.
+   * The files that stay rolled back, as putting them back failed too, or undefined when none did.
+   */
+  async #writeRollback(toolCallId: string, targets: readonly RollbackTarget[]): Promise<RollbackTarget[] | undefined> {
+    const written: RollbackTarget[] = [];
+    try {
+      for (const target of targets.filter(target => target.current.text !== target.preimage.text)) {
+        await this.#writeSource(target.location, target.preimage.text);
+        written.push(target);
       }
-      let written: typeof targets = [];
-      try {
-        for (const target of targets) {
-          if (target.current.text === target.preimage.text) continue;
-          await this.#writeSource(target.location, target.preimage.text);
-          written.push(target);
-        }
-      } catch (error) {
-        // Every file or none: what was already put back takes the edit's text again.
-        const stuck: typeof targets = [];
-        let undoError: unknown;
-        for (const target of written) {
-          await this.#writeSource(target.location, target.current.text).catch((failure: unknown) => {
-            stuck.push(target);
-            undoError ??= failure;
-          });
-        }
-        const kept = stuck.length === 0
-          ? ""
-          : `; ${stuck.map(target => target.location.path).join(", ")} stay rolled back: ${errorMessage(undoError)}`;
-        process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${errorMessage(error)}${kept}\n`);
-        if (stuck.length === 0) return undefined;
-        written = stuck;
-      }
-      try {
-        const edits: CodeRuleEdit[] = [];
-        for (const { location, current } of written) {
-          const source = await this.#readSource(root, location.path);
-          this.#touchSource(discovery, location.path);
-          if (source === undefined) continue;
-          this.#updateObservedSource(source);
-          const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
-          if (edit !== undefined) edits.push(edit);
-        }
-        // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
-        if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
-      } catch (error) {
-        process.stderr.write(`rerail: could not audit the rollback of tool call ${toolCallId}: ${errorMessage(error)}\n`);
-      }
-      return {
-        revision: this.#revision,
-        restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
-        deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
-      };
-    });
+      return written;
+    } catch (error) {
+      const stuck = await this.#undoRollback(toolCallId, written, error);
+      return stuck.length === 0 ? undefined : stuck;
+    }
+  }
+
+  async #undoRollback(toolCallId: string, written: readonly RollbackTarget[], error: unknown): Promise<RollbackTarget[]> {
+    const stuck: RollbackTarget[] = [];
+    let undoError: unknown;
+    for (const target of written) {
+      await this.#writeSource(target.location, target.current.text).catch((failure: unknown) => {
+        stuck.push(target);
+        undoError ??= failure;
+      });
+    }
+    const kept = stuck.length === 0 ? "" : `; ${stuck.map(target => target.location.path).join(", ")} stay rolled back: ${errorMessage(undoError)}`;
+    process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${errorMessage(error)}${kept}\n`);
+    return stuck;
+  }
+
+  /** The rollback is audited in `log` mode; that failing is logged, never a reason to lose what was rolled back. */
+  async #auditRollback(discovery: SourceDiscovery, toolCallId: string, root: string, written: readonly RollbackTarget[]): Promise<void> {
+    try {
+      const edits = await this.#rolledBackEdits(discovery, root, written);
+      // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
+      if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
+    } catch (error) {
+      process.stderr.write(`rerail: could not audit the rollback of tool call ${toolCallId}: ${errorMessage(error)}\n`);
+    }
+  }
+
+  /** Each rolled-back file as Rerail's own write, from the edit's text: no walk reports it as an uncaptured edit. */
+  async #rolledBackEdits(discovery: SourceDiscovery, root: string, written: readonly RollbackTarget[]): Promise<CodeRuleEdit[]> {
+    const edits: CodeRuleEdit[] = [];
+    for (const { location, current } of written) {
+      const source = await this.#readSource(root, location.path);
+      this.#touchSource(discovery, location.path);
+      if (source === undefined) continue;
+      this.#updateObservedSource(source);
+      const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
+      if (edit !== undefined) edits.push(edit);
+    }
+    return edits;
   }
 
   /** Whether a call other than `toolCallId`, begun and unfinished or still rewindable, covers any of `paths`. */
@@ -622,10 +860,10 @@ export class CodeRuleBridge {
 
   /** Whether the folder a file is to be created in lies in the checkout that owns the file. */
   async #ownsFolder(root: string, location: SourceLocation): Promise<boolean> {
-    const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
+    const owner = this.#owningCheckout(root, location.path);
     if (owner === undefined) return false;
     const folder = await realpath(dirname(location.absolute)).catch(() => undefined);
-    return folder !== undefined && (folder === owner || folder.startsWith(`${owner}${sep}`));
+    return folder !== undefined && withinFolder(owner, folder);
   }
 
   /**
@@ -636,7 +874,7 @@ export class CodeRuleBridge {
   async #writeSource(location: SourceLocation, text: string | undefined): Promise<void> {
     if (text === undefined) {
       await unlink(location.absolute).catch((error: unknown) => {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+        if (!hasErrorCode(error, "ENOENT")) throw error;
       });
       return;
     }
@@ -747,15 +985,9 @@ export class CodeRuleBridge {
     for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
       const source = await this.#readSource(root, configuredPath);
       if (source === undefined) continue;
-      if (source.readError === undefined) {
-        if (source.deleted) this.#observed.delete(source.path);
-        else this.#observed.set(source.path, observation(source));
-      }
-      if (source.text !== undefined && sensitiveByName(source.path))
-        preimages.set(source.path, { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } });
-      else if (source.text !== undefined) preimages.set(source.path, { text: source.text });
-      else if (source.readError !== undefined) preimages.set(source.path, { readError: source.readError });
-      else if (source.deleted) preimages.set(source.path, {});
+      this.#updateObservedSource(source);
+      const preimage = preimageOf(source);
+      if (preimage !== undefined) preimages.set(source.path, preimage);
     }
     return preimages;
   }
@@ -770,19 +1002,29 @@ export class CodeRuleBridge {
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
     for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
-      const source = await this.#readSource(root, configuredPath);
-      if (source === undefined) continue;
-      this.#touchSource(discovery, source.path);
-      const preimage = preimages.get(source.path);
-      const before = this.#observed.get(source.path)?.digest;
-      const edit = this.#readEdit(source, preimage);
-      if (edit === undefined) continue;
-      edits.push(edit);
-      // A secret-like file's text was not captured: its digest finds it again where this session or Git holds it.
-      const prior = preimage === undefined ? before : preimage.withheld?.sha256;
-      if (prior !== undefined && edit.generatedText !== undefined) uncaptured.set(edit.path, prior);
+      const edit = await this.#readToolEdit(discovery, root, configuredPath, preimages, uncaptured);
+      if (edit !== undefined) edits.push(edit);
     }
     return { edits, uncaptured };
+  }
+
+  async #readToolEdit(
+    discovery: SourceDiscovery,
+    root: string,
+    configuredPath: string,
+    preimages: ReadonlyMap<string, Preimage>,
+    uncaptured: Map<string, string>,
+  ): Promise<CodeRuleEdit | undefined> {
+    const source = await this.#readSource(root, configuredPath);
+    if (source === undefined) return undefined;
+    this.#touchSource(discovery, source.path);
+    const preimage = preimages.get(source.path);
+    const before = this.#observed.get(source.path)?.digest;
+    const edit = this.#readEdit(source, preimage);
+    if (edit === undefined) return undefined;
+    const prior = uncapturedPrior(edit, preimage, before);
+    if (prior !== undefined) uncaptured.set(edit.path, prior);
+    return edit;
   }
 
   /** Queues a pass for `checkpoint` and resolves once the walk is idle, i.e. every pass requested so far has run. */
@@ -1046,32 +1288,29 @@ export class CodeRuleBridge {
   ): Promise<{ own: CodeRuleEdit[]; gitWritten: CodeRuleEdit[] }> {
     const own: CodeRuleEdit[] = [];
     const gitWritten: CodeRuleEdit[] = [];
-    if (edits.length === 0) return { own, gitWritten };
-    const byCheckout = new Map<string, CodeRuleEdit[]>();
-    for (const edit of edits) {
-      const checkout = this.#auditor.sourceRoot === undefined ? discovery.root : this.#auditor.sourceRoot(edit.path);
-      if (checkout === undefined) own.push(edit);
-      else byCheckout.set(checkout, [...(byCheckout.get(checkout) ?? []), edit]);
-    }
-    for (const [checkout, group] of byCheckout) {
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
+    own.push(...unowned);
+    for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
       for (const edit of group) {
         const verdict = verdicts.get(edit.path);
         if (verdict === undefined) own.push(edit);
-        else if (verdict.previousText !== undefined) {
-          const { previousReadError: _uncaptured, ...rest } = edit;
+        else if (verdict.previousText === undefined) this.#sortGitWrite(edit, verdict, gitWritten);
+        else {
           uncaptured.delete(edit.path);
-          own.push({ ...rest, previousText: verdict.previousText });
-        } else if (this.#texts.has(edit.path)) {
-          const { previousReadError: _uncaptured, ...rest } = edit;
-          gitWritten.push(edit.generatedText === undefined ? edit : { ...rest, previousText: edit.generatedText });
-        } else if (verdict.conflicted && edit.generatedText !== undefined) {
-          // The next shell edit of a conflicted file measures from the text Git left, which no blob holds.
-          this.#rememberText(edit.path, edit.generatedText);
+          own.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
         }
       }
     }
     return { own, gitWritten };
+  }
+
+  /** A Git write is audited only for a source this session had changed; a conflicted one's text is kept for its next edit. */
+  #sortGitWrite(edit: CodeRuleEdit, verdict: GitVerdict, gitWritten: CodeRuleEdit[]): void {
+    if (this.#texts.has(edit.path))
+      gitWritten.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
+    // The next shell edit of a conflicted file measures from the text Git left, which no blob holds.
+    else if (verdict.conflicted === true && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText);
   }
 
   /**
@@ -1089,48 +1328,29 @@ export class CodeRuleBridge {
     checkout: string,
     edits: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
-  ): Promise<Map<string, { previousText?: string; conflicted?: boolean }>> {
-    const verdicts = new Map<string, { previousText?: string; conflicted?: boolean }>();
-    const head = await gitHead(checkout);
-    if (head === undefined) return verdicts;
-    const from = discovery.heads.get(checkout);
-    if (from === undefined) discovery.heads.set(checkout, head);
-    const moved = from !== head;
-    const committed = moved && await headMovedOnlyByCommits(checkout, from);
-    const before = moved && from !== undefined ? from : undefined;
-    const named = edits.map(edit => ({ edit, path: sessionPath(checkout, resolve(discovery.root, edit.path)) }));
-    // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    const blobs = await readGitBlobs(checkout, named.flatMap(({ path }) => [
-      `:./${path}`, `:2:./${path}`, `:3:./${path}`, `HEAD:./${path}`, ...(before === undefined ? [] : [`${before}:./${path}`]),
-    ]), { maxBlobBytes: MAX_SOURCE_BYTES });
-    const digest = (revision: string): string | undefined => {
-      const blob = blobs.get(revision);
-      return blob === undefined ? undefined : createHash("sha256").update(blob).digest("hex");
-    };
-    // A file stays unmerged after the agent edits it: Git wrote it only if it changed from what Git started the merge on.
-    const conflicted = ({ edit, path }: { edit: CodeRuleEdit; path: string }): boolean => {
-      if (!blobs.has(`:2:./${path}`) && !blobs.has(`:3:./${path}`)) return false;
-      const prior = uncaptured.get(edit.path);
-      return prior === undefined || prior === digest(`:2:./${path}`) || (before !== undefined && prior === digest(`${before}:./${path}`));
-    };
-    const stopped = named.some(conflicted);
-    const heldByGit = (edit: CodeRuleEdit, path: string): boolean => {
-      if (edit.deleted === true) return (moved && !committed && !blobs.has(`HEAD:./${path}`)) || (stopped && !blobs.has(`:./${path}`));
-      const after = this.#observed.get(edit.path)?.digest;
-      if (after === undefined) return false;
-      return (!committed && after === digest(`HEAD:./${path}`)) || (stopped && after === digest(`:./${path}`));
-    };
-    for (const { edit, path } of named) {
-      if (edit.readError !== undefined) continue;
-      if (conflicted({ edit, path })) verdicts.set(edit.path, { conflicted: true });
-      else if (heldByGit(edit, path)) verdicts.set(edit.path, {});
-      else if (before !== undefined && uncaptured.get(edit.path) === digest(`${before}:./${path}`)) {
-        const earlier = committed ? undefined : blobs.get(`HEAD:./${path}`);
-        const previous = earlier ?? blobs.get(`${before}:./${path}`);
-        if (previous !== undefined) verdicts.set(edit.path, { previousText: previous.toString("utf8") });
-      }
+  ): Promise<Map<string, GitVerdict>> {
+    const verdicts = new Map<string, GitVerdict>();
+    const named = edits.map(edit => ({ edit, path: sessionPath(checkout, resolve(discovery.root, edit.path)), prior: uncaptured.get(edit.path) }));
+    const read = await readGitView(discovery, checkout, named.map(({ path }) => path));
+    if (read === undefined) return verdicts;
+    const view: GitView = { ...read, stopped: named.some(({ path, prior }) => conflictedByGit(read, path, prior)) };
+    for (const { edit, path, prior } of named) {
+      const verdict = edit.readError === undefined ? this.#gitVerdict(view, edit, path, prior) : undefined;
+      if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
     return verdicts;
+  }
+
+  #gitVerdict(view: GitView, edit: CodeRuleEdit, path: string, prior: string | undefined): GitVerdict | undefined {
+    if (conflictedByGit(view, path, prior)) return { conflicted: true };
+    if (this.#heldByGit(view, edit, path)) return {};
+    return movedFromText(view, path, prior);
+  }
+
+  #heldByGit(view: GitView, edit: CodeRuleEdit, path: string): boolean {
+    if (edit.deleted === true) return removedByGit(view, path);
+    const after = this.#observed.get(edit.path)?.digest;
+    return after !== undefined && holdsGitBlob(view, path, after);
   }
 
   #discoveredEdit(
@@ -1174,27 +1394,24 @@ export class CodeRuleBridge {
       const wave = stack.splice(-OBSERVATION_CONCURRENCY);
       await Promise.all(wave.map(absolute => this.#observePath(walk, absolute)));
     }
-    for (const source of scan.sources.values()) {
-      if (source.readError === undefined) continue;
-      if (source.readError === OVERSIZE_ERROR && source.stamp !== undefined && sourceLanguageOfPath(source.path) === undefined)
-        scan.unread.set(source.path, { stamp: source.stamp, readError: source.readError });
-      else scan.errors.push(`${source.path}: ${source.readError}`);
-    }
+    for (const source of scan.sources.values()) recordReadError(scan, source);
     return scan;
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
-    const { discovery } = walk;
     let info: Stats | undefined;
     try {
       info = await lstat(absolute);
-      if (discovery.cancelled || info.isSymbolicLink()) return;
-      if (info.isDirectory()) await this.#expandDirectory(walk, absolute);
-      else if (info.isFile()) await this.#observeRegularFile(walk, absolute, info);
+      await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (discovery.cancelled) return;
-      this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
+      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
     }
+  }
+
+  async #observeEntry(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
+    if (walk.discovery.cancelled || info.isSymbolicLink()) return;
+    if (info.isDirectory()) await this.#expandDirectory(walk, absolute);
+    else if (info.isFile()) await this.#observeRegularFile(walk, absolute, info);
   }
 
   /** Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed. */
@@ -1219,95 +1436,69 @@ export class CodeRuleBridge {
     if (!this.#auditor.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
   }
 
-  /** An unlisted binary file is observed without a read, nor a read error, so it is not read again while its stamp holds. */
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
-    const { discovery, observedAt, previousSources, captureChanges, scan: { sources: observed } } = walk;
-    const { absolute, path, language, unlisted } = location;
-    const stamp = `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
-    let modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
-    const previous = previousSources.get(path);
-    if (!this.#auditor.acceptsPath(path)) {
-      observed.set(path, { path, language, stamp, observedAt, ...(previous?.digest === undefined ? {} : { digest: previous.digest }) });
-      return;
-    }
-    if (staleStamp(previous, stamp, modifiedAt)) {
-      observed.set(path, previous!);
-      return;
-    }
-    if (unlisted && await binaryPrefix(absolute)) {
-      observed.set(path, { path, language, stamp, modifiedAt, observedAt });
-      return;
-    }
-    if (info.size > MAX_SOURCE_BYTES) {
-      observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: OVERSIZE_ERROR });
-      return;
-    }
-    const source = await readFile(absolute);
-    if (discovery.cancelled) return;
+    const observed = await this.#observedFile(walk, location, info);
+    if (observed !== undefined) walk.scan.sources.set(location.path, observed);
+  }
+
+  /**
+   * What the walk observes of a file; undefined once the walk is cancelled. A file the auditor does not read keeps the
+   * digest it had, and one whose stamp holds keeps its observation. An unlisted binary file is observed without a read,
+   * nor a read error, so it is not read again while its stamp holds.
+   */
+  async #observedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+    const stamped = { path: location.path, language: location.language, stamp: fileStamp(info), observedAt: walk.observedAt };
+    const previous = walk.previousSources.get(location.path);
+    if (!this.#auditor.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
+    const modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
+    if (staleStamp(previous, stamped.stamp, modifiedAt)) return previous;
+    const unread = await unreadFile(location, info);
+    if (unread !== undefined) return { ...stamped, modifiedAt, ...unread };
+    return await this.#readObservedFile(walk, location, { ...stamped, modifiedAt }, previous);
+  }
+
+  async #readObservedFile(
+    walk: SourceWalk,
+    location: SourceLocation,
+    stamped: StampedSource,
+    previous: ObservedSource | undefined,
+  ): Promise<Source | undefined> {
+    const source = await readFile(location.absolute);
+    if (walk.discovery.cancelled) return undefined;
     // A shell may mutate the file while readFile is pending. Keep the original stamp
     // so the next reconciliation re-reads it, but do not silently baseline those bytes.
-    if (!captureChanges) {
-      const after = await lstat(absolute);
-      if (discovery.cancelled) return;
-      modifiedAt = Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
-    }
-    if (unlisted && source.includes(0)) {
-      observed.set(path, { path, language, stamp, modifiedAt, observedAt });
-      return;
-    }
-    if (source.length > MAX_SOURCE_BYTES || source.includes(0)) {
-      observed.set(path, { path, language, stamp, modifiedAt, observedAt, readError: "Source exceeds its byte budget or contains binary data" });
-      return;
-    }
-    const digest = createHash("sha256").update(source).digest("hex");
-    observed.set(path, {
-      path, language, stamp, digest, modifiedAt, observedAt,
-      ...((captureChanges || modifiedAt >= discovery.startedAt) && previous?.digest !== digest
-        ? { text: source.toString("utf8") } : {}),
-    });
+    const modifiedAt = walk.captureChanges ? stamped.modifiedAt : await modifiedSince(location.absolute, stamped.modifiedAt);
+    if (walk.discovery.cancelled) return undefined;
+    const content = nonText(location, source);
+    return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, source) : { ...stamped, modifiedAt, ...content };
   }
 
   /** `file` when the path is known to be a file: an unlisted one fails as a source, not as a folder walked. */
   #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown, file: boolean): void {
-    const { discovery, previousSources, scan } = walk;
-    const path = sessionPath(discovery.root, absolute);
+    const path = sessionPath(walk.discovery.root, absolute);
     const language = sourceLanguageOfPath(path) ?? (file ? UNLISTED_TEXT_LANGUAGE : undefined);
-    const readError = error instanceof Error ? error.message : String(error);
-    if (language !== undefined) {
-      scan.sources.set(path, { path, language, readError });
-      return;
-    }
-    scan.errors.push(`${path || "."}: ${readError}`);
-    scan.failedRoots.add(path);
-    for (const [sourcePath, source] of previousSources) {
-      if (path === "" || sourcePath.startsWith(`${path}/`))
-        scan.sources.set(sourcePath, { path: sourcePath, language: source.language, readError });
-    }
+    const readError = errorMessage(error);
+    if (language === undefined) failFolder(walk, path, readError);
+    else walk.scan.sources.set(path, { path, language, readError });
   }
 
   #readEdit(source: Source, preimage: Preimage | undefined): CodeRuleEdit | undefined {
-    const unchanged = preimage?.withheld === undefined ? preimage?.text === source.text : preimage.withheld.sha256 === source.digest;
-    if (source.text !== undefined && unchanged) {
+    if (source.text !== undefined && unchangedSince(source, preimage)) {
       this.#observed.set(source.path, observation(source));
       return undefined;
     }
     // Absent before the call and after it, as a path the input named that is no file: nothing was edited.
-    if (source.deleted && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined) return undefined;
+    if (absentThroughout(source, preimage)) return undefined;
     const edit = this.#editFromToolSource(source, preimage);
     this.#updateObservedSource(source);
     return edit;
   }
 
   #editFromToolSource(source: Source, preimage: Preimage | undefined): CodeRuleEdit | undefined {
-    const previous = preimage === undefined
-      ? { previousReadError: "Original source was not captured for this tool call" }
-      : preimage.withheld !== undefined
-        ? { previousReadError: "Rerail keeps no copy of a file holding secrets" }
-        : { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
-    if (source.text !== undefined) return { path: source.path, language: source.language, ...previous, generatedText: source.text };
-    if (source.deleted) return { path: source.path, language: source.language, ...previous, deleted: true };
-    if (source.readError !== undefined) return { path: source.path, language: source.language, ...previous, readError: source.readError };
-    return undefined;
+    const edit = { path: source.path, language: source.language, ...previousOf(preimage) };
+    if (source.text !== undefined) return { ...edit, generatedText: source.text };
+    if (source.deleted === true) return { ...edit, deleted: true };
+    return source.readError === undefined ? undefined : { ...edit, readError: source.readError };
   }
 
   #updateObservedSource(source: Source): void {
@@ -1342,46 +1533,30 @@ export class CodeRuleBridge {
    * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
-    let handle: FileHandle;
-    try {
-      handle = await open(location.absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ELOOP") return undefined;
-      throw error;
-    }
+    const handle = await openNoFollow(location.absolute);
+    if (handle === undefined) return undefined;
     try {
       const info = await handle.stat();
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
-      const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
-      if (owner === undefined) return undefined;
-      const canonical = await realpath(location.absolute);
-      if (canonical !== owner && !canonical.startsWith(`${owner}${sep}`)) return undefined;
-      const named = await lstat(canonical);
-      if (named.dev !== info.dev || named.ino !== info.ino) return undefined;
-      if (location.unlisted && await binaryPrefix(handle)) return undefined;
-      if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
-      const source = await handle.readFile();
-      if (location.unlisted && source.includes(0)) return undefined;
-      if (source.length > MAX_SOURCE_BYTES || source.includes(0))
-        return { path: location.path, language: location.language, readError: "Source exceeds its byte budget or contains binary data" };
-      return {
-        path: location.path, language: location.language, text: source.toString("utf8"),
-        stamp: `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`,
-        digest: createHash("sha256").update(source).digest("hex"),
-      };
+      return await this.#readsInPlace(root, location, info) ? await readOpenedSource(handle, location, info) : undefined;
     } finally {
       await handle.close();
     }
   }
 
+  /** Whether the file's real path stays inside the checkout that owns it and still names the file that was opened. */
+  async #readsInPlace(root: string, location: SourceLocation, info: Stats): Promise<boolean> {
+    const owner = this.#owningCheckout(root, location.path);
+    if (owner === undefined) return false;
+    const canonical = await realpath(location.absolute);
+    if (!withinFolder(owner, canonical)) return false;
+    const named = await lstat(canonical);
+    return named.dev === info.dev && named.ino === info.ino;
+  }
+
   #failedSourceRead(location: SourceLocation, error: unknown): Source {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT")
-      return { path: location.path, language: location.language, deleted: true };
-    return {
-      path: location.path,
-      language: location.language,
-      readError: error instanceof Error ? error.message : String(error),
-    };
+    if (hasErrorCode(error, "ENOENT")) return { path: location.path, language: location.language, deleted: true };
+    return { path: location.path, language: location.language, readError: errorMessage(error) };
   }
 
   async #auditEdits(
@@ -1420,7 +1595,7 @@ export class CodeRuleBridge {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
     const unresolved = this.#recoverFromTexts(uncaptured, recovered);
-    for (const [checkout, paths] of this.#byOwningCheckout(root, unresolved))
+    for (const [checkout, paths] of this.#byOwningCheckout(root, unresolved, path => path).owned)
       await recoverFromGit(root, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {
       const previousText = recovered.get(edit.path);
@@ -1441,14 +1616,24 @@ export class CodeRuleBridge {
     return unresolved;
   }
 
-  /** Each file's blobs are in the Git of the checkout that owns it, which a worktree in the session's folder is not. */
-  #byOwningCheckout(root: string, paths: readonly string[]): Map<string, string[]> {
-    const byCheckout = new Map<string, string[]>();
-    for (const path of paths) {
-      const checkout = this.#auditor.sourceRoot?.(path) ?? root;
-      byCheckout.set(checkout, [...(byCheckout.get(checkout) ?? []), path]);
+  /**
+   * `items` by the checkout that owns each one's path, whose Git holds its blobs (a worktree in the session's folder is
+   * not the session's checkout); `unowned` has those no checkout owns, which no lane audits.
+   */
+  #byOwningCheckout<T>(root: string, items: readonly T[], pathOf: (item: T) => string): { owned: Map<string, T[]>; unowned: T[] } {
+    const owned = new Map<string, T[]>();
+    const unowned: T[] = [];
+    for (const item of items) {
+      const checkout = this.#owningCheckout(root, pathOf(item));
+      if (checkout === undefined) unowned.push(item);
+      else owned.set(checkout, [...(owned.get(checkout) ?? []), item]);
     }
-    return byCheckout;
+    return { owned, unowned };
+  }
+
+  /** The checkout that owns `path`: the session folder for an auditor that judges one folder. */
+  #owningCheckout(root: string, path: string): string | undefined {
+    return this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(path);
   }
 
   /** Keeps `text` as the source's latest; past `MAX_SESSION_TEXT_BYTES`, the least recently changed sources go. */
