@@ -24,3 +24,22 @@ it("parses invalid source in one native relation without requiring a valid CST",
   expect(result.violations).toHaveLength(1);
   expect(JSON.parse(result.violations[0].message)).toMatchObject({ msg: "'(' was never closed", lineno: 3 });
 });
+
+it("selects a diagnostic line only within its admitted witness span", () => {
+  const relational = { inputs: { f: { evidence: { as: "f", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
+    syntax: { name: "cst", gate: "f", columns: ["__path", "id", "kind", "__start", "__end"] },
+    query: "SELECT __path path,__start start_byte,__end end_byte,3 line FROM cst WHERE kind='module'", line: "line" };
+  const authored = { format: "rerail.policy/v1", id: "line-anchor", revision: 1, mode: "log", clauses: [{ id: "line", relational,
+    violation: { code: "LINE", message: "Line diagnostic", anchor: "witness.span" } }] };
+  const snapshot = JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files: [{ path: "a.py", source: "pass\n\n# third\n", language: "python" }] });
+  function evaluate(query: string) {
+    const program = { ...authored, clauses: [{ ...authored.clauses[0], relational: { ...relational, query } }] };
+    const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(program)), "json", capabilities);
+    return JSON.parse(rule.evaluate(snapshot, "report"));
+  }
+  expect(evaluate(relational.query)).toMatchObject({ failures: [], violations: [{ span: { startLine: 2, startByte: 6, endByte: 6 } }] });
+  for (const line of [0, 99, -1, 1.5, "'3'"]) {
+    const result = evaluate(relational.query.replace("3 line", `${line} line`));
+    expect(result.violations).toEqual([]); expect(result.failures).toHaveLength(1);
+  }
+});
