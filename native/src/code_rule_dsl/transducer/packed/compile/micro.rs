@@ -14,7 +14,7 @@
 //! program with an operation outside the walk's (size, assertions, repeats, greedy forks,
 //! directives) is not a micro walk. A text test is a fixed predicate of its node, so it is read
 //! from bits: the term index's row (`prefilter::terms`) or one pass over the file by the text layer
-//! (`text::scan`, decision 0039), never a regex run per node. A walk that needs more frames, captures or steps than it has
+//! (`text::scan`, decision 0042), never a regex run per node. A walk that needs more frames, captures or steps than it has
 //! fails, and its pass runs on the interpreter instead. Its steps scale with the file (`steps`).
 
 use super::*;
@@ -273,7 +273,7 @@ impl Micro {
         program.value_programs[usize::from(value)].is_match(tape.transducer_text(node), &program.strings, &mut work).ok()
     }
 
-    /// Slot `slot`'s test in the text layer (decision 0039); `None` for a Lua pattern, which keeps
+    /// Slot `slot`'s test in the text layer (decision 0042); `None` for a Lua pattern, which keeps
     /// its value program.
     pub(in crate::code_rule_dsl) fn lowered(&self, program: &Program, slot: usize) -> Option<std::sync::Arc<crate::code_rule_dsl::text::Lowered>> {
         use crate::code_rule_dsl::text::{Domain, Source, Spelling, lower};
@@ -313,7 +313,7 @@ impl Micro {
     }
 
     /// What slot `slot`'s bits depend on, as a key. Passes whose slots share a key share their bits.
-    /// A lowered test's key is its plan's (decision 0039: equal however spelt), with no kind: its
+    /// A lowered test's key is its plan's (decision 0042: equal however spelt), with no kind: its
     /// bits cover every node, and a walk reads them only after the slot's kind test, so one row
     /// serves every walk with the test (a fused walk's slots, whose kind is unknown, included).
     /// Another test's key is its value program, the strings it reads and its kind.

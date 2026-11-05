@@ -3,15 +3,15 @@
 //!
 //! `nearest($n, $a, set)` holds when `$a` is `$n`'s nearest strict ancestor whose kind is in the set. Tree
 //! structure is not a relation (§12), so the strata do not climb the tree: the relation is made per chunk,
-//! file-locally, as a flat-lattice system the transducer's file-local FIX solves (list step 17,
-//! `transducer::packed::metal_lattice`, on the device work queue), and the strata read its rows as an input
-//! (`nearest_<set>(n, a)`, `facts::vtab::syntax::with_nearest`).
+//! file-locally, and the strata read its rows as an input (`nearest_<set>(n, a)`,
+//! `facts::vtab::syntax::with_nearest`).
 //!
-//! The system has a cell per (set, node). A node whose parent's kind is in the set is seeded with its parent;
-//! any other node with a parent copies its parent's cell; a root has no value. Each cell has one input, so the
-//! flat lattice never reaches TOP, and the least fixpoint is each node's nearest ancestor in the set. Every
-//! set of the program is one system and one launch. The CPU solves the same system (`solve_cpu`), the
-//! reference the device's must equal.
+//! It is a pure function of the tree, solved per (set, node) cell (decision 0038). On the device by pointer
+//! jumping in one dispatch (`transducer::packed::metal_nearest`, decision 0040): each cell's target starts at
+//! its parent and takes its target's current state until final, one command buffer and one wait a chunk. On the CPU by one pass in
+//! preorder, which is the reference. It was a flat-lattice system on the device work queue (list step 17), at
+//! about 2.5 us a cell visit, one tree level at a time; `system` and `solve_cpu` remain for a piece whose
+//! parents do not precede their children, and for comparison (`nearest_costs_by_solver`).
 
 use crate::content_store::{StoreError, StoreResult};
 
@@ -106,25 +106,6 @@ fn solve_cpu(system: &System) -> Vec<i64> {
     values
 }
 
-#[cfg(target_os = "macos")]
-fn solve_device(system: &System) -> StoreResult<Option<Vec<i64>>> {
-    use crate::code_rule_dsl::transducer::packed::metal_lattice;
-    let device = metal_lattice::System { seeds: &system.seeds, copies: &system.copies, bins: &[] };
-    match metal_lattice::solve(&device) {
-        Ok(solved) => {
-            crate::code_rule_dsl::prof::count("nearest.device_launches", solved.launches);
-            Ok(Some(solved.values))
-        }
-        Err(crate::code_rule_dsl::transducer::packed::Error::UnsupportedBackend) => Ok(None),
-        Err(error) => Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn solve_device(_: &System) -> StoreResult<Option<Vec<i64>>> {
-    Ok(None)
-}
-
 /// Cells of one system at most: a chunk's (list step 17's queue is sized per launch). Larger batches are split at
 /// their documents' roots, a system and a launch each.
 const CELLS: usize = 1 << 18;
@@ -154,15 +135,63 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
     Ok(out)
 }
 
-/// `nearest` of one system.
+/// `nearest` of one piece (decision 0038). On the device: pointer jumping, a cell per (set, node) whose target
+/// starts at the parent and jumps to its target's target until final (`metal_nearest`). On the CPU: one pass in
+/// preorder, where a node reads its parent's answer once; the worklist over the lattice system where a parent does
+/// not precede its children.
 fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+    use crate::code_rule_dsl::logic::profile;
     let n = trees.parent.len();
-    let system = system(trees, sets)?;
-    let values = match binding {
-        Binding::Metal => solve_device(&system)?.map_or_else(|| solve_cpu(&system), |values| values),
-        Binding::Cpu => solve_cpu(&system),
-    };
-    crate::code_rule_dsl::prof::count("nearest.cells", values.len());
+    let member = |k: usize, node: u32| sets[k].contains(&trees.kind[node as usize]);
+    crate::code_rule_dsl::prof::count("nearest.cells", n * sets.len());
+    #[cfg(target_os = "macos")]
+    if binding == Binding::Metal {
+        let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
+        profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping, one dispatch and one wait"));
+        let mut target = Vec::with_capacity(n * sets.len());
+        let mut done = Vec::with_capacity(n * sets.len());
+        for k in 0..sets.len() {
+            for &p in trees.parent {
+                target.push(p);
+                done.push(u8::from(p == NONE || member(k, p)));
+            }
+        }
+        use crate::code_rule_dsl::transducer::packed::{Error, metal_nearest};
+        // `RERAIL_NEAREST_BUFFERS=fresh`: buffers made per piece, to measure the pre-pinned blocks against.
+        let how = if std::env::var("RERAIL_NEAREST_BUFFERS").is_ok_and(|v| v == "fresh") { metal_nearest::Buffers::Fresh } else { metal_nearest::Buffers::Blocks };
+        match metal_nearest::solve_with(n, &target, &done, how) {
+            Ok(solved) => {
+                let kernel = "nearest ancestors (pointer jumping)";
+                profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
+                profile::device_phases(kernel, solved.phases, solved.made, solved.reused);
+                crate::code_rule_dsl::prof::count("nearest.device_steps", solved.rounds as usize);
+                return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
+            }
+            Err(Error::UnsupportedBackend) => {
+                profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
+            }
+            Err(error) => return Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
+        }
+    }
+    let _ = binding;
+    let _span = profile::span(|| "nearest on the CPU".into());
+    if trees.parent.iter().enumerate().all(|(v, &p)| p == NONE || (p as usize) < v) {
+        profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on the CPU, one pass in preorder"));
+        return Ok((0..sets.len())
+            .map(|k| {
+                let mut found = vec![NONE; n];
+                for v in 0..n {
+                    let p = trees.parent[v];
+                    if p != NONE {
+                        found[v] = if member(k, p) { p } else { found[p as usize] };
+                    }
+                }
+                found
+            })
+            .collect());
+    }
+    profile::decision("nearest ancestors", || "a piece whose parents do not precede their children: the CPU worklist".into());
+    let values = solve_cpu(&system(trees, sets)?);
     values
         .chunks(n)
         .map(|set| {
@@ -192,10 +221,11 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, and the document column of `node`, `doc` and `pkg`.
+    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg` and
+    // `syntax_error`.
     let base_locations = |rel: &str| -> Vec<usize> {
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if matches!(rel, "node" | "doc" | "pkg") {
+        if matches!(rel, "node" | "doc" | "pkg" | "syntax_error") {
             columns.push(0);
         }
         columns
@@ -237,6 +267,38 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
             }
         }
     }
+    // String filters (decision 0037): a text test's relation (`strtest_<k>`), and a derived relation whose every
+    // rule reads only text relations and such filters, each head string from a text column. A chunk's rows hold
+    // every string of the chunk that passes, so a rule that joins one on a string its chunk gave stays file-local.
+    let text_columns = |rel: &str| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c);
+    let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+    // To a fixpoint: a filter may read other filters.
+    let mut filters: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
+    loop {
+        let kept: BTreeSet<String> = filters
+            .iter()
+            .filter(|rel| {
+                prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
+                    let mut strings = BTreeSet::new();
+                    let reads_only_text = r.body.iter().all(|l| match l {
+                        Literal::Atom(a) if test_relation(&a.rel) || filters.contains(&a.rel) => true,
+                        Literal::Atom(a) if !a.neg && let Some(cols) = text_columns(&a.rel) => {
+                            strings.extend(cols.iter().filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None }));
+                            true
+                        }
+                        Literal::Cmp { .. } => true,
+                        _ => false,
+                    });
+                    reads_only_text && r.head.args.iter().all(|t| matches!(t, Term::Var(v) if strings.contains(v)))
+                })
+            })
+            .cloned()
+            .collect();
+        if kept == filters {
+            break;
+        }
+        filters = kept;
+    }
     let mut local: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> bool {
@@ -253,7 +315,7 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
                     Literal::Cmp { .. } => continue,
                 };
                 let constant = !derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel);
-                if constant {
+                if constant || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
                     continue;
                 }
                 if derived.contains(atom.rel.as_str()) && !local.contains(&atom.rel) {

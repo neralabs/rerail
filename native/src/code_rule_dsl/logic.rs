@@ -11,8 +11,10 @@ pub(in crate::code_rule_dsl) mod magic;
 pub(in crate::code_rule_dsl) mod native;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod plan;
+pub(in crate::code_rule_dsl) mod profile;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod sql;
+pub(in crate::code_rule_dsl) mod simplify;
 pub(in crate::code_rule_dsl) mod strings;
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod convert;

@@ -1,6 +1,19 @@
 .decl doc(d: int, path: sym, module: sym)
-.input doc
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl name(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, field, text, name, line
+.kindset k0 = "block"
 .decl in_scope(d: int)
+.decl m16(n: node)
+.decl m21(n: node)
+.decl m27(n: node)
+.decl m32(n: node)
+.decl m39(n: node)
+.decl m45(n: node)
+.decl m50(n: node)
 .decl out_scope(d: int)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
@@ -104,4 +117,18 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+m16($n) :- field($v13, "left", $n), node(_, $v13, "assignment", _, _).
+m16($n) :- field($v14, "value", $n), node(_, $v14, "subscript", _, _), field($v15, "left", $v14), node(_, $v15, "assignment", _, _).
+m21($n) :- inside($n, $v17, k0), node(_, $v17, "block", _, _), field($v18, "consequence", $v17), node(_, $v18, "if_statement", _, _), field($v18, "condition", $v19), name($v19, $v20), @contains($v20, "TYPE_CHECKING").
+violation("data-layer-dynamic-module-loading", "pattern-1", "DML001", $p, $l) :- node(_, $n, "subscript", _, _), field($n, "value", $v6), node(_, $v6, "call", _, _), field($v6, "function", $v7), name($v7, $v9), $v9 = "globals", field($v6, "arguments", $v10), name($v10, $v12), @glob($v12, "()"), m16($n), !m21($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m27($n) :- field($v23, "function", $n), node(_, $v23, "call", _, _).
+m27($n) :- field($v24, "attribute", $n), node(_, $v24, "attribute", _, _), field($v25, "function", $v24), node(_, $v25, "call", _, _).
+m27($n) :- field($v26, "name", $n), node(_, $v26, "function_definition", _, _).
+m32($n) :- inside($n, $v28, k0), node(_, $v28, "block", _, _), field($v29, "consequence", $v28), node(_, $v29, "if_statement", _, _), field($v29, "condition", $v30), name($v30, $v31), @contains($v31, "TYPE_CHECKING").
+violation("data-layer-dynamic-module-loading", "pattern-2", "DML001", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v22), $v22 = "__import__", m27($n), !m32($n), node($d, $n, _, _, _), in_scope($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m39($n) :- inside($n, $v35, k0), node(_, $v35, "block", _, _), field($v36, "consequence", $v35), node(_, $v36, "if_statement", _, _), field($v36, "condition", $v37), name($v37, $v38), @contains($v38, "TYPE_CHECKING").
+m45($n) :- field($v41, "function", $n), node(_, $v41, "call", _, _).
+m45($n) :- field($v42, "attribute", $n), node(_, $v42, "attribute", _, _), field($v43, "function", $v42), node(_, $v43, "call", _, _).
+m45($n) :- field($v44, "name", $n), node(_, $v44, "function_definition", _, _).
+m50($n) :- inside($n, $v46, k0), node(_, $v46, "block", _, _), field($v47, "consequence", $v46), node(_, $v47, "if_statement", _, _), field($v47, "condition", $v48), name($v48, $v49), @contains($v49, "TYPE_CHECKING").
 .output violation

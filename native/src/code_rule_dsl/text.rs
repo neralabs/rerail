@@ -1,4 +1,4 @@
-//! The text layer (decision 0039): every text test, however a rule spells it, as one canonical plan
+//! The text layer (decision 0042): every text test, however a rule spells it, as one canonical plan
 //! run by one of two engines.
 //!
 //! A rule tests text as a regex, a glob, a prefix, suffix or substring, an exact string or a set of

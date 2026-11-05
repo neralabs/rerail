@@ -1,0 +1,1031 @@
+{
+  "cases": [
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:complete-family",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@legacy_sync\ndef read(x): return None\n@legacy_async\nasync def read_async(x): return None\n@lazy\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read,read_async,read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:missing-legacy_sync",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read(x): return None\n@legacy_async\nasync def read_async(x): return None\n@lazy\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read,read_async,read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:missing-legacy_async",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@legacy_sync\ndef read(x): return None\nasync def read_async(x): return None\n@lazy\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read,read_async,read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:missing-lazy",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@legacy_sync\ndef read(x): return None\n@legacy_async\nasync def read_async(x): return None\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read,read_async,read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:signature-exempts-legacy",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read(x,y): return None\nasync def read_async(x,y): return None\n@lazy\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read,read_async,read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:legacy-unsuffixed-async",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@legacy_async\ndef read(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:private-marker",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@private_api\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:mixed-module-name",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy_async(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy_async\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:mixed-module-private-marker",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@private_api\ndef read_lazy_async(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy_async\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:class-StoreProtocol",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class StoreProtocol:\n def read_lazy(self,x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import StoreProtocol\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:class-AsyncStore",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class AsyncStore:\n def read_lazy(self,x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import AsyncStore\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:class-PrivateStore",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@private_api\nclass PrivateStore:\n def read_lazy(self,x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import PrivateStore\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:class-Store",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def read_lazy(self,x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:class-lazy-decorator",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@apply_lazy_to_public_lazy_methods\nclass Store:\n def read_lazy(self,x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:inherited-family-dedup",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Base:\n def read_lazy(self,x): return None\nclass First(Base): pass\nclass Second(Base): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import First,Second\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:inherited-distinct-family",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Base:\n def read_lazy(self,x): return None\nclass First(Base): pass\nclass Second(Base):\n @legacy_sync\n def read(self,x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import First,Second\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-16",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = []\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-17",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = ['other']\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-18",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = ['read_lazy']\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-19",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = [u'read_lazy']\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-20",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = ['\\x72ead_lazy']\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-21",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = names\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:literal-exports-22",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n__all__ = ('read_lazy',)\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:explicit-alias",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy as named\n__all__=[\"named\"]\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:reexport-chain",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.bridge import read_lazy\n"
+        },
+        {
+          "path": "impl/common/bridge.py",
+          "source": "from .query import read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:module-family-dedup",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read_lazy\n"
+        },
+        {
+          "path": "data_layer/also.py",
+          "source": "from impl.common.query import read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:chainable-builder",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Query:\n def read_lazy(self,x) -> Query: return self\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Query\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:bootstrap-lazy-only",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def bootstrap_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import bootstrap_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:all-scope-nonexecution",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import helper\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "executionOnly": false
+        }
+      }
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:execution-scope-nonexecution",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import helper\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:direct-wrapper",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "@direct_legacy_module_sync\ndef read(x): return grammar_effect_lazy()\n@legacy_async\nasync def read_async(x): return None\n@lazy\ndef read_lazy(x): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import read,read_async,read_lazy\n"
+        }
+      ]
+    },
+    {
+      "check": "public_api_triples",
+      "test": "batch-05-relational:property-override-inherits-public",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Base:\n def read_lazy(self,x): return None\nclass Child(Base):\n @property\n def read_lazy(self): return None\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Child\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-convention-siblings",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def run(x): return x\nasync def run_async(x): return x\ndef run_lazy(x): return x\ndef unused(x): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-class-public-dunder",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nclass Store:\n def __init__(self): helper()\n def run(self): pass\n def _unused(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-module-alias",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nTABLE = {\"key\": helper}\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-module-method-default",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nclass Store:\n def run(self, callback=helper): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-module-method-decorator",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(fn): return fn\nclass Store:\n @helper\n def _run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-function-default-not-module",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\ndef unused(callback=helper): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-function-decorator-not-module",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(fn): return fn\n@helper\ndef unused(): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-class-decorator-not-module",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(cls): return cls\n@helper\nclass Unused: pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-class-annotations-module",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Payload: pass\nclass Unused:\n item: Payload\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-protocol-conformance",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "from typing import Protocol\ndef helper(): pass\nclass Shape(Protocol):\n def run(self): pass\nclass Store:\n def run(self): helper()\n def _unused(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Shape\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-protocol-name-only",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nclass ShapeProtocol:\n def run(self): pass\nclass Store:\n def run(self): helper()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import ShapeProtocol\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-polymorphic-mixin",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nclass Base:\n def run(self): pass\nclass Mixin:\n def run(self): helper()\nclass Store(Base, Mixin): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Base\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-abstract-override",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "from abc import ABC, abstractmethod\nclass Base(ABC):\n @abstractmethod\n def run(self): pass\nclass Store(Base):\n def run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-abstract-root",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "from abc import ABC, abstractmethod\nclass Base(ABC):\n @abstractmethod\n def run(self): pass\nclass Store(Base):\n def run(self): pass\n def _private(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Base\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-registration",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def register_driver(): pass\ndef _create_driver_connection(): pass\ndef _lower_query(): pass\ndef orphan(): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-property",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n @property\n def value(self): return 1\n @value.setter\n def value(self, x): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-dynamic-import",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/registry.py",
+          "source": "import importlib\nvalue = importlib.import_module('impl.common.query').Store\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-dynamic-import-string",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/registry.py",
+          "source": "TEXT = \"importlib.import_module('impl.common.query').Store\"\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-import-exemption",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\ndef unused(): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/use.py",
+          "source": "from impl.common.query import helper\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-dual-category",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class SqlUnusedIntent: pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-quoted-annotation",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Payload: pass\ndef run(x: \"Payload\"): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-generic-annotation",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Payload: pass\ndef run(x: list[Payload]): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-annotation-reexport",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def run(x: Payload): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        },
+        {
+          "path": "impl/common/types.py",
+          "source": "class Payload: pass\n"
+        },
+        {
+          "path": "impl/common/alias.py",
+          "source": "from impl.common.types import Payload\n"
+        },
+        {
+          "path": "impl/common/query_extra.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-unimported-global-annotation",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def run(x: Payload): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        },
+        {
+          "path": "impl/common/types.py",
+          "source": "class Payload:\n def run(self): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-duplicate-global-annotation",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def run(x: Payload): return x\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        },
+        {
+          "path": "impl/common/a.py",
+          "source": "class Payload: pass\n"
+        },
+        {
+          "path": "impl/common/b.py",
+          "source": "class Payload: pass\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-nested-class-statements",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nclass Outer:\n class Inner:\n  def run(self): helper()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-dynamic-import-production",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/registry.py",
+          "source": "import importlib\nvalue = importlib.import_module('impl.common.query').Store\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      }
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-dynamic-import-string-production",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Store:\n def run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        },
+        {
+          "path": "impl/common/registry.py",
+          "source": "TEXT = \"importlib.import_module('impl.common.query').Store\"\n"
+        }
+      ],
+      "oracle_config": {
+        "options": {
+          "oracleAnalyzer": false
+        }
+      }
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-dataclass-annotation",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "from dataclasses import dataclass, field\n@dataclass\nclass Payload: pass\n@dataclass\nclass Store:\n items: list[Payload] = field(default_factory=list)\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-conditional-metaclass",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "if TYPE_CHECKING:\n from other import Store\nelse:\n class Meta(type): pass\n class Store(metaclass=Meta): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-generic-base",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "from abc import ABC, abstractmethod\nclass Base[T](ABC):\n def run(self): pass\n def _private(self): pass\nclass Store(Base[int]):\n def run(self): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-conditional-class-names",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "if TYPE_CHECKING:\n pass\nelse:\n class Meta(type): pass\n class Store(metaclass=Meta): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-class-function-annotation",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nclass Store:\n items: list[helper]\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": ""
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-module-import-root",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "def helper(): pass\nTABLE = helper\n"
+        },
+        {
+          "path": "impl/common/use.py",
+          "source": "import impl.common.query as q\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-multiline-generic-base",
+      "files": [
+        {
+          "path": "impl/common/query.py",
+          "source": "class Base[T]:\n def run(self): pass\n def _unused(self): pass\nclass Store(Base[\n int,\n]): pass\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import Store\n"
+        }
+      ]
+    },
+    {
+      "check": "internal_dead_code",
+      "test": "batch-05:dead-reexported-module-attribute",
+      "files": [
+        {
+          "path": "impl/common/effect.py",
+          "source": "def _effect(): pass\n"
+        },
+        {
+          "path": "impl/common/bridge.py",
+          "source": "from impl.common import effect\n"
+        },
+        {
+          "path": "impl/common/query.py",
+          "source": "from impl.common.bridge import effect\ndef run(): return effect._effect()\n"
+        },
+        {
+          "path": "data_layer/__init__.py",
+          "source": "from impl.common.query import run\n"
+        }
+      ]
+    }
+  ]
+}

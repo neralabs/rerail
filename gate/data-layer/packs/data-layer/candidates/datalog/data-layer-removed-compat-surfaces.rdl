@@ -3,56 +3,17 @@
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
+.decl name(n: node, s: sym)
 .decl line(n: node, l: int)
 .decl syntax_error(d: int)
-.input doc, node, child, field, text, line, syntax_error
-.decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.input doc, node, child, field, text, name, line, syntax_error
 .kindset k0 = "global_statement" | "import_from_statement" | "import_statement" | "nonlocal_statement"
 .decl in_scope(d: int)
-.decl m18(n: node)
-.decl m5(n: node)
-.decl m8(n: node)
-.decl names0(s: sym)
+.decl m10(n: node)
+.decl m20(n: node)
+.decl m7(n: node)
 .decl out_scope(d: int)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("AdvisoryLockCoordinator").
-names0("ApplicationTickProvider").
-names0("ApplyClaimedTimersConfig").
-names0("ClaimDueTimersConfig").
-names0("CypherLeaseCoordinator").
-names0("FileLockCoordinator").
-names0("LeaseDocumentCoordinator").
-names0("RowLockCoordinator").
-names0("SchedulerTick").
-names0("SupersedeTimerConfig").
-names0("TickCoordinator").
-names0("TimerClaim").
-names0("TimerScanConfig").
-names0("_apply_claimed_timers_runtime").
-names0("_claim_due_timers_runtime").
-names0("_claimed_queue_prefix_rows_query_spec").
-names0("_claimed_queue_rows_query_spec").
-names0("_coalesce_branch_tip_materialization_alias").
-names0("_reconcile_due_timers_runtime").
-names0("_recover_abandoned_timer_claims_runtime").
-names0("_schedule_timer_runtime").
-names0("_supersede_timer_runtime").
-names0("apply_claimed_timers").
-names0("apply_claimed_timers_async").
-names0("apply_timer_driver_claims").
-names0("apply_timer_driver_claims_async").
-names0("claim_due_timer").
-names0("claim_due_timer_async").
-names0("claim_due_timers").
-names0("claim_due_timers_async").
-names0("claim_local_timer_responsibilities").
-names0("claim_local_timer_responsibilities_async").
-names0("dispatch_due_jobs").
-names0("dispatch_due_jobs_lazy").
-names0("recover_abandoned_timer_claims").
-names0("recover_abandoned_timer_claims_async").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "l4100_queue/**/*.py").
@@ -68,23 +29,23 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
-m5($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), name($v1, $v2), names0($v2).
-m5($n) :- node(_, $n, "class_definition", _, _), field($n, "name", $v3), name($v3, $v4), names0($v4).
-violation("data-layer-removed-compat-surfaces", "definitions", "RCS001", $p, $l) :- m5($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-m8($n) :- node(_, $n, "import_statement", _, _).
-m8($n) :- node(_, $n, "import_from_statement", _, _).
-m8($n) :- node(_, $n, "global_statement", _, _).
-m8($n) :- node(_, $n, "nonlocal_statement", _, _).
-m18($n) :- inside($n, $v7, k0), m8($v7).
-m18($n) :- field($v9, "name", $n), node(_, $v9, "function_definition", _, _).
-m18($n) :- field($v10, "name", $n), node(_, $v10, "class_definition", _, _).
-m18($n) :- field($v11, "name", $n), node(_, $v11, "keyword_argument", _, _).
-m18($n) :- field($v12, "attribute", $n), node(_, $v12, "attribute", _, _).
-m18($n) :- child($v13, $n, _), node(_, $v13, "parameters", _, _).
-m18($n) :- child($v14, $n, _), node(_, $v14, "lambda_parameters", _, _).
-m18($n) :- field($v15, "name", $n), node(_, $v15, "default_parameter", _, _).
-m18($n) :- field($v16, "name", $n), node(_, $v16, "typed_default_parameter", _, _).
-m18($n) :- child($v17, $n, _), node(_, $v17, "typed_parameter", _, _).
-violation("data-layer-removed-compat-surfaces", "names", "RCS001", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v6), names0($v6), !m18($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-violation("data-layer-removed-compat-surfaces", "attributes", "RCS001", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v19), node(_, $v19, "identifier", _, _), text($v19, $v20), names0($v20), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m7($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), name($v1, $v3), $v3 in {"AdvisoryLockCoordinator", "ApplicationTickProvider", "ApplyClaimedTimersConfig", "ClaimDueTimersConfig", "CypherLeaseCoordinator", "FileLockCoordinator", "LeaseDocumentCoordinator", "RowLockCoordinator", "SchedulerTick", "SupersedeTimerConfig", "TickCoordinator", "TimerClaim", "TimerScanConfig", "_apply_claimed_timers_runtime", "_claim_due_timers_runtime", "_claimed_queue_prefix_rows_query_spec", "_claimed_queue_rows_query_spec", "_coalesce_branch_tip_materialization_alias", "_reconcile_due_timers_runtime", "_recover_abandoned_timer_claims_runtime", "_schedule_timer_runtime", "_supersede_timer_runtime", "apply_claimed_timers", "apply_claimed_timers_async", "apply_timer_driver_claims", "apply_timer_driver_claims_async", "claim_due_timer", "claim_due_timer_async", "claim_due_timers", "claim_due_timers_async", "claim_local_timer_responsibilities", "claim_local_timer_responsibilities_async", "dispatch_due_jobs", "dispatch_due_jobs_lazy", "recover_abandoned_timer_claims", "recover_abandoned_timer_claims_async"}.
+m7($n) :- node(_, $n, "class_definition", _, _), field($n, "name", $v4), name($v4, $v6), $v6 in {"AdvisoryLockCoordinator", "ApplicationTickProvider", "ApplyClaimedTimersConfig", "ClaimDueTimersConfig", "CypherLeaseCoordinator", "FileLockCoordinator", "LeaseDocumentCoordinator", "RowLockCoordinator", "SchedulerTick", "SupersedeTimerConfig", "TickCoordinator", "TimerClaim", "TimerScanConfig", "_apply_claimed_timers_runtime", "_claim_due_timers_runtime", "_claimed_queue_prefix_rows_query_spec", "_claimed_queue_rows_query_spec", "_coalesce_branch_tip_materialization_alias", "_reconcile_due_timers_runtime", "_recover_abandoned_timer_claims_runtime", "_schedule_timer_runtime", "_supersede_timer_runtime", "apply_claimed_timers", "apply_claimed_timers_async", "apply_timer_driver_claims", "apply_timer_driver_claims_async", "claim_due_timer", "claim_due_timer_async", "claim_due_timers", "claim_due_timers_async", "claim_local_timer_responsibilities", "claim_local_timer_responsibilities_async", "dispatch_due_jobs", "dispatch_due_jobs_lazy", "recover_abandoned_timer_claims", "recover_abandoned_timer_claims_async"}.
+violation("data-layer-removed-compat-surfaces", "definitions", "RCS001", $p, $l) :- m7($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m10($n) :- node(_, $n, "import_statement", _, _).
+m10($n) :- node(_, $n, "import_from_statement", _, _).
+m10($n) :- node(_, $n, "global_statement", _, _).
+m10($n) :- node(_, $n, "nonlocal_statement", _, _).
+m20($n) :- inside($n, $v9, k0), m10($v9).
+m20($n) :- field($v11, "name", $n), node(_, $v11, "function_definition", _, _).
+m20($n) :- field($v12, "name", $n), node(_, $v12, "class_definition", _, _).
+m20($n) :- field($v13, "name", $n), node(_, $v13, "keyword_argument", _, _).
+m20($n) :- field($v14, "attribute", $n), node(_, $v14, "attribute", _, _).
+m20($n) :- child($v15, $n, _), node(_, $v15, "parameters", _, _).
+m20($n) :- child($v16, $n, _), node(_, $v16, "lambda_parameters", _, _).
+m20($n) :- field($v17, "name", $n), node(_, $v17, "default_parameter", _, _).
+m20($n) :- field($v18, "name", $n), node(_, $v18, "typed_default_parameter", _, _).
+m20($n) :- child($v19, $n, _), node(_, $v19, "typed_parameter", _, _).
+violation("data-layer-removed-compat-surfaces", "names", "RCS001", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v8), $v8 in {"AdvisoryLockCoordinator", "ApplicationTickProvider", "ApplyClaimedTimersConfig", "ClaimDueTimersConfig", "CypherLeaseCoordinator", "FileLockCoordinator", "LeaseDocumentCoordinator", "RowLockCoordinator", "SchedulerTick", "SupersedeTimerConfig", "TickCoordinator", "TimerClaim", "TimerScanConfig", "_apply_claimed_timers_runtime", "_claim_due_timers_runtime", "_claimed_queue_prefix_rows_query_spec", "_claimed_queue_rows_query_spec", "_coalesce_branch_tip_materialization_alias", "_reconcile_due_timers_runtime", "_recover_abandoned_timer_claims_runtime", "_schedule_timer_runtime", "_supersede_timer_runtime", "apply_claimed_timers", "apply_claimed_timers_async", "apply_timer_driver_claims", "apply_timer_driver_claims_async", "claim_due_timer", "claim_due_timer_async", "claim_due_timers", "claim_due_timers_async", "claim_local_timer_responsibilities", "claim_local_timer_responsibilities_async", "dispatch_due_jobs", "dispatch_due_jobs_lazy", "recover_abandoned_timer_claims", "recover_abandoned_timer_claims_async"}, !m20($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-removed-compat-surfaces", "attributes", "RCS001", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v21), node(_, $v21, "identifier", _, _), text($v21, $v22), $v22 in {"AdvisoryLockCoordinator", "ApplicationTickProvider", "ApplyClaimedTimersConfig", "ClaimDueTimersConfig", "CypherLeaseCoordinator", "FileLockCoordinator", "LeaseDocumentCoordinator", "RowLockCoordinator", "SchedulerTick", "SupersedeTimerConfig", "TickCoordinator", "TimerClaim", "TimerScanConfig", "_apply_claimed_timers_runtime", "_claim_due_timers_runtime", "_claimed_queue_prefix_rows_query_spec", "_claimed_queue_rows_query_spec", "_coalesce_branch_tip_materialization_alias", "_reconcile_due_timers_runtime", "_recover_abandoned_timer_claims_runtime", "_schedule_timer_runtime", "_supersede_timer_runtime", "apply_claimed_timers", "apply_claimed_timers_async", "apply_timer_driver_claims", "apply_timer_driver_claims_async", "claim_due_timer", "claim_due_timer_async", "claim_due_timers", "claim_due_timers_async", "claim_local_timer_responsibilities", "claim_local_timer_responsibilities_async", "dispatch_due_jobs", "dispatch_due_jobs_lazy", "recover_abandoned_timer_claims", "recover_abandoned_timer_claims_async"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

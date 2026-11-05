@@ -1,4 +1,4 @@
-# 0039: One text layer: a regex costs what its best rewrite costs
+# 0042: One text layer: a regex costs what its best rewrite costs
 
 Status: proposed (2026-11-05)
 
@@ -36,7 +36,7 @@ to one syntax tree (`regex_syntax`'s HIR; a glob is translated first). Then:
    - `\b\B` and other empty languages become `never`.
    - `^(?s).*R.*$` becomes "contains R".
 2. **Find a literal shape.** The literal extractor (`regex_syntax::hir::literal`, already used for
-   0038's prefix pass) decides whether the language is a finite set of strings. With the anchors
+   0041's prefix pass) decides whether the language is a finite set of strings. With the anchors
    that gives:
 
    | Anchors | Finite set of strings becomes |
@@ -79,7 +79,7 @@ these runs over the distinct strings, never over nodes:
 Some text has no vocabulary: a whole module, a function body, a regex on nodes of any kind. Each
 file is scanned once per group of matchers, linearly, and the match positions are then mapped to
 nodes using the tape's preorder and spans. No node's text is read on its own, so nesting costs
-nothing extra (0038's O(bytes × depth) is gone).
+nothing extra (0041's O(bytes × depth) is gone).
 
 How a node's verdict is read from one file-wide scan:
 
@@ -96,7 +96,7 @@ How a node's verdict is read from one file-wide scan:
   by `e`. It stops at its first accept or its dead state.
 - **Anchored at the end only.** The mirror case: a reverse DFA from `e`.
 - **Anchored at both ends.** A forward DFA from `s` must accept exactly at `e`. Literal prefixes
-  pick the candidate nodes first (0038's pass), so most nodes are never started.
+  pick the candidate nodes first (0041's pass), so most nodes are never started.
 - **Look-arounds at the node's edges** (`\b`, multi-line `^`/`$`) can differ between the file's
   context and the node's own text. A match touching a node's edge is re-checked on that node's text.
   This is exact, and rare.
@@ -162,7 +162,7 @@ per (value, kind) over nodes after a file-wide literal pass.
 
 - **0037 (proposed).** *Extended.* Its vocabulary matchers and result relations are §2. This record
   adds regexes as an equal input, the canonical key, and §3 for text with no vocabulary.
-- **0038 (chunked text).** *Narrowed.* Its file-wide literal pass is the candidate step of §3. Its
+- **0041 (chunked text).** *Narrowed.* Its file-wide literal pass is the candidate step of §3. Its
   per-node DFA confirmation is replaced by the overlapping scan and range-max. The device part (O66)
   becomes the vocabulary and file-scan matchers, chunked.
 - **PIAT `research/regex.md` §1.1, §2.1–2.3.** *Agrees.* Hash for exact sets, small DFA groups, no

@@ -107,6 +107,61 @@ pub(crate) fn commit_checked(command: &CommandBufferRef) -> Result<(), Error> {
     Ok(())
 }
 
+/// A completed command buffer's time on the GPU, in seconds (`GPUEndTime - GPUStartTime`).
+pub(crate) fn gpu_seconds(command: &CommandBufferRef) -> f64 {
+    unsafe extern "C" {
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn objc_msgSend();
+    }
+    // SAFETY: `GPUStartTime` and `GPUEndTime` take no arguments and return a CFTimeInterval (a double).
+    let send: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> f64 =
+        unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    let object = command.as_ptr().cast::<std::ffi::c_void>().cast_const();
+    let (start, end) = unsafe { (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr()))) };
+    (end - start).max(0.0)
+}
+
+/// The host clock Metal's command-buffer times are in (`CACurrentMediaTime`: mach absolute time), in seconds.
+pub(crate) fn host_seconds() -> f64 {
+    #[repr(C)]
+    struct Timebase {
+        numer: u32,
+        denom: u32,
+    }
+    unsafe extern "C" {
+        fn mach_timebase_info(info: *mut Timebase) -> i32;
+        fn mach_absolute_time() -> u64;
+    }
+    static RATIO: std::sync::LazyLock<f64> = std::sync::LazyLock::new(|| {
+        let mut info = Timebase { numer: 0, denom: 0 };
+        // SAFETY: fills the struct.
+        unsafe { mach_timebase_info(&mut info) };
+        f64::from(info.numer) / f64::from(info.denom.max(1)) / 1e9
+    });
+    // SAFETY: no arguments.
+    (unsafe { mach_absolute_time() }) as f64 * *RATIO
+}
+
+/// A completed command buffer's host-clock times, in seconds: `kernelStartTime` (the system began scheduling
+/// it), `GPUStartTime`, `GPUEndTime`.
+pub(crate) fn command_times(command: &CommandBufferRef) -> [f64; 3] {
+    unsafe extern "C" {
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn objc_msgSend();
+    }
+    // SAFETY: each selector takes no arguments and returns a CFTimeInterval (a double).
+    let send: unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> f64 =
+        unsafe { std::mem::transmute(objc_msgSend as unsafe extern "C" fn()) };
+    let object = command.as_ptr().cast::<std::ffi::c_void>().cast_const();
+    unsafe {
+        [
+            send(object, sel_registerName(c"kernelStartTime".as_ptr())),
+            send(object, sel_registerName(c"GPUStartTime".as_ptr())),
+            send(object, sel_registerName(c"GPUEndTime".as_ptr())),
+        ]
+    }
+}
+
 pub(crate) fn wait_checked(command: &CommandBufferRef) -> Result<(), Error> {
     command.wait_until_completed();
     if command.status() != metal::MTLCommandBufferStatus::Completed {

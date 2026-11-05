@@ -76,6 +76,8 @@ enum Class {
     Operator,
     FunctionDefinition,
     FunctionItem,
+    Attribute,
+    String,
 }
 impl Class {
     fn of(name: &str) -> Self {
@@ -90,6 +92,8 @@ impl Class {
             }
             "function_definition" => Self::FunctionDefinition,
             "function_item" => Self::FunctionItem,
+            "attribute" => Self::Attribute,
+            "string" => Self::String,
             _ => Self::Other,
         }
     }
@@ -130,6 +134,37 @@ impl Dialect {
     }
     fn name(&self, f: &Facts, id: u32) -> &'static str {
         self.catalog.kind_name(Self::code(f, id)).unwrap_or("")
+    }
+    /// The child of `id` in field `field`.
+    fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
+        let field = self.catalog.field_id(field)?;
+        f.children(id).iter().copied().find(|&c| f.field[c as usize] == field)
+    }
+    /// A name's dotted text: an identifier's, or an attribute's object's and attribute's joined by a dot (`a.b.c`),
+    /// whatever spaces the source has between them. `None` where the object has no name (a call, a subscript).
+    fn dotted(&self, f: &Facts, id: u32) -> Option<String> {
+        match self.class(f, id) {
+            Class::Text => Some(f.text(id).to_owned()).filter(|t| !t.contains(['\t', '\n', '\r', '\\'])),
+            Class::Attribute => {
+                let object = self.dotted(f, self.field_child(f, id, "object")?)?;
+                let attribute = self.field_child(f, id, "attribute")?;
+                Some(format!("{object}.{}", f.text(attribute)))
+            }
+            _ => None,
+        }
+    }
+    /// A string literal's prefix (lowercased, `""` for none) and, where it has no interpolation, its content
+    /// between the quotes, as written (escapes kept).
+    fn string<'f>(&self, f: &'f Facts, id: u32) -> Option<(String, Option<&'f str>)> {
+        let children = f.children(id);
+        let start = *children.iter().find(|&&c| self.name(f, c) == "string_start")?;
+        let end = *children.iter().rev().find(|&&c| self.name(f, c) == "string_end")?;
+        let opening = f.text(start);
+        let prefix = opening.trim_end_matches(['"', '\'']).to_lowercase();
+        let interpolated = children.iter().any(|&c| self.name(f, c) == "interpolation");
+        let whole = f.text(id);
+        let content = (!interpolated && whole.len() >= opening.len() + f.text(end).len()).then(|| &whole[opening.len()..whole.len() - f.text(end).len()]);
+        Some((prefix, content))
     }
 }
 
@@ -261,7 +296,10 @@ enum View {
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`).
-    fn build(store: &ContentStore, documents: Vec<Document>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>)> {
+    /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
+    /// (`logic::strings::Vocabulary`, decision 0037).
+    #[allow(clippy::type_complexity)]
+    fn build(store: &ContentStore, documents: Vec<Document>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, (Vec<String>, Vec<u32>))> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
         if documents.windows(2).any(|w| w[0].key == w[1].key) {
@@ -278,6 +316,9 @@ impl Batch {
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
         let (mut doc, mut pkg, mut text, mut intval, mut op) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        // Text relations (decision 0037): `name(n, s)` (an identifier's text, an attribute's dotted text),
+        // `str(n, s)` (a string literal's content, between its quotes) and `strprefix(n, p)` (its prefix, lowercased).
+        let (mut name, mut strs, mut strprefix) = (Vec::new(), Vec::new(), Vec::new());
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
         let mut docs = Vec::with_capacity(documents.len());
@@ -302,6 +343,20 @@ impl Batch {
                         let t = f.text(id);
                         if !t.contains(['\t', '\n', '\r', '\\']) {
                             text.push([n, string(t) as i64]);
+                            name.push([n, string(t) as i64]);
+                        }
+                    }
+                    Class::Attribute => {
+                        if let Some(dotted) = dialect.dotted(f, id) {
+                            name.push([n, string(&dotted) as i64]);
+                        }
+                    }
+                    Class::String => {
+                        if let Some((prefix, content)) = dialect.string(f, id) {
+                            strprefix.push([n, string(&prefix) as i64]);
+                            if let Some(content) = content {
+                                strs.push([n, string(content) as i64]);
+                            }
                         }
                     }
                     Class::Integer => {
@@ -355,6 +410,9 @@ impl Batch {
             ("text", relation(&["n", "s"], &mut text.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("intval", relation(&["n", "v"], &mut intval.iter().map(|&[n, v]| vec![n, v]))),
             ("op", relation(&["n", "s"], &mut op.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("name", relation(&["n", "s"], &mut name.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("str", relation(&["n", "s"], &mut strs.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("strprefix", relation(&["n", "s"], &mut strprefix.iter().map(|&[n, s]| vec![n, atom(s)]))),
         ];
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
@@ -364,7 +422,7 @@ impl Batch {
         let nodes = offsets(&|p| p.core.len());
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| p.fielded.len());
-        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py }), relations))
+        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py }), relations, (strings, atoms)))
     }
 
     fn offsets(&self, view: View) -> &[usize] {
@@ -572,7 +630,7 @@ pub(crate) fn field_atom(tag: u8, code: u16) -> u32 {
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
-    let (batch, relations) = Batch::build(store, documents)?;
+    let (batch, relations, _) = Batch::build(store, documents)?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
         relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
     out.extend(views(&batch));
@@ -761,19 +819,33 @@ impl Source for Nearest {
     }
 }
 
-/// T's base relations over `documents` (`sources`), and each of `sets` (a relation and its set's kind atoms),
+/// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms),
 /// made by the transducer's file-local FIX bound as `binding`: `nearest_<set>(n, a)`, the nearest ancestor in the
 /// set, or `inside_<set>(n, a)`, every one (decision 0036).
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
     sets: &[(String, Vec<i64>)],
+    tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::typing::file_local;
-    let (batch, relations) = Batch::build(store, documents)?;
+    let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
+    let (batch, relations, (strings, symbols)) = Batch::build(store, documents)?;
+    drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
+    let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
+    for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
+        let mut r = Relation::new(&["s"]);
+        rows.into_iter().for_each(|s| r.push(&[s]));
+        out.push((name.clone(), Arc::new(r)));
+    }
+    drop(text);
+    let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().map(|(name, source)| (name.to_owned(), source)));
+    drop(viewing);
+    let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     let (parent, kind) = batch.trees();
     let kinds: Vec<Vec<i64>> = sets.iter().map(|(_, kinds)| kinds.clone()).collect();
     let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;

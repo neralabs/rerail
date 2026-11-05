@@ -1,0 +1,1256 @@
+{
+  "format": "rerail.data-layer-batch-evidence/v1",
+  "batch": 8,
+  "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "engine": {
+    "format": "rerail.data-layer-integrated-engine/v1",
+    "base_commit": "9bc955cc5",
+    "commit": "899c3e53d2cb43a509a47d94e0bdc4fd36bb3c21",
+    "branch": "jeremy/data-layer-integrated-compat-20261103",
+    "native_sha256": "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b",
+    "build": {
+      "package": "rerail-engine",
+      "profile": "profiling",
+      "extra_features": [],
+      "allocator": "jemalloc",
+      "wallSeconds": 36.61
+    },
+    "frontend_schema_sha256": "cec776b6daec6170c586714d056a4b8c0515e0514f24f33eace1a2b4e403bea7",
+    "frontend_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
+    "python": "Python 3.13.12",
+    "boundary": "Production schema and native compiled-rule/workspace APIs; relational compatibility, with wave/GPU lowering separate.",
+    "runtime_dependency": "CPython 3.13; one isolated batch per nonempty canonical Python producer wave.",
+    "replay_schema_sha256": "75234e4dbedf2aa6f61cb3a2c033c174a301e8ae5076777d5935963afaf37e71",
+    "replay_capabilities_sha256": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01"
+  },
+  "upstream": {
+    "passed": 456,
+    "sourceMismatches": [],
+    "eligibleCalls": 320,
+    "positiveCalls": 201,
+    "cleanCalls": 119,
+    "retainedCalls": 1,
+    "uncapturedTests": 208
+  },
+  "native": {
+    "nativeCalls": 534,
+    "hostGuardCalls": 0,
+    "replayedCalls": 534,
+    "positiveCalls": 335,
+    "cleanCalls": 199,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "executionPathDifferences": 0,
+    "nativeCoverage": [
+      {
+        "check": "eager_resolve",
+        "positive": 52,
+        "clean": 25
+      },
+      {
+        "check": "lazy_architecture",
+        "positive": 95,
+        "clean": 102
+      },
+      {
+        "check": "pure_lazy_runtime_purity",
+        "positive": 32,
+        "clean": 20
+      },
+      {
+        "check": "cached_pure_lazy_allowlist",
+        "positive": 49,
+        "clean": 5
+      },
+      {
+        "check": "lazy_sql_surface",
+        "positive": 23,
+        "clean": 11
+      },
+      {
+        "check": "plan_helpers_allowlist",
+        "positive": 55,
+        "clean": 27
+      },
+      {
+        "check": "legacy_callback_quarantine",
+        "positive": 9,
+        "clean": 2
+      },
+      {
+        "check": "readthrough_authority_architecture",
+        "positive": 7,
+        "clean": 3
+      },
+      {
+        "check": "authentication_plan_purity",
+        "positive": 5,
+        "clean": 3
+      },
+      {
+        "check": "lazy_adapter_ownership",
+        "positive": 8,
+        "clean": 1
+      }
+    ]
+  },
+  "supplemental": {
+    "observations": 214,
+    "positive": 134,
+    "clean": 80
+  },
+  "incremental": {
+    "format": "rerail.data-layer-incremental-parity/v1",
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "nativeSha256": "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b",
+    "checks": 10,
+    "transitions": 50,
+    "differences": 0,
+    "elapsedMs": 673.362791,
+    "rows": [
+      {
+        "check": "eager_resolve",
+        "cleanTest": "scripts/tests/test_lint_eager_resolve.py::test_does_not_flag_non_preprocess_helper",
+        "positiveTest": "scripts/tests/test_lint_eager_resolve.py::test_flags_resolve_server_value_in_preprocess",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "lazy_architecture",
+        "cleanTest": "scripts/tests/test_lint_lazy_architecture.py::test_pure_lazy_dynamic_import_is_allowed",
+        "positiveTest": "scripts/tests/test_lint_lazy_architecture.py::test_lazy_calling_legacy_wrapper_triggers_la013",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "pure_lazy_runtime_purity",
+        "cleanTest": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_method_calls_without_protected_attr_access",
+        "positiveTest": "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_flags_protected_runtime_attr_access_inside_pure_lazy",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "cached_pure_lazy_allowlist",
+        "cleanTest": "probe:batch8:cached-policy-clean",
+        "positiveTest": "probe:batch8:cached-policy-body-drift",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "lazy_sql_surface",
+        "cleanTest": "probe:batch8:clean-0",
+        "positiveTest": "probe:batch8:call-_grammar_effect_lazy",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "plan_helpers_allowlist",
+        "cleanTest": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_does_not_flag_non_target_attribute",
+        "positiveTest": "scripts/tests/test_lint_plan_helpers_allowlist.py::test_flags_direct_bare_name_call_without_import",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "legacy_callback_quarantine",
+        "cleanTest": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_public_legacy_versioned_callback_definition_is_allowed",
+        "positiveTest": "scripts/tests/test_lint_legacy_callback_quarantine.py::test_internal_versioned_write_callback_is_quarantined",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "readthrough_authority_architecture",
+        "cleanTest": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_accepts_closed_same_plan_overlay_and_inventory_contract",
+        "positiveTest": "scripts/tests/test_lint_readthrough_authority_architecture.py::test_linter_rejects_eager_overlay_restore_and_runtime_seed",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "authentication_plan_purity",
+        "cleanTest": "scripts/tests/test_lint_authentication_plan_purity.py::test_accepts_legacy_forwarders_to_pure_lazy_method",
+        "positiveTest": "scripts/tests/test_lint_authentication_plan_purity.py::test_rejects_transport_and_mutable_results_in_semantic_steps",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 2,
+            "actual": 2,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      },
+      {
+        "check": "lazy_adapter_ownership",
+        "cleanTest": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_accepts_sync_and_async_adapters_over_one_pure_lazy_module_surface",
+        "positiveTest": "scripts/tests/test_lint_lazy_adapter_ownership.py::test_rejects_adapter_body_that_duplicates_planning",
+        "transitions": [
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "clean",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "positive",
+            "expected": 1,
+            "actual": 1,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          },
+          {
+            "phase": "removed",
+            "expectedSource": "fresh-empty-workspace",
+            "expected": 0,
+            "actual": 0,
+            "falsePositives": [],
+            "falseNegatives": [],
+            "failures": []
+          }
+        ]
+      }
+    ]
+  },
+  "alwaysCleanControls": {
+    "checks": 10,
+    "rejected": 10,
+    "sqlSurfaceUsesSupplementalPositive": true
+  },
+  "nativeTests": {
+    "passed": 2525,
+    "ignored": 67,
+    "excludedInheritedFailure": "admission_spike::interpreter_snapshot_matches_the_current_independent_oracle",
+    "qualification": "Historical Rust suite; no engine code changed for the exactness audit."
+  },
+  "repositoryGate": "historical-pass-before-diagnostic-metadata-projections",
+  "policies": {
+    "eager_resolve": "6d6018db76770f598116d402deacf0352b625addfa303c8a16254d656647d484",
+    "lazy_architecture": "cdb2802c6c3db0dcdd61775ffd5750f8995c0239b23cf8366805bc266bc2557a",
+    "pure_lazy_runtime_purity": "d2b96027619e9d8bf3f0257791099adbd2ccfeacf4542cd08c0ce0696dc110d4",
+    "cached_pure_lazy_allowlist": "7df526577a86d01fb6cada8fcfbeff61f1e388bbf5cfbd1a8702a4818d5950c7",
+    "lazy_sql_surface": "60bb5c5396b44d2c4f5612d03d2207434196bda622d6aa652e48eca1c5f2728c",
+    "plan_helpers_allowlist": "5df0a07570787c35d7d6891c556e3d2635182f2742c459c0d990590b9499b0f3",
+    "legacy_callback_quarantine": "ded5835e2322c93064d9e345cd8478265d3606bf9a8b260e7760010d85915cca",
+    "readthrough_authority_architecture": "f69ebc9679de9fc2d5fa47ddbaf5a5f7d47aa1cd4da931e5f6c561b67e240190",
+    "authentication_plan_purity": "80f0cf548e5214d1c3df61cc35e97bf44cd7570c69e47453581dde90da2b0ef9",
+    "lazy_adapter_ownership": "cab4cc03af19e8f29b44b081e75f5709f27f02d400e22f32f88390564e4b03ff"
+  },
+  "typescriptTests": {
+    "passed": 86,
+    "skipped": 0,
+    "scope": "Distinct assertions across the broad native conformance run and final focused run; batch six separately replays all 1259 observations in 24 bounded shards."
+  },
+  "compatibility": {
+    "checks": 80,
+    "failures": 0,
+    "nativeSha256": "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b",
+    "policies": [
+      {
+        "check": "removed_compat_surfaces",
+        "policySha256": "4c8214eb6c3e30bc6afd0f3d02d25cc2a522e0af1f0343e1e1c64242ead43d6e",
+        "authoredDigest": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+        "passed": true
+      },
+      {
+        "check": "versioned_lifecycle_legacy_surfaces",
+        "policySha256": "931b8c73be253bff264bf63ea46bd145f8d01fc7bc66290e367841b881465b97",
+        "authoredDigest": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46",
+        "passed": true
+      },
+      {
+        "check": "no_api_root_imports",
+        "policySha256": "48b8a8762bec65d2ac3a648893e8e745094ff84ef5906d6a1b5cd73f8034b377",
+        "authoredDigest": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+        "passed": true
+      },
+      {
+        "check": "backend_type_strings",
+        "policySha256": "0ecc6dab424746bfd6007dfd0684f460851d26361ea3a5c0b1a2734d8f9d190c",
+        "authoredDigest": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+        "passed": true
+      },
+      {
+        "check": "hasattr_async",
+        "policySha256": "ca10f10fb53277ead5302d5b08e70696bd89d0c454ea8c328006c9148a461208",
+        "authoredDigest": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+        "passed": true
+      },
+      {
+        "check": "no_source_inspection",
+        "policySha256": "89f2000f352654e02459f7e7bef1609b0e846a46c64bb1d6606169ef7872185f",
+        "authoredDigest": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+        "passed": true
+      },
+      {
+        "check": "serverplan_name_inference",
+        "policySha256": "c1326f54d9381d1efad6d898b9bb0c7d61cd801243d4cf7a9b5132499cef351c",
+        "authoredDigest": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+        "passed": true
+      },
+      {
+        "check": "no_blanket_grammar_bypass",
+        "policySha256": "700460f3a9868afe3abd8254af2b39324ee22cc13ba4132867b8870a2d4d96da",
+        "authoredDigest": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+        "passed": true
+      },
+      {
+        "check": "serverplan_grammar_surface",
+        "policySha256": "f6dbbb2f93e3b973b8a6906c0197beb2207d06ea1c7634078e5441c2912f5c28",
+        "authoredDigest": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+        "passed": true
+      },
+      {
+        "check": "permission_error",
+        "policySha256": "f95c0bc0626da3c96900d5bbe3aa72fd9709a3aad7557c0930e4d00db34de3f1",
+        "authoredDigest": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+        "passed": true
+      },
+      {
+        "check": "dynamic_module_loading",
+        "policySha256": "60a9cff5845cb22edfd90b365ba5ac41e948b605115c0233af66a81ab68d6478",
+        "authoredDigest": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+        "passed": true
+      },
+      {
+        "check": "forwardref",
+        "policySha256": "9bccddea5856ae1e41d834d68d7da4d96fdebe512c93c03bcef605a818f35333",
+        "authoredDigest": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+        "passed": true
+      },
+      {
+        "check": "unresolved_forward_refs",
+        "policySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
+        "authoredDigest": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+        "passed": true
+      },
+      {
+        "check": "classvar_check",
+        "policySha256": "9056ad18066c1d44a2d9c8d6ae676f25a4aada9c2130cd698976d64c48857eda",
+        "authoredDigest": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+        "passed": true
+      },
+      {
+        "check": "type_safety_patterns",
+        "policySha256": "311eda52dff8cfc9108b52fcb2971412c59f1ea97c1784d6b4e47173ac8e61ca",
+        "authoredDigest": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+        "passed": true
+      },
+      {
+        "check": "conn_or_txn_union",
+        "policySha256": "8d783578a716e46d038ed1f28d288355f48f5f40338123e13a38a4f6f0901daa",
+        "authoredDigest": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+        "passed": true
+      },
+      {
+        "check": "async_executor",
+        "policySha256": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
+        "authoredDigest": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+        "passed": true
+      },
+      {
+        "check": "async_patterns",
+        "policySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
+        "authoredDigest": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+        "passed": true
+      },
+      {
+        "check": "async_sync_boundary",
+        "policySha256": "f342876eef567090dd1493a0a8411a057fb14915dca5d5184e023322f18a483a",
+        "authoredDigest": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+        "passed": true
+      },
+      {
+        "check": "admin_async_purity",
+        "policySha256": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
+        "authoredDigest": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+        "passed": true
+      },
+      {
+        "check": "plan_scope_side_effects",
+        "policySha256": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
+        "authoredDigest": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+        "passed": true
+      },
+      {
+        "check": "plan_scope_ownership",
+        "policySha256": "a51c7f0406a0cc42984dcea94914f0613e48f1c420b91e49a1e6f42a49dfc1ab",
+        "authoredDigest": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+        "passed": true
+      },
+      {
+        "check": "transaction_closures",
+        "policySha256": "83f35c1e002c5f11945b0fdf18a02ecae99f2a976a0124b87ffcdb84f0e8da56",
+        "authoredDigest": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+        "passed": true
+      },
+      {
+        "check": "transaction_callback_wrappers",
+        "policySha256": "ccfa86dd6d1f393a80e969d148af343376bafa36d36358a18d4834e7d5561205",
+        "authoredDigest": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+        "passed": true
+      },
+      {
+        "check": "transaction_patterns",
+        "policySha256": "8fcc8c1a6690883cf3816ff28e59efbe255baf37de3bff1efb49fd8da857b1ae",
+        "authoredDigest": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+        "passed": true
+      },
+      {
+        "check": "lazy_result_usage",
+        "policySha256": "c221f7bbf5c4c5f9c8fcfa55a10ed4fd72f4ffbff4986eb72985aaba8dc623df",
+        "authoredDigest": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+        "passed": true
+      },
+      {
+        "check": "swallowed_exceptions",
+        "policySha256": "df25e1c35068c80e36a14a244feda3958b04a4fcc812ec0a7d8b25e8a292f1b5",
+        "authoredDigest": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+        "passed": true
+      },
+      {
+        "check": "error_handling",
+        "policySha256": "3bbdc70fb1ffb9552218b98d02ff5663c28b57c99d09c34fa2742dc6f80dbe33",
+        "authoredDigest": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+        "passed": true
+      },
+      {
+        "check": "module_level_caches",
+        "policySha256": "2ba31a57f2ff59881cb6f7dd472ea0cdc10546264dcc80c812943032c0370019",
+        "authoredDigest": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+        "passed": true
+      },
+      {
+        "check": "connection_caches",
+        "policySha256": "d3e65fbd29b0cc1de9e23085ef4cb2ce7b5e3a6b92d19e3bc60f4c0d9ad96225",
+        "authoredDigest": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+        "passed": true
+      },
+      {
+        "check": "render_fstrings",
+        "policySha256": "acf31f86d4de43c251c67d570f09c69b3eb645b24fa4948e45734775db69561c",
+        "authoredDigest": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
+        "passed": true
+      },
+      {
+        "check": "render_raw_strings",
+        "policySha256": "bf6911d01528b8e06342a6a0094ade70ff3d6cd94bacba7d3958bb2d4a3c883b",
+        "authoredDigest": "sha256:636e02995bf3eeef4ca8d4a41224a04b65aeed5fbb81ced3d1e75c5d465ab870",
+        "passed": true
+      },
+      {
+        "check": "regex_sql_parsing",
+        "policySha256": "4f1d38624a792094896568b970af80d55fab32eb5ef431dec84b9ce1f84067c9",
+        "authoredDigest": "sha256:610b522e4adf244cc3ae294863be09628ebeb3955a4b9e66be6b810ba78ccaa0",
+        "passed": true
+      },
+      {
+        "check": "sql_grammar_escape_hatches",
+        "policySha256": "9fe021819a3cbd3410f74b99ec1e33758d4eb680fd7e744e73c4cc8c186fbd1c",
+        "authoredDigest": "sha256:51c459be9f1186f88174ac44a7ac9f4981704bf7aaecb2bf8c668c20383a48c0",
+        "passed": true
+      },
+      {
+        "check": "grammar_render_methods",
+        "policySha256": "a2b24d816be228ad74cfdb5e48ee6076720df931800803cd72f76d15e0c379c5",
+        "authoredDigest": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
+        "passed": true
+      },
+      {
+        "check": "grammar_str_params",
+        "policySha256": "7a8a088b745e9b5abd434e56c38dcdad832bd7ad5b2533144554c3d82aabd446",
+        "authoredDigest": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
+        "passed": true
+      },
+      {
+        "check": "grammar_callable_constructors",
+        "policySha256": "90faab3f9f14820402ab2ec031344e3587287c1e4facdc83a757f15a1574ba85",
+        "authoredDigest": "sha256:4a25209ac52a2007b8ad8287191cd4949a78e6cd0c303681d4ce626b229a8045",
+        "passed": true
+      },
+      {
+        "check": "grammar_fragment_usage",
+        "policySha256": "6072ae2c92cde1d7b570ede8a0f48b8e24c771b399c6bfb40b66db63be4a28e3",
+        "authoredDigest": "sha256:dd0bdb3bc70bb59ebf9e3bcba037008b01d075a00dfc1bc4f24c44de9022cba3",
+        "passed": true
+      },
+      {
+        "check": "grammar_allowlist_burndown",
+        "policySha256": "0596978d51eeddec03b1db10fcf33f1792ac5c7b9cd16d881bb5c0ce374c813f",
+        "authoredDigest": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
+        "passed": true
+      },
+      {
+        "check": "rust_sql_grammar_boundary",
+        "policySha256": "80d7fab57e7782b6b7c49316084305fdaf5899389f1c2fa8a7f4d48c8cdfef65",
+        "authoredDigest": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc",
+        "passed": true
+      },
+      {
+        "check": "missing_async_pairs",
+        "policySha256": "5d2bdf11502aa39982bfc6ea19a4e6cd91e7ddf1f6d63b75fdcaaa392c290bee",
+        "authoredDigest": "sha256:ebf3bdbcb97a9db2aed181733bb3c2c57f7b54fa418cc2fa4f558a18bc5dcff6",
+        "passed": true
+      },
+      {
+        "check": "sync_async_signatures",
+        "policySha256": "ef99509b0a370a866cf85e124284c7bf90ce2e8d3e34f1decf10fae408c8a3c7",
+        "authoredDigest": "sha256:7b6c45edbd81a4c4ecf04fcfe97fbb0e31856c5f41c0fe35257fd7c432d62ddb",
+        "passed": true
+      },
+      {
+        "check": "async_sync_delegation",
+        "policySha256": "fec7c4bd3e7d6ea27e522f2da3aa18436599d6cc6cbdc170af8d1102ef6c96f8",
+        "authoredDigest": "sha256:854ef36424c9717ede05c769aa7e14708fc5a414c02225d990a9d405123915ee",
+        "passed": true
+      },
+      {
+        "check": "public_api_triples",
+        "policySha256": "9a221d0403753d8c179a154553cff0da2c5f2f0de4c3d4e1c50b9013ce59a85a",
+        "authoredDigest": "sha256:264698ea635d43af27e10217d1cfc3d14659b637b2a4b2c4208ec37c5ec96963",
+        "passed": true
+      },
+      {
+        "check": "data_layer_facade_purity",
+        "policySha256": "f08348732dcf1827030a1059efb3e6b85e7d92bf3193fd171ae93f9098fdced5",
+        "authoredDigest": "sha256:7aad3045ddf5c9d66eca850e455ec9763062bfe412f9db3af92328d72f553158",
+        "passed": true
+      },
+      {
+        "check": "data_layer_compat_aliases",
+        "policySha256": "821e77b0f992fe9397f7820a5e8391c4be607c0a0cd9326233793295f5d24eb4",
+        "authoredDigest": "sha256:e3a56226f0e2e3777817dce9f48a503303bd9d6cbeafd7e5d21231bd719c5860",
+        "passed": true
+      },
+      {
+        "check": "layer_violations",
+        "policySha256": "7e6429288e52ee44640555298374c589b7a66cc777f9bceb4416320ef1302f32",
+        "authoredDigest": "sha256:8c3d2a6473f033969ed5b46bd90b11986f4e4441f13402e9c4cf95d926a03449",
+        "passed": true
+      },
+      {
+        "check": "backend_coupling",
+        "policySha256": "54a16169fbba1e0d4372fa9e85a3d2b0b6e05a342620e30cb34c2fa8d3d20d0d",
+        "authoredDigest": "sha256:7bd4e209cba4a6012f8553980ef36833214c7ea649963db7ec6b75efd837f63e",
+        "passed": true
+      },
+      {
+        "check": "internal_dead_code",
+        "policySha256": "521dc835db1efc8b7e96c36d81781ed5151370ec575beb4cf67fefdbf6a69990",
+        "authoredDigest": "sha256:5a00b45c2aa4f39ab90f9505efd8714abd156fb99d77ba0f3e71d0c595469892",
+        "passed": true
+      },
+      {
+        "check": "imperative_private_functions",
+        "policySha256": "abac3153206d2c4924b73ddae6016c642a59113fb5cb5db48e12dbea8687ea04",
+        "authoredDigest": "sha256:bf3a6ba7e6b7e2c750ae8317594777a001e24318935c491f77a0d149fde02afe",
+        "passed": true
+      },
+      {
+        "check": "serverplan_bypass",
+        "policySha256": "1dc17f26cd4f28f2405ecf0b51067aa45864416fb1933385dcf1e57f54e12cdb",
+        "authoredDigest": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+        "passed": true
+      },
+      {
+        "check": "serverplan_steps",
+        "policySha256": "591f11d4792fcb313a87f9235d3752af04adaa8788aa58cb8b0d1dd6c70ebf63",
+        "authoredDigest": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+        "passed": true
+      },
+      {
+        "check": "serverplan_state_tripwires",
+        "policySha256": "7680e1e3f3e6d2d46ac491905ecd39bd79fb9a469f2d8e8c9566470bdcf7f032",
+        "authoredDigest": "sha256:d5d8f9e222f527d87a002e41381fac52270ba49e551d8bd3f0f30aef95674d12",
+        "passed": true
+      },
+      {
+        "check": "serverplan_dispatch_architecture",
+        "policySha256": "690192884c5fdb2d8f3ac738d3fa7b4cddeca15072cd7cb04c161a20ae654300",
+        "authoredDigest": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+        "passed": true
+      },
+      {
+        "check": "serverplan_quality",
+        "policySha256": "d1ad882170e7a577cde80cbfdd6f7c538261b2ea40ac6690a7c1d45dd6c1d966",
+        "authoredDigest": "sha256:901e890fd5781ecc565b67198afdd6889fd70fa9c46f33075db363d5f81fa01e",
+        "passed": true
+      },
+      {
+        "check": "serverplan_target_architecture",
+        "policySha256": "f8ca589ed2cda0828a22e4abaf4316bfbfd2f8dc3cb25f46596851770cbd6b4a",
+        "authoredDigest": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+        "passed": true
+      },
+      {
+        "check": "execution_authority_bypass",
+        "policySha256": "1248d6fd9cc99d083b11e4e523b3c41ee221839a23d905c60d1326f43aa8a2dd",
+        "authoredDigest": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+        "passed": true
+      },
+      {
+        "check": "impl_direct_execution",
+        "policySha256": "4ad1f0cebda73e992103ba98361b5c80b5caf2099cc65078e40df6b732961b4a",
+        "authoredDigest": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+        "passed": true
+      },
+      {
+        "check": "raw_execute_regression",
+        "policySha256": "a6f3834fc9a74b85e5df4706b13efb0943b6bb0ae82e5e0f59a80f048df53c04",
+        "authoredDigest": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+        "passed": true
+      },
+      {
+        "check": "legacy_execution_surfaces",
+        "policySha256": "de41585f5b7a3f05666570665980055923b70e3f1c4c447636b50ce181d47866",
+        "authoredDigest": "sha256:e0419857266f932a292fa551bc99dcf5990649e400facbe90086e0106bb5d9dd",
+        "passed": true
+      },
+      {
+        "check": "post_op_side_effects",
+        "policySha256": "655ff5697718438456d6a1e01767157a7c99b68689779cb60bb9f4ebc40fcb98",
+        "authoredDigest": "sha256:f2e5373b90ce329c9c90c2e9ccac2afe042e356e112e963d15ef5dad23da322a",
+        "passed": true
+      },
+      {
+        "check": "post_op_no_internal_dispatch",
+        "policySha256": "f04e536ac07edc1151120f17c76a18e2791de9af91fb151d37d6901c5586d14c",
+        "authoredDigest": "sha256:21349e8ce41f7e89a18497db8bfb54f4fe071f6a599f805562e0aecf83a26559",
+        "passed": true
+      },
+      {
+        "check": "executor_publication_repairs",
+        "policySha256": "8bb06158b6c487c677eca9afd9af8524adb158ec3a92b3689d82336c6e658f2c",
+        "authoredDigest": "sha256:1a2d24ba0ae22e0f9b1256378c83bb43b8a26e15cddbc2cb5f3bd55fa567e013",
+        "passed": true
+      },
+      {
+        "check": "history_serverplan_projection",
+        "policySha256": "167e4569d9cee4534df7514ffd927151fa4f4531197eaa9f5f5c818244a57886",
+        "authoredDigest": "sha256:49482d786aca6d55dd17475e9f38eab491eba270d3bbcb05666742351babc3fe",
+        "passed": true
+      },
+      {
+        "check": "revision_ancestry_invariants",
+        "policySha256": "29d46248597921efeb90a3c0de5c284ff07f5d5207487b04d67a5fb1077e46d1",
+        "authoredDigest": "sha256:01ba7f7ad706a80b316f475e85b3a4fb8c74dd244bdddaf1c183d7468713e1cf",
+        "passed": true
+      },
+      {
+        "check": "versioned_merged_identity",
+        "policySha256": "f410333211d81a210c38b26ed4db7df073d9900dc07a3f3ebb3eeb84a2a6d754",
+        "authoredDigest": "sha256:271ff5d3d69e7016484a8cb9fd82a58bb4988ce8a8fd06d53abbd7e1c3627955",
+        "passed": true
+      },
+      {
+        "check": "publication_registry_writes",
+        "policySha256": "4078d413576a8c2f7dddb3a5e1171825f5415a3e1c581bccd059a793b2000926",
+        "authoredDigest": "sha256:64531da218ad6d604f6e2046ffba3d818ff9262e2f8d95f7ac6d8da8bcd29e6b",
+        "passed": true
+      },
+      {
+        "check": "declared_fact_interrogation",
+        "policySha256": "0fa2269f092b0af0ebae7b0dc14e940c03c20fee4ce2e08ced21699deb6e91f9",
+        "authoredDigest": "sha256:6c6c4f2e8b0f0fe6aef56d302b5987da06d3330b73932677ab09b657c3dee2fb",
+        "passed": true
+      },
+      {
+        "check": "grammar_mutation_invalidation",
+        "policySha256": "37bd90ecc337a8ca5e89cacd5bee302d799a89f9157e16372065b3b87dcdb977",
+        "authoredDigest": "sha256:e85df49bce10fb9b1bbc5736cecaffa737d2b27f093740d4f0ae45ef58ae55ae",
+        "passed": true
+      },
+      {
+        "check": "unknown_contract_defaults",
+        "policySha256": "319a5ef09dda569d69cde3d4010887c1fc348a8180df7301268757e2477520e2",
+        "authoredDigest": "sha256:8af9c45df66020cd12768e4fbbf6ddf47221420ca90f5179556c8626de9a05c7",
+        "passed": true
+      },
+      {
+        "check": "eager_resolve",
+        "policySha256": "6d6018db76770f598116d402deacf0352b625addfa303c8a16254d656647d484",
+        "authoredDigest": "sha256:2d1b9a372470f9c0d20a1ef63a7e84985261be9e8de74dbbb14af6c6ac7e6411",
+        "passed": true
+      },
+      {
+        "check": "lazy_architecture",
+        "policySha256": "cdb2802c6c3db0dcdd61775ffd5750f8995c0239b23cf8366805bc266bc2557a",
+        "authoredDigest": "sha256:58e59507ae804784004e2d1c232b57f07888898ae1676aca32ef82b28a956f7e",
+        "passed": true
+      },
+      {
+        "check": "pure_lazy_runtime_purity",
+        "policySha256": "d2b96027619e9d8bf3f0257791099adbd2ccfeacf4542cd08c0ce0696dc110d4",
+        "authoredDigest": "sha256:919d4a974975efad2ea8e61fae7e9aed30ce55c0fcae404724823207084fee47",
+        "passed": true
+      },
+      {
+        "check": "cached_pure_lazy_allowlist",
+        "policySha256": "7df526577a86d01fb6cada8fcfbeff61f1e388bbf5cfbd1a8702a4818d5950c7",
+        "authoredDigest": "sha256:014874039cd148fdeb04d50286d900e4258593e676b026d7c0477d3a6aae7854",
+        "passed": true
+      },
+      {
+        "check": "lazy_sql_surface",
+        "policySha256": "60bb5c5396b44d2c4f5612d03d2207434196bda622d6aa652e48eca1c5f2728c",
+        "authoredDigest": "sha256:58bdc4c2787e3553925a1e5bcec7bded8732f151b55ebcf5d7d475a31cb27b86",
+        "passed": true
+      },
+      {
+        "check": "plan_helpers_allowlist",
+        "policySha256": "5df0a07570787c35d7d6891c556e3d2635182f2742c459c0d990590b9499b0f3",
+        "authoredDigest": "sha256:f2478ca0f0c8ef72228750b78e24bfaa00ee7edda72afcd906e35caaf6954e7a",
+        "passed": true
+      },
+      {
+        "check": "legacy_callback_quarantine",
+        "policySha256": "ded5835e2322c93064d9e345cd8478265d3606bf9a8b260e7760010d85915cca",
+        "authoredDigest": "sha256:0cc458ebf7e86704eefb0a87f096ea33f5f9ae1cfd8b9b6d84c0c494b02124f4",
+        "passed": true
+      },
+      {
+        "check": "readthrough_authority_architecture",
+        "policySha256": "f69ebc9679de9fc2d5fa47ddbaf5a5f7d47aa1cd4da931e5f6c561b67e240190",
+        "authoredDigest": "sha256:09263eafde085cc8849d5916ee87e37851e2cbe59d78164da063b4201e576dee",
+        "passed": true
+      },
+      {
+        "check": "authentication_plan_purity",
+        "policySha256": "80f0cf548e5214d1c3df61cc35e97bf44cd7570c69e47453581dde90da2b0ef9",
+        "authoredDigest": "sha256:5f4e4a2f3e44e8a2afd5c0a862b3755717b6e9e7b3d422108f017f5c4473d34c",
+        "passed": true
+      },
+      {
+        "check": "lazy_adapter_ownership",
+        "policySha256": "cab4cc03af19e8f29b44b081e75f5709f27f02d400e22f32f88390564e4b03ff",
+        "authoredDigest": "sha256:36d3005f8b52ac5140810d52b84dfc770d1f54c06be1127d4078d517b76b0bee",
+        "passed": true
+      }
+    ]
+  },
+  "repository": {
+    "commit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+    "files": 9021,
+    "bytes": 137924324,
+    "expected": 25262,
+    "actual": 25262,
+    "falsePositives": [],
+    "falseNegatives": [],
+    "failures": [],
+    "workloadSha256": "af51dd07aaefdc6f2bb6d9a5ee75abe7bb995286c52093ff26fe28102052e31a",
+    "policyDigests": {
+      "data-layer-admin-async-purity": "sha256:28deddcad1b387ac3b546cca10895436e0c72fd351e7b2b500ca8192e3a4987e",
+      "data-layer-async-executor": "sha256:3bf76b24b1acd4c18e88904fc9c732f4fb30ce800c331499952d0c1dcf769154",
+      "data-layer-async-patterns": "sha256:555668ec0ddc233376e61b1c68258877a8c7f3304ae7cfc794fa3fd390be3d30",
+      "data-layer-async-sync-boundary": "sha256:8387d16fdbb47ca400d878ca97be6d1c42a48defe7e0b9909ff9b15b496ef82e",
+      "data-layer-async-sync-delegation": "sha256:854ef36424c9717ede05c769aa7e14708fc5a414c02225d990a9d405123915ee",
+      "data-layer-backend-coupling": "sha256:7bd4e209cba4a6012f8553980ef36833214c7ea649963db7ec6b75efd837f63e",
+      "data-layer-backend-type-strings": "sha256:9a767dadcfe52ec2b2801588f36919e74f6a793cb0a072cc6af21f24288b5faf",
+      "data-layer-classvar-check": "sha256:f492d76f3f686b430c649080c9be8420d375e1be023d639cf5d6c7613acb03b4",
+      "data-layer-conn-or-txn-union": "sha256:deb16c1381ad2414041c981a4c56ff6990008093f05722c74ba10baf5d01258b",
+      "data-layer-connection-caches": "sha256:33bd67e8e1ca9a9ef6f3ba78442ee2338a4fbf8392ec5dd482310e674a195c8b",
+      "data-layer-data-layer-compat-aliases": "sha256:e3a56226f0e2e3777817dce9f48a503303bd9d6cbeafd7e5d21231bd719c5860",
+      "data-layer-data-layer-facade-purity": "sha256:7aad3045ddf5c9d66eca850e455ec9763062bfe412f9db3af92328d72f553158",
+      "data-layer-declared-fact-interrogation": "sha256:6c6c4f2e8b0f0fe6aef56d302b5987da06d3330b73932677ab09b657c3dee2fb",
+      "data-layer-dynamic-module-loading": "sha256:a877158fd13f016a1eaecc9cb229d08b82288cdea1bb297f6479feaf9b18c387",
+      "data-layer-error-handling": "sha256:148c2913f29d34155412e24ba97b9dcdfb08cf470d5c237f54059e5014b8fccf",
+      "data-layer-execution-authority-bypass": "sha256:0bc1b6415b39f4867108efd14051f652c745e5f0531b8417005cf08d98490478",
+      "data-layer-executor-publication-repairs": "sha256:1a2d24ba0ae22e0f9b1256378c83bb43b8a26e15cddbc2cb5f3bd55fa567e013",
+      "data-layer-forwardref": "sha256:23e61b16ea5970188473c10aa8d47857b65e49a2e9a81d82c9fe4251467af585",
+      "data-layer-grammar-allowlist-burndown": "sha256:9951b7cc2804ae4f089bce9159c59b57f07327be51e513a0e9ad0a014df25936",
+      "data-layer-grammar-callable-constructors": "sha256:4a25209ac52a2007b8ad8287191cd4949a78e6cd0c303681d4ce626b229a8045",
+      "data-layer-grammar-fragment-usage": "sha256:dd0bdb3bc70bb59ebf9e3bcba037008b01d075a00dfc1bc4f24c44de9022cba3",
+      "data-layer-grammar-mutation-invalidation": "sha256:e85df49bce10fb9b1bbc5736cecaffa737d2b27f093740d4f0ae45ef58ae55ae",
+      "data-layer-grammar-render-methods": "sha256:02daf674754c08edb1cafcceee3d5ebeb4b02f94f6ebb5b318addab65804dc4f",
+      "data-layer-grammar-str-params": "sha256:c8d6ccba2cea149b130f57ff72248c4313622babd4b8dabe5cf20f492fb97903",
+      "data-layer-hasattr-async": "sha256:a74db29278d0d0c76b96a87d2086d120383203dda7491c875df48a8cf461a247",
+      "data-layer-history-serverplan-projection": "sha256:49482d786aca6d55dd17475e9f38eab491eba270d3bbcb05666742351babc3fe",
+      "data-layer-imperative-private-functions": "sha256:bf3a6ba7e6b7e2c750ae8317594777a001e24318935c491f77a0d149fde02afe",
+      "data-layer-impl-direct-execution": "sha256:c19f1c4022fb0af026826e0588d4e4ac6f87489ce694c91fb0551a8aedf68708",
+      "data-layer-internal-dead-code": "sha256:5a00b45c2aa4f39ab90f9505efd8714abd156fb99d77ba0f3e71d0c595469892",
+      "data-layer-layer-violations": "sha256:8c3d2a6473f033969ed5b46bd90b11986f4e4441f13402e9c4cf95d926a03449",
+      "data-layer-lazy-result-usage": "sha256:861c4ce42ec168a6437789375ae80a05869654dde9d2d424a5da84ea646d4a1f",
+      "data-layer-legacy-execution-surfaces": "sha256:e0419857266f932a292fa551bc99dcf5990649e400facbe90086e0106bb5d9dd",
+      "data-layer-missing-async-pairs": "sha256:ebf3bdbcb97a9db2aed181733bb3c2c57f7b54fa418cc2fa4f558a18bc5dcff6",
+      "data-layer-module-level-caches": "sha256:c823d10e3d198b68284904d503860e04bf190e0e3e3dca19f7f96597288f490d",
+      "data-layer-no-api-root-imports": "sha256:ef339f54cbb5b61d815448ca08c6db8d1715d325663c711c43c22f50621f0cbc",
+      "data-layer-no-blanket-grammar-bypass": "sha256:0d6e692f4a48ed34de5928d35d05fefa5fd6f9d7181607084102b43389af48e5",
+      "data-layer-no-source-inspection": "sha256:cfedb7e006ea6b12e84cb9d960e0658cf7134067724181a5d8a212e25222ccfc",
+      "data-layer-permission-error": "sha256:8c4a2c535f0b0696924936fb543604778be3ad9d2efca2a20a1d08a047d52afd",
+      "data-layer-plan-scope-ownership": "sha256:2a251ae3d8d16f86a4297f3e499bbed943d878f41142fa2248434c31e7a828eb",
+      "data-layer-plan-scope-side-effects": "sha256:3c95c904567737c074afa6479d5aa55276be1afd311e37e1d22d8ab85162b10f",
+      "data-layer-post-op-no-internal-dispatch": "sha256:21349e8ce41f7e89a18497db8bfb54f4fe071f6a599f805562e0aecf83a26559",
+      "data-layer-post-op-side-effects": "sha256:f2e5373b90ce329c9c90c2e9ccac2afe042e356e112e963d15ef5dad23da322a",
+      "data-layer-public-api-triples": "sha256:264698ea635d43af27e10217d1cfc3d14659b637b2a4b2c4208ec37c5ec96963",
+      "data-layer-publication-registry-writes": "sha256:64531da218ad6d604f6e2046ffba3d818ff9262e2f8d95f7ac6d8da8bcd29e6b",
+      "data-layer-raw-execute-regression": "sha256:e7906ab4289b8ea6c7e0cc97dea0d2e0eb33c04daeb26e857ec908a6bcd4c35f",
+      "data-layer-regex-sql-parsing": "sha256:610b522e4adf244cc3ae294863be09628ebeb3955a4b9e66be6b810ba78ccaa0",
+      "data-layer-removed-compat-surfaces": "sha256:94835f3059e4020dc15475f567c861994ccf549b3ef9108d4310bc0962f39573",
+      "data-layer-render-fstrings": "sha256:38600be3e0d5679decfe7f1b8297f21ec3374e4e551c288b066ba0a2f20acf54",
+      "data-layer-render-raw-strings": "sha256:636e02995bf3eeef4ca8d4a41224a04b65aeed5fbb81ced3d1e75c5d465ab870",
+      "data-layer-revision-ancestry-invariants": "sha256:01ba7f7ad706a80b316f475e85b3a4fb8c74dd244bdddaf1c183d7468713e1cf",
+      "data-layer-serverplan-bypass": "sha256:bd11d189d06488a9cea1392b65d0d8571e9a2e30fe6e0ad2f63bbe0d708e0ff7",
+      "data-layer-serverplan-dispatch-architecture": "sha256:ee74b7ee0c37ce3dcaf5fee04b041f7f1e6c4e365647a2bd376c3dff7454fee8",
+      "data-layer-serverplan-grammar-surface": "sha256:78bfa70d244f7cb87fde460d228a19f30ebb601c784cb4eb7cf8cb38cc141d59",
+      "data-layer-serverplan-name-inference": "sha256:5107509774e9e6e057129af25d7b01124caf3f7619c25ea258579347d9a07051",
+      "data-layer-serverplan-quality": "sha256:901e890fd5781ecc565b67198afdd6889fd70fa9c46f33075db363d5f81fa01e",
+      "data-layer-serverplan-state-tripwires": "sha256:d5d8f9e222f527d87a002e41381fac52270ba49e551d8bd3f0f30aef95674d12",
+      "data-layer-serverplan-steps": "sha256:1adf862c5ead8f71320eebbf8facfbd9fcc04a0f160339660b41164af8976b85",
+      "data-layer-serverplan-target-architecture": "sha256:92daf314473947482eee739da1d5a7153f7e3aae86c7a04c78c677aef6960198",
+      "data-layer-sql-grammar-escape-hatches": "sha256:51c459be9f1186f88174ac44a7ac9f4981704bf7aaecb2bf8c668c20383a48c0",
+      "data-layer-swallowed-exceptions": "sha256:b3fb96fa63706e2a7725795531374944218108708fd77da95368d9717ac3d53c",
+      "data-layer-sync-async-signatures": "sha256:7b6c45edbd81a4c4ecf04fcfe97fbb0e31856c5f41c0fe35257fd7c432d62ddb",
+      "data-layer-transaction-callback-wrappers": "sha256:ec450b584c2d34983aae73770dd03bbb36488ab0de8e8f71fd2bb30c834c7697",
+      "data-layer-transaction-closures": "sha256:888f738714f199e81fbe0e0b34e51dc4109e0b9b4d7016a7444f60b6236b449a",
+      "data-layer-transaction-patterns": "sha256:cb8ed48327845bd31df6d4c2306f055705f28812f39ec9f8b08e95869c9b8968",
+      "data-layer-type-safety-patterns": "sha256:13a97ae41a7e1ebbee159bc9b7c693206b02740698bc5d479f05c8cc45f156ab",
+      "data-layer-unknown-contract-defaults": "sha256:8af9c45df66020cd12768e4fbbf6ddf47221420ca90f5179556c8626de9a05c7",
+      "data-layer-unresolved-forward-refs": "sha256:86cdf97aa17812e9cc8b0d4f3edc65e099a7de3fc831426f1d5826ef37b2f94b",
+      "data-layer-versioned-lifecycle-legacy-surfaces": "sha256:579c7656724ba5a24b5ee0733b65f5561881a3df1160d4c48b5d14a63b518a46",
+      "data-layer-versioned-merged-identity": "sha256:271ff5d3d69e7016484a8cb9fd82a58bb4988ce8a8fd06d53abbd7e1c3627955",
+      "data-layer-rust-sql-grammar-boundary": "sha256:2bb8339680ef9c152f8245bac1499d3938c47dc130609d326b85560fbfa3cbcc",
+      "data-layer-cached-pure-lazy-allowlist": "sha256:014874039cd148fdeb04d50286d900e4258593e676b026d7c0477d3a6aae7854",
+      "data-layer-authentication-plan-purity": "sha256:5f4e4a2f3e44e8a2afd5c0a862b3755717b6e9e7b3d422108f017f5c4473d34c",
+      "data-layer-eager-resolve": "sha256:e2d1d8c6ed3d9800783ce15dce1e3e31001daec399b5ad33e879ee6058c5703e",
+      "data-layer-lazy-adapter-ownership": "sha256:36d3005f8b52ac5140810d52b84dfc770d1f54c06be1127d4078d517b76b0bee",
+      "data-layer-lazy-architecture": "sha256:58e59507ae804784004e2d1c232b57f07888898ae1676aca32ef82b28a956f7e",
+      "data-layer-lazy-sql-surface": "sha256:58bdc4c2787e3553925a1e5bcec7bded8732f151b55ebcf5d7d475a31cb27b86",
+      "data-layer-legacy-callback-quarantine": "sha256:0cc458ebf7e86704eefb0a87f096ea33f5f9ae1cfd8b9b6d84c0c494b02124f4",
+      "data-layer-plan-helpers-allowlist": "sha256:b3c1e8c338ad8e1fd512b344fcefea8600be802265975fb62df059f2b546df34",
+      "data-layer-pure-lazy-runtime-purity": "sha256:4d362584906395022e4493fe1d439e4b40df505dcbc131187234c321ad62178d",
+      "data-layer-readthrough-authority-architecture": "sha256:09263eafde085cc8849d5916ee87e37851e2cbe59d78164da063b4201e576dee"
+    },
+    "nativeSha256": "4f5a112f088dc59713231e387e1bd62b3ec6192352e36a044688481007d49c3b",
+    "rules": 80,
+    "batchEightExpected": 269,
+    "batchEightActual": 269,
+    "measurement": "docs/performance-decisions/data-layer-batch-eight-20261104.json",
+    "oracleQualification": "Expected findings combine the unchanged first-70 and batch-eight oracle recordings on an identical verified source domain; no new cumulative Python timing is claimed.",
+    "qualification": "Historical full repository result for the recorded policy digests. Eager symbols, purity qualified names and helper callsites were subsequently added to diagnostic projections. No new full repository cold execution was run."
+  },
+  "recordings": {
+    "batch-08-recording.json": "5cd4d58c2c34d81df509ac3d473a6caa065eb7a78a1586ff6d34d3204d6c63ab",
+    "batch-08-probes.json": "dbeae7b28266265241ffa0097bf550f60a6a51f4774fc5ff0651e7813ae30643",
+    "batch-08-probe-inputs.json": "5a1e9035159a344411ba3ac57687bc710831f4265f8ae2d23b1340faed2ca03a"
+  },
+  "exactnessAudit": {
+    "caseLedger": "fixtures/host/data-layer-port/batch-08-case-coverage.json",
+    "caseLedgerSha256": "ef6a279846d4ec45e182a9bcad56eeff7307ef5a72044e763ce6b37c1c2b1ed2",
+    "coverageReceipt": "fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json",
+    "discovery": {
+      "tests": [
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_enumerates_only_candidate_module_asts_once[@cached_pure_lazy(cache_args=())\\n]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@\\uff43\\uff41\\uff43\\uff48\\uff45\\uff44_\\uff50\\uff55\\uff52\\uff45_\\uff4c\\uff41\\uff5a\\uff59(cache_args=())]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_normalized_identifier_findings[@unresolved(\\uff43\\uff41\\uff43\\uff48\\uff45_\\uff41\\uff52\\uff47\\uff53=())]",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy",
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_allows_managed_memoization_cache_access_inside_pure_lazy"
+      ],
+      "positive": 14,
+      "clean": 1,
+      "syntaxContracts": [
+        "scripts/tests/test_lint_pure_lazy_runtime_purity.py::test_cached_policy_preserves_unrelated_syntax_errors"
+      ],
+      "failures": [],
+      "differences": []
+    },
+    "dimensions": [
+      "multiplicity",
+      "relative path",
+      "line",
+      "diagnostic code",
+      "backend comparison column",
+      "diagnostic category where recorded",
+      "recorded semantic metadata"
+    ],
+    "upstreamAssertionsOnlyCases": 205
+  }
+}

@@ -12,59 +12,18 @@
 .decl m11(n: node)
 .decl m21(n: node)
 .decl m29(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
 .decl out_scope(d: int)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("grammar_execute").
-names0("grammar_execute_async").
-names0("grammar_execute_lazy").
-names0("grammar_exists").
-names0("grammar_exists_async").
-names0("grammar_exists_lazy").
-names0("grammar_fetchall").
-names0("grammar_fetchall_async").
-names0("grammar_fetchall_lazy").
-names0("grammar_fetchone").
-names0("grammar_fetchone_async").
-names0("grammar_fetchone_lazy").
-names0("grammar_scalar").
-names0("grammar_scalar_async").
-names0("grammar_scalar_lazy").
-names0("grammar_validate").
-names0("grammar_validate_async").
-names0("grammar_validate_lazy").
-names1("execute_grammar_direct").
-names1("execute_grammar_direct_async").
-names1("execute_grammar_direct_lazy").
-names1("execute_grammar_fetchall_direct").
-names1("execute_grammar_fetchall_direct_async").
-names1("execute_grammar_fetchall_direct_lazy").
-names1("execute_grammar_fetchall_with_params_direct").
-names1("execute_grammar_fetchall_with_params_direct_async").
-names1("execute_grammar_fetchall_with_params_direct_lazy").
-names1("execute_grammar_fetchone_direct").
-names1("execute_grammar_fetchone_direct_async").
-names1("execute_grammar_fetchone_direct_lazy").
-names1("execute_grammar_fetchone_with_params_direct").
-names1("execute_grammar_fetchone_with_params_direct_async").
-names1("execute_grammar_fetchone_with_params_direct_lazy").
-names1("execute_grammar_with_params_direct").
-names1("execute_grammar_with_params_direct_async").
-names1("execute_grammar_with_params_direct_lazy").
-names2("SqlPreRenderedDdlFragment").
-names2("SqlPrerenderedDdl").
 in_scope($d) :- doc($d, $p, _), @glob($p, "**/*.py").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
-violation("data-layer-serverplan-grammar-surface", "helper-definitions", "SPG-helper_definition", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-violation("data-layer-serverplan-grammar-surface", "direct-helper-definitions", "SPG-direct_helper_definition", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v3), node(_, $v3, "identifier", _, _), text($v3, $v4), names1($v4), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-violation("data-layer-serverplan-grammar-surface", "helper-attributes", "SPG-helper_attribute", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v5), node(_, $v5, "identifier", _, _), text($v5, $v6), names0($v6), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-violation("data-layer-serverplan-grammar-surface", "direct-helper-attributes", "SPG-direct_helper_attribute", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v7), node(_, $v7, "identifier", _, _), text($v7, $v8), names1($v8), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-grammar-surface", "helper-definitions", "SPG-helper_definition", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), $v2 in {"grammar_execute", "grammar_execute_async", "grammar_execute_lazy", "grammar_exists", "grammar_exists_async", "grammar_exists_lazy", "grammar_fetchall", "grammar_fetchall_async", "grammar_fetchall_lazy", "grammar_fetchone", "grammar_fetchone_async", "grammar_fetchone_lazy", "grammar_scalar", "grammar_scalar_async", "grammar_scalar_lazy", "grammar_validate", "grammar_validate_async", "grammar_validate_lazy"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-grammar-surface", "direct-helper-definitions", "SPG-direct_helper_definition", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v3), node(_, $v3, "identifier", _, _), text($v3, $v4), $v4 in {"execute_grammar_direct", "execute_grammar_direct_async", "execute_grammar_direct_lazy", "execute_grammar_fetchall_direct", "execute_grammar_fetchall_direct_async", "execute_grammar_fetchall_direct_lazy", "execute_grammar_fetchall_with_params_direct", "execute_grammar_fetchall_with_params_direct_async", "execute_grammar_fetchall_with_params_direct_lazy", "execute_grammar_fetchone_direct", "execute_grammar_fetchone_direct_async", "execute_grammar_fetchone_direct_lazy", "execute_grammar_fetchone_with_params_direct", "execute_grammar_fetchone_with_params_direct_async", "execute_grammar_fetchone_with_params_direct_lazy", "execute_grammar_with_params_direct", "execute_grammar_with_params_direct_async", "execute_grammar_with_params_direct_lazy"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-grammar-surface", "helper-attributes", "SPG-helper_attribute", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v5), node(_, $v5, "identifier", _, _), text($v5, $v6), $v6 in {"grammar_execute", "grammar_execute_async", "grammar_execute_lazy", "grammar_exists", "grammar_exists_async", "grammar_exists_lazy", "grammar_fetchall", "grammar_fetchall_async", "grammar_fetchall_lazy", "grammar_fetchone", "grammar_fetchone_async", "grammar_fetchone_lazy", "grammar_scalar", "grammar_scalar_async", "grammar_scalar_lazy", "grammar_validate", "grammar_validate_async", "grammar_validate_lazy"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-grammar-surface", "direct-helper-attributes", "SPG-direct_helper_attribute", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v7), node(_, $v7, "identifier", _, _), text($v7, $v8), $v8 in {"execute_grammar_direct", "execute_grammar_direct_async", "execute_grammar_direct_lazy", "execute_grammar_fetchall_direct", "execute_grammar_fetchall_direct_async", "execute_grammar_fetchall_direct_lazy", "execute_grammar_fetchall_with_params_direct", "execute_grammar_fetchall_with_params_direct_async", "execute_grammar_fetchall_with_params_direct_lazy", "execute_grammar_fetchone_direct", "execute_grammar_fetchone_direct_async", "execute_grammar_fetchone_direct_lazy", "execute_grammar_fetchone_with_params_direct", "execute_grammar_fetchone_with_params_direct_async", "execute_grammar_fetchone_with_params_direct_lazy", "execute_grammar_with_params_direct", "execute_grammar_with_params_direct_async", "execute_grammar_with_params_direct_lazy"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 m11($n) :- node(_, $n, "import_statement", _, _).
 m11($n) :- node(_, $n, "import_from_statement", _, _).
 m11($n) :- node(_, $n, "global_statement", _, _).
@@ -79,8 +38,8 @@ m21($n) :- child($v17, $n, _), node(_, $v17, "lambda_parameters", _, _).
 m21($n) :- field($v18, "name", $n), node(_, $v18, "default_parameter", _, _).
 m21($n) :- field($v19, "name", $n), node(_, $v19, "typed_default_parameter", _, _).
 m21($n) :- child($v20, $n, _), node(_, $v20, "typed_parameter", _, _).
-violation("data-layer-serverplan-grammar-surface", "ddl-escapes", "SPG-ddl_escape", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v9), names2($v9), !m21($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-grammar-surface", "ddl-escapes", "SPG-ddl_escape", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v9), $v9 in {"SqlPreRenderedDdlFragment", "SqlPrerenderedDdl"}, !m21($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 m29($n) :- inside($n, $v23, k1), field($v23, "module_name", $v24), node(_, $n, _, $v25, $v26), node(_, $v24, _, $v27, $v28), $v27 <= $v25, $v26 <= $v28, node(_, $v23, "import_from_statement", _, _).
-violation("data-layer-serverplan-grammar-surface", "ddl-imports", "SPG-ddl_import", $p, $l) :- node(_, $n, "dotted_name", _, _), text($n, $v22), names2($v22), !m29($n), inside($n, $v30, k1), node(_, $v30, "import_from_statement", _, _), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-serverplan-grammar-surface", "ddl-imports", "SPG-ddl_import", $p, $l) :- node(_, $n, "dotted_name", _, _), text($n, $v22), $v22 in {"SqlPreRenderedDdlFragment", "SqlPrerenderedDdl"}, !m29($n), inside($n, $v30, k1), node(_, $v30, "import_from_statement", _, _), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 violation("data-layer-serverplan-grammar-surface", "syntax", "SPG-SYNTAX", $p, 1) :- node(_, $n, "module", _, _), node($d, $n, _, _, _), in_scope($d), syntax_error($d), !out_scope($d), doc($d, $p, _).
 .output violation

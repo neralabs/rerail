@@ -40,6 +40,13 @@ pub(in crate::code_rule_dsl) struct Solved {
     pub(in crate::code_rule_dsl) launches: usize,
     pub(in crate::code_rule_dsl) visits: u64,
     pub(in crate::code_rule_dsl) retries: u64,
+    /// The command buffers' GPU seconds, the host's wall seconds from its first buffer to the last
+    /// completion, where they went (`profile::PHASES`), and the buffer bytes made and reused.
+    pub(in crate::code_rule_dsl) gpu: f64,
+    pub(in crate::code_rule_dsl) wall: f64,
+    pub(in crate::code_rule_dsl) phases: [f64; 7],
+    pub(in crate::code_rule_dsl) made: u64,
+    pub(in crate::code_rule_dsl) reused: u64,
 }
 
 /// `(start, items)` CSR of `edges` by their first element over `n` cells.
@@ -59,7 +66,7 @@ fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>) {
 pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Error> {
     let n = system.seeds.len();
     if n == 0 {
-        return Ok(Solved { values: Vec::new(), launches: 0, visits: 0, retries: 0 });
+        return Ok(Solved { values: Vec::new(), launches: 0, visits: 0, retries: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });
     }
     if n > u32::MAX as usize / 4 {
         return Err(Error::BackendCapacity);
@@ -95,40 +102,55 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     // retries and the indices a taker gave up.
     let groups = super::work_queue::groups(n);
     let capacity = 4 * (n + 2 * outs.len()) + (groups * super::work_queue::WIDTH) as usize * 4 + 4096;
-    let queue = super::work_queue::Queue::new(device, capacity, &initial)?;
-    let upload = |data: &[u32]| MappedBuffer::from_slice(device, if data.is_empty() { &[0_u32][..] } else { data });
+    use super::blocks::{upload, zeroed};
+    let begun = super::metal_backend::launch::host_seconds();
+    let queue = super::work_queue::Queue::new(capacity, &initial)?;
     let state = upload(&state)?;
-    let values = MappedBuffer::from_slice(device, system.seeds)?;
-    let seeds = MappedBuffer::from_slice(device, system.seeds)?;
+    let values = upload(system.seeds)?;
+    let seeds = upload(system.seeds)?;
     let (copy_start, copies, bin_start, bin_index) = (upload(&copy_start)?, upload(&copies)?, upload(&bin_start)?, upload(&bin_index)?);
-    let bins = MappedBuffer::from_slice(device, if bins.is_empty() { &[[0_u32; 4]][..] } else { &bins })?;
+    let bins = upload(&bins)?;
     let (out_start, outs, queued) = (upload(&out_start)?, upload(&outs)?, upload(&queued)?);
-    let stats = MappedBuffer::zeroed::<u32>(device, 4)?;
+    let stats = zeroed::<u32>(4)?;
+    let made_in = super::metal_backend::launch::host_seconds() - begun;
     let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, pad: 0 };
     let pipeline = pipeline()?;
-    let launches = super::work_queue::run(device, &pipeline, &queue, groups, "Rerail lattice FIX", |encoder| {
+    let ran = super::work_queue::run(device, &pipeline, &queue, groups, "Rerail lattice FIX", |encoder| {
         for (index, buffer) in [
             &state, &values, &seeds, &copy_start, &copies, &bin_start, &bin_index, &bins, &out_start, &outs, &queued, &queue.slots, &queue.control, &stats,
         ]
         .iter()
         .enumerate()
         {
-            encoder.set_buffer(index as u64, Some(&buffer.buffer), 0);
+            encoder.set_buffer(index as u64, Some(buffer.buffer()), 0);
         }
         encoder.set_bytes(14, std::mem::size_of::<Args>() as u64, std::ptr::from_ref(&args).cast());
     })?;
-    let read = |buffer: &MappedBuffer, count: usize| unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<u32>(), count).to_vec() };
-    let (stats, state) = (read(&stats, 4), read(&state, n));
-    let raw = unsafe { std::slice::from_raw_parts(values.buffer.contents().cast::<i64>(), n) };
-    let values = state.iter().zip(raw).map(|(&state, &value)| match state {
+    let (made, reused) = [&state, &values, &seeds, &copy_start, &copies, &bin_start, &bin_index, &bins, &out_start, &outs, &queued, &queue.slots, &queue.control, &stats]
+        .iter()
+        .fold((0u64, 0u64), |(m, r), b| if b.made { (m + b.byte_length() as u64, r) } else { (m, r + b.byte_length() as u64) });
+    let (stats, state, raw) = (stats.read::<u32>(4), state.read::<u32>(n), values.read::<i64>(n));
+    let values = state.iter().zip(raw).map(|(&state, value)| match state {
         0 => BOT,
         3 => TOP,
         _ => value,
     });
     if std::env::var_os("RERAIL_LAUNCHES").is_some() {
-        eprintln!("lattice queue: {n} cells, {} initial, {groups} groups, {launches} launches, {} visits, {} retries, {} slots used", initial.len(), stats[0], stats[1], queue.used());
+        eprintln!("lattice queue: {n} cells, {} initial, {groups} groups, {} launches, {} visits, {} retries, {} slots used", initial.len(), ran.launches, stats[0], stats[1], queue.used());
     }
-    Ok(Solved { values: values.collect(), launches, visits: u64::from(stats[0]), retries: u64::from(stats[1]) })
+    let mut phases = ran.phases;
+    phases[0] = made_in;
+    Ok(Solved {
+        values: values.collect(),
+        launches: ran.launches,
+        visits: u64::from(stats[0]),
+        retries: u64::from(stats[1]),
+        gpu: ran.gpu,
+        wall: ran.wall + made_in,
+        phases,
+        made,
+        reused,
+    })
 }
 
 fn pipeline() -> Result<metal::ComputePipelineState, Error> {

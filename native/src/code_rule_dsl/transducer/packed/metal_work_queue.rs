@@ -23,14 +23,14 @@ const LAUNCHES: usize = 8;
 
 /// A linear queue: `slots` (an item + 1 per slot), `control` (head, tail, active, overflow).
 pub(in crate::code_rule_dsl) struct Queue {
-    pub(in crate::code_rule_dsl) slots: MappedBuffer,
-    pub(in crate::code_rule_dsl) control: MappedBuffer,
+    pub(in crate::code_rule_dsl) slots: super::blocks::Block,
+    pub(in crate::code_rule_dsl) control: super::blocks::Block,
     pub(in crate::code_rule_dsl) capacity: u32,
 }
 
 impl Queue {
     /// A queue of `capacity` slots holding `initial`.
-    pub(in crate::code_rule_dsl) fn new(device: &Device, capacity: usize, initial: &[u32]) -> Result<Self, Error> {
+    pub(in crate::code_rule_dsl) fn new(capacity: usize, initial: &[u32]) -> Result<Self, Error> {
         let capacity = capacity.max(initial.len()).max(1);
         if capacity >= u32::MAX as usize / 2 {
             return Err(Error::BackendCapacity);
@@ -41,8 +41,8 @@ impl Queue {
         }
         let count = initial.len() as u32;
         Ok(Self {
-            slots: MappedBuffer::from_slice(device, &slots)?,
-            control: MappedBuffer::from_slice(device, &[0, count, count, 0_u32])?,
+            slots: super::blocks::upload(&slots)?,
+            control: super::blocks::upload(&[0, count, count, 0_u32])?,
             capacity: capacity as u32,
         })
     }
@@ -54,7 +54,7 @@ impl Queue {
 
     /// head, tail, active, overflow.
     fn control(&self) -> [u32; 4] {
-        let words = unsafe { std::slice::from_raw_parts(self.control.buffer.contents().cast::<u32>(), 4) };
+        let words = self.control.read::<u32>(4);
         [words[0], words[1], words[2], words[3]]
     }
 }
@@ -64,8 +64,18 @@ pub(in crate::code_rule_dsl) fn groups(items: usize) -> u64 {
     (items as u64).div_ceil(WIDTH * 4).clamp(1, GROUPS)
 }
 
+/// What a queue's run took: its launches, the command buffers' GPU seconds, the host's wall
+/// seconds from the first encode to the last completion, and where they went (`profile::PHASES`;
+/// the buffers are the caller's).
+pub(in crate::code_rule_dsl) struct Ran {
+    pub(in crate::code_rule_dsl) launches: usize,
+    pub(in crate::code_rule_dsl) gpu: f64,
+    pub(in crate::code_rule_dsl) wall: f64,
+    pub(in crate::code_rule_dsl) phases: [f64; 7],
+}
+
 /// Runs `pipeline` (its buffers set by `bind`) over `queue` until no item is active: one launch,
-/// or more where every worker exited with items left. The launches it took.
+/// or more where every worker exited with items left.
 pub(in crate::code_rule_dsl) fn run(
     device: &Device,
     pipeline: &metal::ComputePipelineState,
@@ -73,10 +83,16 @@ pub(in crate::code_rule_dsl) fn run(
     groups: u64,
     label: &str,
     bind: impl Fn(&ComputeCommandEncoderRef),
-) -> Result<usize, Error> {
+) -> Result<Ran, Error> {
+    use super::metal_backend::launch::{command_times, host_seconds};
     let _scope = super::metal_backend::launch::LaunchScope::enter();
-    let commands = device.new_command_queue();
+    let mut phases = [0.0f64; 7];
+    let started = host_seconds();
+    let commands = super::blocks::queue(device)?;
+    phases[1] += host_seconds() - started;
+    let mut gpu = 0.0;
     for launch in 1..=LAUNCHES {
+        let at = host_seconds();
         let command = commands.new_command_buffer();
         command.set_label(label);
         let encoder = command.new_compute_command_encoder();
@@ -85,15 +101,24 @@ pub(in crate::code_rule_dsl) fn run(
         bind(encoder);
         encoder.checked_dispatch_thread_groups(command, MTLSize::new(groups, 1, 1), MTLSize::new(WIDTH, 1, 1));
         encoder.end_encoding();
+        let committed = host_seconds();
+        phases[2] += committed - at;
         commit_checked(command)?;
         wait_checked(command)?;
+        let woke = host_seconds();
+        let [kernel, start, end] = command_times(command);
+        phases[3] += (kernel - committed).max(0.0);
+        phases[4] += (start - kernel).max(0.0);
+        phases[5] += (end - start).max(0.0);
+        phases[6] += (woke - end).max(0.0);
+        gpu += end - start;
         let [_, _, active, overflow] = queue.control();
         if overflow != 0 {
             return Err(Error::BackendCapacity);
         }
         if active == 0 {
             crate::code_rule_dsl::prof::count("queue.launches", launch);
-            return Ok(launch);
+            return Ok(Ran { launches: launch, gpu, wall: host_seconds() - started, phases });
         }
     }
     Err(Error::BackendFailure)

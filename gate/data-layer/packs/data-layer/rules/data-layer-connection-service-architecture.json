@@ -1,0 +1,731 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-connection-service-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer connection_service_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2000_connection/**/*.py",
+      "impl/common/l2200_sql_dialect/**/*.py",
+      "impl/{sqlite,postgres,mariadb,remote,read_through}/connection.py",
+      "impl/common/l5150_fts_polyfill/manager.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test_*.py",
+      "**/*_test.py"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "connection-services",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_context",
+                "ast_name_repr",
+                "ast_value_repr"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,ast_context AS context,ast_name_repr AS name_repr,ast_value_repr AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "methods",
+            "query": "SELECT f.*,c.name AS class_name FROM functions f JOIN a c ON c.__path=f.__path AND c.id=f.parent AND c.kind='ClassDef' WHERE f.field='body'",
+            "indexes": [
+              [
+                "__path",
+                "parent",
+                "name"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "decorators",
+            "query": "WITH RECURSIVE d(__path,fn,root,id) AS (\n      SELECT __path,parent,id,id FROM a WHERE field='decorator_list'\n      UNION ALL SELECT d.__path,d.fn,d.root,n.id FROM d JOIN a n ON n.__path=d.__path AND n.parent=d.id AND n.field='func'\n      JOIN a c ON c.__path=d.__path AND c.id=d.id AND c.kind='Call')\n      SELECT d.__path,d.fn,d.root,n.id,n.kind,n.name FROM d JOIN a n ON n.__path=d.__path AND n.id=d.id WHERE n.kind IN ('Name','Attribute')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "body",
+            "query": "SELECT b.* FROM a b WHERE field='body' AND NOT (b.position=0 AND b.kind='Expr' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=b.__path AND v.parent=b.id AND v.field='value' AND v.kind='Constant' AND v.value_kind='str'))",
+            "indexes": [
+              [
+                "__path",
+                "parent",
+                "position"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "bodies",
+            "query": "SELECT f.__path,f.id,count(b.id) AS body_count,min(b.id) AS first_body,max(b.id) AS last_body FROM functions f LEFT JOIN body b ON b.__path=f.__path AND b.parent=f.id GROUP BY f.__path,f.id",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "service_entry",
+            "query": {
+              "$option": "entryPoint",
+              "escape": "sql",
+              "template": "SELECT {} name"
+            }
+          },
+          {
+            "name": "service_classes",
+            "query": "SELECT n.*,CASE WHEN substr(n.name,-8)='Protocol' OR substr(n.name,-8)='Contract' OR substr(n.name,-4)='Plan' OR EXISTS(SELECT 1 FROM a b WHERE b.__path=n.__path AND b.parent=n.id AND b.field='bases' AND b.kind IN ('Name','Attribute') AND b.name IN ('Protocol','TypedDict')) THEN 1 ELSE 0 END AS abstract FROM a n WHERE kind='ClassDef' AND parent=0",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "service_methods",
+            "query": "SELECT m.*,c.abstract FROM methods m JOIN service_classes c ON c.__path=m.__path AND c.id=m.parent",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "latest_methods",
+            "query": "SELECT m.*,(SELECT min(x.id) FROM service_methods x WHERE x.__path=m.__path AND x.parent=m.parent AND x.name=m.name) AS insertion FROM service_methods m WHERE NOT EXISTS(SELECT 1 FROM service_methods x WHERE x.__path=m.__path AND x.parent=m.parent AND x.name=m.name AND x.id>m.id)",
+            "indexes": [
+              [
+                "__path",
+                "parent",
+                "name"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "name_decorators",
+            "query": "SELECT * FROM decorators WHERE kind='Name'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "slot_aliases",
+            "query": "SELECT n.__path,n.fn,t.name,n.id FROM a n JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('target','targets') AND t.kind='Name' JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='value'\n WHERE n.kind IN ('Assign','AnnAssign') AND n.fn IS NOT NULL AND EXISTS(SELECT 1 FROM a k WHERE k.__path=v.__path AND k.id BETWEEN v.id AND v.last AND k.kind='Constant' AND k.value_kind='str' AND k.value IN ('_current_async_schema_transaction','_current_schema_transaction'))",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "slot_probes",
+            "query": "SELECT c.*,v.name AS probe_name,v.name_repr AS probe_repr FROM calls c JOIN a v ON v.__path=c.__path AND v.parent=c.id AND v.field='args' AND v.position=CASE WHEN c.callee IN ('getattr','hasattr') THEN 1 ELSE 0 END\n WHERE (c.callee IN ('getattr','hasattr') OR c.callee_kind='Attribute' AND c.callee='get' AND EXISTS(SELECT 1 FROM calls receiver WHERE receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.callee='vars'))\n AND v.kind='Name' AND EXISTS(SELECT 1 FROM slot_aliases s WHERE s.__path=c.__path AND s.fn=c.fn AND s.name=v.name AND s.id<c.id)\n UNION ALL SELECT c.*,v.value,v.value_repr FROM calls c JOIN a v ON v.__path=c.__path AND v.parent=c.id AND v.field='args' AND v.position=CASE WHEN c.callee IN ('getattr','hasattr') THEN 1 ELSE 0 END\n WHERE (c.callee IN ('getattr','hasattr') OR c.callee_kind='Attribute' AND c.callee='get' AND EXISTS(SELECT 1 FROM calls receiver WHERE receiver.__path=c.__path AND receiver.id=c.receiver AND receiver.callee='vars')) AND v.kind='Constant' AND v.value_kind='str' AND v.value IN ('_current_async_schema_transaction','_current_schema_transaction')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "delegates",
+            "query": "SELECT m.__path,m.id FROM service_methods m JOIN bodies b ON b.__path=m.__path AND b.id=m.id JOIN body first ON first.__path=b.__path AND first.id=b.first_body JOIN body last ON last.__path=b.__path AND last.id=b.last_body\n LEFT JOIN a v ON v.__path=last.__path AND v.parent=last.id AND v.field='value'\n WHERE last.kind='Raise' OR b.body_count=1 AND (first.kind='Pass' OR first.kind='Expr' AND v.kind='Constant' AND v.value_kind='ellipsis')\n OR (b.body_count=1 AND first.kind IN ('Expr','Return') OR b.body_count=2 AND first.kind='Expr' AND last.kind='Return') AND (v.kind='Call' OR v.kind='Await' AND EXISTS(SELECT 1 FROM a x WHERE x.__path=v.__path AND x.parent=v.id AND x.field='value' AND x.kind='Call'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "owners",
+            "query": "SELECT m.* FROM service_methods m LEFT JOIN delegates d ON d.__path=m.__path AND d.id=m.id WHERE NOT m.abstract AND (m.name IN ('introspect_table','introspect_table_async','table_exists','table_exists_async','table_exists_many','table_exists_many_async','trigger_exists','trigger_exists_async') OR substr(m.name,1,8)='_schema_') AND d.id IS NULL",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ],
+              [
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "owner_groups",
+            "query": "SELECT __path,name,count(*) count,group_concat(class_name,', ') names FROM (SELECT * FROM owners ORDER BY id) GROUP BY __path,name",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "legacy",
+            "query": "SELECT m.*,d.name AS decorator,d.root AS decorator_id,CASE d.name WHEN 'legacy_sync' THEN '_legacy_delegate_stub' ELSE '_legacy_delegate_stub_async' END AS stub,\n coalesce(NULLIF((SELECT v.value FROM a k JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' JOIN name_decorators other ON other.__path=k.__path AND other.root=k.parent AND other.fn=m.id AND other.name=d.name WHERE k.__path=d.__path AND k.field='keywords' AND k.name='lazy_name' AND v.kind='Constant' AND v.value_kind='str' ORDER BY other.root,k.position LIMIT 1),''),CASE WHEN d.name='legacy_async' AND substr(m.name,-6)='_async' THEN substr(m.name,1,length(m.name)-6)||'_lazy' ELSE m.name||'_lazy' END) AS lazy_name\n FROM latest_methods m JOIN (SELECT __path,fn,name,min(root) root FROM name_decorators GROUP BY __path,fn,name) d ON d.__path=m.__path AND d.fn=m.id WHERE NOT m.abstract AND d.name IN ('legacy_sync','legacy_async') AND CASE WHEN (SELECT name FROM service_entry) NOT IN ('all','lint','analyze_source') OR m.abstract THEN 1 WHEN (SELECT count(DISTINCT check_decorator.name) FROM name_decorators check_decorator WHERE check_decorator.__path=m.__path AND check_decorator.fn=m.id AND check_decorator.name IN ('legacy_sync','legacy_async'))<=1 THEN 1 ELSE json_extract('[]','$[legacy decorator cardinality]') END",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "lazy_counterparts",
+            "query": "SELECT l.__path,l.id,coalesce(own.id,fallback.id) AS counterpart FROM legacy l LEFT JOIN latest_methods own ON own.__path=l.__path AND own.parent=l.parent AND own.name=l.lazy_name\n LEFT JOIN latest_methods fallback ON fallback.__path=l.__path AND fallback.class_name='LazySchemaTransaction' AND fallback.name=l.lazy_name AND l.class_name IN ('SyncSchemaTransaction','AsyncSchemaTransaction') AND fallback.parent=(SELECT min(c.id) FROM service_classes c WHERE c.__path=l.__path AND c.name='LazySchemaTransaction')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "first_classes",
+            "query": "SELECT c.* FROM service_classes c WHERE NOT EXISTS(SELECT 1 FROM service_classes x WHERE x.__path=c.__path AND x.name=c.name AND x.id<c.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "first_methods",
+            "query": "SELECT m.* FROM service_methods m JOIN first_classes c ON c.__path=m.__path AND c.id=m.parent WHERE NOT EXISTS(SELECT 1 FROM service_methods x WHERE x.__path=m.__path AND x.parent=m.parent AND x.name=m.name AND x.id<m.id)",
+            "indexes": [
+              [
+                "__path",
+                "class_name",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "required_services",
+            "query": "SELECT column1 ordinal,column2 owner,column3 method FROM (VALUES (0,'SqlSessionContextService','_assert_sync_io_allowed'),(0,'SqlSessionContextService','_finalize_commit_branch_ripple_context'),(0,'SqlSessionContextService','_finalize_commit_branch_ripple_context_async'),(0,'SqlSessionContextService','_raise_if_pending_active_plan_for_immediate_sql'),(1,'SqlMaintenanceService','_execute_analyze'),(1,'SqlMaintenanceService','_reset_plan_flush_ctx'),(1,'SqlMaintenanceService','enable_query_prerender_cache'),(1,'SqlMaintenanceService','get_query_prerender_cache_statistics'),(1,'SqlMaintenanceService','native_pipeline'))"
+          },
+          {
+            "name": "expected_backends",
+            "query": "SELECT column1 ordinal,column2 path,column3 owner FROM (VALUES (0,'impl/sqlite/connection.py','_SqliteConnectionCore'),(1,'impl/postgres/connection.py','_PostgresConnectionCore'),(2,'impl/mariadb/connection.py','_MariaDBConnectionCore'))"
+          },
+          {
+            "name": "service_configuration",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "file_order",
+            "query": "SELECT value path,CAST(key AS INTEGER) ordinal FROM service_configuration,json_each(data,'$.fileOrder')",
+            "indexes": [
+              [
+                "path"
+              ]
+            ]
+          },
+          {
+            "name": "broad_owners",
+            "query": {
+              "$option": "entryPoint",
+              "cases": {
+                "all": "SELECT * FROM owners WHERE substr(__path,1,17)='l2000_connection/' OR substr(__path,1,30)='impl/common/l2200_sql_dialect/' OR __path IN ('impl/sqlite/connection.py','impl/postgres/connection.py','impl/mariadb/connection.py','impl/common/l5150_fts_polyfill/manager.py')"
+              },
+              "default": "SELECT * FROM owners"
+            }
+          },
+          {
+            "name": "cross_owner_groups",
+            "query": "SELECT name,count(DISTINCT __path||':'||class_name) distinct_owners,group_concat(display_path||':'||class_name,', ') names FROM (\n SELECT o.*,coalesce(json_extract(p.data,'$.displayPaths.'||json_quote(o.__path)),o.__path) display_path FROM broad_owners o CROSS JOIN service_configuration p\n LEFT JOIN file_order ord ON ord.path=o.__path ORDER BY coalesce(ord.ordinal,2147483647),o.__path,o.id) GROUP BY name",
+            "indexes": [
+              [
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "service_analysis",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN102' AS issue,'forbidden ambient schema transaction lookup helper '||n.name_repr||'; pass schema authority explicitly' AS message,n.id||':CONN102:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE n.name IN ('_peek_active_schema_transaction','_peek_active_schema_transaction_for_test','_peek_active_schema_transaction_optional','_require_active_schema_transaction') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN600' AS issue,'immediate bootstrap metadata reader '||n.name_repr||' bypasses the interrogation plan' AS message,n.id||':CONN600:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM functions n WHERE n.name IN ('_read_bootstrap_metadata_immediate_lazy','_read_lazy_bootstrap_metadata_immediate','_read_lazy_bootstrap_metadata_immediate_async','_read_lazy_bootstrap_proof_immediate','_read_lazy_bootstrap_proof_immediate_async') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN101' AS issue,'direct schema transaction slot read '||n.name_repr||'; pass schema authority explicitly' AS message,n.id||':CONN101:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Attribute' AND n.context='Load' AND n.name IN ('_current_async_schema_transaction','_current_schema_transaction') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN102' AS issue,'forbidden ambient schema transaction lookup helper call '||(SELECT a.name_repr FROM a WHERE a.__path=n.__path AND a.id=n.callee_id)||'; pass schema authority explicitly' AS message,n.id||':CONN102:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.callee IN ('_peek_active_schema_transaction','_peek_active_schema_transaction_for_test','_peek_active_schema_transaction_optional','_require_active_schema_transaction') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN500' AS issue,'connection code must not add scattered load_python_module shims; use the deferred-import boundary' AS message,n.id||':CONN500:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.callee='load_python_module' AND n.__path NOT IN ('l2000_connection/deferred_imports.py','l2000_connection/schema_transaction_deferred_imports.py') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN102' AS issue,'forbidden ambient schema transaction lookup helper import '||s.name_repr||'; pass schema authority explicitly' AS message,n.id||':CONN102:'||(n.id+s.position*0.00001) AS identity,0 AS phase,n.id+s.position*0.00001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a s ON s.__path=n.__path AND s.parent=n.id WHERE n.kind='ImportFrom' AND s.kind='alias' AND s.name IN ('_peek_active_schema_transaction','_peek_active_schema_transaction_for_test','_peek_active_schema_transaction_optional','_require_active_schema_transaction') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN100' AS issue,CASE WHEN n.callee='get' THEN 'vars(...).get' ELSE n.callee END||' probe of schema transaction slot '||n.probe_repr||'; pass schema authority explicitly' AS message,n.id||':CONN100:'||(n.id+0.0001) AS identity,0 AS phase,n.id+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM slot_probes n WHERE 1 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN601' AS issue,'read-through getattr delegation to '||v.name_repr||' treats connections as capability bags' AS message,n.id||':CONN601:'||(n.id+0.0003) AS identity,0 AS phase,n.id+0.0003 AS ordering,'' AS symbol,'' AS sort_name FROM calls n JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='args' AND v.position=0 WHERE n.__path='impl/read_through/connection.py' AND n.callee='getattr' AND v.kind='Attribute' AND v.name IN ('_cache','_upstream') AND EXISTS(SELECT 1 FROM a x WHERE x.__path=v.__path AND x.parent=v.id AND x.field='value' AND (x.kind='Name' AND x.name='self')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN200' AS issue,n.class_name||'.'||n.name||'/'||n.name||'_async are substantial sync/async twins; factor shared pure/lazy logic' AS message,n.id||':CONN200:'||(n.insertion) AS identity,1 AS phase,n.insertion AS ordering,'' AS symbol,'' AS sort_name FROM latest_methods n JOIN latest_methods async ON async.__path=n.__path AND async.parent=n.parent AND async.name=n.name||'_async' JOIN bodies b ON b.__path=n.__path AND b.id=n.id JOIN bodies ab ON ab.__path=async.__path AND ab.id=async.id WHERE NOT n.abstract AND n.class_name NOT IN ('LazySchemaTransaction','SyncSchemaTransaction','AsyncSchemaTransaction') AND substr(n.name,-6)!='_async' AND (n.name IN ('introspect_table','introspect_table_async','table_exists','table_exists_async','table_exists_many','table_exists_many_async','trigger_exists','trigger_exists_async') OR substr(n.name,1,8)='_schema_' OR instr(n.name,'schema')>0 OR instr(n.name,'versioned')>0 OR instr(n.name,'polymorphic')>0 OR instr(n.name,'large_column')>0 OR instr(n.name,'column_exists')>0) AND b.body_count>=5 AND ab.body_count>=5 UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN103' AS issue,n.class_name||'.'||n.name||' is a connection-level column/schema probe; use explicit schema authority' AS message,n.id||':CONN103:'||(n.id) AS identity,2 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM service_methods n WHERE instr(n.class_name,'Connection')>0 AND substr(n.name,1,1)!='_' AND (EXISTS(SELECT 1 FROM a probe WHERE probe.__path=n.__path AND probe.id BETWEEN n.id AND n.last AND (probe.kind IN ('Name','Attribute') AND probe.name IN ('_cache_table_columns','_cached_table_columns','_describe_table','_describe_table_async','_load_table_columns_lazy','_schema_column_exists','_schema_column_exists_async','_schema_column_exists_impl','_schema_column_exists_lazy','column_exists','column_exists_async','get_table_info','get_table_info_async'))) OR n.kind='AsyncFunctionDef' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='returns' AND (v.kind='Name' AND v.name='bool')) AND EXISTS(SELECT 1 FROM parameters p WHERE p.__path=n.__path AND p.fn=n.id AND p.kind='arg' AND p.field='args' AND p.name='table_name') AND EXISTS(SELECT 1 FROM parameters p WHERE p.__path=n.__path AND p.fn=n.id AND p.kind='arg' AND p.field='args' AND p.name='column_name')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN300' AS issue,n.name_repr||' has multiple non-delegate owners in one connection surface: '||g.names AS message,n.id||':CONN300:'||(n.id) AS identity,3 AS phase,n.id AS ordering,'' AS symbol,n.name AS sort_name FROM owners n JOIN owner_groups g ON g.__path=n.__path AND g.name=n.name WHERE g.count>1 AND substr(n.class_name,-7)!='Service' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN400' AS issue,n.class_name||'.'||n.name||' must use '||n.stub||'() as its decorated legacy body'||CASE WHEN EXISTS(SELECT 1 FROM bodies b JOIN body s ON s.__path=b.__path AND s.id=b.first_body JOIN calls call ON call.__path=s.__path AND call.parent=s.id AND call.field='exc' JOIN a msg ON msg.__path=call.__path AND msg.parent=call.id AND msg.field='args' AND msg.position=0 WHERE b.__path=n.__path AND b.id=n.id AND b.body_count=1 AND s.kind='Raise' AND call.callee='AssertionError' AND msg.kind='Constant' AND msg.value_kind='str' AND instr(msg.value,'legacy delegate should be provided by decorator')>0) THEN '; assertion-style stubs are not allowed' ELSE '' END AS message,n.id||':CONN400:'||(n.insertion) AS identity,4 AS phase,n.insertion AS ordering,'' AS symbol,'' AS sort_name FROM legacy n WHERE NOT EXISTS(SELECT 1 FROM bodies b JOIN body s ON s.__path=b.__path AND s.id=b.first_body JOIN calls call ON call.__path=s.__path AND call.parent=s.id AND call.field='value' WHERE b.__path=n.__path AND b.id=n.id AND b.body_count=1 AND s.kind='Expr' AND call.callee=n.stub) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN401' AS issue,n.class_name||'.'||n.name||' legacy wrapper missing lazy counterpart '||n.lazy_name AS message,n.id||':CONN401:'||(n.insertion+0.0001) AS identity,4 AS phase,n.insertion+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM legacy n JOIN lazy_counterparts l ON l.__path=n.__path AND l.id=n.id WHERE l.counterpart IS NULL UNION ALL SELECT n.__path AS path,lazy.__start AS start_byte,lazy.__end AS end_byte,lazy.line,'CONN402' AS issue,n.class_name||'.'||n.lazy_name||' must be @pure_lazy for legacy wrapper '||n.name AS message,n.id||':CONN402:'||(n.insertion+0.0001) AS identity,4 AS phase,n.insertion+0.0001 AS ordering,'' AS symbol,'' AS sort_name FROM legacy n JOIN lazy_counterparts l ON l.__path=n.__path AND l.id=n.id JOIN a lazy ON lazy.__path=l.__path AND lazy.id=l.counterpart WHERE NOT EXISTS(SELECT 1 FROM name_decorators d WHERE d.__path=l.__path AND d.fn=l.counterpart AND d.name='pure_lazy')"
+          },
+          {
+            "name": "service_sql",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing _SqlConnectionCore' AS message,n.id||':CONN000:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2200_sql_dialect/sql_connection.py' AND NOT EXISTS(SELECT 1 FROM first_classes c WHERE c.__path=n.__path AND c.name='_SqlConnectionCore') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'_SqlConnectionCore defines forbidden schema wrappers: '||(SELECT group_concat(name,', ') FROM (SELECT DISTINCT m.name FROM first_classes c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE c.__path=n.__path AND c.name='_SqlConnectionCore' AND m.name IN ('add_column_if_missing','create_index_from_introspection','create_table_from_schema','create_tables_from_schema','create_trigger_from_introspection','create_versioned_table','create_versioned_tables','create_view_from_sql') ORDER BY m.name)) AS message,n.id||':CONN000:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND n.__path='impl/common/l2200_sql_dialect/sql_connection.py' AND (SELECT group_concat(name,', ') FROM (SELECT DISTINCT m.name FROM first_classes c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE c.__path=n.__path AND c.name='_SqlConnectionCore' AND m.name IN ('add_column_if_missing','create_index_from_introspection','create_table_from_schema','create_tables_from_schema','create_trigger_from_introspection','create_versioned_table','create_versioned_tables','create_view_from_sql') ORDER BY m.name)) IS NOT NULL UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing '||r.owner AS message,n.id||':CONN000:'||(r.ordinal+1) AS identity,0 AS phase,r.ordinal+1 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN (SELECT DISTINCT ordinal,owner FROM required_services) r WHERE n.kind='Module' AND n.__path='impl/common/l2200_sql_dialect/sql_connection.py' AND NOT EXISTS(SELECT 1 FROM first_classes c WHERE c.__path=n.__path AND c.name=r.owner) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,r.owner||' missing service-owned methods: '||(SELECT group_concat(method,', ') FROM required_services required WHERE required.owner=r.owner AND NOT EXISTS(SELECT 1 FROM first_classes c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE c.__path=n.__path AND c.name=r.owner AND m.name=required.method)) AS message,n.id||':CONN000:'||(r.ordinal+1) AS identity,0 AS phase,r.ordinal+1 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN (SELECT DISTINCT ordinal,owner FROM required_services) r WHERE n.kind='Module' AND n.__path='impl/common/l2200_sql_dialect/sql_connection.py' AND EXISTS(SELECT 1 FROM first_classes c WHERE c.__path=n.__path AND c.name=r.owner) AND (SELECT group_concat(method,', ') FROM required_services required WHERE required.owner=r.owner AND NOT EXISTS(SELECT 1 FROM first_classes c JOIN methods m ON m.__path=c.__path AND m.parent=c.id WHERE c.__path=n.__path AND c.name=r.owner AND m.name=required.method)) IS NOT NULL"
+          },
+          {
+            "name": "service_backend",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing '||expected.owner AS message,n.id||':CONN000:'||(expected.ordinal*3) AS identity,0 AS phase,expected.ordinal*3 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN expected_backends expected ON expected.path=n.__path WHERE n.kind='Module' AND NOT EXISTS(SELECT 1 FROM first_classes cls WHERE cls.__path=n.__path AND cls.name=expected.owner) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,expected.owner||' regrew direct method bucket: '||(SELECT group_concat(name,', ') FROM (SELECT DISTINCT m.name FROM first_classes cls JOIN methods m ON m.__path=cls.__path AND m.parent=cls.id WHERE cls.__path=n.__path AND cls.name=expected.owner AND m.name!='__init__' ORDER BY m.name)) AS message,n.id||':CONN000:'||(expected.ordinal*3+1) AS identity,0 AS phase,expected.ordinal*3+1 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN expected_backends expected ON expected.path=n.__path WHERE n.kind='Module' AND EXISTS(SELECT 1 FROM first_classes cls WHERE cls.__path=n.__path AND cls.name=expected.owner) AND (SELECT group_concat(name,', ') FROM (SELECT DISTINCT m.name FROM first_classes cls JOIN methods m ON m.__path=cls.__path AND m.parent=cls.id WHERE cls.__path=n.__path AND cls.name=expected.owner AND m.name!='__init__' ORDER BY m.name)) IS NOT NULL UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing backend service assembly in __init__' AS message,n.id||':CONN000:'||(expected.ordinal*3+2) AS identity,0 AS phase,expected.ordinal*3+2 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN expected_backends expected ON expected.path=n.__path WHERE n.kind='Module' AND EXISTS(SELECT 1 FROM first_classes cls WHERE cls.__path=n.__path AND cls.name=expected.owner) AND NOT EXISTS(SELECT 1 FROM functions init WHERE init.__path=n.__path AND init.name='__init__' AND EXISTS(SELECT 1 FROM a n WHERE n.__path=init.__path AND n.id BETWEEN init.id AND init.last AND (n.kind='Attribute' AND n.name='_backend_driver_service')) AND EXISTS(SELECT 1 FROM a n WHERE n.__path=init.__path AND n.id BETWEEN init.id AND init.last AND (n.kind='Attribute' AND n.name='_backend_maintenance_service')) AND EXISTS(SELECT 1 FROM a n WHERE n.__path=init.__path AND n.id BETWEEN init.id AND init.last AND (n.kind='Attribute' AND n.name='_backend_schema_service')) AND EXISTS(SELECT 1 FROM a n WHERE n.__path=init.__path AND n.id BETWEEN init.id AND init.last AND (n.kind='Attribute' AND n.name='_backend_session_context_service')))"
+          },
+          {
+            "name": "service_cross",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN301' AS issue,n.name_repr||' has multiple non-delegate owners across connection surface: '||g.names AS message,n.id||':CONN301:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,n.name AS sort_name FROM broad_owners n JOIN cross_owner_groups g ON g.name=n.name WHERE g.distinct_owners>1 AND substr(n.class_name,-7)!='Service'"
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "analyze_source": "SELECT * FROM service_analysis",
+            "_lint_schema_transaction_facades_source": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing schema transaction classes: '||(SELECT group_concat(name,', ') FROM (SELECT 0 ordinal,'LazySchemaTransaction' name UNION ALL SELECT 1 ordinal,'SyncSchemaTransaction' name UNION ALL SELECT 2 ordinal,'AsyncSchemaTransaction' name) required WHERE NOT EXISTS(SELECT 1 FROM first_classes c WHERE c.__path=n.__path AND c.name=required.name)) AS message,n.id||':CONN000:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND NOT ((SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'ensure_polymorphic_columns_exist logic must live in pure_lazy ensure_polymorphic_columns_exist_lazy' AS message,n.id||':CONN000:'||(1) AS identity,0 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (NOT EXISTS(SELECT 1 FROM first_methods m JOIN name_decorators d ON d.__path=m.__path AND d.fn=m.id AND d.name='pure_lazy' WHERE m.__path=n.__path AND m.class_name='LazySchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_lazy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'SyncSchemaTransaction must not restore eager ensure_polymorphic_columns_exist; use ensure_polymorphic_columns_exist_lazy at an explicit terminal boundary' AS message,n.id||':CONN000:'||(2) AS identity,0 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='SyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'AsyncSchemaTransaction.ensure_polymorphic_columns_exist_async must be a legacy_async wrapper' AS message,n.id||':CONN000:'||(3) AS identity,0 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (NOT EXISTS(SELECT 1 FROM first_methods m JOIN name_decorators d ON d.__path=m.__path AND d.fn=m.id AND d.name='legacy_async' JOIN a k ON k.__path=d.__path AND k.parent=d.root AND k.field='keywords' AND k.name='lazy_name' JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' WHERE m.__path=n.__path AND m.class_name='AsyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async' AND v.kind='Constant' AND v.value_kind='str' AND v.value='ensure_polymorphic_columns_exist_lazy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'LazySchemaTransaction must not expose async-only ensure_polymorphic_columns_exist_async' AS message,n.id||':CONN000:'||(4) AS identity,0 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='LazySchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'SyncSchemaTransaction must not expose async-only ensure_polymorphic_columns_exist_async' AS message,n.id||':CONN000:'||(5) AS identity,0 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='SyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async'))",
+            "_lint_sql_services": "SELECT * FROM service_sql",
+            "_lint_backend_cores": "SELECT * FROM service_backend",
+            "_lint_duplicate_service_ownership_across_files": "SELECT * FROM service_cross",
+            "_lint_forbidden_connection_level_schema_methods_for_files": "SELECT * FROM (SELECT * FROM service_analysis) WHERE issue='CONN103'"
+          },
+          "default": "SELECT *, 0 api_group FROM (SELECT * FROM service_sql) UNION ALL SELECT *, 2 api_group FROM (SELECT * FROM service_backend) UNION ALL SELECT *, 3 api_group FROM (SELECT * FROM (SELECT * FROM service_analysis) WHERE substr(path,1,17)='l2000_connection/' OR substr(path,1,30)='impl/common/l2200_sql_dialect/' OR path IN ('impl/sqlite/connection.py','impl/postgres/connection.py','impl/mariadb/connection.py','impl/common/l5150_fts_polyfill/manager.py')) UNION ALL SELECT *, 4 api_group FROM (SELECT * FROM service_cross) UNION ALL SELECT *, 5 api_group FROM (SELECT * FROM (SELECT * FROM (SELECT * FROM service_analysis) WHERE issue='CONN103') WHERE path IN ('impl/remote/connection.py','impl/read_through/connection.py'))"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "schema-transaction-facades",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "filePath": {
+                          "regex": "^l2000_connection/schema_transaction\\.py$"
+                        }
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "\\b\\B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "methods",
+            "query": "SELECT f.*,c.name AS class_name FROM functions f JOIN a c ON c.__path=f.__path AND c.id=f.parent AND c.kind='ClassDef' WHERE f.field='body'",
+            "indexes": [
+              [
+                "__path",
+                "parent",
+                "name"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "decorators",
+            "query": "WITH RECURSIVE d(__path,fn,root,id) AS (\n      SELECT __path,parent,id,id FROM a WHERE field='decorator_list'\n      UNION ALL SELECT d.__path,d.fn,d.root,n.id FROM d JOIN a n ON n.__path=d.__path AND n.parent=d.id AND n.field='func'\n      JOIN a c ON c.__path=d.__path AND c.id=d.id AND c.kind='Call')\n      SELECT d.__path,d.fn,d.root,n.id,n.kind,n.name FROM d JOIN a n ON n.__path=d.__path AND n.id=d.id WHERE n.kind IN ('Name','Attribute')",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "service_classes",
+            "query": "SELECT n.*,CASE WHEN substr(n.name,-8)='Protocol' OR substr(n.name,-8)='Contract' OR substr(n.name,-4)='Plan' OR EXISTS(SELECT 1 FROM a b WHERE b.__path=n.__path AND b.parent=n.id AND b.field='bases' AND b.kind IN ('Name','Attribute') AND b.name IN ('Protocol','TypedDict')) THEN 1 ELSE 0 END AS abstract FROM a n WHERE kind='ClassDef' AND parent=0",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "service_methods",
+            "query": "SELECT m.*,c.abstract FROM methods m JOIN service_classes c ON c.__path=m.__path AND c.id=m.parent",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "name_decorators",
+            "query": "SELECT * FROM decorators WHERE kind='Name'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "first_classes",
+            "query": "SELECT c.* FROM service_classes c WHERE NOT EXISTS(SELECT 1 FROM service_classes x WHERE x.__path=c.__path AND x.name=c.name AND x.id<c.id)",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "first_methods",
+            "query": "SELECT m.* FROM service_methods m JOIN first_classes c ON c.__path=m.__path AND c.id=m.parent WHERE NOT EXISTS(SELECT 1 FROM service_methods x WHERE x.__path=m.__path AND x.parent=m.parent AND x.name=m.name AND x.id<m.id)",
+            "indexes": [
+              [
+                "__path",
+                "class_name",
+                "name"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "all": "SELECT *,1 api_group FROM (SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing schema transaction classes: '||(SELECT group_concat(name,', ') FROM (SELECT 0 ordinal,'LazySchemaTransaction' name UNION ALL SELECT 1 ordinal,'SyncSchemaTransaction' name UNION ALL SELECT 2 ordinal,'AsyncSchemaTransaction' name) required WHERE NOT EXISTS(SELECT 1 FROM first_classes c WHERE c.__path=n.__path AND c.name=required.name)) AS message,n.id||':CONN000:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND NOT ((SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'ensure_polymorphic_columns_exist logic must live in pure_lazy ensure_polymorphic_columns_exist_lazy' AS message,n.id||':CONN000:'||(1) AS identity,0 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (NOT EXISTS(SELECT 1 FROM first_methods m JOIN name_decorators d ON d.__path=m.__path AND d.fn=m.id AND d.name='pure_lazy' WHERE m.__path=n.__path AND m.class_name='LazySchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_lazy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'SyncSchemaTransaction must not restore eager ensure_polymorphic_columns_exist; use ensure_polymorphic_columns_exist_lazy at an explicit terminal boundary' AS message,n.id||':CONN000:'||(2) AS identity,0 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='SyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'AsyncSchemaTransaction.ensure_polymorphic_columns_exist_async must be a legacy_async wrapper' AS message,n.id||':CONN000:'||(3) AS identity,0 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (NOT EXISTS(SELECT 1 FROM first_methods m JOIN name_decorators d ON d.__path=m.__path AND d.fn=m.id AND d.name='legacy_async' JOIN a k ON k.__path=d.__path AND k.parent=d.root AND k.field='keywords' AND k.name='lazy_name' JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' WHERE m.__path=n.__path AND m.class_name='AsyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async' AND v.kind='Constant' AND v.value_kind='str' AND v.value='ensure_polymorphic_columns_exist_lazy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'LazySchemaTransaction must not expose async-only ensure_polymorphic_columns_exist_async' AS message,n.id||':CONN000:'||(4) AS identity,0 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='LazySchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'SyncSchemaTransaction must not expose async-only ensure_polymorphic_columns_exist_async' AS message,n.id||':CONN000:'||(5) AS identity,0 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='SyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async'))) WHERE path='l2000_connection/schema_transaction.py')"
+          },
+          "default": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'missing schema transaction classes: '||(SELECT group_concat(name,', ') FROM (SELECT 0 ordinal,'LazySchemaTransaction' name UNION ALL SELECT 1 ordinal,'SyncSchemaTransaction' name UNION ALL SELECT 2 ordinal,'AsyncSchemaTransaction' name) required WHERE NOT EXISTS(SELECT 1 FROM first_classes c WHERE c.__path=n.__path AND c.name=required.name)) AS message,n.id||':CONN000:'||(0) AS identity,0 AS phase,0 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND NOT ((SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'ensure_polymorphic_columns_exist logic must live in pure_lazy ensure_polymorphic_columns_exist_lazy' AS message,n.id||':CONN000:'||(1) AS identity,0 AS phase,1 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (NOT EXISTS(SELECT 1 FROM first_methods m JOIN name_decorators d ON d.__path=m.__path AND d.fn=m.id AND d.name='pure_lazy' WHERE m.__path=n.__path AND m.class_name='LazySchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_lazy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'SyncSchemaTransaction must not restore eager ensure_polymorphic_columns_exist; use ensure_polymorphic_columns_exist_lazy at an explicit terminal boundary' AS message,n.id||':CONN000:'||(2) AS identity,0 AS phase,2 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='SyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'AsyncSchemaTransaction.ensure_polymorphic_columns_exist_async must be a legacy_async wrapper' AS message,n.id||':CONN000:'||(3) AS identity,0 AS phase,3 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (NOT EXISTS(SELECT 1 FROM first_methods m JOIN name_decorators d ON d.__path=m.__path AND d.fn=m.id AND d.name='legacy_async' JOIN a k ON k.__path=d.__path AND k.parent=d.root AND k.field='keywords' AND k.name='lazy_name' JOIN a v ON v.__path=k.__path AND v.parent=k.id AND v.field='value' WHERE m.__path=n.__path AND m.class_name='AsyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async' AND v.kind='Constant' AND v.value_kind='str' AND v.value='ensure_polymorphic_columns_exist_lazy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'LazySchemaTransaction must not expose async-only ensure_polymorphic_columns_exist_async' AS message,n.id||':CONN000:'||(4) AS identity,0 AS phase,4 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='LazySchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONN000' AS issue,'SyncSchemaTransaction must not expose async-only ensure_polymorphic_columns_exist_async' AS message,n.id||':CONN000:'||(5) AS identity,0 AS phase,5 AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.kind='Module' AND (SELECT count(*) FROM first_classes c WHERE c.__path=n.__path AND c.name IN ('AsyncSchemaTransaction','LazySchemaTransaction','SyncSchemaTransaction'))=3 AND (EXISTS(SELECT 1 FROM first_methods m WHERE m.__path=n.__path AND m.class_name='SyncSchemaTransaction' AND m.name='ensure_polymorphic_columns_exist_async'))) WHERE 0"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "source-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "all": [
+              {
+                "kind": "module"
+              },
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "_lint_schema_transaction_facades_source": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "_lint_sql_services": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  },
+                  "_lint_backend_cores": {
+                    "filePath": {
+                      "regex": "(?s).*"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "\\b\\B"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

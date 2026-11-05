@@ -4,71 +4,48 @@
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
 .input doc, node, child, field, text
-.decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
 .kindset k0 = "await" | "for_statement" | "with_statement"
 .kindset k1 = "function_definition"
 .kindset k2 = "class_definition"
 .kindset k3 = "module"
 .kindset k4 = "identifier"
-.decl blocked110(low: node, high: node)
-.decl blocked125(low: node, high: node)
 .decl blocked13(low: node, high: node)
-.decl blocked144(low: node, high: node)
-.decl blocked159(low: node, high: node)
-.decl blocked25(low: node, high: node)
 .decl blocked4(low: node, high: node)
-.decl blocked42(low: node, high: node)
-.decl blocked57(low: node, high: node)
-.decl blocked76(low: node, high: node)
-.decl blocked91(low: node, high: node)
 .decl in_scope(d: int)
-.decl m104(n: node)
-.decl m108(n: node)
-.decl m119(n: node)
-.decl m123(n: node)
-.decl m138(n: node)
-.decl m142(n: node)
-.decl m153(n: node)
-.decl m157(n: node)
+.decl m103(n: node)
+.decl m113(n: node)
+.decl m117(n: node)
+.decl m131(n: node)
+.decl m135(n: node)
+.decl m145(n: node)
+.decl m149(n: node)
 .decl m18(n: node)
-.decl m36(n: node)
-.decl m40(n: node)
-.decl m51(n: node)
-.decl m55(n: node)
-.decl m70(n: node)
-.decl m74(n: node)
+.decl m35(n: node)
+.decl m39(n: node)
+.decl m49(n: node)
+.decl m53(n: node)
+.decl m67(n: node)
+.decl m71(n: node)
+.decl m81(n: node)
 .decl m85(n: node)
-.decl m89(n: node)
 .decl m9(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
-.decl names3(s: sym)
-.decl names4(s: sym)
+.decl m99(n: node)
 .decl out_scope(d: int)
 .decl u1(n: node)
 .decl u10(n: node)
-.decl u126(n: node)
-.decl u127(n: node)
-.decl u128(n: node)
-.decl u160(n: node)
-.decl u161(n: node)
-.decl u162(n: node)
-.decl u58(n: node)
-.decl u59(n: node)
-.decl u60(n: node)
-.decl u92(n: node)
-.decl u93(n: node)
-.decl u94(n: node)
+.decl u119(n: node)
+.decl u120(n: node)
+.decl u121(n: node)
+.decl u151(n: node)
+.decl u152(n: node)
+.decl u153(n: node)
+.decl u55(n: node)
+.decl u56(n: node)
+.decl u57(n: node)
+.decl u87(n: node)
+.decl u88(n: node)
+.decl u89(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("__aenter__").
-names0("__aexit__").
-names1("legacy_sync").
-names2("legacy_async").
-names3("legacy_module_sync").
-names4("legacy_module_async").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -174,45 +151,36 @@ m9($n) :- node(_, $n, "with_statement", _, _).
 blocked13($low, $high) :- inside($low, $high, k0), inside($low, $s, k1), node(_, $s, "function_definition", _, _), node(_, $s, _, $v14, $v15), node(_, $high, _, $v16, $v17), $v16 <= $v14, $v15 <= $v17, $s != $high.
 m18($n) :- node(_, $n, "for_statement", _, _).
 m18($n) :- node(_, $n, "with_statement", _, _).
-blocked25($low, $high) :- inside($low, $s, k2), node(_, $s, "class_definition", _, _), inside($s, $high, k2).
-m36($n) :- node(_, $n, "identifier", _, _), text($n, $v33), names1($v33).
-m36($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v34), node(_, $v34, "identifier", _, _), text($v34, $v35), names1($v35).
-m40($n) :- child($v37, $n, _), node(_, $v37, "module", _, _).
-m40($n) :- child($v38, $n, _), node(_, $v38, "decorated_definition", _, _), child($v39, $v38, _), node(_, $v39, "module", _, _).
-blocked42($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m51($n) :- node(_, $n, "identifier", _, _), text($n, $v48), names1($v48).
-m51($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v49), node(_, $v49, "identifier", _, _), text($v49, $v50), names1($v50).
-m55($n) :- child($v52, $n, _), node(_, $v52, "module", _, _).
-m55($n) :- child($v53, $n, _), node(_, $v53, "decorated_definition", _, _), child($v54, $v53, _), node(_, $v54, "module", _, _).
-blocked57($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m70($n) :- node(_, $n, "identifier", _, _), text($n, $v67), names2($v67).
-m70($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v68), node(_, $v68, "identifier", _, _), text($v68, $v69), names2($v69).
-m74($n) :- child($v71, $n, _), node(_, $v71, "module", _, _).
-m74($n) :- child($v72, $n, _), node(_, $v72, "decorated_definition", _, _), child($v73, $v72, _), node(_, $v73, "module", _, _).
-blocked76($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m85($n) :- node(_, $n, "identifier", _, _), text($n, $v82), names2($v82).
-m85($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v83), node(_, $v83, "identifier", _, _), text($v83, $v84), names2($v84).
-m89($n) :- child($v86, $n, _), node(_, $v86, "module", _, _).
-m89($n) :- child($v87, $n, _), node(_, $v87, "decorated_definition", _, _), child($v88, $v87, _), node(_, $v88, "module", _, _).
-blocked91($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m104($n) :- node(_, $n, "identifier", _, _), text($n, $v101), names3($v101).
-m104($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v102), node(_, $v102, "identifier", _, _), text($v102, $v103), names3($v103).
-m108($n) :- child($v105, $n, _), node(_, $v105, "module", _, _).
-m108($n) :- child($v106, $n, _), node(_, $v106, "decorated_definition", _, _), child($v107, $v106, _), node(_, $v107, "module", _, _).
-blocked110($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m119($n) :- node(_, $n, "identifier", _, _), text($n, $v116), names3($v116).
-m119($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v117), node(_, $v117, "identifier", _, _), text($v117, $v118), names3($v118).
-m123($n) :- child($v120, $n, _), node(_, $v120, "module", _, _).
-m123($n) :- child($v121, $n, _), node(_, $v121, "decorated_definition", _, _), child($v122, $v121, _), node(_, $v122, "module", _, _).
-blocked125($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m138($n) :- node(_, $n, "identifier", _, _), text($n, $v135), names4($v135).
-m138($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v136), node(_, $v136, "identifier", _, _), text($v136, $v137), names4($v137).
-m142($n) :- child($v139, $n, _), node(_, $v139, "module", _, _).
-m142($n) :- child($v140, $n, _), node(_, $v140, "decorated_definition", _, _), child($v141, $v140, _), node(_, $v141, "module", _, _).
-blocked144($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
-m153($n) :- node(_, $n, "identifier", _, _), text($n, $v150), names4($v150).
-m153($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v151), node(_, $v151, "identifier", _, _), text($v151, $v152), names4($v152).
-m157($n) :- child($v154, $n, _), node(_, $v154, "module", _, _).
-m157($n) :- child($v155, $n, _), node(_, $v155, "decorated_definition", _, _), child($v156, $v155, _), node(_, $v156, "module", _, _).
-blocked159($low, $high) :- inside($low, $s, k3), node(_, $s, "module", _, _), inside($s, $high, k3).
+m35($n) :- node(_, $n, "identifier", _, _), text($n, $v32), $v32 = "legacy_sync".
+m35($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v33), node(_, $v33, "identifier", _, _), text($v33, $v34), $v34 = "legacy_sync".
+m39($n) :- child($v36, $n, _), node(_, $v36, "module", _, _).
+m39($n) :- child($v37, $n, _), node(_, $v37, "decorated_definition", _, _), child($v38, $v37, _), node(_, $v38, "module", _, _).
+m49($n) :- node(_, $n, "identifier", _, _), text($n, $v46), $v46 = "legacy_sync".
+m49($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v47), node(_, $v47, "identifier", _, _), text($v47, $v48), $v48 = "legacy_sync".
+m53($n) :- child($v50, $n, _), node(_, $v50, "module", _, _).
+m53($n) :- child($v51, $n, _), node(_, $v51, "decorated_definition", _, _), child($v52, $v51, _), node(_, $v52, "module", _, _).
+m67($n) :- node(_, $n, "identifier", _, _), text($n, $v64), $v64 = "legacy_async".
+m67($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v65), node(_, $v65, "identifier", _, _), text($v65, $v66), $v66 = "legacy_async".
+m71($n) :- child($v68, $n, _), node(_, $v68, "module", _, _).
+m71($n) :- child($v69, $n, _), node(_, $v69, "decorated_definition", _, _), child($v70, $v69, _), node(_, $v70, "module", _, _).
+m81($n) :- node(_, $n, "identifier", _, _), text($n, $v78), $v78 = "legacy_async".
+m81($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v79), node(_, $v79, "identifier", _, _), text($v79, $v80), $v80 = "legacy_async".
+m85($n) :- child($v82, $n, _), node(_, $v82, "module", _, _).
+m85($n) :- child($v83, $n, _), node(_, $v83, "decorated_definition", _, _), child($v84, $v83, _), node(_, $v84, "module", _, _).
+m99($n) :- node(_, $n, "identifier", _, _), text($n, $v96), $v96 = "legacy_module_sync".
+m99($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v97), node(_, $v97, "identifier", _, _), text($v97, $v98), $v98 = "legacy_module_sync".
+m103($n) :- child($v100, $n, _), node(_, $v100, "module", _, _).
+m103($n) :- child($v101, $n, _), node(_, $v101, "decorated_definition", _, _), child($v102, $v101, _), node(_, $v102, "module", _, _).
+m113($n) :- node(_, $n, "identifier", _, _), text($n, $v110), $v110 = "legacy_module_sync".
+m113($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v111), node(_, $v111, "identifier", _, _), text($v111, $v112), $v112 = "legacy_module_sync".
+m117($n) :- child($v114, $n, _), node(_, $v114, "module", _, _).
+m117($n) :- child($v115, $n, _), node(_, $v115, "decorated_definition", _, _), child($v116, $v115, _), node(_, $v116, "module", _, _).
+m131($n) :- node(_, $n, "identifier", _, _), text($n, $v128), $v128 = "legacy_module_async".
+m131($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v129), node(_, $v129, "identifier", _, _), text($v129, $v130), $v130 = "legacy_module_async".
+m135($n) :- child($v132, $n, _), node(_, $v132, "module", _, _).
+m135($n) :- child($v133, $n, _), node(_, $v133, "decorated_definition", _, _), child($v134, $v133, _), node(_, $v134, "module", _, _).
+m145($n) :- node(_, $n, "identifier", _, _), text($n, $v142), $v142 = "legacy_module_async".
+m145($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v143), node(_, $v143, "identifier", _, _), text($v143, $v144), $v144 = "legacy_module_async".
+m149($n) :- child($v146, $n, _), node(_, $v146, "module", _, _).
+m149($n) :- child($v147, $n, _), node(_, $v147, "decorated_definition", _, _), child($v148, $v147, _), node(_, $v148, "module", _, _).
 .output violation

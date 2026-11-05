@@ -164,6 +164,8 @@ pub(crate) struct Report {
     pub(crate) rounds: cross_rounds::Rounds,
     /// Declarations, summaries and terms (`corpus::typing`).
     pub(crate) typing: TypingReport,
+    /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
+    pub(crate) text: (usize, usize, f64),
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -204,6 +206,12 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         }
         last = now;
     };
+    let profiling = crate::code_rule_dsl::logic::profile::on();
+    if profiling {
+        crate::code_rule_dsl::logic::profile::reset();
+    }
+    // Plans are kept across this run's chunks only (decision 0038).
+    let _plans = super::KeepPlans::start();
     let mut prog = front::parse(program)?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
@@ -246,11 +254,28 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
+    crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
+    // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
+    let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
+    crate::code_rule_dsl::logic::profile::decision("file-local split", || {
+        format!(
+            "{} rules run per chunk over its files (file-local); {} rules run once over all files (cross-file); {} relations exported to the cross part, {} base relations kept for it",
+            split.local.rules.len(),
+            split.cross.rules.len(),
+            split.exports.len(),
+            split.base.len()
+        )
+    });
+    crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
+        let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
+        format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
+    });
     let (local, cross) = (part(split.local), part(split.cross));
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
     // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
@@ -268,6 +293,12 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         }
     };
     let own = t.is_none();
+    crate::code_rule_dsl::logic::profile::decision("statistics", || {
+        if own { "each chunk measures its own sources' statistics; the planner prices that chunk's plans from them".into() } else { "T's corpus statistics, read once, with each chunk's sources' own".into() }
+    });
+    if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().filter(|n| n != "1") {
+        crate::code_rule_dsl::logic::profile::decision("sampling", || format!("every {n}th file only (RERAIL_SAMPLE_EVERY): findings are a sample's"));
+    }
     let constants = Own::constants(&lowered.program);
     let mut own_totals = Own::default();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
@@ -342,7 +373,11 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
         let build = |d: &i64, path: &String| -> Result<syntax::Document> {
+            let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
+            let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
             let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
+            drop(read);
+            let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
             let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
                 Built::Facts(f) => Arc::new(f),
@@ -366,7 +401,9 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             }
             add(&mut parse, t);
             t = thread_usage();
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()));
+            let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
+            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding).map_err(|e| Error::Plan(e.to_string()));
+            drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
             if send.send(built.map(|sources| (n, sources))).is_err() {
@@ -385,6 +422,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         chunks += 1;
         let mut stats = t_stats.clone();
         if own {
+            let _measure = crate::code_rule_dsl::logic::profile::span(|| "measure constants".into());
             let chunk = Own::measure(&sources, &constants);
             chunk.apply(&mut stats);
             own_totals.add(&chunk);
@@ -406,15 +444,19 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
                 }
             }
+            let measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
             let measured = syntax::statistics(source.as_ref());
-            if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS)) {
+            drop(measure);
+            if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
             modules.bind(&db, &rel, source)?;
             bound.insert(rel);
         }
+        let running = crate::code_rule_dsl::logic::profile::span(|| "run".into());
         let got = super::run_atoms_native_over(&local, &db, "main", stats, split.exports.iter().cloned().collect(), modes)?;
+        drop(running);
         let kept = got.kept.clone();
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         native.extend(gather(got, &mut outputs, &mut node_columns, &outputs_of).into_iter().map(|k| format!("local:{k}")));
@@ -521,7 +563,22 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let rss = usage().2;
     phases.insert(1, ("parse (worker)", parse_cpu.0, parse_cpu.1, rss, 0));
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
-    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed })
+    let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
+    drop(statements);
+    crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
+    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+        let mut header = format!(
+            "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
+            docs.len(),
+            vocabulary.tests.len()
+        );
+        for (name, user, sys, rss, n) in &phases {
+            header.push_str(&format!("{:>9.2} s  {name:<16} rss {rss:.0} MB  {n} statements\n", user + sys));
+        }
+        header.push_str(&format!("\nProgram: {} lines; rules are numbered as in the `rule #k` notes at the end.\n", program.lines().filter(|l| !l.trim().is_empty()).count()));
+        crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
+    }
+    Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu) })
 }
 
 
@@ -621,6 +678,8 @@ fn run_rounds(db: &Connection, modules: &Modules, round: lower::Lowered, hops: &
 struct Statements {
     db: *mut rusqlite::ffi::sqlite3,
     state: Box<StatementState>,
+    /// The profile's span of the phase entered last (`logic::profile`).
+    span: std::cell::RefCell<Option<crate::code_rule_dsl::logic::profile::Span>>,
 }
 #[derive(Default)]
 struct StatementState {
@@ -638,7 +697,10 @@ impl Statements {
                 state.count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 return 0;
             }
-            let Some(costs) = &state.costs else { return 0 };
+            let profiled = crate::code_rule_dsl::logic::profile::on();
+            if state.costs.is_none() && !profiled {
+                return 0;
+            }
             let stmt = p.cast::<ffi::sqlite3_stmt>();
             // SAFETY: for SQLITE_TRACE_PROFILE, P is the statement and X its time in nanoseconds.
             let (ns, text, vm, scan, sort, auto) = unsafe {
@@ -647,6 +709,10 @@ impl Statements {
                 let st = |op| ffi::sqlite3_stmt_status(stmt, op, 1) as u64;
                 (ns, text, st(ffi::SQLITE_STMTSTATUS_VM_STEP), st(ffi::SQLITE_STMTSTATUS_FULLSCAN_STEP), st(ffi::SQLITE_STMTSTATUS_SORT), st(ffi::SQLITE_STMTSTATUS_AUTOINDEX))
             };
+            if profiled {
+                crate::code_rule_dsl::logic::profile::sql(text.clone(), ns, vm, scan, sort, auto);
+            }
+            let Some(costs) = &state.costs else { return 0 };
             let phase = *state.phase.lock();
             let mut costs = costs.lock();
             let c = costs.entry((phase, text)).or_default();
@@ -656,11 +722,12 @@ impl Statements {
             0
         }
         let state = Box::new(StatementState { costs: std::env::var_os("RDL_STMTS").map(|_| Default::default()), ..Default::default() });
-        let mask = ffi::SQLITE_TRACE_STMT as u32 | if state.costs.is_some() { ffi::SQLITE_TRACE_PROFILE as u32 } else { 0 };
+        let profile = state.costs.is_some() || crate::code_rule_dsl::logic::profile::on();
+        let mask = ffi::SQLITE_TRACE_STMT as u32 | if profile { ffi::SQLITE_TRACE_PROFILE as u32 } else { 0 };
         // SAFETY: the connection is live for the run; the state is boxed (a stable address) and outlives the callback.
         let db = unsafe { db.handle() };
         unsafe { ffi::sqlite3_trace_v2(db, mask, Some(trace), std::ptr::from_ref(&*state).cast_mut().cast()) };
-        Statements { db, state }
+        Statements { db, state, span: Default::default() }
     }
     fn count(&self) -> usize {
         self.state.count.load(std::sync::atomic::Ordering::Relaxed)
@@ -668,10 +735,14 @@ impl Statements {
     /// The phase the statements from now on are charged to.
     fn enter(&self, phase: &'static str) {
         *self.state.phase.lock() = phase;
+        // The last phase's span closes before this one opens (spans nest by a stack).
+        drop(self.span.borrow_mut().take());
+        *self.span.borrow_mut() = Some(crate::code_rule_dsl::logic::profile::span(|| phase.to_owned()));
     }
 }
 impl Drop for Statements {
     fn drop(&mut self) {
+        drop(self.span.borrow_mut().take());
         // SAFETY: as in `on`; the connection is still open (dropped after this).
         unsafe { rusqlite::ffi::sqlite3_trace_v2(self.db, 0, None, std::ptr::null_mut()) };
         if let (Some(costs), Some(file)) = (&self.state.costs, std::env::var_os("RDL_STMTS")) {
@@ -830,6 +901,12 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
     }
     python.sort();
     rust.sort();
+    // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
+    if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
+        for files in [&mut python, &mut rust] {
+            *files = files.iter().step_by(n).cloned().collect();
+        }
+    }
     Ok((python, rust))
 }
 

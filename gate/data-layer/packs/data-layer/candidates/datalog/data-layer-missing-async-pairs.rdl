@@ -2,258 +2,34 @@
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.input doc, node, field, text
 .decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.input doc, node, field, text, name
 .kindset k0 = "function_definition"
 .kindset k1 = "class_definition"
-.decl blocked30(low: node, high: node)
-.decl blocked5(low: node, high: node)
-.decl blocked55(low: node, high: node)
 .decl in_scope(d: int)
-.decl m12(n: node)
+.decl m11(n: node)
 .decl m15(n: node)
-.decl m18(n: node)
+.decl m19(n: node)
 .decl m24(n: node)
 .decl m28(n: node)
 .decl m3(n: node)
-.decl m34(n: node)
-.decl m37(n: node)
+.decl m33(n: node)
+.decl m36(n: node)
 .decl m40(n: node)
-.decl m43(n: node)
+.decl m44(n: node)
 .decl m49(n: node)
 .decl m53(n: node)
-.decl m59(n: node)
-.decl m62(n: node)
+.decl m58(n: node)
+.decl m61(n: node)
 .decl m65(n: node)
-.decl m68(n: node)
+.decl m69(n: node)
 .decl m74(n: node)
-.decl m9(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
+.decl m8(n: node)
 .decl out_scope(d: int)
-.decl t23(s: sym)
-.decl t48(s: sym)
-.decl t73(s: sym)
 .decl u1(n: node)
 .decl u26(n: node)
 .decl u51(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("__aenter__").
-names0("__aexit__").
-names0("__enter__").
-names0("__exit__").
-names0("__init__").
-names0("__repr__").
-names0("__str__").
-names0("_sort_key").
-names0("add_param").
-names0("aggregate").
-names0("authorize_internal_access").
-names0("base_read_transaction").
-names0("base_revision_id").
-names0("base_write_transaction").
-names0("between_revisions").
-names0("branch").
-names0("branch_anchor").
-names0("branch_id").
-names0("branches").
-names0("build_versioning_where_conditions").
-names0("by_session").
-names0("cache").
-names0("cached_mapping").
-names0("cancel").
-names0("connection_id").
-names0("cross_branch").
-names0("cursor_paginate").
-names0("deferred").
-names0("diff_bytes").
-names0("disable_thread_affinity_checks").
-names0("distinct").
-names0("domain").
-names0("ensure_internal_raw_access").
-names0("excluding").
-names0("execute_fire_and_forget").
-names0("execute_later").
-names0("execute_raw").
-names0("execute_returning").
-names0("execute_runtime").
-names0("extract_fields_from_expression").
-names0("fetchall_raw").
-names0("fetchone_raw").
-names0("filter").
-names0("filter_eq").
-names0("filter_gt").
-names0("filter_gte").
-names0("filter_in").
-names0("filter_lt").
-names0("filter_lte").
-names0("filter_ne").
-names0("filter_revision").
-names0("final_sort_key").
-names0("for_object").
-names0("for_objects").
-names0("for_update").
-names0("get_cached").
-names0("get_session_id_sql").
-names0("get_sparse_column").
-names0("get_strict_mode_setting").
-names0("get_thread_checks_disabled").
-names0("graph").
-names0("graph_query_builder").
-names0("group_by").
-names0("having").
-names0("include_deleted").
-names0("insert_into").
-names0("is_active").
-names0("is_cancelled").
-names0("is_committed").
-names0("is_determined").
-names0("is_rolled_back").
-names0("iter_blob_chunks").
-names0("keyset_paginate").
-names0("limit").
-names0("mode").
-names0("offset").
-names0("order_by").
-names0("original_session_id").
-names0("plan").
-names0("query").
-names0("query_unfiltered").
-names0("quote_col").
-names0("read_blob_range").
-names0("record_async_operation").
-names0("record_sync_operation").
-names0("reorder_for_update").
-names0("replacing").
-names0("reset").
-names0("revision_history_query").
-names0("revision_id").
-names0("revisions").
-names0("search").
-names0("select_tuple").
-names0("session_id").
-names0("set_disable_thread_checks").
-names0("set_session_id").
-names0("set_strict_mode_setting").
-names0("since").
-names0("sort_key").
-names0("speculative_publish_table_names_hint").
-names0("table_exists").
-names0("versioned_read").
-names0("versioned_write").
-names0("violation_count").
-names0("where").
-names0("window").
-names0("wrapper").
-names1("__aenter___async").
-names1("__aexit___async").
-names1("__enter___async").
-names1("__exit___async").
-names1("__init___async").
-names1("__repr___async").
-names1("__str___async").
-names1("_sort_key_async").
-names1("add_param_async").
-names1("aggregate_async").
-names1("authorize_internal_access_async").
-names1("base_read_transaction_async").
-names1("base_revision_id_async").
-names1("base_write_transaction_async").
-names1("between_revisions_async").
-names1("branch_anchor_async").
-names1("branch_async").
-names1("branch_id_async").
-names1("branches_async").
-names1("build_versioning_where_conditions_async").
-names1("by_session_async").
-names1("cache_async").
-names1("cached_mapping_async").
-names1("cancel_async").
-names1("connection_id_async").
-names1("cross_branch_async").
-names1("cursor_paginate_async").
-names1("deferred_async").
-names1("diff_bytes_async").
-names1("disable_thread_affinity_checks_async").
-names1("distinct_async").
-names1("domain_async").
-names1("ensure_internal_raw_access_async").
-names1("excluding_async").
-names1("execute_fire_and_forget_async").
-names1("execute_later_async").
-names1("execute_raw_async").
-names1("execute_returning_async").
-names1("execute_runtime_async").
-names1("extract_fields_from_expression_async").
-names1("fetchall_raw_async").
-names1("fetchone_raw_async").
-names1("filter_async").
-names1("filter_eq_async").
-names1("filter_gt_async").
-names1("filter_gte_async").
-names1("filter_in_async").
-names1("filter_lt_async").
-names1("filter_lte_async").
-names1("filter_ne_async").
-names1("filter_revision_async").
-names1("final_sort_key_async").
-names1("for_object_async").
-names1("for_objects_async").
-names1("for_update_async").
-names1("get_cached_async").
-names1("get_session_id_sql_async").
-names1("get_sparse_column_async").
-names1("get_strict_mode_setting_async").
-names1("get_thread_checks_disabled_async").
-names1("graph_async").
-names1("graph_query_builder_async").
-names1("group_by_async").
-names1("having_async").
-names1("include_deleted_async").
-names1("insert_into_async").
-names1("is_active_async").
-names1("is_cancelled_async").
-names1("is_committed_async").
-names1("is_determined_async").
-names1("is_rolled_back_async").
-names1("iter_blob_chunks_async").
-names1("keyset_paginate_async").
-names1("limit_async").
-names1("mode_async").
-names1("offset_async").
-names1("order_by_async").
-names1("original_session_id_async").
-names1("plan_async").
-names1("query_async").
-names1("query_unfiltered_async").
-names1("quote_col_async").
-names1("read_blob_range_async").
-names1("record_async_operation_async").
-names1("record_sync_operation_async").
-names1("reorder_for_update_async").
-names1("replacing_async").
-names1("reset_async").
-names1("revision_history_query_async").
-names1("revision_id_async").
-names1("revisions_async").
-names1("search_async").
-names1("select_tuple_async").
-names1("session_id_async").
-names1("set_disable_thread_checks_async").
-names1("set_session_id_async").
-names1("set_strict_mode_setting_async").
-names1("since_async").
-names1("sort_key_async").
-names1("speculative_publish_table_names_hint_async").
-names1("table_exists_async").
-names1("versioned_read_async").
-names1("versioned_write_async").
-names1("violation_count_async").
-names1("where_async").
-names1("window_async").
-names1("wrapper_async").
 in_scope($d) :- doc($d, $p, _), @glob($p, "l2050_transaction/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "l7200_versioned_transactions/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l7300_sql_versioned_transactions/**/*.py").
@@ -264,99 +40,27 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 m3($n) :- inside($n, $v2, k0), node(_, $v2, "function_definition", _, _).
-blocked5($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m9($n) :- field($n, "name", $v7), node(_, $v7, "identifier", _, _), text($v7, $v8), names0($v8).
-m12($n) :- field($n, "name", $v10), name($v10, $v11), @suffix($v11, "_lazy").
-m15($n) :- field($n, "name", $v13), name($v13, $v14), names1($v14).
-m18($n) :- field($n, "name", $v16), name($v16, $v17), @prefix($v17, "_").
-t23($s) :- name(_, $s), @contains($s, "commit").
-t23($s) :- name(_, $s), @contains($s, "commit_branch").
-t23($s) :- name(_, $s), @contains($s, "count").
-t23($s) :- name(_, $s), @contains($s, "create_branch").
-t23($s) :- name(_, $s), @contains($s, "delete_by_id").
-t23($s) :- name(_, $s), @contains($s, "delete_many").
-t23($s) :- name(_, $s), @contains($s, "execute").
-t23($s) :- name(_, $s), @contains($s, "execute_one").
-t23($s) :- name(_, $s), @contains($s, "find_object_branches").
-t23($s) :- name(_, $s), @contains($s, "find_object_revisions").
-t23($s) :- name(_, $s), @contains($s, "first").
-t23($s) :- name(_, $s), @contains($s, "get_history").
-t23($s) :- name(_, $s), @contains($s, "insert").
-t23($s) :- name(_, $s), @contains($s, "insert_many").
-t23($s) :- name(_, $s), @contains($s, "insert_many_raw").
-t23($s) :- name(_, $s), @contains($s, "rollback").
-t23($s) :- name(_, $s), @contains($s, "select_at_revision").
-t23($s) :- name(_, $s), @contains($s, "select_many").
-t23($s) :- name(_, $s), @contains($s, "select_one").
-t23($s) :- name(_, $s), @contains($s, "update").
-t23($s) :- name(_, $s), @contains($s, "update_many").
-t23($s) :- name(_, $s), @contains($s, "upsert").
-t23($s) :- name(_, $s), @contains($s, "upsert_many").
-m24($n) :- node(_, $n, _, _, _), !m18($n).
-m24($n) :- field($n, "name", $v19), name($v19, $v20), @suffix($v20, "_async").
-m24($n) :- field($n, "name", $v21), name($v21, $v22), t23($v22).
+m8($n) :- field($n, "name", $v6), node(_, $v6, "identifier", _, _), text($v6, $v7), $v7 in {"__aenter__", "__aexit__", "__enter__", "__exit__", "__init__", "__repr__", "__str__", "_sort_key", "add_param", "aggregate", "authorize_internal_access", "base_read_transaction", "base_revision_id", "base_write_transaction", "between_revisions", "branch", "branch_anchor", "branch_id", "branches", "build_versioning_where_conditions", "by_session", "cache", "cached_mapping", "cancel", "connection_id", "cross_branch", "cursor_paginate", "deferred", "diff_bytes", "disable_thread_affinity_checks", "distinct", "domain", "ensure_internal_raw_access", "excluding", "execute_fire_and_forget", "execute_later", "execute_raw", "execute_returning", "execute_runtime", "extract_fields_from_expression", "fetchall_raw", "fetchone_raw", "filter", "filter_eq", "filter_gt", "filter_gte", "filter_in", "filter_lt", "filter_lte", "filter_ne", "filter_revision", "final_sort_key", "for_object", "for_objects", "for_update", "get_cached", "get_session_id_sql", "get_sparse_column", "get_strict_mode_setting", "get_thread_checks_disabled", "graph", "graph_query_builder", "group_by", "having", "include_deleted", "insert_into", "is_active", "is_cancelled", "is_committed", "is_determined", "is_rolled_back", "iter_blob_chunks", "keyset_paginate", "limit", "mode", "offset", "order_by", "original_session_id", "plan", "query", "query_unfiltered", "quote_col", "read_blob_range", "record_async_operation", "record_sync_operation", "reorder_for_update", "replacing", "reset", "revision_history_query", "revision_id", "revisions", "search", "select_tuple", "session_id", "set_disable_thread_checks", "set_session_id", "set_strict_mode_setting", "since", "sort_key", "speculative_publish_table_names_hint", "table_exists", "versioned_read", "versioned_write", "violation_count", "where", "window", "wrapper"}.
+m11($n) :- field($n, "name", $v9), name($v9, $v10), @suffix($v10, "_lazy").
+m15($n) :- field($n, "name", $v12), name($v12, $v14), $v14 in {"__aenter___async", "__aexit___async", "__enter___async", "__exit___async", "__init___async", "__repr___async", "__str___async", "_sort_key_async", "add_param_async", "aggregate_async", "authorize_internal_access_async", "base_read_transaction_async", "base_revision_id_async", "base_write_transaction_async", "between_revisions_async", "branch_anchor_async", "branch_async", "branch_id_async", "branches_async", "build_versioning_where_conditions_async", "by_session_async", "cache_async", "cached_mapping_async", "cancel_async", "connection_id_async", "cross_branch_async", "cursor_paginate_async", "deferred_async", "diff_bytes_async", "disable_thread_affinity_checks_async", "distinct_async", "domain_async", "ensure_internal_raw_access_async", "excluding_async", "execute_fire_and_forget_async", "execute_later_async", "execute_raw_async", "execute_returning_async", "execute_runtime_async", "extract_fields_from_expression_async", "fetchall_raw_async", "fetchone_raw_async", "filter_async", "filter_eq_async", "filter_gt_async", "filter_gte_async", "filter_in_async", "filter_lt_async", "filter_lte_async", "filter_ne_async", "filter_revision_async", "final_sort_key_async", "for_object_async", "for_objects_async", "for_update_async", "get_cached_async", "get_session_id_sql_async", "get_sparse_column_async", "get_strict_mode_setting_async", "get_thread_checks_disabled_async", "graph_async", "graph_query_builder_async", "group_by_async", "having_async", "include_deleted_async", "insert_into_async", "is_active_async", "is_cancelled_async", "is_committed_async", "is_determined_async", "is_rolled_back_async", "iter_blob_chunks_async", "keyset_paginate_async", "limit_async", "mode_async", "offset_async", "order_by_async", "original_session_id_async", "plan_async", "query_async", "query_unfiltered_async", "quote_col_async", "read_blob_range_async", "record_async_operation_async", "record_sync_operation_async", "reorder_for_update_async", "replacing_async", "reset_async", "revision_history_query_async", "revision_id_async", "revisions_async", "search_async", "select_tuple_async", "session_id_async", "set_disable_thread_checks_async", "set_session_id_async", "set_strict_mode_setting_async", "since_async", "sort_key_async", "speculative_publish_table_names_hint_async", "table_exists_async", "versioned_read_async", "versioned_write_async", "violation_count_async", "where_async", "window_async", "wrapper_async"}.
+m19($n) :- field($n, "name", $v16), name($v16, $v18), @prefix($v18, "_").
+m24($n) :- node(_, $n, _, _, _), !m19($n).
+m24($n) :- field($n, "name", $v20), name($v20, $v21), @suffix($v21, "_async").
+m24($n) :- field($n, "name", $v22), name($v22, $v23), @contains($v23, {"commit", "commit_branch", "count", "create_branch", "delete_by_id", "delete_many", "execute", "execute_one", "find_object_branches", "find_object_revisions", "first", "get_history", "insert", "insert_many", "insert_many_raw", "rollback", "select_at_revision", "select_many", "select_one", "update", "update_many", "upsert", "upsert_many"}).
 m28($n) :- inside($n, $v27, k0), node(_, $v27, "function_definition", _, _).
-blocked30($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m34($n) :- field($n, "name", $v32), node(_, $v32, "identifier", _, _), text($v32, $v33), names0($v33).
-m37($n) :- field($n, "name", $v35), name($v35, $v36), @suffix($v36, "_lazy").
-m40($n) :- field($n, "name", $v38), name($v38, $v39), names1($v39).
-m43($n) :- field($n, "name", $v41), name($v41, $v42), @prefix($v42, "_").
-t48($s) :- name(_, $s), @contains($s, "commit").
-t48($s) :- name(_, $s), @contains($s, "commit_branch").
-t48($s) :- name(_, $s), @contains($s, "count").
-t48($s) :- name(_, $s), @contains($s, "create_branch").
-t48($s) :- name(_, $s), @contains($s, "delete_by_id").
-t48($s) :- name(_, $s), @contains($s, "delete_many").
-t48($s) :- name(_, $s), @contains($s, "execute").
-t48($s) :- name(_, $s), @contains($s, "execute_one").
-t48($s) :- name(_, $s), @contains($s, "find_object_branches").
-t48($s) :- name(_, $s), @contains($s, "find_object_revisions").
-t48($s) :- name(_, $s), @contains($s, "first").
-t48($s) :- name(_, $s), @contains($s, "get_history").
-t48($s) :- name(_, $s), @contains($s, "insert").
-t48($s) :- name(_, $s), @contains($s, "insert_many").
-t48($s) :- name(_, $s), @contains($s, "insert_many_raw").
-t48($s) :- name(_, $s), @contains($s, "rollback").
-t48($s) :- name(_, $s), @contains($s, "select_at_revision").
-t48($s) :- name(_, $s), @contains($s, "select_many").
-t48($s) :- name(_, $s), @contains($s, "select_one").
-t48($s) :- name(_, $s), @contains($s, "update").
-t48($s) :- name(_, $s), @contains($s, "update_many").
-t48($s) :- name(_, $s), @contains($s, "upsert").
-t48($s) :- name(_, $s), @contains($s, "upsert_many").
-m49($n) :- node(_, $n, _, _, _), !m43($n).
-m49($n) :- field($n, "name", $v44), name($v44, $v45), @suffix($v45, "_async").
-m49($n) :- field($n, "name", $v46), name($v46, $v47), t48($v47).
+m33($n) :- field($n, "name", $v31), node(_, $v31, "identifier", _, _), text($v31, $v32), $v32 in {"__aenter__", "__aexit__", "__enter__", "__exit__", "__init__", "__repr__", "__str__", "_sort_key", "add_param", "aggregate", "authorize_internal_access", "base_read_transaction", "base_revision_id", "base_write_transaction", "between_revisions", "branch", "branch_anchor", "branch_id", "branches", "build_versioning_where_conditions", "by_session", "cache", "cached_mapping", "cancel", "connection_id", "cross_branch", "cursor_paginate", "deferred", "diff_bytes", "disable_thread_affinity_checks", "distinct", "domain", "ensure_internal_raw_access", "excluding", "execute_fire_and_forget", "execute_later", "execute_raw", "execute_returning", "execute_runtime", "extract_fields_from_expression", "fetchall_raw", "fetchone_raw", "filter", "filter_eq", "filter_gt", "filter_gte", "filter_in", "filter_lt", "filter_lte", "filter_ne", "filter_revision", "final_sort_key", "for_object", "for_objects", "for_update", "get_cached", "get_session_id_sql", "get_sparse_column", "get_strict_mode_setting", "get_thread_checks_disabled", "graph", "graph_query_builder", "group_by", "having", "include_deleted", "insert_into", "is_active", "is_cancelled", "is_committed", "is_determined", "is_rolled_back", "iter_blob_chunks", "keyset_paginate", "limit", "mode", "offset", "order_by", "original_session_id", "plan", "query", "query_unfiltered", "quote_col", "read_blob_range", "record_async_operation", "record_sync_operation", "reorder_for_update", "replacing", "reset", "revision_history_query", "revision_id", "revisions", "search", "select_tuple", "session_id", "set_disable_thread_checks", "set_session_id", "set_strict_mode_setting", "since", "sort_key", "speculative_publish_table_names_hint", "table_exists", "versioned_read", "versioned_write", "violation_count", "where", "window", "wrapper"}.
+m36($n) :- field($n, "name", $v34), name($v34, $v35), @suffix($v35, "_lazy").
+m40($n) :- field($n, "name", $v37), name($v37, $v39), $v39 in {"__aenter___async", "__aexit___async", "__enter___async", "__exit___async", "__init___async", "__repr___async", "__str___async", "_sort_key_async", "add_param_async", "aggregate_async", "authorize_internal_access_async", "base_read_transaction_async", "base_revision_id_async", "base_write_transaction_async", "between_revisions_async", "branch_anchor_async", "branch_async", "branch_id_async", "branches_async", "build_versioning_where_conditions_async", "by_session_async", "cache_async", "cached_mapping_async", "cancel_async", "connection_id_async", "cross_branch_async", "cursor_paginate_async", "deferred_async", "diff_bytes_async", "disable_thread_affinity_checks_async", "distinct_async", "domain_async", "ensure_internal_raw_access_async", "excluding_async", "execute_fire_and_forget_async", "execute_later_async", "execute_raw_async", "execute_returning_async", "execute_runtime_async", "extract_fields_from_expression_async", "fetchall_raw_async", "fetchone_raw_async", "filter_async", "filter_eq_async", "filter_gt_async", "filter_gte_async", "filter_in_async", "filter_lt_async", "filter_lte_async", "filter_ne_async", "filter_revision_async", "final_sort_key_async", "for_object_async", "for_objects_async", "for_update_async", "get_cached_async", "get_session_id_sql_async", "get_sparse_column_async", "get_strict_mode_setting_async", "get_thread_checks_disabled_async", "graph_async", "graph_query_builder_async", "group_by_async", "having_async", "include_deleted_async", "insert_into_async", "is_active_async", "is_cancelled_async", "is_committed_async", "is_determined_async", "is_rolled_back_async", "iter_blob_chunks_async", "keyset_paginate_async", "limit_async", "mode_async", "offset_async", "order_by_async", "original_session_id_async", "plan_async", "query_async", "query_unfiltered_async", "quote_col_async", "read_blob_range_async", "record_async_operation_async", "record_sync_operation_async", "reorder_for_update_async", "replacing_async", "reset_async", "revision_history_query_async", "revision_id_async", "revisions_async", "search_async", "select_tuple_async", "session_id_async", "set_disable_thread_checks_async", "set_session_id_async", "set_strict_mode_setting_async", "since_async", "sort_key_async", "speculative_publish_table_names_hint_async", "table_exists_async", "versioned_read_async", "versioned_write_async", "violation_count_async", "where_async", "window_async", "wrapper_async"}.
+m44($n) :- field($n, "name", $v41), name($v41, $v43), @prefix($v43, "_").
+m49($n) :- node(_, $n, _, _, _), !m44($n).
+m49($n) :- field($n, "name", $v45), name($v45, $v46), @suffix($v46, "_async").
+m49($n) :- field($n, "name", $v47), name($v47, $v48), @contains($v48, {"commit", "commit_branch", "count", "create_branch", "delete_by_id", "delete_many", "execute", "execute_one", "find_object_branches", "find_object_revisions", "first", "get_history", "insert", "insert_many", "insert_many_raw", "rollback", "select_at_revision", "select_many", "select_one", "update", "update_many", "upsert", "upsert_many"}).
 m53($n) :- inside($n, $v52, k0), node(_, $v52, "function_definition", _, _).
-blocked55($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m59($n) :- field($n, "name", $v57), node(_, $v57, "identifier", _, _), text($v57, $v58), names0($v58).
-m62($n) :- field($n, "name", $v60), name($v60, $v61), @suffix($v61, "_lazy").
-m65($n) :- field($n, "name", $v63), name($v63, $v64), names1($v64).
-m68($n) :- field($n, "name", $v66), name($v66, $v67), @prefix($v67, "_").
-t73($s) :- name(_, $s), @contains($s, "commit").
-t73($s) :- name(_, $s), @contains($s, "commit_branch").
-t73($s) :- name(_, $s), @contains($s, "count").
-t73($s) :- name(_, $s), @contains($s, "create_branch").
-t73($s) :- name(_, $s), @contains($s, "delete_by_id").
-t73($s) :- name(_, $s), @contains($s, "delete_many").
-t73($s) :- name(_, $s), @contains($s, "execute").
-t73($s) :- name(_, $s), @contains($s, "execute_one").
-t73($s) :- name(_, $s), @contains($s, "find_object_branches").
-t73($s) :- name(_, $s), @contains($s, "find_object_revisions").
-t73($s) :- name(_, $s), @contains($s, "first").
-t73($s) :- name(_, $s), @contains($s, "get_history").
-t73($s) :- name(_, $s), @contains($s, "insert").
-t73($s) :- name(_, $s), @contains($s, "insert_many").
-t73($s) :- name(_, $s), @contains($s, "insert_many_raw").
-t73($s) :- name(_, $s), @contains($s, "rollback").
-t73($s) :- name(_, $s), @contains($s, "select_at_revision").
-t73($s) :- name(_, $s), @contains($s, "select_many").
-t73($s) :- name(_, $s), @contains($s, "select_one").
-t73($s) :- name(_, $s), @contains($s, "update").
-t73($s) :- name(_, $s), @contains($s, "update_many").
-t73($s) :- name(_, $s), @contains($s, "upsert").
-t73($s) :- name(_, $s), @contains($s, "upsert_many").
-m74($n) :- node(_, $n, _, _, _), !m68($n).
-m74($n) :- field($n, "name", $v69), name($v69, $v70), @suffix($v70, "_async").
-m74($n) :- field($n, "name", $v71), name($v71, $v72), t73($v72).
+m58($n) :- field($n, "name", $v56), node(_, $v56, "identifier", _, _), text($v56, $v57), $v57 in {"__aenter__", "__aexit__", "__enter__", "__exit__", "__init__", "__repr__", "__str__", "_sort_key", "add_param", "aggregate", "authorize_internal_access", "base_read_transaction", "base_revision_id", "base_write_transaction", "between_revisions", "branch", "branch_anchor", "branch_id", "branches", "build_versioning_where_conditions", "by_session", "cache", "cached_mapping", "cancel", "connection_id", "cross_branch", "cursor_paginate", "deferred", "diff_bytes", "disable_thread_affinity_checks", "distinct", "domain", "ensure_internal_raw_access", "excluding", "execute_fire_and_forget", "execute_later", "execute_raw", "execute_returning", "execute_runtime", "extract_fields_from_expression", "fetchall_raw", "fetchone_raw", "filter", "filter_eq", "filter_gt", "filter_gte", "filter_in", "filter_lt", "filter_lte", "filter_ne", "filter_revision", "final_sort_key", "for_object", "for_objects", "for_update", "get_cached", "get_session_id_sql", "get_sparse_column", "get_strict_mode_setting", "get_thread_checks_disabled", "graph", "graph_query_builder", "group_by", "having", "include_deleted", "insert_into", "is_active", "is_cancelled", "is_committed", "is_determined", "is_rolled_back", "iter_blob_chunks", "keyset_paginate", "limit", "mode", "offset", "order_by", "original_session_id", "plan", "query", "query_unfiltered", "quote_col", "read_blob_range", "record_async_operation", "record_sync_operation", "reorder_for_update", "replacing", "reset", "revision_history_query", "revision_id", "revisions", "search", "select_tuple", "session_id", "set_disable_thread_checks", "set_session_id", "set_strict_mode_setting", "since", "sort_key", "speculative_publish_table_names_hint", "table_exists", "versioned_read", "versioned_write", "violation_count", "where", "window", "wrapper"}.
+m61($n) :- field($n, "name", $v59), name($v59, $v60), @suffix($v60, "_lazy").
+m65($n) :- field($n, "name", $v62), name($v62, $v64), $v64 in {"__aenter___async", "__aexit___async", "__enter___async", "__exit___async", "__init___async", "__repr___async", "__str___async", "_sort_key_async", "add_param_async", "aggregate_async", "authorize_internal_access_async", "base_read_transaction_async", "base_revision_id_async", "base_write_transaction_async", "between_revisions_async", "branch_anchor_async", "branch_async", "branch_id_async", "branches_async", "build_versioning_where_conditions_async", "by_session_async", "cache_async", "cached_mapping_async", "cancel_async", "connection_id_async", "cross_branch_async", "cursor_paginate_async", "deferred_async", "diff_bytes_async", "disable_thread_affinity_checks_async", "distinct_async", "domain_async", "ensure_internal_raw_access_async", "excluding_async", "execute_fire_and_forget_async", "execute_later_async", "execute_raw_async", "execute_returning_async", "execute_runtime_async", "extract_fields_from_expression_async", "fetchall_raw_async", "fetchone_raw_async", "filter_async", "filter_eq_async", "filter_gt_async", "filter_gte_async", "filter_in_async", "filter_lt_async", "filter_lte_async", "filter_ne_async", "filter_revision_async", "final_sort_key_async", "for_object_async", "for_objects_async", "for_update_async", "get_cached_async", "get_session_id_sql_async", "get_sparse_column_async", "get_strict_mode_setting_async", "get_thread_checks_disabled_async", "graph_async", "graph_query_builder_async", "group_by_async", "having_async", "include_deleted_async", "insert_into_async", "is_active_async", "is_cancelled_async", "is_committed_async", "is_determined_async", "is_rolled_back_async", "iter_blob_chunks_async", "keyset_paginate_async", "limit_async", "mode_async", "offset_async", "order_by_async", "original_session_id_async", "plan_async", "query_async", "query_unfiltered_async", "quote_col_async", "read_blob_range_async", "record_async_operation_async", "record_sync_operation_async", "reorder_for_update_async", "replacing_async", "reset_async", "revision_history_query_async", "revision_id_async", "revisions_async", "search_async", "select_tuple_async", "session_id_async", "set_disable_thread_checks_async", "set_session_id_async", "set_strict_mode_setting_async", "since_async", "sort_key_async", "speculative_publish_table_names_hint_async", "table_exists_async", "versioned_read_async", "versioned_write_async", "violation_count_async", "where_async", "window_async", "wrapper_async"}.
+m69($n) :- field($n, "name", $v66), name($v66, $v68), @prefix($v68, "_").
+m74($n) :- node(_, $n, _, _, _), !m69($n).
+m74($n) :- field($n, "name", $v70), name($v70, $v71), @suffix($v71, "_async").
+m74($n) :- field($n, "name", $v72), name($v72, $v73), @contains($v73, {"commit", "commit_branch", "count", "create_branch", "delete_by_id", "delete_many", "execute", "execute_one", "find_object_branches", "find_object_revisions", "first", "get_history", "insert", "insert_many", "insert_many_raw", "rollback", "select_at_revision", "select_many", "select_one", "update", "update_many", "upsert", "upsert_many"}).
 .output violation

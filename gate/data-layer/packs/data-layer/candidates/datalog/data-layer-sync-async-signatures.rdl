@@ -15,12 +15,10 @@
 .decl m30(n: node)
 .decl m31(n: node)
 .decl m7(n: node)
-.decl names0(s: sym)
 .decl out_scope(d: int)
 .decl u2(n: node)
 .decl u5(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("self").
 in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
@@ -121,11 +119,11 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
-m7($n) :- node(_, $n, "identifier", _, _), text($n, $v6), names0($v6).
-m10($n) :- node(_, $n, "identifier", _, _), text($n, $v9), names0($v9).
+m7($n) :- node(_, $n, "identifier", _, _), text($n, $v6), $v6 = "self".
+m10($n) :- node(_, $n, "identifier", _, _), text($n, $v9), $v9 = "self".
 m11($n) :- node(_, $n, "default_parameter", _, _).
 m11($n) :- node(_, $n, "typed_default_parameter", _, _).
-m14($n) :- node(_, $n, "identifier", _, _), text($n, $v13), names0($v13).
+m14($n) :- node(_, $n, "identifier", _, _), text($n, $v13), $v13 = "self".
 m15($n) :- node(_, $n, "identifier", _, _), !m7($n).
 m15($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v8, _), node(_, $v8, "identifier", _, _), !m10($v8).
 m15($n) :- m11($n), field($n, "name", $v12), node(_, $v12, "identifier", _, _), !m14($v12).

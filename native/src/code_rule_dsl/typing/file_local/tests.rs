@@ -77,3 +77,103 @@ fn t_programs_split_into_file_local_and_cross_file() {
         eprintln!("SPLIT {name}: {} local, {} cross-file {global:?}\n  cross-file reads base {reads_base:?}\n  and local {reads_local:?}", local.len(), global.len());
     }
 }
+
+/// Where the device's nearest time goes (ignored; `--ignored --nocapture`): one chunk-sized forest (about
+/// 172K nodes, as a 1-in-8 data-layer chunk), solved by the work queue, by the CPU worklist, and by one pass in
+/// preorder (a parent precedes its children, so each node reads its parent's answer once).
+#[test]
+#[ignore]
+fn nearest_costs_by_solver() {
+    // Depth capped as real syntax trees are (`RERAIL_NEAREST_DEPTH`, default 40), and uncapped.
+    for cap in [std::env::var("RERAIL_NEAREST_DEPTH").ok().and_then(|d| d.parse().ok()).unwrap_or(40usize), usize::MAX] {
+        nearest_costs(cap);
+    }
+}
+
+fn nearest_costs(cap: usize) {
+    let n = 172_000usize;
+    // Preorder forest: 80 documents; a node's parent is the open node on top of a stack that grows and shrinks.
+    let mut parent = Vec::with_capacity(n);
+    let mut kind = Vec::with_capacity(n);
+    let mut stack: Vec<u32> = Vec::new();
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut rand = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    for i in 0..n {
+        if i % (n / 80) == 0 {
+            stack.clear();
+        }
+        // Close some open nodes (keeps depth around 20-40), then this node's parent is the top.
+        while stack.len() > 1 && (rand() % 3 == 0 || stack.len() >= cap) {
+            stack.pop();
+        }
+        parent.push(stack.last().copied().unwrap_or(NONE));
+        kind.push((rand() % 300) as i64);
+        stack.push(i as u32);
+    }
+    let depth = (0..n).map(|mut v| { let mut d = 0; while parent[v] != NONE { v = parent[v] as usize; d += 1; } d }).max().unwrap();
+    let sets = vec![vec![7]];
+    let trees = Trees { parent: &parent, kind: &kind };
+    let sys = system(&trees, &sets).unwrap();
+    let t = std::time::Instant::now();
+    let cpu = solve_cpu(&sys);
+    let cpu_worklist = t.elapsed();
+    // One pass in preorder.
+    let t = std::time::Instant::now();
+    let mut one = vec![NONE; n];
+    for v in 0..n {
+        let p = parent[v];
+        if p != NONE {
+            one[v] = if sets[0].contains(&kind[p as usize]) { p } else { one[p as usize] };
+        }
+    }
+    let one_pass = t.elapsed();
+    std::hint::black_box(&one);
+    println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
+    #[cfg(target_os = "macos")]
+    use crate::code_rule_dsl::transducer::packed::metal_nearest;
+    #[cfg(target_os = "macos")]
+    for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
+        let target: Vec<u32> = parent.clone();
+        let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
+        for round in 0..4 {
+            // `RERAIL_NEAREST_IDLE_MS`: the GPU left idle before each call, as between a run's chunks.
+            if let Some(ms) = std::env::var("RERAIL_NEAREST_IDLE_MS").ok().and_then(|v| v.parse().ok()) {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+            let t = std::time::Instant::now();
+            let solved = metal_nearest::solve_with(n, &target, &done, how).unwrap();
+            let p: Vec<String> = solved.phases.iter().map(|s| format!("{:.3}", s * 1e3)).collect();
+            println!(
+                "JUMP {how:?} round {round}: host {:.2} ms, GPU {:.3} ms, {} steps at most; phases ms [made, queue, encode, submit, schedule, GPU, wake] = [{}]; {} KB made",
+                t.elapsed().as_secs_f64() * 1e3,
+                solved.gpu * 1e3,
+                solved.rounds,
+                p.join(", "),
+                solved.made >> 10
+            );
+            assert_eq!(solved.targets, one);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    for round in 0..3 {
+        use crate::code_rule_dsl::transducer::packed::metal_lattice;
+        let device = metal_lattice::System { seeds: &sys.seeds, copies: &sys.copies, bins: &[] };
+        let t = std::time::Instant::now();
+        let solved = metal_lattice::solve(&device).unwrap();
+        println!(
+            "METAL round {round}: host {:.2} ms, GPU {:.2} ms, wait {:.2} ms, {} launches, {} visits, {} retries",
+            t.elapsed().as_secs_f64() * 1e3,
+            solved.gpu * 1e3,
+            solved.wall * 1e3,
+            solved.launches,
+            solved.visits,
+            solved.retries
+        );
+        assert_eq!(solved.values, cpu);
+    }
+}

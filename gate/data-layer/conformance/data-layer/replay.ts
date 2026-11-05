@@ -1,3 +1,4 @@
+import { policyPath } from "./policies.js";
 /** Replay the unchanged data-layer tests' recorded inputs through the native engine. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -7,13 +8,16 @@ import { z } from "zod";
 import { codeRuleSchema, loadNativeBinding, resolveNativeBindingPath, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl, type NativeCodeRuleDslExecution } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { escapeHatchSignatureFailure } from "./signed-allowlist.js";
+import { replayExecution } from "./execution.js";
 
-const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional() });
+const findingSchema = z.object({ path: z.string(), line: z.number(), column: z.number().nullable(), code: z.string(), message: z.string(), tag: z.string().nullable().optional(), metadata: z.record(z.string(), z.unknown()).optional() });
 const eventSchema = z.object({
   test: z.string(), call: z.number(), check: z.string(), entry: z.string(), upstream_passed: z.boolean(),
   retained_reason: z.string().optional(), oracle_ms: z.number().optional(),
   production_scope: z.boolean().optional(), path_skip_override: z.boolean().optional(),
   compare_clause: z.boolean().optional(),
+  compare_fields: z.array(z.string()).optional(),
+  compare_message: z.boolean().optional(),
   oracle_config: z.object({ categories: z.record(z.string(), z.array(z.string())).optional(), source_gate: z.boolean().optional(), options: z.record(z.string(), z.unknown()).optional(), allowlist_signature: z.string().optional() }).optional(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).optional(),
   files: z.array(z.object({ path: z.string(), source: z.string() })).optional(),
@@ -26,7 +30,7 @@ const recordingSchema = z.object({
   collected_tests: z.number(), uncaptured_tests: z.array(z.string()), events: z.array(eventSchema),
 });
 const resultSchema = z.object({
-  violations: z.array(z.object({ code: z.string(), path: z.string(), message: z.string(), clauseId: z.string(),
+  violations: z.array(z.object({ code: z.string(), path: z.string(), message: z.string(), clauseId: z.string(), variables: z.object({ row: z.record(z.string(), z.unknown()).optional() }).passthrough().optional(),
     span: z.object({ startByte: z.number(), startLine: z.number(), startColumn: z.number() }) })),
   failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
 });
@@ -75,7 +79,7 @@ async function workspaceEvaluation(compiled: NativeCompiledCodeRuleDsl, event: E
 }
 
 export async function replay(recordingPath: string | string[], outputPath: string, policies = "packs/data-layer/candidates/rules"): Promise<boolean> {
-  const execution = new (loadNativeBinding().CodeRuleDslExecution)();
+  const execution = replayExecution();
   try { return await replayOwned(recordingPath, outputPath, policies, execution); }
   finally { execution.close(); }
 }
@@ -106,7 +110,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     if (event.retained_reason !== undefined || !event.upstream_passed) continue;
     event.files ??= recording.files;
     if (event.files === undefined || event.scope === undefined || event.findings === undefined) throw new Error(`Incomplete event ${event.test}`);
-    const authored = configurableSchema.parse(JSON.parse(readFileSync(resolve(policies, `data-layer-${event.check.replaceAll("_", "-")}.json`), "utf8")));
+    const authored = configurableSchema.parse(JSON.parse(readFileSync(policyPath(policies, `data-layer-${event.check.replaceAll("_", "-")}`), "utf8")));
     for (const clause of authored.clauses) {
       if (clause.define?.options?.oracleAnalyzer !== undefined) {
         clause.define.config = { ...clause.define.config, oracleAnalyzer: !event.production_scope };
@@ -129,7 +133,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     }
     for (const clause of authored.clauses) {
       if (clause.define?.options !== undefined && event.oracle_config?.options !== undefined) {
-        clause.define.config = { ...clause.define.config, ...event.oracle_config.options };
+        clause.define.config = { ...clause.define.config, ...Object.fromEntries(Object.entries(event.oracle_config.options).filter(([name]) => Object.hasOwn(clause.define!.options!, name))) };
       }
     }
     const authoredKey = JSON.stringify(authored);
@@ -182,14 +186,18 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     const columns = event.check === "backend_type_strings";
     const expected = event.findings.map(finding => {
       if (event.compare_clause && finding.tag == null) throw new Error(`Missing diagnostic tag: ${event.test}`);
-      return JSON.stringify([finding.path, finding.line, finding.code, ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : [])]);
+      const fields = (event.compare_fields ?? []).map(field => {
+        if (finding.metadata?.[field] === undefined) throw new Error(`Missing oracle ${field}: ${event.test}`);
+        return finding.metadata[field];
+      });
+      return JSON.stringify([finding.path, finding.line, finding.code, ...(event.compare_message ? [finding.message] : []), ...(columns ? [finding.column] : []), ...(event.compare_clause ? [finding.tag] : []), ...fields]);
     });
     const actual = (result: Result): string[] => result.violations.map(finding => {
       const file = event.files!.find(file => file.path === finding.path)!;
       const bytes = Buffer.from(file?.source ?? "");
       const prefix = bytes.subarray(finding.span.startByte - finding.span.startColumn, finding.span.startByte).toString("utf8");
       const category = event.check === "connection_caches" ? finding.clauseId.replace(/-file-\d+$/, "") : finding.clauseId;
-      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : [])]);
+      return JSON.stringify([finding.path, finding.span.startLine + 1, finding.code, ...(event.compare_message ? [finding.message] : []), ...(columns ? [[...prefix].length + 1] : []), ...(event.compare_clause ? [category] : []), ...(event.compare_fields ?? []).map(field => finding.variables?.row?.[field] ?? null)]);
     });
     const observed = actual(result);
     rows.push({ execution: signatureFailure === undefined ? "native" : "host-signature-guard", test: event.test, call: event.call, check: event.check,
@@ -205,14 +213,16 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     clean: rows.filter(row => row.check === check && !row.positive).length,
   }));
   const missingCoverage = coverage.filter(row => row.positive === 0 || row.clean === 0);
+  const nativeCoverage = recording.checks.map(check => ({ check,
+    positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
+    clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
+  }));
+  const missingNativeCoverage = nativeCoverage.filter(row => row.positive === 0 || row.clean === 0);
   const report = { coverage, missingCoverage,
     nativeCalls: rows.filter(row => row.execution === "native").length,
     hostGuardCalls: rows.filter(row => row.execution === "host-signature-guard").length,
-    nativeCoverage: recording.checks.map(check => ({ check,
-      positive: rows.filter(row => row.check === check && row.execution === "native" && row.positive).length,
-      clean: rows.filter(row => row.check === check && row.execution === "native" && !row.positive).length,
-    })),
-    nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded"],
+    nativeCoverage, missingNativeCoverage,
+    nativeSha256, dimensions: ["multiplicity", "relative path", "line", "diagnostic code", "backend comparison column", "diagnostic category where recorded", "recorded semantic metadata"],
     format: "rerail.data-layer-parity/v1", commit: recording.commit, recordings: paths,
     collectedTests: recording.collected_tests, replayedCalls: rows.length,
     positiveCalls: rows.filter(row => row.positive).length, cleanCalls: rows.filter(row => !row.positive).length,
@@ -225,7 +235,7 @@ async function replayOwned(recordingPath: string | string[], outputPath: string,
     compilationMs, elapsedMs: performance.now() - started, rows };
   writeFileSync(outputPath, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify({ ...report, rows: undefined, retainedCalls: report.retainedCalls.length, uncapturedTests: report.uncapturedTests.length }, null, 2));
-  return report.falsePositives + report.falseNegatives + report.engineFailures + report.executionPathDifferences + missingCoverage.length === 0;
+  return report.falsePositives + report.falseNegatives + report.engineFailures + report.executionPathDifferences + missingCoverage.length + missingNativeCoverage.length === 0;
 }
 
 if (process.argv[1]?.endsWith("/replay.ts")) {

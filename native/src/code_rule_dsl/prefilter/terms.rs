@@ -1,5 +1,5 @@
 //! `R[tid]` (03 §16 item 4, list step 17): a walk's text test, as a node set read from the term
-//! index instead of each node's text. A test is lowered by the text layer (decision 0039); its plan
+//! index instead of each node's text. A test is lowered by the text layer (decision 0042); its plan
 //! runs over the language's vocabulary once (`text::vocabulary::fill`, kept by plan key and brought
 //! up to date over new terms), and its nodes on a tape are the union of the matched terms' postings
 //! plus the nodes the terms do not cover (`term_coverage.missing`), decided by one pass over the

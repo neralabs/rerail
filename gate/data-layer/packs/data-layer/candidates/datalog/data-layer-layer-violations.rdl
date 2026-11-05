@@ -2,26 +2,22 @@
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.input doc, node, field, text
 .decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.input doc, node, field, text, name
 .kindset k0 = "if_statement"
 .decl in_scope(d: int)
-.decl m11(n: node)
-.decl m16(n: node)
-.decl m22(n: node)
-.decl m24(n: node)
-.decl m29(n: node)
-.decl m35(n: node)
-.decl m37(n: node)
-.decl m42(n: node)
+.decl m13(n: node)
+.decl m18(n: node)
+.decl m26(n: node)
+.decl m28(n: node)
+.decl m33(n: node)
+.decl m41(n: node)
+.decl m43(n: node)
 .decl m48(n: node)
 .decl m5(n: node)
-.decl names0(s: sym)
+.decl m56(n: node)
 .decl out_scope(d: int)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("TYPE_CHECKING").
 in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "conform/**/*.py").
@@ -29,24 +25,24 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
-m5($n) :- inside($n, $v2, k0), node(_, $v2, "if_statement", _, _), field($v2, "condition", $v3), node(_, $v3, "identifier", _, _), text($v3, $v4), names0($v4).
-m11($n) :- field($n, "module_name", $v6), name($v6, $v7), @prefix($v7, "impl.").
-m11($n) :- field($n, "name", $v8), name($v8, $v9), @prefix($v9, "impl.").
-m11($n) :- node(_, $n, "dotted_name", _, _), text($n, $v10), @prefix($v10, "impl.").
-m16($n) :- inside($n, $v13, k0), node(_, $v13, "if_statement", _, _), field($v13, "condition", $v14), node(_, $v14, "identifier", _, _), text($v14, $v15), names0($v15).
-m22($n) :- field($n, "module_name", $v17), name($v17, $v18), @prefix($v18, "impl.").
-m22($n) :- field($n, "name", $v19), name($v19, $v20), @prefix($v20, "impl.").
-m22($n) :- node(_, $n, "dotted_name", _, _), text($n, $v21), @prefix($v21, "impl.").
-m24($n) :- node(_, $n, "dotted_name", _, _).
-m24($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v23).
-m29($n) :- inside($n, $v26, k0), node(_, $v26, "if_statement", _, _), field($v26, "condition", $v27), node(_, $v27, "identifier", _, _), text($v27, $v28), names0($v28).
-m35($n) :- field($n, "module_name", $v30), name($v30, $v31), @prefix($v31, "impl.").
-m35($n) :- field($n, "name", $v32), name($v32, $v33), @prefix($v33, "impl.").
-m35($n) :- node(_, $n, "dotted_name", _, _), text($n, $v34), @prefix($v34, "impl.").
-m37($n) :- node(_, $n, "dotted_name", _, _).
-m37($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v36).
-m42($n) :- inside($n, $v39, k0), node(_, $v39, "if_statement", _, _), field($v39, "condition", $v40), node(_, $v40, "identifier", _, _), text($v40, $v41), names0($v41).
-m48($n) :- field($n, "module_name", $v43), name($v43, $v44), @prefix($v44, "impl.").
-m48($n) :- field($n, "name", $v45), name($v45, $v46), @prefix($v46, "impl.").
-m48($n) :- node(_, $n, "dotted_name", _, _), text($n, $v47), @prefix($v47, "impl.").
+m5($n) :- inside($n, $v2, k0), node(_, $v2, "if_statement", _, _), field($v2, "condition", $v3), node(_, $v3, "identifier", _, _), text($v3, $v4), $v4 = "TYPE_CHECKING".
+m13($n) :- field($n, "module_name", $v6), name($v6, $v8), @prefix($v8, "impl.").
+m13($n) :- field($n, "name", $v9), name($v9, $v11), @prefix($v11, "impl.").
+m13($n) :- node(_, $n, "dotted_name", _, _), text($n, $v12), @prefix($v12, "impl.").
+m18($n) :- inside($n, $v15, k0), node(_, $v15, "if_statement", _, _), field($v15, "condition", $v16), node(_, $v16, "identifier", _, _), text($v16, $v17), $v17 = "TYPE_CHECKING".
+m26($n) :- field($n, "module_name", $v19), name($v19, $v21), @prefix($v21, "impl.").
+m26($n) :- field($n, "name", $v22), name($v22, $v24), @prefix($v24, "impl.").
+m26($n) :- node(_, $n, "dotted_name", _, _), text($n, $v25), @prefix($v25, "impl.").
+m28($n) :- node(_, $n, "dotted_name", _, _).
+m28($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v27).
+m33($n) :- inside($n, $v30, k0), node(_, $v30, "if_statement", _, _), field($v30, "condition", $v31), node(_, $v31, "identifier", _, _), text($v31, $v32), $v32 = "TYPE_CHECKING".
+m41($n) :- field($n, "module_name", $v34), name($v34, $v36), @prefix($v36, "impl.").
+m41($n) :- field($n, "name", $v37), name($v37, $v39), @prefix($v39, "impl.").
+m41($n) :- node(_, $n, "dotted_name", _, _), text($n, $v40), @prefix($v40, "impl.").
+m43($n) :- node(_, $n, "dotted_name", _, _).
+m43($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v42).
+m48($n) :- inside($n, $v45, k0), node(_, $v45, "if_statement", _, _), field($v45, "condition", $v46), node(_, $v46, "identifier", _, _), text($v46, $v47), $v47 = "TYPE_CHECKING".
+m56($n) :- field($n, "module_name", $v49), name($v49, $v51), @prefix($v51, "impl.").
+m56($n) :- field($n, "name", $v52), name($v52, $v54), @prefix($v54, "impl.").
+m56($n) :- node(_, $n, "dotted_name", _, _), text($n, $v55), @prefix($v55, "impl.").
 .output violation

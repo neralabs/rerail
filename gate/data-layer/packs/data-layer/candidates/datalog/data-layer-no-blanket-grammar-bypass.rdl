@@ -6,45 +6,10 @@
 .decl syntax_error(d: int)
 .input doc, node, field, text, line, syntax_error
 .decl in_scope(d: int)
-.decl names0(s: sym)
-.decl names1(s: sym)
 .decl out_scope(d: int)
+.decl t2(s: sym)
+.decl t4(s: sym)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("execute_grammar").
-names0("execute_grammar_async").
-names0("execute_grammar_direct").
-names0("execute_grammar_direct_async").
-names0("execute_grammar_direct_lazy").
-names0("execute_grammar_fetchall").
-names0("execute_grammar_fetchall_async").
-names0("execute_grammar_fetchall_direct").
-names0("execute_grammar_fetchall_direct_async").
-names0("execute_grammar_fetchall_direct_lazy").
-names0("execute_grammar_fetchall_raw").
-names0("execute_grammar_fetchall_raw_async").
-names0("execute_grammar_fetchall_with_params").
-names0("execute_grammar_fetchall_with_params_async").
-names0("execute_grammar_fetchall_with_params_direct").
-names0("execute_grammar_fetchall_with_params_direct_async").
-names0("execute_grammar_fetchall_with_params_direct_lazy").
-names0("execute_grammar_fetchone").
-names0("execute_grammar_fetchone_async").
-names0("execute_grammar_fetchone_direct").
-names0("execute_grammar_fetchone_direct_async").
-names0("execute_grammar_fetchone_direct_lazy").
-names0("execute_grammar_fetchone_raw").
-names0("execute_grammar_fetchone_raw_async").
-names0("execute_grammar_fetchone_with_params").
-names0("execute_grammar_fetchone_with_params_async").
-names0("execute_grammar_fetchone_with_params_direct").
-names0("execute_grammar_fetchone_with_params_direct_async").
-names0("execute_grammar_fetchone_with_params_direct_lazy").
-names0("execute_grammar_with_params").
-names0("execute_grammar_with_params_async").
-names0("execute_grammar_with_params_direct").
-names0("execute_grammar_with_params_direct_async").
-names0("execute_grammar_with_params_direct_lazy").
-names1("impl/common/l2200_sql_dialect/sql_connection.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -146,5 +111,10 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
-violation("data-layer-no-blanket-grammar-bypass", "public-methods", "NGB001", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), doc($d, $p, $m), names1($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t2($s) :- doc(_, $s, _), $s in {"scripts/lint_impl_direct_execution.py", "scripts/lint_no_blanket_grammar_bypass.py", "scripts/tests/test_lint_no_blanket_grammar_bypass.py"}.
+t2($s) :- doc(_, _, $s), $s in {"scripts/lint_impl_direct_execution.py", "scripts/lint_no_blanket_grammar_bypass.py", "scripts/tests/test_lint_no_blanket_grammar_bypass.py"}.
+violation("data-layer-no-blanket-grammar-bypass", "constant", "NGB001", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v1), @contains($v1, "_ALLOW_DIRECT_EXECUTION"), doc($d, $p, $m), !t2($p), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t4($s) :- doc(_, $s, _), $s in {"scripts/lint_impl_direct_execution.py", "scripts/lint_no_blanket_grammar_bypass.py", "scripts/tests/test_lint_no_blanket_grammar_bypass.py"}.
+t4($s) :- doc(_, _, $s), $s in {"scripts/lint_impl_direct_execution.py", "scripts/lint_no_blanket_grammar_bypass.py", "scripts/tests/test_lint_no_blanket_grammar_bypass.py"}.
+violation("data-layer-no-blanket-grammar-bypass", "public-methods", "NGB001", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v5), node(_, $v5, "identifier", _, _), text($v5, $v6), $v6 in {"execute_grammar", "execute_grammar_async", "execute_grammar_direct", "execute_grammar_direct_async", "execute_grammar_direct_lazy", "execute_grammar_fetchall", "execute_grammar_fetchall_async", "execute_grammar_fetchall_direct", "execute_grammar_fetchall_direct_async", "execute_grammar_fetchall_direct_lazy", "execute_grammar_fetchall_raw", "execute_grammar_fetchall_raw_async", "execute_grammar_fetchall_with_params", "execute_grammar_fetchall_with_params_async", "execute_grammar_fetchall_with_params_direct", "execute_grammar_fetchall_with_params_direct_async", "execute_grammar_fetchall_with_params_direct_lazy", "execute_grammar_fetchone", "execute_grammar_fetchone_async", "execute_grammar_fetchone_direct", "execute_grammar_fetchone_direct_async", "execute_grammar_fetchone_direct_lazy", "execute_grammar_fetchone_raw", "execute_grammar_fetchone_raw_async", "execute_grammar_fetchone_with_params", "execute_grammar_fetchone_with_params_async", "execute_grammar_fetchone_with_params_direct", "execute_grammar_fetchone_with_params_direct_async", "execute_grammar_fetchone_with_params_direct_lazy", "execute_grammar_with_params", "execute_grammar_with_params_async", "execute_grammar_with_params_direct", "execute_grammar_with_params_direct_async", "execute_grammar_with_params_direct_lazy"}, doc($d, $p, $m), $p = "impl/common/l2200_sql_dialect/sql_connection.py", node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

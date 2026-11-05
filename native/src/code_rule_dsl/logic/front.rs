@@ -436,6 +436,13 @@ impl Parser<'_> {
             Tok::Int(n) => Term::Int(n),
             Tok::Id(s) if s == "_" => Term::Wild,
             Tok::Id(s) if s == "top" => Term::Top,
+            // A pattern set (decision 0037): `{"a*", "b"}` is `@set("a*", "b")`.
+            Tok::P("{") => {
+                self.i += 1;
+                let items = if self.is_p("}") { Vec::new() } else { self.list(Self::term)? };
+                self.p("}")?;
+                return Ok(Term::Call(crate::code_rule_dsl::logic::strings::SET.to_owned(), items));
+            }
             Tok::P("@") => {
                 self.i += 1;
                 let f = self.id()?;
@@ -492,6 +499,14 @@ impl Parser<'_> {
     fn literal(&mut self) -> Result<Literal, Error> {
         if self.is_p("!") {
             self.i += 1;
+            // A failing text test (decision 0037): `!@prefix($s, "_")` is `@prefix($s, "_") = 0`.
+            if self.is_p("@") {
+                let l = self.term()?;
+                if !matches!(&l, Term::Call(f, _) if crate::code_rule_dsl::logic::strings::is_test(f)) {
+                    return self.fail("a text test after !");
+                }
+                return Ok(Literal::Cmp { l, op: "=", r: Term::Int(0) });
+            }
             return Ok(Literal::Atom(self.atom(true)?));
         }
         if self.is_id("nearest") && matches!(self.peek_at(1), Tok::P("(")) {
@@ -525,6 +540,12 @@ impl Parser<'_> {
             return Ok(Literal::Atom(self.atom(false)?));
         }
         let l = self.term()?;
+        // `$s in {…}`: one of a set (decision 0037), `@equals($s, {…})`.
+        if self.is_id("in") {
+            self.i += 1;
+            let set = self.term()?;
+            return Ok(Literal::Cmp { l: Term::Call("equals".to_owned(), vec![l, set]), op: "=", r: Term::Int(1) });
+        }
         let op = match self.peek() {
             Tok::P(p @ ("=" | "!=" | "<" | "<=" | ">" | ">=")) => *p,
             // A literal test on its own (`logic::strings`): `@prefix($s, "_")` is `@prefix($s, "_") = 1`.

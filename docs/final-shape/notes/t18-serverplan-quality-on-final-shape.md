@@ -31,7 +31,7 @@ Getting there took four engine changes:
 - **Document gates.** A `filePath` conjunct, or an `inside` the module with a regex, is a
   per-file test that runs before the walk.
 - **`nthChild` is a native fact.** It used to call W's matcher per node.
-- **Text tests read the file, not each node** (decision 0038). Before, a long module's text failed
+- **Text tests read the file, not each node** (decision 0041). Before, a long module's text failed
   the NFA's work limit and aborted the audit.
 - **`put_source` and `put_tape` retry a busy store.** At 1,000 files the push's writes met the
   overlay writer's transaction and failed the audit with `Busy`.
@@ -158,6 +158,6 @@ its atoms need the annotation grammar's `parse`, which no rule can reach.
   (`logic/programs/data_layer/serverplan_quality*.rdl`) uses 30 builtins (O61) and capture
   projections (O60). *Agrees on the gaps.* The rules here avoid both: helper atoms instead of
   regex builtins, and `child`/`core_node` joins instead of captures.
-- **Decision 0038 (chunked text).** *Applied.* It came out of this run.
+- **Decision 0041 (chunked text).** *Applied.* It came out of this run.
 - **06 (first slice).** The slice's path is unchanged. `policies::lower_with` adds the authored
   program beside the round-tripped policies.

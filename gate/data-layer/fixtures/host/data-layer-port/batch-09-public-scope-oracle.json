@@ -1,0 +1,121 @@
+{
+  "format": "rerail.data-layer-public-scope/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 121,
+  "sourceSha256": {
+    "scripts/lint_bootstrap_cache_health.py": "38ca210fd097f4de0a1002f2712bd43f25454415044efda31765ab40c4e6e44b",
+    "scripts/lint_bootstrap_engine_invariants_plugin.py": "f3b215a20bb9cfeee5b669ad3037242121abf743f6bb29c2b789c7c28635c5e2",
+    "scripts/lint_bootstrap_lazy_sql.py": "c4541d43ff3ae383b5c8b3eb0bb1a7c13a10f6a60195c5a19ab04e2cd4dbb749",
+    "scripts/lint_connection_mode_split.py": "6609bd0bde17b3a14c2f3fa62cf9e32ffe7a0e8e2292a4e6915e51c1e9d50eea",
+    "scripts/lint_lib/fact_engine.py": "3256ab77785f1a63a9afdd30f55669fb3ce7fadb660558a9d7032c0eced3decd",
+    "scripts/lint_schema_architecture_plugin.py": "4156ae253e047f74e2831a9cca4dc009473669fc9e029aa593b0f902cec002be"
+  },
+  "rules": [
+    {
+      "ruleId": "data-layer-bootstrap-cache-health",
+      "paths": [
+        {
+          "path": "conform/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "conform/.git/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "conform/.venv/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "conform/venv/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "conform/__pycache__/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "conform/tmp/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "conform/tests/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "conform/test/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "conform/.pytest_cache/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "conform/node_modules/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "conform/_tmp/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "unrelated/probe.py",
+          "inScope": false
+        }
+      ]
+    },
+    {
+      "ruleId": "data-layer-connection-mode-split",
+      "paths": [
+        {
+          "path": "api/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "api/.git/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/.venv/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/venv/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/__pycache__/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/tmp/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/tests/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/test/probe.py",
+          "inScope": false
+        },
+        {
+          "path": "api/.pytest_cache/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "api/node_modules/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "api/_tmp/probe.py",
+          "inScope": true
+        },
+        {
+          "path": "unrelated/probe.py",
+          "inScope": false
+        }
+      ]
+    }
+  ]
+}

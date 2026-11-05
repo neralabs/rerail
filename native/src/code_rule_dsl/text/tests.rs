@@ -209,7 +209,7 @@ fn backreferences_run_once_per_string() {
     assert_eq!(found[0], vec![0, 2]);
 }
 
-/// Every regex of serverplan_quality's port lowers, and the productions they take (decision 0039's
+/// Every regex of serverplan_quality's port lowers, and the productions they take (decision 0042's
 /// census by form): `--ignored --nocapture` prints the distribution.
 #[test]
 fn serverplan_quality_s_regexes_lower() {

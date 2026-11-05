@@ -222,10 +222,19 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         let solved = crate::code_rule_dsl::transducer::packed::metal_lattice::solve(&system)
             .map_err(|error| user_err(format!("lattice_fixpoint on Metal: {error:?}")))?;
         crate::code_rule_dsl::prof::count("lattice.device_retries", solved.retries as usize);
+        crate::code_rule_dsl::logic::profile::device("lattice_fixpoint (work queue)", solved.launches as u64, solved.gpu, solved.wall, n as u64);
+        crate::code_rule_dsl::logic::profile::device_phases("lattice_fixpoint (work queue)", solved.phases, solved.made, solved.reused);
+        crate::code_rule_dsl::logic::profile::decision("lattice_fixpoint", || "on the Metal work queue (flat lattice, no widening)".into());
         // On the queue a wave is a launch: the device decides each further evaluation.
         return finish(conn, p, target, keys, solved.values, solved.launches as u32, solved.visits, t);
     }
-    let _ = binding;
+    crate::code_rule_dsl::logic::profile::decision("lattice_fixpoint", || {
+        if binding == Binding::Metal {
+            format!("CPU waves: the device solves flat lattices without widening or absorbing TOP only (flat {flat}, widen {}, absorb {absorb})", widen.is_some())
+        } else {
+            "CPU waves (binding cpu)".into()
+        }
+    });
     let mut val = seed.clone();
     let mut frontier: Vec<u32> = (0..n as u32).filter(|&v| val[v as usize] != BOT).collect();
     let (mut stamp, mut waves, mut visits) = (vec![0u32; n], 0u32, 0u64);
