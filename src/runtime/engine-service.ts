@@ -279,6 +279,10 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
     await listen(server, socketPath);
   } catch (error) {
     if (isWindowsNamedPipe(socketPath) || (error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
+    // Only a socket is a dead daemon's to clear: anything else at the path is left alone, whatever a probe would say.
+    if (!(await lstat(socketPath)).isSocket()) {
+      throw new Error(`Rerail's engine socket path ${socketPath} holds something that is not a socket; move it aside before starting the daemon.`, { cause: error });
+    }
     if (await socketAnswers(socketPath)) {
       throw new Error(`Rerail's engine socket ${socketPath} is in use by a running daemon; stop it with \`rerail daemon stop\` before starting another.`, { cause: error });
     }

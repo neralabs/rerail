@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -69,6 +69,15 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     } finally {
       await new Promise<void>(resolve => live.close(() => resolve()));
     }
+  });
+
+  it("leaves a file that is not a socket alone, and says so", async () => {
+    const directory = join(await temporaryRoot(), "run");
+    await mkdir(directory, { mode: 0o700 });
+    const socketPath = join(directory, "engine.sock");
+    await writeFile(socketPath, "not a socket");
+    await expect(startEngineService({ socketPath, storageRoot: join(directory, "state") })).rejects.toThrow(/not a socket/u);
+    expect((await lstat(socketPath)).isFile()).toBe(true);
   });
 
   it("refuses a directory that others may write, and listens nowhere", async () => {

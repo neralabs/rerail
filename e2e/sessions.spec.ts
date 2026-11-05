@@ -111,7 +111,7 @@ test.describe("History by session", () => {
     const message = page.locator("#content .msgrow.u .msg").first();
     await expect(message).toBeVisible();
     // 901 to 1180px once left the transcript a column about 20px wide beside the sidebar and the list (#301).
-    for (const width of [800, 960, 1100, 1180, 1440]) {
+    for (const width of [800, 960, 1100, 1180, 1181, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(page.locator("#content .spick")).toBeVisible({ visible: width <= 1180 });
       expect((await message.boundingBox())!.width, `message width at ${width}px`).toBeGreaterThan(200);
