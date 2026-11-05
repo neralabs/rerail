@@ -171,6 +171,34 @@ fn convert_the_data_layer_pack() {
     println!("{report}");
 }
 
+/// One policy file's conversion (`RERAIL_CONVERT_POLICY`): the clauses converted and the gaps, printed; the
+/// program is written to `RERAIL_CONVERT_OUT` where given.
+#[test]
+#[ignore = "converts one policy file; RERAIL_CONVERT_POLICY, --ignored --nocapture"]
+fn convert_one_policy() {
+    let path = PathBuf::from(std::env::var("RERAIL_CONVERT_POLICY").expect("RERAIL_CONVERT_POLICY"));
+    let c = convert(&path, &Adjust::default());
+    let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
+    println!("{ok}/{} clauses converted", c.clauses.len());
+    let mut gaps = BTreeMap::<String, usize>::new();
+    for (_, r) in &c.clauses {
+        if let Err(Gap(g)) = r {
+            *gaps.entry(g.chars().take(100).collect()).or_default() += 1;
+        }
+    }
+    let mut by_count: Vec<_> = gaps.into_iter().collect();
+    by_count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    for (g, n) in by_count {
+        println!("  gap {n:4}  {g}");
+    }
+    for a in &c.approx {
+        println!("  approx  {a}");
+    }
+    if let Ok(out) = std::env::var("RERAIL_CONVERT_OUT") {
+        std::fs::write(out, &c.program).unwrap();
+    }
+}
+
 #[test]
 fn regexes_become_names_and_string_tests() {
     let parse = |s: &str| regex_syntax::ParserBuilder::new().build().parse(s).unwrap();
