@@ -87,10 +87,10 @@
 // A two-word operator is one token: "not in", "is not". `op` (above) is the unordered view; chained comparisons
 // need the order.
 .decl op_at(n: node, i: number, s: symbol)
-// parse_error(d, 3, "invalid syntax"): the language's own parser rejects the file. Tree-sitter recovers from
-// errors, so the tape always has a tree; this fact is the reference parser's verdict (CPython for Python).
-// By the findings contract the file's outcome is Unknown(parse failure); a policy can also report it
-// (`.on parse_error`, at the end).
+// parse_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error, as
+// CPython reports one. Derived from tree-sitter's ERROR and MISSING nodes in Rerail's patched grammar, which is
+// kept in line with the language's own (PATCHES.md); Rerail runs no CPython. The document is withheld from the
+// policy and its outcome is Unknown(parse); a policy can also report it (`.on parse_error`, at the end).
 .decl parse_error(d: number, l: number, msg: symbol)
 .input source, src_line, line_count, end_line, col, op_at, parse_error
 
@@ -303,9 +303,17 @@
 //                (file, line, text) rows, as strict allowlist fragment directories need
 //   at="base"    read the file as it is at git_rev("base", …). Burn-down lists that may only shrink compare the
 //                two readings.
-// Rerail never runs repository code. Facts only a run can produce (pytest's collection, behaviour probes, a
-// catalog built at import time) are read from a file a CI step writes, with IO=json, and are declared inputs.
-.decl input_error(path: symbol, kind: symbol, detail: symbol)  // kind: missing, unreadable, malformed, signature
+//   artifact="name"  instead of filename=: a file a CI step wrote, not a repository file (below).
+//
+// Run artifacts. Rerail never runs repository code. Facts only a run can produce (pytest's collection, behaviour
+// probes, a registry built at import time) come from a file the repository's CI writes and `rerail facts stamp`
+// wraps with a digest of its inputs. The policy declares the inputs:
+//   .artifact "test_collection" inputs "**/*.py", "pyproject.toml"
+// An artifact whose inputs changed since it was stamped is stale and gives no rows. Its problems are
+// input_error("artifact:NAME", kind, …) rows with kind missing, stale, failed or malformed. Rules that read
+// the artifact through `!` or an aggregate are withheld then, and the places it could reach are Unknown
+// (data-layer/FINDINGS-LAYER.md, section 2). The format and the CI steps: data-layer/RUN-FACTS.md.
+.decl input_error(path: symbol, kind: symbol, detail: symbol)  // missing, unreadable, malformed, signature, stale, failed
 .input input_error
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
@@ -333,35 +341,43 @@
 .edit insert_after(n: node, text: symbol)                // built in
 
 // ---- findings and enforcement (directives) -----------------------------------------------------------------------
+// Settings of the findings layer, which runs after the rules: rows become keys, files get outcomes, then the gate,
+// the budgets and the verdict. Semantics and engine needs: data-layer/FINDINGS-LAYER.md.
 // A finding's key is (policy, code, path, line), as the findings contract says. Order, multiplicity and messages
-// are free, so two matches at one key are one finding; a check that needs two keeps them apart with a column.
+// are free, so two matches at one key are one finding; a check that needs two keeps them apart with a tag.
 //
 // .violation V(at: loc, …) "message"          at is a node, a span, or a @place. A place with line 0 is a file-level
 //                                              finding; @place of a missing path is a repository-level one.
-// .violation V(at: loc, c: symbol) code {c}   the code is a column: SEC123 found in a comment is its own code,
-//                                              and budgets by code see each one.
-// .severity V warning | error                 per code; `.budget … by severity` counts by it.
-// .gate V                                     when V has rows, they are the policy's only findings: a bad
-//                                              signature or a missing baseline replaces the report.
-// .on parse_error report CODE                 also report each parse_error as a finding (the outcome is still
-//                                              Unknown for that file); likewise .on input_error report CODE.
-// .budget V by code { … }                      ratchet: block only past these counts (as before).
-// .budget V by code from base [floor] [drop 10%]
-//                                              the ceilings are the rows of relation base(code, n), which rules
-//                                              derive, typically from a baseline file read with .input and verified
-//                                              with @ed25519_ok. A code with no row has ceiling 0. floor: counts may
-//                                              not drop either; drop N%: not by more than N%. A missing or badly
-//                                              signed baseline is an ordinary violation, usually a .gate.
-// .budget M by k from base …                  the same over a metric relation M(k, n) that is .output, not over
-//                                              findings: test counts, ignore comments, tracked docs.
+// .violation V(at: loc, c: symbol) code {c}   the code is a column: SEC123 found in a comment is its own code.
+//     code {c} in "SEC\d+"                     the codes it may produce; a row outside them is Unknown, not a finding
+// .violation V(…, t: symbol) tag {t}          an extra key field: findings at one place stay apart (one per probe)
+// .mode block | steer | log                   the policy's default; `.mode log CODE, …` for some codes
+// .severity V warning | error                 presentation and `.budget … by severity`; never decides blocking
+// .gate V, W                                  when they have keys, those are the report; every other file of the
+//                                              policy is Unknown(gated). Gates may not depend on other violations.
+// .on parse_error report CODE [at line 1]     also report each parse error as a finding. Either way the document
+//                                              is withheld (no facts) and its outcome is Unknown(parse).
+// .on input_error report CODE                 a repository input that is missing or malformed is a finding.
+// .budget V by code { "A": 3 }                 findings may exist up to these counts without blocking. Counts are of
+//                                              distinct keys, suppressed ones included; a group without a ceiling
+//                                              has 0. by code | severity | group | path, or total.
+// .budget V by code from base [floor] [drop N% [from obs]]
+//                                              ceilings are the rows of relation base(code, n), usually a verified
+//                                              baseline. floor: counts may not drop either; drop: not by more than
+//                                              N% of obs (default the ceilings). An incomplete count can only fail
+//                                              upwards, else the budget is Unknown. A bad baseline is a violation
+//                                              the policy writes, usually a gate.
+//     … report CODE at "path"                  the budget's own finding (default code V.budget, no path)
+//                                              A ratchet on a metric (a count of annotations, of tests) is not a
+//                                              budget: it is a rule comparing the metric with its ceiling.
 // .group errors = "A", "B"                    names a set of codes, for `.budget … by group`.
+// .artifact "name" inputs "glob", …           a run artifact and the files it is built from (Run artifacts above).
 // .scope report dirs "api", "impl"            where findings may land; facts still come from the whole scope,
 //                                              so imports and manifests outside it are read.
 // .scope text "**/*.md", "**/*.rs"            documents read as text only (source, src_line; no tree).
 // .scope dirs option("application_root")     a scope entry taken from a policy option, so one policy text serves
 //                                              repositories laid out differently (the scripts' --application-root).
-// .requires "data-layer:a", "data-layer:b"    a suite policy: one finding per member policy that blocks, or that
-//                                              ends Unknown(budget|timeout) on any file. Members run as usual.
+// .requires "data-layer:a", "data-layer:b"    a suite policy: one finding per member policy that fails, or that
+//                                              ends unknown on any file. Members run as usual.
 // .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
-

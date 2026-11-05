@@ -175,13 +175,16 @@ exec(code)                          # not reported: this exec is the local funct
       <tr><td><code>.violation CODE(at: node, …) "message {col}"</code></td><td>A finding relation. Continuation lines: <code>suppress</code>, <code>fix</code>, <code>anchor</code>.</td></tr>
       <tr><td><code>CODE(@place("a.json", 1), …) :- …</code></td><td>A finding at a file and line with no node there: an allowlist, a baseline, a Markdown line. Line 0: the whole file.</td></tr>
       <tr><td><code>.violation SEC(at: span, c: symbol) code {c}</code></td><td>The code is a column: each SEC code found in a comment is its own code.</td></tr>
-      <tr><td><code>.severity CODE warning</code></td><td>Severity per code, as the repository's report shows it.</td></tr>
+      <tr><td><code>.violation SPTB(…, probe: symbol) tag {probe}</code></td><td>An extra key field, so findings at one place stay apart: one per failing probe.</td></tr>
+      <tr><td><code>.severity CODE warning</code></td><td>Severity per code, as the repository's report shows it. Presentation only: it never decides blocking.</td></tr>
+      <tr><td><code>.mode log CODE</code></td><td>These codes are reported and never block, for findings that only a ratchet enforces.</td></tr>
       <tr><td><code>.requires "data-layer:a", …</code></td><td>A suite: one finding per member policy that blocks or ends Unknown (budget, timeout).</td></tr>
-      <tr><td><code>.gate CODE</code></td><td>When CODE has rows they are the only findings: a bad signature replaces the report.</td></tr>
-      <tr><td><code>.on parse_error report CODE</code></td><td>Also report files the language's own parser rejects (their outcome stays Unknown).</td></tr>
-      <tr><td><code>.budget M by k from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. M is a violation or an <code>.output</code> metric.</td></tr>
+      <tr><td><code>.gate CODE</code></td><td>When CODE has findings they are the report: a bad signature replaces it. The policy's other files are Unknown, not silently clean.</td></tr>
+      <tr><td><code>.on parse_error report CODE</code></td><td>Also report files that do not parse. Either way such a file gives no facts and its outcome is Unknown.</td></tr>
+      <tr><td><code>.budget V by code from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. It counts distinct findings. A ratchet on a metric (annotations, tests) is an ordinary rule comparing the metric with its ceiling.</td></tr>
       <tr><td><code>.scope report dirs "api"</code><br><code>.scope text "**/*.md"</code></td><td>Findings only land under these directories / read these files as text only (lines, no tree).</td></tr>
       <tr><td><code>.input r(IO=json, filename="b.json", path="/counts")</code></td><td>Read a repository file: json, yaml, lines (<code>dir=</code> for a directory), file. A missing or malformed file gives an <code>input_error</code> row.</td></tr>
+      <tr><td><code>.artifact "test_collection" inputs "**/*.py"</code><br><code>.input r(IO=json, artifact="test_collection")</code></td><td>Facts from a file a CI step wrote by running the repository's code, which Rerail never runs. A change to any input makes the file stale: its rules are then Unknown where they could report.</td></tr>
       <tr><td><code>.edit e(…)</code></td><td>An edit defined in Datalog, for fixes (see "Fixes").</td></tr>
     </table></div>
   </section>

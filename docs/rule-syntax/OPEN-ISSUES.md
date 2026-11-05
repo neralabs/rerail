@@ -68,7 +68,15 @@ confirm once a parser and engine exist. None is fixed yet.
    it is `ordered by earlier` and the use is tied by `earlier(m, n)`. It found the two cycles above.
 
 ## Data-layer design (data-layer/DESIGN.md)
-1. `.gate`, `.budget … from base`, `.on parse_error` and `code {c}` are specified but have no engine yet.
+1. The findings layer is designed (data-layer/FINDINGS-LAYER.md), not built: outcomes per (policy, file), keys
+   and ids from keys, `code {c}`, `tag {t}`, the gate stratum, `.on parse_error`, `.budget … from base`, and the
+   verdict. Three things to measure once it runs:
+   - how far Unknown spreads in cross-file policies when one file does not parse (the over-approximate places of
+     section 2): if a typical edit with a syntax error makes whole policies Unknown, consider keeping the
+     document's last parsed facts for the other files;
+   - the cost of the extra evaluation that finds Unknown places, on a run with artifacts missing;
+   - whether withholding whole unparsable documents loses findings that the engine's error-tolerant clauses find
+     today (`source-partial`).
 2. Signature verification is Datalog over `@ed25519_ok`; the two layouts in lib/data-layer/signing.rr were checked
    against real signatures at the pinned revision, the rules themselves were not run.
 3. file-length follows the CLI's line count (splitlines); the suite plugin counts `\n`. They differ only on files
@@ -77,6 +85,9 @@ confirm once a parser and engine exist. None is fixed yet.
    PATCHES.md patch 1). python/ast.rr's `type_param` was written from its grammar.json, not checked on a parse:
    confirm the shapes (`type` around the name, `constrained_type`, `splat_type`) with a tree dump once the
    engine runs .rr files.
-5. Five checks need facts from a run of repository code, read from CI-written JSON: linter_enforcement,
-   explicit_semantic_ids, plan_composition_architecture, serverplan_target_architecture, test_budget. The CI
-   step that writes each file is not designed here.
+5. Run artifacts are designed (data-layer/RUN-FACTS.md), not built: `.artifact`, `artifact=`, `rerail facts
+   stamp`, `--facts`, `--require-facts`. The five producers are sketches over the data layer's existing
+   functions. Only linter_runtime's is new logic, a loop over `DL_SUITE`; it belongs in the data-layer
+   repository. test-budget.rr is the worked port; the other four checks are not ported yet.
+6. `.budget M by k from base` over a metric relation was dropped: a metric ratchet is a rule
+   (noqa-sec-ratchet.rr, test-budget.rr). The coverage table's 16 `.budget … from` uses include metric ratchets.

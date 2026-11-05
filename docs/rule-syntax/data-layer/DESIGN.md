@@ -21,6 +21,13 @@ column, gates, and budgets read from files.
 Some needs are outside the language on purpose. Checks that run repository code (pytest collection, import-time
 registries, behaviour probes) get those facts from a file a CI step writes. Rerail never runs the code it checks.
 
+Two companion pages say how the engine runs what this page designs:
+
+- [FINDINGS-LAYER.md](FINDINGS-LAYER.md): how rows become findings, which files are Unknown, and what `.gate`,
+  `.budget`, `.on parse_error`, `code {c}`, `.mode` and `.severity` do;
+- [RUN-FACTS.md](RUN-FACTS.md): the artifacts a CI step writes, how Rerail knows they are for the code being
+  checked, and the five checks that need them.
+
 How this was done:
 
 1. Each check was read in the pinned scripts (revision `2b1504ad`) and in its candidate JSON port, if it had one.
@@ -30,7 +37,10 @@ How this was done:
 2. The needs were merged and designed into the core, the libraries and the directives (below).
 3. Three checks were written as worked ports that use the new parts, plus one sketch:
    - [file-length.rr](file-length.rr): a JSON allowlist, a signature checked in Datalog, a gate.
-   - [noqa-sec-ratchet.rr](noqa-sec-ratchet.rr): a line scan, codes from a column, a budget from a signed baseline.
+   - [noqa-sec-ratchet.rr](noqa-sec-ratchet.rr): a line scan, codes from a column, a ratchet against a signed
+     baseline.
+   - [test-budget.rr](test-budget.rr): a run artifact (pytest's count), a static bound that works without it, a
+     gate. Its signed layout was checked against the real signature too.
    - [versioned-table-names.rr](versioned-table-names.rr): file-wide state in visit order, as plain recursion.
    - [sketches/owner-code.rr](sketches/owner-code.rr): the one shape that needs `ordered by earlier`.
 4. Every check was then mapped onto the design: [checks/COVERAGE.md](checks/COVERAGE.md).
@@ -180,16 +190,23 @@ dropped out under it: messages that list joined names, two findings at one key, 
 |---|---|---|
 | `V(@place("a.json", 1), …) :- …` | a finding at a file and line with no node there; line 0 for the whole file | missing files, allowlist and baseline outcomes, Markdown lines |
 | `.violation V(at: span, c: symbol) code {c}` | the code is a column | open code sets: SEC codes, pattern names |
-| `.severity V warning` | per-code severity | warning-only checks |
-| `.gate V` | when V has rows they are the only findings | bad signatures, missing baselines: the scripts exit before scanning |
+| `.violation V(…, t: symbol) tag {t}` | an extra key field, so findings at one place stay apart | one finding per failing probe |
+| `.severity V warning` | per-code severity, for presentation; it never decides blocking | warning-only checks |
+| `.mode log CODE` | these codes are reported and never block | findings that only a ratchet enforces |
+| `.gate V` | when V has keys they are the report, and the policy's other files are Unknown | bad signatures, missing baselines: the scripts exit before scanning |
 | `.on parse_error report CODE`, `.on input_error report CODE` | report those as findings too | scripts that report their own extraction failures |
-| `.budget M by k from base [floor] [drop N%]` | a ratchet whose ceilings are rows of a relation that rules derive, usually from a verified baseline; M may be an `.output` metric | ratchets read from `.ratchet-baselines/*.json` and similar |
+| `.budget V by code from base [floor] [drop N%]` | findings may exist up to ceilings that are rows of a relation, usually a verified baseline; counts are of distinct keys | ratchets over findings, read from `.ratchet-baselines/*.json` and similar |
+| `.artifact "name" inputs …`, `.input … artifact=` | facts from a file a CI step wrote, and the files it was built from | the five checks that run repository code |
 | `.group G = "A", "B"` | a named set of codes for budgets | ratchets over category groups |
 | `.scope report dirs …`, `.scope text …`, `.scope tests false` | where findings land; text-only documents; test directories | checks that read outside where they report |
 
 A missing or badly signed baseline is an ordinary violation, usually a `.gate`. It is not a special outcome of
 `.budget`: the check states the script's own behaviour. In noqa-sec-ratchet, a missing baseline passes and an
 unsigned one fails.
+
+A ratchet on a metric (annotations, tests, tracked documents) is a rule that compares the metric with its
+ceiling, not a `.budget`. A budget counts finding keys, and a metric counts what the script counts: two SEC codes
+on one line are two annotations but one key per code. FINDINGS-LAYER.md, section 6.
 
 ## Bugs found on the way
 
@@ -232,7 +249,7 @@ What the checks use most:
 | `.scope report / text` | 23 |
 | file readers | 21 |
 | dropped by the findings contract | 20 |
-| `.budget … from` | 16 |
+| `.budget … from` (metric ratchets among them are now rules; FINDINGS-LAYER.md §6) | 16 |
 | `join` | 16 |
 | `parse_error` | 14 |
 | `str_part` | 12 |
@@ -287,4 +304,6 @@ Recorded as for a decision: the source, what it says, and whether this design ag
 
 Nothing here has been compiled or run against an engine. `site/check_rr.py` checks groundedness, duplicate
 declarations and stratification statically; it passes on every file. The signing layouts were checked against the
-real signatures with PyNaCl. The rules that build those messages were not run.
+real signatures with PyNaCl. The rules that build those messages were not run. The findings layer and the run
+artifacts are designed (FINDINGS-LAYER.md, RUN-FACTS.md), not built; the producers are sketches over the data
+layer's existing functions.

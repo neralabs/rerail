@@ -13,8 +13,10 @@
 //   2. hit(m, c) is one SEC code m (a span, so it has a line) on a suppression line; c is its text.
 //   3. SEC is the finding, with its code taken from the c column (`code {c}`).
 //   4. annotations is the metric the ratchet compares; base is its ceiling, from the verified baseline.
+//   5. over_budget compares them. It is an ordinary rule: a metric ratchet needs no directive
+//      (FINDINGS-LAYER.md, section 6).
 //
-// Shows: a text scan over source lines, a code from a column, and a budget from a signed baseline file.
+// Shows: a text scan over source lines, a code from a column, and a ratchet against a signed baseline file.
 
 #include "data-layer/signing.rr"
 //   ratchet_count, ratchet_sig (provided here) -> ratchet_status(name, "valid" | "invalid" | "unsigned")
@@ -42,6 +44,7 @@ hit(m, c) :- prod(d), src_line(d, _, sp),
 // One finding per SEC code per line; its code is the SEC code, as in the plugin's StructuredViolation.
 .violation SEC(at: span, c: symbol) code {c} "{c} suppression annotation"
 .severity SEC warning
+.mode log SEC                    // reported, never blocking: only the ratchet blocks
 SEC(m, c) :- hit(m, c).
 
 // The metric: every SEC code on a suppression line, counted with multiplicity (two SEC1 on one line are two
@@ -72,8 +75,16 @@ invalid_baseline(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), s) 
     ratchet_status("lint_noqa_sec_ratchet", s), s != "valid".
 .gate invalid_baseline
 
-// The ceilings. A key absent from the baseline has ceiling 0, which is the budget's default too.
+// The ceilings. A key absent from the baseline has ceiling 0.
 .decl base(k: symbol, n: number)
 base(k, n) :- ratchet_status("lint_noqa_sec_ratchet", "valid"), base_count(k, n).
 base(k, n) :- !file(".ratchet-baselines/lint_noqa_sec_ratchet.json"), annotations(k, n).
-.budget annotations by k from base
+
+// The ratchet. The script prints and exits 1 with no finding code; over_budget is this port's name for it.
+// It counts annotations, not finding keys: two SEC1 on one line are two annotations but one SEC1 key, which
+// is why this is a rule over the metric and not a `.budget` over SEC.
+.violation over_budget(at: loc, k: symbol, n: number, max: number) "{k}: {n} exceeds the baseline's {max}"
+over_budget(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), k, n, m) :- annotations(k, n),
+    base(k, m), n > m.
+over_budget(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), k, n, 0) :- annotations(k, n), n > 0,
+    !base(k, _).

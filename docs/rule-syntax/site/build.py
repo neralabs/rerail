@@ -40,6 +40,7 @@ DATA_LAYER = [
     ("file-length", "file-length", "lint_file_length.py"),
     ("noqa-sec-ratchet", "noqa-sec-ratchet", "lint_noqa_sec_ratchet.py"),
     ("versioned-table-names", "versioned-table-names", "lint_versioned_table_name_manipulation.py"),
+    ("test-budget", "test-budget", "check_test_budget.py"),
 ]
 NDL_COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 PR2539 = "origin/jeremy/serverplan-architecture-integration"
