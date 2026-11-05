@@ -9,7 +9,7 @@
 //     filter step left the output empty (EXPECTED_OUTPUT);
 //   - the filter matches every file all jobs share (COMMON);
 //   - each job it names needs `changes` and is skipped by its output, and nothing in ci.yml reads an output this check
-//     does not know (UNGUARDED lists the filters it leaves alone, with why);
+//     does not know (UNGUARDED lists the outputs it leaves alone, with why);
 //   - every file `reads` lists exists and matches it;
 // and that ci-result needs every other job, since a skipped job passes only because it does.
 //
@@ -108,8 +108,9 @@ export const GROUPS = {
   },
 };
 
-/** Filters of the `changes` job this check leaves alone, and why. */
+/** Outputs of the `changes` job this check leaves alone, and why. */
 export const UNGUARDED = {
+  "release-pr": "whether this is the Release pull request, which its branch decides, no file path",
   rust: "the Rust jobs build and test crates; cargo's inputs are no TypeScript import closure",
 };
 
