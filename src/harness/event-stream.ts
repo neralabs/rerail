@@ -10,6 +10,7 @@ import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
   decodeRerailEventFrame,
   encodeRerailEventResult,
+  InactiveSessionError,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,
 } from "../runtime/event-protocol.js";
@@ -46,7 +47,7 @@ function eventIdFromLine(line: string): string | null {
 
 function errorFrame(line: string, error: unknown): RerailEventErrorFrame {
   const message = error instanceof Error ? error.message : String(error);
-  const code = message.startsWith("Inactive session:") ? "inactive-session" : "invalid-event";
+  const code = error instanceof InactiveSessionError ? error.code : "invalid-event";
   return { eventId: eventIdFromLine(line), error: { code, message } };
 }
 

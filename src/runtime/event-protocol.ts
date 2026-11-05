@@ -3,6 +3,15 @@ import { RERAIL_HOSTS, STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
+
+/** An event for a session the runtime has not started or has ended; the event stream answers it as `inactive-session`. */
+export class InactiveSessionError extends Error {
+  readonly code = "inactive-session";
+
+  constructor(sessionId: string) {
+    super(`Inactive session: ${sessionId}`);
+  }
+}
 export const RERAIL_EVENT_MAX_FRAME_BYTES = 1024 * 1024;
 
 const SessionSchema = z.object({

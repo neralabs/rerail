@@ -288,6 +288,8 @@ export interface NativeExclusiveFileLock {
 }
 
 export interface NativeBinding {
+  /** The message of a workspace task's failure while another apply holds the engine's one slot: pause and call again. */
+  readonly WORKSPACE_BUSY: string;
   health(): NativeHealth;
   /** Checks the model directory against its `manifest.json` (each file's SHA-256) without loading the model. */
   verifyModelFiles(modelPath: string): NativeModelCheck;
@@ -362,6 +364,11 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
 
 export function loadNativeBinding(): NativeBinding {
   return require(resolveNativeBindingPath()) as NativeBinding;
+}
+
+/** Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. */
+export function isWorkspaceBusy(error: unknown): boolean {
+  return error instanceof Error && error.message === loadNativeBinding().WORKSPACE_BUSY;
 }
 
 export function nativeHealth(): NativeHealth {
