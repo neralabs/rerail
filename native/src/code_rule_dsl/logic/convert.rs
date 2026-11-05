@@ -295,20 +295,28 @@ impl Emitter {
                 {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
-                    let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
                     let blocked = self.fresh("blocked");
                     self.decls.insert(blocked.clone(), "low: node, high: node".to_owned());
                     // A stop node strictly between: over `low`, under `high`.
                     let mut b = Vec::new();
-                    if axis == Axis::Has {
-                        b.push(format!("inside($low, $high, {set})"));
-                    }
-                    b.push(format!("inside($low, $s, {stops})"));
-                    b.extend(is_stop);
-                    if axis == Axis::Inside {
+                    if kind_only(stop, 0) {
+                        // A stop is a node of the stop kinds: one lies between where the nearest one over `low`
+                        // lies under `high` (any other is further up). One row a `low` from the tape's nearest
+                        // ancestors (decision 0038), not every pair of a stop and an ancestor.
+                        b.push(format!("nearest($low, $s, {stops})"));
                         b.push(format!("inside($s, $high, {set})"));
                     } else {
-                        b.extend(within_strict("$s", "$high", self));
+                        let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
+                        if axis == Axis::Has {
+                            b.push(format!("inside($low, $high, {set})"));
+                        }
+                        b.push(format!("inside($low, $s, {stops})"));
+                        b.extend(is_stop);
+                        if axis == Axis::Inside {
+                            b.push(format!("inside($s, $high, {set})"));
+                        } else {
+                            b.extend(within_strict("$s", "$high", self));
+                        }
                     }
                     self.rules.push(format!("{blocked}($low, $high) :- {}.", b.join(", ")));
                     body.push(format!("!{blocked}({low}, {high})"));
