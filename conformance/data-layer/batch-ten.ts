@@ -20,7 +20,7 @@ const compare = (left: unknown, right: unknown): number => typeof left === "numb
 export const canonical = (values: unknown): unknown => Array.isArray(values) ? [...values].sort((a,b) => compare(JSON.stringify(a),JSON.stringify(b))) : values;
 export function tenResult(record: TenRecord, findings: Finding[]): unknown {
   const rows = findings.map(f => f.variables.row);
-  const order = (r: Row) => record.check === "conditional_architecture" ? record.entry==="conditional_architecture_findings"?[r.path,r.line,r.message]:[r.issue,r.path,r.line,r.message]
+  const order = (r: Row) => record.check === "conditional_architecture" ? record.entry==="conditional_architecture_findings"?[r.path,r.line,r.message]:[r.issue,r.path,String(r.line),r.message]
     : ["hnsw_architecture","bounded_composed_graph_paths","matching_architecture"].includes(record.check) ? [r.path,r.line,r.issue,r.message]
     : record.check === "plan_optimizer_v2" && record.entry === "find_violations" ? [r.path,r.line,r.issue]
     : [r.phase ?? 0,r.sort_name ?? "",r.ordering ?? 0,r.issue];

@@ -72,7 +72,11 @@ for document in request["documents"]:
         try:
             tree = ast.parse(source)
         except SyntaxError as error:
-            if not all(item['kind'] == 'module' and item['fields'] == ['syntax_error']
+            # A relation over an invalid module has no syntax rows. Explicit
+            # syntax_error requests still expose the error in the same batch.
+            # Scalar AST projections keep their strict failure contract.
+            if not all(text_only(item) or item['kind'] == 'module' and item['fields'] in (
+                           ['syntax_error'], ['ast_nodes'], ['ast_annotations'])
                        for item in document['requests']):
                 raise
             syntax_error = {name: getattr(error, name) for name in (
@@ -84,11 +88,11 @@ for document in request["documents"]:
     structural=any(any(field in STRUCTURE_FIELDS or field in {'annotation_names','ast_nodes','ast_annotations'} for field in item['fields']) for item in document['requests'])
     details={}
     needed_types=tuple({kind for item in document["requests"] if item["kind"]!="module" and not text_only(item) for kind in KINDS.get(item["kind"],())})
-    module_walks += bool(needed_types or structural)
-    if structural:
+    module_walks += bool(tree is not None and (needed_types or structural))
+    if structural and tree is not None:
         requested={field for item in document['requests'] for field in (item.get('columns',STRUCTURE_FIELDS) if item['fields']==['ast_nodes'] else item['fields'])}
         details,all_nodes=structure_index(tree,offsets,len(source_bytes),breadth='ast_breadth_order' in requested,annotations=bool({'ast_annotation','ast_annotation_repr'}&requested))
-    else:all_nodes=ast.walk(tree) if needed_types else ()
+    else:all_nodes=ast.walk(tree) if tree is not None and needed_types else ()
     for node in all_nodes:
         if (not structural and not isinstance(node,needed_types)) or not hasattr(node,"lineno"):continue
         span=(offsets[node.lineno-1]+node.col_offset,offsets[node.end_lineno-1]+node.end_col_offset)

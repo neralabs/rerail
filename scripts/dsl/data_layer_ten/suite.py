@@ -15,6 +15,14 @@ import pytest
 ENTRIES={'generated_index_sources':['check_source','check_file'],'hnsw_architecture':['find_hnsw_architecture_findings'],'graphql_plan_ownership':['scan_source'],'schema_introspection_data_paths':['_collect_violations'],'embedding_vector_orchestration':['scan_source','scan_file','_violations_for_files'],'graph_lazy_sql_plan':['run_checks','_scan_versioned_lazy_mixin','_scan_versioned_transactions','_scan_graph_lazy_sql','_scan_intent_graph','_violations_for_sources','_violations_for_files'],'bounded_composed_graph_paths':['collect_violations'],'conditional_architecture':['collect_violations'],'matching_architecture':['scan_sources','lint','_scan_tree'],'plan_optimizer_v2':['scan_file','find_violations']}
 GRAPH={'versioned_lazy_mixin':'l7200_versioned_transactions/versioned_lazy_mixin.py','versioned_transactions':'l7200_versioned_transactions/versioned_transactions.py','graph_lazy_sql':'l7200_versioned_transactions/graph_lazy_sql.py','intent_graph':'impl/common/l2070_server_plan/steps/intent_graph.py'}
 class Suite(NineSuite):
+ def wrap(self,check,entry,module,original):
+  wrapped=super().wrap(check,entry,module,original)
+  @wraps(wrapped)
+  def adapter(*args,**kwargs):
+   self.adapter_depth=getattr(self,'adapter_depth',0)+1
+   try:return wrapped(*args,**kwargs)
+   finally:self.adapter_depth-=1
+  return adapter
  def pytest_configure(self):
   parse,walk=ast.parse,ast.walk
   @wraps(parse)
@@ -48,11 +56,13 @@ class Suite(NineSuite):
     if detail is not None:
      check,name,passive=detail;key=check+':'+name
      self.original_calls[key]=self.original_calls.get(key,0)+1
-     semantic=not passive and (check=='conditional_shared' or 'Collector.' in name or name in {'_extract_hnsw_architecture_facts','_source_facts','_scan_inventory','_scan_inventory_facts','_summary_from_tree','_run_graph_collector_on_tree'})
+     allowed_inventory=check=='matching_architecture' and name=='_production_paths'
+     semantic=not passive and ((getattr(self,'adapter_depth',0)>0 and not allowed_inventory) or check=='conditional_shared' or 'Collector.' in name or name in {'_extract_hnsw_architecture_facts','_source_facts','_scan_inventory','_scan_inventory_facts','_summary_from_tree','_run_graph_collector_on_tree'})
     else:semantic=False
     if frame.f_code in self.detector_codes or semantic:
      name=self.detector_codes.get(frame.f_code,check+':'+name);self.semantic_fallbacks.append(name);raise AssertionError('Original detector executed: '+name)
-   sys.setprofile(guard)
+   import threading
+   sys.setprofile(guard);threading.setprofile(guard)
  def inputs(self,check,entry,module,arguments):
   root=Path(arguments.get('root') or getattr(module,'ROOT',getattr(module,'REPO_ROOT',self.root)))
   temporary=self.item.funcargs.get('tmp_path') if self.item else None
@@ -66,7 +76,7 @@ class Suite(NineSuite):
   def add(path,source=None):
    path=Path(path);name=path.relative_to(root).as_posix() if path.is_absolute() and path.is_relative_to(root) else path.as_posix()
    if source is None:
-    try:source=path.read_text()
+    try:source=path.read_bytes().decode('utf-8')
     except (OSError,UnicodeError):return
    files.append(dict(path=name,source=source));originals[name]=path
   if check=='graph_lazy_sql_plan':
@@ -136,7 +146,7 @@ class Suite(NineSuite):
   values.sort(key=lambda r:(r['phase'],r.get('sort_name',''),r['ordering'],r['issue']))
   if check=='hnsw_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
   if check in {'bounded_composed_graph_paths','matching_architecture','plan_optimizer_v2'}:values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
-  if check=='conditional_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['message']) if entry=='conditional_architecture_findings' else (r['issue'],r['path'],r['line'],r['message']))
+  if check=='conditional_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['message']) if entry=='conditional_architecture_findings' else (r['issue'],r['path'],str(r['line']),r['message']))
   result=[]
   for r in values:
    path=originals.get(r['path'],Path(r['path']));line=r['line'];code=r['issue'];message=r['message']

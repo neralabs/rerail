@@ -2,10 +2,101 @@
   "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "cases": [
     {
-      "test": "bounded-raw-'\\r\\n'",
+      "test": "bounded-clean-lf",
       "check": "bounded_composed_graph_paths",
       "entry": "all",
       "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "bounded-clean-crlf",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
       "files": [
         {
           "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
@@ -88,14 +179,14 @@
           "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\r\n"
         }
       ],
-      "expected": [],
-      "production": true
+      "expected": []
     },
     {
-      "test": "bounded-raw-'\\r'",
+      "test": "bounded-clean-cr",
       "check": "bounded_composed_graph_paths",
       "entry": "all",
       "parameters": {},
+      "production": true,
       "files": [
         {
           "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
@@ -178,91 +269,367 @@
           "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\r"
         }
       ],
-      "expected": [],
-      "production": true
+      "expected": []
     },
     {
-      "test": "::test_complete_shape_result[control-graph_lazy_sql_plan-GLSP-002]",
+      "test": "bounded-positive-lf",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\n\ndef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "bounded-positive-crlf",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\r\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\r\n======\r\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\r\n====\r\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\r\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\r\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\r\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\r\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\r\nclass BoundedComposedPathRelationPlan: pass\r\nclass GraphPathRelationSchemas: pass\r\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\r\nclass _ResolveGraphExecutionCtxConfig:\r\n    graph_type: type\r\nclass _GraphExecuteConfig:\r\n    graph_type: type\r\nclass GraphPathEvidenceRelationRow: pass\r\nclass ExecuteGraphPathsStep:\r\n    def cte_publication_contract(self): ...\r\n    def compile(self): ...\r\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\r\nclass SqlGraphQueryBuilder:\r\n    def _build_execute_paths_relation_plan(self): ...\r\n    def _build_execute_paths_grammar(self):\r\n        return self._build_execute_paths_relation_plan()\r\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\r\nclass _GraphTraversalApiConfig:\r\n    graph_type: type\r\nclass _GraphTraversalTerminalConfig:\r\n    graph_type: type\r\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\r\nclass SqlGraphExecutionCtx:\r\n    graph_type: type\r\nclass SqlPlanGraphQueryBuilder:\r\n    @pure_lazy\r\n    def execute_paths_lazy(self): ...\r\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\r\nclass VersionedReadTransactionLazyMixin:\r\n    @pure_lazy\r\n    def graph_lazy(self): ...\r\n\r\n\r\ndef graph_query_builder():\r\n    pass\r\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\r\nclass LazyVersionedReadTransaction:\r\n    @legacy_sync\r\n    def graph(self): ...\r\n    @legacy_async\r\n    async def graph_async(self): ...\r\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\r\nclass PathExpression: pass\r\nclass PathStep: pass\r\nclass PathSequence: pass\r\nclass PathChoice: pass\r\nclass QuantifiedPath: pass\r\nclass PathMode: pass\r\nclass PathSearch: pass\r\nclass GraphPathEvidenceRow: pass\r\nclass PathPattern:\r\n    expression: PathExpression\r\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\r\nclass GraphQueryBuilder:\r\n    @pure_lazy\r\n    def execute_paths_lazy(self): ...\r\n    @legacy_sync\r\n    def execute_paths(self): ...\r\n    @legacy_async\r\n    async def execute_paths_async(self): ...\r\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\r\nclass SparqlPathExpression: pass\r\nclass SparqlPathAlternative: pass\r\nclass SparqlPathSequence: pass\r\nclass SparqlPathInverse: pass\r\nclass SparqlPathQuantifier: pass\r\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\r\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\r\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\r\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "bounded-positive-cr",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\r"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\r======\r"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\r====\r"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\r"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\r"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\r"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\r"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\rclass BoundedComposedPathRelationPlan: pass\rclass GraphPathRelationSchemas: pass\r"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\rclass _ResolveGraphExecutionCtxConfig:\r    graph_type: type\rclass _GraphExecuteConfig:\r    graph_type: type\rclass GraphPathEvidenceRelationRow: pass\rclass ExecuteGraphPathsStep:\r    def cte_publication_contract(self): ...\r    def compile(self): ...\r"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\rclass SqlGraphQueryBuilder:\r    def _build_execute_paths_relation_plan(self): ...\r    def _build_execute_paths_grammar(self):\r        return self._build_execute_paths_relation_plan()\r"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\rclass _GraphTraversalApiConfig:\r    graph_type: type\rclass _GraphTraversalTerminalConfig:\r    graph_type: type\r"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\rclass SqlGraphExecutionCtx:\r    graph_type: type\rclass SqlPlanGraphQueryBuilder:\r    @pure_lazy\r    def execute_paths_lazy(self): ...\r"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\rclass VersionedReadTransactionLazyMixin:\r    @pure_lazy\r    def graph_lazy(self): ...\r\r\rdef graph_query_builder():\r    pass\r"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\rclass LazyVersionedReadTransaction:\r    @legacy_sync\r    def graph(self): ...\r    @legacy_async\r    async def graph_async(self): ...\r"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\rclass PathExpression: pass\rclass PathStep: pass\rclass PathSequence: pass\rclass PathChoice: pass\rclass QuantifiedPath: pass\rclass PathMode: pass\rclass PathSearch: pass\rclass GraphPathEvidenceRow: pass\rclass PathPattern:\r    expression: PathExpression\r"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\rclass GraphQueryBuilder:\r    @pure_lazy\r    def execute_paths_lazy(self): ...\r    @legacy_sync\r    def execute_paths(self): ...\r    @legacy_async\r    async def execute_paths_async(self): ...\r"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\rclass SparqlPathExpression: pass\rclass SparqlPathAlternative: pass\rclass SparqlPathSequence: pass\rclass SparqlPathInverse: pass\rclass SparqlPathQuantifier: pass\r"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\r"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\r"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\r"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "graph_lazy_sql_plan-incomplete-if",
       "check": "graph_lazy_sql_plan",
       "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
       "files": [
         {
           "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
           "source": "if True:\n"
-        },
-        {
-          "path": "l7200_versioned_transactions/versioned_transactions.py",
-          "source": "if True:\n\n    class LazyVersionedReadTransaction:\n\n        @legacy_sync\n        def graph(self, graph_id, graph_type):\n            del graph_id, graph_type\n            _legacy_delegate_stub()\n\n        @legacy_async\n        async def graph_async(self, graph_id, graph_type):\n            del graph_id, graph_type\n            _legacy_delegate_stub()\n\n        @legacy_sync\n        def graph_query_builder(self, graph_id, result_node_type=None):\n            del graph_id, result_node_type\n            _legacy_delegate_stub()\n\n        @legacy_async\n        async def graph_query_builder_async(self, graph_id, result_node_type=None):\n            del graph_id, result_node_type\n            _legacy_delegate_stub()\n"
-        },
-        {
-          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
-          "source": "if True:\n\n    class GraphLazyStepRegistrar:\n        __pure_lazy_surface__ = True\n\n    class SqlGraphExecutionCtx:\n        pass\n\n    class SqlPlanGraphQuery:\n        pass\n\n    class SqlPlanGraphQueryBuilder:\n\n        @pure_lazy\n        def execute_lazy(self):\n            return None\n\n        @pure_lazy\n        def execute_one_lazy(self):\n            return None\n\n        @pure_lazy\n        def count_lazy(self):\n            return None\n\n        @pure_lazy\n        def exists_lazy(self):\n            return None\n\n        @pure_lazy\n        def execute_bindings_lazy(self):\n            return None\n\n        @pure_lazy\n        def execute_aggregate_lazy(self):\n            return None\n\n    class SqlPlanGraphTraversal:\n        pass\n"
-        },
-        {
-          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
-          "source": "if True:\n\n    def _build_graph_execution_ctx(ctx, **kwargs):\n        del ctx, kwargs\n        return None\n\n    class ExecuteGraphNodesStep:\n        pass\n\n    class ExecuteGraphOneStep:\n        pass\n\n    class ExecuteGraphCountStep:\n        pass\n\n    class ExecuteGraphExistsStep:\n        pass\n\n    class ExecuteGraphBindingsStep:\n        pass\n\n    class ExecuteGraphAggregateStep:\n        pass\n"
         }
       ],
-      "parameters": {},
-      "expected": [
-        {
-          "code": "GLSP-008",
-          "file_path": "l7200_versioned_transactions/graph_lazy_sql.py",
-          "line_number": 12,
-          "message": "`SqlPlanGraphQueryBuilder.execute_paths_lazy` is missing"
-        },
-        {
-          "code": "GLSP-007",
-          "file_path": "l7200_versioned_transactions/versioned_transactions.py",
-          "line_number": 16,
-          "message": "Removed graph shortcut `graph_query_builder` must remain absent"
-        },
-        {
-          "code": "GLSP-007",
-          "file_path": "l7200_versioned_transactions/versioned_transactions.py",
-          "line_number": 21,
-          "message": "Removed graph shortcut `graph_query_builder_async` must remain absent"
-        },
-        {
-          "code": "GLSP-012",
-          "file_path": "impl/common/l2070_server_plan/steps/intent_graph.py",
-          "line_number": 1,
-          "message": "Required graph intent symbol `ExecuteGraphPathsStep` is missing"
-        },
-        {
-          "code": "GLSP-013",
-          "file_path": "impl/common/l2070_server_plan/steps/intent_graph.py",
-          "line_number": 19,
-          "message": "ExecuteGraphBindingsStep must declare cte_column_type_hints() for SQL-visible binding columns"
-        }
-      ],
-      "production": false
+      "expected": []
     },
     {
-      "test": "::test_complete_shape_result[control-plan_optimizer_v2-PV2-044]",
+      "test": "graph_lazy_sql_plan-incomplete-def",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "def incomplete():\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "plan_optimizer_v2-incomplete-if",
       "check": "plan_optimizer_v2",
       "entry": "scan_file",
+      "parameters": {},
+      "production": false,
       "files": [
         {
           "path": "impl/common/l2065_plan_core/node.py",
           "source": "if True:\n"
         }
       ],
-      "parameters": {},
-      "expected": [],
-      "production": false
+      "expected": []
     },
     {
-      "test": "::test_complete_shape_result[duplicate-conditional_architecture-CONDA-001]",
+      "test": "plan_optimizer_v2-incomplete-def",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "def incomplete():\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "conditional-textual-line-order",
       "check": "conditional_architecture",
       "entry": "collect_violations",
+      "parameters": {},
+      "production": false,
       "files": [
         {
           "path": "l2070_batching/conditional_step.py",
-          "source": "class ConditionalStep:\n\n    def compile(self, ctx):\n        from impl.common.l2100_sql_grammar.tree.cte import SqlCte\n        return CompiledStep(grammar=SqlSelectStmt())\n\nclass ConditionalStep:\n\n    def compile(self, ctx):\n        from impl.common.l2100_sql_grammar.tree.cte import SqlCte\n        return CompiledStep(grammar=SqlSelectStmt())\n"
+          "source": "class ConditionalStep:\n    def compile(self, ctx):\n        pass\n        from impl.common.l2100_sql_grammar import SqlA\n\n\n\n\n\n        from impl.common.l2100_sql_grammar import SqlB\n"
         }
       ],
-      "parameters": {},
       "expected": [
         {
           "rule": "CONDA-001",
@@ -279,18 +646,6 @@
         {
           "rule": "CONDA-001",
           "file": "l2070_batching/conditional_step.py",
-          "line": 11,
-          "message": "ConditionalStep.compile() must not assemble SQL grammar locally."
-        },
-        {
-          "rule": "CONDA-001",
-          "file": "l2070_batching/conditional_step.py",
-          "line": 11,
-          "message": "ConditionalStep.compile() must not return CompiledStep(grammar=...)."
-        },
-        {
-          "rule": "CONDA-001",
-          "file": "l2070_batching/conditional_step.py",
           "line": 4,
           "message": "ConditionalStep.compile() must not import SQL grammar classes."
         },
@@ -299,18 +654,6 @@
           "file": "l2070_batching/conditional_step.py",
           "line": 4,
           "message": "ConditionalStep.compile() must not import impl SQL compiler modules."
-        },
-        {
-          "rule": "CONDA-001",
-          "file": "l2070_batching/conditional_step.py",
-          "line": 5,
-          "message": "ConditionalStep.compile() must not assemble SQL grammar locally."
-        },
-        {
-          "rule": "CONDA-001",
-          "file": "l2070_batching/conditional_step.py",
-          "line": 5,
-          "message": "ConditionalStep.compile() must not return CompiledStep(grammar=...)."
         },
         {
           "rule": "CONDA-004",
@@ -345,17 +688,16 @@
         {
           "rule": "CONDA-005",
           "file": "l2070_batching/conditional_step.py",
-          "line": 7,
+          "line": 1,
           "message": "semantic ConditionalStep must reject direct compilation with TypeError"
         },
         {
           "rule": "CONDA-005",
           "file": "l2070_batching/conditional_step.py",
-          "line": 7,
+          "line": 1,
           "message": "semantic typed conditional contract must unconditionally reject with TypeError"
         }
-      ],
-      "production": false
+      ]
     }
   ]
 }

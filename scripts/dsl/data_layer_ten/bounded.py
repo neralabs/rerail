@@ -5,7 +5,7 @@ import re,ast
 
 def candidate(root):
  c=constants(root/'scripts/lint_bounded_composed_graph_paths.py');paths={n.targets[0].id:n.value.args[0].value for n in ast.parse((root/'scripts/lint_bounded_composed_graph_paths.py').read_text()).body if isinstance(n,ast.Assign) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Name) and n.value.func.id=='Path' and len(n.value.args)==1 and isinstance(n.value.args[0],ast.Constant)};rows=[];required=[]
- def src(key):return 'source_text('+q(paths[key])+')'
+ def src(key):return 'replace(replace(source_text('+q(paths[key])+'),char(13)||char(10),char(10)),char(13),char(10))'
  def rx(text,pattern,group=0):return f'rx_extract({text},{q(pattern)},{group})'
  def matches(text,pattern):return f'coalesce(rx_matches({text},{q(pattern)}),0)'
  def line(prefix):return f"1+length({prefix})-length(replace({prefix},char(10),''))"
@@ -19,7 +19,7 @@ def candidate(root):
   return f'({headertext}||{rx(rest,r"(?ms)\A(.*?)(?:"+stop+r"|\z)",1)})',line(prefix(src(key),header))
  def emit(code,key,message,condition='1',ln='1'):
   ordinal=len(rows);p=q(paths[key]);text=src(key)
-  rows.append(f"SELECT {p} path,0 start_byte,coalesce(length(CAST({text} AS BLOB)),0) end_byte,{ln} line,{q(code)} issue,{q(message)} message,{ordinal} identity,0 phase,{ordinal} ordering,'' symbol,'' sort_name WHERE {condition}")
+  rows.append(f"SELECT {p} path,0 start_byte,coalesce(length(CAST(source_text({p}) AS BLOB)),0) end_byte,{ln} line,{q(code)} issue,{q(message)} message,{ordinal} identity,0 phase,{ordinal} ordering,'' symbol,'' sort_name WHERE {condition}")
  def require(key):
   required.append(key);emit('BCGP001',key,'required architecture file is missing',src(key)+' IS NULL')
  def decorated(key,owner,method,deco,code,message):
