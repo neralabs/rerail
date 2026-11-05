@@ -76,6 +76,29 @@
       ],
       "expected": [],
       "enforcement": "hard-fail"
+    },
+    {
+      "check": "bootstrap_engine_invariants",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "pass\n\n# COLD_APPLICATION\n"
+        },
+        {
+          "path": "l3200_metadata/bootstrap_coordinator.py",
+          "source": "bootstrap = (\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail",
+      "errors": {
+        "l3200_metadata/bootstrap_coordinator.py": {
+          "bootstrap_engine_invariants.file_violations": "SyntaxError: '(' was never closed (bootstrap_coordinator.py, line 1)"
+        },
+        "scripts/lint_bootstrap_engine_invariants_plugin.py": {
+          "bootstrap_engine_invariants.violations": "SyntaxError: '(' was never closed (<unknown>, line 1)"
+        }
+      }
     }
   ]
 }
