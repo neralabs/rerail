@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Record original contracts without changing raw file contents."""
-import argparse,importlib,json,sys,tempfile
+import argparse,ast,importlib,json,sys,tempfile
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from data_layer_ten.common import PIN
@@ -52,6 +52,18 @@ def record(source,output):
    expected=[dict(path=Path(f.path).relative_to(path).as_posix() if Path(f.path).is_absolute() else str(f.path),line=f.line,code=f.code,message=f.message) for f in findings]
   assert len(expected)==1 and expected[0]['code']=='PV2-044'
   cases.append(dict(test='optimizer-file-lines-'+label,check='plan_optimizer_v2',entry='all',parameters={},production=True,files=[dict(path=relative,source=text)],expected=expected))
+ matching=importlib.import_module('scripts.lint_matching_architecture');relative='data_layer_testing/matching_operator.py'
+ for hook in [False,True]:
+  text='from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module("plugin")\n'+('register_table_hook()\n' if hook else '')
+  with tempfile.TemporaryDirectory() as temporary:
+   path=Path(temporary);location=path/relative;location.parent.mkdir();location.write_bytes(text.encode())
+   findings=matching.lint(path)
+   expected=[dict(path=str(f.path),line=f.line,code=f.code,message=f.message) for f in findings]
+  cases.append(dict(test='matching-auxiliary-hook-'+str(hook),check='matching_architecture',entry='all',parameters={},production=True,files=[dict(path=relative,source=text)],expected=expected))
+  cases.append(dict(test='matching-explicit-auxiliary-'+str(hook),check='matching_architecture',entry='scan_sources',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(matching.scan_sources({Path(relative):text}),source)))
+  cases.append(dict(test='matching-tree-auxiliary-'+str(hook),check='matching_architecture',entry='_scan_tree',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(matching._scan_tree(Path(relative),ast.parse(text)),source)))
+ relative='impl/common/l5250_matching/probe.py';text='value=1\n'
+ cases.append(dict(test='matching-tree-has-no-project-obligations',check='matching_architecture',entry='_scan_tree',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(matching._scan_tree(Path(relative),ast.parse(text)),source)))
  output.write_text(json.dumps(dict(sourcePin=PIN,cases=cases),indent=2)+'\n')
 
 if __name__=='__main__':

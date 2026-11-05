@@ -817,6 +817,143 @@
           "message": "File has 602 lines (cap 600). Split it so each v2 file stays small enough for a less-capable LLM to edit whole."
         }
       ]
+    },
+    {
+      "test": "matching-auxiliary-hook-False",
+      "check": "matching_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "source": "from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module(\"plugin\")\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-explicit-auxiliary-False",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "source": "from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module(\"plugin\")\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA006",
+          "path": "data_layer_testing/matching_operator.py",
+          "line": 3,
+          "symbol": "import_module",
+          "message": "Matching production code must use static imports"
+        }
+      ]
+    },
+    {
+      "test": "matching-tree-auxiliary-False",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "source": "from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module(\"plugin\")\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA006",
+          "path": "data_layer_testing/matching_operator.py",
+          "line": 3,
+          "symbol": "import_module",
+          "message": "Matching production code must use static imports"
+        }
+      ]
+    },
+    {
+      "test": "matching-auxiliary-hook-True",
+      "check": "matching_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "source": "from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module(\"plugin\")\nregister_table_hook()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "line": 1,
+          "code": "MA034",
+          "message": "Testing support cannot own the authoritative process-local matching maintenance mechanism"
+        }
+      ]
+    },
+    {
+      "test": "matching-explicit-auxiliary-True",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "source": "from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module(\"plugin\")\nregister_table_hook()\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA006",
+          "path": "data_layer_testing/matching_operator.py",
+          "line": 3,
+          "symbol": "import_module",
+          "message": "Matching production code must use static imports"
+        }
+      ]
+    },
+    {
+      "test": "matching-tree-auxiliary-True",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer_testing/matching_operator.py",
+          "source": "from data_layer.matching import MatchSpec\nimport importlib\nimportlib.import_module(\"plugin\")\nregister_table_hook()\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA006",
+          "path": "data_layer_testing/matching_operator.py",
+          "line": 3,
+          "symbol": "import_module",
+          "message": "Matching production code must use static imports"
+        }
+      ]
+    },
+    {
+      "test": "matching-tree-has-no-project-obligations",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "value=1\n"
+        }
+      ],
+      "expected": []
     }
   ]
 }
