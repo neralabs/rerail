@@ -61,6 +61,11 @@ function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeR
   };
 }
 
+/** Whether `folder`, relative to a checkout ("" for all of it), holds `path` or is it. */
+function folderHolds(folder: string, path: string): boolean {
+  return folder === "" || path === folder || path.startsWith(`${folder}/`);
+}
+
 export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #options: CheckoutCodeRuleRouterOptions;
   readonly #sessionRoot: string;
@@ -176,29 +181,31 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     input: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks },
   ): Promise<readonly string[]> {
     this.#assertSession(sessionId);
+    const auditIds: string[] = [];
     if (input.scope === "repository") {
       if ((input.paths ?? []).length > 0) throw new Error("Repository scope always covers the full repository");
-      const auditIds: string[] = [];
       await this.#audit(sessionId, this.#options.startingCheckout, input.mode, input.audit, auditIds, new Set());
       return auditIds;
     }
-    const partitioned = new Map<Lane, string[]>();
-    for (const path of input.paths ?? []) {
-      const routed = this.#route(path);
-      if (routed !== undefined) partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), routed.path]);
-    }
-    const auditIds: string[] = [];
     const visited = new Set<string>();
-    for (const [lane, paths] of partitioned) {
+    for (const [lane, paths] of this.#byLane(input.paths ?? [])) {
       await lane.opening;
       auditIds.push(...await lane.enforcer.audit(sessionId, { scope: "touched-files", mode: input.mode, paths }));
       // The lane's walk skips the checkouts nested in a folder it was given; each is audited whole, in its own lane.
-      for (const nested of this.#nestedCheckoutsOf(lane.root)) {
-        if (!paths.some(path => path === "" || nested === path || nested.startsWith(`${path}/`))) continue;
+      for (const nested of this.#nestedCheckoutsOf(lane.root).filter(nested => paths.some(path => folderHolds(path, nested))))
         await this.#audit(sessionId, join(lane.root, nested), input.mode, undefined, auditIds, visited);
-      }
     }
     return auditIds;
+  }
+
+  /** Each path, relative to the checkout that owns it, under that checkout's lane; a path no lane owns is left out. */
+  #byLane(paths: readonly string[]): Map<Lane, string[]> {
+    const partitioned = new Map<Lane, string[]>();
+    for (const path of paths) {
+      const routed = this.#route(path);
+      if (routed !== undefined) partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), routed.path]);
+    }
+    return partitioned;
   }
 
   interrupt(options?: AuditorCloseOptions): void {
@@ -228,19 +235,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   ): Promise<void> {
     if (visited.has(root) || this.#closing) return;
     visited.add(root);
+    const report = await this.#auditCheckout(sessionId, root, mode, audit);
+    if (report === undefined) return;
+    if (report.auditId !== undefined) auditIds.push(report.auditId);
+    for (const nested of this.#ownNestedCheckouts(root, report.nestedCheckouts))
+      await this.#audit(sessionId, nested, mode, audit, auditIds, visited);
+  }
+
+  /** The checkout's own run once its lane has opened; undefined when it has no lane or `audit` did not let it claim the run. */
+  async #auditCheckout(sessionId: string, root: string, mode: AuditMode, audit: RepositoryAuditHooks | undefined) {
     const lane = this.#lane(root);
-    if (lane === undefined) return;
+    if (lane === undefined) return undefined;
     await lane.opening;
-    if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return;
+    if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return undefined;
     const report = await lane.enforcer.auditRepository(sessionId, mode);
     audit?.finish(root, report.auditId);
-    if (report.auditId !== undefined) auditIds.push(report.auditId);
-    for (const nested of report.nestedCheckouts) {
-      const owner = this.#owner(join(root, nested));
-      if (owner !== undefined && owner.path === "" && owner.checkoutRoot !== root) {
-        await this.#audit(sessionId, owner.checkoutRoot, mode, audit, auditIds, visited);
-      }
-    }
+    return report;
+  }
+
+  /** Of the checkouts a walk of `root` skipped, the roots of those that own their files and so are judged in their own lane. */
+  #ownNestedCheckouts(root: string, nested: readonly string[]): string[] {
+    return nested
+      .map(path => this.#owner(join(root, path)))
+      .filter((owner): owner is CheckoutOwner => owner !== undefined && owner.path === "" && owner.checkoutRoot !== root)
+      .map(owner => owner.checkoutRoot);
   }
 
   async #settleLanes(settle: (lane: Lane) => Promise<void>): Promise<void> {
