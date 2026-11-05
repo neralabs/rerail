@@ -141,6 +141,8 @@ and the two differ in ways that change findings:
   it, as `ast` nests them;
 - `sig_param(f, p, nm, i, kind, ann, dflt)`, `param_named`: parameters by kind (positional-only, positional,
   `*args`, keyword-only, `**kw`);
+- `type_param(o, p, nm, i, kind, bound, dflt)`, `tparam_named`: PEP 695 type parameters (TypeVar, TypeVarTuple,
+  ParamSpec) with bound and PEP 696 default (broad_type_surfaces' BTS008/BTS009);
 - `dotted_expr`, `leaf_name`, `call_name`, `call_dotted`, `chain_root`, `base_name`, `from_module_raw`:
   names as the scripts spell them, unresolved;
 - `assign_target`, `assign_value`, `assign_ann`, `body_stmt`, `body_len`, `docstring`, `py_if`, `py_orelse`,
@@ -215,7 +217,7 @@ plugin.
 | expressible with the design | 120 |
 | expressible, with facts from a CI-written artifact | 5 (linter_enforcement, explicit_semantic_ids, plan_composition_architecture, serverplan_target_architecture, test_budget) |
 | approximate | 3 |
-| gap found by the mapping | 7, now designed in (below) except one grammar question |
+| gap found by the mapping | 7, all now designed in (below) |
 
 What the checks use most:
 
@@ -252,7 +254,7 @@ The mapping's gaps, and how each was closed in core.rr:
 | matching_architecture | scope from `--application-root` (:1162-1172) | `.scope dirs option("application_root")` |
 | architecture_rule_docs | a cited commit exists; files at that commit (:219-247) | `git_commit(sha)`; `git_has` for any commit reachable from head |
 | standalone_linter_entrypoints | a suite fails when a member policy fails or times out (plugin.py:127-152) | `.requires "policy", …`: one finding per member that blocks or ends Unknown(budget or timeout) |
-| broad_type_surfaces, broad_type_surfaces_ratchet | PEP 696 type-parameter defaults (lint_broad_type_surfaces.py:701) | not a language need: the bundled tree-sitter-python must parse them; an open issue to check |
+| broad_type_surfaces, broad_type_surfaces_ratchet | PEP 696 type-parameter defaults (lint_broad_type_surfaces.py:701) | not a language need: Rerail's vendored tree-sitter-python already parses them (`type_default`, its patch 1); python/ast.rr's `type_param` reads bound and default |
 
 ## Prior work consulted
 

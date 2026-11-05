@@ -80,8 +80,8 @@ Conventions:
 | backend_type_strings | 4 | hard-fail | N-src, CONTRACT | expressible |
 | type_safety_patterns | 4 | hard-fail | N-src, L5, D-code | expressible |
 | expression_owner_propagation | 4 | hard-fail | P-ast:call_name, P-ast:ast_name, P-ast:assign_target, P-ast:sig_param, N-order, L6, LOCAL, CONTRACT | expressible |
-| broad_type_surfaces | 4 | metric | LOCAL, P-lib:rifrom, P-lib:module_path, P-ast:class_path, P-ast:def_chain, N-fn:@unparse, L5, N-read, N-fn:@json_str, N-fn:@ed25519_ok, N-src, D-budget, D-mode, D-scope | gap: parser support for PEP 696 type-parameter defaults unverified |
-| broad_type_surfaces_ratchet | 4 | hard-fail | LOCAL, P-lib:rifrom, P-lib:module_path, P-ast:class_path, P-ast:def_chain, N-fn:@unparse, L5, N-src, N-read, P-sign, D-budget, D-gate, D-place, D-scope | gap: inherits the PEP 696 parser question of broad_type_surfaces |
+| broad_type_surfaces | 4 | metric | LOCAL, P-lib:rifrom, P-lib:module_path, P-ast:class_path, P-ast:def_chain, N-fn:@unparse, L5, N-read, N-fn:@json_str, N-fn:@ed25519_ok, N-src, D-budget, D-mode, D-scope | gap, closed: the vendored grammar parses PEP 696 defaults; P-ast:type_param |
+| broad_type_surfaces_ratchet | 4 | hard-fail | LOCAL, P-lib:rifrom, P-lib:module_path, P-ast:class_path, P-ast:def_chain, N-fn:@unparse, L5, N-src, N-read, P-sign, D-budget, D-gate, D-place, D-scope | gap, closed: as broad_type_surfaces |
 | no_source_inspection | 4 | hard-fail | N-src | expressible |
 | bootstrap_cache_health | 4 | hard-fail | N-src, P-sign, D-gate, D-place, CONTRACT | expressible |
 | plan_optimizer_v2 | 4 | hard-fail | P-ast:ast_name, N-str, N-src, N-fn:@count_matches, D-scope, D-place | expressible |
@@ -161,8 +161,8 @@ Conventions:
 | internal_dead_code | 8 | metric | LOCAL | expressible |
 
 Since this mapping (2026-11-04), each gap below has a resolution in lib/core.rr (`@ast_dump`, `IO=jsonl` and
-`*` pointer steps, `.scope dirs option(…)`, `git_commit`, `.requires`), except the PEP 696 grammar question,
-which is an open issue. See [../DESIGN.md](../DESIGN.md), "Coverage".
+`*` pointer steps, `.scope dirs option(…)`, `git_commit`, `.requires`). The PEP 696 question was the grammar's:
+Rerail's vendored tree-sitter-python already parses type-parameter defaults, and python/ast.rr has `type_param`. See [../DESIGN.md](../DESIGN.md), "Coverage".
 
 ## Gaps
 
@@ -171,7 +171,7 @@ These needs map to no element. Each is listed with its check, the need, the anal
 | check | need | citation | suggestion |
 |---|---|---|---|
 | standalone_linter_entrypoints | "this policy fails for each member policy with blocking findings", and a member timeout counts as a failure | lint_standalone_linter_entrypoints_plugin.py:127-152, :104-114 | a directive `.requires "data-layer:x", …` that reports one finding per member that is missing or blocks. Or leave it to CI orchestration: it is not a fact query |
-| broad_type_surfaces, broad_type_surfaces_ratchet | the parser must accept PEP 696 type-parameter defaults (`class C[T: X = X]`); BTS009 reads `type_parameter.default_value`, and the repository uses the syntax | lint_broad_type_surfaces.py:701; impl/common/l2066_plan_optimizer/ir.py:49 | native grammar: check the bundled tree-sitter-python and upgrade it if needed, with a grammar test. tstring_syntax makes the same unchecked assumption about the `t` prefix, but its oracle reports nothing |
+| broad_type_surfaces, broad_type_surfaces_ratchet | the parser must accept PEP 696 type-parameter defaults (`class C[T: X = X]`); BTS009 reads `type_parameter.default_value`, and the repository uses the syntax | lint_broad_type_surfaces.py:701; impl/common/l2066_plan_optimizer/ir.py:49 | resolved: native/grammars/tree-sitter-python/PATCHES.md patch 1 adds `type_default` (fields `name`, `value`), and the engine's scope pass already binds it; python/ast.rr `type_param(o, p, nm, i, kind, bound, dflt)`. The `t` prefix of tstring_syntax is lexed by the same scanner as `f` (scanner.c), and string_form tells them apart |
 | permission_test_classification | read the JSON-Lines inventory and the manifest's nested arrays (`groups[].operations[]`, `tests[]`). IO=json's pointer reaches one level of records, and IO=lines does not parse JSON | lint_permission_test_classification.py:552-560, 569-597; permission_surface_manifest.py:240 | N-read extensions: `IO=jsonl` (one row per line, with a line-index column) and wildcard pointers (`path="/groups/*/operations/*"`) that bind index columns |
 | matching_architecture | `--application-root` adds directories to the scan and marks their files as application files; a missing root is an error | lint_matching_architecture.py:1162-1172 | a scope entry taken from an option, e.g. `.scope include option "application_root"`, plus a fact for documents it added. `--phase` is not a gap: each rule can test `option("phase", …)` |
 | architecture_rule_docs | existence of commits and blobs anywhere in history (`git cat-file -e`), for the example SHAs the rule docs cite | lint_architecture_rule_docs.py:219-247 | specify `git_has(sha, path)` for any reachable SHA, answered on demand, and add `git_commit(sha)`. Today core describes it only for the `git_rev` revisions |
