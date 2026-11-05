@@ -131,11 +131,9 @@ A gate finding blocks under the policy's mode like any other (section 7).
 **Where `syntax_error` comes from.** `syntax_error(d, line, msg)` has one row per document that does not parse,
 at the first error, as CPython reports one.
 
-- **For Python** the verdict, line and message are CPython's own. They come from `ast.parse` in an isolated
-  worker (`python -I -S`), which parses the file and never imports or runs it. This is how the Data-layer rule
-  expressivity branch builds its AST facts. The same worker gives `@unparse`, `@ast_dump` and `str_part`.
-  Parsing is not running repository code. A missing worker makes these facts an incomplete input (section 2):
-  they are Unknown, never empty.
+- **For Python** the verdict and line follow CPython's grammar, from a native parser (Ruff's). No CPython
+  runs, in any form. Tree-sitter's tree cannot give the verdict, because it recovers from errors. If the parser
+  is unavailable, the fact is an incomplete input (section 2): Unknown, never empty.
 - **For other languages** the fact comes from the tree-sitter `ERROR` and `MISSING` nodes the engine already
   collects (`native/src/code_rule_dsl/soundness.rs`). The message is free text under the contract.
 
@@ -246,7 +244,7 @@ they are gaps, which is what a laptop without the artifacts wants.
 | `code {c}`, `tag {t}` | key extraction | the code field already in the id |
 | Gate stratum, evaluated first | the Datalog planner | stratification, which the checker already computes |
 | Incomplete inputs: withheld rules, Unknown places | the planner marks rules that cross `!` or an aggregate; one extra evaluation when needed | — |
-| `syntax_error` and withheld documents | a native fact: CPython's verdict for Python, the error ranges elsewhere | the isolated CPython worker of the Data-layer branch; `soundness.rs` `SyntaxErrors` |
+| `syntax_error` and withheld documents | a native fact: a parser following CPython's grammar for Python, the error ranges elsewhere | Ruff's parser (not the Data-layer branch's CPython worker); `soundness.rs` `SyntaxErrors` |
 | `.budget … from base`, `floor`, `drop` | the findings layer, over consolidated keys | `ClauseKind::Budget` (`model.rs:598-604`), with ceilings per group from a relation instead of a literal |
 | Verdict and exit status | the scan CLI | `--fail-on-violations` counts every violation today (`src/cli/audit-cli.ts:256`); it should count blocking findings |
 | `--require-facts`, `--facts DIR` | the scan CLI | [RUN-FACTS.md](RUN-FACTS.md) |

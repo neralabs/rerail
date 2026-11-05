@@ -116,10 +116,10 @@
 // need the order.
 .decl op_at(n: node, i: number, s: symbol)
 // syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
-// For Python the verdict, line and message are CPython's: `ast.parse` in an isolated worker (`python -I -S`),
-// which never imports or runs the file. That worker also gives @unparse, @ast_dump and str_part; without it those
-// facts are an incomplete input (Unknown), never empty. Other languages use tree-sitter's ERROR and MISSING
-// nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
+// For Python the verdict and line come from a native parser that follows CPython's grammar (Ruff's parser):
+// tree-sitter recovers from errors, so its tree cannot say whether CPython accepts the file. The message is that
+// parser's; messages are not part of a finding's key. No CPython runs, in any form. Other languages use
+// tree-sitter's ERROR and MISSING nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
 .input source, src_line, line_count, end_line, col, op_at, syntax_error
@@ -297,15 +297,12 @@
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
 // @tree_digest(n): a hash of n's subtree (kinds, fields, token text; no positions), as Python's ast.dump compares.
 .functor tree_digest(n: node): symbol
-// @ast_dump(n): CPython's ast.dump(n, include_attributes=False) text, exactly. Where a repository stores hashes
-// of that text (cached_pure_lazy_allowlist), @sha256(@ast_dump(n)) reproduces them; composite payloads are
-// built with cat and join (a def's body as "Module(body=[" + join of its statements + "], type_ignores=[])").
-.functor ast_dump(n: node): symbol
-// @unparse(n): the reference printer's text of n (Python: ast.unparse). Comments go, quotes and spacing are
-// normalised. Native because it is the reference implementation's printer, not a property of the tree.
+// There is no @ast_dump: a repository that stores hashes of ast.dump text (cached_pure_lazy_allowlist) is
+// re-signed once with @tree_digest, which compares the same way without reproducing CPython's text.
+// @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
+// message previews such as "{@unparse(call)}". Not for keys or comparisons: compare trees with @tree_digest, and
+// parts of trees with relations.
 .functor unparse(n: node): symbol
-// Cost (@ast_dump, @unparse, str_part, syntax_error's message): the isolated CPython worker, one batch per wave.
-// Put cheap atoms first so only the nodes that need them are sent.
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
@@ -344,7 +341,8 @@
 // Python string constants as CPython builds them. str_part(lit, i, v, at, spec): piece i of the str Constant(s)
 // that literal lit becomes: adjacent literals are one constant, joined; an f-string gives one piece per literal
 // run between interpolations, and spec = 1 for a piece inside a format spec. v is decoded (escapes applied).
-// at is the source piece it starts in. Bytes literals give no row. Native: it is CPython's decoder.
+// at is the source piece it starts in. Bytes literals give no row. Decoded natively, by the language reference's
+// literal rules (escapes, raw prefixes, `{{`/`}}`), checked once against CPython's own decoder offline.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, string_annotation, option
 .input signed_list, git_tracked, git_rev, git_has, git_commit, str_part

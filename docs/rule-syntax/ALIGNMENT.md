@@ -105,10 +105,12 @@ not make it.
 
 ## Taken from Data-layer rule expressivity
 
-- **CPython facts come from an isolated worker** (`python -I -S`, `ast.parse`, never importing the source). That
-  is where `@unparse`, `@ast_dump`, `str_part` and now `syntax_error`'s line and message come from. A missing
-  worker is an incomplete input, so those facts are Unknown and never silently empty.
-- **`@sha256(s)`** was already in core; its `body_sha256` and `dump_sha256` fields are `@sha256(@ast_dump(n))`.
+- **Not taken: the isolated CPython worker.** That branch gets `@unparse`, `@ast_dump`, `str_part` and
+  `syntax_error`'s line and message from `python -I -S` running `ast.parse`. Rerail runs no CPython, in any form
+  (decided 2026-11-05). `str_part` is decoded natively by the literal rules; `syntax_error` comes from a native
+  parser that follows CPython's grammar (Ruff's), keyed by line; `@unparse` is a native printer for messages only.
+- **`@sha256(s)`** was already in core. Its `body_sha256` and `dump_sha256` fields hash `ast.dump` text; here
+  the allowlist that stores them is re-signed once with `@tree_digest` instead (there is no `@ast_dump`).
 - **Lambda parameters.** Its batch-nine audit found lambda parameters attributed to the enclosing `def`.
   `python/ast.rr` does not have that defect: `sig_param` takes a function's parameters from its own `parameters`
   field, and `py_frame` treats a lambda as its own frame.

@@ -9,7 +9,7 @@
 //   - strings: adjacent literals are one Constant.
 // Each relation here is one of those views, used by at least two checks (data-layer/DESIGN.md lists them).
 // Everything is Datalog over core and python/names, except what CPython alone defines: decoded string pieces
-// (str_part), visit order (earlier), the printer (@unparse) and its parser's verdict (syntax_error), all in core.
+// (str_part), visit order (earlier), the printer (@unparse) and the parser's verdict (syntax_error), all in core and all native.
 //
 // How to read this file
 //   1. Structure: ast_parent, unparen, py_frame / def_frame (the function a node belongs to).

@@ -102,6 +102,20 @@ confirm once a parser and engine exist. None is fixed yet.
      repo-wide have a path-like receiver, all but one outside LEG-083's files;
    - the patch has not been run against the data layer's own test suite.
 
+## No CPython (decided 2026-11-05)
+
+Rerail runs no CPython: no worker, no embedding, no WASM build. What the design took from it, and the native
+route for each:
+
+1. `str_part`: decode string literals natively, by the language reference's rules. Differential-test the decoder
+   once against CPython over the data-layer repository's literals, offline.
+2. `syntax_error`: a native parser that follows CPython's grammar (Ruff's), keyed by line. The message is free
+   text. Check once that it accepts and rejects the same files as CPython on the 9,010-file repository.
+3. `@unparse`: a native canonical printer, for messages only; comparisons use `@tree_digest` or relations.
+4. `@ast_dump`: removed. cached_pure_lazy_allowlist stores SHA-256 of `ast.dump` text; it is re-signed once
+   with `@tree_digest`, which needs the repository's owners to accept a one-time allowlist change.
+
+
 ## Alignment with the other branches (ALIGNMENT.md)
 1. The final-shape `.rdl` parser would accept this notation with small changes: bare variables, `number` and
    `symbol`, `glob(p, s)` argument order, relations of names in place of `{…}` sets, `@dot` for its `@cat`, the
