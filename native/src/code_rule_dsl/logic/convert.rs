@@ -279,14 +279,20 @@ impl Emitter {
                 let Some(ks) = kinds(rule, 0) else { return gap(format!("{axis:?} to a rule of any kind")) };
                 let set = self.kindset(&ks)?;
                 let (low, high) = if axis == Axis::Inside { (n.to_owned(), m.clone()) } else { (m.clone(), n.to_owned()) };
-                body.push(format!("inside({low}, {high}, {set})"));
+                // `inside` stopping at the first node of the same kinds is the nearest one (decision 0038): a
+                // built-in over the tape, not `inside` less a `blocked` relation of all pairs with one between.
+                let nearest = axis == Axis::Inside
+                    && matches!(stop, StopBy::Rule(r) if kind_only(r, 0) && kinds(r, 0).as_ref() == Some(&ks));
+                body.push(format!("{}({low}, {high}, {set})", if nearest { "nearest" } else { "inside" }));
                 if let Some(f) = &field {
                     // The path enters `high` through `f`: `low` lies within that field's child.
                     let c = self.var();
                     body.push(format!("field({high}, {}, {c})", quote(f)));
                     body.extend(within(&low, &c, self));
                 }
-                if let StopBy::Rule(stop) = stop {
+                if let StopBy::Rule(stop) = stop
+                    && !nearest
+                {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
                     let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
@@ -715,6 +721,19 @@ fn kind_ids(k: &ast_grep_core::matcher::KindMatcher) -> Vec<u16> {
 }
 
 /// The kinds a node must have for `m` to match it, where they are known.
+/// Whether `m` tests only a node's kind (a kind, a supertype-free any-of of kinds, or a utility that is one).
+fn kind_only(m: &AstMatcher, depth: usize) -> bool {
+    if depth > 32 {
+        return false;
+    }
+    match m {
+        AstMatcher::Kind(_) => true,
+        AstMatcher::Any(ms) => ms.iter().all(|t| kind_only(t, depth + 1)),
+        AstMatcher::Util(u) => u.with_target(|rule| kind_only(rule, depth + 1)).unwrap_or(false),
+        _ => false,
+    }
+}
+
 fn kinds(m: &AstMatcher, depth: usize) -> Option<BTreeSet<u16>> {
     use ast_grep_core::matcher::Matcher;
     if depth > 32 {

@@ -11,7 +11,6 @@
 .kindset k3 = "attribute" | "identifier"
 .kindset k4 = "class_definition"
 .decl blocked368(low: node, high: node)
-.decl blocked425(low: node, high: node)
 .decl in_scope(d: int)
 .decl m100(n: node)
 .decl m102(n: node)
@@ -91,11 +90,11 @@
 .decl m410(n: node)
 .decl m416(n: node)
 .decl m423(n: node)
-.decl m435(n: node)
+.decl m434(n: node)
 .decl m45(n: node)
-.decl m452(n: node)
-.decl m455(n: node)
-.decl m461(n: node)
+.decl m451(n: node)
+.decl m454(n: node)
+.decl m460(n: node)
 .decl m5(n: node)
 .decl m52(n: node)
 .decl m53(n: node)
@@ -125,9 +124,9 @@
 .decl u389(n: node)
 .decl u40(n: node)
 .decl u402(n: node)
-.decl u428(n: node)
-.decl u447(n: node)
-.decl u456(n: node)
+.decl u427(n: node)
+.decl u446(n: node)
+.decl u455(n: node)
 .decl u6(n: node)
 .decl u67(n: node)
 .decl u72(n: node)
@@ -412,15 +411,14 @@ m416($n) :- node(_, $n, "identifier", _, _), text($n, $v412), @prefix($v412, "dd
 m416($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v413), name($v413, $v415), @prefix($v415, "ddl_").
 m423($n) :- node(_, $n, "identifier", _, _), text($n, $v420), $v420 = "resolve_defaults".
 m423($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v421), node(_, $v421, "identifier", _, _), text($v421, $v422), $v422 = "resolve_defaults".
-blocked425($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
-m435($n) :- node(_, $n, "identifier", _, _), text($n, $v432), $v432 = "_lazy_result_step_ref_id".
-m435($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v433), node(_, $v433, "identifier", _, _), text($v433, $v434), $v434 = "_lazy_result_step_ref_id".
-m452($n) :- node(_, $n, "identifier", _, _), text($n, $v449), $v449 = "graph_query_builder_lazy".
-m452($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v450), node(_, $v450, "identifier", _, _), text($v450, $v451), $v451 = "graph_query_builder_lazy".
-m455($n) :- node(_, $n, "call", _, _), field($n, "function", $v448), m452($v448).
-m455($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v453), u447($v453).
-m455($n) :- node(_, $n, "call", _, _), field($n, "function", $v454), u447($v454).
-u447($n) :- m455($n).
-m461($n) :- node(_, $n, "identifier", _, _), text($n, $v458), $v458 in {"flat_map_lazy_result", "map_lazy_result"}.
-m461($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v459), node(_, $v459, "identifier", _, _), text($v459, $v460), $v460 in {"flat_map_lazy_result", "map_lazy_result"}.
+m434($n) :- node(_, $n, "identifier", _, _), text($n, $v431), $v431 = "_lazy_result_step_ref_id".
+m434($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v432), node(_, $v432, "identifier", _, _), text($v432, $v433), $v433 = "_lazy_result_step_ref_id".
+m451($n) :- node(_, $n, "identifier", _, _), text($n, $v448), $v448 = "graph_query_builder_lazy".
+m451($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v449), node(_, $v449, "identifier", _, _), text($v449, $v450), $v450 = "graph_query_builder_lazy".
+m454($n) :- node(_, $n, "call", _, _), field($n, "function", $v447), m451($v447).
+m454($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v452), u446($v452).
+m454($n) :- node(_, $n, "call", _, _), field($n, "function", $v453), u446($v453).
+u446($n) :- m454($n).
+m460($n) :- node(_, $n, "identifier", _, _), text($n, $v457), $v457 in {"flat_map_lazy_result", "map_lazy_result"}.
+m460($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v458), node(_, $v458, "identifier", _, _), text($v458, $v459), $v459 in {"flat_map_lazy_result", "map_lazy_result"}.
 .output violation

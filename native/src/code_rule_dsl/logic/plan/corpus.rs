@@ -252,6 +252,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
+    crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
     // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;

@@ -11,17 +11,16 @@
 .kindset k0 = "class_definition"
 .kindset k1 = "module"
 .kindset k2 = "import_from_statement"
-.decl blocked6(low: node, high: node)
 .decl in_scope(d: int)
-.decl m10(n: node)
-.decl m21(n: node)
-.decl m42(n: node)
+.decl m20(n: node)
+.decl m41(n: node)
+.decl m44(n: node)
 .decl m45(n: node)
-.decl m46(n: node)
+.decl m9(n: node)
 .decl out_scope(d: int)
-.decl u25(n: node)
-.decl u30(n: node)
-.decl u7(n: node)
+.decl u24(n: node)
+.decl u29(n: node)
+.decl u6(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
@@ -36,14 +35,13 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_usage", $p, $l) :- node(_, $n, "class_definition", _, _), field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), $v2 in {"SqlDeferredRenderable", "SqlPreRenderedFragment"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-blocked6($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m10($n) :- field($n, "name", $v8), node(_, $v8, "identifier", _, _), text($v8, $v9), $v9 in {"SqlDeferredRenderable", "SqlFragment", "SqlPreRenderedFragment"}.
-m21($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v16), node(_, $v16, "identifier", _, _), text($v16, $v17), $v17 = "render".
-m21($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v18), node(_, $v18, "function_definition", _, _), field($v18, "name", $v19), node(_, $v19, "identifier", _, _), text($v19, $v20), $v20 = "render".
-u30($n) :- inside($v31, $n, k2), node(_, $v31, "import_from_statement", _, _), child($v31, $v32, _), node(_, $v32, "aliased_import", _, _), field($v32, "name", $v33), name($v33, $v34), @glob($v34, {"*.SqlFragment", "SqlFragment"}).
-m42($n) :- strprefix($n, $v41), @contains($v41, "f").
-m45($n) :- child($n, $v43, _), node(_, $v43, "string", _, _), strprefix($v43, $v44), @contains($v44, "f").
-m46($n) :- node(_, $n, "string", _, _), !m42($n).
-m46($n) :- node(_, $n, "concatenated_string", _, _), !m45($n).
+m9($n) :- field($n, "name", $v7), node(_, $v7, "identifier", _, _), text($v7, $v8), $v8 in {"SqlDeferredRenderable", "SqlFragment", "SqlPreRenderedFragment"}.
+m20($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v15), node(_, $v15, "identifier", _, _), text($v15, $v16), $v16 = "render".
+m20($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v17), node(_, $v17, "function_definition", _, _), field($v17, "name", $v18), node(_, $v18, "identifier", _, _), text($v18, $v19), $v19 = "render".
+u29($n) :- inside($v30, $n, k2), node(_, $v30, "import_from_statement", _, _), child($v30, $v31, _), node(_, $v31, "aliased_import", _, _), field($v31, "name", $v32), name($v32, $v33), @glob($v33, {"*.SqlFragment", "SqlFragment"}).
+m41($n) :- strprefix($n, $v40), @contains($v40, "f").
+m44($n) :- child($n, $v42, _), node(_, $v42, "string", _, _), strprefix($v42, $v43), @contains($v43, "f").
+m45($n) :- node(_, $n, "string", _, _), !m41($n).
+m45($n) :- node(_, $n, "concatenated_string", _, _), !m44($n).
 violation("data-layer-grammar-fragment-usage", "syntax-error", "python_parse_error", $p, 1) :- node(_, $n, "module", _, _), node($d, $n, _, _, _), in_scope($d), syntax_error($d), !out_scope($d), doc($d, $p, _).
 .output violation

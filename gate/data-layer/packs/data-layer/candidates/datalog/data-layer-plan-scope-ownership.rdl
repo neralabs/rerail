@@ -14,8 +14,6 @@
 .kindset k4 = "identifier"
 .kindset k5 = "concatenated_string" | "string"
 .decl blocked199(low: node, high: node)
-.decl blocked229(low: node, high: node)
-.decl blocked265(low: node, high: node)
 .decl in_scope(d: int)
 .decl m10(n: node)
 .decl m100(n: node)
@@ -42,16 +40,16 @@
 .decl m214(n: node)
 .decl m222(n: node)
 .decl m227(n: node)
-.decl m239(n: node)
-.decl m244(n: node)
-.decl m249(n: node)
-.decl m252(n: node)
-.decl m257(n: node)
-.decl m259(n: node)
-.decl m263(n: node)
-.decl m268(n: node)
+.decl m238(n: node)
+.decl m243(n: node)
+.decl m248(n: node)
+.decl m251(n: node)
+.decl m256(n: node)
+.decl m258(n: node)
+.decl m262(n: node)
+.decl m266(n: node)
 .decl m27(n: node)
-.decl m276(n: node)
+.decl m274(n: node)
 .decl m32(n: node)
 .decl m35(n: node)
 .decl m40(n: node)
@@ -76,8 +74,8 @@
 .decl u170(n: node)
 .decl u181(n: node)
 .decl u192(n: node)
-.decl u250(n: node)
-.decl u255(n: node)
+.decl u249(n: node)
+.decl u254(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
@@ -199,34 +197,32 @@ m222($n) :- inside($n, $v218, k0), node(_, $v218, "module", _, _), node($v219, $
 violation("data-layer-plan-scope-ownership", "helper-base-call", "PSO004", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v210), m214($v210), m222($n), doc($d, $p, $m), $p in {"conform/versioned_plan_scope_helpers.py", "data_layer_testing/versioning/query_helpers.py"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 m227($n) :- node(_, $n, "identifier", _, _), text($n, $v224), $v224 in {"commit", "execute", "fetch", "open_read_plan", "open_write_plan", "read_transaction", "rollback", "write_transaction"}.
 m227($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v225), node(_, $v225, "identifier", _, _), text($v225, $v226), $v226 in {"commit", "execute", "fetch", "open_read_plan", "open_write_plan", "read_transaction", "rollback", "write_transaction"}.
-blocked229($low, $high) :- inside($low, $s, k1), node(_, $s, "function_definition", _, _), inside($s, $high, k1).
-m239($n) :- node(_, $n, "module", _, _), node($v232, $n, _, _, _), node($v232, $v233, _, _, _), name($v233, $v234), @contains($v234, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
-m239($n) :- inside($n, $v235, k0), node(_, $v235, "module", _, _), node($v236, $v235, _, _, _), node($v236, $v237, _, _, _), name($v237, $v238), @contains($v238, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
-violation("data-layer-plan-scope-ownership", "nested-terminal", "PSO006", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v223), m227($v223), inside($n, $v228, k1), !blocked229($n, $v228), node(_, $v228, "function_definition", _, _), field($v228, "name", $v230), name($v230, $v231), @contains($v231, "nested_versioned"), m239($n), doc($d, $p, $m), $p in {"conform/versioned_plan_scope_helpers.py", "data_layer_testing/versioning/query_helpers.py", "l2000_connection/connection_callback_results.py", "l2000_connection/connection_plan_workflows.py", "l2000_connection/plan_scopes.py", "l7000_versioned_schema/versioned_connection.py", "l9900_auto_api/_versioning_helpers.py"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-m244($n) :- node(_, $n, "identifier", _, _), text($n, $v241), $v241 in {"getattr", "hasattr"}.
-m244($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v242), node(_, $v242, "identifier", _, _), text($v242, $v243), $v243 in {"getattr", "hasattr"}.
-m249($n) :- node(_, $n, "string", _, _).
-m249($n) :- node(_, $n, "concatenated_string", _, _).
-m252($n) :- node(_, $n, "string", _, _).
-m252($n) :- node(_, $n, "concatenated_string", _, _).
-m257($n) :- node(_, $n, "assignment", _, _).
-m257($n) :- node(_, $n, "augmented_assignment", _, _).
-m257($n) :- node(_, $n, "for_statement", _, _).
-m257($n) :- node(_, $n, "for_in_clause", _, _).
-m259($n) :- node(_, $n, "pattern_list", _, _).
-m259($n) :- node(_, $n, "tuple_pattern", _, _).
-m259($n) :- node(_, $n, "list_pattern", _, _).
-m259($n) :- node(_, $n, "tuple", _, _).
-m259($n) :- node(_, $n, "list", _, _).
-m259($n) :- node(_, $n, "list_splat_pattern", _, _).
-m259($n) :- node(_, $n, "parenthesized_expression", _, _).
-m263($n) :- field($v256, "left", $n), m257($v256).
-m263($n) :- child($v258, $n, _), m259($v258), u255($v258).
-m263($n) :- child($v260, $n, _), node(_, $v260, "as_pattern_target", _, _), field($v261, "alias", $v260), node(_, $v261, "as_pattern", _, _), child($v262, $v261, _), node(_, $v262, "with_item", _, _).
-u255($n) :- m263($n).
-blocked265($low, $high) :- inside($low, $s, k1), node(_, $s, "function_definition", _, _), inside($s, $high, k1).
-m268($n) :- inside($n, $v264, k1), !blocked265($n, $v264), node(_, $v264, "function_definition", _, _), field($v264, "name", $v266), node(_, $v266, "identifier", _, _), text($v266, $v267), $v267 in {"__aenter__", "__aexit__", "__enter__", "__exit__", "__init__", "_bind_versioned_write_plan_owner", "_cleanup_and_restore_callback_versioned_write_plan", "_cleanup_and_restore_callback_versioned_write_plan_async", "_restore_versioned_write_plan_owner"}.
-m276($n) :- node(_, $n, "module", _, _), node($v269, $n, _, _, _), node($v269, $v270, _, _, _), name($v270, $v271), @contains($v271, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
-m276($n) :- inside($n, $v272, k0), node(_, $v272, "module", _, _), node($v273, $v272, _, _, _), node($v273, $v274, _, _, _), name($v274, $v275), @contains($v275, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
-violation("data-layer-plan-scope-ownership", "callback-owner", "PSO010", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v253), node(_, $v253, "identifier", _, _), text($v253, $v254), $v254 = "_callback_versioned_txn", u255($n), !m268($n), m276($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m238($n) :- node(_, $n, "module", _, _), node($v231, $n, _, _, _), node($v231, $v232, _, _, _), name($v232, $v233), @contains($v233, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
+m238($n) :- inside($n, $v234, k0), node(_, $v234, "module", _, _), node($v235, $v234, _, _, _), node($v235, $v236, _, _, _), name($v236, $v237), @contains($v237, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
+violation("data-layer-plan-scope-ownership", "nested-terminal", "PSO006", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v223), m227($v223), nearest($n, $v228, k1), node(_, $v228, "function_definition", _, _), field($v228, "name", $v229), name($v229, $v230), @contains($v230, "nested_versioned"), m238($n), doc($d, $p, $m), $p in {"conform/versioned_plan_scope_helpers.py", "data_layer_testing/versioning/query_helpers.py", "l2000_connection/connection_callback_results.py", "l2000_connection/connection_plan_workflows.py", "l2000_connection/plan_scopes.py", "l7000_versioned_schema/versioned_connection.py", "l9900_auto_api/_versioning_helpers.py"}, node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m243($n) :- node(_, $n, "identifier", _, _), text($n, $v240), $v240 in {"getattr", "hasattr"}.
+m243($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v241), node(_, $v241, "identifier", _, _), text($v241, $v242), $v242 in {"getattr", "hasattr"}.
+m248($n) :- node(_, $n, "string", _, _).
+m248($n) :- node(_, $n, "concatenated_string", _, _).
+m251($n) :- node(_, $n, "string", _, _).
+m251($n) :- node(_, $n, "concatenated_string", _, _).
+m256($n) :- node(_, $n, "assignment", _, _).
+m256($n) :- node(_, $n, "augmented_assignment", _, _).
+m256($n) :- node(_, $n, "for_statement", _, _).
+m256($n) :- node(_, $n, "for_in_clause", _, _).
+m258($n) :- node(_, $n, "pattern_list", _, _).
+m258($n) :- node(_, $n, "tuple_pattern", _, _).
+m258($n) :- node(_, $n, "list_pattern", _, _).
+m258($n) :- node(_, $n, "tuple", _, _).
+m258($n) :- node(_, $n, "list", _, _).
+m258($n) :- node(_, $n, "list_splat_pattern", _, _).
+m258($n) :- node(_, $n, "parenthesized_expression", _, _).
+m262($n) :- field($v255, "left", $n), m256($v255).
+m262($n) :- child($v257, $n, _), m258($v257), u254($v257).
+m262($n) :- child($v259, $n, _), node(_, $v259, "as_pattern_target", _, _), field($v260, "alias", $v259), node(_, $v260, "as_pattern", _, _), child($v261, $v260, _), node(_, $v261, "with_item", _, _).
+u254($n) :- m262($n).
+m266($n) :- nearest($n, $v263, k1), node(_, $v263, "function_definition", _, _), field($v263, "name", $v264), node(_, $v264, "identifier", _, _), text($v264, $v265), $v265 in {"__aenter__", "__aexit__", "__enter__", "__exit__", "__init__", "_bind_versioned_write_plan_owner", "_cleanup_and_restore_callback_versioned_write_plan", "_cleanup_and_restore_callback_versioned_write_plan_async", "_restore_versioned_write_plan_owner"}.
+m274($n) :- node(_, $n, "module", _, _), node($v267, $n, _, _, _), node($v267, $v268, _, _, _), name($v268, $v269), @contains($v269, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
+m274($n) :- inside($n, $v270, k0), node(_, $v270, "module", _, _), node($v271, $v270, _, _, _), node($v271, $v272, _, _, _), name($v272, $v273), @contains($v273, {"PlanScope", "VersionedPlanScope", "_callback_versioned_txn", "execute_read_workflow", "execute_write_workflow", "imported_contract", "run_read_plan_scope_workflow", "run_write_plan_scope_workflow"}).
+violation("data-layer-plan-scope-ownership", "callback-owner", "PSO010", $p, $l) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v252), node(_, $v252, "identifier", _, _), text($v252, $v253), $v253 = "_callback_versioned_txn", u254($n), !m266($n), m274($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

@@ -6,80 +6,74 @@
 .decl name(n: node, s: sym)
 .input doc, node, child, field, text, name
 .kindset k0 = "class_definition"
-.decl blocked121(low: node, high: node)
-.decl blocked160(low: node, high: node)
-.decl blocked199(low: node, high: node)
-.decl blocked4(low: node, high: node)
-.decl blocked43(low: node, high: node)
-.decl blocked82(low: node, high: node)
 .decl in_scope(d: int)
-.decl m100(n: node)
-.decl m108(n: node)
+.decl m10(n: node)
+.decl m105(n: node)
+.decl m106(n: node)
 .decl m109(n: node)
-.decl m11(n: node)
-.decl m112(n: node)
-.decl m116(n: node)
-.decl m125(n: node)
-.decl m128(n: node)
+.decl m113(n: node)
+.decl m121(n: node)
+.decl m124(n: node)
+.decl m131(n: node)
+.decl m132(n: node)
+.decl m134(n: node)
 .decl m135(n: node)
-.decl m136(n: node)
-.decl m138(n: node)
-.decl m139(n: node)
+.decl m143(n: node)
+.decl m144(n: node)
 .decl m147(n: node)
-.decl m148(n: node)
 .decl m151(n: node)
-.decl m155(n: node)
-.decl m164(n: node)
-.decl m167(n: node)
-.decl m174(n: node)
-.decl m175(n: node)
-.decl m177(n: node)
-.decl m178(n: node)
+.decl m159(n: node)
+.decl m162(n: node)
+.decl m169(n: node)
+.decl m17(n: node)
+.decl m170(n: node)
+.decl m172(n: node)
+.decl m173(n: node)
 .decl m18(n: node)
-.decl m186(n: node)
-.decl m187(n: node)
-.decl m19(n: node)
-.decl m190(n: node)
-.decl m194(n: node)
-.decl m203(n: node)
-.decl m206(n: node)
+.decl m181(n: node)
+.decl m182(n: node)
+.decl m185(n: node)
+.decl m189(n: node)
+.decl m197(n: node)
+.decl m20(n: node)
+.decl m200(n: node)
+.decl m207(n: node)
+.decl m208(n: node)
 .decl m21(n: node)
-.decl m213(n: node)
-.decl m214(n: node)
-.decl m216(n: node)
-.decl m217(n: node)
-.decl m22(n: node)
-.decl m225(n: node)
-.decl m226(n: node)
-.decl m229(n: node)
-.decl m233(n: node)
+.decl m210(n: node)
+.decl m211(n: node)
+.decl m219(n: node)
+.decl m220(n: node)
+.decl m223(n: node)
+.decl m227(n: node)
+.decl m29(n: node)
 .decl m30(n: node)
-.decl m31(n: node)
-.decl m34(n: node)
-.decl m38(n: node)
-.decl m47(n: node)
-.decl m50(n: node)
-.decl m57(n: node)
+.decl m33(n: node)
+.decl m37(n: node)
+.decl m45(n: node)
+.decl m48(n: node)
+.decl m55(n: node)
+.decl m56(n: node)
 .decl m58(n: node)
-.decl m60(n: node)
-.decl m61(n: node)
-.decl m69(n: node)
-.decl m70(n: node)
-.decl m73(n: node)
-.decl m77(n: node)
-.decl m8(n: node)
+.decl m59(n: node)
+.decl m67(n: node)
+.decl m68(n: node)
+.decl m7(n: node)
+.decl m71(n: node)
+.decl m75(n: node)
+.decl m83(n: node)
 .decl m86(n: node)
-.decl m89(n: node)
+.decl m93(n: node)
+.decl m94(n: node)
 .decl m96(n: node)
 .decl m97(n: node)
-.decl m99(n: node)
 .decl out_scope(d: int)
-.decl u131(n: node)
-.decl u14(n: node)
-.decl u170(n: node)
-.decl u209(n: node)
-.decl u53(n: node)
-.decl u92(n: node)
+.decl u127(n: node)
+.decl u13(n: node)
+.decl u165(n: node)
+.decl u203(n: node)
+.decl u51(n: node)
+.decl u89(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
@@ -93,106 +87,100 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
-blocked4($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m8($n) :- node(_, $n, "identifier", _, _), text($n, $v7), $v7 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
-m11($n) :- name($n, $v10), @glob($v10, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
-m18($n) :- node(_, $n, "identifier", _, _), text($n, $v15), $v15 in {"ABC", "Protocol"}.
-m18($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v16), node(_, $v16, "identifier", _, _), text($v16, $v17), $v17 in {"ABC", "Protocol"}.
-m19($n) :- node(_, $n, "subscript", _, _).
-m19($n) :- node(_, $n, "generic_type", _, _).
-m21($n) :- m18($n).
-m21($n) :- m19($n), child($n, $v20, _), u14($v20).
-u14($n) :- m21($n).
-m22($n) :- field($n, "superclasses", $v12), child($v12, $v13, _), u14($v13).
-m30($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v25), node(_, $v25, "identifier", _, _), text($v25, $v26), $v26 = "execute_lazy".
-m30($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v27, _), node(_, $v27, "function_definition", _, _), field($v27, "name", $v28), node(_, $v28, "identifier", _, _), text($v28, $v29), $v29 = "execute_lazy".
-m31($n) :- field($n, "body", $v23), child($v23, $v24, _), m30($v24).
-m34($n) :- field($n, "return_type", $v32), name($v32, $v33), @contains($v33, {"DeferredFuture", "LazyResult", "LazySeq"}).
-m38($n) :- node(_, $n, "pass_statement", _, _).
-m38($n) :- node(_, $n, "expression_statement", _, _), child($n, $v37, _), node(_, $v37, "ellipsis", _, _).
-blocked43($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m47($n) :- node(_, $n, "identifier", _, _), text($n, $v46), $v46 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
-m50($n) :- name($n, $v49), @glob($v49, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
-m57($n) :- node(_, $n, "identifier", _, _), text($n, $v54), $v54 in {"ABC", "Protocol"}.
-m57($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v55), node(_, $v55, "identifier", _, _), text($v55, $v56), $v56 in {"ABC", "Protocol"}.
-m58($n) :- node(_, $n, "subscript", _, _).
-m58($n) :- node(_, $n, "generic_type", _, _).
-m60($n) :- m57($n).
-m60($n) :- m58($n), child($n, $v59, _), u53($v59).
-u53($n) :- m60($n).
-m61($n) :- field($n, "superclasses", $v51), child($v51, $v52, _), u53($v52).
-m69($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v64), node(_, $v64, "identifier", _, _), text($v64, $v65), $v65 in {"execute_lazy", "first_lazy"}.
-m69($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v66, _), node(_, $v66, "function_definition", _, _), field($v66, "name", $v67), node(_, $v67, "identifier", _, _), text($v67, $v68), $v68 in {"execute_lazy", "first_lazy"}.
-m70($n) :- field($n, "body", $v62), child($v62, $v63, _), m69($v63).
-m73($n) :- field($n, "return_type", $v71), name($v71, $v72), @contains($v72, {"DeferredFuture", "LazyResult", "LazySeq"}).
-m77($n) :- node(_, $n, "pass_statement", _, _).
-m77($n) :- node(_, $n, "expression_statement", _, _), child($n, $v76, _), node(_, $v76, "ellipsis", _, _).
-blocked82($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m86($n) :- node(_, $n, "identifier", _, _), text($n, $v85), $v85 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
-m89($n) :- name($n, $v88), @glob($v88, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
-m96($n) :- node(_, $n, "identifier", _, _), text($n, $v93), $v93 in {"ABC", "Protocol"}.
-m96($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v94), node(_, $v94, "identifier", _, _), text($v94, $v95), $v95 in {"ABC", "Protocol"}.
-m97($n) :- node(_, $n, "subscript", _, _).
-m97($n) :- node(_, $n, "generic_type", _, _).
-m99($n) :- m96($n).
-m99($n) :- m97($n), child($n, $v98, _), u92($v98).
-u92($n) :- m99($n).
-m100($n) :- field($n, "superclasses", $v90), child($v90, $v91, _), u92($v91).
-m108($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v103), node(_, $v103, "identifier", _, _), text($v103, $v104), $v104 in {"execute_lazy", "one_lazy"}.
-m108($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v105, _), node(_, $v105, "function_definition", _, _), field($v105, "name", $v106), node(_, $v106, "identifier", _, _), text($v106, $v107), $v107 in {"execute_lazy", "one_lazy"}.
-m109($n) :- field($n, "body", $v101), child($v101, $v102, _), m108($v102).
-m112($n) :- field($n, "return_type", $v110), name($v110, $v111), @contains($v111, {"DeferredFuture", "LazyResult", "LazySeq"}).
-m116($n) :- node(_, $n, "pass_statement", _, _).
-m116($n) :- node(_, $n, "expression_statement", _, _), child($n, $v115, _), node(_, $v115, "ellipsis", _, _).
-blocked121($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m125($n) :- node(_, $n, "identifier", _, _), text($n, $v124), $v124 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
-m128($n) :- name($n, $v127), @glob($v127, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
-m135($n) :- node(_, $n, "identifier", _, _), text($n, $v132), $v132 in {"ABC", "Protocol"}.
-m135($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v133), node(_, $v133, "identifier", _, _), text($v133, $v134), $v134 in {"ABC", "Protocol"}.
-m136($n) :- node(_, $n, "subscript", _, _).
-m136($n) :- node(_, $n, "generic_type", _, _).
-m138($n) :- m135($n).
-m138($n) :- m136($n), child($n, $v137, _), u131($v137).
-u131($n) :- m138($n).
-m139($n) :- field($n, "superclasses", $v129), child($v129, $v130, _), u131($v130).
-m147($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v142), node(_, $v142, "identifier", _, _), text($v142, $v143), $v143 in {"execute_lazy", "one_or_none_lazy"}.
-m147($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v144, _), node(_, $v144, "function_definition", _, _), field($v144, "name", $v145), node(_, $v145, "identifier", _, _), text($v145, $v146), $v146 in {"execute_lazy", "one_or_none_lazy"}.
-m148($n) :- field($n, "body", $v140), child($v140, $v141, _), m147($v141).
-m151($n) :- field($n, "return_type", $v149), name($v149, $v150), @contains($v150, {"DeferredFuture", "LazyResult", "LazySeq"}).
-m155($n) :- node(_, $n, "pass_statement", _, _).
-m155($n) :- node(_, $n, "expression_statement", _, _), child($n, $v154, _), node(_, $v154, "ellipsis", _, _).
-blocked160($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m164($n) :- node(_, $n, "identifier", _, _), text($n, $v163), $v163 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
-m167($n) :- name($n, $v166), @glob($v166, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
-m174($n) :- node(_, $n, "identifier", _, _), text($n, $v171), $v171 in {"ABC", "Protocol"}.
-m174($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v172), node(_, $v172, "identifier", _, _), text($v172, $v173), $v173 in {"ABC", "Protocol"}.
-m175($n) :- node(_, $n, "subscript", _, _).
-m175($n) :- node(_, $n, "generic_type", _, _).
-m177($n) :- m174($n).
-m177($n) :- m175($n), child($n, $v176, _), u170($v176).
-u170($n) :- m177($n).
-m178($n) :- field($n, "superclasses", $v168), child($v168, $v169, _), u170($v169).
-m186($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v181), node(_, $v181, "identifier", _, _), text($v181, $v182), $v182 in {"execute_lazy", "select_one_lazy"}.
-m186($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v183, _), node(_, $v183, "function_definition", _, _), field($v183, "name", $v184), node(_, $v184, "identifier", _, _), text($v184, $v185), $v185 in {"execute_lazy", "select_one_lazy"}.
-m187($n) :- field($n, "body", $v179), child($v179, $v180, _), m186($v180).
-m190($n) :- field($n, "return_type", $v188), name($v188, $v189), @contains($v189, {"DeferredFuture", "LazyResult", "LazySeq"}).
-m194($n) :- node(_, $n, "pass_statement", _, _).
-m194($n) :- node(_, $n, "expression_statement", _, _), child($n, $v193, _), node(_, $v193, "ellipsis", _, _).
-blocked199($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
-m203($n) :- node(_, $n, "identifier", _, _), text($n, $v202), $v202 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
-m206($n) :- name($n, $v205), @glob($v205, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
-m213($n) :- node(_, $n, "identifier", _, _), text($n, $v210), $v210 in {"ABC", "Protocol"}.
-m213($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v211), node(_, $v211, "identifier", _, _), text($v211, $v212), $v212 in {"ABC", "Protocol"}.
-m214($n) :- node(_, $n, "subscript", _, _).
-m214($n) :- node(_, $n, "generic_type", _, _).
-m216($n) :- m213($n).
-m216($n) :- m214($n), child($n, $v215, _), u209($v215).
-u209($n) :- m216($n).
-m217($n) :- field($n, "superclasses", $v207), child($v207, $v208, _), u209($v208).
-m225($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v220), node(_, $v220, "identifier", _, _), text($v220, $v221), $v221 = "select_one_or_raise_lazy".
-m225($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v222, _), node(_, $v222, "function_definition", _, _), field($v222, "name", $v223), node(_, $v223, "identifier", _, _), text($v223, $v224), $v224 = "select_one_or_raise_lazy".
-m226($n) :- field($n, "body", $v218), child($v218, $v219, _), m225($v219).
-m229($n) :- field($n, "return_type", $v227), name($v227, $v228), @contains($v228, {"DeferredFuture", "LazyResult", "LazySeq"}).
-m233($n) :- node(_, $n, "pass_statement", _, _).
-m233($n) :- node(_, $n, "expression_statement", _, _), child($n, $v232, _), node(_, $v232, "ellipsis", _, _).
+m7($n) :- node(_, $n, "identifier", _, _), text($n, $v6), $v6 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
+m10($n) :- name($n, $v9), @glob($v9, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
+m17($n) :- node(_, $n, "identifier", _, _), text($n, $v14), $v14 in {"ABC", "Protocol"}.
+m17($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v15), node(_, $v15, "identifier", _, _), text($v15, $v16), $v16 in {"ABC", "Protocol"}.
+m18($n) :- node(_, $n, "subscript", _, _).
+m18($n) :- node(_, $n, "generic_type", _, _).
+m20($n) :- m17($n).
+m20($n) :- m18($n), child($n, $v19, _), u13($v19).
+u13($n) :- m20($n).
+m21($n) :- field($n, "superclasses", $v11), child($v11, $v12, _), u13($v12).
+m29($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v24), node(_, $v24, "identifier", _, _), text($v24, $v25), $v25 = "execute_lazy".
+m29($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v26, _), node(_, $v26, "function_definition", _, _), field($v26, "name", $v27), node(_, $v27, "identifier", _, _), text($v27, $v28), $v28 = "execute_lazy".
+m30($n) :- field($n, "body", $v22), child($v22, $v23, _), m29($v23).
+m33($n) :- field($n, "return_type", $v31), name($v31, $v32), @contains($v32, {"DeferredFuture", "LazyResult", "LazySeq"}).
+m37($n) :- node(_, $n, "pass_statement", _, _).
+m37($n) :- node(_, $n, "expression_statement", _, _), child($n, $v36, _), node(_, $v36, "ellipsis", _, _).
+m45($n) :- node(_, $n, "identifier", _, _), text($n, $v44), $v44 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
+m48($n) :- name($n, $v47), @glob($v47, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
+m55($n) :- node(_, $n, "identifier", _, _), text($n, $v52), $v52 in {"ABC", "Protocol"}.
+m55($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v53), node(_, $v53, "identifier", _, _), text($v53, $v54), $v54 in {"ABC", "Protocol"}.
+m56($n) :- node(_, $n, "subscript", _, _).
+m56($n) :- node(_, $n, "generic_type", _, _).
+m58($n) :- m55($n).
+m58($n) :- m56($n), child($n, $v57, _), u51($v57).
+u51($n) :- m58($n).
+m59($n) :- field($n, "superclasses", $v49), child($v49, $v50, _), u51($v50).
+m67($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v62), node(_, $v62, "identifier", _, _), text($v62, $v63), $v63 in {"execute_lazy", "first_lazy"}.
+m67($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v64, _), node(_, $v64, "function_definition", _, _), field($v64, "name", $v65), node(_, $v65, "identifier", _, _), text($v65, $v66), $v66 in {"execute_lazy", "first_lazy"}.
+m68($n) :- field($n, "body", $v60), child($v60, $v61, _), m67($v61).
+m71($n) :- field($n, "return_type", $v69), name($v69, $v70), @contains($v70, {"DeferredFuture", "LazyResult", "LazySeq"}).
+m75($n) :- node(_, $n, "pass_statement", _, _).
+m75($n) :- node(_, $n, "expression_statement", _, _), child($n, $v74, _), node(_, $v74, "ellipsis", _, _).
+m83($n) :- node(_, $n, "identifier", _, _), text($n, $v82), $v82 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
+m86($n) :- name($n, $v85), @glob($v85, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
+m93($n) :- node(_, $n, "identifier", _, _), text($n, $v90), $v90 in {"ABC", "Protocol"}.
+m93($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v91), node(_, $v91, "identifier", _, _), text($v91, $v92), $v92 in {"ABC", "Protocol"}.
+m94($n) :- node(_, $n, "subscript", _, _).
+m94($n) :- node(_, $n, "generic_type", _, _).
+m96($n) :- m93($n).
+m96($n) :- m94($n), child($n, $v95, _), u89($v95).
+u89($n) :- m96($n).
+m97($n) :- field($n, "superclasses", $v87), child($v87, $v88, _), u89($v88).
+m105($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v100), node(_, $v100, "identifier", _, _), text($v100, $v101), $v101 in {"execute_lazy", "one_lazy"}.
+m105($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v102, _), node(_, $v102, "function_definition", _, _), field($v102, "name", $v103), node(_, $v103, "identifier", _, _), text($v103, $v104), $v104 in {"execute_lazy", "one_lazy"}.
+m106($n) :- field($n, "body", $v98), child($v98, $v99, _), m105($v99).
+m109($n) :- field($n, "return_type", $v107), name($v107, $v108), @contains($v108, {"DeferredFuture", "LazyResult", "LazySeq"}).
+m113($n) :- node(_, $n, "pass_statement", _, _).
+m113($n) :- node(_, $n, "expression_statement", _, _), child($n, $v112, _), node(_, $v112, "ellipsis", _, _).
+m121($n) :- node(_, $n, "identifier", _, _), text($n, $v120), $v120 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
+m124($n) :- name($n, $v123), @glob($v123, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
+m131($n) :- node(_, $n, "identifier", _, _), text($n, $v128), $v128 in {"ABC", "Protocol"}.
+m131($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v129), node(_, $v129, "identifier", _, _), text($v129, $v130), $v130 in {"ABC", "Protocol"}.
+m132($n) :- node(_, $n, "subscript", _, _).
+m132($n) :- node(_, $n, "generic_type", _, _).
+m134($n) :- m131($n).
+m134($n) :- m132($n), child($n, $v133, _), u127($v133).
+u127($n) :- m134($n).
+m135($n) :- field($n, "superclasses", $v125), child($v125, $v126, _), u127($v126).
+m143($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v138), node(_, $v138, "identifier", _, _), text($v138, $v139), $v139 in {"execute_lazy", "one_or_none_lazy"}.
+m143($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v140, _), node(_, $v140, "function_definition", _, _), field($v140, "name", $v141), node(_, $v141, "identifier", _, _), text($v141, $v142), $v142 in {"execute_lazy", "one_or_none_lazy"}.
+m144($n) :- field($n, "body", $v136), child($v136, $v137, _), m143($v137).
+m147($n) :- field($n, "return_type", $v145), name($v145, $v146), @contains($v146, {"DeferredFuture", "LazyResult", "LazySeq"}).
+m151($n) :- node(_, $n, "pass_statement", _, _).
+m151($n) :- node(_, $n, "expression_statement", _, _), child($n, $v150, _), node(_, $v150, "ellipsis", _, _).
+m159($n) :- node(_, $n, "identifier", _, _), text($n, $v158), $v158 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
+m162($n) :- name($n, $v161), @glob($v161, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
+m169($n) :- node(_, $n, "identifier", _, _), text($n, $v166), $v166 in {"ABC", "Protocol"}.
+m169($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v167), node(_, $v167, "identifier", _, _), text($v167, $v168), $v168 in {"ABC", "Protocol"}.
+m170($n) :- node(_, $n, "subscript", _, _).
+m170($n) :- node(_, $n, "generic_type", _, _).
+m172($n) :- m169($n).
+m172($n) :- m170($n), child($n, $v171, _), u165($v171).
+u165($n) :- m172($n).
+m173($n) :- field($n, "superclasses", $v163), child($v163, $v164, _), u165($v164).
+m181($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v176), node(_, $v176, "identifier", _, _), text($v176, $v177), $v177 in {"execute_lazy", "select_one_lazy"}.
+m181($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v178, _), node(_, $v178, "function_definition", _, _), field($v178, "name", $v179), node(_, $v179, "identifier", _, _), text($v179, $v180), $v180 in {"execute_lazy", "select_one_lazy"}.
+m182($n) :- field($n, "body", $v174), child($v174, $v175, _), m181($v175).
+m185($n) :- field($n, "return_type", $v183), name($v183, $v184), @contains($v184, {"DeferredFuture", "LazyResult", "LazySeq"}).
+m189($n) :- node(_, $n, "pass_statement", _, _).
+m189($n) :- node(_, $n, "expression_statement", _, _), child($n, $v188, _), node(_, $v188, "ellipsis", _, _).
+m197($n) :- node(_, $n, "identifier", _, _), text($n, $v196), $v196 in {"AsyncConnectionWrapper", "AsyncCursor", "BaseDeferredQuery", "Connection", "Cursor", "DeferredInsertFromQueryBuilder", "InProcessExecutor", "JobExecutor", "MigrationExecutorProtocol", "SyncExecutor"}.
+m200($n) :- name($n, $v199), @glob($v199, {"Async*", "Lazy*", "_Async*", "_Lazy*", "__Async*", "__Lazy*", "___Async*", "___Lazy*"}).
+m207($n) :- node(_, $n, "identifier", _, _), text($n, $v204), $v204 in {"ABC", "Protocol"}.
+m207($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v205), node(_, $v205, "identifier", _, _), text($v205, $v206), $v206 in {"ABC", "Protocol"}.
+m208($n) :- node(_, $n, "subscript", _, _).
+m208($n) :- node(_, $n, "generic_type", _, _).
+m210($n) :- m207($n).
+m210($n) :- m208($n), child($n, $v209, _), u203($v209).
+u203($n) :- m210($n).
+m211($n) :- field($n, "superclasses", $v201), child($v201, $v202, _), u203($v202).
+m219($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v214), node(_, $v214, "identifier", _, _), text($v214, $v215), $v215 = "select_one_or_raise_lazy".
+m219($n) :- node(_, $n, "decorated_definition", _, _), child($n, $v216, _), node(_, $v216, "function_definition", _, _), field($v216, "name", $v217), node(_, $v217, "identifier", _, _), text($v217, $v218), $v218 = "select_one_or_raise_lazy".
+m220($n) :- field($n, "body", $v212), child($v212, $v213, _), m219($v213).
+m223($n) :- field($n, "return_type", $v221), name($v221, $v222), @contains($v222, {"DeferredFuture", "LazyResult", "LazySeq"}).
+m227($n) :- node(_, $n, "pass_statement", _, _).
+m227($n) :- node(_, $n, "expression_statement", _, _), child($n, $v226, _), node(_, $v226, "ellipsis", _, _).
 .output violation

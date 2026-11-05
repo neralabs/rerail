@@ -8,21 +8,20 @@
 .input doc, node, child, field, text, name, op
 .kindset k0 = "function_definition"
 .kindset k1 = "class_definition"
-.decl blocked21(low: node, high: node)
 .decl in_scope(d: int)
-.decl m24(n: node)
-.decl m31(n: node)
+.decl m23(n: node)
+.decl m30(n: node)
+.decl m38(n: node)
 .decl m39(n: node)
 .decl m4(n: node)
-.decl m40(n: node)
+.decl m47(n: node)
 .decl m48(n: node)
-.decl m49(n: node)
-.decl m59(n: node)
+.decl m58(n: node)
 .decl out_scope(d: int)
 .decl u1(n: node)
-.decl u56(n: node)
+.decl u55(n: node)
 .decl u6(n: node)
-.decl u61(n: node)
+.decl u60(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2100_sql_grammar/**/*.py").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
@@ -33,16 +32,15 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 m4($n) :- node(_, $n, "identifier", _, _), text($n, $v3), $v3 = "self".
-blocked21($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m24($n) :- field($n, "name", $v22), node(_, $v22, "identifier", _, _), text($v22, $v23), $v23 in {"CheckExpressionLexer", "SqlAdminToolRawStatement", "SqlColumnConstraint", "SqlColumnType", "SqlEscapedLiteral", "SqlExplain", "SqlFragment", "SqlHybridSearchQuery", "SqlIntegerLiteral", "SqlPreRenderedFragment", "SqlQuotedIdentifier", "SqlTypeRef", "ViewDefinition", "sql_ddl_comment"}.
-m31($n) :- node(_, $n, "identifier", _, _), text($n, $v27), @prefix($v27, {"Sql", "_Sql"}).
-m31($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v28), name($v28, $v30), @prefix($v30, {"Sql", "_Sql"}).
-m39($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v34), node(_, $v34, "identifier", _, _), text($v34, $v35), $v35 = "render", !op($n, "async").
-m39($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v36), node(_, $v36, "function_definition", _, _), field($v36, "name", $v37), node(_, $v37, "identifier", _, _), text($v37, $v38), $v38 = "render", !op($v36, "async").
-m40($n) :- field($n, "superclasses", $v25), child($v25, $v26, _), m31($v26).
-m40($n) :- field($n, "body", $v32), child($v32, $v33, _), m39($v33).
-m48($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v43), node(_, $v43, "identifier", _, _), text($v43, $v44), $v44 = "__init__", !op($n, "async").
-m48($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v45), node(_, $v45, "function_definition", _, _), field($v45, "name", $v46), node(_, $v46, "identifier", _, _), text($v46, $v47), $v47 = "__init__", !op($v45, "async").
-m49($n) :- field($n, "body", $v41), child($v41, $v42, _), m48($v42).
-m59($n) :- node(_, $n, "identifier", _, _), text($n, $v58), $v58 = "self".
+m23($n) :- field($n, "name", $v21), node(_, $v21, "identifier", _, _), text($v21, $v22), $v22 in {"CheckExpressionLexer", "SqlAdminToolRawStatement", "SqlColumnConstraint", "SqlColumnType", "SqlEscapedLiteral", "SqlExplain", "SqlFragment", "SqlHybridSearchQuery", "SqlIntegerLiteral", "SqlPreRenderedFragment", "SqlQuotedIdentifier", "SqlTypeRef", "ViewDefinition", "sql_ddl_comment"}.
+m30($n) :- node(_, $n, "identifier", _, _), text($n, $v26), @prefix($v26, {"Sql", "_Sql"}).
+m30($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v27), name($v27, $v29), @prefix($v29, {"Sql", "_Sql"}).
+m38($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v33), node(_, $v33, "identifier", _, _), text($v33, $v34), $v34 = "render", !op($n, "async").
+m38($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v35), node(_, $v35, "function_definition", _, _), field($v35, "name", $v36), node(_, $v36, "identifier", _, _), text($v36, $v37), $v37 = "render", !op($v35, "async").
+m39($n) :- field($n, "superclasses", $v24), child($v24, $v25, _), m30($v25).
+m39($n) :- field($n, "body", $v31), child($v31, $v32, _), m38($v32).
+m47($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v42), node(_, $v42, "identifier", _, _), text($v42, $v43), $v43 = "__init__", !op($n, "async").
+m47($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v44), node(_, $v44, "function_definition", _, _), field($v44, "name", $v45), node(_, $v45, "identifier", _, _), text($v45, $v46), $v46 = "__init__", !op($v44, "async").
+m48($n) :- field($n, "body", $v40), child($v40, $v41, _), m47($v41).
+m58($n) :- node(_, $n, "identifier", _, _), text($n, $v57), $v57 = "self".
 .output violation
