@@ -1,19 +1,26 @@
 /** Replay complete batch-ten observations through the native execution APIs. */
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { codeRuleSchema, loadNativeBinding, RESULT_PAGE_BYTES, type NativeCompiledCodeRuleDsl } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../engine.js";
 import { replayExecution } from "./execution.js";
 import type { NineOracle, NineRecord } from "./batch-nine.js";
 export type TenOracle = NineOracle;
 export type TenRecord = NineRecord;
+export function readTenOracle(path:string):TenOracle{
+  const oracle=JSON.parse((path.endsWith(".gz")?gunzipSync(readFileSync(path)):readFileSync(path)).toString("utf8")) as TenOracle;
+  // check_file embeds pytest's changing temporary root in its string result.
+  for(const record of oracle.records)if(record.check==="generated_index_sources"&&Array.isArray(record.expected))record.expected=record.expected.map(value=>typeof value==="string"?value.replace(/\/[^ ]*\/pytest-[0-9]+\/[^/]+\//g,""):value);
+  return oracle;
+}
 type Row = Record<string, string | number | null>;
 type Finding = { code: string; message: string; path: string; span: { startLine: number }; variables: { row: Row } };
 const compare = (left: unknown, right: unknown): number => typeof left === "number" && typeof right === "number" ? left - right : Buffer.compare(Buffer.from(String(left)), Buffer.from(String(right)));
 export const canonical = (values: unknown): unknown => Array.isArray(values) ? [...values].sort((a,b) => compare(JSON.stringify(a),JSON.stringify(b))) : values;
 export function tenResult(record: TenRecord, findings: Finding[]): unknown {
   const rows = findings.map(f => f.variables.row);
-  const order = (r: Row) => record.check === "conditional_architecture" ? [r.issue,r.path,r.line,r.message]
+  const order = (r: Row) => record.check === "conditional_architecture" ? record.entry==="conditional_architecture_findings"?[r.path,r.line,r.message]:[r.issue,r.path,r.line,r.message]
     : ["hnsw_architecture","bounded_composed_graph_paths","matching_architecture"].includes(record.check) ? [r.path,r.line,r.issue,r.message]
     : record.check === "plan_optimizer_v2" && record.entry === "find_violations" ? [r.path,r.line,r.issue]
     : [r.phase ?? 0,r.sort_name ?? "",r.ordering ?? 0,r.issue];
@@ -32,7 +39,7 @@ export function tenResult(record: TenRecord, findings: Finding[]): unknown {
         const digest=createHash("sha256").update(String(path)).update("\0").update(source??"").digest("hex").slice(0,16);
         return {file_path:record.entry==="scan_source"?`tmp/embedding_vector_orchestration_scan/${digest}/${path}`:path,line,qualname:row.qualname,code,message};
       }
-      case "conditional_architecture":return {rule:code,file:path,line,message};
+      case "conditional_architecture":return record.entry==="conditional_architecture_findings"?{path,line,message}:{rule:code,file:path,line,message};
       case "matching_architecture":return {code,path,line,symbol:row.symbol,message};
       case "plan_optimizer_v2":return {file_path:path,line,code,message};
       default:return {code,path,line,message};
@@ -44,8 +51,13 @@ export class TenReplay {
   private readonly execution=replayExecution();
   constructor(private readonly directory="packs/data-layer/rules",private readonly mutant=false){}
   close():void{this.execution.close();}
-  async run(oracle:TenOracle,record:TenRecord,mode:"snapshot"|"workspace",production=false):Promise<unknown>{
+  async run(oracle:TenOracle,record:TenRecord,mode:"snapshot"|"workspace",production=false,selectionOnly=false):Promise<unknown>{
     const authored=JSON.parse(readFileSync(`${this.directory}/data-layer-${record.check.replaceAll("_","-")}.json`,"utf8"));
+    if(selectionOnly){
+      if(record.check!=="matching_architecture"||!production)throw new Error("Selection probe requires matching production defaults");
+      const gate=authored.clauses.find((c:{id:string})=>c.id==="matching-file-checks").relational.inputs.gate;
+      authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"selection-observation",relational:{inputs:{gate},query:"SELECT DISTINCT __path path,0 start_byte,0 end_byte FROM gate"},violation:{code:"SELECTION",message:"Selected source",anchor:"witness.span"}}]);
+    }
     if(!production)for(const clause of authored.clauses)if(clause.define?.options!==undefined)clause.define.config={...clause.define.config,entryPoint:record.entry,parameters:JSON.stringify(record.parameters)};
     if(this.mutant)authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"disabled",forbid:{regex:{source:"file.content",pattern:"\\b\\B"}},violation:{code:"CONTROL",message:"Disabled",anchor:"witness.span"}}]);
     if(!production)authored.scope={include:["**/*"],exclude:[]};
@@ -62,6 +74,7 @@ export class TenReplay {
       }finally{workspace.close();}
     }
     if(result.failures.length)throw new Error(`${record.test}: ${JSON.stringify(result.failures)}`);
+    if(selectionOnly)return [...new Set(result.violations.map(f=>f.path))].sort();
     for(const finding of result.violations){const row=finding.variables.row;
       if(finding.code!==row.issue||finding.message!==row.message||finding.path!==row.path||finding.span.startLine+1!==row.line)throw new Error(`Public diagnostic differs from DTO: ${JSON.stringify(finding)}`);
     }

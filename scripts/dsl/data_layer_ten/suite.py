@@ -25,13 +25,22 @@ class Suite(NineSuite):
    return tree
   self.replace(ast,'parse',capture)
   self.modules={check:importlib.import_module('scripts.lint_'+check) for check in self.checks}
-  original_codes=codes(self.modules)
+  self.shared=importlib.import_module('scripts.conditional_architecture_facts')
+  original_codes=codes({**self.modules,'conditional_shared':self.shared})
   self.detector_codes={}
   for check,module in self.modules.items():
    for entry in ENTRIES[check]:
     if not hasattr(module,entry):continue
     original=getattr(module,entry);self.detector_codes[original.__code__]=check+':'+entry
     self.replace(module,entry,self.wrap(check,entry,module,original))
+  if 'conditional_architecture' in self.checks:
+   self.replace(self.shared,'conditional_architecture_findings',self.wrap('conditional_architecture','conditional_architecture_findings',self.shared,self.shared.conditional_architecture_findings))
+   if not self.oracle:
+    from scripts.lint_lib.ast_collectors import AstEventCollector
+    class SourceInventory(AstEventCollector):
+     # The host materializes source inventory. SQLite supplies all conditional decisions.
+     def finish_file(self):return {}
+    self.replace(self.shared,'ConditionalArchitectureCollector',SourceInventory)
   if not self.oracle:
    def guard(frame,event,arg):
     if event!='call':return
@@ -39,7 +48,7 @@ class Suite(NineSuite):
     if detail is not None:
      check,name,passive=detail;key=check+':'+name
      self.original_calls[key]=self.original_calls.get(key,0)+1
-     semantic=not passive and ('Collector.' in name or name in {'_extract_hnsw_architecture_facts','_source_facts','_scan_inventory','_scan_inventory_facts','_summary_from_tree','_run_graph_collector_on_tree'})
+     semantic=not passive and (check=='conditional_shared' or 'Collector.' in name or name in {'_extract_hnsw_architecture_facts','_source_facts','_scan_inventory','_scan_inventory_facts','_summary_from_tree','_run_graph_collector_on_tree'})
     else:semantic=False
     if frame.f_code in self.detector_codes or semantic:
      name=self.detector_codes.get(frame.f_code,check+':'+name);self.semantic_fallbacks.append(name);raise AssertionError('Original detector executed: '+name)
@@ -47,7 +56,12 @@ class Suite(NineSuite):
  def inputs(self,check,entry,module,arguments):
   root=Path(arguments.get('root') or getattr(module,'ROOT',getattr(module,'REPO_ROOT',self.root)))
   temporary=self.item.funcargs.get('tmp_path') if self.item else None
-  if temporary is not None:root=Path(temporary)
+  def temporary_path(value):
+   if isinstance(value,Path):return value.is_absolute() and value.is_relative_to(temporary)
+   if isinstance(value,dict):return any(temporary_path(v) for v in value.keys())
+   if isinstance(value,(tuple,list,set,frozenset)):return any(temporary_path(v) for v in value)
+   return False
+  if temporary is not None and (root==Path(temporary) or Path.cwd()==Path(temporary) or any(temporary_path(v) for v in arguments.values()) or 'view' in arguments):root=Path(temporary)
   parameters={};files=[];originals={}
   def add(path,source=None):
    path=Path(path);name=path.relative_to(root).as_posix() if path.is_absolute() and path.is_relative_to(root) else path.as_posix()
@@ -64,7 +78,8 @@ class Suite(NineSuite):
    else:
     for path in arguments['files']:add(path)
   elif check=='matching_architecture':
-   parameters['applicationPaths']=[str(p) for p in sorted(arguments.get('application_paths',()))]
+   application_paths=[str(p) for p in sorted(arguments.get('application_paths',()))]
+   if application_paths:parameters['applicationPaths']=application_paths
    if entry=='_scan_tree':
     text=tree_source(arguments['tree'],self.trees)
     if text is None:raise AssertionError('Missing original tree source')
@@ -78,12 +93,12 @@ class Suite(NineSuite):
      resolved=root/application
      if not resolved.is_dir():raise FileNotFoundError('Matching application root does not exist: '+str(application))
      for p in resolved.rglob('*.py'):
-      if 'tests' not in p.parts:paths.add(p);parameters['applicationPaths'].append(p.relative_to(root).as_posix())
-    for path in sorted(paths):
-     text=path.read_text();relative=path.relative_to(root)
-     if relative.as_posix() in parameters['applicationPaths'] or module._source_requires_matching_scan(relative,text):add(path,text)
+      if 'tests' not in p.parts:paths.add(p);parameters.setdefault('applicationPaths',[]).append(p.relative_to(root).as_posix())
+    for path in sorted(paths):add(path)
     add(root/'data_layer_testing/matching_operator.py')
     originals={name:Path(name) for name in originals}
+  elif check=='conditional_architecture' and entry=='conditional_architecture_findings':
+   for path in sorted(arguments['view'].files):add(path)
   elif check=='plan_optimizer_v2' and entry=='scan_file':add(arguments['path'],arguments['source'])
   elif check in {'bounded_composed_graph_paths','conditional_architecture','plan_optimizer_v2'}:
    for path in sorted(root.rglob('*')):
@@ -121,7 +136,7 @@ class Suite(NineSuite):
   values.sort(key=lambda r:(r['phase'],r.get('sort_name',''),r['ordering'],r['issue']))
   if check=='hnsw_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
   if check in {'bounded_composed_graph_paths','matching_architecture','plan_optimizer_v2'}:values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
-  if check=='conditional_architecture':values.sort(key=lambda r:(r['issue'],r['path'],r['line'],r['message']))
+  if check=='conditional_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['message']) if entry=='conditional_architecture_findings' else (r['issue'],r['path'],r['line'],r['message']))
   result=[]
   for r in values:
    path=originals.get(r['path'],Path(r['path']));line=r['line'];code=r['issue'];message=r['message']
@@ -131,7 +146,7 @@ class Suite(NineSuite):
    elif check=='schema_introspection_data_paths':value=module.Violation(path,line,r['call_name'],message)
    elif check=='embedding_vector_orchestration':value=module.Violation(path,line,r['qualname'],code,message)
    elif check=='graph_lazy_sql_plan':value=module.Violation(code,r['path'],line,message)
-   elif check=='conditional_architecture':value=module.Violation(code,path,line,message)
+   elif check=='conditional_architecture':value=module.ConditionalArchitectureFinding(path,line,message) if entry=='conditional_architecture_findings' else module.Violation(code,path,line,message)
    elif check=='matching_architecture':value=module.MatchingArchitectureFinding(code,path,line,r['symbol'],message)
    elif check=='plan_optimizer_v2':value=module.Finding(path,line,code,message)
    else:value=module.Violation(code,path,line,message)
@@ -142,10 +157,11 @@ class Suite(NineSuite):
 def main():
  p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--repo',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--policies',type=Path,required=True);p.add_argument('--oracle',action='store_true');p.add_argument('--baseline',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot');p.add_argument('--checks',default=','.join(CHECKS));p.add_argument('--mutant',action='store_true');p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);p.add_argument('tests',nargs='*');args=p.parse_args()
  workspace=Path.cwd();root=args.source.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True);os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
- baseline=expand(json.loads(args.baseline.read_text())) if args.baseline else None
+ from data_layer_ten.evidence import read_report
+ baseline=expand(read_report(args.baseline)) if args.baseline else None
  if not args.oracle and baseline is None:p.error('A recorded original baseline is required')
  checks=tuple(args.checks.split(','));from data_layer_nine.discovery import upstream_tests,independent_collections
- tests=args.tests or [*upstream_tests(root,checks),str(Path(__file__).with_name('optimizer_cases.py')),str(Path(__file__).with_name('audit_cases.py'))];os.chdir(root);backends=[];exitcodes=[]
+ tests=args.tests or [*upstream_tests(root,checks),str(root/'scripts/tests/test_conditional_architecture_facts.py'),str(Path(__file__).with_name('optimizer_cases.py')),str(Path(__file__).with_name('audit_cases.py')),str(Path(__file__).with_name('repair_cases.py')),str(Path(__file__).with_name('shape_cases.py'))];os.chdir(root);backends=[];exitcodes=[]
  for index,collection in enumerate(independent_collections(tests)):
   backend=Suite(root,workspace,args.mode,output.with_name(output.stem+f'-{index}.json'),args.oracle,baseline['records'] if baseline else None);backend.checks=checks;backend.part=args.part;backend.parts=args.parts;backend.mutant=args.mutant
   exitcodes.append(int(pytest.main(['--rootdir',str(root),'-c',str(root/'pyproject.toml'),'-q',*collection],plugins=[backend])));backends.append(backend)

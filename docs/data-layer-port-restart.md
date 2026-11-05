@@ -3,7 +3,8 @@
 Updated: 2026-11-05. Status: 100 ports are authored. Further batch-nine audits exposed public-contract, numeric-equality and file-presence gaps after the earlier repair claims.
 See [the completion audit](data-layer-batch-nine-audit.md). The historical complete repository result covers 80.
 
-Batch ten adds 326 original and original-evaluated cases, 203 complete API results, and 61 configured-default observations.
+Batch ten repairs the disproved completion claim with 744 original and original-evaluated cases, 621 complete API results, and 62 configured-default observations.
+Both native APIs receive the full matching inventory; source selection no longer runs in Python.
 See [its report](data-layer-batch-ten.md). The cumulative repository result still covers 80 rules.
 
 The recovery survey below describes the original 60-rule restart point.

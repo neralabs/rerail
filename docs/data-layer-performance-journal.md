@@ -6669,3 +6669,65 @@ Restricting discovery to `--dir test` gives the 403 passing current-checkout ass
 
 No cumulative cold benchmark was run. The previous complete repository measurement still covers 80 rules.
 No Linear issues were created.
+
+## 2026-11-05 — Batch-ten completion repair
+
+The earlier batch-ten completion claim was disproved. Treat its 326-case receipt as superseded.
+Nine audit inputs exposed four ports with incorrect results through both native APIs.
+The prior harness also omitted 14 shared conditional tests and filtered matching inputs with the original Python selector.
+Its earlier statement about retaining the complete matching domain was therefore misleading.
+
+The repair proceeded through failing-test commits before implementation:
+
+- `58ffdd3a6` records the nine audit regressions through both APIs.
+- `ecd327ef8` requires structural relative-import levels.
+- `7711d7a9c` requires structural parents without source locations.
+- `27a303d66` exposes method-event ownership and same-line control deduplication defects in the replacement analyzer.
+
+The implementation fixes authority tokenization, application-path ownership, repeated counter targets, and relative imports.
+It also fixes parenthesized rejection and the matching default source predicate.
+A canonical SQL conditional analyzer replaces the earlier CST approximation.
+The new analyzer preserves the original traversal's alias timing, overwritten descriptors, control-flow rules, and class-level events.
+A source-inventory collector supplies files to shared tests without running the original semantic collector.
+
+The final original run passes 744 cases at source pin `2b1504adc4291daaf080b2e932962b134da1a69a`.
+These comprise 279 upstream cases and 465 supplementary cases evaluated by the original linters.
+The supplements include 354 transformations across all ten rules and 50 repair, control-flow, ownership, and selection cases.
+Each native API matches 621 complete detector results, including 551 positives, across 620 detector tests.
+The other 124 cases retain their original utility or CLI assertions.
+They do not count as native detector observations.
+Disabled-rule controls produce 163 failing assertions and reject all ten disabled detectors.
+
+The matching assertion now sends all 2,871 production files and 57,328,575 source bytes to native execution.
+No native assertion report records a call to Python `_source_requires_matching_scan`.
+Snapshot and workspace executions pass the original repository assertion separately.
+Their pytest durations are 97.34 and 98.06 seconds, respectively.
+These are assertion durations, not cold CPU benchmarks.
+The other 743 cases pass in 74.56 seconds for snapshot and 76.53 seconds for workspace under concurrent validation load.
+A combined initial attempt reached the 115-second command limit; separate commands preserve the repository-wide assertion unchanged.
+CI uses the same separation.
+
+An initial full run also found a harness normalization defect for tuple-valued file arguments.
+It retained changing pytest directory prefixes in 13 HNSW observations.
+The corrected recorder recursively identifies temporary file arguments, and both full native runs pass those observations.
+Compact TypeScript replay separately exposed embedded temporary roots in generated-index string results.
+Replay removes only that changing prefix, as the Python parity comparator already did.
+
+The configured corpus has 62 original reporter observations.
+Both APIs check shipped defaults, diagnostic fields, scopes, missing artifacts, and matching's selected file set.
+The configured-default, repair, and new native-contract gate passes 25 tests.
+All ten documents regenerate byte for byte. Typechecking, boundary checks, and DSL reference validation pass.
+The rebuilt native DSL suite passes 1,576 tests, with 23 existing ignored tests and 114 tests outside its selected namespace.
+The three existing flat-directory limit failures remain: native root 26, DSL scripts root 31, and native tests root 26; each limit is 25.
+
+The complete corpus is now compressed to preserve the full source inventory in Git.
+The refreshed receipt binds complete native results and controls to the current implementation.
+See [the batch report](data-layer-batch-ten.md) for commands and the per-rule result counts.
+These finite gates do not establish equivalence for every possible Python program.
+The cumulative full-repository result still covers 80 rules. No cumulative cold benchmark or new Linear issue was added.
+
+Final compact batch-ten replay passes all 23 tests after the temporary-root correction.
+Batch nine's 228 original assertions also pass again through both APIs on the rebuilt engine.
+Its disabled-detector controls still reject all ten ports.
+Its receipt is refreshed from those executions because the shared AST metadata and CI file changed.
+The prior batch-nine kernel measurements remain historical; no old kernel received a new cold benchmark.

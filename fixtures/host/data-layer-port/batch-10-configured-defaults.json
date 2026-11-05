@@ -816,7 +816,25 @@
           "message": "Authoritative matching maintenance must use the shared branch-aware index policy in production ownership"
         }
       ],
-      "selected": null
+      "selected": [
+        "l5250_matching/execution.py"
+      ]
+    },
+    {
+      "test": "matching_architecture:clean",
+      "check": "matching_architecture",
+      "entry": "all",
+      "files": [
+        {
+          "path": "l1470_matching_contracts/model.py",
+          "sourceSha256": "4f2ce9754840e409cd376c7070ebd3c83fd24dc9626b9c0dba5995162c4ba982"
+        }
+      ],
+      "parameters": {},
+      "expected": [],
+      "selected": [
+        "l1470_matching_contracts/model.py"
+      ]
     },
     {
       "test": "matching_architecture:scope-tests",
@@ -830,7 +848,7 @@
       ],
       "parameters": {},
       "expected": [],
-      "selected": null
+      "selected": []
     },
     {
       "test": "matching_architecture:scope-tmp",
@@ -857,7 +875,9 @@
           "message": "Matching physical failure cannot continue through a runtime fallback"
         }
       ],
-      "selected": null
+      "selected": [
+        "l5250_matching/tmp/execution.py"
+      ]
     },
     {
       "test": "matching_architecture:scope-__pycache__",
@@ -884,7 +904,9 @@
           "message": "Authoritative matching maintenance must use the shared branch-aware index policy in production ownership"
         }
       ],
-      "selected": null
+      "selected": [
+        "l5250_matching/__pycache__/execution.py"
+      ]
     },
     {
       "test": "matching_architecture:scope-venv",
@@ -911,7 +933,9 @@
           "message": "Matching physical failure cannot continue through a runtime fallback"
         }
       ],
-      "selected": null
+      "selected": [
+        "l5250_matching/venv/execution.py"
+      ]
     },
     {
       "test": "matching_architecture:scope-unrelated",
@@ -925,7 +949,7 @@
       ],
       "parameters": {},
       "expected": [],
-      "selected": null
+      "selected": []
     },
     {
       "test": "hnsw_architecture:positive",
@@ -1292,6 +1316,57 @@
       "selected": [
         "l9750_graphql/probe.py"
       ]
+    },
+    {
+      "test": "matching_architecture:native-selection",
+      "check": "matching_architecture",
+      "entry": "all",
+      "files": [
+        {
+          "path": "l1700_other/plain.py",
+          "sourceSha256": "0512f94f5665154dff1559fb4414b86d3c10bd2324082c027454c9d41c918a2e"
+        },
+        {
+          "path": "l1700_other/continued.py",
+          "sourceSha256": "09e1c01b270e50c47e06f1435280ca0f157cf1058c0d3687b5d2babbd48abf8b"
+        },
+        {
+          "path": "l1700_other/marked.py",
+          "sourceSha256": "28e88f82df8be78a69ce72cc2da0c77354f0868ce36483d608eb1c4a96eb2469"
+        },
+        {
+          "path": "l1700_other/clean.py",
+          "sourceSha256": "9f56e761d79bfdb34304a012586cb04d16b435ef6130091a97702e559260a2f2"
+        },
+        {
+          "path": "l1470_matching_contracts/empty.py",
+          "sourceSha256": "9f56e761d79bfdb34304a012586cb04d16b435ef6130091a97702e559260a2f2"
+        },
+        {
+          "path": "l1470_matching_contracts/tests/ignored.py",
+          "sourceSha256": "dd836956882fb50aebcafcba9f0e87e47eabc479464668b66d4dce075b054e37"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l1700_other/marked.py",
+          "line": 3,
+          "code": "MA003",
+          "message": "Lower transaction classes cannot define a matching method"
+        },
+        {
+          "path": "l1700_other/plain.py",
+          "line": 2,
+          "code": "MA003",
+          "message": "Lower transaction classes cannot define a matching method"
+        }
+      ],
+      "selected": [
+        "l1470_matching_contracts/empty.py",
+        "l1700_other/marked.py",
+        "l1700_other/plain.py"
+      ]
     }
   ],
   "sources": {
@@ -1332,6 +1407,7 @@
     "e9b12b1d5f1e7c7b55901ee1f04f3b5ec69996ee4c3db9e94ea2b3e93711f84b": "\ndef compile(ctx):\n    return ctx.sql_connection.table_exists(\"users\")\n",
     "453ff8958728abc0adfd3bd9d125922a4941266a0137e733555ea8fc56ea50d0": "\ndef ensure_tables(conn):\n    return conn.table_exists(\"users\")\n",
     "7a8d5407389bfad097313125673e61dfd7ef45c34f84aa773554e61499e74848": "\ndef execute(plan):\n    try:\n        return execute_physical_plan(plan)\n    except MatchPhysicalPlanError:\n        return exact_scan(plan)\n",
+    "4f2ce9754840e409cd376c7070ebd3c83fd24dc9626b9c0dba5995162c4ba982": "def match(txn: \"Connection\", spec: MatchSpec):\n    pass\n",
     "45e6741e44986f2bbfc472774492ec70713794ef092bd06421621351bce7f520": "from grammar import SqlJsonIndexSet as mutate\nmutate(state, key, value)\n",
     "29d2098fbac53be6ad7dcec309b8afb7cdc1bd62de646cf4766619669d04e87e": "# JSON state is forbidden. Use indexed rows.\nSqlInsert(table, source=SqlSelect(columns, from_=visited))\n",
     "72463568a97bcbd7a7b6fd4a3016020c365612ba94ad9380d5545e60e830746f": "\nasync def helper(conn, session_id, fn):\n    return await conn.session(session_id).write_async(fn=fn)\n",
@@ -1339,6 +1415,11 @@
     "d2be4d8ff67b33cd08dd831d1c9892be9f65d132e2046e0370518660be562108": "def build():\n    return Index(name='idx', columns=['x'])\n",
     "5bbb8160506db81bc20adae0fc4cedc515eb929ddf53f8311fcae0f0f76e394b": "def _generated_index(*, source: IndexSource):\n    return Index(name='idx', columns=['x'], source=source)\n",
     "e9dd492fb73cfae77fa092f47dd6cd0294a05aad9e0847915a01c2fa193f2b70": "def f(scope: PlanScope):\n    return (\n",
-    "b950c7033562ad45f6433b6fd248d407676620eb0e567599ff1cfe1ab32327f3": "x = (\n"
+    "b950c7033562ad45f6433b6fd248d407676620eb0e567599ff1cfe1ab32327f3": "x = (\n",
+    "0512f94f5665154dff1559fb4414b86d3c10bd2324082c027454c9d41c918a2e": "class Helper:\n    def match(self):\n        return self.conn.query()\n",
+    "09e1c01b270e50c47e06f1435280ca0f157cf1058c0d3687b5d2babbd48abf8b": "class Helper:\n    def \\\n        match(self):\n        return self.conn.query()\n",
+    "28e88f82df8be78a69ce72cc2da0c77354f0868ce36483d608eb1c4a96eb2469": "# MatchSpec\nclass Helper:\n    def \\\n        match(self):\n        return self.conn.query()\n",
+    "9f56e761d79bfdb34304a012586cb04d16b435ef6130091a97702e559260a2f2": "pass\n",
+    "dd836956882fb50aebcafcba9f0e87e47eabc479464668b66d4dce075b054e37": "MatchSpec()\n"
   }
 }

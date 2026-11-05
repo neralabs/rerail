@@ -537,15 +537,22 @@ jobs:
           unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
           reports="$RUNNER_TEMP/batch-ten-reports"
           mkdir -p "$reports"
+          PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
           timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
             --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-            --baseline fixtures/host/data-layer-port/batch-10-complete-api.json \
+            --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
             --policies packs/data-layer/rules --mode "$MODE" --output "$reports/api-$MODE.json"
+          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
+            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
+            --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
+            --checks matching_architecture --policies packs/data-layer/rules --mode "$MODE" \
+            --output "$reports/repository-$MODE.json" \
+            "$GITHUB_WORKSPACE/.rerail/data-layer-upstream/scripts/tests/test_lint_matching_architecture.py::test_current_matching_architecture_is_clean_tdd_red"
       - name: Verify batch-ten replay, defaults and disabled detectors
         if: matrix.mode == 'snapshot'
         run: |
           timeout 115s npx vitest run test/conformance/data-layer/batch-ten.test.ts
-          timeout 115s npx vitest run test/conformance/data-layer/batch-ten-defaults.test.ts test/engine/native/data-layer-ten/
+          timeout 115s npx vitest run test/conformance/data-layer/batch-ten-defaults.test.ts test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
       - name: Upload batch-ten assertion receipts
         if: always()
         uses: actions/upload-artifact@v7

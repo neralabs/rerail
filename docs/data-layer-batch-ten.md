@@ -1,97 +1,118 @@
 # Data-layer batch ten
 
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
-The inventory now has 100 authored ports out of 142 checks.
-The private pack contains 30 shipped documents. Seventy earlier ports remain candidates.
+There are 100 authored ports out of 142 checks. Thirty documents ship in the private pack.
+The cumulative repository result still covers 80 rules.
 
-| Rule | Complete API observations | Positive observations |
+## Completion repair
+
+The earlier completion claim was wrong. Nine audit inputs exposed failures in four ports.
+The harness also omitted the shared conditional suite and used Python to select matching source files.
+The previous 326-case receipt did not establish the claimed contract.
+
+The repair fixes authority-token extraction, application-path classification, repeated assignment targets, and relative import levels.
+It also fixes parenthesized conditional rejection, method-event ownership, and backend-control deduplication.
+Matching now applies its source-selection predicate in the native rule.
+
+The conditional analyzer now uses canonical Python syntax in SQL.
+It no longer reuses the earlier CST approximation from batch six.
+Its relations preserve alias timing, class and method replacement, control-flow rejection, branch provenance, and state-write events.
+They also preserve observed upstream quirks, including the inert assignment callback.
+
+Two generic engine changes support these contracts:
+
+- `ast_level` exposes the actual relative-import level.
+- Canonical expansion retains structural parents without source locations, including `match_case`.
+
+Earlier batch-ten changes provide complete file text, typed regex evidence, and diagnostic line narrowing.
+All rule decisions execute in SQLite. CPython supplies syntax facts without executing analyzed source.
+
+## Evidence
+
+The [compressed complete corpus](../fixtures/host/data-layer-port/batch-10-complete-api.json.gz) retains source text, parameters, and complete original results.
+Compression preserves the full production-file inventory without adding a 59 MB JSON file.
+
+| Rule | Complete API results | Positive results |
 | --- | ---: | ---: |
-| graph_lazy_sql_plan | 37 | 33 |
-| bounded_composed_graph_paths | 12 | 11 |
-| graphql_plan_ownership | 11 | 9 |
-| plan_optimizer_v2 | 32 | 25 |
-| conditional_architecture | 4 | 3 |
-| schema_introspection_data_paths | 12 | 9 |
-| matching_architecture | 48 | 44 |
-| hnsw_architecture | 19 | 16 |
-| embedding_vector_orchestration | 16 | 12 |
-| generated_index_sources | 12 | 7 |
+| graph_lazy_sql_plan | 76 | 69 |
+| bounded_composed_graph_paths | 39 | 36 |
+| graphql_plan_ownership | 32 | 27 |
+| plan_optimizer_v2 | 100 | 87 |
+| conditional_architecture | 67 | 61 |
+| schema_introspection_data_paths | 33 | 27 |
+| matching_architecture | 173 | 164 |
+| hnsw_architecture | 40 | 34 |
+| embedding_vector_orchestration | 43 | 36 |
+| generated_index_sources | 18 | 10 |
 
-The [complete corpus](../fixtures/host/data-layer-port/batch-10-complete-api.json) retains source text, caller parameters, and complete original results.
-Replay checks diagnostic multiplicity, path, code, message, and line through snapshot and workspace execution.
-It also checks that the public diagnostic agrees with the SQL result row.
+The corpus has 744 cases: 279 upstream cases and 465 supplementary cases evaluated by the original linters.
+The upstream cases include all 14 shared conditional tests that the earlier harness omitted.
+Supplementary cases include 354 syntax transformations, 50 repair and ownership cases, and 61 earlier boundary cases.
+The 354 transformations cover every rule and use positive and clean source seeds.
+Their expected results come from original execution, without an assumption that formatting preserves results.
 
-The corpus contains 326 pytest cases: 265 original upstream cases and 61 added cases evaluated by the original linters.
-The optimizer has no dedicated upstream test module. Its 32 added cases cover every diagnostic family, including registry and documentation checks.
-The other 29 added cases cover aliases, quoted annotations, generic bases, parser errors, file artifacts, and direct source APIs.
+There are 621 complete detector observations, including 551 positive observations, across 620 tests.
+The other 124 cases retain Python utility or CLI assertions. They are not native detector observations.
+The conditional observations include 47 calls to the shared analyzer.
+Replay compares diagnostic multiplicity, path, code, message, line, and rule-specific DTO fields through both native APIs.
+It also checks that public diagnostics agree with SQL result rows.
 
-There are 203 recorded detector results, including 169 positive results.
-These results occur in 202 tests. The other 124 tests check upstream utilities, constants, DTOs, discovery, or CLI behavior.
-Those utility and CLI tests retain their original assertions. They do not count as native detector observations.
-Original detector functions and collector methods are forbidden during native detector replay.
+The matching repository assertion supplies all 2,871 production files, containing 57,328,575 source bytes.
+The Python adapter no longer calls `_source_requires_matching_scan` to reduce that inventory.
+The native selection gate has a separate file-set comparison against the original selector.
+The full matching assertion runs separately from the small cases to keep each command below two minutes.
+Compact replay omits that expensive repeated assertion; the native assertion receipt covers it through both APIs.
 
-The graph source API completes independent files concurrently. Its cross-file list order varies between original runs.
-Replay compares its complete results as a multiset. Per-file diagnostic fields and multiplicity remain exact.
-Generated-index observations remove only pytest's changing temporary-directory prefix.
+The [configured corpus](../fixtures/host/data-layer-port/batch-10-configured-defaults.json) has 62 original reporter observations.
+It covers shipped scopes, clean files, ignored directories, parser behavior, missing artifacts, and matching selection.
+Both APIs run it with default options.
 
-The [configured corpus](../fixtures/host/data-layer-port/batch-10-configured-defaults.json) records 61 observations from actual upstream reporters and discovery.
-Both native APIs check these observations with shipped scopes and default options.
-This gate covers ignored directories, unrelated files, parser messages, required documents, and reporter-specific filtering.
-Direct source APIs have separate contracts where upstream behavior differs.
-For example, the HNSW source API checks forbidden file existence before parsing; its configured plugin does not.
-Embedding source observations include EVO107 and EVO108. The configured reporter preserves its narrower upstream failing-code set.
+The [receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, and implementation hashes.
+The [repair regressions](../fixtures/host/data-layer-port/batch-10-repair-regressions.json) preserve the nine disproving audit inputs.
+The [journal](data-layer-performance-journal.md) records failed attempts and subsequent verification.
 
-Rule decisions execute in SQLite over canonical syntax columns and text evidence.
-CPython supplies syntax facts. It does not import or execute analyzed source.
-The conditional rule reuses the existing shared conditional producer from batch six and selects the actual CONDA-005 findings.
-The bounded-path rule preserves upstream text checks for Python, RST, and Markdown files, including duplicate missing-artifact findings.
+These finite tests provide regression evidence. They do not prove equivalence for every possible Python program.
+No cumulative cold benchmark or new Linear ticket forms part of this repair.
 
-Batch ten required these generic engine changes:
+## Run the gates
 
-- `source_text(path)` reads a complete immutable file. Missing and empty files remain distinct.
-- Evidence relations accept `file.content` regex queries with typed capture projections.
-- `relational.line` can narrow a proven text span and retain line one for declared missing-file locations.
-- Workspace text evidence retains its projected values and remains complete when an unrelated AST query encounters syntax errors.
-
-Regression tests cover the engine changes before the rule replay gates.
-The workspace test also checks edits and removal.
-The existing source-work budgets, output limits, and SQL submission guard remain in place.
-
-Matching initially repeated canonical preparation across detector clauses and exceeded the AST output budget on its repository test.
-One shared producer now serves the detectors for each candidate file.
-Its static-string relation also needed an indexed intermediate relation to avoid repeated scans of a recursive CTE.
-The repository assertion retains its full original domain and its actual 140 selected source files.
-No cumulative cold benchmark was run for this batch.
-
-Generate the policies with:
+Generate all ten documents:
 
 ```sh
 python3.13 scripts/generate/packs/data_layer_batch_ten.py \
   --source /path/to/pinned-data-layer
 ```
 
-Run unchanged assertions against the recorded oracle with:
+Run the small assertions with a recorded original baseline:
+
+```sh
+PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
+python3.13 scripts/dsl/data_layer_ten/suite.py \
+  --source /path/to/pinned-data-layer --repo /path/to/git-objects \
+  --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
+  --policies packs/data-layer/rules --mode snapshot --output /tmp/batch-ten.json
+```
+
+Run the full matching assertion as a separate command:
 
 ```sh
 python3.13 scripts/dsl/data_layer_ten/suite.py \
   --source /path/to/pinned-data-layer --repo /path/to/git-objects \
-  --baseline fixtures/host/data-layer-port/batch-10-complete-api.json \
-  --policies packs/data-layer/rules --mode snapshot --output /tmp/batch-ten.json
+  --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
+  --checks matching_architecture --policies packs/data-layer/rules \
+  --mode snapshot --output /tmp/batch-ten-repository.json \
+  /path/to/pinned-data-layer/scripts/tests/test_lint_matching_architecture.py::test_current_matching_architecture_is_clean_tdd_red
 ```
 
-Repeat with `--mode workspace`. Add `--oracle` and omit `--baseline` to record original execution.
-The fixture recorder never edits upstream test assertions or linter implementations.
+Repeat both commands with `--mode workspace`.
+Add `--oracle` and omit `--baseline` to record original execution.
+The recorder does not change upstream assertions or linter implementations.
 Native replay needs CPython 3.13 on PATH.
 
-Run the compact replay and configured-default gates separately:
+Run compact replay and configured defaults separately:
 
 ```sh
-npx vitest run test/conformance/data-layer/batch-ten.test.ts
-npx vitest run test/conformance/data-layer/batch-ten-defaults.test.ts
-npx vitest run test/engine/native/data-layer-ten/
+npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts
+npx vitest run --dir test test/conformance/data-layer/batch-ten-defaults.test.ts \
+  test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
 ```
-
-The [assertion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds native runs, disabled-detector controls, and implementation hashes.
-The [journal](data-layer-performance-journal.md) records the defects and verification results.
-These batch gates do not certify all 100 rules together on the full repository.
-The prior complete repository measurement still covers 80 rules.

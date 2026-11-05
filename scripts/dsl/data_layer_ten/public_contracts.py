@@ -27,7 +27,8 @@ def record(source,repo,reports,output):
    previous=Path.cwd();os.chdir(root)
    try:
     if check in {'bounded_composed_graph_paths','matching_architecture'}:
-     findings=module.collect_violations(root) if check=='bounded_composed_graph_paths' else module.lint(root);selected=None
+     findings=module.collect_violations(root) if check=='bounded_composed_graph_paths' else module.lint(root)
+     selected=sorted(p.relative_to(root).as_posix() for p in module._production_paths(root) if module._source_requires_matching_scan(p.relative_to(root),p.read_text())) if check=='matching_architecture' else None
     else:
      plugin=getattr(module,check+'_plugin')(root)
      engine=FactEngine(root=root,fact_store=JsonFactStore(root/'tmp/store'),extractors=getattr(module,check+'_fact_extractors')(root))
@@ -59,6 +60,14 @@ def record(source,repo,reports,output):
     observe(check,'scope-'+folder,[dict(path=location,source=one['source'])])
  for text in ['def f(scope: PlanScope):\n    return (\n','x = (\n']:
   observe('graphql_plan_ownership','parser-'+hashlib.sha256(text.encode()).hexdigest()[:8],[dict(path='l9750_graphql/probe.py',source=text)])
+ observe('matching_architecture','native-selection',[
+  dict(path='l1700_other/plain.py',source='class Helper:\n    def match(self):\n        return self.conn.query()\n'),
+  dict(path='l1700_other/continued.py',source='class Helper:\n    def \\\n        match(self):\n        return self.conn.query()\n'),
+  dict(path='l1700_other/marked.py',source='# MatchSpec\nclass Helper:\n    def \\\n        match(self):\n        return self.conn.query()\n'),
+  dict(path='l1700_other/clean.py',source='pass\n'),
+  dict(path='l1470_matching_contracts/empty.py',source='pass\n'),
+  dict(path='l1470_matching_contracts/tests/ignored.py',source='MatchSpec()\n'),
+ ])
  report=dict(format='rerail.data-layer-batch-ten-defaults/v1',sourcePin=PIN,sourceFilesChecked=verify_sources(source,repo,PIN),records=results)
  output.write_text(json.dumps(compact(report),indent=2)+'\n')
 def main():
