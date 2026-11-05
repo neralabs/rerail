@@ -32,7 +32,8 @@ def main():
         for line, vs, st in souffle.check_text(open(f).read(), edits):
             bad += 1
             print(f"{f}:{line}: unbound {', '.join(vs)}")
-    for f in sorted(glob.glob("*.rr") + glob.glob("data-layer/**/*.rr", recursive=True) + glob.glob("lib/**/*.rr", recursive=True)):
+    for f in sorted(glob.glob("*.rr") + glob.glob("data-layer/**/*.rr", recursive=True) + glob.glob("lib/**/*.rr", recursive=True)
+                    + [p for p in glob.glob("packs/**/*.rr", recursive=True) if not p.endswith(".facts.rr")]):
         files = program(os.path.abspath(f)) + [os.path.join(ROOT, "lib/core.rr")]
         texts = [open(g).read() for g in dict.fromkeys(files)]
         for line, h, d, st in souffle.check_strata(texts):

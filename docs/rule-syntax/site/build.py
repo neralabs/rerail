@@ -29,6 +29,9 @@ LIBS = [
     ("data-layer/signing", "datalog", "The data-layer repository's signed allowlists and ratchet baselines, verified in Datalog: the signed bytes rebuilt with join, checked with @ed25519_ok."),
     ("tsx/names", "datalog", "TypeScript and JavaScript scopes after eslint-scope, import specifier resolution, exports and symbols across files."),
     ("tsx/jsx", "datalog", "JSX tags, components, and what renders under what."),
+    ("tsx/statements", "datalog", "Statement bodies, braces, dangling if/else, one-liners and ASI hazards, and declarations with their declarators: what curly and one-var need."),
+    ("tsx/modules", "datalog", "Directive prologues and strict mode, source type, and import declarations as sort-imports sees them."),
+    ("tsx/values", "datalog", "Which Node.js built-in or global API an expression denotes: require, imports, destructuring, globalThis."),
 ]
 DATA_LAYER = [
     ("layer-violations", "layer-violations", "check_layer_violations.py"),
@@ -91,8 +94,16 @@ def main():
             rr, u, ug = translate.translate(doc)
             ungrounded += ug
             pretty = json.dumps(doc, indent=2, ensure_ascii=False)
-            rules.append({"id": doc.get("id", os.path.basename(f)), "d": doc.get("description", ""), "m": doc.get("mode", "log"),
-                          "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")})
+            rid = doc.get("id", os.path.basename(f))
+            entry = {"id": rid, "d": doc.get("description", ""), "m": doc.get("mode", "log"),
+                     "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")}
+            # A hand-written exemplar: docs/rule-syntax/packs/<pack>/<id>.rr, plus <id>.<part>.rr files (a fact table).
+            hand = os.path.join(RS, "packs", name, rid + ".rr")
+            if os.path.exists(hand):
+                entry["h"] = read(hand)
+                entry["hx"] = {os.path.basename(x)[len(rid) + 1:-3]: read(x)
+                               for x in sorted(glob.glob(os.path.join(RS, "packs", name, rid + ".*.rr")))}
+            rules.append(entry)
             total_json += len(pretty)
             total_rr += len("\n".join(l for l in rr.split("\n") if not l.lstrip().startswith("//")))  # code only
             atom_rules += bool(u)
@@ -101,7 +112,8 @@ def main():
         n_rules += len(rules)
         with open(os.path.join(a.out, "data", f"pack-{name}.json"), "w", encoding="utf-8") as fh:
             fh.write(compact(rules))
-        packs.append({"name": name, "count": len(rules)})
+        rules.sort(key=lambda r: "h" not in r)  # hand-written exemplars first, then the JSON's order
+        packs.append({"name": name, "count": len(rules), "hand": sum("h" in r for r in rules)})
     packs.sort(key=lambda p: (-p["count"], p["name"]))
 
     hand_meta, hand_data = [], {}

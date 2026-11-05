@@ -123,6 +123,16 @@
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
 .input source, src_line, line_count, end_line, col, op_at, syntax_error
+// Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
+// ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.
+// A token is a span, as a regex capture is: text, line, end_line and col apply to it, a finding can sit on it,
+// and an edit can replace it. Read off the tree; no text is scanned.
+// In `if (a) b();`: first_token(if, `if`), last_token(if, `;`), token_before(b(), `)`), token_after(`if`, `(`).
+.decl first_token(n: node, t: span)                     // n's first token
+.decl last_token(n: node, t: span)                      // n's last token
+.decl token_before(x: loc, t: span)                     // the token just before node or token x
+.decl token_after(x: loc, t: span)                      // the token just after node or token x
+.input first_token, last_token, token_before, token_after
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -278,6 +288,16 @@
 // @slice("_name", 1, 5) = "name": characters start to end-1; negative positions count from the end.
 .functor slice(s: symbol, start: number, end: number): symbol
 .functor to_precision(n: symbol, digits: number): symbol  // JavaScript's Number.prototype.toPrecision
+// @lower("Foo") = "foo": JavaScript's String.prototype.toLowerCase (Unicode default case mapping), for
+// case-insensitive comparisons (ESLint's ignoreCase). @convert's lowerCase also splits words.
+.functor lower(s: symbol): symbol
+// Semver, as npm's node-semver reads ranges: engines, peer ranges, versions.
+// @semver_valid(r) = 1 when r parses as a range (node-semver's validRange, loose: "^v16.17.0" is valid), else 0.
+.functor semver_valid(r: symbol): number
+// @semver_subset(a, b) = 1 when every version range a admits, b admits too (node-semver's subset), else 0:
+// subset(">=18", ">=16") = 1. Defined only for two valid ranges: on an invalid one it is an evaluation error
+// (the row is Unknown, never 0), so callers guard both arguments with @semver_valid.
+.functor semver_subset(a: symbol, b: symbol): number
 //
 // Places. @place("api/LAYER_GROUPS.yaml", 1) is a span at line 1 of that path, and @place(path, 0) the file
 // itself. It is how a finding sits where there is no node: a missing required file, an allowlist, a baseline,
@@ -320,11 +340,21 @@
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
 // package_export("@acme/ui", "./button", "./src/button.ts").
 .decl package_export(name: symbol, subpath: symbol, target: symbol)
+// package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory, as tsconfig_for.
+// package_field("web", "engines/node", ">=18"): its string values, one row each. The key is the member's path
+// from the root, segments joined by "/" and escaped as JSON pointer tokens (RFC 6901: "~" as "~0", "/" as "~1"),
+// array elements by index from 0: "type", "engines/node", "devEngines/runtime/0/version". Only strings give
+// rows: `"engines": { "node": 18 }` gives none, as the engine ignores a non-string there.
+.decl package_for(path: symbol, dir: symbol)
+.decl package_field(dir: symbol, key: symbol, v: symbol)
 // Python: in `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the list of
 // positions follows Ruff's own table, not anything visible in the tree.
 .decl string_annotation(s: node)                         // a string Ruff reads as a type definition
 // option("max_depth", "3"): a policy's tunable, so one rule text serves repositories with different settings.
 .decl option(name: symbol, v: symbol)  // a rule option's configured value (rerail.policy/v1 `options`)
+// option_item("memberSyntaxSortOrder", 0, "none"): element i of a list-valued option, from 0, so its order
+// is kept. A boolean option is "true" or "false"; a list option has no `option` row.
+.decl option_item(name: symbol, i: number, v: symbol)
 // signed_list("allow/exec.txt", "scripts/build.py"): approved exceptions; the signature check is native so a
 // rule cannot accept an edited list. A list whose signature fails has no rows, and an input_error row instead.
 .decl signed_list(path: symbol, entry: symbol)  // entries of a signed allowlist; refused if the signature fails
@@ -344,7 +374,8 @@
 // at is the source piece it starts in. Bytes literals give no row. Decoded natively, by the language reference's
 // literal rules (escapes, raw prefixes, `{{`/`}}`), checked once against CPython's own decoder offline.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
-.input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, string_annotation, option
+.input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
+.input string_annotation, option, option_item
 .input signed_list, git_tracked, git_rev, git_has, git_commit, str_part
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per

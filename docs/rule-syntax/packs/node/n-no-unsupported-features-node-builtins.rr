@@ -1,0 +1,56 @@
+.policy "n-no-unsupported-features-node-builtins" revision 4
+.description "Use only the Node.js built-in APIs that every Node.js version in the package's engines.node range provides, or raise that range."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n 18.4.1's n/no-unsupported-features/node-builtins. Every use of a Node.js built-in (a module,
+// a member, a global; read, called or constructed) whose supported releases do not cover every version the package
+// may run on. The data is a table, one row per API; this file is the check.
+//   1. use: each API use (lib/tsx/values.rr), less the names the `ignores` option lists.
+//   2. supported: the range of releases that have the API: ">=since", plus "^v" for each backport.
+//   3. runs_on: the range the file must run on: a valid `version` option, else values.rr's node_range.
+//   4. a finding where runs_on is not a subset of supported, or where no release supports the API in that form.
+// Not ported: allowExperimental (the plugin has experimental versions; the JSON this table comes from dropped them)
+// and ESLint's settings.node.version.
+
+#include "tsx/values.rr"
+#include "../packs/node/n-no-unsupported-features-node-builtins.facts.rr"   // api_since, api_backport, …
+
+// use(at, api, how): a use of a tabled API. `export * from "fs"` uses every direct member of fs ("fs#x", not
+// "fs#x.y"), as ReferenceTracker reports each one at the statement.
+.decl use(at: node, api: symbol, how: symbol)
+use(at, p, how) :- api_use(at, p, how), tabled(p, how), !ignored(p).
+use(e, p, "read") :- export_all(e, m), tabled(p, "read"), match("(?<pm>[^#]+)#[^.]+", p), pm = m, !ignored(p).
+.decl tabled(api: symbol, how: symbol)
+tabled(p, how) :- api_since(p, how, _).
+tabled(p, how) :- api_experimental(p, how).
+// ignores lists names as the plugin spells them: "fs.promises.readFile", "process.getBuiltinModule"; "fs" covers
+// node:fs too. One option row per list entry.
+.decl ignored(p: symbol)
+ignored(p) :- tabled(p, _), option("ignores", i), @replace_all(@replace_all(p, "^node:", ""), "#", ".") = i.
+
+// supported(api, how, since, r): the releases that have it: ("process.getBuiltinModule", "read", "22.3.0",
+// ">=22.3.0 || ^20.16.0"). Built from the table's versions, so always a valid range; the guard keeps it so.
+.decl supported(api: symbol, how: symbol, since: symbol, r: symbol)
+supported(p, how, s, cat(cat(">=", s), bs)) :- api_since(p, how, s),
+    bs = join x by b sep "" : { api_backport(p, how, b), x = cat(" || ^", b) }, @semver_valid(cat(cat(">=", s), bs)) = 1.
+
+// runs_on(d, r): the Node.js range document d must run on. A `version` that is no range ("lts") is ignored.
+.decl runs_on(d: number, r: symbol)
+runs_on(d, r) :- doc(d, _, _), version_opt(r).
+runs_on(d, r) :- node_range(d, r), !version_opt(_).
+.decl version_opt(r: symbol)
+version_opt(r) :- option("version", r), @semver_valid(r) = 1.
+
+// The findings. Both share the plugin's code, so a finding's key is (policy, code, path, line), as in the JSON.
+.violation unsupported(at: node, api: symbol, since: symbol, ok: symbol, cfg: symbol) code "n/no-unsupported-features/node-builtins"
+    "{api} needs Node.js {since} or later ({ok}); the configured range {cfg} includes earlier versions."
+    suppress eslint "n/no-unsupported-features/node-builtins"
+unsupported(at, p, s, r, t) :- use(at, p, how), supported(p, how, s, r), docof(at, d), runs_on(d, t),
+    @semver_subset(t, r) = 0.
+
+.violation experimental(at: node, api: symbol) code "n/no-unsupported-features/node-builtins"
+    "{api} is still experimental in every Node.js release; do not rely on it."
+    suppress eslint "n/no-unsupported-features/node-builtins"
+// No release supports p used this way: an experimental API, or a form no release has (zlib.Gzip() without new).
+experimental(at, p) :- use(at, p, how), api_experimental(p, how).
