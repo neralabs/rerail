@@ -8,10 +8,12 @@ import { basename, dirname, extname, join, normalize, resolve, sep } from "node:
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
+import { PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -56,6 +58,8 @@ const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request;
 
 export interface RerailDaemonOptions {
   version: string;
+  /** Internal testing: false keeps the remote sink's sender off; tests may shorten its interval. */
+  remoteSink?: false | { intervalMs: number };
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -271,6 +275,7 @@ export class RerailDaemon {
   readonly #accessToken: string;
   readonly #tlsFingerprint256: string | undefined;
   #closed = false;
+  #remoteSink: RemoteSinkLoop | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
@@ -341,8 +346,8 @@ export class RerailDaemon {
     const kernelSocketPath = options.kernelSocketPath
       ?? await chooseEngineSocketPath([defaultSocketPath, join(dirname(databasePath), "run", basename(defaultSocketPath))]);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
-    const storageRoot = join(workspaceRoot, ".rerail", "sessions");
-    const modelPath = bundledModelPath();
+    // The paths of a session whose host sends none.
+    const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
@@ -432,6 +437,8 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
+      // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
+      if (options.remoteSink !== false) daemon.#remoteSink = startRemoteSink({ home: dirname(databasePath), ...(options.remoteSink ?? {}) });
       // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
       if (options.portFile !== undefined && options.port !== 0 && daemon.port !== remembered) await rememberPort(options.portFile, daemon.port);
       return daemon;
@@ -503,6 +510,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     try {
+      await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);
     } finally {
       try {

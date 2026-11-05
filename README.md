@@ -7,7 +7,7 @@ Works with [![Claude Code](docs/images/agents/claude-code.svg)](https://claude.c
 [![CI](https://github.com/neralabs/rerail/actions/workflows/ci.yml/badge.svg)](https://github.com/neralabs/rerail/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[Docs](docs/README.md) · [Changelog](CHANGELOG.md)
+[Docs](https://neralabs.github.io/rerail/) · [Changelog](CHANGELOG.md)
 
 ## What is Rerail
 
@@ -44,7 +44,7 @@ To add a rule of your own, type `/rerail-create` followed by what you want:
 /rerail-create never import from src/legacy in new code
 ```
 
-The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having.
+The agent drafts the rule from your description, tests it against the repository without saving it, and adds it after you confirm. [Writing rules](docs/writing-rules.md) covers which rules are worth having, and [Architecture rule examples](docs/architecture-rule-examples.md) has complete, tested rules for design decisions that maintainers of Sentry, VS Code, rust-analyzer, Nextcloud and other projects enforce in review: layer boundaries, calls that must go through a service or repository, one home for each kind of thing.
 
 ## How it works
 
@@ -63,7 +63,7 @@ A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascrip
 
 ## Capabilities
 
-- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](docs/code-rule-dsl-reference.html) documents every construct.
+- **Code rules.** Rules are `rerail.policy/v1` documents. Each clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries. The native engine runs them the same way every time, within set limits on files, nodes and time. The [code-rule DSL reference](https://neralabs.github.io/rerail/code-rule-dsl-reference.html) documents every construct.
 - **Only the agent's new work is judged.** Code rules report only the lines the agent changed in the session, so existing code does not bury the signal.
 - **Runtime steering.** Violations go back into the live session while the change is still being made, not later in review.
 - **Rules belong to the repository.** Every clone and worktree of a remote shares its rules. Turn a rule or pack on, off or to log-only per repository, folder or checkout, and choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence it; changes apply on the next tool call. See [Rule scoping](docs/rule-scoping.md).
@@ -195,9 +195,9 @@ Their list, and where each one surfaces, is in [Internal testing](docs/internal-
 - [CONTEXT.md](CONTEXT.md): the vocabulary used across the codebase. Read it first.
 - [docs/installation.md](docs/installation.md): what you need, how to install, update and remove Rerail, and what set-up changes on your machine; [docs/how-setup-works.md](docs/how-setup-works.md) has every step and file in detail.
 - [docs/reference.md](docs/reference.md): rules and their configuration, the database, updates, the daemon and its API.
-- [docs/code-rule-dsl-reference.html](docs/code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` rule language.
+- [docs/code-rule-dsl-reference.html](https://neralabs.github.io/rerail/code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` rule language.
 - [docs/rule-packs.md](docs/rule-packs.md) and [docs/pack-format.md](docs/pack-format.md): how packs work and what each must prove.
-- [packs/complexity/rules/](packs/complexity/rules/): real rules to copy when writing your own.
+- [packs/complexity/rules/](packs/complexity/rules/) and [docs/architecture-rule-examples.md](docs/architecture-rule-examples.md): real rules to copy when writing your own.
 - [src/README.md](src/README.md): the layers and which may import which.
 
 ## Contributing

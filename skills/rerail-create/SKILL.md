@@ -62,7 +62,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      and 3 call `console.log`.
    - `rerail rules export --output <tmp>/rules.json`, to see the person's own rules and avoid duplicating them.
    - For architecture rules, also read the design docs and the maintainers' review comments that
-     [Where the intent is written](references/architecture-rules.md#where-the-intent-is-written) lists.
+     [Where the intent is written](references/architecture-rules.md#find-the-intent) lists.
 2. **Turn the evidence into candidates.** Write one checkable sentence each, in the person's own words. Never turn a "should" into
    a "must". Score each candidate with the value model and drop the ones it says to skip.
 3. **Show the shortlist:** at most five, best first, in the card format the reference gives, and ask which to write. With no
@@ -79,7 +79,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    instead.
 2. **Choose the kind.** A code rule checks files; read [references/code-rules.md](references/code-rules.md). A conversation rule
    checks a command the agent runs; read [references/conversation-rules.md](references/conversation-rules.md). Conversation
-   rules are in internal testing: Rerail 0.1.0 releases code rules only.
+   rules are in internal testing: Rerail's latest release ships code rules only.
    - Give it the id `local:<short-kebab-name>` and `revision` 1.
    - Set `mode`. Use `steer` when you are sure of the rule. Use `log` when the repo pass or the meaning leaves doubt. Never use
      `block`.
@@ -103,7 +103,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      Its matches say nothing about those. `repository.binary` counts files in scope it skipped as binary.
    - A rule that matches hundreds of places fights the repo's convention.
    - The message passes the harmful-steering check.
-   - An architecture rule passes [Proving it against history](references/architecture-rules.md#proving-it-against-history):
+   - An architecture rule passes [Proving it against history](references/architecture-rules.md#check-it-against-history):
      it catches the first draft the maintainers sent back, and stays quiet on the merge and on recent merged work.
 
    After about five rounds without passing, stop and tell the person what does not work.
@@ -145,7 +145,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - **Architecture rules.** Put the history result above the card in one line: `Checked against history: caught the first
      draft of #123; quiet on its merge and on 15 recent merged PRs.`
    - **Conversation rules** (command or similarity). Put one line above the card: `Internal testing: this kind of rule is not
-     part of Rerail 0.1.0 yet.`
+     part of Rerail's latest release yet.`
    - **"Change something".** Offer Steer and Log, each with what it means; All of the repo or this worktree only (its rule
      runs nowhere else, not in the main checkout nor other worktrees); and any other row the person names.
    - **"Show me the rule".** Print the rule JSON, then ask again.

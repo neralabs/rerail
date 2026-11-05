@@ -19,7 +19,9 @@ The generators that write the expected findings are outside this directory, on t
 the renamer `scripts/pack-data/rename/`). How the data is snapshotted and published is
 [docs/upstream.md](../docs/upstream.md).
 
-Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack).
+Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's steps for
+a rule, written for Rerail or ported, and a port's way from candidate to shipped, are
+[docs/adding-rules-to-a-pack.md](../docs/adding-rules-to-a-pack.md).
 
 ## The gate
 
@@ -225,3 +227,8 @@ A pack whose shipped rules have no upstream adapter is listed in `conformance/la
 today; a tool-pack still validated elsewhere would be listed in `conformance/languages/pending.json`. Both lists may only
 shrink against the base (`--base`); a new shipped rule in such a pack fails, so keep it in `candidates/` until its
 tool-pack is gated.
+
+A private pack (`"private": true` in its `package.json`, as `packs/rerail`) is left out of both checks: it is never
+published, so its rules never reach a user through the gates, and they are written for this repository, not ported, so
+they have no upstream tool to gate them. Its `pack.json` examples (the pack validation's checks 2 and 3) and its own
+tests prove them instead. The frozen list must not name a private pack's rules: a listed one is reported stale.

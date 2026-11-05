@@ -30,6 +30,17 @@ import { pinnedNodePath } from "./node-path.js";
 
 export const DEFAULT_UPDATE_CHANNEL = "latest";
 
+/** In the Rerail home: the updater's record of the installed versions and the update channel. */
+export const UPDATE_STATE_FILE = "update-state.json";
+/** In the Rerail home: the installed versions. */
+export const VERSIONS_DIR = "versions";
+/** In the Rerail home: the link to the active package root. */
+export const CURRENT_LINK = "current";
+/** In the Rerail home: the folder holding the launcher. */
+export const LAUNCHER_DIR = "bin";
+/** In the Rerail home: the lock an update holds. */
+export const UPDATE_LOCK_DIR = "update.lock";
+
 const UPDATE_STATE_VERSION = 1;
 const LOCK_LEASE_MS = 15 * 60 * 1_000;
 const LOCK_RENEWAL_MS = LOCK_LEASE_MS / 3;
@@ -472,8 +483,8 @@ export class ManagedUpdater {
 
   constructor(options: ManagedUpdaterOptions) {
     this.home = options.home ?? defaultRerailHome();
-    this.statePath = join(this.home, "update-state.json");
-    this.versionsRoot = join(this.home, "versions");
+    this.statePath = join(this.home, UPDATE_STATE_FILE);
+    this.versionsRoot = join(this.home, VERSIONS_DIR);
     this.packageRoot = resolve(options.packageRoot);
     this.packageVersion = options.packageVersion;
     parseSemver(this.packageVersion);
@@ -504,12 +515,12 @@ export class ManagedUpdater {
 
   /** `<home>/current` always points at the active package root; harness registrations reference it. */
   get currentLink(): string {
-    return join(this.home, "current");
+    return join(this.home, CURRENT_LINK);
   }
 
   /** Stable launcher every hook and shell alias runs (`rerail.cmd` on Windows). */
   get launcherPath(): string {
-    return join(this.home, "bin", this.platform === "win32" ? "rerail.cmd" : "rerail");
+    return join(this.home, LAUNCHER_DIR, this.platform === "win32" ? "rerail.cmd" : "rerail");
   }
 
   private async writeState(state: UpdateState): Promise<void> {
@@ -567,7 +578,7 @@ export class ManagedUpdater {
     await this.syncCurrentLink(resolve(installation.packageRoot));
     const node = pinnedNodePath();
     const launchers: [path: string, shim: string][] = [[this.launcherPath, launcherShim(this.currentLink, node, this.platform)]];
-    if (this.platform === "win32") launchers.push([join(this.home, "bin", "rerail"), gitBashShim(this.currentLink, node)]);
+    if (this.platform === "win32") launchers.push([join(this.home, LAUNCHER_DIR, "rerail"), gitBashShim(this.currentLink, node)]);
     for (const [path, shim] of launchers) {
       const current = await readFile(path, "utf8").catch(() => undefined);
       if (current === shim) continue;
@@ -609,7 +620,7 @@ export class ManagedUpdater {
   }
 
   private async withLock<T>(operation: () => Promise<T>): Promise<T> {
-    const lockPath = join(this.home, "update.lock");
+    const lockPath = join(this.home, UPDATE_LOCK_DIR);
     const owner = randomUUID();
     await mkdir(this.home, { recursive: true, mode: 0o700 });
     try {

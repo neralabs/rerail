@@ -1,14 +1,15 @@
 # Environment matrix
 
-The environment matrix installs a Rerail package in each of a set of environments, throwaway Azure VMs for Linux
-and Windows and GitHub-hosted runners for macOS, and checks it there the way a user meets it. CI runs it
-(`.github/workflows/env-matrix.yml`) after a push to `main` that changes what core ships, by the rule the Release pull
-request uses (`scripts/release/core-paths.mjs`), or that changes the matrix itself; a pack, test, docs or other CI
-change leaves the package as the last run tested it. `just rerail-env-matrix` runs the Azure environments by hand.
+The environment matrix installs a Rerail package and checks it as a user would meet it: Linux and Windows on
+throwaway Azure VMs, macOS on GitHub-hosted runners.
+
+CI (`.github/workflows/env-matrix.yml`) runs it after a push to `main` that changes the matrix, or what core ships per
+`scripts/release/core-paths.mjs` (the Release pull request's rule). Pack, test, docs or other CI changes leave the
+package as the last run tested it. `just rerail-env-matrix` runs the Azure environments by hand.
 
 ## Environments
 
-`scripts/host/azure/environments.json` lists them:
+`scripts/host/azure/environments.json` lists the environments and what each is expected to do.
 
 | Environment | Image | Expected |
 | -- | -- | -- |
@@ -21,102 +22,186 @@ change leaves the package as the last run tested it. `just rerail-env-matrix` ru
 | `macos-26-arm64`, `macos-15-arm64` | GitHub-hosted runner `macos-26`, `macos-15` (Apple silicon) | pass |
 | `macos-15-x64` | GitHub-hosted runner `macos-15-intel` | pass |
 
-The Linux engines are built against glibc 2.17, older than the glibc 2.28 Node 24 itself needs, so every glibc
-distribution Node 24 runs on is expected to pass. An environment where set-up is known to fail is marked
-`"expect": "setup-fails"`, with the text the failure prints (`failsWith`) and the reason (`because`): it passes when
-set-up fails that way and fails when set-up starts succeeding, and then support has changed and the entry moves to
-`"expect": "pass"`.
+<details>
+<summary>Glibc support and expected failures</summary>
 
-Azure has no Macs, so the macOS environments (`"os": "macos"`, with the `"runner"` label to run on) run on
-GitHub-hosted runners: `matrix.mjs local` runs the Linux guest, `guest.sh`, on the runner itself with sudo. A runner
-is not a clean Mac (it carries Xcode, Homebrew and other Nodes), so the guest makes it one the way a developer's is
-set up: the account's shell becomes zsh, and Node comes from nodejs.org's installer into `/usr/local/bin`; the
-facts record which Node the user's shell runs. `local` refuses to run anywhere but a GitHub-hosted runner, which is
-thrown away after the job. Without `--env` it takes the runner it is on as the environment, expected to pass: that is
-how the release workflow installs every release on Linux x64 (`ubuntu-24.04`) and macOS arm64 (`macos-15`).
+Linux engines target glibc 2.17, below the 2.28 Node 24 itself needs, so any glibc distribution running Node 24
+should pass.
 
-Each environment gets the newest Node release of the major in `environments.json` (`"node"`, overridable per
-environment) from nodejs.org, and Git from the distribution, the Command Line Tools on a Mac, or, on Windows, Git
-for Windows in its default folder: what a user brings, installed the way they would install it.
+A known set-up failure is marked `"expect": "setup-fails"`, with the printed text (`failsWith`) and reason
+(`because`). It passes while set-up fails that way. Once set-up succeeds it fails: support has changed, so switch the
+entry to `"expect": "pass"`.
+
+</details>
+
+### macOS on GitHub-hosted runners
+
+Azure has no Macs, so macOS environments run the Linux guest, `guest.sh`, on a GitHub-hosted runner via
+`matrix.mjs local`.
+
+<details>
+<summary>How the runner becomes a clean Mac</summary>
+
+A macOS environment has `"os": "macos"` plus a `"runner"` label to run on; the guest runs on it with sudo.
+
+A runner is not a clean Mac: it carries Xcode, Homebrew and other Nodes. The guest makes zsh the account's shell and
+installs Node from nodejs.org's installer into `/usr/local/bin`, as a developer would. The facts record which Node the
+user's shell runs.
+
+`local` refuses to run anywhere but a GitHub-hosted runner, which is discarded after the job. Without `--env`, the
+runner it is on is the environment, expected to pass. The release workflow installs every release this way on
+`ubuntu-24.04` (Linux x64) and `macos-15` (macOS arm64).
+
+</details>
+
+### Node and Git
+
+Each environment installs Node and Git the way a user would.
+
+- **Node**: newest release of the `environments.json` major (`"node"`, overridable per environment), from nodejs.org.
+- **Git**: the distribution's; the Command Line Tools on a Mac; Git for Windows, default folder.
 
 ## What each environment checks
 
-The checks run as the machine's ordinary user, never as root or SYSTEM: on Linux and macOS through a login shell, on
-Windows in a desktop session the user is signed into (automatic sign-in, then a restart), so set-up writes PATH into
-the user's own startup files or registry hive as it would on a person's computer. The release workflow runs the same
-checks before every publish: `guest.sh` on Linux and macOS (above), and on Windows the registry, set-up, managed
-install, hook and uninstall steps of `scripts/host/windows-host.ps1` through `scripts/host/windows-install-smoke.ps1`.
+Eight checks run as the ordinary user, never root or SYSTEM, so set-up writes PATH as on a person's computer.
 
-1. **registry**: the package under test and every rule pack in `packs/` are served from a registry on the VM, as
-   npmjs will serve them; everything else comes from npmjs.
-2. **project**: a Git repository with a `package.json` (React, TypeScript) and one commit, and empty `~/.claude`,
-   `~/.codex` and `~/.cursor` folders so set-up connects those agents.
-3. **setup**: `npx @neralabs/rerail setup --json` in the project, then each answer through the launcher command set-up
-   prints for it (allow sessions, read this repository, start with the packs shown) until set-up says Rerail is on.
-4. **status**: `rerail status` reports the daemon running with `Engine: ok`, and `~/.rerail/current` is a symlink (a
-   junction on Windows).
-5. **PATH**: a new shell finds `rerail`: a login and an interactive bash on Linux; on macOS a login interactive zsh (as
-   Terminal.app opens) and an interactive one; on Windows, PATH built from the machine and user values in the
-   registry, as a new terminal builds it.
-6. **hooks**: the SessionStart command set-up registered for Claude Code and for Codex, run the way each agent runs
-   it, records its session with the daemon; Cursor's hooks are registered.
-7. **daemon-restart**: `rerail daemon stop` returns within 60 seconds, `status` then reports no daemon, and `rerail
-   daemon start` brings it back with the engine.
-8. **uninstall**: `rerail install --remove` leaves no Claude Code, Codex or Cursor config pointing into the Rerail
-   home, and takes Rerail's directory off PATH.
+1. **registry**: a registry on the VM serves the package and every published rule pack in `packs/`; all else comes
+   from npmjs.
+2. **project**: a Git repository with a `package.json` and one commit, plus empty agent folders.
+3. **setup**: `npx @neralabs/rerail setup --json`, answered until Rerail is on.
+4. **status**: `rerail status` shows the daemon running with `Engine: ok`.
+5. **PATH**: a new shell finds `rerail`.
+6. **hooks**: Claude Code's and Codex's SessionStart commands record their sessions with the daemon.
+7. **daemon-restart**: `rerail daemon stop` and `rerail daemon start` work.
+8. **uninstall**: `rerail install --remove` unhooks every agent and takes Rerail off PATH.
 
-Facts about each environment (OS, glibc or Windows build, Node and where it lives, npm, Git, and on Windows the
-execution policy and what `npx` does in a new Windows PowerShell) are recorded alongside, not judged.
+<details>
+<summary>Exact pass conditions</summary>
+
+- **registry**: the VM's registry serves them as npmjs will.
+- **project**: the `package.json` is React and TypeScript; empty `~/.claude`, `~/.codex` and `~/.cursor` make set-up
+  connect those agents.
+- **setup**: runs in the project, then sends each answer through the launcher command it prints (allow sessions, read
+  this repository, start with the packs shown) until set-up says Rerail is on.
+- **status**: `~/.rerail/current` is a symlink (junction on Windows).
+- **hooks**: Claude Code's and Codex's SessionStart commands run as each agent runs them. Cursor's hooks are registered.
+- **daemon-restart**: `rerail daemon stop` returns within 60 seconds, `status` shows no daemon, and `rerail daemon
+  start` restores it with the engine.
+- **uninstall**: no Claude Code, Codex or Cursor config points into the Rerail home, and Rerail's directory is off PATH.
+
+</details>
+
+<details>
+<summary>Sessions, shells and recorded facts</summary>
+
+Set-up writes PATH into the user's own startup files or registry hive. Linux and macOS use a login shell; Windows a
+signed-in desktop session (automatic sign-in, then a restart).
+
+The PATH check uses login and interactive bash on Linux; login interactive zsh (as Terminal.app opens) and
+interactive zsh on macOS. On Windows, PATH is built from machine and user registry values, as a new terminal builds it.
+
+The release workflow runs the same checks before every publish: `guest.sh` on Linux and macOS, and on Windows the
+registry, set-up, managed install, hook and uninstall steps of `scripts/host/windows-host.ps1` via
+`scripts/host/windows-install-smoke.ps1`.
+
+Facts are recorded, not judged: OS, glibc or Windows build, Node and its location, npm, Git; on Windows, also the
+execution policy and what `npx` does in a new Windows PowerShell.
+
+</details>
 
 ## Results
 
-Each run writes, per environment, `<id>.json` (facts and steps, each with its output's tail) and `<id>.log` (the
-whole provisioning and check log), and a `summary.md` table. CI adds the table to the job summary and uploads the
-files as the `env-matrix-<id>` artifact; by hand they land in `.rerail/env-matrix/<run id>/`. Each macOS job writes
-its own table.
+Each run writes `<id>.json` and `<id>.log` per environment, plus a `summary.md` table.
+
+- **`<id>.json`**: facts and steps, each with its output's tail.
+- **`<id>.log`**: the full provisioning and check log.
+
+CI adds the table to the job summary (one per macOS job) and uploads the files as the `env-matrix-<id>` artifact. By
+hand, they land in `.rerail/env-matrix/<run id>/`.
 
 ## Running it by hand
 
-Sign in with `az login` to the subscription that holds the resource group, then:
+Run the Azure environments locally with `just rerail-env-matrix`, after `az login` to the subscription that holds the
+resource group:
 
 ```sh
 just rerail-env-matrix run --tarball neralabs-rerail-<version>.tgz                  # every environment
 just rerail-env-matrix run --tarball <file> --env windows-11-x64,debian-12-x64      # some
 just rerail-env-matrix run --npm next                                               # a published version from npmjs
-just rerail-env-matrix run --tarball <file> --env ubuntu-24.04-x64 --keep          # leave the VM for a look
+just rerail-env-matrix run --tarball <file> --env ubuntu-24.04-x64 --keep           # leave the VM for a look
 just rerail-env-matrix sweep --run-id <id>                                          # delete what a --keep run left
 ```
 
-A tarball needs every native engine, so take it from a `rerail-package` artifact (`gh run download <run> -n
-rerail-package`, from a Release or Environment matrix run), not from a checkout's `npm pack`. `--npm` installs from
-npmjs, which serves `@neralabs` packages only to signed-in members until launch: set `RERAIL_ENV_NPM_TOKEN` to a read
-token meanwhile. Environments run in parallel; a run of all of them takes about 20 minutes, the Windows ones longest.
+- **Tarball**: needs every native engine, so use a `rerail-package` artifact from a Release or Environment matrix run
+  (`gh run download <run> -n rerail-package`), not a checkout's `npm pack`.
+- **`--npm`**: until launch, npmjs serves `@neralabs` only to signed-in members; set `RERAIL_ENV_NPM_TOKEN` to a read
+  token.
+- **Duration**: environments run in parallel; a full run takes about 20 minutes, Windows longest.
 
-No VM accepts inbound connections. Scripts reach a VM through Azure Run Command, the package and the results move
-through blob URLs signed for three hours, and each VM's public IP carries only its outbound traffic. Each environment
-deletes its VM, disk, network interface and public IP when it finishes; `sweep` deletes what a cancelled run left and
-each run's storage container once nothing has been written to it for three hours (CI sweeps after every run).
+### Network and clean-up
 
-In CI the package is staged once per run (`stage` bundles it with the rule packs into the run's container) and each
-environment's job runs `run --staged` against it; re-running failed environments reuses that bundle. Every attempt
-writes its results into the container, so the bundle lasts three hours past the run's last attempt. A re-run started
-later than that fails with `Nothing is staged in run-gh<id>`: re-run all jobs, which stages the package again.
+VMs accept no inbound connections and are deleted when done.
 
-A Windows VM's administrator password is generated for the run and is readable in clear while the VM exists: in the
-Run Command resource (`az vm run-command show`, by anyone with Reader on the resource group), in
-`C:\rerail-env\guest.ps1`, and in the Winlogon `DefaultPassword` value that signs the user in. The VM admits no inbound
-connections and is deleted when its environment finishes, so the password opens nothing reachable and outlives
-nothing; keep the resource group's access to the people who run the matrix.
+<details>
+<summary>How VMs are reached and removed</summary>
+
+Scripts reach a VM through Azure Run Command; the package and results move through blob URLs signed for three hours.
+Each VM's public IP carries only outbound traffic.
+
+Each environment deletes its VM, disk, network interface and public IP when it finishes. `sweep`, run by CI after every
+run, deletes what a cancelled run left and any run container unwritten for three hours.
+
+</details>
+
+### Staging in CI
+
+CI stages the package once per run; each environment's job runs `run --staged` against it.
+
+<details>
+<summary>Re-runs and expiry</summary>
+
+`stage` bundles the package and rule packs into the run's container, and re-runs of failed environments reuse it.
+Every attempt writes its results there, so the bundle lasts three hours past the last attempt.
+
+Later re-runs fail with `Nothing is staged in run-gh<id>`: re-run all jobs instead, which stages the package again.
+
+</details>
+
+### Windows passwords
+
+Each Windows VM's administrator password is generated per run and readable in clear while the VM exists.
+
+<details>
+<summary>Where it is readable and why that is acceptable</summary>
+
+- the Run Command resource (`az vm run-command show`, for anyone with Reader on the resource group);
+- `C:\rerail-env\guest.ps1`;
+- the Winlogon `DefaultPassword` value that signs the user in.
+
+With no inbound access and the VM deleted after its run, the password opens nothing. Still, limit resource group
+access to the people who run the matrix.
+
+</details>
 
 ## Azure setup
 
-`scripts/host/azure/bootstrap.sh` sets up, once and idempotently, a resource group (`rerail-envtest-rg` in Canada
-Central by default) holding a storage account whose blobs expire after seven days and a virtual network whose
-security group admits nothing from outside. For CI it creates the app registration `rerail-env-matrix-github`,
-trusted through OIDC for pushes to `main` of this repository, with Contributor on that resource group only, and
-`--github` writes the repository variables the workflow reads (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID`, `RERAIL_AZURE_RESOURCE_GROUP`). `--branch <name>` also trusts one more branch, to try a
-change to the workflow before it merges; `--remove-branch <name>` takes that back.
+`scripts/host/azure/bootstrap.sh` creates the Azure resources once, idempotently.
 
-The Windows 11 images run under `--license-type Windows_Client`, which Azure allows for organisations whose Microsoft
-365 or Windows subscriptions license Windows 11 for their users.
+<details>
+<summary>Flags, resources and licensing</summary>
+
+- **`--github`** writes the workflow's repository variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID`, `RERAIL_AZURE_RESOURCE_GROUP`.
+- **`--branch <name>`** trusts one more branch, to test a workflow change before merge; **`--remove-branch <name>`**
+  undoes it.
+
+The script creates a resource group (`rerail-envtest-rg` in Canada Central by default) with a storage account whose
+blobs expire after seven days and a virtual network whose security group admits nothing from outside.
+
+For CI, it creates the app registration `rerail-env-matrix-github`, trusted through OIDC for pushes to this
+repository's `main`, with Contributor on that resource group only.
+
+Windows 11 images run under `--license-type Windows_Client`, which Azure allows when Microsoft 365 or Windows
+subscriptions license Windows 11 for the organisation's users.
+
+</details>

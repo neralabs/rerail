@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -63,6 +62,8 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
+import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
@@ -90,8 +91,8 @@ interface PackageManifest {
   version: string;
 }
 
-async function packageManifest(root: string): Promise<PackageManifest> {
-  const value = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as Record<string, unknown>;
+function packageManifest(root: string): PackageManifest {
+  const value = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
   if (typeof value.name !== "string" || typeof value.version !== "string") {
     throw new TypeError(`Invalid Rerail package manifest: ${join(root, "package.json")}`);
   }
@@ -184,8 +185,14 @@ function usage(): string {
     "  rerail update status",
     "  rerail update --channel <tag>",
     "",
-    internalTesting("Not part of the 0.1.0 release:"),
+    internalTesting(`Not part of the ${packageManifest(packageRoot).version} release:`),
     "  rerail scan --session <id> [--scope repository|git-diff] [--wait] [--json]",
+    "  rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]... [--path <p>]... [--paths-from <file>] [--json] [--fail-on-violations] [--no-send]",
+    "  rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content]",
+    "  rerail remote list|status [--json]",
+    "  rerail remote remove <name|url>",
+    "  rerail remote push [--json]",
+    "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
@@ -276,6 +283,12 @@ async function runStatusCommand(home: string): Promise<number> {
   else if (state === "not-set-up") process.stdout.write(`Rerail is on in ${name}, which is not set up yet. Set it up with rerail start.\n`);
   else process.stdout.write(`Rerail is on in ${name}.\n`);
   const code = printDaemonStatus(lookup);
+  // Internal testing: the remote sink, only when a remote is added.
+  try {
+    for (const remote of new RemoteOutbox({ home }).status()) process.stdout.write(`${describeRemoteStatus(remote)}\n`);
+  } catch (error) {
+    process.stdout.write(`Remote sink: status unreadable (${error instanceof Error ? error.message : String(error)})\n`);
+  }
   // Last, for each connected coding agent, whether its tools can read Rerail's data on this computer.
   for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
     // Each sentence names its coding agent.
@@ -457,7 +470,7 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     awaitingApproval: counts?.awaitingApproval ?? null,
     rulesUrl,
     repositoryName: repositoryName(cwd),
-    sigil: host === "codex" ? "$" : "/",
+    sigil: ADAPTER_CAPABILITIES[host as RerailHost].commandSigil,
   })}\n`);
   if (!open) return 0;
   const page = presentation?.url ?? rulesUrl;
@@ -607,7 +620,9 @@ function isVersionIndependentCommand(args: readonly string[]): boolean {
   // `setup` installs the package it was invoked from, so it must not forward to an older active version.
   // `seed`, `rules`, `show-me`, `reset`, `scrub` and `feedback` write the Rerail database with the invoking package's schema (a checkout build, say).
   // `support-bundle` reports the version it was invoked as, and has to run where the active version cannot.
-  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback"].includes(command ?? "")) return true;
+  if (["setup", "install", "start", "stop", "state", "status", "session", "manage", "seed", "rules", "show-me", "reset", "scrub", "support-bundle", "feedback", "remote"].includes(command ?? "")) return true;
+  // A headless `scan` (no `--session`) runs in this process, so it scans with the package invoked.
+  if (command === "scan") return !commandArgs.includes("--session");
   if (command === "daemon") return commandArgs[1] === "stop";
   return command === "update" && commandArgs[1] === "status";
 }
@@ -629,7 +644,7 @@ function refuseUnsupportedNode(args: readonly string[]): number | undefined {
 }
 
 async function main(): Promise<number> {
-  const manifest = await packageManifest(packageRoot);
+  const manifest = packageManifest(packageRoot);
   const home = defaultRerailHome();
   const updater = new ManagedUpdater({
     home,
@@ -720,7 +735,9 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
   if (command === "state") return runStateCommand(args);
   // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
-  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home });
+  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home, version: context.packageVersion });
+  // Internal testing: the remote sink.
+  if (command === "remote") return await runRemoteCommand(args, { home });
   return undefined;
 }
 

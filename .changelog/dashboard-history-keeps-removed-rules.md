@@ -1,1 +1,0 @@
-`rules_activity` reports a rule taken out of the repository while it has violations, marked `removed: true`, so History by rule keeps listing it after Delete or Remove pack. Undo on a deleted rule always restores it to the repository it was deleted from.

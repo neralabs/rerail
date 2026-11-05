@@ -288,6 +288,16 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     expectUntouched(setup);
   });
 
+  it("tells a Codex user to start later with $rerail-start", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment({ found: ["codex"] });
+    const notNow = agentIo();
+    expect(await runSetup(notNow, request(setup, environment, { answer: "not-now", repo: setup.repo }))).toEqual({ status: "not-now" });
+    expect(notNow.text()).toContain("whenever you’re ready with $rerail-start.");
+    expect(notNow.text()).not.toContain("/rerail-start");
+    expect(environment.connections).toEqual([]);
+  });
+
   it("asks for a folder where there is no repo, and skipping connects the coding agents and starts nothing", async () => {
     const setup = await fixture();
     const plain = join(setup.root, "downloads");

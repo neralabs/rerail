@@ -1,5 +1,23 @@
 # @neralabs/rerail-pack-typescript
 
+Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.
+
+Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
+
+## 0.1.6 (2026-11-04)
+
+65 rules, 23 of them on by default.
+
+### Fixed
+
+- `typescript-eslint-no-unused-expressions` now tells agents to rewrite a short-circuit call such as `a && f()` as an `if` that keeps its condition, and names the condition. Agents given the old message sometimes dropped the condition. What the rule reports is unchanged.
+
+## 0.1.5 (2026-11-04)
+
+65 rules, 23 of them on by default.
+
+- 41 new rules (38 from typescript-eslint and 3 from @vitest/eslint-plugin): 9 start in Steer, 1 in Log and 31 off.
+
 ## 0.1.4
 
 ### Patch Changes

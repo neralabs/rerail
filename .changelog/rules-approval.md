@@ -1,1 +1,0 @@
-A rule Rerail did not publish steers only once a person approves what it says: a rule in your library, a worktree's own rule, and every rule of a third party's pack or one from a folder run in Log until approved, and again after a change. Approve with `rerail rules approve` or the dashboard's Approve button ([approval](docs/rule-scoping.md#approval)).

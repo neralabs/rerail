@@ -1554,8 +1554,9 @@ export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
  * - test data (`publish/<path>`): overlay (default): the archive the commit's test-data.lock names, less the files the
  *   merge base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; `replace`:
  *   publish/ alone;
- * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, then laid over the
- *   archive the commit's samples.lock names, or alone with `replace`.
+ * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, each checked against
+ *   its repository's licence files at its commit (checkLicenceTexts, reading GitHub through `gh` into the checkout's
+ *   `.rerail/pack-data/licences/`), then laid over the archive the commit's samples.lock names, or alone with `replace`.
  *
  * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
  * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
@@ -1646,8 +1647,9 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
       const blobs = gitBlobs(root, files.map(({ oid }) => oid));
       let published = files.map(({ path, oid }) => ({ path, bytes: blobs.get(oid) }));
       if (kind === "samples") {
-        const { publishedSamples } = await import("../samples/publish.ts");
+        const { checkLicenceTexts, licenceCache, publishedSamples } = await import("../samples/publish.ts");
         published = publishedSamples(published);
+        checkLicenceTexts(published, licenceCache(root));
       }
       const next = new Map();
       if (!replace) {

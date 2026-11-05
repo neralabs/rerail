@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Core's release notes are written for the person upgrading (docs/release.md, "Release notes"). On a pull request,
-// each entry it adds or changes in .changelog/ (one file each) stays at a sentence or two, names no ticket, pull
-// request or commit, and is the entry's text alone, without the bullet the Release pull request adds; and no entry is
-// written into CHANGELOG.md's first section, unreleased or dated, where every pull request would edit the same lines
+// every entry pending in .changelog/ (one file each) names its change type, and each it adds or changes stays at a
+// sentence or two, names no ticket, pull request or commit, and is the entry's text alone, without the bullet the
+// Release pull request adds; and no entry is written into CHANGELOG.md's first section, unreleased or dated, where every pull request would edit the same lines
 // (or a published release's notes). On the Release pull request, whose first section is a dated heading new against
 // the base and holds the entries it moved out of .changelog/ (checked when they were added), the section leads with a
 // paragraph for the people who upgrade, written under `## Unreleased` on main. ci.yml's lint job runs it.
@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CHANGELOG_ENTRIES, changelogEntryFileRefusal, changelogLead, changelogLeadRefusal, firstChangelogSection, handWrittenChangelogEntries, readChangelogEntries, unreleasedChangelogEntries } from "./core.mjs";
+import { CHANGELOG_ENTRIES, changelogEntryFileRefusal, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, firstChangelogSection, handWrittenChangelogEntries, readChangelogEntries, unreleasedChangelogEntries } from "./core.mjs";
 import { releaseNoteRefusal } from "./release-notes.mjs";
 import { ROOT } from "./packs.mjs";
 
@@ -25,6 +25,17 @@ function atBase(path) {
   } catch {
     return null;
   }
+}
+
+/** The text of every entry the base holds in .changelog/, whatever its file is named there. */
+function baseEntryTexts() {
+  let listed = "";
+  try {
+    listed = execFileSync("git", ["ls-tree", "--name-only", base, `${CHANGELOG_ENTRIES}/`], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    // A base that holds no such folder holds no entries.
+  }
+  return new Set(listed.split("\n").filter((path) => path.endsWith(".md") && path !== `${CHANGELOG_ENTRIES}/README.md`).map(atBase));
 }
 
 const quote = (entry) => `"${entry.replace(/\s+/gu, " ").slice(0, 60)}…"`;
@@ -48,11 +59,15 @@ if (section !== null) {
   }
 }
 
-// An entry the base holds already, in its file or as a whole entry of CHANGELOG.md's unreleased section (moved out of
-// it), is not this pull request's.
+// An entry the base holds already, in a file under any name (renaming one to give it a type changes no word of it) or
+// as a whole entry of CHANGELOG.md's unreleased section (moved out of it), is not this pull request's. Its type is
+// checked all the same: the Release pull request can't place an entry without one.
 const moved = unreleasedChangelogEntries(before);
+const held = baseEntryTexts();
 for (const { path, text, entry } of readChangelogEntries(ROOT)) {
-  if (atBase(path) === text) continue;
+  const typeRefusal = changelogEntryTypeRefusal(path);
+  if (typeRefusal !== null) failures.push({ file: path, title: "Changelog entry", text: `${path} ${typeRefusal}` });
+  if (held.has(text)) continue;
   const fileRefusal = changelogEntryFileRefusal(text);
   if (fileRefusal !== null) {
     failures.push({ file: path, title: "Changelog entry", text: `${path} ${fileRefusal}` });

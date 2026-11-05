@@ -1,1 +1,0 @@
-A checkout runs its own rules: every rule document in `<checkout>/.rerail/rules/*.json` loads in that checkout alone, as the pack `worktree`, without being installed or added. A file that fails its checks is left out with why, an edit applies at the next event, and the footer and dashboard name them ([a worktree's own rules](docs/rule-packs.md#a-worktrees-own-rules)).

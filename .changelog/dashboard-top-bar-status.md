@@ -1,1 +1,0 @@
-The dashboard's top bar status is shorter and says only what it knows: "Live", "Reconnecting…", "Daemon not responding", "Repo not found", "Not set up" and "Stopped". Each warning's tooltip names the next step, and the tooltips no longer say that new sessions go unsteered while the daemon is down, or that the page is connected when it has only gone quiet.

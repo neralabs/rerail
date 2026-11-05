@@ -1,0 +1,114 @@
+{
+  "caught": [
+    {
+      "path": "src/harness/native-semantic-tools.ts",
+      "content": "import type { ExtensionAPI as OmpExtensionAPI } from \"@oh-my-pi/pi-coding-agent\";\nimport type { ExtensionAPI as PiExtensionAPI } from \"@earendil-works/pi-coding-agent\";\nimport { Type } from \"typebox\";\nimport type {\n  ProjectionSpec,\n  RelationSpec,\n  SelectionSpec,\n  WatermarkChange,\n} from \"../engine/native/semantic-types.js\";\nimport { internalTesting } from \"../engine/internal-testing.js\";\n\nexport interface NativeSemanticToolRuntime {\n  mark(change: WatermarkChange): Promise<unknown>;\n  select(spec: SelectionSpec): Promise<unknown>;\n  project(selectionId: string, spec: ProjectionSpec): Promise<unknown>;\n  relate(leftId: string, rightId: string, spec: RelationSpec): Promise<unknown>;\n}\n\n\nfunction result(details: unknown) {\n  return {\n    content: [{ type: \"text\" as const, text: JSON.stringify(details, null, 2) }],\n    details,\n  };\n}\n\n/** Internal testing: the semantic tools `rerail_mark`, `rerail_select`, `rerail_project` and `rerail_relate`. */\nexport function registerOmpSemanticTools(pi: OmpExtensionAPI, runtime: NativeSemanticToolRuntime): void {\n  const z = pi.zod;\n  const markParameters = z.object({ change: z.unknown() });\n  const selectParameters = z.object({ spec: z.unknown() });\n  const projectParameters = z.object({ selectionId: z.string(), spec: z.unknown() });\n  const relateParameters = z.object({\n    leftProjectionId: z.string(),\n    rightProjectionId: z.string(),\n    spec: z.unknown(),\n  });\n  pi.registerTool({\n    name: \"rerail_mark\",\n    label: \"Rerail Mark\",\n    description: internalTesting(\"Attach or detach namespaced watermarks on active-session content.\"),\n    parameters: markParameters,\n    approval: \"write\",\n    loadMode: \"discoverable\",\n    strict: true,\n    async execute(_id, input) {\n      const parsed = markParameters.parse(input);\n      return result(await runtime.mark(parsed.change as WatermarkChange));\n    },\n  });\n  pi.registerTool({\n    name: \"rerail_select\",\n    label: \"Rerail Select\",\n    description: internalTesting(\"Select active-session content with source and watermark filters.\"),\n    parameters: selectParameters,\n    approval: \"read\",\n    loadMode: \"discoverable\",\n    strict: true,\n    async execute(_id, input) {\n      const parsed = selectParameters.parse(input);\n      return result(await runtime.select(parsed.spec as SelectionSpec));\n    },\n  });\n  pi.registerTool({\n    name: \"rerail_project\",\n    label: \"Rerail Project\",\n    description: internalTesting(\"Render and embed a cached selection.\"),\n    parameters: projectParameters,\n    approval: \"read\",\n    loadMode: \"discoverable\",\n    strict: true,\n    async execute(_id, input) {\n      const parsed = projectParameters.parse(input);\n      return result(await runtime.project(parsed.selectionId, parsed.spec as ProjectionSpec));\n    },\n  });\n  pi.registerTool({\n    name: \"rerail_relate\",\n    label: \"Rerail Relate\",\n    description: internalTesting(\"Compare two cached semantic projections.\"),\n    parameters: relateParameters,\n    approval: \"read\",\n    loadMode: \"discoverable\",\n    strict: true,\n    async execute(_id, input) {\n      const parsed = relateParameters.parse(input);\n      return result(await runtime.relate(\n        parsed.leftProjectionId,\n        parsed.rightProjectionId,\n        parsed.spec as RelationSpec,\n      ));\n    },\n  });\n}\n\n/** Internal testing: the semantic tools, as {@link registerOmpSemanticTools}. */\nexport function registerPiSemanticTools(pi: PiExtensionAPI, runtime: NativeSemanticToolRuntime): void {\n  pi.registerTool({\n    name: \"rerail_mark\",\n    label: \"Rerail Mark\",\n    description: internalTesting(\"Attach or detach namespaced watermarks on active-session content.\"),\n    parameters: Type.Object({ change: Type.Unknown() }),\n    async execute(_id, input) {\n      return result(await runtime.mark(input.change as WatermarkChange));\n    },\n  });\n  pi.registerTool({\n    name: \"rerail_select\",\n    label: \"Rerail Select\",\n    description: internalTesting(\"Select active-session content with source and watermark filters.\"),\n    parameters: Type.Object({ spec: Type.Unknown() }),\n    async execute(_id, input) {\n      return result(await runtime.select(input.spec as SelectionSpec));\n    },\n  });\n  pi.registerTool({\n    name: \"rerail_project\",\n    label: \"Rerail Project\",\n    description: internalTesting(\"Render and embed a cached selection.\"),\n    parameters: Type.Object({ selectionId: Type.String(), spec: Type.Unknown() }),\n    async execute(_id, input) {\n      return result(await runtime.project(input.selectionId, input.spec as ProjectionSpec));\n    },\n  });\n  pi.registerTool({\n    name: \"rerail_relate\",\n    label: \"Rerail Relate\",\n    description: internalTesting(\"Compare two cached semantic projections.\"),\n    parameters: Type.Object({\n      leftProjectionId: Type.String(),\n      rightProjectionId: Type.String(),\n      spec: Type.Unknown(),\n    }),\n    async execute(_id, input) {\n      return result(await runtime.relate(input.leftProjectionId, input.rightProjectionId, input.spec as RelationSpec));\n    },\n  });\n}\n"
+    },
+    {
+      "path": "src/presentation/omp-presentation.ts",
+      "content": "import type { ExtensionContext } from \"@oh-my-pi/pi-coding-agent\";\n\nexport interface OmpPresentation {\n  start(ctx: ExtensionContext, options?: { off?: boolean }): void;\n  stop(): void;\n}\n"
+    },
+    {
+      "path": "src/runtime/session-messages.ts",
+      "content": "import type { AgentMessage } from \"@oh-my-pi/pi-agent-core\";\n\nexport function isUserMessage(message: AgentMessage): boolean {\n  return message.role === \"user\";\n}\n"
+    },
+    {
+      "path": "src/presentation/steer-theme.ts",
+      "content": "import type {\n  ExtensionAPI,\n  Theme,\n} from '@oh-my-pi/pi-coding-agent';\n\nexport function accent(theme: Theme): string { return theme.fg(\"accent\", \"◆\"); }\n"
+    },
+    {
+      "path": "src/engine/adapter-host-types.ts",
+      "content": "export type { ExtensionContext as PiContext } from \"@earendil-works/pi-coding-agent\";\n"
+    },
+    {
+      "path": "src/harness/compaction-shape.ts",
+      "content": "export type Preparation = Parameters<typeof import(\"@earendil-works/pi-coding-agent\").compact>[0];\n"
+    },
+    {
+      "path": "src/setup/omp-version.ts",
+      "content": "const sdk = require(\"@oh-my-pi/pi-ai\");\nexport const ompVersion: string = sdk.version;\n"
+    },
+    {
+      "path": "src/runtime/omp-types.ts",
+      "content": "import \"@oh-my-pi/omptype\";\n"
+    },
+    {
+      "path": "src/engine/claude-session.ts",
+      "content": "import { query } from \"@anthropic-ai/claude-agent-sdk\";\nexport { query };\n"
+    },
+    {
+      "path": "src/engine/codex-session.ts",
+      "content": "import { Codex } from \"@openai/codex-sdk\";\nexport const codex = new Codex();\n"
+    },
+    {
+      "path": "src/harness/pi-schemas.ts",
+      "content": "import { Type } from \"@sinclair/typebox\";\nexport const changeParameters = Type.Object({ change: Type.Unknown() });\n"
+    },
+    {
+      "path": "src/engine/catalog/omp-loader.ts",
+      "content": "import { createRequire } from \"node:module\";\nexport const loadOmp = (): unknown => createRequire(import.meta.url)(\"@oh-my-pi/pi-coding-agent\");\n"
+    },
+    {
+      "path": "src/harness/pi-loader.ts",
+      "content": "export const loadPi = () => import(`@earendil-works/pi-coding-agent`);\n"
+    },
+    {
+      "path": "src/harness/omp-globals.ts",
+      "content": "/// <reference types=\"@oh-my-pi/omptype\" />\nexport {};\n"
+    },
+    {
+      "path": "src/harness/omp-augment.ts",
+      "content": "declare module \"@oh-my-pi/pi-coding-agent\" {\n  interface ExtensionAPI { rerail?: unknown }\n}\nexport {};\n"
+    },
+    {
+      "path": "src/harness/cursor-agent.ts",
+      "content": "import { Agent } from \"@cursor/sdk\";\nexport { Agent };\n"
+    },
+    {
+      "path": "src/harness/pi-shapes.d.ts",
+      "content": "import type { ExtensionContext } from \"@earendil-works/pi-coding-agent\";\nexport type PiContext = ExtensionContext;\n"
+    },
+    {
+      "path": "src/runtime/omp-require.ts",
+      "content": "import omp = require(\"@oh-my-pi/pi-coding-agent\");\nexport = omp;\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "src/presentation/omp-presentation.ts",
+      "content": "import { fallbackPresentation, formatTerminalStatus, notOnHerePresentation, readPresentation } from \"./session-presentation.js\";\n\nconst STATUS_KEY = \"rerail\";\nconst REFRESH_MS = 5_000;\n\n/**\n * What the footer needs from an OMP or Pi extension context. OMP schedules through its own timers so\n * they stop with the session; Pi has none, so the footer falls back to an unref'd process timer.\n */\nexport interface PresentationContext {\n  cwd: string;\n  hasUI?: boolean;\n  sessionManager: { getSessionId(): string };\n  ui: { setWidget(key: string, content: string[] | undefined, options?: { placement?: \"aboveEditor\" | \"belowEditor\" }): void };\n  setInterval?(callback: () => void, ms: number): unknown;\n  clearTimer?(timer: never): void;\n}\n\n"
+    },
+    {
+      "path": "src/harness/compaction-guard.ts",
+      "content": "import { STEER_LINE_MESSAGE_TYPE } from \"../engine/adapter-contract.js\";\n\n/** The line a Rerail message carries into a Pi or OMP compaction, so the summarizer never takes it for the person. */\nexport const RERAIL_COMPACTION_LABEL = \"[Rerail: automated rule check sent to the agent, not a message from the user]\";\n\ninterface MessageLike {\n  role: string;\n}\n\n/**\n * The part of Pi's and OMP's `CompactionPreparation` the guard rewrites (pi-coding-agent 1.1.0 and 0.80.6\n * `compaction.d.ts`, OMP `pi-agent-core/src/compaction/compaction.ts`). Only OMP has `recentMessages`: the kept tail it\n * hands to remote compaction and the short summary.\n */\nexport interface CompactionPreparationLike<Message extends MessageLike> {\n  messagesToSummarize: Message[];\n  turnPrefixMessages: Message[];\n  isSplitTurn: boolean;\n  recentMessages?: Message[];\n}\n"
+    },
+    {
+      "path": "src/harness/sdk-names.ts",
+      "content": "/** Pins follow the OMP SDK, @oh-my-pi/pi-coding-agent; see scripts/deps/sync-pins.mjs. */\nexport const OMP_SDK = \"@oh-my-pi/pi-coding-agent\";\nexport const PI_SDK = '@earendil-works/pi-coding-agent';\n"
+    },
+    {
+      "path": "src/engine/model-client.ts",
+      "content": "import Anthropic from \"@anthropic-ai/sdk\";\nimport OpenAI from \"openai\";\nexport const clients = { anthropic: new Anthropic(), openai: new OpenAI() };\n"
+    },
+    {
+      "path": "src/presentation/presentation-ui.ts",
+      "content": "// Same shape as import(\"@oh-my-pi/pi-coding-agent\").ExtensionContext[\"ui\"], kept local so this layer has no SDK import.\ninterface PresentationUi {\n  setWidget(key: string, content: string[] | undefined): void;\n}\nexport type { PresentationUi };\n"
+    },
+    {
+      "path": "src/setup/host-version.ts",
+      "content": "export const OMP_VERSION_PROBE = `process.stdout.write(require(\"@oh-my-pi/pi-coding-agent/package.json\").version)`;\n"
+    },
+    {
+      "path": "src/engine/catalog/schema-note.ts",
+      "content": "// Shared schemas use zod; Pi's tools import { Type } from \"typebox\" in src/hosts/pi.\nimport { z } from \"zod\";\nexport const changeSchema = z.object({ change: z.unknown() });\n"
+    },
+    {
+      "path": "src/hosts/omp/extension.ts",
+      "content": "import { execFile } from \"node:child_process\";\nimport { randomUUID } from \"node:crypto\";\nimport { existsSync } from \"node:fs\";\nimport { join, resolve } from \"node:path\";\nimport { promisify } from \"node:util\";\nimport { setImmediate as nextMacrotask } from \"node:timers/promises\";\nimport { pathToFileURL } from \"node:url\";\nimport type { AgentMessage } from \"@oh-my-pi/pi-agent-core\";\nimport type { ExtensionAPI, ExtensionContext, ExtensionFactory } from \"@oh-my-pi/pi-coding-agent\";\nimport type * as RepositoryStart from \"../../runtime/repository-start.js\";\nimport {\n  assistantAbortEvent,\n"
+    },
+    {
+      "path": "src/hosts/pi/pi-tool.ts",
+      "content": "import type { ExtensionAPI } from \"@earendil-works/pi-coding-agent\";\nimport { Type } from \"typebox\";\nimport type { ConversationRuleRegistry } from \"../../engine/catalog/registry.js\";\nimport { MUTATION_ENTRY_TYPE, type RuleMutation } from \"../../runtime/session-state.js\";\nimport { parseSampleSource, SAMPLE_BOUNDARIES } from \"../../engine/catalog/rule-schema.js\";\n"
+    }
+  ]
+}

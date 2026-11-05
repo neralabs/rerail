@@ -1,0 +1,616 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-cli-entry-no-decisions",
+  "revision": 1,
+  "mode": "log",
+  "description": "Put a function that branches without running commands or writing output in an importable module beside the script, not in a release, host or CLI script that runs when imported; tests can't import it.",
+  "scope": {
+    "include": [
+      "scripts/release/**/*.mjs",
+      "scripts/release/**/*.js",
+      "scripts/release/**/*.cjs",
+      "scripts/release/**/*.ts",
+      "scripts/release/**/*.mts",
+      "scripts/release/**/*.cts",
+      "scripts/host/**/*.mjs",
+      "scripts/host/**/*.js",
+      "scripts/host/**/*.cjs",
+      "scripts/host/**/*.ts",
+      "scripts/host/**/*.mts",
+      "scripts/host/**/*.cts",
+      "src/cli/**/*.ts",
+      "src/cli/**/*.mts"
+    ],
+    "exclude": [
+      "**/*.test.*",
+      "**/*.d.ts",
+      "**/*.d.mts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "main-guard": {
+            "kind": "if_statement",
+            "has": {
+              "field": "condition",
+              "regex": "import\\.meta\\.main\\b|===\\s*(?:fileURLToPath\\(\\s*)?import\\.meta\\.(?:url|filename)\\b|import\\.meta\\.(?:url|filename)\\s*===|process\\.argv\\[1\\]\\s*===|===\\s*(?:\\w+\\(\\s*)?process\\.argv\\[1\\]|require\\.main\\s*===\\s*module\\b|\\b(?:launchedDirectly|isMain|invoked|launched|launchedPath|SCRIPT)\\b"
+            }
+          },
+          "runs-on-import": {
+            "kind": "program",
+            "not": {
+              "has": {
+                "matches": "main-guard"
+              }
+            },
+            "has": {
+              "any": [
+                {
+                  "kind": "expression_statement"
+                },
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "for_in_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "do_statement"
+                },
+                {
+                  "kind": "try_statement"
+                },
+                {
+                  "kind": "switch_statement"
+                },
+                {
+                  "kind": "lexical_declaration"
+                },
+                {
+                  "kind": "variable_declaration"
+                }
+              ],
+              "has": {
+                "matches": "import-effect",
+                "stopBy": "end"
+              }
+            }
+          },
+          "branch": {
+            "any": [
+              {
+                "kind": "if_statement"
+              },
+              {
+                "kind": "switch_statement"
+              },
+              {
+                "kind": "ternary_expression"
+              },
+              {
+                "kind": "binary_expression",
+                "has": {
+                  "regex": "^(?:&&|\\|\\|)$"
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "\\.(?:filter|find|findIndex|findLast|findLastIndex|some|every)$"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "has": {
+                        "any": [
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "function_expression"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "local-function": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      }
+                    ]
+                  },
+                  {
+                    "has": {
+                      "field": "name",
+                      "pattern": "$NAME"
+                    }
+                  },
+                  {
+                    "any": [
+                      {
+                        "inside": {
+                          "matches": "runs-on-import",
+                          "stopBy": "neighbor"
+                        }
+                      },
+                      {
+                        "inside": {
+                          "kind": "export_statement",
+                          "stopBy": "neighbor",
+                          "inside": {
+                            "matches": "runs-on-import",
+                            "stopBy": "neighbor"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "generator_function"
+                      }
+                    ]
+                  },
+                  {
+                    "inside": {
+                      "kind": "variable_declarator",
+                      "stopBy": "neighbor",
+                      "has": {
+                        "field": "name",
+                        "pattern": "$NAME"
+                      },
+                      "inside": {
+                        "all": [
+                          {
+                            "any": [
+                              {
+                                "kind": "lexical_declaration"
+                              },
+                              {
+                                "kind": "variable_declaration"
+                              }
+                            ]
+                          },
+                          {
+                            "any": [
+                              {
+                                "inside": {
+                                  "matches": "runs-on-import",
+                                  "stopBy": "neighbor"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "kind": "export_statement",
+                                  "stopBy": "neighbor",
+                                  "inside": {
+                                    "matches": "runs-on-import",
+                                    "stopBy": "neighbor"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        ],
+                        "stopBy": "neighbor"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "does-io": {
+            "any": [
+              {
+                "kind": "await_expression"
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "^(?:console\\.\\w+|process\\.(?:stdout|stderr)\\.write|process\\.(?:exit|kill|chdir))$|^(?:\\w+\\.)?(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork|execa|fetch|git|npm|gh|az|run)$|^(?:(?:fs|fsp|fsPromises|promises)\\.)?(?:writeFile|appendFile|mkdir|mkdtemp|rm|rmdir|unlink|rename|copyFile|cp|symlink|chmod|truncate|open|createWriteStream)(?:Sync)?$"
+                }
+              },
+              {
+                "kind": "member_expression",
+                "regex": "^process\\.exitCode\\b"
+              }
+            ]
+          },
+          "text-value": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "array",
+                    "not": {
+                      "has": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "string"
+                            },
+                            {
+                              "kind": "template_string"
+                            },
+                            {
+                              "kind": "identifier"
+                            },
+                            {
+                              "regex": "^[\\[\\],]$"
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "regex": "\\.join$"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "binary_expression",
+                "has": {
+                  "regex": "^\\+$"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "matches": "doc-part"
+                    }
+                  }
+                ],
+                "not": {
+                  "has": {
+                    "not": {
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "kind": "array",
+                              "not": {
+                                "has": {
+                                  "not": {
+                                    "any": [
+                                      {
+                                        "kind": "string"
+                                      },
+                                      {
+                                        "kind": "template_string"
+                                      },
+                                      {
+                                        "kind": "identifier"
+                                      },
+                                      {
+                                        "regex": "^[\\[\\],]$"
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "kind": "call_expression",
+                              "has": {
+                                "field": "function",
+                                "regex": "\\.join$"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string"
+                        },
+                        {
+                          "regex": "^\\+$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "formats-text": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "body",
+                  "matches": "text-value"
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "kind": "statement_block",
+                  "all": [
+                    {
+                      "has": {
+                        "kind": "return_statement",
+                        "stopBy": "end",
+                        "not": {
+                          "inside": {
+                            "any": [
+                              {
+                                "kind": "arrow_function"
+                              },
+                              {
+                                "kind": "function_expression"
+                              },
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              },
+                              {
+                                "kind": "method_definition"
+                              }
+                            ],
+                            "stopBy": "end",
+                            "inside": {
+                              "any": [
+                                {
+                                  "kind": "arrow_function"
+                                },
+                                {
+                                  "kind": "function_expression"
+                                },
+                                {
+                                  "kind": "function_declaration"
+                                },
+                                {
+                                  "kind": "generator_function"
+                                },
+                                {
+                                  "kind": "generator_function_declaration"
+                                },
+                                {
+                                  "kind": "method_definition"
+                                }
+                              ],
+                              "stopBy": "end"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "kind": "return_statement",
+                          "stopBy": "end",
+                          "not": {
+                            "any": [
+                              {
+                                "inside": {
+                                  "any": [
+                                    {
+                                      "kind": "arrow_function"
+                                    },
+                                    {
+                                      "kind": "function_expression"
+                                    },
+                                    {
+                                      "kind": "function_declaration"
+                                    },
+                                    {
+                                      "kind": "generator_function"
+                                    },
+                                    {
+                                      "kind": "generator_function_declaration"
+                                    },
+                                    {
+                                      "kind": "method_definition"
+                                    }
+                                  ],
+                                  "stopBy": "end",
+                                  "inside": {
+                                    "any": [
+                                      {
+                                        "kind": "arrow_function"
+                                      },
+                                      {
+                                        "kind": "function_expression"
+                                      },
+                                      {
+                                        "kind": "function_declaration"
+                                      },
+                                      {
+                                        "kind": "generator_function"
+                                      },
+                                      {
+                                        "kind": "generator_function_declaration"
+                                      },
+                                      {
+                                        "kind": "method_definition"
+                                      }
+                                    ],
+                                    "stopBy": "end"
+                                  }
+                                }
+                              },
+                              {
+                                "has": {
+                                  "matches": "text-value"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "import-effect": {
+            "any": [
+              {
+                "matches": "does-io"
+              },
+              {
+                "kind": "member_expression",
+                "regex": "^process\\.argv\\b"
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "^main$"
+                }
+              }
+            ],
+            "not": {
+              "inside": {
+                "any": [
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  },
+                  {
+                    "kind": "method_definition"
+                  }
+                ],
+                "stopBy": "end"
+              }
+            }
+          },
+          "doc-part": {
+            "any": [
+              {
+                "kind": "array",
+                "not": {
+                  "has": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "string"
+                        },
+                        {
+                          "kind": "template_string"
+                        },
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "regex": "^[\\[\\],]$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "\\.join$"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "local-decision-function",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "all": [
+              {
+                "matches": "local-function"
+              },
+              {
+                "has": {
+                  "matches": "branch",
+                  "stopBy": "end"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "matches": "does-io",
+                    "stopBy": "end"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "matches": "formats-text"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "DECISION_IN_ENTRY_SCRIPT",
+        "anchor": "capture.NAME",
+        "message": "This script runs when imported, so no test reaches `$NAME`: move it to an importable module beside it, export it and test it there. Leave it if it only parses arguments, maps errors or formats text."
+      }
+    }
+  ]
+}
