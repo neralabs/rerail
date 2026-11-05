@@ -169,6 +169,20 @@
             ]
           },
           {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
             "name": "decorators",
             "query": "WITH RECURSIVE d(__path,fn,root,id) AS (\n      SELECT __path,parent,id,id FROM a WHERE field='decorator_list'\n      UNION ALL SELECT d.__path,d.fn,d.root,n.id FROM d JOIN a n ON n.__path=d.__path AND n.parent=d.id AND n.field='func'\n      JOIN a c ON c.__path=d.__path AND c.id=d.id AND c.kind='Call')\n      SELECT d.__path,d.fn,d.root,n.id,n.kind,n.name FROM d JOIN a n ON n.__path=d.__path AND n.id=d.id WHERE n.kind IN ('Name','Attribute')",
             "indexes": [
@@ -192,7 +206,7 @@
           },
           {
             "name": "params",
-            "query": "SELECT p.*,v.id AS annotation_id,f.name AS function_name,f.name_repr AS function_repr,\n CASE p.field WHEN 'posonlyargs' THEN 0 WHEN 'args' THEN 1 WHEN 'kwonlyargs' THEN 2 WHEN 'vararg' THEN 3 ELSE 4 END*10000+p.position AS param_order\n FROM a p JOIN functions f ON f.__path=p.__path AND f.id=p.fn\n LEFT JOIN a v ON v.__path=p.__path AND v.parent=p.id AND v.field='annotation' WHERE p.kind='arg'",
+            "query": "SELECT p.*,v.id AS annotation_id,f.name AS function_name,f.name_repr AS function_repr,\n CASE p.field WHEN 'posonlyargs' THEN 0 WHEN 'args' THEN 1 WHEN 'kwonlyargs' THEN 2 WHEN 'vararg' THEN 3 ELSE 4 END*10000+p.position AS param_order\n FROM parameters p JOIN functions f ON f.__path=p.__path AND f.id=p.fn\n LEFT JOIN a v ON v.__path=p.__path AND v.parent=p.id AND v.field='annotation' WHERE p.kind='arg'",
             "indexes": [
               [
                 "__path",

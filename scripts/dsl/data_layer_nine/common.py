@@ -22,6 +22,7 @@ def base():
       LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'
       WHERE c.kind='Call'""",('__path','id'),('__path','callee'),('__path','fn')),
       S('functions',"SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",('__path','id'),('__path','name')),
+      S('parameters',"SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",('__path','fn'),('__path','id')),
       S('methods',"SELECT f.*,c.name AS class_name FROM functions f JOIN a c ON c.__path=f.__path AND c.id=f.parent AND c.kind='ClassDef' WHERE f.field='body'",('__path','parent','name'),('__path','id')),
       S('decorators',"""WITH RECURSIVE d(__path,fn,root,id) AS (
       SELECT __path,parent,id,id FROM a WHERE field='decorator_list'
@@ -80,7 +81,7 @@ def clause(name,stages,query,locations=None,options=None,partition=True):
 
 def document(name,clauses,scope=None,options=None):
     p=policy(name,scope or ['**/*.py']);p['description']=p['description'].replace('Candidate port','Exact port')
-    if name in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','bootstrap_cache_health','plan_composition_architecture','connection_service_architecture','schema_architecture'}:
+    if name in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','plan_composition_architecture','connection_service_architecture','schema_architecture'}:
         error_rule=K('module')
         if name=='schema_architecture':error_rule=A(error_rule,{'$option':'entryPoint','cases':{'scan_source':TRUE},'default':FALSE})
         if name=='bootstrap_cache_health':

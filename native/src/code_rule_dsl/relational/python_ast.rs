@@ -11,6 +11,7 @@ use std::{
 pub(in crate::code_rule_dsl) struct Spec {
     pub roots: String,
     pub syntax: String,
+    pub source: bool,
     pub fields: Vec<String>,
     pub expand: Option<String>,
 }
@@ -18,8 +19,10 @@ pub(in crate::code_rule_dsl) struct Spec {
 pub(super) struct DemandSpec {
     pub fields: Vec<String>,
     pub expand: Option<String>,
+    pub sources: Option<Vec<String>>,
 }
 pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
+    "syntax_error",
     "dump",
     "body_sha256",
     "signature_sha256",
@@ -80,6 +83,42 @@ pub(super) fn demand(
     files: &syntax::Files,
     work: Arc<AtomicUsize>,
 ) -> Result<super::producer::Demand> {
+    if spec.source {
+        let mut paths = Vec::new();
+        let mut sources = Vec::new();
+        let mut bytes = 0usize;
+        let mut statement = db.prepare_cached(&spec.roots).map_err(super::sql_error)?;
+        let mut rows = statement.query([]).map_err(super::sql_error)?;
+        while let Some(row) = rows.next().map_err(super::sql_error)? {
+            let path: String = row.get(0).map_err(super::sql_error)?;
+            let text: String = row.get(1).map_err(super::sql_error)?;
+            bytes = bytes.saturating_add(text.len());
+            if bytes > 8 * 1024 * 1024 {
+                return Err(invalid("Python source batch capacity"));
+            }
+            source::charge(&work, 1 + text.len().div_ceil(256))?;
+            paths.push(path);
+            sources.push(text);
+        }
+        let roots = (0..paths.len())
+            .map(|file| super::producer::Root {
+                file: file as u32,
+                node: 0,
+                expand: 0,
+            })
+            .collect();
+        return Ok(super::producer::Demand {
+            roots,
+            paths,
+            trees: vec![],
+            work,
+            python_ast: Some(DemandSpec {
+                fields: spec.fields.clone(),
+                expand: None,
+                sources: Some(sources),
+            }),
+        });
+    }
     let request = super::Reachability {
         ordered_first: None,
         roots: spec.roots.clone(),
@@ -93,6 +132,7 @@ pub(super) fn demand(
     demand.python_ast = Some(DemandSpec {
         fields: spec.fields.clone(),
         expand: spec.expand.clone(),
+        sources: None,
     });
     Ok(demand)
 }
@@ -132,6 +172,23 @@ pub(super) fn execute(
         let fields = &demand.python_ast.as_ref().expect("Python demand").fields;
         let mut mapping = Vec::new();
         let prepared = contexts[*index].run(|| -> Result<()> {
+            if let Some(sources) = &demand.python_ast.as_ref().unwrap().sources {
+                for source in sources {
+                    let document = documents.len();
+                    documents.push(canonical::Document {
+                        source: source.clone(),
+                        requests: vec![canonical::Request {
+                            start: 0,
+                            end: source.len(),
+                            kind: "module".into(),
+                            fields: fields.clone(),
+                            columns: None,
+                        }],
+                    });
+                    mapping.push((document, 0));
+                }
+                return Ok(());
+            }
             for root in &demand.roots {
                 source::charge(&demand.work, 1)?;
                 let facts = &demand.trees[root.file as usize].facts;

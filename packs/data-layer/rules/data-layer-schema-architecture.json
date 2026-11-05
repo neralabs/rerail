@@ -323,6 +323,20 @@
             ]
           },
           {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
             "name": "expression_roots",
             "query": "WITH RECURSIVE roots(__path,id,root,name) AS (\n SELECT __path,id,id,name FROM a WHERE kind='Name'\n UNION ALL SELECT parent.__path,parent.id,roots.root,roots.name FROM roots JOIN a parent ON parent.__path=roots.__path JOIN a child ON child.__path=roots.__path AND child.id=roots.id WHERE parent.id=child.parent AND parent.kind='Attribute' AND child.field='value') SELECT * FROM roots",
             "indexes": [
@@ -334,7 +348,7 @@
           },
           {
             "name": "schema_parameters",
-            "query": "SELECT DISTINCT p.__path,p.fn,p.name FROM a p JOIN a annotation ON annotation.__path=p.__path AND annotation.parent=p.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE p.kind='arg' AND p.field IN ('posonlyargs','args','kwonlyargs') AND term.kind IN ('Name','Attribute') AND substr(term.name,-17)='SchemaTransaction'",
+            "query": "SELECT DISTINCT p.__path,p.fn,p.name FROM parameters p JOIN a annotation ON annotation.__path=p.__path AND annotation.parent=p.id AND annotation.field='annotation' JOIN a term ON term.__path=annotation.__path AND term.id BETWEEN annotation.id AND annotation.last WHERE p.kind='arg' AND p.field IN ('posonlyargs','args','kwonlyargs') AND term.kind IN ('Name','Attribute') AND substr(term.name,-17)='SchemaTransaction'",
             "indexes": [
               [
                 "__path",
@@ -433,6 +447,81 @@
       "violation": {
         "code": "NATIVE-SYNTAX",
         "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "reported-parser-error",
+      "relational": {
+        "inputs": {
+          "invalid": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "SchemaTransaction|Callable|_schema_operation_plan"
+                      },
+                      {
+                        "filePath": {
+                          "regex": "^(?:l2000_connection|l3200_metadata|impl/common/l7245_versioned_backends)/"
+                        }
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "\\b\\B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "requireNonemptyInput": "invalid",
+        "stages": [
+          {
+            "name": "parsed",
+            "pythonAst": {
+              "source": "invalid",
+              "roots": "SELECT __path,source_text(__path,0,__end) AS source FROM invalid",
+              "fields": [
+                "syntax_error"
+              ]
+            }
+          }
+        ],
+        "query": "SELECT i.__path path,0 start_byte,0 end_byte,1 line,'SAP000' issue,'cannot inspect schema lifecycle ownership: SyntaxError: '||json_extract(p.syntax_error,'$.msg')||CASE WHEN json_extract(p.syntax_error,'$.lineno') IS NULL THEN '' ELSE ' ('||rx_replace(i.__path,'^.*/','')||', line '||json_extract(p.syntax_error,'$.lineno')||')' END message,i.__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM invalid i JOIN parsed p ON p.__path=i.__path WHERE p.syntax_error!='null'",
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message"
+      },
+      "violation": {
+        "code": "SAP000",
+        "message": "Parser error",
         "anchor": "witness.span"
       }
     }

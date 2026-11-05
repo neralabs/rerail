@@ -314,9 +314,12 @@ pub(super) fn compile(
                         ));
                     }
                     let shape = object(value, &format!("{at}/pythonAst"))?;
-                    reject_unknown(shape, &["roots", "syntax", "fields", "expand"], &at)?;
-                    let source = non_empty_str(shape.get("syntax"), &at)?.to_owned();
-                    if syntax.as_ref().is_none_or(|s| s.name != source) {
+                    reject_unknown(shape, &["roots", "syntax", "source", "fields", "expand"], &at)?;
+                    let from_source = shape.contains_key("source");
+                    if from_source == shape.contains_key("syntax") { return Err(invalid("pythonAst requires exactly one source or syntax relation")); }
+                    let source = non_empty_str(shape.get(if from_source { "source" } else { "syntax" }), &at)?.to_owned();
+                    if from_source { if !tables.contains(&source) { return Err(invalid("pythonAst source must name a declared relation")); } }
+                    else if syntax.as_ref().is_none_or(|s| s.name != source) {
                         return Err(invalid("pythonAst must name the declared syntax source"));
                     }
                     let fields:Vec<String> = shape.get("fields").and_then(Value::as_array)
@@ -338,9 +341,9 @@ pub(super) fn compile(
                     )?;
                     let (selected, reads, source_bytes) =
                         relational::inspect_fields(&db, &roots, &tables)?;
-                    if selected != ["__path", "id"] {
-                        return Err(invalid("pythonAst roots must select __path,id in order"));
-                    }
+                    let columns = if from_source { ["__path", "source"] } else { ["__path", "id"] };
+                    if selected != columns { return Err(invalid("pythonAst roots must select its path and source or node identity in order")); }
+                    if from_source && (fields != ["syntax_error"] || shape.contains_key("expand")) { return Err(invalid("source parser requests require syntax_error without expansion")); }
                     reads_source |= source_bytes;
                     stage_reads_source |= source_bytes;
                     for (name, fields) in reads {
@@ -358,6 +361,7 @@ pub(super) fn compile(
                         expand,
                         roots,
                         syntax: source,
+                        source: from_source,
                         fields,
                     })
                 })

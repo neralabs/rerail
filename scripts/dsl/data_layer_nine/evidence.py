@@ -29,10 +29,19 @@ def expand(report):
 
 
 def verify(oracle,reports,controls=False):
- expected=set(oracle['cases']);seen=set();counts=Counter();positive=Counter();rejected=set();engine=None;policies=None
+ expected=set(oracle['cases']);seen=set();counts=Counter();positive=Counter();rejected=set();engine=None;policies=None;actual_records=[];translated=set()
  for report in reports:
   if seen&report['cases'].keys():raise ValueError('Duplicate test coverage')
   seen.update(report['cases'])
+  for translation in report.get('instrumentationTranslations',[]):
+   name=translation['test']
+   if not name.endswith('::test_bootstrap_function_checks_reuse_one_subtree_walk'):raise ValueError('Unrecognized instrumentation translation')
+   calls=[call for call in report['calls'] if call['test']==name]
+   if len(calls)!=1:raise ValueError('Missing instrumentation execution')
+   metrics=calls[0]['metrics'];metrics=metrics.get('workspaceProfile',metrics)
+   if not controls and (metrics.get('pythonAstModuleWalks')!=1 or metrics.get('pythonAstParses')!=1):raise ValueError('Incorrect native instrumentation counters')
+   translated.add(name)
+  actual_records.extend(expand(report)['records'])
   if report['semanticFallbacks']:raise ValueError('Original semantic execution occurred')
   if report['exitCode']!=(1 if controls else 0):raise ValueError('Unexpected suite exit code')
   if engine is not None and report['engineSha256']!=engine:raise ValueError('Mixed addon builds')
@@ -53,6 +62,17 @@ def verify(oracle,reports,controls=False):
  if seen!=expected:raise ValueError('Missing or extra test identities: '+str(seen^expected))
  if controls and rejected!=set(CHECKS):raise ValueError('A disabled detector escaped its positive controls: '+str(set(CHECKS)-rejected))
  if not controls and set(positive)!=set(CHECKS):raise ValueError('Every rule needs an executed positive')
+ if not controls:
+  def keyed(records):
+   result={}
+   for record in records:
+    if record['test'] not in translated:result.setdefault((record['test'],record['check'],record['entry']),[]).append(record)
+   return result
+  wanted=keyed(expand(oracle)['records']);actual=keyed(actual_records)
+  if wanted!=actual:
+   mismatches=[key for key in wanted.keys()|actual.keys() if wanted.get(key)!=actual.get(key)]
+   raise ValueError('complete-result parity: '+str(mismatches))
+
  return dict(cases=len(seen),completeResults=sum(counts.values()),positiveResults=sum(positive.values()),perRule=dict(counts),positivePerRule=dict(positive),engineSha256=engine,policySha256=policies,rejected=sorted(rejected))
 
 

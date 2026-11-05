@@ -230,7 +230,6 @@ class Suite(NativeSuite):
    finding=syntax[0];details=finding['variables']['syntax_error'];path=originals[finding['path']]
    filename=str(path) if (check=='schema_architecture' and entry=='scan_source') or check in {'schema_bootstrap_contracts','bootstrap_lazy_sql','bootstrap_eager_resolve','plan_composition_architecture','bootstrap_cache_health'} else '<unknown>'
    error=SyntaxError(details['msg'],(filename,details['lineno'],details['offset'],details['text'],details['end_lineno'],details['end_offset']))
-   if check=='bootstrap_cache_health':return [module.BootstrapCacheHealthViolation(path,1,'BCH000','SyntaxError: '+str(error))]
    raise error
   values=[row['variables']['row'] for row in rows]
   file_order={p:i for i,p in enumerate(originals)}
@@ -263,14 +262,22 @@ def main():
  from data_layer_nine.evidence import expand,compact
  if not args.oracle and args.baseline is None:p.error('Native assertions require a recorded oracle')
  baseline=expand(json.loads(args.baseline.read_text())) if args.baseline else None
- backend=Suite(root,workspace,args.mode,output,args.oracle,baseline['records'] if baseline else None)
- backend.part=args.part;backend.parts=args.parts;backend.mutant=args.mutant
  if not 0<=args.part<args.parts:p.error('Invalid shard')
- defaults=[str(root/('scripts/tests/test_lint_'+check+'.py')) for check in CHECKS if (root/('scripts/tests/test_lint_'+check+'.py')).exists()]
- defaults += [str(root/'l2000_connection/tests/test_schema_architecture_linter.py'),str(root/'l2000_connection/tests/test_connection_service_architecture.py'),str(root/'scripts/tests/test_linter_supplied_ast_contracts.py')+'::test_structural_helper_does_not_reparse_supplied_tree',str(root/'scripts/tests/test_codemod_bootstrap_cache_health.py'),str(Path(__file__).with_name('probe_cases.py'))]
+ from data_layer_nine.discovery import upstream_tests,independent_collections
+ defaults=[*upstream_tests(root,CHECKS),str(root/'scripts/tests/test_codemod_bootstrap_cache_health.py'),str(Path(__file__).with_name('probe_cases.py')),str(Path(__file__).with_name('audit_cases.py'))]
  tests=[str(Path(t).resolve()) if Path(t).exists() else str(root/t) for t in args.tests] or defaults
  os.chdir(root)
- code=pytest.main(['--rootdir',str(root),'-c',str(root/'pyproject.toml'),'-q',*tests],plugins=[backend])
+ backends=[];codes_=[]
+ for index,collection in enumerate(independent_collections(tests)):
+  backend=Suite(root,workspace,args.mode,output.with_name(output.stem+f'-collection-{index}'+output.suffix),args.oracle,baseline['records'] if baseline else None)
+  backend.part=args.part;backend.parts=args.parts;backend.mutant=args.mutant
+  codes_.append(pytest.main(['--rootdir',str(root),'-c',str(root/'pyproject.toml'),'-q',*collection],plugins=[backend]));backends.append(backend)
+ backend=backends[0];code=max(codes_)
+ for other in backends[1:]:
+  assert not backend.outcomes.keys()&other.outcomes.keys(),'Duplicate case coverage'
+  backend.outcomes.update(other.outcomes)
+  for name in ['records','calls','semantic_fallbacks','instrumentation_translations']:getattr(backend,name).extend(getattr(other,name))
+  backend.original_calls=dict(Counter(backend.original_calls)+Counter(other.original_calls))
  checked=verify_sources(root,args.repo.resolve(),'2b1504adc4291daaf080b2e932962b134da1a69a')
  report=dict(format='rerail.data-layer-batch-nine/v1',oracle=args.oracle,mode=args.mode,exitCode=int(code),sourceFilesChecked=checked,engineSha256=hashlib.sha256(backend.engine_path.read_bytes()).hexdigest(),records=backend.records,calls=backend.calls,cases=backend.outcomes,semanticFallbacks=backend.semantic_fallbacks,originalCalls=backend.original_calls,instrumentationTranslations=backend.instrumentation_translations)
  report['policySha256']={check:hashlib.sha256((Path(os.environ['RERAIL_NATIVE_POLICY_DIRECTORY'])/('data-layer-'+check.replace('_','-')+'.json')).read_bytes()).hexdigest() for check in CHECKS}

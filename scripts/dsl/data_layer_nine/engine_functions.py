@@ -35,7 +35,7 @@ def rows(c):
  add('BEI019',q('cold application tail must not execute lifecycle effects as ServerPlan callbacks'),publish+" AND n.callee='bootstrap_schema_tail_lazy' AND "+child('n','keywords',condition="v.name='lifecycle_effects'"),5,calls,engine=True)
  # _collect_schema_tail_boundary_violations
  tail=SCHEMA+" AND f.name='bootstrap_schema_tail_lazy'"
- add('BEI024',q('bootstrap_schema_tail_lazy must accept the BootstrapApplicationPlan-produced tail ref'),tail+" AND NOT EXISTS(SELECT 1 FROM a p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field IN ('args','kwonlyargs') AND p.name='produced_ref')",6,selfnode,node='f',sub='0',engine=True)
+ add('BEI024',q('bootstrap_schema_tail_lazy must accept the BootstrapApplicationPlan-produced tail ref'),tail+" AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field IN ('args','kwonlyargs') AND p.name='produced_ref')",6,selfnode,node='f',sub='0',engine=True)
  add('BEI024',q('bootstrap_schema_tail_lazy must publish facts only; materialization/flush belongs to the application boundary'),tail+" AND n.callee IN ('_materialize_schema_operation_records','_flush_deferred_create_table_ddl_batch','flush_schema_plan','flush_schema_plan_async')",6,calls,engine=True)
  # _collect_application_ref_graph_violations and install-time lowering
  materialize=COORD+" AND f.name='_materialize_application_lazy_results'"

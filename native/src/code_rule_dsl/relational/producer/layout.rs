@@ -21,7 +21,25 @@ impl Footprint {
         demand: &Demand,
         limit: usize,
     ) -> bool {
-        self.admit_parts(&demand.trees, demand.roots.len(), limit)
+        let source_bytes = demand
+            .python_ast
+            .as_ref()
+            .and_then(|p| p.sources.as_ref())
+            .map_or(0, |sources| {
+                sources
+                    .iter()
+                    .map(|s| s.capacity() + std::mem::size_of::<String>())
+                    .sum()
+            });
+        if !self.admit_parts(
+            &demand.trees,
+            demand.roots.len(),
+            limit.saturating_sub(source_bytes),
+        ) {
+            return false;
+        }
+        self.bytes = self.bytes.saturating_add(source_bytes);
+        true
     }
     pub(in crate::code_rule_dsl::relational) fn admit_trees(
         &mut self,

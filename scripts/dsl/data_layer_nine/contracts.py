@@ -5,7 +5,7 @@ def candidate(root):
  c=constants(root/'scripts/lint_schema_bootstrap_contracts.py')
  stages=[S('params',"""SELECT p.*,v.id AS annotation_id,f.name AS function_name,f.name_repr AS function_repr,
  CASE p.field WHEN 'posonlyargs' THEN 0 WHEN 'args' THEN 1 WHEN 'kwonlyargs' THEN 2 WHEN 'vararg' THEN 3 ELSE 4 END*10000+p.position AS param_order
- FROM a p JOIN functions f ON f.__path=p.__path AND f.id=p.fn
+ FROM parameters p JOIN functions f ON f.__path=p.__path AND f.id=p.fn
  LEFT JOIN a v ON v.__path=p.__path AND v.parent=p.id AND v.field='annotation' WHERE p.kind='arg'""",('__path','fn'),('__path','id')),
  S('param_types',"""SELECT p.__path,p.id,n.name FROM params p JOIN annotation_names n ON n.__path=p.__path AND n.annotation=p.annotation_id""",('__path','id','name')),
  S('function_annotations',"""SELECT p.__path,p.fn,v.id AS annotation,0 AS category,p.param_order AS ordinal FROM params p JOIN a v ON v.__path=p.__path AND v.id=p.annotation_id

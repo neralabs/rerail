@@ -1,14 +1,15 @@
 # Data-layer rules
 
 This private pack contains the twenty batch-eight and batch-nine architecture rules for nera-data-layer.
-Batch nine has confirmed parity and production-integration gaps. Its completion claim is withdrawn.
-See [the audit](../../docs/data-layer-batch-nine-audit.md) before using these ten documents.
+Batch-nine audited defects are fixed, and its expanded acceptance suite passes.
+The [audit](../../docs/data-layer-batch-nine-audit.md) retains the original failures and their resolutions.
 Load it explicitly with `readBundledCatalog([packDirectory])` for repository integration.
 It is not part of the default core catalog.
 The other seventy ports remain in `candidates/rules/`.
 
 The [batch-nine report](../../docs/data-layer-batch-nine.md) records the next ten ports and their complete API evidence.
-Plan-composition runtime probes require fresh host observations; the report defines this contract.
+The production CLI and `runDataLayerAudit()` API collect fresh plan-composition observations from the application.
+The report defines the low-level observation contract.
 Generate batch nine with `scripts/generate/packs/data_layer_batch_nine.py`.
 
 The [batch-eight report](../../docs/data-layer-batch-eight.md) records the upstream tests, positive controls and runtime requirements.
@@ -27,3 +28,17 @@ Use `conformance/data-layer/replay.ts` to replay the recorded positive and clean
 
 The earlier reports cover [batch two](../../docs/data-layer-batch-two.md), [three](../../docs/data-layer-batch-three.md), [four](../../docs/data-layer-batch-four.md), [five](../../docs/data-layer-batch-five.md), [six](../../docs/data-layer-batch-six.md) and [seven](../../docs/data-layer-batch-seven.md).
 Historical repository benchmarks used earlier engine builds. They do not measure the current batch-eight or batch-nine kernels.
+
+Run the production integration with a repository snapshot:
+
+```sh
+rerail data-layer --repo /path/to/data-layer --pack packs/data-layer \
+  --snapshot /path/to/snapshot.json
+```
+
+The explicit command imports application code for live composition probes.
+It uses the application's `.venv/bin/python` when present, or `python3.13`.
+Use `--python` to select the application's interpreter and dependencies.
+Use `--rules` to select comma-separated rule IDs.
+`runtime/observations.py` collects fresh typed observations. SQL evaluates the composition predicates.
+Probe failures remain failures. The runner rejects snapshot source that differs from application source.

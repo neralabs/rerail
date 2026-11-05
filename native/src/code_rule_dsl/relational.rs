@@ -1250,8 +1250,10 @@ impl<'a> Session<'a> {
                         .map(|s| (s, false))
                 })
                 .or_else(|| {
-                    (start == 0 && end == 0 && plan.locations.contains(path))
-                        .then_some((super::violations::Span::default(), false))
+                    (start == 0
+                        && end == 0
+                        && (plan.locations.contains(path) || anchors.contains_key(path)))
+                    .then_some((super::violations::Span::default(), false))
                 })
                 .ok_or_else(|| {
                     invalid("relational results must anchor to an input witness span")

@@ -1,7 +1,9 @@
 # Batch-nine completion audit — 2026-11-05
 
-The previous completion claim is withdrawn.
-The ten documents exist, but batch nine has confirmed parity and production-integration defects.
+The previous completion claim was withdrawn.
+The repair section records the subsequent fixes and expanded acceptance results.
+The findings before the repair section describe the audited commit.
+Its ten documents contained confirmed parity and production-integration defects.
 The passing receipt measures its recorded corpus and adapter behavior. It does not prove complete rule semantics.
 
 The audit uses the same source pin, `2b1504adc4291daaf080b2e932962b134da1a69a`.
@@ -27,7 +29,7 @@ The same error creates false positives and hides a required positive.
 The reduced cases are in `scripts/dsl/data_layer_nine/audit_cases.py`.
 Run them through `suite.py --oracle`, then use that report as the native `--baseline`.
 Use each native mode and pass the reduced case file as the explicit pytest target.
-These cases remain failing regressions. This audit does not fix them.
+These cases failed at the audited commit. They now remain as passing regressions in the acceptance corpus.
 
 ## Confirmed production-path gaps
 
@@ -82,3 +84,31 @@ The earlier restart document incorrectly said that lazy-SQL tests had been recov
 The old receipt remains historical evidence of its actual runs.
 Its case count must not serve as a declaration that batch nine is complete.
 This audit is not exhaustive. No Linear tickets were created.
+
+## Repair and acceptance — 2026-11-05
+
+The historical audit JSON remains unchanged. The current implementation fixes each confirmed defect.
+
+| Defect | Repair | Permanent regression |
+| --- | --- | --- |
+| Lambda arguments leak into function signatures | Publish actual `arguments` containers and join signature parameters through their owning function | `audit_cases.py`; `parser-source.test.ts`; shipped-policy regressions |
+| Schema parser diagnostic disappears | Batched source-parser facts feed the production SAP000 relation | `batch-nine-production-regressions.test.ts` |
+| Cache parser diagnostic exists only in the adapter | The production BCH000 relation preserves the parser message and file-start location; adapter fabrication removed | `parser-source.test.ts`; `batch-nine-production-regressions.test.ts` |
+| Production probes require manual observations | The public CLI and host API run the actual producer freshly before rule normalization | `production-runtime.test.ts` |
+| Four upstream MCP cases are omitted | Source-based discovery includes all four; separate collections preserve upstream contract markers | `audit_cases.py`; assertion receipt |
+
+The runtime regressions also found stale Python bytecode reuse and rejection of revision-zero snapshots.
+The producer now uses an empty bytecode-cache path for each process.
+The fresh workspace maps an initial revision of zero to its first application revision.
+The aggregate verifier also requires complete API-value equality. A changed diagnostic must fail verification.
+
+The original oracle and both native APIs pass 212 cases.
+Each native mode matches 253 complete API results, including 147 results with findings.
+One additional original instrumentation record maps to actual native parse and walk counters.
+All ten detectors fail their disabled-detector controls.
+Twenty-two production regressions preserve shipped defaults and scopes; two runtime tests exercise the public production boundary.
+The native DSL suite passes 1,576 tests, with 23 existing ignores.
+
+The [current report](data-layer-batch-nine.md) describes runtime requirements and reproduction.
+The [current receipt](../fixtures/host/data-layer-port/batch-09-native-assertions.json) binds the expanded suite to the implementation.
+These results establish the stated acceptance coverage. They do not turn the original incomplete claim into valid historical evidence.

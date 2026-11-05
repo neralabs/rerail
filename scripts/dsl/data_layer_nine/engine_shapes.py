@@ -22,7 +22,7 @@ def rows(c):
  for rank,(condition,suffix) in enumerate([('NOT '+pure('f'),' must be decorated with @pure_lazy'),('NOT '+child('f','returns',condition="substr(v.annotation,1,11)='LazyResult['"),' must return LazyResult[...]')]):
   add('BEI039',"'schema-transaction lazy bootstrap surface '||f.name_repr||"+q(suffix),shape+' AND '+condition,16,f,node='f',sub=str(rank))
  for rank,name in enumerate(['produced_ref','dependency_refs']):
-  add('BEI039',"'bootstrap primitive lowerer '||f.name_repr||"+q(' must accept keyword-only '+name),primitive+" AND NOT EXISTS(SELECT 1 FROM a p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field='kwonlyargs' AND p.name="+q(name)+')',16,f,node='f',sub=str(2+rank))
+  add('BEI039',"'bootstrap primitive lowerer '||f.name_repr||"+q(' must accept keyword-only '+name),primitive+" AND NOT EXISTS(SELECT 1 FROM parameters p WHERE p.__path=f.__path AND p.fn=f.id AND p.kind='arg' AND p.field='kwonlyargs' AND p.name="+q(name)+')',16,f,node='f',sub=str(2+rank))
  discarded="(SELECT '['||group_concat(quote(name),', ')||']' FROM (SELECT DISTINCT name FROM a t WHERE t.__path=n.__path AND t.parent=n.id AND t.field='targets' AND t.kind='Name' AND t.name IN ('produced_ref','dependency_refs') ORDER BY name))"
  add('BEI040',"'bootstrap primitive lowerer '||f.name_repr||' must preserve contract refs, not discard '||"+discarded,primitive+" AND n.kind='Delete' AND "+discarded+' IS NOT NULL',16)
  # Application install shape, including deleted scaffolding.

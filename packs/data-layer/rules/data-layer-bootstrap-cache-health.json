@@ -195,26 +195,57 @@
       }
     },
     {
-      "id": "source-syntax",
-      "forbid": {
-        "ast": {
-          "language": "python",
-          "syntax": "invalid",
-          "rule": {
-            "all": [
-              {
-                "kind": "module"
+      "id": "reported-parser-error",
+      "relational": {
+        "inputs": {
+          "invalid": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables"
+                      }
+                    ]
+                  }
+                }
               },
-              {
-                "regex": "bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables"
+              "project": {
+                "path": "file.path"
               }
-            ]
+            }
           }
-        }
+        },
+        "requireNonemptyInput": "invalid",
+        "stages": [
+          {
+            "name": "parsed",
+            "pythonAst": {
+              "source": "invalid",
+              "roots": "SELECT __path,source_text(__path,0,__end) AS source FROM invalid",
+              "fields": [
+                "syntax_error"
+              ]
+            }
+          }
+        ],
+        "query": "SELECT i.__path path,0 start_byte,0 end_byte,1 line,'BCH000' issue,'SyntaxError: '||json_extract(p.syntax_error,'$.msg')||CASE WHEN json_extract(p.syntax_error,'$.lineno') IS NULL THEN '' ELSE ' ('||rx_replace(i.__path,'^.*/','')||', line '||json_extract(p.syntax_error,'$.lineno')||')' END message,i.__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM invalid i JOIN parsed p ON p.__path=i.__path WHERE p.syntax_error!='null'",
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message"
       },
       "violation": {
-        "code": "NATIVE-SYNTAX",
-        "message": "Python source cannot be parsed",
+        "code": "BCH000",
+        "message": "Parser error",
         "anchor": "witness.span"
       }
     }

@@ -46,6 +46,7 @@ import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-con
 import { loadBundledCatalog } from "../engine/catalog/bundled-rules.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
+import { runDataLayerCommand } from "./data-layer-audit.js";
 import { runRuleDraftCommand } from "./rule-draft.js";
 import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { runShowMeCommand } from "./show-me.js";
@@ -118,6 +119,7 @@ function usage(): string {
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
+    "  rerail data-layer --repo <root> --pack <pack> --snapshot <json> [--rules <ids>] [--python <executable>]",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",
@@ -545,6 +547,7 @@ async function runProjectCommand(command: string, args: readonly string[], conte
   const { home, updater } = context;
   if (command === "setup") return await runSetupCommand(args, { home, packageRoot, updater });
   if (command === "install") return await runInstallCommand(args, { home, packageRoot, updater });
+  if (command === "data-layer") return await runDataLayerCommand(args);
   if (command === "session") return await runSessionCommand(args);
   if (command === "seed") return runSeedCommand(args);
   if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);

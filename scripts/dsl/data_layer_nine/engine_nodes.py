@@ -9,7 +9,7 @@ def rows(c):
  for code,key,message,rank in [('BEI001','OLD_BOOTSTRAP_SYMBOLS',"'old bootstrap engine symbol '||n.name_repr||' must be deleted, not preserved'",0),('BEI002','DIRECT_BOOTSTRAP_NAMES',"'direct bootstrap/eager transition surface '||n.name_repr||' is forbidden'",0.1),('BEI047','DELETED_BOOTSTRAP_CALLBACK_SURFACES',"'deleted bootstrap callback/fallback surface '||n.name_repr||' must not be reintroduced'",0.2)]:
   add(code,message,decl+f' AND n.name IN {literals(c[key])}',rank)
  # Function metadata-publication parameters are independent of engine-file scope.
- add('BEI017',q('metadata publication must accept preplanned rows/plan, not rebuild inputs'),"f.kind='FunctionDef' AND f.name='publish_bootstrap_metadata_lazy' AND n.kind='arg' AND n.field='args' AND n.name IN ('bootstrap_plan','model_classes')",25,'function_nodes f JOIN a n ON n.__path=f.__path AND n.fn=f.id',order="printf('%020d/%06d/%024.6f',f.bfs,25000,n.position)")
+ add('BEI017',q('metadata publication must accept preplanned rows/plan, not rebuild inputs'),"f.kind='FunctionDef' AND f.name='publish_bootstrap_metadata_lazy' AND n.kind='arg' AND n.field='args' AND n.name IN ('bootstrap_plan','model_classes')",25,'function_nodes f JOIN parameters n ON n.__path=f.__path AND n.fn=f.id',order="printf('%020d/%06d/%024.6f',f.bfs,25000,n.position)")
  # Class-scoped lifecycle authority checks retain every nested use.
  lifecycle="EXISTS(SELECT 1 FROM a base WHERE base.__path=f.__path AND base.parent=f.id AND base.field='bases' AND base.kind IN ('Name','Attribute') AND base.name='PipelineLifecycleEffect')"
  classsrc='engine_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last'

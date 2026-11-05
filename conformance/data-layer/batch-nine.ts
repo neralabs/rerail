@@ -89,7 +89,6 @@ export class NineReplay {
       const detail = JSON.parse(response.documents[0][0].syntax_error);
       const filename = ["schema_architecture", "schema_bootstrap_contracts", "bootstrap_lazy_sql", "bootstrap_eager_resolve", "plan_composition_architecture", "bootstrap_cache_health"].includes(record.check) ? file.path.split("/").at(-1) : "<unknown>";
       const message = `${detail.msg} (${filename}, line ${detail.lineno})`;
-      if (record.check === "bootstrap_cache_health") return [{ path: file.path, line: 1, code: "BCH000", message: `SyntaxError: ${message}` }];
       return { exception: { type: "SyntaxError", message, ...detail } };
     }
     return nineResult(record, result.violations);

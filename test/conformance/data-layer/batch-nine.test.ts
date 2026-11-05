@@ -14,7 +14,7 @@ const checks = ["connection_mode_split", "connection_structural_boundaries", "co
 const unique = [...new Map(oracle.records.map(record => [JSON.stringify({ ...record, test: undefined }), record])).values()];
 
 it("retains all upstream cases, complete results and independently observed sources", () => {
-  expect(Object.keys(oracle.cases)).toHaveLength(201);
+  expect(Object.keys(oracle.cases)).toHaveLength(212);
   for (const [digest, source] of Object.entries(oracle.sources)) expect(createHash("sha256").update(source).digest("hex")).toBe(digest);
   for (const check of checks) {
     const records = oracle.records.filter(r => r.check === check);
@@ -23,6 +23,7 @@ it("retains all upstream cases, complete results and independently observed sour
   }
   expect(oracle.records.some(r => r.test.includes("test_connection_service_architecture_linter_is_clean") && r.files.length === 100)).toBe(true);
   expect(oracle.records.some(r => r.test.includes("test_schema_architecture_fixture_names_do_not_control_findings"))).toBe(true);
+  expect(Object.keys(oracle.cases).filter(name => name.startsWith("tests/l9875_mcp/test_mcp_architecture_contracts.py::"))).toHaveLength(4);
 });
 
 it.each(checks)("matches complete %s results through both native APIs", async check => {
@@ -85,16 +86,16 @@ it("binds the final assertions, disabled controls and kernel evidence to their i
   const receipt = JSON.parse(readFileSync(path, "utf8"));
   expect(receipt.sourcePin).toBe("2b1504adc4291daaf080b2e932962b134da1a69a");
   for (const mode of ["snapshot", "workspace"]) {
-    expect(receipt.executionPaths[mode]).toMatchObject({ cases: 201, completeResults: 244, positiveResults: 142, rejected: [] });
+    expect(receipt.executionPaths[mode]).toMatchObject({ cases: 212, completeResults: 253, positiveResults: 147, rejected: [] });
     expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);
-    expect(Object.keys(receipt.executionPaths[mode].caseOutcomes)).toHaveLength(201);
+    expect(Object.keys(receipt.executionPaths[mode].caseOutcomes)).toHaveLength(212);
     expect(receipt.executionPaths[mode].instrumentationTranslations).toHaveLength(1);
     for (const phases of Object.values(receipt.executionPaths[mode].caseOutcomes) as { outcome: string }[][])
       expect(phases.map(p => p.outcome)).toEqual(["passed", "passed", "passed"]);
   }
-  expect(receipt.positiveControls.cases).toBe(201);
+  expect(receipt.positiveControls.cases).toBe(212);
   expect(receipt.positiveControls.rejected).toEqual([...checks].sort());
-  expect(receipt.positiveControls.failedCases).toBe(147);
+  expect(receipt.positiveControls.failedCases).toBe(152);
   for (const [path, digest] of Object.entries(receipt.fileSha256))
     expect(createHash("sha256").update(readFileSync(path)).digest("hex"), path).toBe(digest);
 });

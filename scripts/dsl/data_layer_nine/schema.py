@@ -10,5 +10,7 @@ def candidate(root):
  standalone['relational']['query']={'$option':'entryPoint','cases':{'lint_file':standalone['relational']['query'],'standalone':standalone['relational']['query']},'default':'SELECT * FROM ('+' UNION ALL '.join(queries)+') WHERE 0'}
  from .schema_lifecycle import clauses
  item=document('schema_architecture',[standalone,*clauses(root)],['l2000_connection/**/*.py','l3200_metadata/**/*.py','impl/common/l7245_versioned_backends/**/*.py',*list(c['TARGETS'])])
+ from .parser_errors import clause_
+ item['clauses'].append(clause_('SAP000','cannot inspect schema lifecycle ownership: SyntaxError: ',A(K('module'),RX('SchemaTransaction|Callable|_schema_operation_plan'),{'filePath':{'regex':r'^(?:l2000_connection|l3200_metadata|impl/common/l7245_versioned_backends)/'}},{'$option':'entryPoint','cases':{'all':TRUE},'default':FALSE})))
  item['scope']['exclude']=['**/'+part+'/**' for part in ['.git','.venv','venv','__pycache__','tmp','tests','test']]
  return item

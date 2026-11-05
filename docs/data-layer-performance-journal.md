@@ -6476,3 +6476,50 @@ Neither lazy-SQL entry point has a dedicated upstream pytest module; the earlier
 The [audit](data-layer-batch-nine-audit.md) and [evidence](../fixtures/host/data-layer-port/batch-09-audit-20261105.json) retain the reproductions.
 The 201-case historical receipt remains valid evidence of those runs, rather than complete batch-nine acceptance.
 The completion claim is withdrawn. No Linear issues were created.
+
+## 2026-11-05 — Batch-nine TDD repair and production acceptance
+
+The completion audit exposed real defects. This delivery repairs them before any further ports.
+The source pin remains `2b1504adc4291daaf080b2e932962b134da1a69a`.
+The historical audit evidence remains unchanged.
+Red-test commits are `a07e11e45`, `e179ec9dd`, `1c695547e` and `076bf932a`.
+
+| TDD step | Observed red result | Green implementation |
+| --- | --- | --- |
+| Canonical argument ownership | Function and lambda ownership facts fail the new primitive regression | Publish `arguments` containers; use function-owned parameters in signature relations |
+| Batched parser errors | Invalid-source parser stage is unsupported; leading blank lines later expose an invalid anchor | Generic source demand returns bounded `syntax_error` facts; admitted files permit a file-start diagnostic |
+| Shipped rule execution | Lambda signatures, SAP000 and BCH000 fail raw-policy comparisons | Correct signature joins and emit reporter diagnostics in SQL; remove BCH000 adapter fabrication |
+| Production composition | Public runtime integration is absent; pre-normalized options prevent binding | Add explicit CLI and host API; bind fresh observations before schema normalization |
+| Freshness | A new process reads timestamp-valid stale bytecode | Give each probe process an empty bytecode-cache path |
+| Revision zero | Both public-runner tests reject the initial snapshot | Advance the fresh workspace to revision one for initial revision-zero input |
+| Complete-value verifier | A changed diagnostic does not fail the aggregate verifier | Compare complete API records, input domains and call multiplicity |
+
+The corpus now includes 137 upstream linter/framework cases, 13 adjacent host codemod cases and 62 additional cases.
+The additional cases include two harness checks. All four omitted MCP cases now run.
+Two independent pytest collections retain the upstream contract markers without conflicting owners.
+Each repository test retains its complete file domain, including the mandatory 100-file service test.
+
+| Acceptance gate | Result |
+| --- | --- |
+| Original oracle | 212 cases pass; 254 complete API records |
+| Native snapshot assertions | 212 cases pass; 253 complete results match; 147 positive results |
+| Native workspace assertions | 212 cases pass; 253 complete results match; 147 positive results |
+| Instrumentation translation | One original walk record maps to actual native parse and module-walk counters |
+| Disabled detectors | 152 expected failed cases and 60 passing cases; all ten detectors rejected |
+| Native DSL suite | 1,576 pass; 23 existing ignores; 114 non-DSL tests outside this command |
+| Focused TypeScript acceptance | 55 pass, including 22 shipped-policy and two production-runner regressions |
+| Retained API and capability checks | 44 pass |
+| Selected earlier receipt checks | Four pass; 21 unrelated cases outside this command |
+| TypeScript typecheck and boundaries | Pass |
+| Generated documents | All ten regenerate byte for byte |
+| Structure | Three pre-existing directory-size findings; no new findings |
+
+The public producer runs the actual application's builder and returns observations only.
+SQL retains the detector predicates. Probe failures fail closed.
+The runner rejects stale snapshot source. Fresh bytecode paths also cover same-size edits with unchanged modification times.
+Low-level compiled composition rules require explicit observations; the supported CLI and host API supply them automatically.
+
+The [batch report](data-layer-batch-nine.md) and [assertion receipt](../fixtures/host/data-layer-port/batch-09-native-assertions.json) record reproduction and identities.
+The previous kernel receipt remains historical. It does not measure this repaired build.
+No cumulative cold repository run or new performance claim forms part of this repair.
+No capacity or statement limit increased. No Linear issues were created.

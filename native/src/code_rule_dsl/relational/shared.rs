@@ -388,7 +388,10 @@ impl Bindings {
                 Key::Reach {
                     roots: spec.roots.clone(),
                     edges: String::new(),
-                    semantics: format!("python:{:?}:{:?}", spec.fields, spec.expand),
+                    semantics: format!(
+                        "python:{}:{:?}:{:?}",
+                        spec.source, spec.fields, spec.expand
+                    ),
                     forest: false,
                     expand: false,
                     inputs,
