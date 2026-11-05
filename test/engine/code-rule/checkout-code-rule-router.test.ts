@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -362,6 +363,16 @@ describe("CheckoutCodeRuleRouter", () => {
   });
 });
 
+/** Whether this filesystem matches names case-insensitively, as macOS does by default. */
+function caseInsensitiveFilesystem(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), "rerail-case-"));
+  try {
+    return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
+
 describe("CheckoutCodeRuleRouter and linked worktrees", () => {
   function recordedCheckouts(databasePath: string): string[] {
     const database = openRerailDatabase(databasePath);
@@ -525,6 +536,18 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await auditor.openWorkspace("roots");
 
     expect(auditor.worktreeRoots()).toEqual([worktree]);
+  });
+
+  it.skipIf(!caseInsensitiveFilesystem())("names a worktree Git registered under a path typed in another case than the folder has", async () => {
+    const { root, databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const typed = join(root, "Elsewhere", "typed");
+    git(session, "worktree", "add", "--quiet", "-b", "typed", typed);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder);
+
+    await auditor.openWorkspace("typed-case");
+
+    expect(auditor.worktreeRoots().toSorted()).toEqual([join(root, "elsewhere", "typed"), worktree].toSorted());
   });
 
   it("gives no lane to a .git file outside the checkout that names the repository's Git folder", async () => {

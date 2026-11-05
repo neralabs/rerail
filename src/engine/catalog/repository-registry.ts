@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { physicalPath, withinCheckout } from "./checkout-control.js";
+import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
@@ -153,7 +153,7 @@ export function recordStartedWorktree(db: RerailDatabase, root: string, location
 /** Whether the recorded `checkout` reads Git's registry in `commonDirectory` and lists `root` there; a gone folder lists nothing. */
 function registryLists(checkout: string, commonDirectory: string, root: string): boolean {
   const registry = worktreeRegistry(checkout);
-  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => physicalPath(worktree) === root);
+  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => storedPath(worktree) === root);
 }
 
 /**

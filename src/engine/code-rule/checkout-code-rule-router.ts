@@ -11,7 +11,7 @@
  */
 import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { physicalPath } from "../catalog/checkout-control.js";
+import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
@@ -136,7 +136,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;
     return (worktreeRegistry(starting)?.worktrees ?? [])
-      .map(worktree => physicalPath(worktree))
+      .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
   }
 

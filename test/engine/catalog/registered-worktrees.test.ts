@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -40,6 +41,16 @@ async function startedRepository() {
   await mkdir(forged);
   await writeFile(join(forged, ".git"), `gitdir: ${join(main, ".git")}\n`);
   return { root, main, database, forged };
+}
+
+/** Whether this filesystem matches names case-insensitively, as macOS does by default. */
+function caseInsensitiveFilesystem(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), "rerail-case-"));
+  try {
+    return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
 }
 
 const worktreeLists = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
@@ -133,5 +144,17 @@ describe("recordStartedWorktree", () => {
 
     expect(recordStartedWorktree(database, worktree, { ...genuine, identityPath: join(elsewhere, "rerail-repository-id") })).toBe(false);
     expect(recordStartedWorktree(database, worktree, genuine)).toBe(true);
+  });
+
+  it.skipIf(!caseInsensitiveFilesystem())("records a worktree Git registered under a path typed in another case than the folder has", async () => {
+    const { root, main, database } = await startedRepository();
+    await mkdir(join(root, "elsewhere"));
+    // Git keeps the path as typed; the folder's top level is reported in the case it has on disk.
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "Elsewhere", "w"));
+    const worktree = join(root, "elsewhere", "w");
+    const location = repositoryIdentityLocation(worktree);
+    expect(location.workspaceRoot).toBe(worktree);
+
+    expect(recordStartedWorktree(database, worktree, location)).toBe(true);
   });
 });
