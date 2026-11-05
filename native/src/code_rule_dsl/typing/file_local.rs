@@ -157,9 +157,13 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
             }
         }
         use crate::code_rule_dsl::transducer::packed::{Error, metal_nearest};
-        match metal_nearest::solve(n, &target, &done) {
+        // `RERAIL_NEAREST_BUFFERS=fresh`: buffers made per piece, to measure the pre-pinned blocks against.
+        let how = if std::env::var("RERAIL_NEAREST_BUFFERS").is_ok_and(|v| v == "fresh") { metal_nearest::Buffers::Fresh } else { metal_nearest::Buffers::Blocks };
+        match metal_nearest::solve_with(n, &target, &done, how) {
             Ok(solved) => {
-                profile::device("nearest ancestors (pointer jumping)", solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
+                let kernel = "nearest ancestors (pointer jumping)";
+                profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
+                profile::device_phases(kernel, solved.phases, solved.made, solved.reused);
                 crate::code_rule_dsl::prof::count("nearest.device_rounds", solved.rounds as usize);
                 return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
             }

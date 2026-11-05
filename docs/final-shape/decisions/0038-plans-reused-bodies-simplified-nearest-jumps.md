@@ -171,5 +171,7 @@ Left:
 
 - On the device run the host waited 287 ms in all for 13.4 ms of GPU work, about 20 ms per
   piece at load 155. That is scheduling on a shared GPU, not the kernel. Batching every piece of a
-  chunk into one command buffer would pay it once a chunk.
+  chunk into one command buffer would pay it once a chunk. Decision 0039 measured where it goes: making
+  buffers per piece is 7–16 ms of it, now removed by pre-pinned blocks. Most of the rest is the
+  host thread being rescheduled under CPU load.
 - Parsing (2.5 s) and measuring each chunk's statistics are now the largest costs.

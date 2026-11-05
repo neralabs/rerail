@@ -140,7 +140,23 @@ struct DeviceTotal {
     gpu: f64,
     wall: f64,
     cells: u64,
+    /// Where the host's time went, summed (`device_phases`): seconds per `PHASES` entry.
+    phases: [f64; PHASES.len()],
+    /// Bytes of buffers made for the runs, and of buffers reused.
+    made: u64,
+    reused: u64,
 }
+
+/// A device run's host-side phases, in order (`device_phases`).
+pub(in crate::code_rule_dsl) const PHASES: [&str; 7] = [
+    "buffers made (map, wire, copy)",
+    "command queue made",
+    "encode",
+    "submit (commit to kernelStartTime)",
+    "schedule (kernelStartTime to GPUStartTime: residency)",
+    "GPU",
+    "wake (GPUEndTime to wait returning)",
+];
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
 
@@ -353,6 +369,22 @@ pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wa
     t.cells += cells;
 }
 
+/// A device run's host-side phases (seconds, in `PHASES` order) and the buffer bytes it made and reused, added to
+/// the current span's entry for `kernel`.
+pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reused: u64) {
+    if !on() {
+        return;
+    }
+    let path = current();
+    let mut state = STATE.lock().unwrap();
+    let t = state.devices.entry((path, kernel.to_owned())).or_default();
+    for (a, b) in t.phases.iter_mut().zip(phases) {
+        *a += b;
+    }
+    t.made += made;
+    t.reused += reused;
+}
+
 /// Forgets everything recorded (a run's start).
 pub(in crate::code_rule_dsl) fn reset() {
     *STATE.lock().unwrap() = State::default();
@@ -551,6 +583,12 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
             d.launches,
             d.cells
         );
+        if d.phases.iter().any(|p| *p > 0.0) {
+            for (name, s) in PHASES.iter().zip(d.phases) {
+                let _ = writeln!(r, "{:>14.3} ms  {name}", s * 1e3);
+            }
+            let _ = writeln!(r, "{:>14} MB made, {} MB reused", d.made >> 20, d.reused >> 20);
+        }
     }
 
     // Warnings: the shapes that usually explain a slow rule.

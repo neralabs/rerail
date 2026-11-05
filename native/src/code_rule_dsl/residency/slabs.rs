@@ -604,6 +604,7 @@ pub(in crate::code_rule_dsl) fn drop_all() {
         state.deadline = None;
     }
     crate::code_rule_dsl::transducer::packed::metal_backend::drop_pipelines();
+    crate::code_rule_dsl::transducer::packed::metal_blocks::drop_all();
     crate::code_rule_dsl::transducer::packed::drop_label_pipelines();
     crate::code_rule_dsl::prof::count("residency.dropped", 1);
 }

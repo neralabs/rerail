@@ -135,20 +135,29 @@ fn nearest_costs(cap: usize) {
     std::hint::black_box(&one);
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
     #[cfg(target_os = "macos")]
-    for round in 0..3 {
-        use crate::code_rule_dsl::transducer::packed::metal_nearest;
+    use crate::code_rule_dsl::transducer::packed::metal_nearest;
+    #[cfg(target_os = "macos")]
+    for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
         let target: Vec<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
-        let t = std::time::Instant::now();
-        let solved = metal_nearest::solve(n, &target, &done).unwrap();
-        println!(
-            "JUMP round {round}: host {:.2} ms, GPU {:.3} ms, wait {:.3} ms, {} rounds",
-            t.elapsed().as_secs_f64() * 1e3,
-            solved.gpu * 1e3,
-            solved.wall * 1e3,
-            solved.rounds
-        );
-        assert_eq!(solved.targets, one);
+        for round in 0..4 {
+            // `RERAIL_NEAREST_IDLE_MS`: the GPU left idle before each call, as between a run's chunks.
+            if let Some(ms) = std::env::var("RERAIL_NEAREST_IDLE_MS").ok().and_then(|v| v.parse().ok()) {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+            let t = std::time::Instant::now();
+            let solved = metal_nearest::solve_with(n, &target, &done, how).unwrap();
+            let p: Vec<String> = solved.phases.iter().map(|s| format!("{:.3}", s * 1e3)).collect();
+            println!(
+                "JUMP {how:?} round {round}: host {:.2} ms, GPU {:.3} ms, {} rounds; phases ms [made, queue, encode, submit, schedule, GPU, wake] = [{}]; {} KB made",
+                t.elapsed().as_secs_f64() * 1e3,
+                solved.gpu * 1e3,
+                solved.rounds,
+                p.join(", "),
+                solved.made >> 10
+            );
+            assert_eq!(solved.targets, one);
+        }
     }
     #[cfg(target_os = "macos")]
     for round in 0..3 {
