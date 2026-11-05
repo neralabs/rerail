@@ -3,26 +3,32 @@
 //!
 //!   cargo run --release -- check 20000          differential test, small and large graphs
 //!   cargo run --release -- state 20000          supplied memo/visiting = an edge rewrite
+//!   cargo run --release -- par 5000             threaded passes and GPU steps 1-3 = sequential
 //!   cargo run --release -- bench 1000000 0.05 [giant]
+//!   cargo run --release -- real leg.graph       LEG-083 on the data-layer repo (../realgraph.py)
 //!
-//! Std only. CPU time is getrusage(RUSAGE_SELF), user+sys.
+//! Std only, plus Metal through build.rs. CPU time is getrusage(RUSAGE_SELF), user+sys.
 
 use std::collections::{HashMap, HashSet};
 
-const NONE: u32 = u32::MAX;
+mod gpu;
+mod par;
+mod real;
+
+pub(crate) const NONE: u32 = u32::MAX;
 
 // ------------------------------------------------------------------ graph --
 #[derive(Clone)]
-struct Graph {
-    n: usize,
-    off: Vec<usize>,            // CSR: out-edges of u are off[u]..off[u+1], in (ord, dst) order
-    dst: Vec<u32>,
-    loc: Vec<i64>,
-    sink: Vec<Option<i64>>,     // the target's own location
+pub(crate) struct Graph {
+    pub(crate) n: usize,
+    pub(crate) off: Vec<usize>,            // CSR: out-edges of u are off[u]..off[u+1], in (ord, dst) order
+    pub(crate) dst: Vec<u32>,
+    pub(crate) loc: Vec<i64>,
+    pub(crate) sink: Vec<Option<i64>>,     // the target's own location
 }
 
 impl Graph {
-    fn new(n: usize, mut edges: Vec<(u32, u32, i64, i64)>, sinks: &[(u32, i64)]) -> Graph {
+    pub(crate) fn new(n: usize, mut edges: Vec<(u32, u32, i64, i64)>, sinks: &[(u32, i64)]) -> Graph {
         edges.sort_by_key(|e| (e.0, e.2, e.1));
         let mut off = vec![0; n + 1];
         for e in &edges {
@@ -37,12 +43,12 @@ impl Graph {
         }
         Graph { n, off, dst: edges.iter().map(|e| e.1).collect(), loc: edges.iter().map(|e| e.3).collect(), sink }
     }
-    fn out(&self, u: u32) -> std::ops::Range<usize> {
+    pub(crate) fn out(&self, u: u32) -> std::ops::Range<usize> {
         self.off[u as usize]..self.off[u as usize + 1]
     }
 }
 
-type Found = Option<(u32, i64)>;
+pub(crate) type Found = Option<(u32, i64)>;
 
 // ----------------------------------------------------------------- oracle --
 // ordered_first.rs `Graph::first`, line for line, with its supplied state: `blocked` (the initial
@@ -104,7 +110,7 @@ fn oracle_first(g: &Graph, root: u32, on_edge: bool, blocked: &HashSet<u32>, mem
     }
 }
 
-fn oracle(g: &Graph, roots: &[u32], node_mode: bool, share: bool, blocked: &HashSet<u32>, initial: &HashMap<u32, Found>) -> (Vec<Found>, u64) {
+pub(crate) fn oracle(g: &Graph, roots: &[u32], node_mode: bool, share: bool, blocked: &HashSet<u32>, initial: &HashMap<u32, Found>) -> (Vec<Found>, u64) {
     let mut steps = 0;
     let mut memo = initial.clone();
     let out = roots
@@ -121,15 +127,15 @@ fn oracle(g: &Graph, roots: &[u32], node_mode: bool, share: bool, blocked: &Hash
 }
 
 // -------------------------------------------------------------- set-based --
-struct Prep {
-    live: Vec<bool>,
-    nxt: Vec<u32>,     // the edge index of u's first edge into a live node, or NONE
-    first: Vec<u32>,   // first_of: the target u's next chain ends at, or NONE
-    knot: Vec<bool>,   // on a cycle of live non-sink nodes
-    ent: Vec<u32>,     // the first knot node on u's chain, or NONE: u is "pure"
+pub(crate) struct Prep {
+    pub(crate) live: Vec<bool>,
+    pub(crate) nxt: Vec<u32>,     // the edge index of u's first edge into a live node, or NONE
+    pub(crate) first: Vec<u32>,   // first_of: the target u's next chain ends at, or NONE
+    pub(crate) knot: Vec<bool>,   // on a cycle of live non-sink nodes
+    pub(crate) ent: Vec<u32>,     // the first knot node on u's chain, or NONE: u is "pure"
 }
 
-fn cpu() -> f64 {
+pub(crate) fn cpu() -> f64 {
     #[repr(C)]
     struct Tv {
         sec: i64,
@@ -152,7 +158,7 @@ fn cpu() -> f64 {
     }
 }
 
-fn prepare(g: &Graph, times: &mut Vec<(&'static str, f64)>) -> Prep {
+pub(crate) fn prepare(g: &Graph, times: &mut Vec<(&'static str, f64)>) -> Prep {
     let n = g.n;
     let mut t = cpu();
     let mut lap = |name: &'static str, times: &mut Vec<(&'static str, f64)>| {
@@ -234,7 +240,48 @@ fn prepare(g: &Graph, times: &mut Vec<(&'static str, f64)>) -> Prep {
         }
     }
     lap("first_of", times);
-    // 4. knot: Tarjan over live non-sink nodes and the edges between them, read from the CSR directly.
+    let knot = knot_pass(g, &live);
+    lap("knot", times);
+    let inner = |u: usize| live[u] && g.sink[u].is_none();
+    // 5. ent: the first knot node on each chain. Every next-loop lies in the knot, so walks end.
+    let mut ent = vec![NONE; n];
+    let mut done = vec![false; n];
+    for s in 0..n {
+        let mut v = s;
+        walk.clear();
+        let ans = loop {
+            if done[v] {
+                break ent[v];
+            }
+            if !inner(v) {
+                done[v] = true;
+                break NONE;
+            }
+            if knot[v] {
+                ent[v] = v as u32;
+                done[v] = true;
+                break v as u32;
+            }
+            walk.push(v);
+            let d = if nxt[v] == NONE { usize::MAX } else { g.dst[nxt[v] as usize] as usize };
+            if d == usize::MAX || g.sink[d].is_some() {
+                break NONE;
+            }
+            v = d;
+        };
+        for &w in &walk {
+            ent[w] = ans;
+            done[w] = true;
+        }
+    }
+    lap("ent", times);
+    Prep { live, nxt, first, knot, ent }
+}
+
+/// Step 4: Tarjan over live non-sink nodes and the edges between them, read from the CSR directly.
+/// Sequential: SCCs are the one step the GPU and the threads leave to a single core.
+pub(crate) fn knot_pass(g: &Graph, live: &[bool]) -> Vec<bool> {
+    let n = g.n;
     let inner = |u: usize| live[u] && g.sink[u].is_none();
     let mut knot = vec![false; n];
     let mut index = vec![u32::MAX; n];
@@ -302,104 +349,76 @@ fn prepare(g: &Graph, times: &mut Vec<(&'static str, f64)>) -> Prep {
             }
         }
     }
-    lap("knot", times);
-    // 5. ent: the first knot node on each chain. Every next-loop lies in the knot, so walks end.
-    let mut ent = vec![NONE; n];
-    let mut done = vec![false; n];
-    for s in 0..n {
-        let mut v = s;
-        walk.clear();
-        let ans = loop {
-            if done[v] {
-                break ent[v];
-            }
-            if !inner(v) {
-                done[v] = true;
-                break NONE;
-            }
-            if knot[v] {
-                ent[v] = v as u32;
-                done[v] = true;
-                break v as u32;
-            }
-            walk.push(v);
-            let d = if nxt[v] == NONE { usize::MAX } else { g.dst[nxt[v] as usize] as usize };
-            if d == usize::MAX || g.sink[d].is_some() {
-                break NONE;
-            }
-            v = d;
-        };
-        for &w in &walk {
-            ent[w] = ans;
-            done[w] = true;
-        }
-    }
-    lap("ent", times);
-    Prep { live, nxt, first, knot, ent }
+    knot
 }
 
-struct Run<'a> {
-    g: &'a Graph,
-    p: &'a Prep,
-    steps: u64,
-    searches: u64,
+pub(crate) struct Run<'a> {
+    pub(crate) g: &'a Graph,
+    pub(crate) p: &'a Prep,
+    pub(crate) steps: u64,
+    pub(crate) searches: u64,
+}
+
+/// ordered_first.rs's search, stepping into a node only if its chain meets the knot; at a pure node
+/// it takes the set-based answer.
+pub(crate) fn search(g: &Graph, p: &Prep, root: u32, on_edge: bool, memo: &mut HashMap<u32, Found>, steps: &mut u64) -> Found {
+    *steps += 1;
+    if let Some(f) = memo.get(&root) {
+        return *f;
+    }
+    let mut stack: Vec<(u32, usize, Option<i64>)> = vec![(root, g.off[root as usize], None)];
+    let mut visiting = HashSet::from([root]);
+    loop {
+        *steps += 1;
+        let top = stack.len() - 1;
+        let (node, next, _) = stack[top];
+        if next >= g.off[node as usize + 1] {
+            stack.pop();
+            visiting.remove(&node);
+            memo.insert(node, None);
+            if stack.is_empty() {
+                return None;
+            }
+            continue;
+        }
+        stack[top].1 += 1;
+        let (child, loc) = (g.dst[next], g.loc[next]);
+        let c = child as usize;
+        let found = if on_edge && g.sink[c].is_some() {
+            Some((child, loc))
+        } else if !p.live[c] || visiting.contains(&child) {
+            continue;
+        } else if let Some(m) = memo.get(&child) {
+            m.map(|(s, _)| (s, loc))
+        } else if g.sink[c].is_some() {
+            Some((child, loc))
+        } else if p.ent[c] == NONE {
+            Some((p.first[c], loc))
+        } else {
+            visiting.insert(child);
+            stack.push((child, g.off[c], Some(loc)));
+            continue;
+        };
+        if let Some((s, mut loc)) = found {
+            while let Some((f, _, via)) = stack.pop() {
+                visiting.remove(&f);
+                memo.insert(f, Some((s, loc)));
+                if let Some(v) = via {
+                    loc = v;
+                }
+            }
+            return Some((s, loc));
+        }
+    }
 }
 
 impl Run<'_> {
     fn search(&mut self, root: u32, on_edge: bool, memo: &mut HashMap<u32, Found>) -> Found {
-        let (g, p) = (self.g, self.p);
         self.searches += 1;
-        self.steps += 1;
-        if let Some(f) = memo.get(&root) {
-            return *f;
-        }
-        let mut stack: Vec<(u32, usize, Option<i64>)> = vec![(root, g.off[root as usize], None)];
-        let mut visiting = HashSet::from([root]);
-        loop {
-            self.steps += 1;
-            let top = stack.len() - 1;
-            let (node, next, _) = stack[top];
-            if next >= g.off[node as usize + 1] {
-                stack.pop();
-                visiting.remove(&node);
-                memo.insert(node, None);
-                if stack.is_empty() {
-                    return None;
-                }
-                continue;
-            }
-            stack[top].1 += 1;
-            let (child, loc) = (g.dst[next], g.loc[next]);
-            let c = child as usize;
-            let found = if on_edge && g.sink[c].is_some() {
-                Some((child, loc))
-            } else if !p.live[c] || visiting.contains(&child) {
-                continue;
-            } else if let Some(m) = memo.get(&child) {
-                m.map(|(s, _)| (s, loc))
-            } else if g.sink[c].is_some() {
-                Some((child, loc))
-            } else if p.ent[c] == NONE {
-                Some((p.first[c], loc))
-            } else {
-                visiting.insert(child);
-                stack.push((child, g.off[c], Some(loc)));
-                continue;
-            };
-            if let Some((s, mut loc)) = found {
-                while let Some((f, _, via)) = stack.pop() {
-                    visiting.remove(&f);
-                    memo.insert(f, Some((s, loc)));
-                    if let Some(v) = via {
-                        loc = v;
-                    }
-                }
-                return Some((s, loc));
-            }
-        }
+        search(self.g, self.p, root, on_edge, memo, &mut self.steps)
     }
 
-    fn run(&mut self, roots: &[u32], node_mode: bool, share: bool) -> Vec<Found> {
+    pub(crate) fn run(&mut self, roots: &[u32], node_mode: bool, share: bool) -> Vec<Found> {
         let (g, p) = (self.g, self.p);
         let on_edge = !node_mode;
         let mut memo = HashMap::new();
@@ -451,7 +470,7 @@ impl Run<'_> {
 //              in node mode b is no longer a target.
 //   seed v -> (s, l): v's edges become one edge v -> s at location l; in node mode v is no
 //              longer a target (the memo is read before v's own target test).
-fn rewrite(n: usize, edges: &[(u32, u32, i64, i64)], sinks: &[(u32, i64)], node_mode: bool,
+pub(crate) fn rewrite(n: usize, edges: &[(u32, u32, i64, i64)], sinks: &[(u32, i64)], node_mode: bool,
            blocked: &HashSet<u32>, seed: &HashMap<u32, (u32, i64)>) -> (Vec<(u32, u32, i64, i64)>, Vec<(u32, i64)>) {
     let is_sink: HashSet<u32> = sinks.iter().map(|s| s.0).collect();
     let mut e2: Vec<_> = edges
@@ -473,23 +492,23 @@ fn rewrite(n: usize, edges: &[(u32, u32, i64, i64)], sinks: &[(u32, i64)], node_
 }
 
 // --------------------------------------------------------------- harness --
-struct Rng(u64);
+pub(crate) struct Rng(u64);
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
-    fn below(&mut self, k: u64) -> u64 {
+    pub(crate) fn below(&mut self, k: u64) -> u64 {
         self.next() % k.max(1)
     }
-    fn chance(&mut self, p: f64) -> bool {
+    pub(crate) fn chance(&mut self, p: f64) -> bool {
         (self.next() >> 11) as f64 / (1u64 << 53) as f64 <= p
     }
 }
 
-fn random_graph(rng: &mut Rng, large: bool) -> (usize, Vec<(u32, u32, i64, i64)>, Vec<(u32, i64)>, Vec<u32>) {
+pub(crate) fn random_graph(rng: &mut Rng, large: bool) -> (usize, Vec<(u32, u32, i64, i64)>, Vec<(u32, i64)>, Vec<u32>) {
     let n = if large { 10 + rng.below(31) } else { 1 + rng.below(9) } as usize;
     let m = if large { n as u64 + rng.below(2 * n as u64 + 1) } else { rng.below(3 * n as u64 + 1) };
     let edges = (0..m).map(|_| (rng.below(n as u64) as u32, rng.below(n as u64) as u32, rng.below(5) as i64, 1 + rng.below(99) as i64)).collect();
@@ -578,7 +597,37 @@ fn check_state(cases: usize) -> bool {
     true
 }
 
-fn bench(n: usize, back: f64, giant: bool) {
+/// The parallel passes and the GPU's steps 1-3 give the sequential arrays and answers.
+fn check_par(cases: usize, threads: usize) -> bool {
+    let mut rng = Rng(0xA0761D6478BD642F);
+    let gpu = gpu::init();
+    for large in [false, true] {
+        for i in 0..cases {
+            let (n, edges, sinks, roots) = random_graph(&mut rng, large);
+            let g = Graph::new(n, edges.clone(), &sinks);
+            let p = prepare(&g, &mut Vec::new());
+            let q = par::prepare_par(&g, threads, &mut Vec::new());
+            let gpu_bad = if gpu.is_some() && i % 10 == 0 { gpu::differs(&gpu::prepare(&g), &p) } else { None };
+            let mut bad = if !par::same(&p, &q) { Some("threaded arrays".to_string()) } else { gpu_bad.map(|x| format!("GPU {x}")) };
+            for node_mode in [true, false] {
+                for share in [false, true] {
+                    let want = Run { g: &g, p: &p, steps: 0, searches: 0 }.run(&roots, node_mode, share);
+                    if par::run_par(&g, &q, &roots, node_mode, share, threads).0 != want {
+                        bad.get_or_insert(format!("threaded roots, node_mode={node_mode} share={share}"));
+                    }
+                }
+            }
+            if let Some(b) = bad {
+                println!("DISAGREE ({b}) large={large} case {i}\n edges {edges:?}\n sinks {sinks:?}\n roots {roots:?}");
+                return false;
+            }
+        }
+    }
+    println!("ok: {cases} small and {cases} large graphs, {threads} threads{}", if gpu.is_some() { "; GPU on every tenth" } else { "; no GPU" });
+    true
+}
+
+fn bench(n: usize, back: f64, giant: bool, threads: usize) {
     let mut rng = Rng(1);
     let mut edges = Vec::new();
     for s in 0..n {
@@ -625,20 +674,45 @@ fn bench(n: usize, back: f64, giant: bool) {
             println!(" | oracle not run (one search per root)");
         }
     }
+    let mut times = Vec::new();
+    let q = par::prepare_par(&g, threads, &mut times);
+    let total: f64 = times.iter().map(|t| t.1).sum();
+    println!("  {threads} threads, set passes {total:7.3}s CPU ({}), arrays {}",
+             times.iter().map(|(n, s)| format!("{n} {s:.3}")).collect::<Vec<_>>().join(", "),
+             if par::same(&p, &q) { "equal" } else { "DIFFER" });
+    for share in [false, true] {
+        let t = cpu();
+        let (got, steps) = par::run_par(&g, &q, &roots, true, share, threads);
+        let dt = cpu() - t;
+        let want = Run { g: &g, p: &p, steps: 0, searches: 0 }.run(&roots, true, share);
+        println!("  {threads} threads, {} roots {dt:7.3}s CPU, {steps} steps, {}",
+                 if share { "shared" } else { "fresh " }, if got == want { "agrees" } else { "DISAGREES" });
+    }
+    if let Some(dev) = gpu::init() {
+        let t = cpu();
+        let o = gpu::prepare(&g);
+        let host = cpu() - t;
+        println!("  GPU ({dev}) steps 1-3: {:.4}s GPU, host {host:.3}s CPU (CSR copies, reverse CSR), {} waves, {} command buffers, {}",
+                 o.gpu_seconds, o.waves, o.command_buffers, gpu::differs(&o, &p).map_or("arrays equal".into(), |x| format!("{x} DIFFERS")));
+    }
 }
 
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     let num = |i: usize, d: usize| a.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
+    let threads = std::env::var("THREADS").ok().and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, |x| x.get()));
     let ok = match a.get(1).map(String::as_str) {
+        Some("par") => check_par(num(2, 5000), threads),
+        Some("real") => real::real(a.get(2).expect("graph file"), threads),
         Some("check") => check(num(2, 20000)),
         Some("state") => check_state(num(2, 20000)),
         Some("bench") => {
-            bench(num(2, 100000), a.get(3).and_then(|s| s.parse().ok()).unwrap_or(0.05), a.get(4).map(String::as_str) == Some("giant"));
+            bench(num(2, 100000), a.get(3).and_then(|s| s.parse().ok()).unwrap_or(0.05), a.get(4).map(String::as_str) == Some("giant"), threads);
             true
         }
         _ => {
-            eprintln!("usage: check N | state N | bench NODES BACK [giant]");
+            eprintln!("usage: check N | state N | par N | bench NODES BACK [giant] | real FILE   (THREADS=k)");
             false
         }
     };

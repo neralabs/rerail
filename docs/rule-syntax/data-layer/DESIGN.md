@@ -217,7 +217,40 @@ Native (spikes/dfs-first/native; every set pass is a linear scan of a CSR edge a
 | 5,000 functions, one cycle through almost all | under 1 ms | 4.3 M steps, 0.16 s | 11 k steps, 1 ms | fresh: 4.9 M steps, 0.21 s |
 
 Peak resident memory at 1,000,000 functions: 435 MB, including the oracle's memo. CPU time, user+sys; the machine
-was heavily loaded (load average 20–150), so times are upper bounds.
+was heavily loaded (load average 20–150; 50–110 for the real-data, thread and GPU runs), so times are upper bounds.
+
+On the real repository. spikes/dfs-first/realgraph.py rebuilds LEG-083's call graph from the data-layer
+repository at its pinned commit, reading blobs through `git cat-file` and parsing them with `ast` (nothing from
+the repository runs), and runs a copy of the script's own `_transitive_eager_resolve`. Three answers are compared
+per root: the script's, the oracle's (legacy surfaces as the supplied visiting set) and the set-based plan's on the
+rewritten graph (legacy surfaces blocked).
+
+| Scope | Graph | Findings | `dfs_first_memo` vs the script | Set passes | Search steps (memo / fresh) |
+|---|---|---|---|---|---|
+| LEG-083's files (`_is_internal_execution_path`) | 2,493 files, 63,191 functions, 73,848 calls, 21 eager, 1,785 legacy | 18 | equal on all 61,403 roots | 1 ms; 18 live, knot 2 | 10 / 11 |
+| every .py file, same rules | 8,123 files, 154,573 functions, 135,199 calls, 1,284 eager | 1,830 | equal on all 152,753 roots | 4 ms; 1,864 live, knot 65 | 455 / 17,378 |
+
+On the wider graph, `dfs_first` (LEG_083_SOUND) reports 1,864 functions: 34 that the shared memo loses on a
+cycle, and 2 at a different call. On LEG-083's own files the two agree; no cycle there reaches an eager call
+through a poisoned entry. Real call graphs are mostly dead: under 2% of functions are live, so steps 2-5 touch
+few nodes.
+
+Threads and GPU. Steps 1-3 and 5 run as waves: `live` as a frontier per level, `next` as one pass per node,
+`first_of` and `ent` by pointer jumping (log₂ n rounds). Step 4, Tarjan, stays on one core. On 8 threads and on
+Metal (Apple M5 Max) every array equals the sequential pass on 10,000 random graphs (the GPU on every tenth), on
+the bench graphs and on both real graphs.
+
+| 1,000,000 functions, 5,000,000 calls | Wave form, 1 thread | 8 threads (CPU summed over threads) | Metal, steps 1-3 |
+|---|---|---|---|
+| set passes | 0.13 s (live 0.04, next 0.003, first_of 0.02, knot 0.04, ent 0.02) | 0.14 s | 0.004 s GPU; 0.036 s host (u32 copies, reverse CSR); 2 command buffers |
+| every root, fresh memo | 0.06 s | 0.08 s | — |
+| every root, shared memo | 0.03 s | 0.03 s | — |
+
+The wave form on one thread is a little cheaper than the sequential passes above (0.13 s against 0.16 s without the load). Threads add little CPU. They pay off where the work is the searches: on the giant cycle, the fresh-memo
+searches (8.6 M steps, 0.97 s CPU) are independent and spread over the threads. Under `dfs_first_memo` only roots
+that meet no cycle run in parallel; the rest keep root order. On the GPU, the frontier of `live` empties inside
+one batch of 32 waves with no host wait between them; the host's share is building the reverse CSR, which the
+fact store would already hold. Peak resident memory with both paths: 567 MB.
 
 Three readings. For `dfs_first`, the semantics this design recommends, the plan replaces a search per root,
 quadratic, with linear set passes and a search confined to cycles. For the scripts' variant, the native plan is

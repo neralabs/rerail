@@ -112,5 +112,9 @@ confirm once a parser and engine exist. None is fixed yet.
    - ordering roots by a symbol column matches Soufflé after all: Soufflé's `<` on symbols compares the
      decoded strings (interpreter Engine.cpp, COMPARE_STRING); only `ord()` is the table index. The earlier
      note here was wrong.
-   Still open: no engine has the built-ins; the native spike is single-threaded, and the GPU waves for steps 1-3
-   are not written.
+   - on the real repository (spikes/dfs-first/realgraph.py), `dfs_first_memo` equals LEG-083's search on every
+     root: 61,403 roots in its files, 152,753 over every .py file. `dfs_first` adds 34 findings on the wider
+     graph;
+   - steps 1-3 and 5 run on 8 threads and steps 1-3 on Metal, with arrays equal to the sequential passes.
+   Still open: no engine has the built-ins. Tarjan (step 4) is sequential; a GPU SCC pass would be needed only
+   if knots grow large.

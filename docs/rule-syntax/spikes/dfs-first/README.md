@@ -14,10 +14,14 @@ the scripts' depth-first search, and what does it cost.
 - `check.py`: differential test on random graphs (self-loops, duplicate edges, tied orders), in both
   match modes, with a fresh memo and a shared one.
 - `bench.py`: CPU time on synthetic call graphs.
+- `realgraph.py`: LEG-083's call graph from the real data-layer repository, and the script's own answers, for
+  `native real`. Reads blobs with `git cat-file`; parses with `ast`; runs nothing from the repository.
 - `native/`: the same plan in Rust, std only, with no SQL and no materialised tables. Every set pass is a
   linear scan of a CSR edge array; Tarjan reads the array directly. It carries its own port of
   `Graph::first`, including the producer's supplied visiting set and initial memo, and checks that those
   are a rewrite of the edge and target relations.
+  - `src/par.rs`: the set passes and root answering on threads; `src/gpu.rs` and `gpu/dfs_gpu.mm`: steps 1-3
+    as Metal waves, compiled by `build.rs` with the system clang.
 
 ## Run
 
@@ -32,6 +36,11 @@ cargo run --release -- check 20000                    # 20,000 small + 20,000 la
 cargo run --release -- state 20000                    # supplied visiting set and memo = an edge rewrite
 cargo run --release -- bench 1000000 0.05             # 1,000,000 functions, 5,000,000 calls
 cargo run --release -- bench 5000 0.2 giant
+cargo run --release -- par 5000                       # threads and GPU arrays = sequential (THREADS=k)
+
+python3 -I ../realgraph.py DATA_LAYER_REPO COMMIT leg.graph leg   # LEG-083's files
+python3 -I ../realgraph.py DATA_LAYER_REPO COMMIT all.graph all   # every .py file
+cargo run --release -- real leg.graph
 ```
 
 ## Results (2026-11-05)
@@ -49,6 +58,14 @@ Native, at 1,000,000 functions and 5,000,000 calls: 0.20 s CPU of set passes, 0.
 root with a fresh memo, 0.03 s with the shared one (the scripts' own search: 0.32 s); 435 MB peak. Both
 planted bugs (a fresh memo for the shared variant; a rewrite that keeps a known node as a target) are
 caught.
+
+Real repository (LEG-083): the set-based `dfs_first_memo`, the oracle and the script's own search agree on all
+61,403 roots of LEG-083's files (18 findings) and all 152,753 roots of every .py file (1,830 findings). The
+fresh-memo `dfs_first` finds 34 more on the wider graph. Set passes: 1 ms and 4 ms.
+
+Threads and GPU: on 8 threads and on Metal (steps 1-3), every array equals the sequential pass on 10,000
+random graphs, the bench graphs and both real graphs. At a million functions, steps 1-3 take 0.004 s of GPU
+time against 0.07 s on a core.
 
 Cost: see the tables in data-layer/DESIGN.md. In short, the fresh-memo semantics drops from a search per
 root (millions of steps at 5,000 functions) to set passes plus tens of search steps. The scripts'
