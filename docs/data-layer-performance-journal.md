@@ -6727,7 +6727,7 @@ These finite gates do not establish equivalence for every possible Python progra
 The cumulative full-repository result still covers 80 rules. No cumulative cold benchmark or new Linear issue was added.
 
 Final compact batch-ten replay passes all 23 tests after the temporary-root correction.
-Batch nine's 228 original assertions also pass again through both APIs on the rebuilt engine.
+Batch nine's 228 assertion cases also pass again through both APIs on the rebuilt engine.
 Its disabled-detector controls still reject all ten ports.
 Its receipt is refreshed from those executions because the shared AST metadata and CI file changed.
 The prior batch-nine kernel measurements remain historical; no old kernel received a new cold benchmark.
