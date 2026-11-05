@@ -1,5 +1,6 @@
-use super::closure::{Bits, Closure, Graph, Hop, Seed, Status, path_module};
+use super::closure::{Bits, Closure, Graph, Hop, Seed, Status};
 use super::names::Name;
+use super::python::path_module;
 use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, callee_at};
 use super::{CallsView, FileSeeds, SeedScope, Through};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};

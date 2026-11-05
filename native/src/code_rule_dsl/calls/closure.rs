@@ -5,6 +5,7 @@
 
 use super::names::Name;
 use super::php;
+use super::python::path_module;
 use super::summary::{BASE, CLASS, DECORATED, METACLASS, OPEN, Summary, UNKNOWN_BASE};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
@@ -501,28 +502,6 @@ pub(crate) struct GraphStats {
     /// Targets that link to no definition: outside the workspace, or no edge statically.
     pub(crate) unlinked_targets: usize,
     pub(crate) open_defs: usize,
-}
-
-/// The dotted name a file's path gives it from the deepest directory whose name is no Python
-/// identifier (a checkout's own directory): what `import` finds with that directory on
-/// `sys.path`, namespace packages included. `pkg/__init__.py` is `pkg`.
-pub(crate) fn path_module(path: &str) -> Option<String> {
-    let path = path
-        .strip_suffix(".py")
-        .or_else(|| path.strip_suffix(".pyi"))?;
-    let mut segments = path.split('/').collect::<Vec<_>>();
-    if segments.len() > 1 && segments.last() == Some(&"__init__") {
-        segments.pop();
-    }
-    let identifier = |segment: &&str| {
-        let mut chars = segment.chars();
-        chars
-            .next()
-            .is_some_and(|first| first == '_' || first.is_alphabetic())
-            && chars.all(|c| c == '_' || c.is_alphanumeric())
-    };
-    let valid = segments.iter().rev().take_while(|s| identifier(s)).count();
-    (valid > 0).then(|| segments[segments.len() - valid..].join("."))
 }
 
 impl Graph {

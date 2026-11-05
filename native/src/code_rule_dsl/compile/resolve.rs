@@ -439,7 +439,7 @@ fn compile_binding_in<S: ScopeRules>(
                 BTreeSet::new()
             },
             reference_kinds: kind_ids(language, S::REFERENCE_KINDS),
-            paren_kinds: kind_ids(language, &["parenthesized_expression"]),
+            paren_kinds: kind_ids(language, S::PAREN_KINDS),
             options: utils.options.clone(),
             python: utils.python.clone(),
             filter,
@@ -609,7 +609,7 @@ fn compile_lexical_resolves<S: ScopeRules>(
     let dotted_kinds = if imported.is_empty() || seen_before {
         BTreeSet::new()
     } else {
-        kind_ids(language, &["dotted_name"])
+        kind_ids(language, S::DOTTED_NAME_KINDS)
     };
     let globals = value
         .get("global")
@@ -629,19 +629,15 @@ fn compile_lexical_resolves<S: ScopeRules>(
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
-    let attribute_kinds = if S::IMPORT_PATHS {
-        kind_ids(language, &["scoped_identifier", "scoped_type_identifier"])
-    } else {
-        kind_ids(language, &["attribute"])
-    };
+    let attribute_kinds = kind_ids(language, S::ATTRIBUTE_KINDS);
     // An import resolves a read's attribute chain too.
     let mut reference_kinds = kind_ids(language, S::REFERENCE_KINDS);
     if !imports.is_empty() || import_any {
         reference_kinds.extend(attribute_kinds.iter().copied());
     }
-    let paren_kinds = kind_ids(language, &["parenthesized_expression"]);
+    let paren_kinds = kind_ids(language, S::PAREN_KINDS);
     let this_kinds = if this_global {
-        kind_ids(language, &["this"])
+        kind_ids(language, S::THIS_KINDS)
     } else {
         BTreeSet::new()
     };
@@ -788,7 +784,7 @@ fn compile_php_resolves<S: ScopeRules>(
             directives: false,
             language,
             reference_kinds,
-            paren_kinds: kind_ids(language, &["parenthesized_expression"]),
+            paren_kinds: kind_ids(language, S::PAREN_KINDS),
             options: None,
             python: None,
             this_global: false,

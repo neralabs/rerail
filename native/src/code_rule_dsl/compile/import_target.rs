@@ -3,7 +3,8 @@
 
 use crate::code_rule_dsl::import_target::{ModuleType, Style};
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::language::{Family, GrammarDialect};
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::language::adapter::has_import_targets;
 use crate::code_rule_dsl::matcher::{AstMatcher, ImportTargetTest, Reading, Semantic};
 use crate::code_rule_dsl::scope::options::LanguageOptions;
 use napi::Result;
@@ -86,7 +87,7 @@ pub(super) fn compile_import_target(
     path: &str,
     options: Option<&Arc<LanguageOptions>>,
 ) -> Result<AstMatcher> {
-    if Family::of(language) != Family::Ecma {
+    if !has_import_targets(language) {
         return Err(invalid(format!(
             "{path}: import targets are eslint-plugin-n's, read in JavaScript and TypeScript files"
         )));

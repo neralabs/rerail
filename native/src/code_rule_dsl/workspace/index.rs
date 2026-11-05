@@ -10,7 +10,7 @@
 //! `max_file_bytes`). Its apply publishes the batch and releases every source and tape before the
 //! chunk returns, so between chunks the workspace retains per-file results only.
 
-use super::api::{WorkspaceApplyTask, close_poisoned, cpu_slot};
+use super::api::{WORKSPACE_BUSY, WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
 use super::ingest::{Request, WireFile, make_file};
@@ -722,7 +722,7 @@ impl Task for WorkspaceIndexTask {
             };
             let Some(_slot) = cpu_slot().try_lock() else {
                 self.lock()?.repository_index = Some(index);
-                return Err(invalid("WORKSPACE_BUSY"));
+                return Err(invalid(WORKSPACE_BUSY));
             };
             let mut failures = std::mem::take(&mut index.failures);
             let batch = self.read_batch(&repository, &mut index, &mut failures)?;

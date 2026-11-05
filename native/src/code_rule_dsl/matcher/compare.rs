@@ -311,7 +311,7 @@ fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
     }
     let mut node = node.clone();
     let mut parent = node.parent()?;
-    while parent.kind() == "parenthesized_expression" {
+    while super::util::is_paren_kind(&parent.kind()) {
         node = parent;
         parent = node.parent()?;
     }
@@ -333,7 +333,7 @@ fn element_index<D: Doc>(node: &Node<'_, D>) -> Option<usize> {
 /// The node inside any parentheses: ESTree has none.
 fn unparenthesized<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut node = node.clone();
-    while node.kind() == "parenthesized_expression" {
+    while super::util::is_paren_kind(&node.kind()) {
         let Some(inner) = node
             .children()
             .find(|child| child.is_named() && !super::util::is_comment_kind(&child.kind()))

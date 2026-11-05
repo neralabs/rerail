@@ -1167,7 +1167,7 @@ impl TapeImage {
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
-        if grammar.lang == GrammarDialect::Blade {
+        if super::language::adapter::parsed_by_forte(grammar.lang) {
             return match Self::encode_template(grammar, source, budget) {
                 Ok(image) => Some(Ok(image)),
                 // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
@@ -1275,7 +1275,7 @@ impl TapeImage {
         budget: &impl Fn() -> bool,
     ) -> Result<FileImage, TemplateError> {
         checked(budget)?;
-        if grammar.lang != GrammarDialect::Blade {
+        if !super::language::adapter::parsed_by_forte(grammar.lang) {
             return Err("only a Blade template is encoded from a Forte tree"
                 .to_owned()
                 .into());

@@ -19,7 +19,7 @@ use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Query
 use crate::code_rule_dsl::placement::placement_identity;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::profile;
-use crate::code_rule_dsl::soundness::UNREAD;
+use crate::code_rule_dsl::soundness::{SYNTAX_ERRORS, UNREAD};
 use crate::code_rule_dsl::violations::{Captures, Span, Witness};
 use crate::code_rule_dsl::{language, tape};
 use crate::content_store::{
@@ -152,7 +152,7 @@ fn persisted_failure(code: &str, message: &str) -> Option<LocalFailure> {
         "file match budget exceeded",
         "file line index could not be built",
         "file grammar cannot be taped",
-        "file has syntax errors",
+        SYNTAX_ERRORS,
         UNREAD,
         "file parsing time budget exceeded",
         "file tape encoding failed",

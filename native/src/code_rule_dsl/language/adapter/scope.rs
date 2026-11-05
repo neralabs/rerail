@@ -82,6 +82,14 @@ pub(crate) trait ScopeRules {
     const ANNOTATION_STRING_KINDS: &'static [&'static str];
     /// The kinds a binding's name node has (`binds`, `resolves.write`).
     const NAME_KINDS: &'static [&'static str];
+    /// The kinds of a parenthesized expression, which `binds` and `resolves` read through.
+    const PAREN_KINDS: &'static [&'static str];
+    /// The kinds of a dotted name, the only thing `resolves.imported` reads (Python's).
+    const DOTTED_NAME_KINDS: &'static [&'static str];
+    /// The kinds of the attribute chain or path that `resolves.import` follows to an import.
+    const ATTRIBUTE_KINDS: &'static [&'static str];
+    /// The kinds of `this`, read by `resolves.global` when it lists `this`.
+    const THIS_KINDS: &'static [&'static str];
     /// The kinds of a private name, a binding of its class body that `binds` matches too.
     const PRIVATE_NAME_KINDS: &'static [&'static str];
     /// The binding forms a `form` filter names.
@@ -220,6 +228,10 @@ impl ScopeRules for Python {
     const REFERENCE_KINDS: &'static [&'static str] = &["identifier"];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &["string", "concatenated_string"];
     const NAME_KINDS: &'static [&'static str] = &["identifier", "dotted_name"];
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &["dotted_name"];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &["attribute"];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     const FORMS: &'static [(&'static str, Form)] = LEXICAL_FORMS;
     const SCOPES: &'static [(&'static str, ScopeName)] = &[
@@ -420,6 +432,11 @@ impl ScopeRules for Ecma {
         "shorthand_property_identifier_pattern",
         "undefined",
     ];
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    /// The ECMA grammars have no such kind; Vue's own tree, which reads this family's scope, does.
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &["attribute"];
+    const THIS_KINDS: &'static [&'static str] = &["this"];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &["private_property_identifier"];
     const FORMS: &'static [(&'static str, Form)] = LEXICAL_FORMS;
     /// eslint-scope's names: `global` is a script's top level, `module` a module's or CommonJS
@@ -675,6 +692,11 @@ impl ScopeRules for Php {
     const REFERENCE_KINDS: &'static [&'static str] = &["variable_name"];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
     const NAME_KINDS: &'static [&'static str] = &["variable_name"];
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    /// PHP's `resolves` reads the file's names and flow (`FLOW`), not these three.
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &[];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     const FORMS: &'static [(&'static str, Form)] = &[
         ("assignment", Form::Assignment),
