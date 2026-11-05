@@ -115,6 +115,32 @@ function discoveryCheckpoints(checkpoint: DiscoveryCheckpoint): CodeRuleCheckpoi
   return checkpoint === "edit" ? ["edit", "function"] : [checkpoint];
 }
 
+/** The walk of the repository's other worktrees (`#scheduleWorktreeWalk`), kept apart from the session folder's. */
+interface WorktreeDiscovery {
+  /** The other worktrees, relative to the session folder. */
+  roots: ReadonlySet<string>;
+  /** Those whose first walk is still to finish: as with `SourceDiscovery.baselineRoots`, what it finds is a baseline. */
+  readonly fresh: Set<string>;
+  /** Subtrees the last walk could not read: what it first finds there is a baseline too. */
+  baselineRoots: Set<string>;
+  /** The walk in flight or timed; undefined while none is due. */
+  walk: Promise<void> | undefined;
+  /** A boundary came after the walk in flight had started, so it may have passed what changed: walk again after it. */
+  requested: boolean;
+  /** When the next walk may start. */
+  nextWalkAt: number;
+  /** What the last walk could not check, reported at each boundary as the session walk's `error` is. */
+  error: string | undefined;
+  /** The unlisted files the last walk found too large to read, as `SourceDiscovery.unread`. */
+  unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
+}
+
+function worktreeDiscovery(): WorktreeDiscovery {
+  return {
+    roots: new Set(), fresh: new Set(), baselineRoots: new Set(), walk: undefined, requested: false, nextWalkAt: 0, error: undefined, unread: new Map(),
+  };
+}
+
 interface SourceDiscovery {
   /** Filesystem-clock reading taken before the walk; files stamped at or after it may hold this session's shell writes. */
   readonly startedAt: number;
@@ -127,18 +153,7 @@ interface SourceDiscovery {
   readonly versions: Map<string, number>;
   /** Subtrees whose first successful observation must still be a baseline. */
   baselineRoots: Set<string>;
-  /** The repository's other worktrees, relative to the session folder; their own walk covers them (`#scheduleWorktreeWalk`). */
-  worktrees: ReadonlySet<string>;
-  /** Those whose first walk is still to finish: as with `baselineRoots`, what it finds is a baseline. */
-  readonly newWorktrees: Set<string>;
-  /** `baselineRoots` of the last worktree walk: subtrees in the other worktrees it could not read. */
-  worktreeBaselineRoots: Set<string>;
-  /** The worktree walk in flight or timed; undefined while none is due. */
-  worktreeWalk: Promise<void> | undefined;
-  /** A boundary came after the walk in flight had started, so it may have passed what changed: walk again after it. */
-  worktreeWalkRequested: boolean;
-  /** When the next worktree walk may start. */
-  nextWorktreeWalkAt: number;
+  readonly worktrees: WorktreeDiscovery;
   error: string | undefined;
   /** A boundary answered while the current walk was running; closing before it finishes says so again. */
   pendingReported: boolean;
@@ -197,7 +212,7 @@ interface WalkStart {
   /** The session folder's first walk: what it finds is a baseline. */
   readonly baseline: boolean;
   readonly checkpoint: DiscoveryCheckpoint;
-  /** `SourceDiscovery.worktrees` as the walk started. */
+  /** `WorktreeDiscovery.roots` as the walk started. */
   readonly worktrees: ReadonlySet<string>;
   readonly previous: ReadonlyMap<string, ObservedSource>;
   readonly versions: ReadonlyMap<string, number>;
@@ -209,7 +224,7 @@ interface WalkStart {
  */
 function walkAnswersFor(discovery: SourceDiscovery, walk: WalkStart, path: string): boolean {
   const walked = underBaselineRoot(walk.worktrees, path);
-  const current = underBaselineRoot(discovery.worktrees, path);
+  const current = underBaselineRoot(discovery.worktrees.roots, path);
   if (!walk.inSession) return walked && current;
   return !walked && !current && path !== ".." && !path.startsWith("../");
 }
@@ -259,6 +274,35 @@ function sameSource(left: ObservedSource | undefined, right: Source | undefined)
 }
 function emptyResponse(revision: number): CodeRuleResponse {
   return { revision, disposition: "continue", violations: [], failures: [] };
+}
+/** The session folder's walk is running after a boundary stopped waiting for it. */
+function sessionWalkAbandoned(discovery: SourceDiscovery): boolean {
+  return discovery.idle !== undefined && discovery.pendingReported;
+}
+/** A worktree walk a boundary asked for has yet to finish, and there are worktrees for it to check. */
+function worktreeWalkAbandoned(discovery: SourceDiscovery): boolean {
+  return discovery.worktrees.walk !== undefined && discovery.worktrees.roots.size > 0;
+}
+/** Each of `unread` this session has not yet reported at its stamp, now marked reported. */
+function newlyUnread(discovery: SourceDiscovery, unread: SourceDiscovery["unread"]): string[] {
+  const errors: string[] = [];
+  for (const [path, { stamp, readError }] of unread) {
+    if (discovery.reported.get(path) === stamp) continue;
+    discovery.reported.set(path, stamp);
+    errors.push(`${path}: ${readError}`);
+  }
+  return errors;
+}
+/**
+ * What the last walks of the session folder and of the other worktrees could not check, with each unlisted file too large
+ * to read that this session has not yet reported at its stamp; else whether the session folder's walk is still to finish.
+ */
+function discoveryGap(discovery: SourceDiscovery): string | undefined {
+  const errors = [discovery.error, discovery.worktrees.error].filter(error => error !== undefined);
+  for (const unread of [discovery.unread, discovery.worktrees.unread]) errors.push(...newlyUnread(discovery, unread));
+  if (errors.length > 0) return errors.join("; ");
+  if (!discovery.baselineComplete) return "Initial source discovery is still pending";
+  return discovery.idle === undefined ? undefined : "Source reconciliation is still pending";
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -418,7 +462,7 @@ export class CodeRuleBridge {
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
-        versions: new Map(), baselineRoots: new Set(), worktrees: new Set(), newWorktrees: new Set(), worktreeBaselineRoots: new Set(), worktreeWalk: undefined, worktreeWalkRequested: false, nextWorktreeWalkAt: 0, error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
+        versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(),
       };
       this.#discovery = discovery;
@@ -681,8 +725,9 @@ export class CodeRuleBridge {
     // Cancel before reporting and before joining the operation queue: neither the report nor a blocked filesystem read
     // may keep the walk going.
     discovery.cancelled = true;
-    // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked.
-    if (discovery.idle !== undefined && discovery.pendingReported) this.#reportDiscoveryPending("close");
+    // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked. No boundary waits
+    // for the worktree walk, so one still due is always such a walk.
+    if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
@@ -773,7 +818,7 @@ export class CodeRuleBridge {
     try {
       this.#onDiscoveryPending?.(boundary);
     } catch (error) {
-      process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
     }
   }
 
@@ -794,26 +839,26 @@ export class CodeRuleBridge {
   }
 
   #recordDiscoveryError(discovery: SourceDiscovery, error: unknown): void {
-    if (this.#discovery === discovery && !discovery.cancelled) discovery.error = error instanceof Error ? error.message : String(error);
+    if (this.#discovery === discovery && !discovery.cancelled) discovery.error = errorMessage(error);
   }
 
   /**
-   * The repository's other worktrees as they are now, each relative to the session folder in `discovery.worktrees`. One
+   * The repository's other worktrees as they are now, each relative to the session folder in `WorktreeDiscovery.roots`. One
    * first seen now is a baseline but for what changed since the session opened, which Git's verdicts judge. One gone took
    * its files with it, and none of them is an edit.
    */
   #syncWorktrees(discovery: SourceDiscovery): readonly string[] {
     const worktrees = (this.#auditor.worktreeRoots?.() ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
-    for (const worktree of current) if (!discovery.worktrees.has(worktree)) discovery.newWorktrees.add(worktree);
-    const removed = new Set([...discovery.worktrees].filter(worktree => !current.has(worktree)));
+    for (const worktree of current) if (!discovery.worktrees.roots.has(worktree)) discovery.worktrees.fresh.add(worktree);
+    const removed = new Set([...discovery.worktrees.roots].filter(worktree => !current.has(worktree)));
     if (removed.size > 0) this.#forgetWorktrees(discovery, removed);
-    discovery.worktrees = current;
+    discovery.worktrees.roots = current;
     return worktrees;
   }
 
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
-    for (const worktree of removed) discovery.newWorktrees.delete(worktree);
+    for (const worktree of removed) discovery.worktrees.fresh.delete(worktree);
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
   }
 
@@ -825,14 +870,15 @@ export class CodeRuleBridge {
    */
   #scheduleWorktreeWalk(discovery: SourceDiscovery): void {
     if (discovery.cancelled || this.#auditor.worktreeRoots === undefined) return;
-    if (discovery.worktreeWalk !== undefined) {
-      discovery.worktreeWalkRequested = true;
+    const worktrees = discovery.worktrees;
+    if (worktrees.walk !== undefined) {
+      worktrees.requested = true;
       return;
     }
-    const delay = Math.max(0, discovery.nextWorktreeWalkAt - Date.now());
-    discovery.worktreeWalk = this.#walkWorktrees(discovery, delay).finally(() => {
-      discovery.worktreeWalk = undefined;
-      if (discovery.worktreeWalkRequested) this.#scheduleWorktreeWalk(discovery);
+    const delay = Math.max(0, worktrees.nextWalkAt - Date.now());
+    worktrees.walk = this.#walkWorktrees(discovery, delay).finally(() => {
+      worktrees.walk = undefined;
+      if (worktrees.requested) this.#scheduleWorktreeWalk(discovery);
     });
   }
 
@@ -840,20 +886,20 @@ export class CodeRuleBridge {
     if (delay > 0) await new Promise(wake => { setTimeout(wake, delay).unref?.(); });
     if (discovery.cancelled) return;
     // This walk sees whatever a boundary before it asked about.
-    discovery.worktreeWalkRequested = false;
+    discovery.worktrees.requested = false;
     const startedAt = Date.now();
     try {
       await this.#walkSources(discovery, "worktrees", "edit");
     } catch (error) {
-      process.stderr.write(`rerail: worktree walk failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      if (!this.#abandoned(discovery)) discovery.worktrees.error = errorMessage(error);
     }
-    discovery.nextWorktreeWalkAt = Date.now() + Math.max(this.#worktreeWalkGapMs, Date.now() - startedAt);
+    discovery.worktrees.nextWalkAt = Date.now() + Math.max(this.#worktreeWalkGapMs, Date.now() - startedAt);
   }
 
   /** Waits for the worktree walk in flight or timed, if any, and any walk a boundary asked for meanwhile. */
   async settleWorktreeWalk(): Promise<void> {
     const discovery = this.#discovery;
-    while (discovery?.worktreeWalk !== undefined) await discovery.worktreeWalk;
+    while (discovery?.worktrees.walk !== undefined) await discovery.worktrees.walk;
   }
 
   async #discoveryPass(discovery: SourceDiscovery): Promise<void> {
@@ -867,7 +913,7 @@ export class CodeRuleBridge {
     const worktrees = this.#syncWorktrees(discovery);
     const inSession = scope === "session";
     const walk: WalkStart = {
-      inSession, baseline: inSession && !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees),
+      inSession, baseline: inSession && !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move the walk only partly saw is still a move to the next one.
       heads: await this.#readHeads(discovery, inSession ? undefined : worktrees),
@@ -885,7 +931,7 @@ export class CodeRuleBridge {
 
   async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan> {
     // An earlier session's baseline of this workspace lets unchanged sources skip the read.
-    const seed = walk.baseline || (!walk.inSession && discovery.newWorktrees.size > 0) ? this.#observations?.get(this.#cwd) : undefined;
+    const seed = walk.baseline || (!walk.inSession && discovery.worktrees.fresh.size > 0) ? this.#observations?.get(this.#cwd) : undefined;
     return await this.#observeSources({
       discovery, observedAt: await filesystemClock(),
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
@@ -915,14 +961,16 @@ export class CodeRuleBridge {
     } catch (error) {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
-      this.#restoreObservations(edits, walk.previous);
+      this.#restoreObservations(discovery, walk, edits);
       throw error;
     }
   }
 
-  #restoreObservations(edits: readonly CodeRuleEdit[], previous: ReadonlyMap<string, ObservedSource>): void {
-    for (const edit of edits) {
-      const before = previous.get(edit.path);
+  /** Puts back what `walk` had observed of `edits`, but in a worktree removed since, which took its files with it (`#forgetWorktrees`). */
+  #restoreObservations(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[]): void {
+    const gone = new Set([...walk.worktrees].filter(worktree => !discovery.worktrees.roots.has(worktree)));
+    for (const edit of edits.filter(edit => !underBaselineRoot(gone, edit.path))) {
+      const before = walk.previous.get(edit.path);
       if (before === undefined) this.#observed.delete(edit.path);
       else this.#observed.set(edit.path, before);
     }
@@ -936,9 +984,11 @@ export class CodeRuleBridge {
   }
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
-    for (const worktree of walk.worktrees) discovery.newWorktrees.delete(worktree);
-    discovery.worktreeBaselineRoots = scan.failedRoots;
-    if (scan.errors.length > 0) process.stderr.write(`rerail: worktree walk incomplete: ${scan.errors.join("; ")}\n`);
+    const worktrees = discovery.worktrees;
+    for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
+    worktrees.baselineRoots = scan.failedRoots;
+    worktrees.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
+    worktrees.unread = scan.unread;
   }
 
   /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */
@@ -975,7 +1025,7 @@ export class CodeRuleBridge {
    */
   async #readHeads(discovery: SourceDiscovery, worktrees?: readonly string[]): Promise<Map<string, string>> {
     const heads = new Map<string, string>();
-    const others = [...discovery.heads.keys()].filter(known => !discovery.worktrees.has(sessionPath(discovery.root, known)));
+    const others = [...discovery.heads.keys()].filter(known => !discovery.worktrees.roots.has(sessionPath(discovery.root, known)));
     for (const root of worktrees ?? new Set([discovery.root, ...others])) {
       const head = await gitHead(root);
       if (head !== undefined) heads.set(root, head);
@@ -1109,7 +1159,7 @@ export class CodeRuleBridge {
   #baselinePath(discovery: SourceDiscovery, path: string, before: ObservedSource | undefined, baseline: boolean): boolean {
     if (baseline) return true;
     return before === undefined
-      && [discovery.baselineRoots, discovery.worktreeBaselineRoots, discovery.newWorktrees].some(roots => underBaselineRoot(roots, path));
+      && [discovery.baselineRoots, discovery.worktrees.baselineRoots, discovery.worktrees.fresh].some(roots => underBaselineRoot(roots, path));
   }
 
   #deletedEdit(path: string, before: ObservedSource | undefined): CodeRuleEdit | undefined {
@@ -1434,17 +1484,9 @@ export class CodeRuleBridge {
     if (this.#discovery !== discovery) throw new Error("Policy workspace is not open");
   }
 
-  /** The last walk's errors, with each unlisted file too large to read that this session has not yet reported at its stamp. */
+  /** The walks' gaps as a `source-incomplete` failure on the last response; the last response alone when there are none. */
   #discoveryResponse(discovery: SourceDiscovery): CodeRuleResponse {
-    const errors = discovery.error === undefined ? [] : [discovery.error];
-    for (const [path, { stamp, readError }] of discovery.unread) {
-      if (discovery.reported.get(path) === stamp) continue;
-      discovery.reported.set(path, stamp);
-      errors.push(`${path}: ${readError}`);
-    }
-    let message = errors.length === 0 ? undefined : errors.join("; ");
-    if (message === undefined && !discovery.baselineComplete) message = "Initial source discovery is still pending";
-    else if (message === undefined && discovery.idle !== undefined) message = "Source reconciliation is still pending";
+    const message = discoveryGap(discovery);
     if (message === undefined) return this.#lastResponse;
     return {
       ...this.#lastResponse,

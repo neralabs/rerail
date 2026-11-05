@@ -930,17 +930,42 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await writeFile(join(worktree, "deep", "old.py"), "violation\n");
     await awaitClockAfter(join(worktree, "deep", "old.py"));
     discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
-    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      const { bridge, auditGeneratedEdits } = await opened(root, extra);
-      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("worktree walk incomplete"));
-      await writeFile(join(worktree, "deep", "new.py"), "violation\n");
-      await bridge.checkpoint("turn");
-      await bridge.settleWorktreeWalk();
-      expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
-    } finally {
-      stderr.mockRestore();
-    }
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // The gap is the session's, as the session folder's own walk reports one.
+    expect((await bridge.checkpoint("turn")).failures).toEqual([
+      expect.objectContaining({ code: "source-incomplete", message: expect.stringContaining("EMFILE") }),
+    ]);
+    await bridge.settleWorktreeWalk();
+    await writeFile(join(worktree, "deep", "new.py"), "violation\n");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
+    expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+  });
+
+  it("reports a worktree walk that never ran as pending when the session closes, and none with no worktree to walk", async () => {
+    const root = await twoBranches();
+    const { extra } = await withWorktree(root, join(await workspace(), "w"));
+    const pending: string[] = [];
+    const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), ...extra }, {
+      worktreeWalkGapMs: 60_000, onDiscoveryPending: boundary => { pending.push(boundary); },
+    });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    // The next walk is timed a minute out; the session closes first.
+    await bridge.checkpoint("turn");
+    await bridge.close();
+    expect(pending).toEqual(["close"]);
+
+    const alone = createBridge(await twoBranches(), { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), worktreeRoots: () => [] }, {
+      worktreeWalkGapMs: 60_000, onDiscoveryPending: boundary => { pending.push(`alone:${boundary}`); },
+    });
+    await alone.openWorkspace("session-2");
+    await alone.checkpoint("turn");
+    await alone.checkpoint("turn");
+    await alone.close();
+    expect(pending).toEqual(["close"]);
   });
 
   it("reports no deletions for a nested worktree the other walk dropped while the session's walk ran", async () => {
