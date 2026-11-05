@@ -723,9 +723,14 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
 - **Pinned references.** Every `uses:` under `.github`, including first-party actions and the reviewer workflow, is
   pinned to a commit SHA with a version comment; Dependabot updates them, composite actions included.
   `npm run check:pins` keeps the reviewer's `reviewer_ref` equal to its `uses:` SHA.
-- **Reviewer cannot approve or see forks.** `reviewer.yml` sets `allow_approve: false`. Its `same-repo` job holds no
-  secrets, has a read-only token, and calls the reviewer only when the pull request's head repository is this one. No
-  trigger, a maintainer's comment command included, gives a fork pull request the model key or the app key.
+- **Reviewer never sees forks.** `reviewer.yml`'s `same-repo` job holds no secrets, has a read-only token, and calls the
+  reviewer only when the pull request's head repository is this one. No trigger, a maintainer's comment command
+  included, gives a fork pull request the model key or the app key.
+- **Reviewer approval is bounded.** `reviewer.yml` sets `allow_approve: true`, and main requires one approval with no
+  code-owner requirement, so the bot's approval is enough to merge. The verdict is the reviewer's own policy, not the
+  model's: it approves only with nothing blocking, CI passed, and no high-risk path from REVIEW.md touched, which keeps
+  `.github/`, packaging, migrations and release scripts in front of a person. Only contributors push branches here, so
+  a prompt injection in a pull request's text needs a contributor to open it.
 - **No branch code beside the write token.** `dependabot-pins.yml` runs branch code in a read-only job that uploads a
   patch; a second job applies only pin-file changes, then mints the write token and pushes.
 
@@ -735,6 +740,8 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
 <summary>What remains</summary>
 
 - `release.yml` runs on any `v*` tag; the `release` environment approval is the only gate.
+- An approval, the bot's included, survives later pushes: main's ruleset does not dismiss stale approvals, so a
+  contributor can push to a branch after it is approved and merge it unreviewed.
 - `scripts/host/host-auth.ts` (developer smoke runs) copies an access-only OAuth token (no refresh token) into a
   sandbox, 0600 in a 0700 folder, and deletes it and its SQLite journal files when the run ends, failures included.
 - The `.node` binaries ship without a separate signature and rely on provenance.

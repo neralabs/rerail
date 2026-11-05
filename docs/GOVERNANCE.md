@@ -33,8 +33,10 @@ Nera Software sets policy; maintainers decide within it, in the open.
   or by majority if they cannot agree ([Disagreement](#how-decisions-are-made)).
 - **In the open.** Decisions on code, rules, packs or docs are recorded, with the reason, in the issue or pull request
   before anyone acts.
-- **Everyday changes.** A pull request merges when a code owner other than its author approves and **CI result**
-  passes. It is squash-merged. The automated reviewer (`reviewer.yml`) comments but never approves.
+- **Everyday changes.** A pull request merges with one approval from someone other than its author and **CI result**
+  passing. It is squash-merged. Code owners review, and the automated reviewer (`reviewer.yml`) may approve: its
+  approval counts, since main requires no code-owner review. It never approves a pull request that touches a high-risk
+  path in [REVIEW.md](../REVIEW.md#high-risk-areas); a code owner approves those.
 - **Issue first.** For anything [Start with an issue](../CONTRIBUTING.md#start-with-an-issue) lists, a maintainer
   agrees the approach in the issue before coding. Large changes write a short design there first
   ([Large changes](../CONTRIBUTING.md#large-changes)).

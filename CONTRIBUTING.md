@@ -123,10 +123,12 @@ is open to others again.
    changes.
 5. Run the checks in [Before you open a pull request](#before-you-open-a-pull-request).
 6. Open a pull request against `main` that links the issue (`Fixes #123`) and says how you tested the change.
-7. A code owner reviews it; the `neralabs-reviewer` bot may also comment (never on a pull request from a fork), but
-   its review never approves. Push fixes to the same branch. Pack data the pull request stages is published by a
-   maintainer first ([docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data)); once a code
-   owner approves it and CI passes, it is squash-merged.
+7. A code owner reviews it, and the `neralabs-reviewer` bot may too (never on a pull request from a fork). The bot
+   approves when it finds nothing blocking and the pull request touches no high-risk path in
+   [REVIEW.md](REVIEW.md#high-risk-areas); that approval counts as the one main requires. Push fixes to the same
+   branch. Pack data the pull request stages is published by a maintainer first
+   ([docs/upstream.md, "Publishing pack data"](docs/upstream.md#publishing-pack-data)); once it is approved and CI
+   passes, it is squash-merged.
 
 **From a fork** (anyone): steps 1, 4 and 5 as above, on a branch in your fork, then open a pull request from it or link
 the branch in the issue ([Proposing a change from your fork](#proposing-a-change-from-your-fork)).
