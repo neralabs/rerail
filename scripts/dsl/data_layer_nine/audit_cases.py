@@ -84,3 +84,26 @@ def test_evidence_verifier_rejects_a_changed_complete_result(request):
  record['expected'][0]['message']='a deliberately incorrect diagnostic'
  with pytest.raises(ValueError,match='complete-result parity'):
   verify(oracle,[report])
+
+
+@pytest.mark.parametrize('number,positive',[('0',True),('0.0',True),('False',True),('0j',True),('1',False),('1.0',False),('1j',False),('1e999',False),('1e999j',False)])
+def test_executor_zero_counts_preserve_python_numeric_equality(tmp_path,number,positive):
+ import ast
+ from scripts import lint_bootstrap_engine_invariants as lint
+ path=tmp_path/'l3200_metadata/bootstrap_state.py';path.parent.mkdir(parents=True)
+ source=f'def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a={number},b={number},c={number},d={number}))\n'
+ path.write_text(source)
+ result=lint._collect_fake_executor_violations(path,ast.parse(source).body[0])
+ assert bool(result)==positive
+
+
+@pytest.mark.parametrize('lifecycle',['absent','invalid','empty'])
+def test_lifecycle_fallback_depends_on_file_presence(tmp_path,monkeypatch,lifecycle):
+ from scripts import lint_connection_structural_boundaries as lint
+ connection=tmp_path/'l2000_connection/connection.py';connection.parent.mkdir(parents=True)
+ connection.write_text('class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n')
+ path=tmp_path/'l2000_connection/connection_lifecycle.py'
+ if lifecycle!='absent':path.write_text('def broken(\n' if lifecycle=='invalid' else '')
+ for name,value in [('ROOT',tmp_path),('CONNECTION_FILE',connection),('CONNECTION_LIFECYCLE_FILE',path),('SQL_CONNECTION_FILE',tmp_path/'missing.py'),('BACKEND_CONNECTION_FILES',()),('LIFECYCLE_SCAN_FILES',())]:monkeypatch.setattr(lint,name,value)
+ result=lint.lint()
+ assert [row.code for row in result]==(['CSB030'] if lifecycle=='absent' else [])
