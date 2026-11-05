@@ -6460,3 +6460,19 @@ The TypeScript replay and receipt tests pass all 26 cases.
 Retained checks pass 34 supplied-fact API cases, thirteen capability cases and four prior-receipt cases.
 TypeScript typecheck passes. The ten documents regenerate byte for byte.
 The structure check retains three pre-existing directory-size findings; all other metrics pass.
+
+## 2026-11-05 — Batch-nine completion claim withdrawn
+
+A new audit reproduces three semantic regressions: two false SBC002 findings and one missing BEI024 finding.
+The original implementation passes all three reduced cases. Both native API modes fail all three.
+The cause is lambda argument leakage into enclosing function signatures.
+
+Direct shipped-policy evaluation also drops SAP000 and emits NATIVE-SYNTAX instead of BCH000.
+The replay adapter supplies the BCH000 conversion, so its passing assertions concealed the production mismatch.
+The plan-composition producer is only called by the test harness; the default rule requires manually supplied observations.
+Four upstream MCP composition cases were omitted. They pass when explicitly selected through the adapted harness.
+Neither lazy-SQL entry point has a dedicated upstream pytest module; the earlier recovered-tests statement was incorrect.
+
+The [audit](data-layer-batch-nine-audit.md) and [evidence](../fixtures/host/data-layer-port/batch-09-audit-20261105.json) retain the reproductions.
+The 201-case historical receipt remains valid evidence of those runs, rather than complete batch-nine acceptance.
+The completion claim is withdrawn. No Linear issues were created.

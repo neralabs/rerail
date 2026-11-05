@@ -1,7 +1,11 @@
 # Data-layer batch nine
 
+Status, 2026-11-05: **incomplete; the completion claim is withdrawn**.
+The [completion audit](data-layer-batch-nine-audit.md) records confirmed false positives, a missed positive, and production-path gaps.
+The counts below describe historical test runs. They do not establish complete parity.
+
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
-The inventory now contains 90 of 142 ports. Fifty-two checks remain.
+The inventory contains 90 authored ports out of 142. Batch nine needs completion; fifty-two further checks remain unauthored.
 The private pack ships twenty documents. Seventy earlier ports remain candidates.
 
 | Check | Preserved contract | Recorded API results with findings |

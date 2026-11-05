@@ -1,6 +1,7 @@
 # Restart the data-layer rule ports
 
-Updated: 2026-11-04. Status: 90 ports have focused parity evidence. The historical complete repository result covers 80.
+Updated: 2026-11-04. Status: 90 ports are authored. Batch nine has confirmed parity gaps and is incomplete.
+See [the completion audit](data-layer-batch-nine-audit.md). The historical complete repository result covers 80.
 
 The recovery survey below describes the original 60-rule restart point.
 Batch seven now passes 217 source observations and 50 edit/removal transitions.
@@ -171,7 +172,8 @@ Record new performance changes alongside parity; the existing RSS failure remain
 | 15 | 2 | Final two checks, preserving metric and source-disabled behavior |
 
 The original pinned survey found no associated tests for six checks: `bootstrap_eager_resolve`, `bootstrap_lazy_sql`, `explicit_semantic_ids`, `pending_pipeline_effect_kinds`, `plan_optimizer_v2`, and `rust_sql_grammar_boundary`.
-Batch nine recovered the lazy-SQL tests and added separate eager-resolution entry-point controls.
+Neither lazy-SQL entry point has a dedicated upstream test module at this pin.
+Batch nine added oracle-evaluated controls for both. The earlier claim of recovered lazy-SQL tests was incorrect.
 The Rust grammar check already has supplemental coverage in batch four.
 The other three need explicit oracle probes when their batches start.
 Absence of discovered tests is not a passing gate.

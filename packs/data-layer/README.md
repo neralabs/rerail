@@ -1,6 +1,8 @@
 # Data-layer rules
 
 This private pack contains the twenty batch-eight and batch-nine architecture rules for nera-data-layer.
+Batch nine has confirmed parity and production-integration gaps. Its completion claim is withdrawn.
+See [the audit](../../docs/data-layer-batch-nine-audit.md) before using these ten documents.
 Load it explicitly with `readBundledCatalog([packDirectory])` for repository integration.
 It is not part of the default core catalog.
 The other seventy ports remain in `candidates/rules/`.
