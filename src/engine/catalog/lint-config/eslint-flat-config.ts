@@ -48,7 +48,8 @@ export interface FlatConfigRead {
 }
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
-type Resolved = { readonly ok: true; readonly value: Json } | { readonly ok: false; readonly why: string };
+type Unresolved = { readonly ok: false; readonly why: string };
+type Resolved = { readonly ok: true; readonly value: Json } | Unresolved;
 
 const MAX_SOURCE_TEXT = 48;
 const DEFINE_CONFIG_MODULES = new Set(["eslint/config", "@eslint/config-helpers"]);
@@ -173,77 +174,71 @@ class FlatConfigReader {
 
   /** The first statement or expression of the file that is code rather than data (see the module comment). */
   #code(): t.Node | undefined {
-    const declaration = (statement: t.VariableDeclaration): t.Node | undefined => {
-      // A `declare const` is erased before the file runs: its name is the global of that name, not its initializer.
-      if (statement.kind !== "const" || statement.declare === true) return statement;
-      for (const declarator of statement.declarations) {
-        if (declarator.id.type !== "Identifier" || declarator.init == null) return declarator;
-        const code = this.#nonData(declarator.init, false);
-        if (code !== undefined) return code;
-      }
-      return undefined;
-    };
     for (const statement of this.program.body) {
-      switch (statement.type) {
-        case "ImportDeclaration":
-          continue;
-        case "ExportAllDeclaration":
-          // A module named by path may export `then` (see below), which a package is trusted not to.
-          if (isPathModule(statement.source.value)) return statement;
-          continue;
-        case "EmptyStatement":
-        case "TSTypeAliasDeclaration":
-        case "TSInterfaceDeclaration":
-        case "TSDeclareFunction":
-          continue;
-        case "TSModuleDeclaration":
-          if (statement.declare === true) continue;
-          return statement;
-        case "VariableDeclaration": {
-          const code = declaration(statement);
-          if (code !== undefined) return code;
-          continue;
-        }
-        case "ExportNamedDeclaration": {
-          // `import()` calls a module's own `then` export as it loads it, and ESLint loads the config with `import()`.
-          const exported = statement.declaration?.type === "VariableDeclaration"
-            ? statement.declaration.declarations.map(declarator => (declarator.id.type === "Identifier" ? declarator.id.name : undefined))
-            : statement.specifiers.map(specifier => (specifier.exported.type === "Identifier" ? specifier.exported.name : specifier.exported.value));
-          if (exported.includes("then")) return statement;
-          // A const another module can import is not read: that module may change it.
-          for (const specifier of statement.specifiers) {
-            if (specifier.type === "ExportSpecifier" && specifier.local.type === "Identifier") this.#consts.delete(specifier.local.name);
-          }
-          const declared = statement.declaration;
-          if (declared == null || declared.type === "TSTypeAliasDeclaration" || declared.type === "TSInterfaceDeclaration") continue;
-          if (declared.type !== "VariableDeclaration") return declared;
-          const code = declaration(declared);
-          if (code !== undefined) return code;
-          continue;
-        }
-        case "ExportDefaultDeclaration": {
-          if (!isExpression(statement.declaration)) return statement.declaration;
-          const code = this.#nonData(statement.declaration, false);
-          if (code !== undefined) return code;
-          continue;
-        }
-        case "TSExportAssignment": {
-          const code = this.#nonData(statement.expression, false);
-          if (code !== undefined) return code;
-          continue;
-        }
-        case "ExpressionStatement": {
-          const value = this.#moduleExports(statement.expression);
-          if (value === undefined) return statement;
-          const code = this.#nonData(value, false);
-          if (code !== undefined) return code;
-          continue;
-        }
-        default:
-          return statement;
-      }
+      const code = this.#statementCode(statement);
+      if (code !== undefined) return code;
     }
     return undefined;
+  }
+
+  #statementCode(statement: t.Statement): t.Node | undefined {
+    switch (statement.type) {
+      case "ImportDeclaration":
+      case "EmptyStatement":
+      case "TSTypeAliasDeclaration":
+      case "TSInterfaceDeclaration":
+      case "TSDeclareFunction":
+        return undefined;
+      case "ExportAllDeclaration":
+        // A module named by path may export `then` (see below), which a package is trusted not to.
+        return isPathModule(statement.source.value) ? statement : undefined;
+      case "TSModuleDeclaration":
+        return statement.declare === true ? undefined : statement;
+      case "VariableDeclaration":
+        return this.#declarationCode(statement);
+      case "ExportNamedDeclaration":
+        return this.#exportNamedCode(statement);
+      case "ExportDefaultDeclaration":
+        return isExpression(statement.declaration) ? this.#nonData(statement.declaration, false) : statement.declaration;
+      case "TSExportAssignment":
+        return this.#nonData(statement.expression, false);
+      case "ExpressionStatement": {
+        const value = this.#moduleExports(statement.expression);
+        return value === undefined ? statement : this.#nonData(value, false);
+      }
+      default:
+        return statement;
+    }
+  }
+
+  #declarationCode(statement: t.VariableDeclaration): t.Node | undefined {
+    // A `declare const` is erased before the file runs: its name is the global of that name, not its initializer.
+    if (statement.kind !== "const" || statement.declare === true) return statement;
+    for (const declarator of statement.declarations) {
+      const code = this.#declaratorCode(declarator);
+      if (code !== undefined) return code;
+    }
+    return undefined;
+  }
+
+  #declaratorCode(declarator: t.VariableDeclarator): t.Node | undefined {
+    return declarator.id.type !== "Identifier" || declarator.init == null ? declarator : this.#nonData(declarator.init, false);
+  }
+
+  #exportNamedCode(statement: t.ExportNamedDeclaration): t.Node | undefined {
+    // `import()` calls a module's own `then` export as it loads it, and ESLint loads the config with `import()`.
+    if (exportedNames(statement).includes("then")) return statement;
+    this.#forgetExportedConsts(statement);
+    const declared = statement.declaration;
+    if (declaresNoValue(declared)) return undefined;
+    return declared.type === "VariableDeclaration" ? this.#declarationCode(declared) : declared;
+  }
+
+  /** A const another module can import is not read: that module may change it. */
+  #forgetExportedConsts(statement: t.ExportNamedDeclaration): void {
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === "ExportSpecifier" && specifier.local.type === "Identifier") this.#consts.delete(specifier.local.name);
+    }
   }
 
   /**
@@ -253,14 +248,6 @@ class FlatConfigReader {
    * (through which a call reaches the exported config) are code anywhere but in the one `module.exports = …` statement.
    */
   #nonData(node: t.Node, given: boolean): t.Node | undefined {
-    const all = (nodes: readonly (t.Node | null | undefined)[], inside: boolean): t.Node | undefined => {
-      for (const child of nodes) {
-        if (child == null) continue;
-        const code = this.#nonData(child.type === "SpreadElement" ? child.argument : child, inside);
-        if (code !== undefined) return code;
-      }
-      return undefined;
-    };
     switch (node.type) {
       case "StringLiteral":
       case "NumericLiteral":
@@ -270,62 +257,28 @@ class FlatConfigReader {
       case "RegExpLiteral":
       case "MetaProperty":
         return undefined;
-      case "Identifier": {
-        if (!this.#locals.has(node.name) && !this.#imports.has(node.name)) return DATA_GLOBALS.has(node.name) ? undefined : node;
-        // A code-running Node module is code wherever it is named: a value read from it can run code when coerced.
-        const from = this.#imports.get(node.name)?.module;
-        if (from !== undefined && CODE_MODULES.has(from.replace(/^node:/u, ""))) return node;
-        // A module named by path may be the config itself: handing its values to a call may change the export.
-        return given && (this.#locals.has(node.name) || (from !== undefined && isPathModule(from))) ? node : undefined;
-      }
+      case "Identifier":
+        return this.#identifierCode(node, given);
       case "TemplateLiteral":
-        return all(node.expressions, given);
+        return this.#firstNonData(node.expressions, given);
       case "MemberExpression":
-      case "OptionalMemberExpression": {
-        // `.constructor` of any function is `Function`; a key Rerail cannot read may be that one.
-        const key = keyName(node.property, node.computed);
-        if (key === undefined || REFLECTIVE_KEYS.has(key)) return node;
-        // The environment's variables are strings: reading them reaches nothing else of the process.
-        if (key === "env" && node.object.type === "Identifier" && node.object.name === "process" && this.#isGlobal("process")) return undefined;
-        return this.#nonData(node.object, given);
-      }
+      case "OptionalMemberExpression":
+        return this.#memberCode(node, given);
       case "ArrayExpression":
-        return all(node.elements, given);
-      case "ObjectExpression": {
-        for (const property of node.properties) {
-          if (property.type === "ObjectMethod") return property;
-          if (property.type === "SpreadElement") {
-            const code = this.#nonData(property.argument, given);
-            if (code !== undefined) return code;
-            continue;
-          }
-          // JavaScript calls `toString`, `valueOf` or `toJSON` itself when it turns the object into a string or JSON.
-          const key = keyName(property.key, property.computed);
-          if (key === undefined || REFLECTIVE_KEYS.has(key) || COERCION_KEYS.has(key)) return property;
-          const code = this.#nonData(property.value, given);
-          if (code !== undefined) return code;
-        }
-        return undefined;
-      }
+        return this.#firstNonData(node.elements, given);
+      case "ObjectExpression":
+        return this.#objectCode(node, given);
       case "CallExpression":
       case "OptionalCallExpression":
-      case "NewExpression": {
-        const helper = node.type === "CallExpression" && this.#isConfigHelper(node.callee);
-        // Only calls into the packages the file imports and `require("<package>")`, `new URL(…)`, `process.cwd()` and
-        // `import.meta.resolve(…)`: a global such as `Object`, `Reflect`, `Function` or `globalThis.eval` can reach
-        // anything.
-        const trusted = helper ? "package" : this.#trustedCall(node);
-        if (trusted === undefined) return node;
-        if (given && node.type === "CallExpression" && isRequire(node) && isPathModule(requiredModule(node))) return node;
-        return (trusted === "global" ? undefined : this.#nonData(node.callee, true)) ?? all(node.arguments, given || !helper);
-      }
+      case "NewExpression":
+        return this.#callCode(node, given);
       case "UnaryExpression":
         return node.operator === "delete" ? node : this.#nonData(node.argument, given);
       case "BinaryExpression":
       case "LogicalExpression":
-        return node.left.type === "PrivateName" ? node : all([node.left, node.right], given);
+        return node.left.type === "PrivateName" ? node : this.#firstNonData([node.left, node.right], given);
       case "ConditionalExpression":
-        return all([node.test, node.consequent, node.alternate], given);
+        return this.#firstNonData([node.test, node.consequent, node.alternate], given);
       case "TSAsExpression":
       case "TSSatisfiesExpression":
       case "TSNonNullExpression":
@@ -336,6 +289,73 @@ class FlatConfigReader {
       default:
         return node;
     }
+  }
+
+  #firstNonData(nodes: readonly (t.Node | null | undefined)[], inside: boolean): t.Node | undefined {
+    for (const child of nodes) {
+      if (child == null) continue;
+      const code = this.#nonData(child.type === "SpreadElement" ? child.argument : child, inside);
+      if (code !== undefined) return code;
+    }
+    return undefined;
+  }
+
+  #identifierCode(node: t.Identifier, given: boolean): t.Node | undefined {
+    if (this.#isGlobal(node.name)) return DATA_GLOBALS.has(node.name) ? undefined : node;
+    // A code-running Node module is code wherever it is named: a value read from it can run code when coerced.
+    const from = this.#imports.get(node.name)?.module;
+    if (isCodeModule(from)) return node;
+    return given && this.#callMayChange(node.name, from) ? node : undefined;
+  }
+
+  /** The file's own binding, or one from a module named by path: that may be the config itself, whose export a call may change. */
+  #callMayChange(name: string, from: string | undefined): boolean {
+    return this.#locals.has(name) || isPathModuleName(from);
+  }
+
+  #memberCode(node: t.MemberExpression | t.OptionalMemberExpression, given: boolean): t.Node | undefined {
+    // `.constructor` of any function is `Function`; a key Rerail cannot read may be that one.
+    const key = keyName(node.property, node.computed);
+    if (key === undefined || REFLECTIVE_KEYS.has(key)) return node;
+    // The environment's variables are strings: reading them reaches nothing else of the process.
+    if (key === "env" && this.#isGlobalProcess(node.object)) return undefined;
+    return this.#nonData(node.object, given);
+  }
+
+  #objectCode(node: t.ObjectExpression, given: boolean): t.Node | undefined {
+    for (const property of node.properties) {
+      const code = this.#propertyCode(property, given);
+      if (code !== undefined) return code;
+    }
+    return undefined;
+  }
+
+  #propertyCode(property: t.ObjectExpression["properties"][number], given: boolean): t.Node | undefined {
+    if (property.type === "ObjectMethod") return property;
+    if (property.type === "SpreadElement") return this.#nonData(property.argument, given);
+    // JavaScript calls `toString`, `valueOf` or `toJSON` itself when it turns the object into a string or JSON.
+    const key = keyName(property.key, property.computed);
+    if (key === undefined || REFLECTIVE_KEYS.has(key) || COERCION_KEYS.has(key)) return property;
+    return this.#nonData(property.value, given);
+  }
+
+  #callCode(node: t.CallExpression | t.OptionalCallExpression | t.NewExpression, given: boolean): t.Node | undefined {
+    const helper = this.#isConfigHelperCall(node);
+    // Only calls into the packages the file imports and `require("<package>")`, `new URL(…)`, `process.cwd()` and
+    // `import.meta.resolve(…)`: a global such as `Object`, `Reflect`, `Function` or `globalThis.eval` can reach
+    // anything.
+    const trusted = helper ? "package" : this.#trustedCall(node);
+    if (trusted === undefined) return node;
+    if (given && requiresPathModule(node)) return node;
+    return this.#calleeCode(node, trusted) ?? this.#firstNonData(node.arguments, given || !helper);
+  }
+
+  #isConfigHelperCall(node: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+    return node.type === "CallExpression" && this.#isConfigHelper(node.callee);
+  }
+
+  #calleeCode(node: t.CallExpression | t.OptionalCallExpression | t.NewExpression, trusted: "global" | "package"): t.Node | undefined {
+    return trusted === "global" ? undefined : this.#nonData(node.callee, true);
   }
 
   #import(statement: t.ImportDeclaration): void {
@@ -465,21 +485,32 @@ class FlatConfigReader {
    * or reaches the module system (`node:vm`, `node:module`, ...) can change anything: calls into them are code.
    */
   #trustedCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): "global" | "package" | undefined {
-    const callee = call.callee;
-    if (call.type === "CallExpression" && isRequire(call) && this.#isGlobal("require")) return "global";
-    if (call.type === "NewExpression" && callee.type === "Identifier" && callee.name === "URL" && this.#isGlobal("URL")) return "global";
-    if (call.type === "CallExpression" && callee.type === "MemberExpression" && !callee.computed && callee.property.type === "Identifier") {
-      const object = callee.object;
-      if (object.type === "Identifier" && object.name === "process" && this.#isGlobal("process") && callee.property.name === "cwd") {
-        return call.arguments.length === 0 ? "global" : undefined;
-      }
-      if (object.type === "MetaProperty" && object.meta.name === "import" && callee.property.name === "resolve") return "global";
-    }
-    let root: t.Node = callee;
-    while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
+    if (this.#isTrustedGlobalCall(call)) return "global";
+    const root = memberRoot(call.callee);
     if (root.type !== "Identifier") return undefined;
-    const from = this.#imports.get(root.name)?.module;
-    return from !== undefined && !isPathModule(from) && !CODE_MODULES.has(from.replace(/^node:/u, "")) ? "package" : undefined;
+    return isPackageModule(this.#imports.get(root.name)?.module) ? "package" : undefined;
+  }
+
+  #isTrustedGlobalCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+    return this.#isGlobalRequire(call) || this.#isGlobalNewUrl(call) || this.#isGlobalProcessCwd(call) || isImportMetaResolve(call);
+  }
+
+  #isGlobalRequire(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+    return call.type === "CallExpression" && isRequire(call) && this.#isGlobal("require");
+  }
+
+  #isGlobalNewUrl(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+    return call.type === "NewExpression" && call.callee.type === "Identifier" && call.callee.name === "URL" && this.#isGlobal("URL");
+  }
+
+  #isGlobalProcessCwd(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+    const method = plainMethodCall(call);
+    return method !== undefined && this.#isGlobalProcess(method.object) && method.name === "cwd" && call.arguments.length === 0;
+  }
+
+  /** The `process` of the global scope: the file neither declares nor imports one. */
+  #isGlobalProcess(node: t.Node): boolean {
+    return node.type === "Identifier" && node.name === "process" && this.#isGlobal("process");
   }
 
   /** Whether `name` is the global of that name: the file neither declares nor imports it. */
@@ -606,7 +637,6 @@ class FlatConfigReader {
     this.#step();
     if (depth > MAX_DEPTH) return { ok: false, why: "it nests too deep" };
     const value = this.#unwrap(node, depth);
-    const unread = (): Resolved => ({ ok: false, why: `it is ${this.#source(value)}, which Rerail does not run` });
     switch (value.type) {
       case "StringLiteral":
       case "NumericLiteral":
@@ -615,54 +645,128 @@ class FlatConfigReader {
       case "NullLiteral":
         return { ok: true, value: null };
       case "TemplateLiteral":
-        return value.expressions.length === 0 && value.quasis.length === 1 && value.quasis[0]!.value.cooked != null
-          ? { ok: true, value: value.quasis[0]!.value.cooked }
-          : unread();
-      case "UnaryExpression": {
-        if ((value.operator !== "-" && value.operator !== "+") || value.argument.type !== "NumericLiteral") return unread();
-        return { ok: true, value: value.operator === "-" ? -value.argument.value : value.argument.value };
-      }
-      case "ArrayExpression": {
-        const items: Json[] = [];
-        for (const element of value.elements) {
-          if (element === null) return unread();
-          const inner = this.#resolve(element.type === "SpreadElement" ? element.argument : element, depth + 1);
-          if (!inner.ok) return inner;
-          if (element.type === "SpreadElement") {
-            if (!Array.isArray(inner.value)) return unread();
-            this.#built(inner.value.length);
-            for (const item of inner.value) items.push(item);
-          } else {
-            this.#built(1);
-            items.push(inner.value);
-          }
-        }
-        return { ok: true, value: items };
-      }
-      case "ObjectExpression": {
-        const object: { [key: string]: Json } = {};
-        for (const property of value.properties) {
-          if (property.type === "SpreadElement") {
-            const inner = this.#resolve(property.argument, depth + 1);
-            if (!inner.ok) return inner;
-            if (inner.value === null || typeof inner.value !== "object" || Array.isArray(inner.value)) return unread();
-            this.#built(Object.keys(inner.value).length);
-            Object.assign(object, inner.value);
-            continue;
-          }
-          const key = property.type === "ObjectProperty" ? propertyName(property) ?? this.#computedKey(property, depth) : undefined;
-          if (key === undefined || property.type !== "ObjectProperty" || !isExpression(property.value)) return unread();
-          const inner = this.#resolve(property.value, depth + 1);
-          if (!inner.ok) return inner;
-          this.#built(1);
-          Object.defineProperty(object, key, { value: inner.value, enumerable: true, writable: true, configurable: true });
-        }
-        return { ok: true, value: object };
-      }
+        return this.#resolveTemplate(value);
+      case "UnaryExpression":
+        return this.#resolveUnary(value);
+      case "ArrayExpression":
+        return this.#resolveArray(value, depth);
+      case "ObjectExpression":
+        return this.#resolveObject(value, depth);
       default:
-        return unread();
+        return this.#unreadValue(value);
     }
   }
+
+  #unreadValue(value: t.Expression): Unresolved {
+    return { ok: false, why: `it is ${this.#source(value)}, which Rerail does not run` };
+  }
+
+  #resolveTemplate(value: t.TemplateLiteral): Resolved {
+    return value.expressions.length === 0 && value.quasis.length === 1 && value.quasis[0]!.value.cooked != null
+      ? { ok: true, value: value.quasis[0]!.value.cooked }
+      : this.#unreadValue(value);
+  }
+
+  #resolveUnary(value: t.UnaryExpression): Resolved {
+    if ((value.operator !== "-" && value.operator !== "+") || value.argument.type !== "NumericLiteral") return this.#unreadValue(value);
+    return { ok: true, value: value.operator === "-" ? -value.argument.value : value.argument.value };
+  }
+
+  #resolveArray(value: t.ArrayExpression, depth: number): Resolved {
+    const items: Json[] = [];
+    for (const element of value.elements) {
+      const added = this.#elementItems(value, element, depth);
+      if (!added.ok) return added;
+      this.#built(added.value.length);
+      for (const item of added.value) items.push(item);
+    }
+    return { ok: true, value: items };
+  }
+
+  /** What one element adds to an array: its value, or the items of a spread array. */
+  #elementItems(array: t.ArrayExpression, element: t.ArrayExpression["elements"][number], depth: number): { readonly ok: true; readonly value: Json[] } | Unresolved {
+    if (element === null) return this.#unreadValue(array);
+    if (element.type !== "SpreadElement") {
+      const inner = this.#resolve(element, depth + 1);
+      return inner.ok ? { ok: true, value: [inner.value] } : inner;
+    }
+    const inner = this.#resolve(element.argument, depth + 1);
+    if (!inner.ok) return inner;
+    return Array.isArray(inner.value) ? { ok: true, value: inner.value } : this.#unreadValue(array);
+  }
+
+  #resolveObject(value: t.ObjectExpression, depth: number): Resolved {
+    const object: { [key: string]: Json } = {};
+    for (const property of value.properties) {
+      const unresolved = property.type === "SpreadElement"
+        ? this.#spreadInto(object, value, property, depth)
+        : this.#propertyInto(object, value, property, depth);
+      if (unresolved !== undefined) return unresolved;
+    }
+    return { ok: true, value: object };
+  }
+
+  #spreadInto(object: { [key: string]: Json }, value: t.ObjectExpression, property: t.SpreadElement, depth: number): Unresolved | undefined {
+    const inner = this.#resolve(property.argument, depth + 1);
+    if (!inner.ok) return inner;
+    if (inner.value === null || typeof inner.value !== "object" || Array.isArray(inner.value)) return this.#unreadValue(value);
+    this.#built(Object.keys(inner.value).length);
+    Object.assign(object, inner.value);
+    return undefined;
+  }
+
+  #propertyInto(object: { [key: string]: Json }, value: t.ObjectExpression, property: t.ObjectProperty | t.ObjectMethod, depth: number): Unresolved | undefined {
+    const key = property.type === "ObjectProperty" ? propertyName(property) ?? this.#computedKey(property, depth) : undefined;
+    if (key === undefined || property.type !== "ObjectProperty" || !isExpression(property.value)) return this.#unreadValue(value);
+    const inner = this.#resolve(property.value, depth + 1);
+    if (!inner.ok) return inner;
+    this.#built(1);
+    Object.defineProperty(object, key, { value: inner.value, enumerable: true, writable: true, configurable: true });
+    return undefined;
+  }
+}
+
+/** What a member path `a.b.c` hangs off: `a`. */
+function memberRoot(node: t.Node): t.Node {
+  let root = node;
+  while (root.type === "MemberExpression" || root.type === "OptionalMemberExpression") root = root.object;
+  return root;
+}
+
+const isCodeModule = (module: string | undefined): boolean => module !== undefined && CODE_MODULES.has(module.replace(/^node:/u, ""));
+
+const isPathModuleName = (module: string | undefined): boolean => module !== undefined && isPathModule(module);
+
+/** A module named by package, which is trusted to behave as documented: not one named by path, nor one that runs code. */
+function isPackageModule(module: string | undefined): boolean {
+  return module !== undefined && !isPathModule(module) && !isCodeModule(module);
+}
+
+/** The object and method name of a plain `object.method(…)` call. */
+function plainMethodCall(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): { readonly object: t.Node; readonly name: string } | undefined {
+  const callee = call.callee;
+  if (call.type !== "CallExpression" || callee.type !== "MemberExpression" || callee.computed || callee.property.type !== "Identifier") return undefined;
+  return { object: callee.object, name: callee.property.name };
+}
+
+function isImportMetaResolve(call: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+  const method = plainMethodCall(call);
+  return method?.object.type === "MetaProperty" && method.object.meta.name === "import" && method.name === "resolve";
+}
+
+function requiresPathModule(node: t.CallExpression | t.OptionalCallExpression | t.NewExpression): boolean {
+  return node.type === "CallExpression" && isRequire(node) && isPathModule(requiredModule(node));
+}
+
+/** The names an `export { … }` or `export const …` gives; undefined for a destructured declarator. */
+function exportedNames(statement: t.ExportNamedDeclaration): (string | undefined)[] {
+  return statement.declaration?.type === "VariableDeclaration"
+    ? statement.declaration.declarations.map(declarator => (declarator.id.type === "Identifier" ? declarator.id.name : undefined))
+    : statement.specifiers.map(specifier => (specifier.exported.type === "Identifier" ? specifier.exported.name : specifier.exported.value));
+}
+
+function declaresNoValue(declared: t.ExportNamedDeclaration["declaration"]): declared is null | undefined | t.TSTypeAliasDeclaration | t.TSInterfaceDeclaration {
+  return declared == null || declared.type === "TSTypeAliasDeclaration" || declared.type === "TSInterfaceDeclaration";
 }
 
 function isExpression(node: t.Node | null | undefined): node is t.Expression {
