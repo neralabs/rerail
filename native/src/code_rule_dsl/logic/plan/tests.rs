@@ -320,7 +320,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             let sets = lowered.transduce_nearest();
             assert!(!sets.is_empty(), "{name} reads nearest");
             assert!(!lowered.program.rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, binding).unwrap() {
+            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding).unwrap() {
                 if rel.starts_with("nearest_") {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -363,7 +363,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
         let p = program(name);
         let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let sets = lowered.transduce_nearest();
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, Binding::Cpu).unwrap() {
+        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu).unwrap() {
             if rel.starts_with("nearest_") {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {

@@ -6,26 +6,9 @@
 .decl in_scope(d: int)
 .decl m10(n: node)
 .decl m17(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
-.decl names3(s: sym)
-.decl names4(s: sym)
-.decl names5(s: sym)
 .decl out_scope(d: int)
 .decl t6(s: sym)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("annotation").
-names1("f").
-names2("model_fields").
-names3("TypeAdapter").
-names3("get_args").
-names3("get_origin").
-names3("get_type_hints").
-names3("isinstance").
-names3("issubclass").
-names4("str").
-names5("isinstance").
 in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
@@ -37,9 +20,9 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 t6($s) :- text(_, $s), @icontains($s, "field_info").
 t6($s) :- text(_, $s), @isuffix($s, "_info").
-m10($n) :- node(_, $n, "identifier", _, _), text($n, $v4), names1($v4).
+m10($n) :- node(_, $n, "identifier", _, _), text($n, $v4), $v4 = "f".
 m10($n) :- node(_, $n, "identifier", _, _), text($n, $v5), t6($v5).
-m10($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v7), node(_, $v7, "attribute", _, _), field($v7, "attribute", $v8), node(_, $v8, "identifier", _, _), text($v8, $v9), names2($v9).
-m17($n) :- node(_, $n, "identifier", _, _), text($n, $v14), names3($v14).
-m17($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v15), node(_, $v15, "identifier", _, _), text($v15, $v16), names3($v16).
+m10($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v7), node(_, $v7, "attribute", _, _), field($v7, "attribute", $v8), node(_, $v8, "identifier", _, _), text($v8, $v9), $v9 = "model_fields".
+m17($n) :- node(_, $n, "identifier", _, _), text($n, $v14), $v14 in {"TypeAdapter", "get_args", "get_origin", "get_type_hints", "isinstance", "issubclass"}.
+m17($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v15), node(_, $v15, "identifier", _, _), text($v15, $v16), $v16 in {"TypeAdapter", "get_args", "get_origin", "get_type_hints", "isinstance", "issubclass"}.
 .output violation

@@ -246,6 +246,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
+    // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
+    let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
@@ -366,7 +368,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             }
             add(&mut parse, t);
             t = thread_usage();
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, binding).map_err(|e| Error::Plan(e.to_string()));
+            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding).map_err(|e| Error::Plan(e.to_string()));
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
             if send.send(built.map(|sources| (n, sources))).is_err() {
@@ -407,7 +409,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                 }
             }
             let measured = syntax::statistics(source.as_ref());
-            if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS)) {
+            if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);

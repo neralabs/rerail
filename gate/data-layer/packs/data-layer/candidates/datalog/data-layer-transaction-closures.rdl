@@ -28,9 +28,6 @@
 .decl m27(n: node)
 .decl m31(n: node)
 .decl m80(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
 .decl out_scope(d: int)
 .decl u121(n: node)
 .decl u155(n: node)
@@ -41,24 +38,6 @@
 .decl u50(n: node)
 .decl u84(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("add").
-names0("append").
-names0("clear").
-names0("discard").
-names0("extend").
-names0("insert").
-names0("pop").
-names0("popitem").
-names0("remove").
-names0("setdefault").
-names0("update").
-names1("read").
-names1("read_version").
-names1("versioned_read").
-names1("versioned_write").
-names1("write").
-names1("write_version").
-names2("fn").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -90,13 +69,13 @@ u23($n) :- m31($n).
 blocked39($low, $high) :- inside($low, $s, k0), node(_, $s, "lambda", _, _), inside($s, $high, k0).
 blocked57($low, $high) :- inside($low, $s, k0), node(_, $s, "lambda", _, _), inside($s, $high, k2).
 blocked63($low, $high) :- inside($low, $high, k1), inside($low, $s, k2), node(_, $s, "function_definition", _, _), node(_, $s, _, $v64, $v65), node(_, $high, _, $v66, $v67), $v66 <= $v64, $v65 <= $v67, $s != $high.
-m80($n) :- child($n, $v77, _), node(_, $v77, "keyword_argument", _, _), field($v77, "name", $v78), node(_, $v78, "identifier", _, _), text($v78, $v79), names2($v79).
+m80($n) :- child($n, $v77, _), node(_, $v77, "keyword_argument", _, _), field($v77, "name", $v78), node(_, $v78, "identifier", _, _), text($v78, $v79), $v79 = "fn".
 blocked91($low, $high) :- inside($low, $s, k0), node(_, $s, "lambda", _, _), inside($s, $high, k2).
 blocked97($low, $high) :- inside($low, $high, k1), inside($low, $s, k2), node(_, $s, "function_definition", _, _), node(_, $s, _, $v98, $v99), node(_, $high, _, $v100, $v101), $v100 <= $v98, $v99 <= $v101, $s != $high.
-m114($n) :- child($n, $v111, _), node(_, $v111, "keyword_argument", _, _), field($v111, "name", $v112), node(_, $v112, "identifier", _, _), text($v112, $v113), names2($v113).
+m114($n) :- child($n, $v111, _), node(_, $v111, "keyword_argument", _, _), field($v111, "name", $v112), node(_, $v112, "identifier", _, _), text($v112, $v113), $v113 = "fn".
 blocked128($low, $high) :- inside($low, $s, k0), node(_, $s, "lambda", _, _), inside($s, $high, k2).
 blocked134($low, $high) :- inside($low, $high, k1), inside($low, $s, k2), node(_, $s, "function_definition", _, _), node(_, $s, _, $v135, $v136), node(_, $high, _, $v137, $v138), $v137 <= $v135, $v136 <= $v138, $s != $high.
-m151($n) :- child($n, $v148, _), node(_, $v148, "keyword_argument", _, _), field($v148, "name", $v149), node(_, $v149, "identifier", _, _), text($v149, $v150), names2($v150).
+m151($n) :- child($n, $v148, _), node(_, $v148, "keyword_argument", _, _), field($v148, "name", $v149), node(_, $v149, "identifier", _, _), text($v149, $v150), $v150 = "fn".
 m157($n) :- node(_, $n, "assignment", _, _).
 m157($n) :- node(_, $n, "augmented_assignment", _, _).
 m157($n) :- node(_, $n, "for_statement", _, _).
@@ -114,5 +93,5 @@ m163($n) :- child($v160, $n, _), node(_, $v160, "as_pattern_target", _, _), fiel
 u155($n) :- m163($n).
 blocked171($low, $high) :- inside($low, $s, k0), node(_, $s, "lambda", _, _), inside($s, $high, k2).
 blocked177($low, $high) :- inside($low, $high, k1), inside($low, $s, k2), node(_, $s, "function_definition", _, _), node(_, $s, _, $v178, $v179), node(_, $high, _, $v180, $v181), $v180 <= $v178, $v179 <= $v181, $s != $high.
-m194($n) :- child($n, $v191, _), node(_, $v191, "keyword_argument", _, _), field($v191, "name", $v192), node(_, $v192, "identifier", _, _), text($v192, $v193), names2($v193).
+m194($n) :- child($n, $v191, _), node(_, $v191, "keyword_argument", _, _), field($v191, "name", $v192), node(_, $v192, "identifier", _, _), text($v192, $v193), $v193 = "fn".
 .output violation

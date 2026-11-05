@@ -39,8 +39,6 @@ pub(in crate::code_rule_dsl) struct Emitter {
     rules: Vec<String>,
     facts: Vec<String>,
     kindsets: BTreeMap<String, BTreeSet<String>>,
-    /// Name sets by their members, so equal sets are one relation.
-    names: BTreeMap<BTreeSet<String>, String>,
     next: usize,
     /// What was said only approximately, by what.
     pub(in crate::code_rule_dsl) approx: BTreeSet<String>,
@@ -50,8 +48,6 @@ pub(in crate::code_rule_dsl) struct Emitter {
     pub(in crate::code_rule_dsl) captures: BTreeMap<String, String>,
     /// Whether the empty relation `never` is used.
     never: bool,
-    /// Whether the derived relation `name` (identifiers and dotted attributes) is used.
-    uses_name: bool,
 }
 
 /// A conjunction over one node variable: the literals, as text.
@@ -65,13 +61,11 @@ impl Emitter {
             rules: Vec::new(),
             facts: Vec::new(),
             kindsets: BTreeMap::new(),
-            names: BTreeMap::new(),
             next: 0,
             approx: BTreeSet::new(),
             utils: BTreeMap::new(),
             captures: BTreeMap::new(),
             never: false,
-            uses_name: false,
         }
     }
 
@@ -250,10 +244,10 @@ impl Emitter {
     pub(in crate::code_rule_dsl) fn condition(&mut self, c: &crate::code_rule_dsl::language::TextCondition, s: &str) -> Res<Body> {
         let mut body = Vec::new();
         if let Some(r) = &c.regex {
-            body.extend(self.tests(r.as_str(), s, &DOC)?);
+            body.extend(self.tests(r.as_str(), s, &DOC, Text::Path)?);
         }
         if let Some(r) = &c.not_regex {
-            let t = self.tests(r.as_str(), "$s", &DOC)?;
+            let t = self.tests(r.as_str(), "$s", &DOC, Text::Path)?;
             let rel = self.fresh("t");
             self.decls.insert(rel.clone(), "s: sym".to_owned());
             // The texts it holds for are those of `doc`'s paths and modules.
@@ -438,6 +432,16 @@ impl Emitter {
                 _ => {}
             }
         }
+        // A string literal: its prefix and content. A rule that names no kind but whose regex reads a string's
+        // prefix and quotes is about strings too.
+        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("string")) {
+            return self.string_regex(&hir, source, n);
+        }
+        if names.is_none()
+            && let Ok(body) = self.string_regex(&hir, source, n)
+        {
+            return Ok(body);
+        }
         // A name: an identifier's text or a dotted attribute's (`name`). A rule that names no kind is read
         // as testing a name, the only text the relations hold.
         let name_kinds = names.as_ref().is_none_or(|k| k.iter().all(|k| matches!(k.as_str(), "identifier" | "attribute" | "dotted_name" | "type_identifier" | "field_identifier")));
@@ -452,10 +456,17 @@ impl Emitter {
             if names.is_none() {
                 self.approx.insert("a regex on a node of any kind as a name".into());
             }
-            self.uses_name = true;
             let s = self.var();
             let mut body = vec![format!("name({n}, {s})")];
-            body.extend(self.tests(source, &s, &["name(_, $s)"])?);
+            body.extend(self.tests(source, &s, &["name(_, $s)"], Text::Name)?);
+            return Ok(body);
+        }
+        // A module's text: read as the names in its file, where the regex only looks for names.
+        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) && module_names(&hir) {
+            self.approx.insert("a module's text read as its file's names".into());
+            let (d, m, s) = (self.var(), self.var(), self.var());
+            let mut body = vec![format!("node({d}, {n}, _, _, _)"), format!("node({d}, {m}, _, _, _)"), format!("name({m}, {s})")];
+            body.extend(self.tests_hir(&hir, source, &s, &["name(_, $s)"], Text::Name)?);
             return Ok(body);
         }
         if !text_kinds {
@@ -463,58 +474,144 @@ impl Emitter {
         }
         let s = self.var();
         let mut body = vec![format!("text({n}, {s})")];
-        body.extend(self.tests(source, &s, &["text(_, $s)"])?);
+        body.extend(self.tests(source, &s, &["text(_, $s)"], Text::Name)?);
         Ok(body)
     }
 
-    /// A regex over the text in `s` as string tests: a name set, or prefix, suffix and substring tests.
-    /// `domain`: the literals that give the strings tested (each over `$s`), for a relation of alternatives.
-    fn tests(&mut self, source: &str, s: &str, domain: &[&str]) -> Res<Body> {
+    /// A regex over the text in `s` as text tests (decision 0037): a set (`$s in {…}`), prefix, suffix and
+    /// substring tests, or globs, exact for the kind of text. `domain`: the literals that give the strings tested
+    /// (each over `$s`), for a relation of alternatives.
+    fn tests(&mut self, source: &str, s: &str, domain: &[&str], text: Text) -> Res<Body> {
         let hir = regex_syntax::ParserBuilder::new().build().parse(source).map_err(|e| Gap(format!("regex {source}: {e}")))?;
+        self.tests_hir(&hir, source, s, domain, text)
+    }
+
+    fn tests_hir(&mut self, hir: &Hir, source: &str, s: &str, domain: &[&str], text: Text) -> Res<Body> {
         let mut body = Vec::new();
-        match shape(&hir) {
+        match shape(hir) {
             Some(Shape::Anything) => {}
             Some(Shape::Nothing) => return Ok(self.never("_")),
-            Some(Shape::Names(set)) => {
-                let r = self.name_set(set);
-                body.push(format!("{r}({s})"));
-            }
-            Some(Shape::Tests(tests)) if tests.len() == 1 => {
-                let (op, lit) = &tests[0];
-                body.push(format!("@{op}({s}, {})", quote(lit)));
-            }
+            Some(Shape::Names(set)) => body.push(member(s, set)),
             Some(Shape::Tests(tests)) => {
-                // One branch per test: a relation over the strings the rules read (names, paths, modules).
-                let r = self.fresh("t");
-                self.decls.insert(r.clone(), "s: sym".to_owned());
+                // One test per kind of test, each over all its literals.
+                let mut by_op: BTreeMap<&str, BTreeSet<String>> = BTreeMap::new();
                 for (op, lit) in tests {
-                    if op == "equals" {
-                        self.facts.push(format!("{r}({}).", quote(&lit)));
-                        continue;
-                    }
-                    for column in domain {
-                        self.rules.push(format!("{r}($s) :- {column}, @{op}($s, {}).", quote(&lit)));
-                    }
+                    by_op.entry(op).or_default().insert(lit);
                 }
-                let _ = &mut body;
-                body.push(format!("{r}({s})"));
+                let literal = |op: &str, set: BTreeSet<String>, s: &str| {
+                    if op == "equals" { member(s, set) } else { format!("@{op}({s}, {})", set_term(set)) }
+                };
+                if by_op.len() == 1 {
+                    let (op, set) = by_op.into_iter().next().expect("one test");
+                    body.push(literal(op, set, s));
+                } else {
+                    // A relation over the strings the rules read (names, paths, modules), one rule per kind of test.
+                    let r = self.fresh("t");
+                    self.decls.insert(r.clone(), "s: sym".to_owned());
+                    for (op, set) in by_op {
+                        for column in domain {
+                            self.rules.push(format!("{r}($s) :- {column}, {}.", literal(op, set.clone(), "$s")));
+                        }
+                    }
+                    body.push(format!("{r}({s})"));
+                }
             }
-            None => return gap(format!("regex {source}")),
+            None => match globs(hir, text) {
+                Some((globs, fold, approx)) => {
+                    if let Some(a) = approx {
+                        self.approx.insert(a.to_owned());
+                    }
+                    body.push(format!("@{}glob({s}, {})", if fold { "i" } else { "" }, set_term(globs)));
+                }
+                None => return gap(format!("regex {source}")),
+            },
         }
         Ok(body)
     }
 
-    fn name_set(&mut self, set: BTreeSet<String>) -> String {
-        if let Some(r) = self.names.get(&set) {
-            return r.clone();
+    /// A regex on a string literal's source text (quotes and prefix included) as tests on its prefix
+    /// (`strprefix`) and content (`str`): `^[rRuU]*(?:'(?:a|b)'|"(?:a|b)")$`, `^[rub]*["']{1,3}x`, `(?i)^[rub]*f`.
+    fn string_regex(&mut self, hir: &Hir, source: &str, n: &str) -> Res<Body> {
+        let fail = || gap(format!("a regex on the text of string ({source})"));
+        let parts: Vec<Hir> = match hir.kind() {
+            HirKind::Concat(parts) => parts.clone(),
+            _ => return fail(),
+        };
+        if !matches!(parts.first().map(Hir::kind), Some(HirKind::Look(Look::Start))) {
+            return fail();
         }
-        let r = format!("names{}", self.names.len());
-        self.decls.insert(r.clone(), "s: sym".to_owned());
-        for s in &set {
-            self.facts.push(format!("{r}({}).", quote(s)));
+        let mut i = 1;
+        // The prefix letters the regex allows (Python's are r, u, b, f; the relation holds them lowercased).
+        let mut allowed = BTreeSet::new();
+        if let Some(HirKind::Repetition(r)) = parts.get(i).map(Hir::kind)
+            && r.min == 0
+            && let HirKind::Class(Class::Unicode(c)) = r.sub.kind()
+        {
+            for range in c.ranges() {
+                for ch in range.start()..=range.end() {
+                    if !"rubfRUBF".contains(ch) {
+                        return fail();
+                    }
+                    allowed.insert(ch.to_ascii_lowercase());
+                }
+            }
+            i += 1;
         }
-        self.names.insert(set, r.clone());
-        r
+        let p = self.var();
+        let mut body = vec![format!("strprefix({n}, {p})")];
+        let rest = &parts[i..];
+        // `(?i)^[rub]*f`: an f-string, whatever else its prefix holds.
+        if let [h] = rest
+            && let Some(f) = letter(h)
+        {
+            let mut with = allowed.clone();
+            with.insert(f);
+            if "rubf".chars().all(|c| with.contains(&c)) {
+                body.push(format!("@contains({p}, {})", quote(&f.to_string())));
+                return Ok(body);
+            }
+            return fail();
+        }
+        for letter in "rubf".chars().filter(|c| !allowed.contains(c)) {
+            body.push(format!("!@contains({p}, {})", quote(&letter.to_string())));
+        }
+        if allowed.contains(&'f') {
+            self.approx.insert("an interpolated string has no content".into());
+        }
+        const QUOTES: [&str; 4] = ["'''", "\"\"\"", "'", "\""];
+        let content: Hir = match rest {
+            // `(?:'X'|"X"|…)$`: the content is X, whole.
+            [alt, end] if matches!(end.kind(), HirKind::Look(Look::End)) => {
+                let mut xs = Vec::new();
+                for b in alternatives(alt) {
+                    let HirKind::Concat(bp) = b.kind() else { return fail() };
+                    let (Some(open), Some(close)) = (bp.first().and_then(lit), bp.last().and_then(lit)) else { return fail() };
+                    if open != close || !QUOTES.contains(&open.as_str()) || bp.len() < 2 {
+                        return fail();
+                    }
+                    xs.push(Hir::concat(bp[1..bp.len() - 1].to_vec()));
+                }
+                Hir::concat(vec![Hir::look(Look::Start), Hir::alternation(xs), Hir::look(Look::End)])
+            }
+            // `["']{1,3}Y`: the content starts with Y.
+            [q, tail @ ..] if is_quote_class(q) => {
+                let mut v = vec![Hir::look(Look::Start)];
+                match tail {
+                    // `["']X["']$`: the content is X, whole.
+                    [x @ .., close, end] if is_quote_class(close) && matches!(end.kind(), HirKind::Look(Look::End)) => {
+                        v.extend(x.iter().cloned());
+                        v.push(Hir::look(Look::End));
+                    }
+                    _ => v.extend(tail.iter().cloned()),
+                }
+                Hir::concat(v)
+            }
+            _ => return fail(),
+        };
+        let v = self.var();
+        body.push(format!("str({n}, {v})"));
+        body.extend(self.tests_hir(&content, source, &v, &["str(_, $s)"], Text::Content)?);
+        Ok(body)
     }
 
     /// Adds a rule `head :- body` and its head's declaration.
@@ -531,10 +628,7 @@ impl Emitter {
     pub(in crate::code_rule_dsl) fn program(&self, outputs: &[&str]) -> String {
         let mut out = String::new();
         // The base relations the rules read: one declared and not read has no statistics.
-        let mut text: String = self.rules.join("\n");
-        if self.uses_name {
-            text.push_str(NAME);
-        }
+        let text: String = self.rules.join("\n");
         let read: Vec<&str> = BASE_RELATIONS.iter().copied().filter(|r| text.contains(&format!("{r}("))).collect();
         for line in BASE.lines() {
             if let Some(rel) = line.strip_prefix(".decl ").and_then(|d| d.split('(').next())
@@ -549,9 +643,6 @@ impl Emitter {
         }
         if self.never {
             out.push_str(".decl never(n: node)\n");
-        }
-        if self.uses_name {
-            out.push_str(NAME);
         }
         for (name, kinds) in &self.kindsets {
             out.push_str(&format!(".kindset {name} = {}\n", kinds.iter().map(|k| quote(k)).collect::<Vec<_>>().join(" | ")));
@@ -581,13 +672,16 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
+.decl name(n: node, s: sym)
+.decl str(n: node, s: sym)
+.decl strprefix(n: node, s: sym)
 .decl intval(n: node, v: int)
 .decl op(n: node, s: sym)
 .decl line(n: node, l: int)
 .decl syntax_error(d: int)
 ";
 
-const BASE_RELATIONS: [&str; 9] = ["doc", "node", "child", "field", "text", "intval", "op", "line", "syntax_error"];
+const BASE_RELATIONS: [&str; 12] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error"];
 
 /// Python's keywords: tokens, never names.
 const KEYWORDS: [&str; 35] = [
@@ -599,12 +693,6 @@ const KEYWORDS: [&str; 35] = [
 /// The strings a path or module condition tests.
 const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];
 
-/// A node's name: an identifier's text, or an attribute's object name and attribute joined by a dot.
-const NAME: &str = "\
-.decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, \"attribute\", _, _), field($n, \"object\", $x), name($x, $o), field($n, \"attribute\", $y), text($y, $a).
-";
 
 fn quote(s: &str) -> String {
     serde_json::to_string(s).expect("a string")
@@ -862,15 +950,401 @@ fn language(hir: &Hir, ci: &mut bool) -> Option<Vec<String>> {
             Some(out)
         }
         HirKind::Class(Class::Unicode(c)) => {
-            let chars: Vec<char> = c.ranges().iter().flat_map(|r| r.start()..=r.end()).take(5).collect();
-            let lower: BTreeSet<String> = chars.iter().map(|ch| ch.to_lowercase().collect()).collect();
-            if chars.len() > 4 || lower.len() != 1 || chars.len() < 2 {
-                return None;
-            }
+            let l = case_letter(c)?;
             *ci = true;
-            Some(vec![lower.first()?.clone()])
+            Some(vec![l.to_string()])
         }
         _ => None,
+    }
+}
+
+/// The kind of text a test reads (decision 0037), which decides when a regex is exactly a glob.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) enum Text {
+    /// A name: word characters (and the dots of a dotted name). `\w` is any of its characters.
+    Name,
+    /// A file path or module: a glob's `*` stays in a segment, `**` crosses them.
+    Path,
+    /// A string's content: any characters.
+    Content,
+}
+
+/// Whether a regex only looks for names: literal alternatives of word characters and dots.
+fn module_names(hir: &Hir) -> bool {
+    let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
+    match shape(hir) {
+        Some(Shape::Names(set)) => set.iter().all(|w| word(w)),
+        Some(Shape::Tests(tests)) => tests.iter().all(|(_, w)| word(w)),
+        _ => false,
+    }
+}
+
+/// `$s` is one of `set`: `$s = "a"`, or `$s in {"a", "b"}`.
+fn member(s: &str, set: BTreeSet<String>) -> String {
+    if set.len() == 1 { format!("{s} = {}", quote(set.first().expect("one"))) } else { format!("{s} in {}", set_term(set)) }
+}
+
+/// A set of strings as a term: one string, or `{a, b}`.
+fn set_term(set: impl IntoIterator<Item = String>) -> String {
+    let items: Vec<String> = set.into_iter().map(|s| quote(&s)).collect();
+    if items.len() == 1 { items.into_iter().next().expect("one") } else { format!("{{{}}}", items.join(", ")) }
+}
+
+/// A literal's text.
+fn lit(h: &Hir) -> Option<String> {
+    match h.kind() {
+        HirKind::Literal(l) => std::str::from_utf8(&l.0).ok().map(str::to_owned),
+        HirKind::Capture(c) => lit(&c.sub),
+        _ => None,
+    }
+}
+
+/// One letter, either case (`f`, `[fF]`), lowercased.
+fn letter(h: &Hir) -> Option<char> {
+    match h.kind() {
+        HirKind::Literal(_) => {
+            let t = lit(h)?;
+            let mut cs = t.chars();
+            let c = cs.next()?;
+            (cs.next().is_none() && c.is_ascii_alphabetic()).then(|| c.to_ascii_lowercase())
+        }
+        HirKind::Class(Class::Unicode(c)) => case_letter(c),
+        _ => None,
+    }
+}
+
+/// A class of one ASCII letter's cases (`(?i)s` is `[sSſ]`, `(?i)k` is `[kKK]`), lowercased.
+fn case_letter(c: &regex_syntax::hir::ClassUnicode) -> Option<char> {
+    let chars: Vec<char> = c.ranges().iter().flat_map(|r| r.start()..=r.end()).take(4).collect();
+    let ascii: BTreeSet<char> = chars.iter().filter(|c| c.is_ascii()).copied().collect();
+    let lower = ascii.first()?.to_ascii_lowercase();
+    let ok = lower.is_ascii_alphabetic()
+        && ascii == BTreeSet::from([lower, lower.to_ascii_uppercase()])
+        && chars.iter().all(|c| c.is_ascii() || matches!(c, '\u{17f}' | '\u{212a}'));
+    ok.then_some(lower)
+}
+
+/// `["']{1,3}`, `["']`: a run of quotes.
+fn is_quote_class(h: &Hir) -> bool {
+    let quotes = |h: &Hir| matches!(h.kind(), HirKind::Class(Class::Unicode(c)) if c.ranges().iter().all(|r| (r.start()..=r.end()).all(|ch| ch == '"' || ch == '\'')));
+    match h.kind() {
+        HirKind::Repetition(r) => r.min >= 1 && r.max.is_some_and(|m| m <= 3) && quotes(&r.sub),
+        _ => quotes(h),
+    }
+}
+
+/// At most this many globs for one regex.
+const MAX_GLOBS: usize = 512;
+
+/// A regex as globs over `text`, exactly, and whether they ignore case; `None` where no glob set says it.
+/// The third value is what the globs say only approximately, if anything.
+fn globs(hir: &Hir, text: Text) -> Option<(Vec<String>, bool, Option<&'static str>)> {
+    let mut g = Globber { text, fold: false, cased: false, approx: None };
+    let mut out = BTreeSet::new();
+    let boundary = |h: Option<&Hir>| matches!(h.map(Hir::kind), Some(HirKind::Look(Look::WordAscii | Look::WordUnicode)));
+    for (mut start, mut parts, mut end) in edges(hir) {
+        // A word boundary at a name's edge: the name's edge or a dot (`\bx` is `x…` or `….x…`).
+        let mut frags = vec![String::new()];
+        let mut tails = vec![String::new()];
+        if text == Text::Name && !start && boundary(parts.first()) {
+            parts.remove(0);
+            start = true;
+            frags.push("*.".to_owned());
+        }
+        if text == Text::Name && !end && boundary(parts.last()) {
+            parts.pop();
+            end = true;
+            tails.push(".*".to_owned());
+        }
+        for p in &parts {
+            frags = glob_product(&frags, &g.frag(p)?)?;
+        }
+        frags = glob_product(&frags, &tails)?;
+        for f in frags {
+            for f in g.anchor(&f, start, end) {
+                out.insert(f);
+            }
+        }
+        if out.len() > MAX_GLOBS {
+            return None;
+        }
+    }
+    if g.fold && g.cased {
+        return None;
+    }
+    // In a path, `**/?*/x` and `x` are `**/x`; `x` is dropped where `**/x` is kept.
+    for g in out.clone() {
+        if let Some(rest) = g.strip_prefix("**/?*/")
+            && out.contains(rest)
+        {
+            out.remove(&g);
+            out.remove(rest);
+            out.insert(format!("**/{rest}"));
+        }
+    }
+    let kept: Vec<String> = out.iter().filter(|g| !out.contains(&format!("**/{g}"))).cloned().collect();
+    (!kept.is_empty()).then_some((kept, g.fold, g.approx))
+}
+
+fn glob_product(left: &[String], right: &[String]) -> Option<Vec<String>> {
+    if left.len() * right.len() > MAX_GLOBS {
+        return None;
+    }
+    Some(left.iter().flat_map(|l| right.iter().map(move |r| format!("{l}{r}"))).collect())
+}
+
+/// A regex's branches with their anchors: `(start, parts, end)`. An alternation at either edge is split into its
+/// branches, recursively, so anchors inside it (`(?:^|/)x`, `x(?:/|$)`, `^(?:a/|b$)`) reach the edge.
+fn edges(hir: &Hir) -> Vec<(bool, Vec<Hir>, bool)> {
+    fn flat(h: &Hir) -> Vec<Hir> {
+        match h.kind() {
+            HirKind::Concat(ps) => ps.iter().flat_map(flat).collect(),
+            HirKind::Capture(c) => flat(&c.sub),
+            _ => vec![h.clone()],
+        }
+    }
+    fn branches(h: &Hir) -> Option<Vec<Hir>> {
+        match h.kind() {
+            HirKind::Alternation(bs) => Some(bs.clone()),
+            HirKind::Capture(c) => branches(&c.sub),
+            _ => None,
+        }
+    }
+    fn expand(parts: Vec<Hir>, out: &mut Vec<Vec<Hir>>) {
+        if out.len() > MAX_GLOBS {
+            return;
+        }
+        if let Some(bs) = parts.first().and_then(branches) {
+            for b in bs {
+                let mut v = flat(&b);
+                v.extend(parts[1..].iter().cloned());
+                expand(v, out);
+            }
+        } else if let Some(bs) = parts.last().and_then(branches) {
+            for b in bs {
+                let mut v = parts[..parts.len() - 1].to_vec();
+                v.extend(flat(&b));
+                expand(v, out);
+            }
+        } else {
+            out.push(parts);
+        }
+    }
+    let mut all = Vec::new();
+    expand(flat(hir), &mut all);
+    all.into_iter()
+        .map(|mut parts| {
+            let start = matches!(parts.first().map(Hir::kind), Some(HirKind::Look(Look::Start)));
+            if start {
+                parts.remove(0);
+            }
+            let end = matches!(parts.last().map(Hir::kind), Some(HirKind::Look(Look::End)));
+            if end {
+                parts.pop();
+            }
+            (start, parts, end)
+        })
+        .collect()
+}
+
+struct Globber {
+    text: Text,
+    /// A class of one letter's two cases was read as the letter: the globs ignore case.
+    fold: bool,
+    /// A literal holds a letter: with `fold`, case would be lost.
+    cased: bool,
+    approx: Option<&'static str>,
+}
+
+/// What a class is, for globs.
+enum ClassIs {
+    /// Any character the text holds, but `/` in a path.
+    Segment,
+    /// Any character at all, `/` included, in a path.
+    Any,
+    Other(String),
+}
+
+impl Globber {
+    fn escape(&mut self, s: &str) -> String {
+        let mut out = String::new();
+        for c in s.chars() {
+            if c.is_alphabetic() && c.to_lowercase().ne(c.to_uppercase()) {
+                self.cased = true;
+            }
+            if matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '\\' | ',') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out
+    }
+
+    fn class(&mut self, c: &regex_syntax::hir::ClassUnicode) -> Option<ClassIs> {
+        let ranges = c.ranges();
+        let contains = |ch: char| ranges.iter().any(|r| r.start() <= ch && ch <= r.end());
+        let count: u32 = ranges.iter().map(|r| r.end() as u32 - r.start() as u32 + 1).sum();
+        if count == 1 {
+            return Some(ClassIs::Other(self.escape(&ranges[0].start().to_string())));
+        }
+        // One letter's cases.
+        if let Some(l) = case_letter(c) {
+            self.fold = true;
+            return Some(ClassIs::Other(l.to_string()));
+        }
+        let word = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_".chars().all(contains);
+        let everything = contains('\u{0}') && contains(char::MAX) && "\n/ .a".chars().filter(|&c| c != '\n').all(contains);
+        match self.text {
+            // Names hold word characters (and dots): `\w` and `.` are any of them.
+            Text::Name if word => return Some(ClassIs::Segment),
+            Text::Path if everything && contains('/') => return Some(ClassIs::Any),
+            Text::Path if !contains('/') && contains(char::MAX) && contains('a') => return Some(ClassIs::Segment),
+            Text::Content if everything => return Some(ClassIs::Segment),
+            Text::Content if word => {
+                self.approx = Some("\\w in a string's content read as any character");
+                return Some(ClassIs::Segment);
+            }
+            _ => {}
+        }
+        // A small ASCII class, or the complement of one.
+        let render = |rs: &[(char, char)]| -> Option<String> {
+            let mut s = String::new();
+            for &(a, b) in rs {
+                if !a.is_ascii_alphanumeric() && a != '_' || !b.is_ascii_alphanumeric() && b != '_' {
+                    if a == b && matches!(a, '.' | '/' | ' ' | '"' | '\'' | '%' | '@' | ':' | '(' | ')') && !(self.text == Text::Path && a == '/') {
+                        s.push(a);
+                        continue;
+                    }
+                    return None;
+                }
+                s.push(a);
+                if b != a {
+                    s.push('-');
+                    s.push(b);
+                }
+            }
+            Some(s)
+        };
+        let rs: Vec<(char, char)> = ranges.iter().map(|r| (r.start(), r.end())).collect();
+        if rs.len() <= 8 && rs.iter().all(|(_, b)| b.is_ascii()) {
+            return render(&rs).map(|s| ClassIs::Other(format!("[{s}]")));
+        }
+        if contains(char::MAX) && contains('\u{0}') {
+            // The complement within ASCII.
+            let mut comp = Vec::new();
+            let mut at = 0u32;
+            for &(a, b) in &rs {
+                if a as u32 > at {
+                    comp.push((char::from_u32(at)?, char::from_u32(a as u32 - 1)?));
+                }
+                at = b as u32 + 1;
+                if at > 0x7f {
+                    break;
+                }
+            }
+            if comp.len() <= 4 && comp.iter().all(|(_, b)| b.is_ascii()) && !(self.text == Text::Path && !comp.iter().any(|&(a, b)| a <= '/' && '/' <= b)) {
+                return render(&comp).map(|s| ClassIs::Other(format!("[!{s}]")));
+            }
+        }
+        None
+    }
+
+    /// A part's glob fragments (alternatives).
+    fn frag(&mut self, h: &Hir) -> Option<Vec<String>> {
+        Some(match h.kind() {
+            HirKind::Empty => vec![String::new()],
+            HirKind::Literal(l) => vec![self.escape(std::str::from_utf8(&l.0).ok()?)],
+            HirKind::Capture(c) => self.frag(&c.sub)?,
+            HirKind::Concat(ps) => {
+                let mut out = vec![String::new()];
+                for p in ps {
+                    out = glob_product(&out, &self.frag(p)?)?;
+                }
+                out
+            }
+            HirKind::Alternation(bs) => {
+                let mut out = Vec::new();
+                for b in bs {
+                    out.extend(self.frag(b)?);
+                }
+                (out.len() <= MAX_GLOBS).then_some(out)?
+            }
+            HirKind::Class(Class::Unicode(c)) => match self.class(c)? {
+                ClassIs::Segment => vec!["?".to_owned()],
+                ClassIs::Any => return None,
+                ClassIs::Other(s) => vec![s],
+            },
+            HirKind::Repetition(r) => {
+                // Names hold no spaces: `\s*` there is nothing, `\s+` never matches.
+                if self.text == Text::Name
+                    && let HirKind::Class(Class::Unicode(c)) = r.sub.kind()
+                    && c.ranges().iter().all(|r| (r.start()..=r.end()).all(char::is_whitespace))
+                {
+                    return Some(if r.min == 0 { vec![String::new()] } else { Vec::new() });
+                }
+                // A run of one character (`_*`): at most three of it.
+                if r.max.is_none()
+                    && let Some(one) = lit(&r.sub).filter(|l| l.chars().count() == 1)
+                {
+                    self.approx = Some("a run of one character read as at most three");
+                    let one = self.escape(&one);
+                    return Some((r.min as usize..=3.max(r.min as usize)).map(|k| one.repeat(k)).collect());
+                }
+                if let HirKind::Class(Class::Unicode(c)) = r.sub.kind() {
+                    match self.class(c)? {
+                        ClassIs::Segment if r.max.is_none() => return Some(vec![if r.min == 0 { "*" } else { "?*" }.to_owned()]),
+                        ClassIs::Any if r.max.is_none() => {
+                            return Some(if r.min == 0 { vec!["*".to_owned(), "*/**/*".to_owned()] } else { vec!["?*".to_owned(), "*/**/*".to_owned()] });
+                        }
+                        ClassIs::Any => return None,
+                        _ => {}
+                    }
+                }
+                let max = r.max?;
+                if max > 4 {
+                    return None;
+                }
+                let one = self.frag(&r.sub)?;
+                let mut out = Vec::new();
+                let mut at = vec![String::new()];
+                for k in 0..=max {
+                    if k >= r.min {
+                        out.extend(at.iter().cloned());
+                    }
+                    at = glob_product(&at, &one)?;
+                }
+                out
+            }
+            _ => return None,
+        })
+    }
+
+    /// A fragment with the regex's anchors: unanchored ends match anything there.
+    fn anchor(&self, f: &str, start: bool, end: bool) -> Vec<String> {
+        let mut heads = vec![f.to_owned()];
+        if !start {
+            heads = match self.text {
+                Text::Path if f.starts_with('/') => vec![format!("**/?*{f}")],
+                Text::Path if f.starts_with("**") => vec![f.to_owned()],
+                Text::Path => vec![format!("**/*{f}")],
+                _ if f.starts_with('*') => vec![f.to_owned()],
+                _ => vec![format!("*{f}")],
+            };
+        }
+        if end {
+            return heads;
+        }
+        heads
+            .into_iter()
+            .flat_map(|h| match self.text {
+                Text::Path if h.ends_with('/') => vec![format!("{h}**")],
+                Text::Path if h.ends_with("**") => vec![h],
+                Text::Path if h.ends_with('*') => vec![h.clone(), format!("{h}/**")],
+                Text::Path => vec![format!("{h}*"), format!("{h}*/**")],
+                _ if h.ends_with('*') => vec![h],
+                _ => vec![format!("{h}*")],
+            })
+            .collect()
     }
 }
 

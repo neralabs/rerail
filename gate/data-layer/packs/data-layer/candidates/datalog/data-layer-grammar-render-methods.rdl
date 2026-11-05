@@ -1,51 +1,50 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
-.input doc, node, field, text
-.decl never(n: node)
 .decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.decl strprefix(n: node, s: sym)
+.input doc, node, child, field, text, name, strprefix
+.decl never(n: node)
 .kindset k0 = "function_definition"
 .kindset k1 = "class_definition"
-.decl blocked13(low: node, high: node)
-.decl blocked34(low: node, high: node)
-.decl blocked64(low: node, high: node)
-.decl blocked80(low: node, high: node)
+.kindset k2 = "call"
+.kindset k3 = "concatenated_string" | "string"
+.decl blocked105(low: node, high: node)
+.decl blocked11(low: node, high: node)
+.decl blocked121(low: node, high: node)
+.decl blocked53(low: node, high: node)
+.decl blocked74(low: node, high: node)
 .decl in_scope(d: int)
-.decl m18(n: node)
-.decl m24(n: node)
-.decl m27(n: node)
+.decl m100(n: node)
+.decl m110(n: node)
+.decl m116(n: node)
+.decl m119(n: node)
+.decl m124(n: node)
+.decl m16(n: node)
+.decl m22(n: node)
+.decl m25(n: node)
+.decl m29(n: node)
+.decl m3(n: node)
+.decl m32(n: node)
 .decl m39(n: node)
+.decl m42(n: node)
+.decl m43(n: node)
 .decl m45(n: node)
-.decl m48(n: node)
-.decl m59(n: node)
-.decl m69(n: node)
-.decl m75(n: node)
-.decl m78(n: node)
-.decl m83(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
-.decl names3(s: sym)
-.decl names4(s: sym)
-.decl names5(s: sym)
-.decl names6(s: sym)
+.decl m58(n: node)
+.decl m6(n: node)
+.decl m64(n: node)
+.decl m67(n: node)
+.decl m79(n: node)
+.decl m85(n: node)
+.decl m88(n: node)
 .decl out_scope(d: int)
-.decl u16(n: node)
-.decl u37(n: node)
-.decl u67(n: node)
+.decl u108(n: node)
+.decl u14(n: node)
+.decl u56(n: node)
+.decl u77(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("join").
-names1("format").
-names2("render").
-names3("").
-names4("Template").
-names4("t").
-names5("static").
-names6("SF").
-names6("SqlFragment").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2100_sql_grammar/**/*.py").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
@@ -54,36 +53,56 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
-blocked13($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m18($n) :- node(_, $n, "identifier", _, _), never($n).
-m18($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v17), node(_, $v17, "identifier", _, _), never($v17).
-m24($n) :- m18($n), name($n, $v19), @contains($v19, "Sql").
-m24($n) :- node(_, $n, "identifier", _, _), text($n, $v20), @contains($v20, "Sql").
-m24($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v21), name($v21, $v22), @contains($v22, "Sql").
-m24($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v23), u16($v23).
-u16($n) :- m24($n).
-m27($n) :- field($n, "name", $v25), node(_, $v25, "identifier", _, _), text($v25, $v26), names3($v26).
-blocked34($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m39($n) :- node(_, $n, "identifier", _, _), never($n).
-m39($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v38), node(_, $v38, "identifier", _, _), never($v38).
-m45($n) :- m39($n), name($n, $v40), @contains($v40, "Sql").
-m45($n) :- node(_, $n, "identifier", _, _), text($n, $v41), @contains($v41, "Sql").
-m45($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v42), name($v42, $v43), @contains($v43, "Sql").
-m45($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v44), u37($v44).
-u37($n) :- m45($n).
-m48($n) :- field($n, "name", $v46), node(_, $v46, "identifier", _, _), text($v46, $v47), names3($v47).
-m59($n) :- node(_, $n, "identifier", _, _), text($n, $v51), names5($v51).
-m59($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v52), node(_, $v52, "identifier", _, _), text($v52, $v53), names5($v53), field($n, "object", $v54), node(_, $v54, "identifier", _, _), text($v54, $v55), names6($v55).
-m59($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v56), node(_, $v56, "identifier", _, _), text($v56, $v57), names5($v57), field($n, "object", $v58), node(_, $v58, "attribute", _, _).
-blocked64($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m69($n) :- node(_, $n, "identifier", _, _), never($n).
-m69($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v68), node(_, $v68, "identifier", _, _), never($v68).
-m75($n) :- m69($n), name($n, $v70), @contains($v70, "Sql").
-m75($n) :- node(_, $n, "identifier", _, _), text($n, $v71), @contains($v71, "Sql").
-m75($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v72), name($v72, $v73), @contains($v73, "Sql").
-m75($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v74), u67($v74).
-u67($n) :- m75($n).
-m78($n) :- field($n, "name", $v76), node(_, $v76, "identifier", _, _), text($v76, $v77), names3($v77).
-blocked80($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
-m83($n) :- field($n, "name", $v81), node(_, $v81, "identifier", _, _), text($v81, $v82), names3($v82).
+m3($n) :- child($v2, $n, _), node(_, $v2, "concatenated_string", _, _).
+m6($n) :- node(_, $n, "string", _, _), strprefix($n, $v1), @contains($v1, "f"), !m3($n).
+m6($n) :- node(_, $n, "concatenated_string", _, _), child($n, $v4, _), node(_, $v4, "string", _, _), strprefix($v4, $v5), @contains($v5, "f").
+m6($n) :- node(_, $n, "format_specifier", _, _).
+blocked11($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m16($n) :- node(_, $n, "identifier", _, _), never($n).
+m16($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v15), node(_, $v15, "identifier", _, _), never($v15).
+m22($n) :- m16($n), name($n, $v17), @contains($v17, "Sql").
+m22($n) :- node(_, $n, "identifier", _, _), text($n, $v18), @contains($v18, "Sql").
+m22($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v19), name($v19, $v20), @contains($v20, "Sql").
+m22($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v21), u14($v21).
+u14($n) :- m22($n).
+m25($n) :- field($n, "name", $v23), node(_, $v23, "identifier", _, _), text($v23, $v24), $v24 = "".
+m29($n) :- inside($n, $v26, k2), node(_, $v26, "call", _, _), field($v26, "function", $v27), node(_, $v27, "identifier", _, _), text($v27, $v28), $v28 = "GrammarException".
+m32($n) :- child($v31, $n, _), node(_, $v31, "concatenated_string", _, _).
+m39($n) :- strprefix($n, $v38), @contains($v38, "f").
+m42($n) :- child($n, $v40, _), node(_, $v40, "string", _, _), strprefix($v40, $v41), @contains($v41, "f").
+m43($n) :- node(_, $n, "string", _, _), !m39($n).
+m43($n) :- node(_, $n, "concatenated_string", _, _), !m42($n).
+m45($n) :- child($v44, $n, _), node(_, $v44, "concatenated_string", _, _).
+blocked53($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m58($n) :- node(_, $n, "identifier", _, _), never($n).
+m58($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v57), node(_, $v57, "identifier", _, _), never($v57).
+m64($n) :- m58($n), name($n, $v59), @contains($v59, "Sql").
+m64($n) :- node(_, $n, "identifier", _, _), text($n, $v60), @contains($v60, "Sql").
+m64($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v61), name($v61, $v62), @contains($v62, "Sql").
+m64($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v63), u56($v63).
+u56($n) :- m64($n).
+m67($n) :- field($n, "name", $v65), node(_, $v65, "identifier", _, _), text($v65, $v66), $v66 = "".
+blocked74($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m79($n) :- node(_, $n, "identifier", _, _), never($n).
+m79($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v78), node(_, $v78, "identifier", _, _), never($v78).
+m85($n) :- m79($n), name($n, $v80), @contains($v80, "Sql").
+m85($n) :- node(_, $n, "identifier", _, _), text($n, $v81), @contains($v81, "Sql").
+m85($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v82), name($v82, $v83), @contains($v83, "Sql").
+m85($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v84), u77($v84).
+u77($n) :- m85($n).
+m88($n) :- field($n, "name", $v86), node(_, $v86, "identifier", _, _), text($v86, $v87), $v87 = "".
+m100($n) :- node(_, $n, "identifier", _, _), text($n, $v92), $v92 = "static".
+m100($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v93), node(_, $v93, "identifier", _, _), text($v93, $v94), $v94 = "static", field($n, "object", $v95), node(_, $v95, "identifier", _, _), text($v95, $v96), $v96 in {"SF", "SqlFragment"}.
+m100($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v97), node(_, $v97, "identifier", _, _), text($v97, $v98), $v98 = "static", field($n, "object", $v99), node(_, $v99, "attribute", _, _).
+blocked105($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m110($n) :- node(_, $n, "identifier", _, _), never($n).
+m110($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v109), node(_, $v109, "identifier", _, _), never($v109).
+m116($n) :- m110($n), name($n, $v111), @contains($v111, "Sql").
+m116($n) :- node(_, $n, "identifier", _, _), text($n, $v112), @contains($v112, "Sql").
+m116($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v113), name($v113, $v114), @contains($v114, "Sql").
+m116($n) :- node(_, $n, "subscript", _, _), field($n, "value", $v115), u108($v115).
+u108($n) :- m116($n).
+m119($n) :- field($n, "name", $v117), node(_, $v117, "identifier", _, _), text($v117, $v118), $v118 = "".
+blocked121($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m124($n) :- field($n, "name", $v122), node(_, $v122, "identifier", _, _), text($v122, $v123), $v123 = "".
 .output violation

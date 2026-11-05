@@ -35,6 +35,7 @@ foldhash = "=0.2.0"
 hashbrown = { version = "=0.16.1", default-features = false }
 gix = { version = "=0.84.0", default-features = false, features = ["status", "parallel", "sha1", "sha256"] }
 globset = "=0.4.20"
+aho-corasick = "=1.1.5"
 model2vec-rs = { version = "0.3.0", default-features = false, features = ["fancy-regex", "local-only"] }
 napi = { version = "3.0", default-features = false, features = ["napi8", "dyn-symbols"] }
 napi-derive = "3.0"

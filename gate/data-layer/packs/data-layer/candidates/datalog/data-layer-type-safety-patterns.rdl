@@ -1,16 +1,14 @@
 .decl doc(d: int, path: sym, module: sym)
-.input doc
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl line(n: node, l: int)
+.decl syntax_error(d: int)
+.input doc, node, field, text, line, syntax_error
 .decl in_scope(d: int)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names2(s: sym)
-.decl names3(s: sym)
+.decl m5(n: node)
 .decl out_scope(d: int)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("order_by").
-names1("where").
-names2("select").
-names3("group_by").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -112,4 +110,7 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+m5($n) :- node(_, $n, "subscript", _, _).
+m5($n) :- node(_, $n, "generic_type", _, _).
+violation("data-layer-type-safety-patterns", "text-deprecated_filter_method", "TSP001", $p, $l) :- node(_, $n, "identifier", _, _), text($n, $v12), $v12 in {"filter_eq", "filter_gt", "filter_gte", "filter_in", "filter_lt", "filter_lte", "filter_ne"}, field($v13, "attribute", $n), node(_, $v13, "attribute", _, _), field($v14, "function", $v13), node(_, $v14, "call", _, _), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
 .output violation

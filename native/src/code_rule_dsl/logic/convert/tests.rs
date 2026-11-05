@@ -6,6 +6,9 @@ use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use std::path::{Path, PathBuf};
 
+/// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
+const RULES: &str = "rules-ast";
+
 fn pack() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates")
 }
@@ -117,7 +120,7 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
 }
 
 fn rule_files() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(pack().join("rules")).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(pack().join(RULES)).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     files.sort();
     files
 }
@@ -152,6 +155,12 @@ fn convert_the_data_layer_pack() {
             *approx.entry(a.clone()).or_default() += 1;
         }
         per_rule.push(format!("{id}: {ok}/{}", c.clauses.len()));
+        for (clause, r) in &c.clauses {
+            if let Err(Gap(g)) = r {
+                let g: String = g.chars().take(160).collect();
+                per_rule.push(format!("    {clause}: {}", g.replace('\n', " ")));
+            }
+        }
     }
     let mut report = format!("{done}/{total} clauses converted\n\ngaps (clauses):\n");
     let mut by_count: Vec<_> = gaps.into_iter().collect();
@@ -189,6 +198,55 @@ fn regexes_become_names_and_string_tests() {
     let Some(Shape::Names(n)) = shape(&parse(r"^(asyncio\.)?(run|to_thread)$")) else { panic!() };
     assert_eq!(n.into_iter().collect::<Vec<_>>(), ["asyncio.run", "asyncio.to_thread", "run", "to_thread"]);
     assert!(shape(&parse(r"Callable\s*\[")).is_none());
+}
+
+/// Regexes become globs exactly: on sample strings each glob set agrees with its regex (decision 0037).
+#[test]
+fn regexes_become_exact_globs() {
+    let parse = |s: &str| regex_syntax::ParserBuilder::new().build().parse(s).unwrap();
+    let cases: [(&str, Text, Option<&[&str]>); 13] = [
+        (r"^[^_].*_", Text::Name, Some(&["[!_]*_*"])),
+        (r"^apply_.*_effect$", Text::Name, Some(&["apply_*_effect"])),
+        (r"^_\w*cache\w*$", Text::Name, Some(&["_*cache*"])),
+        (r"^Py[A-Z][A-Za-z0-9_]*$", Text::Name, Some(&["Py[A-Z]*"])),
+        (r"^_*(?:Async|Lazy)", Text::Name, None),
+        (r"\basyncio\s*\.\s*to_thread$", Text::Name, Some(&["*.asyncio.to_thread", "asyncio.to_thread"])),
+        (r"^(?:materialize|assert_result|.*_post_op)$", Text::Name, Some(&["*_post_op", "assert_result", "materialize"])),
+        (r"(?:^|/)tests(?:/|$)", Text::Path, Some(&["**/tests", "**/tests/**"])),
+        (r"^(?:api/)?impl/common/l2070_server_plan(?:/|$)", Text::Path, None),
+        (r"(?:^|/)l2070_batching/(?:.*/)?executor\.py$", Text::Path, None),
+        (r"(?:^|/)l9750_graphql/", Text::Path, None),
+        (r"(?i)cursor|^(?:db|conn)$", Text::Name, None),
+        (r"^(?:ab|c)+$", Text::Name, Some(&[])),
+    ];
+    let samples = [
+        "a_b", "_ab", "ab", "apply_x_effect", "apply__effect", "_my_cache_x", "cache", "PyResult", "Pyresult", "Py", "_Async", "__Lazy_x", "Lazy",
+        "materialize", "x_post_op", "_post_op", "tests", "a/tests", "a/tests/b.py", "tests/b", "attests/b", "a/b/tests/c/d.py", "impl/common/l2070_server_plan",
+        "api/impl/common/l2070_server_plan/x.py", "impl/common/l2070_server_planx", "l2070_batching/executor.py", "a/l2070_batching/x/y/executor.py",
+        "xl2070_batching/executor.py", "l9750_graphql/a.py", "a/l9750_graphql/b/c.py", "l9750_graphqlx/a.py", "raw_CURSOR", "db", "dbx", "conn", "asyncio.to_thread", "x.asyncio.to_thread", "xasyncio.to_thread",
+    ];
+    for (re, text, expect) in cases {
+        let got = globs(&parse(re), text);
+        if expect == Some(&[]) {
+            assert!(got.is_none(), "{re}: a repeated alternation has no glob");
+            continue;
+        }
+        if let Some(expect) = expect {
+            assert_eq!(got.as_ref().map(|(g, _, _)| g.iter().map(String::as_str).collect::<Vec<_>>()), Some(expect.to_vec()), "{re}");
+        }
+        let (gs, fold, _) = got.unwrap_or_else(|| panic!("{re} gave no globs"));
+        let m = crate::code_rule_dsl::logic::strings::Matcher::new(if fold { "iglob" } else { "glob" }, &gs).unwrap();
+        let r = regex::Regex::new(re).unwrap();
+        for s in samples {
+            let in_text = match text {
+                Text::Name => !s.contains('/') && !s.contains(' '),
+                _ => true,
+            };
+            if in_text {
+                assert_eq!(m.is_match(s), r.is_match(s), "{re} on {s:?}: globs {gs:?}");
+            }
+        }
+    }
 }
 
 /// The recorded events (the upstream linters' tests, `fixtures/host/data-layer-port`), as `replay.ts` reads them.
@@ -256,7 +314,7 @@ fn converted_rules_give_the_recorded_findings() {
         let globs = |key: &str| event["scope"][key].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect::<Vec<_>>();
         let scope = (!production).then(|| if globs("include").is_empty() { (vec![], vec![]) } else { (globs("include"), globs("exclude")) });
         let adjust = Adjust { scope, keep: keep(&check, event["entry"].as_str().unwrap_or(""), production) };
-        let rule = pack().join("rules").join(format!("data-layer-{}.json", check.replace('_', "-")));
+        let rule = pack().join(RULES).join(format!("data-layer-{}.json", check.replace('_', "-")));
         let c = convert(&rule, &adjust);
         if c.clauses.iter().any(|(_, r)| r.is_err()) {
             continue;

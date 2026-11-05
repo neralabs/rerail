@@ -165,7 +165,6 @@
 .decl m9(n: node)
 .decl m95(n: node)
 .decl m96(n: node)
-.decl names0(s: sym)
 .decl out_scope(d: int)
 .decl t117(s: sym)
 .decl t141(s: sym)
@@ -237,30 +236,6 @@
 .decl u91(n: node)
 .decl u97(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-t21("conn").
-names0("ConnectionId").
-t45("conn").
-t69("conn").
-t93("conn").
-t117("conn").
-t141("conn").
-t165("conn").
-t189("conn").
-t213("conn").
-t237("conn").
-t261("conn").
-t285("conn").
-t309("conn").
-t333("conn").
-t357("conn").
-t381("conn").
-t405("conn").
-t429("conn").
-t453("conn").
-t477("conn").
-t501("conn").
-t525("conn").
-t549("conn").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -286,7 +261,8 @@ m16($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m16($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v14, _), m15($v14).
 m17($n) :- child($v11, $n, $v12), child($v11, $v10, $v13), $v13 < $v12, m16($v10).
 t21($s) :- text(_, $s), @contains($s, "Connection").
-m23($n) :- node(_, $n, "identifier", _, _), text($n, $v22), names0($v22).
+t21($s) :- text(_, $s), $s = "conn".
+m23($n) :- node(_, $n, "identifier", _, _), text($n, $v22), $v22 = "ConnectionId".
 m24($n) :- node(_, $n, "string", _, _).
 m24($n) :- node(_, $n, "concatenated_string", _, _).
 m28($n) :- node(_, $n, "identifier", _, _).
@@ -302,7 +278,8 @@ m40($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m40($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v38, _), m39($v38).
 m41($n) :- child($v35, $n, $v36), child($v35, $v34, $v37), $v37 < $v36, m40($v34).
 t45($s) :- text(_, $s), @contains($s, "Connection").
-m47($n) :- node(_, $n, "identifier", _, _), text($n, $v46), names0($v46).
+t45($s) :- text(_, $s), $s = "conn".
+m47($n) :- node(_, $n, "identifier", _, _), text($n, $v46), $v46 = "ConnectionId".
 m48($n) :- node(_, $n, "string", _, _).
 m48($n) :- node(_, $n, "concatenated_string", _, _).
 m52($n) :- node(_, $n, "identifier", _, _).
@@ -318,7 +295,8 @@ m64($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m64($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v62, _), m63($v62).
 m65($n) :- child($v59, $n, $v60), child($v59, $v58, $v61), $v61 < $v60, m64($v58).
 t69($s) :- text(_, $s), @contains($s, "Connection").
-m71($n) :- node(_, $n, "identifier", _, _), text($n, $v70), names0($v70).
+t69($s) :- text(_, $s), $s = "conn".
+m71($n) :- node(_, $n, "identifier", _, _), text($n, $v70), $v70 = "ConnectionId".
 m72($n) :- node(_, $n, "string", _, _).
 m72($n) :- node(_, $n, "concatenated_string", _, _).
 m76($n) :- node(_, $n, "identifier", _, _).
@@ -334,7 +312,8 @@ m88($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m88($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v86, _), m87($v86).
 m89($n) :- child($v83, $n, $v84), child($v83, $v82, $v85), $v85 < $v84, m88($v82).
 t93($s) :- text(_, $s), @contains($s, "Connection").
-m95($n) :- node(_, $n, "identifier", _, _), text($n, $v94), names0($v94).
+t93($s) :- text(_, $s), $s = "conn".
+m95($n) :- node(_, $n, "identifier", _, _), text($n, $v94), $v94 = "ConnectionId".
 m96($n) :- node(_, $n, "string", _, _).
 m96($n) :- node(_, $n, "concatenated_string", _, _).
 m100($n) :- node(_, $n, "identifier", _, _).
@@ -350,7 +329,8 @@ m112($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m112($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v110, _), m111($v110).
 m113($n) :- child($v107, $n, $v108), child($v107, $v106, $v109), $v109 < $v108, m112($v106).
 t117($s) :- text(_, $s), @contains($s, "Connection").
-m119($n) :- node(_, $n, "identifier", _, _), text($n, $v118), names0($v118).
+t117($s) :- text(_, $s), $s = "conn".
+m119($n) :- node(_, $n, "identifier", _, _), text($n, $v118), $v118 = "ConnectionId".
 m120($n) :- node(_, $n, "string", _, _).
 m120($n) :- node(_, $n, "concatenated_string", _, _).
 m124($n) :- node(_, $n, "identifier", _, _).
@@ -366,7 +346,8 @@ m136($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m136($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v134, _), m135($v134).
 m137($n) :- child($v131, $n, $v132), child($v131, $v130, $v133), $v133 < $v132, m136($v130).
 t141($s) :- text(_, $s), @contains($s, "Connection").
-m143($n) :- node(_, $n, "identifier", _, _), text($n, $v142), names0($v142).
+t141($s) :- text(_, $s), $s = "conn".
+m143($n) :- node(_, $n, "identifier", _, _), text($n, $v142), $v142 = "ConnectionId".
 m144($n) :- node(_, $n, "string", _, _).
 m144($n) :- node(_, $n, "concatenated_string", _, _).
 m148($n) :- node(_, $n, "identifier", _, _).
@@ -382,7 +363,8 @@ m160($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m160($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v158, _), m159($v158).
 m161($n) :- child($v155, $n, $v156), child($v155, $v154, $v157), $v157 < $v156, m160($v154).
 t165($s) :- text(_, $s), @contains($s, "Connection").
-m167($n) :- node(_, $n, "identifier", _, _), text($n, $v166), names0($v166).
+t165($s) :- text(_, $s), $s = "conn".
+m167($n) :- node(_, $n, "identifier", _, _), text($n, $v166), $v166 = "ConnectionId".
 m168($n) :- node(_, $n, "string", _, _).
 m168($n) :- node(_, $n, "concatenated_string", _, _).
 m172($n) :- node(_, $n, "identifier", _, _).
@@ -398,7 +380,8 @@ m184($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m184($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v182, _), m183($v182).
 m185($n) :- child($v179, $n, $v180), child($v179, $v178, $v181), $v181 < $v180, m184($v178).
 t189($s) :- text(_, $s), @contains($s, "Connection").
-m191($n) :- node(_, $n, "identifier", _, _), text($n, $v190), names0($v190).
+t189($s) :- text(_, $s), $s = "conn".
+m191($n) :- node(_, $n, "identifier", _, _), text($n, $v190), $v190 = "ConnectionId".
 m192($n) :- node(_, $n, "string", _, _).
 m192($n) :- node(_, $n, "concatenated_string", _, _).
 m196($n) :- node(_, $n, "identifier", _, _).
@@ -414,7 +397,8 @@ m208($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m208($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v206, _), m207($v206).
 m209($n) :- child($v203, $n, $v204), child($v203, $v202, $v205), $v205 < $v204, m208($v202).
 t213($s) :- text(_, $s), @contains($s, "Connection").
-m215($n) :- node(_, $n, "identifier", _, _), text($n, $v214), names0($v214).
+t213($s) :- text(_, $s), $s = "conn".
+m215($n) :- node(_, $n, "identifier", _, _), text($n, $v214), $v214 = "ConnectionId".
 m216($n) :- node(_, $n, "string", _, _).
 m216($n) :- node(_, $n, "concatenated_string", _, _).
 m220($n) :- node(_, $n, "identifier", _, _).
@@ -430,7 +414,8 @@ m232($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m232($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v230, _), m231($v230).
 m233($n) :- child($v227, $n, $v228), child($v227, $v226, $v229), $v229 < $v228, m232($v226).
 t237($s) :- text(_, $s), @contains($s, "Connection").
-m239($n) :- node(_, $n, "identifier", _, _), text($n, $v238), names0($v238).
+t237($s) :- text(_, $s), $s = "conn".
+m239($n) :- node(_, $n, "identifier", _, _), text($n, $v238), $v238 = "ConnectionId".
 m240($n) :- node(_, $n, "string", _, _).
 m240($n) :- node(_, $n, "concatenated_string", _, _).
 m244($n) :- node(_, $n, "identifier", _, _).
@@ -446,7 +431,8 @@ m256($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m256($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v254, _), m255($v254).
 m257($n) :- child($v251, $n, $v252), child($v251, $v250, $v253), $v253 < $v252, m256($v250).
 t261($s) :- text(_, $s), @contains($s, "Connection").
-m263($n) :- node(_, $n, "identifier", _, _), text($n, $v262), names0($v262).
+t261($s) :- text(_, $s), $s = "conn".
+m263($n) :- node(_, $n, "identifier", _, _), text($n, $v262), $v262 = "ConnectionId".
 m264($n) :- node(_, $n, "string", _, _).
 m264($n) :- node(_, $n, "concatenated_string", _, _).
 m268($n) :- node(_, $n, "identifier", _, _).
@@ -462,7 +448,8 @@ m280($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m280($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v278, _), m279($v278).
 m281($n) :- child($v275, $n, $v276), child($v275, $v274, $v277), $v277 < $v276, m280($v274).
 t285($s) :- text(_, $s), @contains($s, "Connection").
-m287($n) :- node(_, $n, "identifier", _, _), text($n, $v286), names0($v286).
+t285($s) :- text(_, $s), $s = "conn".
+m287($n) :- node(_, $n, "identifier", _, _), text($n, $v286), $v286 = "ConnectionId".
 m288($n) :- node(_, $n, "string", _, _).
 m288($n) :- node(_, $n, "concatenated_string", _, _).
 m292($n) :- node(_, $n, "identifier", _, _).
@@ -478,7 +465,8 @@ m304($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m304($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v302, _), m303($v302).
 m305($n) :- child($v299, $n, $v300), child($v299, $v298, $v301), $v301 < $v300, m304($v298).
 t309($s) :- text(_, $s), @contains($s, "Connection").
-m311($n) :- node(_, $n, "identifier", _, _), text($n, $v310), names0($v310).
+t309($s) :- text(_, $s), $s = "conn".
+m311($n) :- node(_, $n, "identifier", _, _), text($n, $v310), $v310 = "ConnectionId".
 m312($n) :- node(_, $n, "string", _, _).
 m312($n) :- node(_, $n, "concatenated_string", _, _).
 m316($n) :- node(_, $n, "identifier", _, _).
@@ -494,7 +482,8 @@ m328($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m328($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v326, _), m327($v326).
 m329($n) :- child($v323, $n, $v324), child($v323, $v322, $v325), $v325 < $v324, m328($v322).
 t333($s) :- text(_, $s), @contains($s, "Connection").
-m335($n) :- node(_, $n, "identifier", _, _), text($n, $v334), names0($v334).
+t333($s) :- text(_, $s), $s = "conn".
+m335($n) :- node(_, $n, "identifier", _, _), text($n, $v334), $v334 = "ConnectionId".
 m336($n) :- node(_, $n, "string", _, _).
 m336($n) :- node(_, $n, "concatenated_string", _, _).
 m340($n) :- node(_, $n, "identifier", _, _).
@@ -510,7 +499,8 @@ m352($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m352($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v350, _), m351($v350).
 m353($n) :- child($v347, $n, $v348), child($v347, $v346, $v349), $v349 < $v348, m352($v346).
 t357($s) :- text(_, $s), @contains($s, "Connection").
-m359($n) :- node(_, $n, "identifier", _, _), text($n, $v358), names0($v358).
+t357($s) :- text(_, $s), $s = "conn".
+m359($n) :- node(_, $n, "identifier", _, _), text($n, $v358), $v358 = "ConnectionId".
 m360($n) :- node(_, $n, "string", _, _).
 m360($n) :- node(_, $n, "concatenated_string", _, _).
 m364($n) :- node(_, $n, "identifier", _, _).
@@ -526,7 +516,8 @@ m376($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m376($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v374, _), m375($v374).
 m377($n) :- child($v371, $n, $v372), child($v371, $v370, $v373), $v373 < $v372, m376($v370).
 t381($s) :- text(_, $s), @contains($s, "Connection").
-m383($n) :- node(_, $n, "identifier", _, _), text($n, $v382), names0($v382).
+t381($s) :- text(_, $s), $s = "conn".
+m383($n) :- node(_, $n, "identifier", _, _), text($n, $v382), $v382 = "ConnectionId".
 m384($n) :- node(_, $n, "string", _, _).
 m384($n) :- node(_, $n, "concatenated_string", _, _).
 m388($n) :- node(_, $n, "identifier", _, _).
@@ -542,7 +533,8 @@ m400($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m400($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v398, _), m399($v398).
 m401($n) :- child($v395, $n, $v396), child($v395, $v394, $v397), $v397 < $v396, m400($v394).
 t405($s) :- text(_, $s), @contains($s, "Connection").
-m407($n) :- node(_, $n, "identifier", _, _), text($n, $v406), names0($v406).
+t405($s) :- text(_, $s), $s = "conn".
+m407($n) :- node(_, $n, "identifier", _, _), text($n, $v406), $v406 = "ConnectionId".
 m408($n) :- node(_, $n, "string", _, _).
 m408($n) :- node(_, $n, "concatenated_string", _, _).
 m412($n) :- node(_, $n, "identifier", _, _).
@@ -558,7 +550,8 @@ m424($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m424($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v422, _), m423($v422).
 m425($n) :- child($v419, $n, $v420), child($v419, $v418, $v421), $v421 < $v420, m424($v418).
 t429($s) :- text(_, $s), @contains($s, "Connection").
-m431($n) :- node(_, $n, "identifier", _, _), text($n, $v430), names0($v430).
+t429($s) :- text(_, $s), $s = "conn".
+m431($n) :- node(_, $n, "identifier", _, _), text($n, $v430), $v430 = "ConnectionId".
 m432($n) :- node(_, $n, "string", _, _).
 m432($n) :- node(_, $n, "concatenated_string", _, _).
 m436($n) :- node(_, $n, "identifier", _, _).
@@ -574,7 +567,8 @@ m448($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m448($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v446, _), m447($v446).
 m449($n) :- child($v443, $n, $v444), child($v443, $v442, $v445), $v445 < $v444, m448($v442).
 t453($s) :- text(_, $s), @contains($s, "Connection").
-m455($n) :- node(_, $n, "identifier", _, _), text($n, $v454), names0($v454).
+t453($s) :- text(_, $s), $s = "conn".
+m455($n) :- node(_, $n, "identifier", _, _), text($n, $v454), $v454 = "ConnectionId".
 m456($n) :- node(_, $n, "string", _, _).
 m456($n) :- node(_, $n, "concatenated_string", _, _).
 m460($n) :- node(_, $n, "identifier", _, _).
@@ -590,7 +584,8 @@ m472($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m472($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v470, _), m471($v470).
 m473($n) :- child($v467, $n, $v468), child($v467, $v466, $v469), $v469 < $v468, m472($v466).
 t477($s) :- text(_, $s), @contains($s, "Connection").
-m479($n) :- node(_, $n, "identifier", _, _), text($n, $v478), names0($v478).
+t477($s) :- text(_, $s), $s = "conn".
+m479($n) :- node(_, $n, "identifier", _, _), text($n, $v478), $v478 = "ConnectionId".
 m480($n) :- node(_, $n, "string", _, _).
 m480($n) :- node(_, $n, "concatenated_string", _, _).
 m484($n) :- node(_, $n, "identifier", _, _).
@@ -606,7 +601,8 @@ m496($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m496($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v494, _), m495($v494).
 m497($n) :- child($v491, $n, $v492), child($v491, $v490, $v493), $v493 < $v492, m496($v490).
 t501($s) :- text(_, $s), @contains($s, "Connection").
-m503($n) :- node(_, $n, "identifier", _, _), text($n, $v502), names0($v502).
+t501($s) :- text(_, $s), $s = "conn".
+m503($n) :- node(_, $n, "identifier", _, _), text($n, $v502), $v502 = "ConnectionId".
 m504($n) :- node(_, $n, "string", _, _).
 m504($n) :- node(_, $n, "concatenated_string", _, _).
 m508($n) :- node(_, $n, "identifier", _, _).
@@ -622,7 +618,8 @@ m520($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m520($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v518, _), m519($v518).
 m521($n) :- child($v515, $n, $v516), child($v515, $v514, $v517), $v517 < $v516, m520($v514).
 t525($s) :- text(_, $s), @contains($s, "Connection").
-m527($n) :- node(_, $n, "identifier", _, _), text($n, $v526), names0($v526).
+t525($s) :- text(_, $s), $s = "conn".
+m527($n) :- node(_, $n, "identifier", _, _), text($n, $v526), $v526 = "ConnectionId".
 m528($n) :- node(_, $n, "string", _, _).
 m528($n) :- node(_, $n, "concatenated_string", _, _).
 m532($n) :- node(_, $n, "identifier", _, _).
@@ -638,7 +635,8 @@ m544($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
 m544($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v542, _), m543($v542).
 m545($n) :- child($v539, $n, $v540), child($v539, $v538, $v541), $v541 < $v540, m544($v538).
 t549($s) :- text(_, $s), @contains($s, "Connection").
-m551($n) :- node(_, $n, "identifier", _, _), text($n, $v550), names0($v550).
+t549($s) :- text(_, $s), $s = "conn".
+m551($n) :- node(_, $n, "identifier", _, _), text($n, $v550), $v550 = "ConnectionId".
 m552($n) :- node(_, $n, "string", _, _).
 m552($n) :- node(_, $n, "concatenated_string", _, _).
 .output violation

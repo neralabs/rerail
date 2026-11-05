@@ -5,10 +5,8 @@
 .input doc, node, field, text
 .decl in_scope(d: int)
 .decl m4(n: node)
-.decl names0(s: sym)
 .decl out_scope(d: int)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("ClassVar").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
@@ -110,6 +108,6 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
-m4($n) :- node(_, $n, "identifier", _, _), text($n, $v1), names0($v1).
-m4($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v2), node(_, $v2, "identifier", _, _), text($v2, $v3), names0($v3).
+m4($n) :- node(_, $n, "identifier", _, _), text($n, $v1), $v1 = "ClassVar".
+m4($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v2), node(_, $v2, "identifier", _, _), text($v2, $v3), $v3 = "ClassVar".
 .output violation

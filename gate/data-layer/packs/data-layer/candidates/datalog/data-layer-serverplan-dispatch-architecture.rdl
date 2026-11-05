@@ -1,25 +1,32 @@
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
+.decl name(n: node, s: sym)
 .decl line(n: node, l: int)
 .decl syntax_error(d: int)
-.input doc, node, field, text, line, syntax_error
-.decl name(n: node, s: sym)
-name($n, $s) :- text($n, $s).
-name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.input doc, node, child, field, text, name, line, syntax_error
 .kindset k0 = "attribute" | "call" | "identifier"
 .kindset k1 = "concatenated_string" | "string"
 .decl in_scope(d: int)
 .decl m10(n: node)
-.decl m103(n: node)
-.decl m106(n: node)
-.decl m108(n: node)
+.decl m100(n: node)
+.decl m101(n: node)
+.decl m107(n: node)
 .decl m113(n: node)
-.decl m122(n: node)
-.decl m129(n: node)
-.decl m138(n: node)
+.decl m118(n: node)
+.decl m119(n: node)
+.decl m120(n: node)
+.decl m125(n: node)
+.decl m134(n: node)
+.decl m137(n: node)
+.decl m139(n: node)
+.decl m144(n: node)
 .decl m15(n: node)
+.decl m153(n: node)
+.decl m160(n: node)
+.decl m169(n: node)
 .decl m25(n: node)
 .decl m30(n: node)
 .decl m31(n: node)
@@ -34,46 +41,18 @@ name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x
 .decl m54(n: node)
 .decl m59(n: node)
 .decl m64(n: node)
-.decl m73(n: node)
-.decl m79(n: node)
-.decl m87(n: node)
-.decl m94(n: node)
-.decl names0(s: sym)
-.decl names1(s: sym)
-.decl names10(s: sym)
-.decl names11(s: sym)
-.decl names2(s: sym)
-.decl names3(s: sym)
-.decl names4(s: sym)
-.decl names5(s: sym)
-.decl names6(s: sym)
-.decl names7(s: sym)
-.decl names8(s: sym)
-.decl names9(s: sym)
+.decl m71(n: node)
+.decl m76(n: node)
+.decl m77(n: node)
+.decl m83(n: node)
+.decl m89(n: node)
+.decl m95(n: node)
 .decl out_scope(d: int)
-.decl u130(n: node)
+.decl u161(n: node)
 .decl u20(n: node)
 .decl u67(n: node)
-.decl u81(n: node)
+.decl u91(n: node)
 .decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-names0("impl/common/l2070_server_plan/backend_profiles.py").
-names0("impl/common/l2070_server_plan/backend_traits.py").
-names1("is_document_backend").
-names1("is_graph_backend").
-names1("is_mysql_family").
-names1("is_sql_backend").
-names2("impl/common/l2070_server_plan/base_server_plan.py").
-names3("backend_type").
-names4("backend_type_for").
-names4("get_backend_type").
-names4("get_backend_type_async").
-names5("BackendType").
-names6("isinstance").
-names7("type").
-names8("__name__").
-names9("__class__").
-names10("dialect").
-names11("getattr").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2065_plan_core/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2066_plan_optimizer/**/*.py").
 in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2070_server_plan/optimizers/**/*.py").
@@ -90,54 +69,69 @@ out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
 out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
-m5($n) :- node($v3, $n, _, _, _), doc($v3, $v4, _), names0($v4).
-m10($n) :- node($v8, $n, _, _, _), doc($v8, $v9, _), names2($v9).
-violation("data-layer-serverplan-dispatch-architecture", "backend-family", "SPD001", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), !m5($n), node(_, $n, "attribute", _, _), field($n, "attribute", $v6), node(_, $v6, "identifier", _, _), text($v6, $v7), names1($v7), !m10($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
-m15($n) :- node($v13, $n, _, _, _), doc($v13, $v14, _), names0($v14).
-m25($n) :- field($n, "attribute", $v22), node(_, $v22, "identifier", _, _), text($v22, $v23), names3($v23).
+m5($n) :- node($v3, $n, _, _, _), doc($v3, $v4, _), $v4 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m10($n) :- node($v8, $n, _, _, _), doc($v8, $v9, _), $v9 = "impl/common/l2070_server_plan/base_server_plan.py".
+violation("data-layer-serverplan-dispatch-architecture", "backend-family", "SPD001", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), !m5($n), node(_, $n, "attribute", _, _), field($n, "attribute", $v6), node(_, $v6, "identifier", _, _), text($v6, $v7), $v7 in {"is_document_backend", "is_graph_backend", "is_mysql_family", "is_sql_backend"}, !m10($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m15($n) :- node($v13, $n, _, _, _), doc($v13, $v14, _), $v14 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m25($n) :- field($n, "attribute", $v22), node(_, $v22, "identifier", _, _), text($v22, $v23), $v23 = "backend_type".
 m25($n) :- field($n, "object", $v24), u20($v24).
-m30($n) :- node(_, $n, "identifier", _, _), text($n, $v27), names4($v27).
-m30($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v28), node(_, $v28, "identifier", _, _), text($v28, $v29), names4($v29).
-m31($n) :- node(_, $n, "identifier", _, _), text($n, $v21), names3($v21).
+m30($n) :- node(_, $n, "identifier", _, _), text($n, $v27), $v27 in {"backend_type_for", "get_backend_type", "get_backend_type_async"}.
+m30($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v28), node(_, $v28, "identifier", _, _), text($v28, $v29), $v29 in {"backend_type_for", "get_backend_type", "get_backend_type_async"}.
+m31($n) :- node(_, $n, "identifier", _, _), text($n, $v21), $v21 = "backend_type".
 m31($n) :- node(_, $n, "attribute", _, _), m25($n).
 m31($n) :- node(_, $n, "call", _, _), field($n, "function", $v26), m30($v26).
 u20($n) :- m31($n).
-m32($n) :- field($n, "attribute", $v17), node(_, $v17, "identifier", _, _), text($v17, $v18), names3($v18).
+m32($n) :- field($n, "attribute", $v17), node(_, $v17, "identifier", _, _), text($v17, $v18), $v18 = "backend_type".
 m32($n) :- field($n, "object", $v19), u20($v19).
-m37($n) :- node(_, $n, "identifier", _, _), text($n, $v34), names4($v34).
-m37($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v35), node(_, $v35, "identifier", _, _), text($v35, $v36), names4($v36).
-m38($n) :- node(_, $n, "identifier", _, _), text($n, $v16), names3($v16).
+m37($n) :- node(_, $n, "identifier", _, _), text($n, $v34), $v34 in {"backend_type_for", "get_backend_type", "get_backend_type_async"}.
+m37($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v35), node(_, $v35, "identifier", _, _), text($v35, $v36), $v36 in {"backend_type_for", "get_backend_type", "get_backend_type_async"}.
+m38($n) :- node(_, $n, "identifier", _, _), text($n, $v16), $v16 = "backend_type".
 m38($n) :- node(_, $n, "attribute", _, _), m32($n).
 m38($n) :- node(_, $n, "call", _, _), field($n, "function", $v33), m37($v33).
-m44($n) :- field($n, "attribute", $v41), node(_, $v41, "identifier", _, _), text($v41, $v42), names3($v42).
+m44($n) :- field($n, "attribute", $v41), node(_, $v41, "identifier", _, _), text($v41, $v42), $v42 = "backend_type".
 m44($n) :- field($n, "object", $v43), u20($v43).
-m49($n) :- node(_, $n, "identifier", _, _), text($n, $v46), names4($v46).
-m49($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v47), node(_, $v47, "identifier", _, _), text($v47, $v48), names4($v48).
-m50($n) :- node(_, $n, "identifier", _, _), text($n, $v40), names3($v40).
+m49($n) :- node(_, $n, "identifier", _, _), text($n, $v46), $v46 in {"backend_type_for", "get_backend_type", "get_backend_type_async"}.
+m49($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v47), node(_, $v47, "identifier", _, _), text($v47, $v48), $v48 in {"backend_type_for", "get_backend_type", "get_backend_type_async"}.
+m50($n) :- node(_, $n, "identifier", _, _), text($n, $v40), $v40 = "backend_type".
 m50($n) :- node(_, $n, "attribute", _, _), m44($n).
 m50($n) :- node(_, $n, "call", _, _), field($n, "function", $v45), m49($v45).
 m51($n) :- m38($n).
 m51($n) :- inside($v39, $n, k0), m50($v39).
 m54($n) :- node(_, $n, "string", _, _).
 m54($n) :- node(_, $n, "concatenated_string", _, _).
-m59($n) :- node($v57, $n, _, _, _), doc($v57, $v58, _), names0($v58).
-m64($n) :- node(_, $n, "identifier", _, _), text($n, $v61), names6($v61).
-m64($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v62), node(_, $v62, "identifier", _, _), text($v62, $v63), names6($v63).
-m73($n) :- node($v71, $n, _, _, _), doc($v71, $v72, _), names0($v72).
-m79($n) :- node(_, $n, "identifier", _, _), text($n, $v76), names7($v76).
-m79($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v77), node(_, $v77, "identifier", _, _), text($v77, $v78), names7($v78).
-m87($n) :- node($v85, $n, _, _, _), doc($v85, $v86, _), names0($v86).
-m94($n) :- node($v92, $n, _, _, _), doc($v92, $v93, _), names0($v93).
-m103($n) :- node(_, $n, "identifier", _, _), text($n, $v100), names7($v100).
-m103($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v101), node(_, $v101, "identifier", _, _), text($v101, $v102), names7($v102).
-m106($n) :- node(_, $n, "call", _, _), field($n, "function", $v99), m103($v99).
-m106($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v104), node(_, $v104, "identifier", _, _), text($v104, $v105), names9($v105).
-m108($n) :- node(_, $n, "string", _, _).
-m108($n) :- node(_, $n, "concatenated_string", _, _).
-m113($n) :- node($v111, $n, _, _, _), doc($v111, $v112, _), names0($v112).
-m122($n) :- node(_, $n, "identifier", _, _), text($n, $v119), names11($v119).
-m122($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v120), node(_, $v120, "identifier", _, _), text($v120, $v121), names11($v121).
-m129($n) :- node($v127, $n, _, _, _), doc($v127, $v128, _), names0($v128).
-m138($n) :- node(_, $n, "identifier", _, _), text($n, $v135), names11($v135).
-m138($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v136), node(_, $v136, "identifier", _, _), text($v136, $v137), names11($v137).
+m59($n) :- node($v57, $n, _, _, _), doc($v57, $v58, _), $v58 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m64($n) :- node(_, $n, "identifier", _, _), text($n, $v61), $v61 = "isinstance".
+m64($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v62), node(_, $v62, "identifier", _, _), text($v62, $v63), $v63 = "isinstance".
+m71($n) :- node(_, $n, "identifier", _, _), text($n, $v70), $v70 in {"CompiledStep", "IntentStep", "ServerPlanStep"}.
+m76($n) :- node(_, $n, "identifier", _, _), text($n, $v75), $v75 in {"CompiledStep", "IntentStep", "ServerPlanStep"}.
+m77($n) :- node(_, $n, "identifier", _, _), name($n, $v69), @glob($v69, {"ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}), !m71($n).
+m77($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v72), name($v72, $v74), @glob($v74, {"ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}), !m76($v72).
+m83($n) :- node($v81, $n, _, _, _), doc($v81, $v82, _), $v82 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m89($n) :- node(_, $n, "identifier", _, _), text($n, $v86), $v86 = "type".
+m89($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v87), node(_, $v87, "identifier", _, _), text($v87, $v88), $v88 = "type".
+m95($n) :- node(_, $n, "identifier", _, _), text($n, $v94), $v94 in {"CompiledStep", "IntentStep", "ServerPlanStep"}.
+m100($n) :- node(_, $n, "identifier", _, _), text($n, $v99), $v99 in {"CompiledStep", "IntentStep", "ServerPlanStep"}.
+m101($n) :- node(_, $n, "identifier", _, _), name($n, $v93), @glob($v93, {"ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}), !m95($n).
+m101($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v96), name($v96, $v98), @glob($v98, {"ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}), !m100($v96).
+m107($n) :- node($v105, $n, _, _, _), doc($v105, $v106, _), $v106 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m113($n) :- node(_, $n, "identifier", _, _), text($n, $v112), $v112 in {"CompiledStep", "IntentStep", "ServerPlanStep"}.
+m118($n) :- node(_, $n, "identifier", _, _), text($n, $v117), $v117 in {"CompiledStep", "IntentStep", "ServerPlanStep"}.
+m119($n) :- node(_, $n, "identifier", _, _), name($n, $v111), @glob($v111, {"ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}), !m113($n).
+m119($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v114), name($v114, $v116), @glob($v116, {"ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}), !m118($v114).
+m120($n) :- node(_, $n, "dotted_name", _, _), text($n, $v109), @glob($v109, {"*.ConditionalStep", "*.PhysicalStatementGroup", "*.[A-Z_a-z]*Intent", "*.[A-Z_a-z]*Step", "*.[A-Z_a-z]*Strategy", "ConditionalStep", "PhysicalStatementGroup", "[A-Z_a-z]*Intent", "[A-Z_a-z]*Step", "[A-Z_a-z]*Strategy"}).
+m120($n) :- m119($n).
+violation("data-layer-serverplan-dispatch-architecture", "step-class-match", "SPD002", $p, $l) :- node($v103, $n, _, _, _), doc($v103, $v104, _), !m107($n), node(_, $n, "class_pattern", _, _), child($n, $v108, _), m120($v108), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m125($n) :- node($v123, $n, _, _, _), doc($v123, $v124, _), $v124 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m134($n) :- node(_, $n, "identifier", _, _), text($n, $v131), $v131 = "type".
+m134($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v132), node(_, $v132, "identifier", _, _), text($v132, $v133), $v133 = "type".
+m137($n) :- node(_, $n, "call", _, _), field($n, "function", $v130), m134($v130).
+m137($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v135), node(_, $v135, "identifier", _, _), text($v135, $v136), $v136 = "__class__".
+m139($n) :- node(_, $n, "string", _, _).
+m139($n) :- node(_, $n, "concatenated_string", _, _).
+m144($n) :- node($v142, $n, _, _, _), doc($v142, $v143, _), $v143 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m153($n) :- node(_, $n, "identifier", _, _), text($n, $v150), $v150 = "getattr".
+m153($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v151), node(_, $v151, "identifier", _, _), text($v151, $v152), $v152 = "getattr".
+m160($n) :- node($v158, $n, _, _, _), doc($v158, $v159, _), $v159 in {"impl/common/l2070_server_plan/backend_profiles.py", "impl/common/l2070_server_plan/backend_traits.py"}.
+m169($n) :- node(_, $n, "identifier", _, _), text($n, $v166), $v166 = "getattr".
+m169($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v167), node(_, $v167, "identifier", _, _), text($v167, $v168), $v168 = "getattr".
 .output violation

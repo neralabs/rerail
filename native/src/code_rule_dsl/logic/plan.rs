@@ -873,11 +873,13 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" => &[&["n"], &["s", "n"]],
+        "text" | "name" | "str" | "strprefix" => &[&["n"], &["s", "n"]],
         "intval" | "op" | "tape" | "line" => &[&["n"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
+        // A text test's symbols (decision 0037, `logic::strings::as_relations`).
+        rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()
@@ -929,7 +931,19 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 (f, [x, y]) if super::strings::is_test(f) => {
                     let text = |e: &Expr| if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() };
                     let op = super::strings::TESTS.iter().find(|t| **t == f).expect("a test");
-                    call("str_test", vec![string(op), text(x), text(y)])
+                    // A pattern set is its patterns' text already (`set` below).
+                    let set = matches!(&args[1], Term::Call(g, _) if g == super::strings::SET);
+                    call("str_test", vec![string(op), text(x), if set { y.clone() } else { text(y) }])
+                }
+                // A pattern set (decision 0037): its patterns' text joined by `strings::SET_SEP`.
+                (f, items) if f == super::strings::SET => {
+                    let text = |e: &Expr| if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() };
+                    let sep = string(&super::strings::SET_SEP.to_string());
+                    let mut out = items.first().map(text).unwrap_or_else(|| string(""));
+                    for item in items.iter().skip(1) {
+                        out = bin(Op::Concatenate, bin(Op::Concatenate, out, sep.clone()), text(item));
+                    }
+                    out
                 }
                 // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
                 ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
