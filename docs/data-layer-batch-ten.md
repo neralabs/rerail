@@ -32,13 +32,19 @@ All rule decisions execute in SQLite. CPython supplies syntax facts without exec
 A further audit invalidated the 744-case completion claim. It found raw-newline normalization,
 malformed-file isolation, textual line ordering, auxiliary-file admission, and Python Unicode regex defects.
 The fixes preserve file APIs separately from source APIs and prevent project checks in tree-only calls.
-The focused corpus contains 39 original-evaluated inputs, replayed through both APIs.
+The focused corpus contains 102 original-evaluated inputs, replayed through both APIs.
 The receipt rejects original runs presented as native, missing call traces, changed policies, and incomplete configured coverage.
 
 Matching now selects raw sources in SQL before canonical expansion.
 A generic source-relation expansion supplies canonical module facts without a preliminary CST index.
 It preserves malformed-module isolation and UTF-8 source spans.
 The 100-statement engine limit and existing capacity bounds remain in place.
+
+Commit `8b0c99311` and its completion message overstated these gates.
+A subsequent audit found 43 counterexamples in matching and bounded-path checks.
+Python whitespace, uppercase expansion, uppercase-name equality, and Unicode decimal paths had non-equivalent SQL translations.
+The focused regressions now preserve those counterexamples and their clean controls.
+The [journal](data-layer-performance-journal.md) records the retraction and repair evidence.
 
 ## Evidence
 
@@ -66,7 +72,8 @@ Their expected results come from original execution, without an assumption that 
 
 There are 975 complete detector observations, including 870 positive observations, across 974 tests.
 Of these observations, 778 have distinct normalized inputs and results; 680 are positive.
-The other 124 cases retain Python utility or CLI assertions. They are not native detector observations.
+The other 124 cases still execute Python helpers or CLI assertions. They are not native detector comparisons.
+The v3 receipt lists all their test IDs explicitly under `retainedPythonCaseIds`.
 The conditional observations include 47 calls to the shared analyzer.
 Replay compares diagnostic multiplicity, path, code, message, line, and rule-specific DTO fields through both native APIs.
 It also checks that public diagnostics agree with SQL result rows.
@@ -77,11 +84,11 @@ The native selection gate has a separate file-set comparison against the origina
 The full matching assertion runs separately from the small cases to keep each command below two minutes.
 Compact replay omits that expensive repeated assertion; the native assertion receipt covers it through both APIs.
 
-The [configured corpus](../fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz) has 1,176 original reporter observations, including 825 positives.
+The [configured corpus](../fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz) has 1,239 original reporter observations, including 875 positives.
 It covers every distinct recorded input, owner-path relocation, and focused file-contract inputs.
 It covers shipped scopes, clean files, ignored directories, parser behavior, missing artifacts, and matching selection.
-Both APIs run it with default options: 2,352 complete-result comparisons.
-A further 612 comparisons check the exact matching file selection, including its 139-file repository subset.
+Both APIs run it with default options: 2,478 complete-result comparisons.
+A further 716 comparisons check the exact matching file selection, including its 139-file repository subset.
 There are also 106 diagnostic-family removal controls, each checked through both APIs.
 These controls remove one diagnostic code at a time and require all other original findings to remain.
 

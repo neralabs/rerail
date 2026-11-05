@@ -6848,3 +6848,39 @@ CI now validates the union of live source shards against the complete original c
 It also validates the union of configured reports, including both whole-repository configured tests.
 The workflow parses, and its three aggregation snippets passed against the final recorded reports.
 The final relocated contract tests still pass all 57 tests, and the shared-resolver fixture reproduces exactly.
+
+## 2026-11-05 — Retraction of the batch-ten completion claim
+
+Commit `8b0c99311` passed the recorded gates but did not establish exact translation.
+The subsequent completion message was wrong. Fixture parity was presented as completion without an adequate semantic audit.
+A fresh differential audit found 43 counterexamples in two ports before any production-code repair.
+The unchanged original rules supplied the expected results.
+
+| Translation defect | Observed consequence |
+| --- | --- |
+| Python `lstrip()` replaced with SQLite `ltrim()` | Matching missed SQL f-strings prefixed by tabs, newlines, and Unicode whitespace |
+| Python `upper()` replaced with SQLite `upper()` | Matching missed long-s, dotless-i, and a final character whose uppercase expansion crosses the prefix boundary |
+| Uppercase-name equality tested with SQLite ASCII casing | Matching falsely rejected counters containing lowercase Unicode identifiers |
+| Python decimal layer parsing replaced with ASCII regex and integer casts | Matching missed Unicode layer names and could select a later ASCII layer instead of the first Unicode layer |
+| Python regex whitespace passed to Rust unchanged | Bounded paths missed four control-whitespace variants accepted by the original textual check |
+
+The red test commit is `6e409fbeb`; the production fix is `6232dc2a1`.
+The fixes generate CPython-compatible whitespace, uppercase preimages, uppercase-change classes, and decimal-digit relations.
+SQL still makes the rule decisions. No engine capability or execution limit changed.
+The expanded focused corpus has 102 original-evaluated inputs, including positive and clean controls.
+All 103 focused tests pass, including the existing repeated-owner regression; both APIs replay every input.
+Additional GraphQL scope and generated-index alias-timing probes matched the originals without production changes.
+
+This record supersedes the prior completion wording. Passing a finite corpus is evidence for those inputs, not proof of exactness.
+The 124 retained Python helper and CLI cases still do not constitute native detector comparisons.
+The full-repository benchmark still covers 80 rules. No broader benchmark or Linear ticket was added in this audit.
+
+The repair rerun preserves all 975 recorded detector results through both native APIs, including 870 positives.
+Each source-suite run has 1,098 passing cases; 974 invoke native detectors and 124 remain Python helper or CLI cases.
+The v3 receipt now lists those retained Python case IDs rather than presenting their pass status as native coverage.
+Configured coverage is 1,239 original observations, including 875 positives: 2,478 result comparisons and 716 selection comparisons.
+The whole-repository matching assertion passes separately through both APIs.
+The 106 diagnostic-removal controls, nine earlier repair cases, 103 focused contract tests, and 23 replay gates pass.
+Typecheck, boundaries, grammar validation, and byte-for-byte regeneration pass.
+The native engine is unchanged in this repair; the earlier Rust-suite results were not rerun or presented as new measurements.
+No claim of whole-batch semantic certification follows from these passing counts.

@@ -69,7 +69,7 @@ def verify(oracle,reports,controls=False,mode=None,policies=None):
  rejected={call['check'] for call in calls if (call['test'],call['check'],call['entry']) in positives and call['test'] in failed and call['findings']==0}
  if controls and rejected!=set(CHECKS):raise ValueError('A disabled detector escaped positives: '+str(set(CHECKS)-rejected))
  unique={json.dumps({k:v for k,v in normalized(r).items() if k!='test'},sort_keys=True):r for r in wanted}
- return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),retainedUtilityAndCliCases=len(seen-{r['test'] for r in records}),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
+ return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),retainedPythonCases=len(seen-{r['test'] for r in records}),retainedPythonCaseIds=sorted(seen-{r['test'] for r in records}),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
 
 def receipt(oracle_path,snapshot,workspace,controls,configured):
  policies={c:hashlib.sha256((Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json')).read_bytes()).hexdigest() for c in CHECKS}
@@ -87,7 +87,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured):
  files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
- return dict(format='rerail.data-layer-batch-ten-assertions/v2',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
+ return dict(format='rerail.data-layer-batch-ten-assertions/v3',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
 def main():
  p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured),indent=2)+'\n')
 if __name__=='__main__':main()
