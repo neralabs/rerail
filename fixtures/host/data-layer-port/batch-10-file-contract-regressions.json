@@ -954,6 +954,271 @@
         }
       ],
       "expected": []
+    },
+    {
+      "test": "hnsw-python-word-0",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = 'json\u0301'\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "line": 1,
+          "code": "HNSW007",
+          "message": "HNSW must use indexed SQL rows, not JSON operations"
+        }
+      ]
+    },
+    {
+      "test": "hnsw-python-word-1",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = 'json\\u200c'\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "line": 1,
+          "code": "HNSW007",
+          "message": "HNSW must use indexed SQL rows, not JSON operations"
+        }
+      ]
+    },
+    {
+      "test": "hnsw-python-word-2",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = 'json\u203f'\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "line": 1,
+          "code": "HNSW007",
+          "message": "HNSW must use indexed SQL rows, not JSON operations"
+        }
+      ]
+    },
+    {
+      "test": "hnsw-python-word-3",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = 'json_\u0301'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "hnsw-python-word-4",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = 'json\u00e9'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "hnsw-python-word-5",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = '\u03b1json'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "optimizer-python-word-0",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "def bad():\n    raise ValueError('Fix\u0301 producer')\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "optimizer-python-word-1",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "def bad():\n    raise ValueError('Fix\\u200c producer')\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "optimizer-python-word-2",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "def bad():\n    raise ValueError('Fix\u00e9 producer')\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/node.py",
+          "line": 2,
+          "code": "PV2-031",
+          "message": "raise in bad() has no repair hint. Every v2 error message must say what is wrong and how to fix it (e.g. start a sentence with Fix/Use/Add/Project/Bind describing the repair)."
+        }
+      ]
+    },
+    {
+      "test": "optimizer-python-word-3",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "def bad():\n    raise ValueError('Fix producer')\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "bounded-python-word-and-line",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n\n_SqlSparseUnionRecursiveBindingGrammar\u0301\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "line": 7,
+          "code": "BCGP014",
+          "message": "legacy sparse binding grammar must not bypass the relation-algebra path"
+        }
+      ]
     }
   ]
 }

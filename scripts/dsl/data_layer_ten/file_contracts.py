@@ -64,6 +64,25 @@ def record(source,output):
   cases.append(dict(test='matching-tree-auxiliary-'+str(hook),check='matching_architecture',entry='_scan_tree',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(matching._scan_tree(Path(relative),ast.parse(text)),source)))
  relative='impl/common/l5250_matching/probe.py';text='value=1\n'
  cases.append(dict(test='matching-tree-has-no-project-obligations',check='matching_architecture',entry='_scan_tree',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(matching._scan_tree(Path(relative),ast.parse(text)),source)))
+ hnsw=importlib.import_module('scripts.lint_hnsw_architecture')
+ for index,word in enumerate(['json\u0301','json\u200c','json\u203f','json_\u0301','jsoné','αjson']):
+  relative='impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py';text='state = '+repr(word)+'\n'
+  with tempfile.TemporaryDirectory() as temporary:
+   path=Path(temporary);location=path/relative;location.parent.mkdir(parents=True);location.write_bytes(text.encode())
+   expected=normalize(hnsw.find_hnsw_architecture_findings((location,)),path)
+  cases.append(dict(test='hnsw-python-word-'+str(index),check='hnsw_architecture',entry='find_hnsw_architecture_findings',parameters={},production=False,files=[dict(path=relative,source=text)],expected=expected))
+ for index,hint in enumerate(['Fix\u0301 producer','Fix\u200c producer','Fixé producer','Fix producer']):
+  relative='impl/common/l2065_plan_core/node.py';text='def bad():\n    raise ValueError('+repr(hint)+')\n'
+  cases.append(dict(test='optimizer-python-word-'+str(index),check='plan_optimizer_v2',entry='scan_file',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(optimizer.scan_file(Path(relative),text),source)))
+ files=[dict(path=f['path'],source=seeds['sources'][f['sourceSha256']]) for f in clean['files']]
+ target=next(f for f in files if f['path']==bounded.SQL_GRAPH_QUERY_BUILDER.as_posix());target['source']+='\n_SqlSparseUnionRecursiveBindingGrammar\u0301\n'
+ with tempfile.TemporaryDirectory() as temporary:
+  path=Path(temporary)
+  for f in files:
+   location=path/f['path'];location.parent.mkdir(parents=True,exist_ok=True);location.write_bytes(f['source'].encode())
+  expected=[dict(path=(r.path.relative_to(path) if r.path.is_absolute() else r.path).as_posix(),line=r.line,code=r.code,message=r.message) for r in bounded.collect_violations(path)]
+ assert len(expected)==1 and expected[0]['code']=='BCGP014'
+ cases.append(dict(test='bounded-python-word-and-line',check='bounded_composed_graph_paths',entry='all',parameters={},production=True,files=files,expected=expected))
  output.write_text(json.dumps(dict(sourcePin=PIN,cases=cases),indent=2)+'\n')
 
 if __name__=='__main__':
