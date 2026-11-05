@@ -35,17 +35,17 @@ def test_report_for_an_old_policy_cannot_certify_the_current_policy():
 
 def test_configured_receipt_requires_both_native_api_assertions():
  oracle={'records':[dict(check='example',test='case',files=[],expected=[])]}
- report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName='configured example snapshot: case')])])
+ report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName='configured example snapshot: observation 0')])])
  with pytest.raises(ValueError,match='Missing or extra'):verify_configured(oracle,[report])
- report['testResults'][0]['assertionResults'].append(dict(status='passed',fullName='configured example workspace: case'))
+ report['testResults'][0]['assertionResults'].append(dict(status='passed',fullName='configured example workspace: observation 0'))
  assert verify_configured(oracle,[report])['apiComparisons']==2
 
 def test_duplicate_configured_assertions_cannot_replace_missing_coverage():
  oracle={'records':[dict(check='example',test='case',files=[],expected=[])]}
- report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName='configured example snapshot: case')]*2)])
+ report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName='configured example snapshot: observation 0')]*2)])
  with pytest.raises(ValueError,match='Duplicate configured'):verify_configured(oracle,[report])
 
 def test_distinct_inputs_from_one_upstream_test_need_distinct_assertion_identities():
- oracle={'records':[dict(check='example',test='case',files=[],expected=[]),dict(check='example',test='case',files=[{'path':'other.py'}],expected=[])]}
- report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName=f'configured example {mode}: case [observation {i}]') for i in range(2) for mode in ['snapshot','workspace']])])
+ oracle={'records':[dict(check='example',test='case'*100,files=[],expected=[]),dict(check='example',test='case'*100,files=[{'path':'other.py'}],expected=[])]}
+ report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName=f'configured example {mode}: observation {i}') for i in range(2) for mode in ['snapshot','workspace']])])
  assert verify_configured(oracle,[report])['assertions']==4

@@ -6,6 +6,7 @@ DSL=Path(__file__).resolve().parents[1];sys.path.insert(0,str(DSL))
 from data_layer_ten.common import CHECKS,PIN
 from data_layer_nine.evidence import expand,compact
 from data_layer_ten.evidence import read_report
+from data_layer_rule_audit import fixtures_path
 
 def record(source,repo,reports,output):
  sys.path[:0]=[str(source),str(source/'scripts')]
@@ -79,8 +80,8 @@ def record(source,repo,reports,output):
    path=Path(probe['path']);observe(check,'extra-scope-'+folder.replace('/','-'),[dict(path=(path.parent/folder/path.name).as_posix(),source=probe['source'])])
   for source_text in ['# ConditionalStep Index( HNSW .read PlanScope table_exists\nif True:\n','# ConditionalStep Index( HNSW .read PlanScope table_exists\ndef unfinished():\n']:
    observe(check,'incomplete-'+hashlib.sha256(source_text.encode()).hexdigest()[:8],[dict(path=probe['path'],source=source_text)])
- for case in json.loads(Path(__file__).resolve().parents[3].joinpath('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json').read_text())['cases']:
-  if case['production']:observe(case['check'],case['test'],case['files'])
+ for case in json.loads(fixtures_path('host/data-layer-port/batch-10-file-contract-regressions.json').read_text())['cases']:
+  observe(case['check'],case['test'],case['files'])
  for text in ['def f(scope: PlanScope):\n    return (\n','x = (\n']:
   observe('graphql_plan_ownership','parser-'+hashlib.sha256(text.encode()).hexdigest()[:8],[dict(path='l9750_graphql/probe.py',source=text)])
  observe('matching_architecture','native-selection',[

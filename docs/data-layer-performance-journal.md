@@ -6731,3 +6731,120 @@ Batch nine's 228 assertion cases also pass again through both APIs on the rebuil
 Its disabled-detector controls still reject all ten ports.
 Its receipt is refreshed from those executions because the shared AST metadata and CI file changed.
 The prior batch-nine kernel measurements remain historical; no old kernel received a new cold benchmark.
+
+## 2026-11-05 — Batch-ten completion audit and contract repairs
+
+The previous 744-case completion report was insufficient. This entry supersedes its coverage claims.
+The audit found raw newline, malformed-file, ordering, source-selection, and Unicode regex defects.
+The file recorder also normalized CRLF and CR, hiding differences before native execution.
+A clean repository result could not expose these defects.
+
+Failing tests preceded the fixes:
+
+- `15eb62928`: raw newlines, malformed-file isolation, and textual line ordering.
+- `b36301c05`: optimizer file/source line-limit differences.
+- `6973b9c34`: reject original runs presented as native evidence and missing native call traces.
+- `37e21ee64`: matching auxiliary-file admission and tree-only project checks.
+- `b7420c8d4` and `780586db7`: CPython word boundaries and whitespace differ from Rust regex defaults.
+- `a5b7fc215`: canonical expansion from SQL-selected source relations, without a CST index.
+
+The fixes preserve raw source bytes and isolate malformed canonical modules.
+They preserve the conditional linter's textual line ordering and the optimizer's distinct file/source line counts.
+Matching excludes auxiliary operator files from default AST analysis and omits project obligations for tree-only calls.
+Generated Unicode classes use CPython 3.13's Unicode 15.1 tables within existing SQL size limits.
+No rule's diagnostic was suppressed to make these tests pass.
+
+The original corpus now contains 1,098 cases: 279 upstream cases and 819 original-evaluated supplements.
+There are 975 detector observations, including 870 positives, over 974 tests.
+They contain 778 distinct normalized observations, including 680 positives.
+The other 124 cases retain utility or CLI assertions. They are not native detector observations.
+The configured-default corpus expands from 62 to 1,176 observations, including 825 positives.
+It includes every distinct recorded input and all 39 focused file-contract inputs.
+A further 106 diagnostic-family controls remove one code at a time while retaining the other original findings.
+
+Two attempts at the repository matching assertion hit the 115-second command cap.
+A short external sample showed corpus value-index insertion and SQLite writes during preparation.
+It did not establish the earlier hypothesis that Unicode regex matching caused the timeout.
+A cheaper AST predicate still exceeded the cap, because AST preparation preceded SQL source selection.
+Matching therefore moves module demand onto raw source relations, selected in SQL.
+The full inventory contains 2,870 production files plus one auxiliary operator file: 57,328,575 source bytes.
+The original selector admits 139 files containing 2,771,856 bytes; SQL must select exactly that set.
+
+The first source-expansion implementation dropped the expansion setting and returned module scalars.
+Positive regressions caught this. The next implementation exposed missing diagnostic-span proofs.
+These intermediate builds are rejected evidence, even though a clean repository assertion passed in one of them.
+The producer must prove exact spans against the actual snapshot source hash and an admitted whole-file witness.
+SQL must not fabricate offsets or substitute transformed source.
+One stale Rust test build was stopped after native source changed; its output is not a final test result.
+
+Final execution receipts and validation results follow below once the repaired build passes.
+
+Repeated execution exposed a further lifecycle defect in the new source path.
+The first owner evaluation passed; repeating the same evaluation failed its anchor check.
+Prepared SQL rows survived, but source-span proofs belonged only to the first session.
+The focused red test is `9028f8b42`.
+Source proofs now share the existing bounded SQL owner, keyed by the exact source digest.
+Their bytes count toward the existing owner budget, and owner reset drops them with cached row definitions.
+This retains the proof requirement when later consumers reuse prepared rows.
+
+The configured receipt validator found ambiguous test identities before certification.
+Vitest truncates long interpolated labels, including trailing observation IDs.
+Short numeric observation labels now bind each assertion to its oracle record.
+The original test name remains in the fixture and failure text.
+Eight evidence-verifier tests cover missing traces, original/native confusion, stale policy hashes,
+API mode confusion, missing configured comparisons, duplicate assertions, and repeated upstream names.
+The configured reports were rerun after correcting their labels.
+
+A configured group reached the command cap under concurrent validation load.
+It now runs as two independent groups, with the same cases and assertions.
+Two unsharded batch-nine compatibility commands also reached the cap.
+Their results were discarded; compatibility uses the four existing CI shards per API.
+The repository matching assertion remains whole in each command.
+
+### Final validation on the repaired build
+
+Addon SHA-256: `464f424955f220cdf8ed74937c93d97cc461e9ba5b19e515f11cc68e86920ba8`.
+The final native build and test build completed separately from bounded test commands.
+
+| Gate | Result |
+| --- | --- |
+| Unchanged original assertions and supplements | 1,098 passed; all 975 observations reproduced |
+| Native snapshot assertions | 1,098 passed; 975 complete results, including 870 positives |
+| Native workspace assertions | Same complete results and case coverage |
+| Shipped defaults | 2,352 complete-result comparisons over 1,176 original observations |
+| Matching file selection | 612 comparisons; repository selection equals the original 139-file set |
+| Focused contracts and repair regressions | 57 tests passed; file-contract and repair inputs exercise both APIs |
+| Individual diagnostic removal controls | 106 tests passed, each through both APIs |
+| Disabled whole-detector controls | All ten rejected; 163 deliberately failing source assertions |
+| Compact batch-ten replay and receipt binding | 23 tests passed |
+| Evidence verifier regressions | 8 tests passed |
+| Native Rust DSL suite | 1,576 passed, 23 existing ignored, 114 outside the selected namespace; 68.45 seconds |
+| Batch-nine compatibility | 228 source cases per API; 269 complete results, including 156 positives |
+| Batch-nine replay and native contract tests | 32 tests passed |
+| Rule generation | All ten documents reproduce byte for byte |
+| Original file-contract and configured fixtures | Reproduced without changing original detector implementations |
+| Typecheck, boundaries, DSL grammar and reference examples | Passed |
+
+The final complete matching assertion passed in 39.16 seconds for snapshot and 49.29 seconds for workspace.
+These are pytest durations under validation load, not cold CPU benchmark measurements.
+Its full input remains 2,871 files; the SQL rule performs source selection itself.
+The final receipt validates every source case, native call trace, current policy hash, and configured observation identity.
+It distinguishes 778 distinct normalized observations, including 680 positives, from repeated observations.
+It also identifies the 124 retained utility and CLI cases separately from native detector cases.
+Batch-nine receipts were refreshed on the same addon. Its historical kernel measurements were not rerun.
+
+No cumulative repository benchmark or new Linear issue was added.
+The historical complete repository result still covers 80 rules, rather than the 100 authored ports.
+The final structure check has 24 passing metrics and one failing metric with three pre-existing findings:
+`native/src/code_rule_dsl/` has 26 flat files, `scripts/dsl/` has 31, and `test/engine/native/` has 26.
+Each limit is 25.
+
+The first final structure run also caught three new layout and packaging problems.
+The recorder now uses the shared Python fixture resolver.
+The cache-lifetime regression now lives with the conformance file-contract tests.
+Both compressed corpora use Git LFS; their index entries are verified 133-byte pointers.
+The existing CI LFS action fetches them. These changes leave only the existing flat-directory findings.
+CI now validates the union of live source shards against the complete original corpus for each API.
+It also validates the union of configured reports, including both whole-repository configured tests.
+The workflow parses, and its three aggregation snippets passed against the final recorded reports.
+The final relocated contract tests still pass all 57 tests, and the shared-resolver fixture reproduces exactly.

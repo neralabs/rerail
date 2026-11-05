@@ -537,22 +537,57 @@ jobs:
           unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
           reports="$RUNNER_TEMP/batch-ten-reports"
           mkdir -p "$reports"
-          PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
-          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
-            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
-            --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
-            --policies packs/data-layer/rules --mode "$MODE" --output "$reports/api-$MODE.json"
+          for part in 0 1 2 3; do
+            PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
+            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
+              --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
+              --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
+              --part "$part" --parts 4 --policies packs/data-layer/rules --mode "$MODE" \
+              --output "$reports/api-$MODE-$part.json"
+          done
           timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
             --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
             --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
             --checks matching_architecture --policies packs/data-layer/rules --mode "$MODE" \
             --output "$reports/repository-$MODE.json" \
             "$GITHUB_WORKSPACE/.rerail/data-layer-upstream/scripts/tests/test_lint_matching_architecture.py::test_current_matching_architecture_is_clean_tdd_red"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          from data_layer_ten.common import CHECKS
+          from data_layer_ten.evidence import read_report,verify
+          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports';mode=os.environ['MODE']
+          paths=[reports/f'api-{mode}-{part}.json' for part in range(4)]+[reports/f'repository-{mode}.json']
+          policies={c:hashlib.sha256(Path('packs/data-layer/rules', 'data-layer-'+c.replace('_','-')+'.json').read_bytes()).hexdigest() for c in CHECKS}
+          summary=verify(read_report(Path('fixtures/host/data-layer-port/batch-10-complete-api.json.gz')),[read_report(p) for p in paths],mode=mode,policies=policies)
+          (reports/f'api-summary-{mode}.json').write_text(json.dumps(summary,indent=2)+'\n')
+          PY
       - name: Verify batch-ten replay, defaults and disabled detectors
         if: matrix.mode == 'snapshot'
         run: |
-          timeout 115s npx vitest run test/conformance/data-layer/batch-ten.test.ts
-          timeout 115s npx vitest run test/conformance/data-layer/batch-ten-defaults.test.ts test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-families.test.ts
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-file-contracts.test.ts test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
+          report_index=0
+          for pattern in 'configured (graph_lazy_sql_plan|bounded_composed_graph_paths|graphql_plan_ownership) ' 'configured (plan_optimizer_v2|conditional_architecture) ' 'matching_architecture' 'configured (schema_introspection_data_paths|hnsw_architecture|embedding_vector_orchestration|generated_index_sources) '; do
+            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-defaults.test.ts -t "$pattern" \
+              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/configured-$report_index.json"
+            report_index=$((report_index + 1))
+          done
+          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/evidence_cases.py
+          for mode in snapshot workspace; do
+            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-configured-repository.test.ts \
+              -t "configured repository $mode" --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/configured-repository-$mode.json"
+          done
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
+          import json,os
+          from pathlib import Path
+          from data_layer_ten.evidence import read_report,verify_configured
+          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
+          paths=[reports/f'configured-{i}.json' for i in range(4)]+[reports/f'configured-repository-{mode}.json' for mode in ['snapshot','workspace']]
+          summary=verify_configured(read_report(Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz')),[read_report(p) for p in paths])
+          (reports/'configured-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          PY
       - name: Upload batch-ten assertion receipts
         if: always()
         uses: actions/upload-artifact@v7

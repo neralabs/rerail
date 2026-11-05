@@ -8,14 +8,14 @@ const checks=["graph_lazy_sql_plan","bounded_composed_graph_paths","graphql_plan
 // The full 2,871-file assertion runs separately in each API, with its receipt below.
 const unique=[...new Map(oracle.records.filter(r=>!r.test.includes("test_current_matching_architecture_is_clean_tdd_red")).map(r=>[JSON.stringify({...r,test:undefined}),r])).values()];
 it("retains unchanged upstream assertions, complete observations and source digests",()=>{
- expect(Object.keys(oracle.cases)).toHaveLength(744);
- expect(oracle.records).toHaveLength(621);
+ expect(Object.keys(oracle.cases)).toHaveLength(1098);
+ expect(oracle.records).toHaveLength(975);
  for(const [digest,source]of Object.entries(oracle.sources))expect(createHash("sha256").update(source).digest("hex")).toBe(digest);
  for(const check of checks){const records=oracle.records.filter(r=>r.check===check);expect(records.some(r=>Array.isArray(r.expected)&&r.expected.length>0)).toBe(true);expect(records.some(r=>Array.isArray(r.expected)&&r.expected.length===0)).toBe(true);}
  expect(oracle.records.some(r=>r.test.includes("current_matching_architecture_is_clean")&&r.files.length===2871)).toBe(true);
  expect(oracle.records.filter(r=>r.entry==="conditional_architecture_findings")).toHaveLength(47);
 });
-it.each(checks)("matches complete %s observations through both native APIs",async check=>{
+it.each(checks)("matches complete %s source-adapter observations through both native APIs",async check=>{
  const replay=new TenReplay();try{for(const record of unique.filter(r=>r.check===check))for(const mode of["snapshot","workspace"]as const){const expected=check==="graph_lazy_sql_plan"?canonical(record.expected):record.expected;expect(await replay.run(oracle,record,mode),`${mode}: ${record.test}`).toEqual(expected);}}finally{replay.close();}
 },90_000);
 it.each(checks)("rejects a disabled %s detector on a recorded positive",async check=>{
@@ -28,7 +28,9 @@ it("ships the ten documents once in the private pack",()=>{
 
 it("binds complete runs and positive controls to the batch implementation",()=>{
  const receipt=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-native-assertions.json","utf8"));
- for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:744,completeResults:621,positiveResults:551,detectorCases:620,retainedUtilityAndCliCases:124,semanticFallbacks:[]});expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);expect(receipt.executionPaths[mode].originalCalls["matching_architecture:_source_requires_matching_scan"]).toBeUndefined();}
+ expect(receipt.format).toBe("rerail.data-layer-batch-ten-assertions/v2");
+ for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:1098,completeResults:975,positiveResults:870,distinctObservations:778,distinctPositiveObservations:680,detectorCases:974,retainedUtilityAndCliCases:124,semanticFallbacks:[]});expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);expect(receipt.executionPaths[mode].originalCalls["matching_architecture:_source_requires_matching_scan"]).toBeUndefined();}
+ expect(receipt.configured).toMatchObject({observations:1176,apiComparisons:2352,selectionComparisons:612,assertions:2964});
  expect(receipt.positiveControls.rejected).toEqual([...checks].sort());
  for(const[path,digest]of Object.entries(receipt.fileSha256))expect(createHash("sha256").update(readFileSync(path)).digest("hex"),path).toBe(digest);
 });

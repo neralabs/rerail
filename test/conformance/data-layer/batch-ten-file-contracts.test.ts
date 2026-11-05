@@ -8,3 +8,8 @@ it.each(cases)("preserves raw files and complete original results: $test",async 
   expect(await replay.run({cases:{},sources:{},records:[]},record,mode,record.production),mode).toEqual(expected);
  }}finally{replay.close();}
 });
+it("retains canonical source proofs when SQL reuses prepared rows",async()=>{
+ const record=cases.find(c=>c.test==="matching-explicit-auxiliary-False")!;
+ const replay=new TenReplay();
+ try{for(const mode of ["snapshot","snapshot","workspace"]as const)expect(await replay.run({cases:{},sources:{},records:[]},record,mode)).toEqual(record.expected);}finally{replay.close();}
+});

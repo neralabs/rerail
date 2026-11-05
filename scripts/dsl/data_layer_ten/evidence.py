@@ -12,10 +12,11 @@ def read_report(path):
 
 def verify_configured(oracle,reports):
  expected=set();selected=0
- for record in oracle['records']:
+ for index,record in enumerate(oracle['records']):
+  identity='observation '+str(index)
   for mode in ['snapshot','workspace']:
-   expected.add('configured repository '+mode+' uses the shipped matching rule' if len(record['files'])>200 else 'configured '+record['check']+' '+mode+': '+record['test'])
-   if record['check']=='matching_architecture':expected.add('selection matching_architecture '+mode+': '+record['test']);selected+=1
+   expected.add('configured repository '+mode+' uses the shipped matching rule' if len(record['files'])>200 else 'configured '+record['check']+' '+mode+': '+identity)
+   if record['check']=='matching_architecture':expected.add('selection matching_architecture '+mode+': '+identity);selected+=1
  seen=set()
  for report in reports:
   if report['numFailedTests'] or report.get('numRuntimeErrorTestSuites',0):raise ValueError('Configured native assertions failed')
@@ -84,7 +85,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured):
  files|=set(Path('scripts/dsl/data_layer_nine').glob('*.py'))|set(Path('scripts/dsl/data_layer_six').glob('*.py'))
  files|={Path('native/src/code_rule_dsl')/p for p in ['compile/evidence.rs','compile/relational.rs','eval/evidence.rs','eval/query.rs','relational.rs','relational/source.rs','relational/python_ast.rs','workspace/evaluate.rs','workspace/global.rs','capabilities.json','value/python_ast/metadata.py','value/python_ast/worker.py']}
  files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
- files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts')}
+ files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
  return dict(format='rerail.data-layer-batch-ten-assertions/v2',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
 def main():
