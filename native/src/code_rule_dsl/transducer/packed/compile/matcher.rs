@@ -188,6 +188,8 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
     }
     crate::code_rule_dsl::prof::count("labels.facts.distinct", distinct.len());
     crate::code_rule_dsl::prof::count("labels.facts.anywhere", distinct.iter().filter(|fact| fact.kinds.is_none()).count());
+    let questions = distinct.iter().map(|fact| fact.question()).collect::<Vec<_>>();
+    crate::code_rule_dsl::prof::count("labels.facts.questions", questions.iter().flatten().collect::<std::collections::HashSet<_>>().len());
     crate::code_rule_dsl::prof::time("labels.facts", || {
         tapes
             .par_iter()
@@ -195,14 +197,41 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
                 let source = Arc::as_ptr(tape.document_source()) as usize;
-                // The tape's sibling positions, shared by its `nthChild` facts.
-                let positions = std::cell::OnceCell::new();
+                // The tape's sibling positions, shared by its `nthChild` facts; the findings of each
+                // question, shared by the facts that ask it; the nodes of each kind.
+                let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
+                let mut answered = HashMap::<&str, crate::code_rule_dsl::matcher::FactFound>::new();
+                let by_kind = std::cell::OnceCell::<HashMap<u16, Vec<u32>>>::new();
+                let by_kind = || {
+                    by_kind.get_or_init(|| {
+                        let mut by_kind = HashMap::<u16, Vec<u32>>::new();
+                        for node in 0..tape.transducer_len() as u32 {
+                            by_kind.entry(tape.transducer_kind(node)).or_default().push(node);
+                        }
+                        by_kind
+                    })
+                };
                 distinct
                     .iter()
-                    .map(|fact| {
-                        let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        let rows = fact.found(&file, domain(&starts, tape, &[]), &positions);
-                        ((Arc::as_ptr(fact) as usize, source), rows)
+                    .zip(&questions)
+                    .map(|(fact, question)| {
+                        let found = match question {
+                            Some(question) if answered.contains_key(question.as_str()) => answered[question.as_str()].clone(),
+                            Some(question) => {
+                                // Its starts from the kinds' nodes: no pass over the tape.
+                                let found = match &fact.kinds {
+                                    Some(kinds) => fact.found(&file, kinds.iter().flat_map(|kind| by_kind().get(kind).into_iter().flatten().copied()), &siblings),
+                                    None => fact.found(&file, 0..tape.transducer_len() as u32, &siblings),
+                                };
+                                answered.insert(question.as_str(), found.clone());
+                                found
+                            }
+                            None => {
+                                let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
+                                fact.found(&file, domain(&starts, tape, &[]), &siblings)
+                            }
+                        };
+                        ((Arc::as_ptr(fact) as usize, source), found)
                     })
                     .collect::<Vec<_>>()
             })
@@ -994,7 +1023,14 @@ impl LoweredWave {
         let clauses = self.clauses.iter().collect::<Vec<_>>();
         let (steps, _) = levels(&clauses, |clause, id| Ok((clause, id)))?;
         let active = |clause: &LoweredMatcher, tape: usize| {
-            let at = self.clauses.iter().position(|c| std::ptr::eq(c, clause)).expect("a clause of the wave");
+            // The clause's index from its address in `clauses` (asked per pass and tape: no scan).
+            let size = std::mem::size_of::<LoweredMatcher>().max(1);
+            let guess = (std::ptr::from_ref(clause) as usize).wrapping_sub(self.clauses.as_ptr() as usize) / size;
+            let at = if self.clauses.get(guess).is_some_and(|c| std::ptr::eq(c, clause)) {
+                guess
+            } else {
+                self.clauses.iter().position(|c| std::ptr::eq(c, clause)).expect("a clause of the wave")
+            };
             active[at][tape]
         };
         let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
@@ -1872,6 +1908,7 @@ fn formulas(
     use super::compile_sets::{Index, Reader, Set};
     use rayon::prelude::*;
     static WALK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SETS").is_ok_and(|mode| mode == "walk"));
+    static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
     if *WALK {
         return vec![None; level.len()];
     }
@@ -1895,7 +1932,7 @@ fn formulas(
                     let texts = walk.texts(program, view)?;
                     let index = indexes[tape].get_or_init(|| Index::of(view));
                     let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(&set);
-                    if std::env::var_os("RERAIL_SETS_CHECK").is_some() {
+                    if *CHECK {
                         let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
                             Domain::All => true,
                             Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),

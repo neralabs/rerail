@@ -76,6 +76,7 @@ pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 pub(in crate::code_rule_dsl) use resolve::file_path;
 pub(super) use memo::with_file as with_file_memo;
 pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
+pub(in crate::code_rule_dsl) use nth_child::SiblingPositions;
 #[cfg(test)]
 pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 #[cfg(test)]
@@ -559,6 +560,25 @@ impl AstMatcher {
             Self::Field(relation) => relation.rule.binds_nothing(),
             Self::NthChild(nth) => nth.of_rule.as_ref().is_none_or(Self::binds_nothing),
             Self::Pattern(_) | Self::Util(_) | Self::Call(_) | Self::Constrained(_) => false,
+        }
+    }
+
+    /// Whether the rule calls a utility (whose meaning is its scope's) anywhere; `true` where it
+    /// cannot tell (a semantic predicate, a count, a comparison, a constrained rule).
+    pub(in crate::code_rule_dsl) fn calls_util(&self) -> bool {
+        let stop = |stop: &relation::StopBy| match stop {
+            relation::StopBy::Rule(rule) => rule.calls_util(),
+            _ => false,
+        };
+        match self {
+            Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Pattern(_) | Self::Never => false,
+            Self::All(items) | Self::Any(items) => items.iter().any(Self::calls_util),
+            Self::Not(item) => item.calls_util(),
+            Self::Inside(related, by) | Self::Has(related, by) | Self::Precedes(related, by) | Self::Follows(related, by) => {
+                related.rule().calls_util() || stop(by)
+            }
+            Self::NthChild(nth) => nth.of_rule.as_ref().is_some_and(Self::calls_util),
+            _ => true,
         }
     }
 

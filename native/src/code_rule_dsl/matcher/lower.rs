@@ -77,6 +77,7 @@ pub(in crate::code_rule_dsl) type FactRow = (u32, Vec<u32>);
 
 /// A fact's findings on one file: rows with their slots' targets, or (a fact with no slot) its
 /// nodes as bits.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) enum FactFound {
     Rows(Vec<FactRow>),
     Nodes(Vec<u64>),
@@ -95,22 +96,37 @@ impl FactFound {
 }
 
 impl Fact {
+    /// What the fact asks where its findings are bits (`found`'s `nthChild` case): facts with equal
+    /// questions and kinds find the same nodes. `None`: it has slots, another producer, or an
+    /// `ofRule` with no identity.
+    pub(in crate::code_rule_dsl) fn question(&self) -> Option<String> {
+        match &self.producer {
+            AstMatcher::NthChild(nth) if self.slots.is_empty() && (nth.of_rule.is_none() || nth.of_rule_key.is_some()) => {
+                Some(format!("{:?}|{}|{}|{}|{:?}", nth.of_rule_key, nth.reverse, nth.position.step, nth.position.offset, self.kinds))
+            }
+            _ => None,
+        }
+    }
+
     /// The findings of `file` (`rows`), as bits where the fact has no slot and its producer is a
     /// position among siblings (`nthChild`).
     pub(in crate::code_rule_dsl) fn found(
         &self,
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
-        positions: &std::cell::OnceCell<super::nth_child::Positions>,
+        siblings: &super::nth_child::SiblingPositions,
     ) -> FactFound {
         match &self.producer {
             AstMatcher::NthChild(nth) if self.slots.is_empty() => {
-                let starts = starts.collect::<Vec<_>>();
-                let positions = positions.get_or_init(|| super::nth_child::Positions::of(file.root().get_doc()));
-                let bits = nth.bits(file, starts.iter().copied(), positions);
                 // `RERAIL_SETS_CHECK`: the bits against the rows.
                 static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
-                if *CHECK {
+                if !*CHECK {
+                    return FactFound::Nodes(nth.bits(file, starts, siblings));
+                }
+                let mut starts = starts.collect::<Vec<_>>();
+                starts.sort_unstable();
+                let bits = nth.bits(file, starts.iter().copied(), siblings);
+                {
                     let rows = self.rows(file, starts.into_iter());
                     let ones = bits.iter().enumerate().flat_map(|(w, &b)| (0..64u32).filter(move |i| b >> i & 1 != 0).map(move |i| w as u32 * 64 + i)).collect::<Vec<_>>();
                     if ones != rows.iter().map(|row| row.0).collect::<Vec<_>>() {

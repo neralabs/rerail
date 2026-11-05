@@ -44,6 +44,9 @@ impl Position {
 pub(crate) struct NthChild {
     pub(crate) position: Position,
     pub(crate) of_rule: Option<AstMatcher>,
+    /// `of_rule`'s identity: equal keys count the same siblings (`Positions`); `None` where it is
+    /// not shared (it calls a utility).
+    pub(crate) of_rule_key: Option<String>,
     pub(crate) reverse: bool,
     /// Whether `of_rule` reads and binds no capture (`CaptureAnalysis::mentions`), worked out on
     /// first use: its verdict at a sibling is then the same for every candidate.
@@ -179,73 +182,25 @@ impl NthChild {
         rows
     }
 
-    /// `rows` as bits over the tape's nodes, from the tape's sibling positions (`Positions`, shared
-    /// by every `nthChild` on the tape): without `ofRule`, a lookup per start; with one, each
-    /// parent's children counted once, an `ofRule` decided by kinds memoized per kind.
+    /// `rows` as bits over the tape's nodes, from the sibling positions it counts (`Positions`,
+    /// shared by every `nthChild` on the tape with the same `ofRule`): a lookup per start.
     pub(in crate::code_rule_dsl) fn bits(
         &self,
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
-        positions: &Positions,
+        siblings: &SiblingPositions,
     ) -> Vec<u64> {
         let tape = file.root().get_doc();
-        let len = tape.transducer_len();
-        let mut bits = vec![0_u64; len.div_ceil(64)];
-        let Some(rule) = &self.of_rule else {
-            for node in starts {
-                let at = node as usize;
-                if !positions.named[at] || tape.transducer_parent(node).is_none() {
-                    continue;
-                }
-                let index = if self.reverse { positions.count[at] - 1 - positions.index[at] } else { positions.index[at] };
-                if self.position.holds(index as usize) {
-                    bits[at / 64] |= 1 << (at % 64);
-                }
-            }
-            return bits;
-        };
-        let mut wanted = vec![0_u64; bits.len()];
+        let positions = siblings.of(self, file);
+        let mut bits = vec![0_u64; tape.transducer_len().div_ceil(64)];
         for node in starts {
-            wanted[node as usize / 64] |= 1 << (node % 64);
-        }
-        // Per kind: 0 not yet asked, 1 no, 2 yes, 3 W's matcher decides.
-        let mut by_kind = Vec::<u8>::new();
-        let mut list = Vec::new();
-        'parents: for parent in 0..len as u32 {
-            list.clear();
-            for child in tape.transducer_children(parent) {
-                if !positions.named[child as usize] {
-                    continue;
-                }
-                let kind = usize::from(tape.transducer_kind(child));
-                if by_kind.len() <= kind {
-                    by_kind.resize(kind + 1, 0);
-                }
-                if by_kind[kind] == 0 {
-                    by_kind[kind] = match on_kinds(rule, kind as u16) {
-                        Some(false) => 1,
-                        Some(true) => 2,
-                        None => 3,
-                    };
-                }
-                let counts = match by_kind[kind] {
-                    1 => false,
-                    2 => true,
-                    _ => match self.probe(file, rule, child) {
-                        Some(verdict) => verdict,
-                        // An unknown verdict leaves the parent's children without one.
-                        None => continue 'parents,
-                    },
-                };
-                if counts {
-                    list.push(child);
-                }
+            let at = node as usize;
+            if !positions.counted[at] {
+                continue;
             }
-            for (position, &child) in list.iter().enumerate() {
-                let index = if self.reverse { list.len() - 1 - position } else { position };
-                if wanted[child as usize / 64] >> (child % 64) & 1 != 0 && self.position.holds(index) {
-                    bits[child as usize / 64] |= 1 << (child % 64);
-                }
+            let index = if self.reverse { positions.count[at] - 1 - positions.index[at] } else { positions.index[at] };
+            if self.position.holds(index as usize) {
+                bits[at / 64] |= 1 << (at % 64);
             }
         }
         bits
@@ -317,32 +272,92 @@ impl NthChild {
 }
 
 /// `rule`'s verdict at a node of kind `kind`, where the rule tests only kinds.
-/// A tape's named children by position: each named node's index among its parent's named
-/// children and their number. Built once per tape for every `nthChild` on it.
+/// A tape's counted children by position: whether each node is counted among its parent's
+/// children (named, and matching the `ofRule`), its index among them and their number. A parent
+/// with a child of unknown verdict counts none of them (no rows, as `rows` has it).
 pub(in crate::code_rule_dsl) struct Positions {
-    named: Vec<bool>,
+    counted: Vec<bool>,
     index: Vec<u32>,
     count: Vec<u32>,
 }
 
 impl Positions {
-    pub(in crate::code_rule_dsl) fn of(tape: &crate::code_rule_dsl::tape::TapeDoc) -> Self {
+    /// One pass in preorder: a node's index is its parent's count so far.
+    fn of(nth: &NthChild, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>) -> Self {
+        let tape = file.root().get_doc();
         let len = tape.transducer_len();
-        let named = (0..len as u32).map(|node| tape.transducer_is_named(node)).collect::<Vec<_>>();
-        let (mut index, mut count) = (vec![0_u32; len], vec![0_u32; len]);
-        for parent in 0..len as u32 {
-            let mut at = 0;
-            for child in tape.transducer_children(parent) {
-                if named[child as usize] {
-                    index[child as usize] = at;
-                    at += 1;
-                }
+        let mut counted = vec![false; len];
+        let mut unknown = vec![false; len];
+        // Per kind: 0 not yet asked, 1 no, 2 yes, 3 W's matcher decides.
+        let mut by_kind = Vec::<u8>::new();
+        for node in 0..len as u32 {
+            if tape.transducer_parent(node).is_none() || !tape.transducer_is_named(node) {
+                continue;
             }
-            for child in tape.transducer_children(parent) {
-                count[child as usize] = at;
+            counted[node as usize] = match &nth.of_rule {
+                None => true,
+                Some(rule) => {
+                    let kind = usize::from(tape.transducer_kind(node));
+                    if by_kind.len() <= kind {
+                        by_kind.resize(kind + 1, 0);
+                    }
+                    if by_kind[kind] == 0 {
+                        by_kind[kind] = match on_kinds(rule, kind as u16) {
+                            Some(false) => 1,
+                            Some(true) => 2,
+                            None => 3,
+                        };
+                    }
+                    match by_kind[kind] {
+                        1 => false,
+                        2 => true,
+                        _ => nth.probe(file, rule, node).unwrap_or_else(|| {
+                            unknown[tape.transducer_parent(node).expect("a child") as usize] = true;
+                            false
+                        }),
+                    }
+                }
+            };
+        }
+        let (mut index, mut count) = (vec![0_u32; len], vec![0_u32; len]);
+        let mut so_far = vec![0_u32; len];
+        for node in 0..len as u32 {
+            let Some(parent) = tape.transducer_parent(node) else { continue };
+            let parent = parent as usize;
+            if unknown[parent] {
+                counted[node as usize] = false;
+            } else if counted[node as usize] {
+                index[node as usize] = so_far[parent];
+                so_far[parent] += 1;
             }
         }
-        Self { named, index, count }
+        for node in 0..len as u32 {
+            if let Some(parent) = tape.transducer_parent(node) {
+                count[node as usize] = so_far[parent as usize];
+            }
+        }
+        Self { counted, index, count }
+    }
+}
+
+/// A tape's `Positions` by `ofRule` (none, or its key), made on first use and shared by the tape's
+/// `nthChild` facts.
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct SiblingPositions(std::cell::RefCell<std::collections::HashMap<Option<String>, std::rc::Rc<Positions>>>);
+
+impl SiblingPositions {
+    fn of(&self, nth: &NthChild, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>) -> std::rc::Rc<Positions> {
+        // A rule without a key is its own.
+        if nth.of_rule.is_some() && nth.of_rule_key.is_none() {
+            return std::rc::Rc::new(Positions::of(nth, file));
+        }
+        let key = nth.of_rule_key.clone();
+        if let Some(found) = self.0.borrow().get(&key) {
+            return std::rc::Rc::clone(found);
+        }
+        let positions = std::rc::Rc::new(Positions::of(nth, file));
+        self.0.borrow_mut().insert(key, std::rc::Rc::clone(&positions));
+        positions
     }
 }
 
@@ -671,3 +686,4 @@ mod tests {
         );
     }
 }
+
