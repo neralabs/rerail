@@ -10,6 +10,23 @@ from data_layer_ten.common import CHECKS,PIN
 def read_report(path):
  return json.loads(gzip.decompress(path.read_bytes()) if path.suffix=='.gz' else path.read_bytes())
 
+def verify_configured(oracle,reports):
+ expected=set();selected=0
+ for record in oracle['records']:
+  for mode in ['snapshot','workspace']:
+   expected.add('configured repository '+mode+' uses the shipped matching rule' if len(record['files'])>200 else 'configured '+record['check']+' '+mode+': '+record['test'])
+   if record['check']=='matching_architecture':expected.add('selection matching_architecture '+mode+': '+record['test']);selected+=1
+ seen=set()
+ for report in reports:
+  if report['numFailedTests'] or report.get('numRuntimeErrorTestSuites',0):raise ValueError('Configured native assertions failed')
+  for suite in report['testResults']:
+   for case in suite['assertionResults']:
+    if case['status']=='passed':
+     if case['fullName'] in seen:raise ValueError('Duplicate configured assertion')
+     seen.add(case['fullName'])
+ if seen!=expected:raise ValueError('Missing or extra configured native assertions: '+str(expected^seen))
+ return dict(observations=len(oracle['records']),positiveObservations=sum(bool(r['expected']) for r in oracle['records']),apiComparisons=2*len(oracle['records']),selectionComparisons=selected,perRule=dict(Counter(r['check'] for r in oracle['records'])),assertions=len(seen))
+
 def normalized(record):
  record=copy.deepcopy(record)
  if record['check']=='generated_index_sources':record['expected']=[re.sub(r'/[^ ]*/pytest-[0-9]+/[^/]+/','',v) for v in record['expected']]
@@ -53,18 +70,23 @@ def verify(oracle,reports,controls=False,mode=None,policies=None):
  unique={json.dumps({k:v for k,v in normalized(r).items() if k!='test'},sort_keys=True):r for r in wanted}
  return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),retainedUtilityAndCliCases=len(seen-{r['test'] for r in records}),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
 
-def receipt(oracle_path,snapshot,workspace,controls):
+def receipt(oracle_path,snapshot,workspace,controls,configured):
  policies={c:hashlib.sha256((Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json')).read_bytes()).hexdigest() for c in CHECKS}
  oracle=read_report(oracle_path);paths={mode:verify(oracle,[read_report(path) for path in reports],mode=mode,policies=policies) for mode,reports in [('snapshot',snapshot),('workspace',workspace)]};negative=verify(oracle,[read_report(path) for path in controls],True,mode='snapshot')
  assert paths['snapshot']['engineSha256']==paths['workspace']['engineSha256']==negative['engineSha256']
- files=set(Path('scripts/dsl/data_layer_ten').glob('*.py'))|{Path('scripts/generate/packs/data_layer_batch_ten.py'),oracle_path,Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json'),Path('conformance/data-layer/batch-ten.ts'),Path('conformance/data-layer/native-worker.ts'),Path('test/conformance/data-layer/batch-ten.test.ts'),Path('test/conformance/data-layer/batch-ten-defaults.test.ts')}
+ configured_path=Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz');configured_summary=verify_configured(read_report(configured_path),[read_report(p) for p in configured])
+ files=set(Path('scripts/dsl/data_layer_ten').glob('*.py'))|{Path('scripts/generate/packs/data_layer_batch_ten.py'),oracle_path,configured_path,Path('conformance/data-layer/batch-ten.ts'),Path('conformance/data-layer/native-worker.ts'),Path('conformance/data-layer/execution.ts'),Path('conformance/data-layer/policies.ts'),Path('test/conformance/data-layer/batch-ten.test.ts'),Path('test/conformance/data-layer/batch-ten-defaults.test.ts')}
+ files|={Path('test/conformance/data-layer')/name for name in ['batch-ten-file-contracts.test.ts','batch-ten-families.test.ts','batch-ten-configured-repository.test.ts']}
+ files|={Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json')}
+ files|={Path('scripts/dsl/data_layer_audit')/name for name in ['native_suite.py','native_guard.py','native_scanners.py']}
  files|=set(Path('test/engine/native/data-layer-ten').glob('*.ts'))|{Path('.github/workflows/ci.yml')}
  files|=set(Path('fixtures/host/data-layer-port').glob('batch-10-*seeds.json'))|{Path('fixtures/host/data-layer-port/batch-10-repair-regressions.json'),Path('test/conformance/data-layer/batch-ten-repair.test.ts')}
  files|=set(Path('scripts/dsl/data_layer_nine').glob('*.py'))|set(Path('scripts/dsl/data_layer_six').glob('*.py'))
  files|={Path('native/src/code_rule_dsl')/p for p in ['compile/evidence.rs','compile/relational.rs','eval/evidence.rs','eval/query.rs','relational.rs','relational/source.rs','relational/python_ast.rs','workspace/evaluate.rs','workspace/global.rs','capabilities.json','value/python_ast/metadata.py','value/python_ast/worker.py']}
+ files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
- return dict(format='rerail.data-layer-batch-ten-assertions/v1',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
+ return dict(format='rerail.data-layer-batch-ten-assertions/v2',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
 def main():
- p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls),indent=2)+'\n')
+ p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured),indent=2)+'\n')
 if __name__=='__main__':main()
