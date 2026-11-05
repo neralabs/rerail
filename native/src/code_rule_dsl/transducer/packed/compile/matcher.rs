@@ -1923,7 +1923,7 @@ fn formulas(
                 let found = on
                     .par_iter()
                     .map(|&tape| {
-                        let index = indexes[tape].get_or_init(|| Index::of(&views[tape]));
+                        let index = indexes[tape].get_or_init(Index::default);
                         let bits = fact.nth_bits(&views[tape], &index.siblings).expect("a node set");
                         (tape, Arc::unwrap_or_clone(bits))
                     })
@@ -1949,7 +1949,7 @@ fn formulas(
                 .map(|&tape| {
                     let view = &views[tape];
                     let texts = walk.texts(program, view)?;
-                    let index = indexes[tape].get_or_init(|| Index::of(view));
+                    let index = indexes[tape].get_or_init(Index::default);
                     let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(&set);
                     if *CHECK {
                         let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {

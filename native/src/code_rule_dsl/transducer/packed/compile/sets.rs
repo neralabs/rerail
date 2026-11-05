@@ -30,7 +30,7 @@
 use super::*;
 use crate::code_rule_dsl::tape::{DERIVED_CLASS_BASE, TapeDoc};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 /// A set of nodes, as a formula over a tape's columns.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -252,29 +252,54 @@ fn forward(words: &[u32], from: usize, to: usize, starts: Set) -> Option<Set> {
     Some(at)
 }
 
-/// A tape's columns as sets, built once per labelling: kind and field postings, flags.
+/// A tape's columns as sets for one labelling, each built the first time a formula reads it.
+#[derive(Default)]
 pub(in crate::code_rule_dsl) struct Index {
-    kinds: HashMap<u16, Vec<u32>>,
-    fields: HashMap<u16, Vec<u32>>,
-    flags: Vec<u8>,
+    kinds: OnceLock<Postings>,
+    fields: OnceLock<Postings>,
+    flags: OnceLock<Vec<u8>>,
     /// Grammar supertypes asked for, by class.
     classes: Mutex<HashMap<u16, Arc<Vec<u64>>>>,
     /// Sibling positions and `nthChild` answers, for facts that are node sets.
     pub(in crate::code_rule_dsl) siblings: crate::code_rule_dsl::matcher::SiblingPositions,
 }
 
-impl Index {
-    pub(in crate::code_rule_dsl) fn of(tape: &TapeDoc) -> Self {
-        let len = tape.transducer_len() as u32;
-        let mut kinds = HashMap::<u16, Vec<u32>>::new();
-        let mut fields = HashMap::<u16, Vec<u32>>::new();
-        let mut flags = Vec::with_capacity(len as usize);
+/// A column's nodes by value, in order: `nodes[offsets[value]..offsets[value + 1]]`. Built by a
+/// counting sort, two passes over the column.
+struct Postings {
+    offsets: Vec<u32>,
+    nodes: Vec<u32>,
+}
+
+impl Postings {
+    fn of(len: u32, value: impl Fn(u32) -> u16) -> Self {
+        let mut offsets = Vec::<u32>::new();
         for node in 0..len {
-            kinds.entry(tape.transducer_kind(node)).or_default().push(node);
-            fields.entry(tape.transducer_field(node)).or_default().push(node);
-            flags.push(tape.transducer_flags(node));
+            let value = usize::from(value(node));
+            if offsets.len() < value + 2 {
+                offsets.resize(value + 2, 0);
+            }
+            offsets[value + 1] += 1;
         }
-        Self { kinds, fields, flags, classes: Default::default(), siblings: Default::default() }
+        for at in 1..offsets.len() {
+            offsets[at] += offsets[at - 1];
+        }
+        let mut next = offsets.clone();
+        let mut nodes = vec![0_u32; len as usize];
+        for node in 0..len {
+            let value = usize::from(value(node));
+            nodes[next[value] as usize] = node;
+            next[value] += 1;
+        }
+        Self { offsets, nodes }
+    }
+
+    fn get(&self, value: u16) -> &[u32] {
+        let value = usize::from(value);
+        match (self.offsets.get(value), self.offsets.get(value + 1)) {
+            (Some(&from), Some(&to)) => &self.nodes[from as usize..to as usize],
+            _ => &[],
+        }
     }
 }
 
@@ -293,12 +318,16 @@ impl Reader<'_> {
         self.tape.transducer_len().div_ceil(64)
     }
 
-    fn postings(&self, nodes: Option<&Vec<u32>>) -> Vec<u64> {
+    fn postings(&self, nodes: &[u32]) -> Vec<u64> {
         let mut bits = vec![0_u64; self.words()];
-        for &node in nodes.map_or(&[][..], Vec::as_slice) {
+        for &node in nodes {
             bits[node as usize / 64] |= 1 << (node % 64);
         }
         bits
+    }
+
+    fn flags(&self) -> &[u8] {
+        self.index.flags.get_or_init(|| (0..self.tape.transducer_len() as u32).map(|node| self.tape.transducer_flags(node)).collect())
     }
 
     /// The members of `set`.
@@ -315,11 +344,17 @@ impl Reader<'_> {
                 }
                 bits
             }
-            Set::Kind(kind) => self.postings(self.index.kinds.get(kind)),
-            Set::Field(field) => self.postings(self.index.fields.get(field)),
+            Set::Kind(kind) => {
+                let len = len as u32;
+                self.postings(self.index.kinds.get_or_init(|| Postings::of(len, |node| self.tape.transducer_kind(node))).get(*kind))
+            }
+            Set::Field(field) => {
+                let len = len as u32;
+                self.postings(self.index.fields.get_or_init(|| Postings::of(len, |node| self.tape.transducer_field(node))).get(*field))
+            }
             Set::Flags { mode, arg } => {
                 let mut bits = vec![0_u64; words];
-                for (node, &flags) in self.index.flags.iter().enumerate() {
+                for (node, &flags) in self.flags().iter().enumerate() {
                     if flags & mode == *mode && flags & arg == 0 {
                         bits[node / 64] |= 1 << (node % 64);
                     }
@@ -375,7 +410,7 @@ impl Reader<'_> {
                 let of = self.eval(of);
                 let mut bits = vec![0_u64; words];
                 for node in ones(&of) {
-                    if *named && self.index.flags[node as usize] & NAMED == 0 {
+                    if *named && self.flags()[node as usize] & NAMED == 0 {
                         continue;
                     }
                     if let Some(parent) = self.tape.transducer_parent(node) {
@@ -388,7 +423,7 @@ impl Reader<'_> {
                 let of = self.eval(of);
                 let mut bits = vec![0_u64; words];
                 for node in ones(&of) {
-                    if *named && self.index.flags[node as usize] & NAMED == 0 {
+                    if *named && self.flags()[node as usize] & NAMED == 0 {
                         continue;
                     }
                     // Up to the first ancestor already marked: its own ancestors are.
@@ -521,7 +556,7 @@ impl Reader<'_> {
     }
 
     fn named_ok(&self, node: u32, named: bool) -> bool {
-        !named || self.index.flags[node as usize] & NAMED != 0
+        !named || self.flags()[node as usize] & NAMED != 0
     }
 }
 
