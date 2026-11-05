@@ -1296,6 +1296,1473 @@
           "message": "Lower transaction classes cannot define a matching method"
         }
       ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x9",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\tSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0xa",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\nSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0xb",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x0bSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0xc",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x0cSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0xd",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\rSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x1c",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x1cSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x1d",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x1dSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x1e",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x1eSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x1f",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x1fSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x20",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f' SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x85",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\x85SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0xa0",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\xa0SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x1680",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u1680SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2000",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2000SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2001",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2001SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2002",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2002SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2003",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2003SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2004",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2004SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2005",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2005SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2006",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2006SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2007",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2007SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2008",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2008SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2009",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2009SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x200a",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u200aSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2028",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2028SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x2029",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u2029SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x202f",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u202fSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x205f",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u205fSELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-space-0x3000",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\u3000SELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-lower-SELECT",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'select {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-lower-INSERT",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'insert {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-lower-UPDATE",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'update {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-lower-DELETE",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'delete {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-lower-CREATE",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'create {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-lower-ALTER",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'alter {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-long-s",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\u017fELECT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-dotless-i",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\u0131NSERT {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-terminal-expansion",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'SELEC\u1e97 {value}'\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA007",
+          "path": "data_layer/matching.py",
+          "line": 2,
+          "symbol": "raw_sql",
+          "message": "Matching SQL must use typed grammar classes"
+        }
+      ]
+    },
+    {
+      "test": "matching-sql-prefix-internal-expansion",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'SELE\u1e97T {value}'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-sql-prefix-bom",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'\\ufeffSELECT {value}'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-sql-prefix-literal-prefix",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer.matching import MatchSpec\nsql = f'value SELECT {value}'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-uppercase-counter-STAGES",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "count = MatchDatabaseRoundTripCount(len(STAGES))\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "MatchDatabaseRoundTripCount",
+          "message": "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+        }
+      ]
+    },
+    {
+      "test": "matching-uppercase-counter-STAGES_\u03b4",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "count = MatchDatabaseRoundTripCount(len(STAGES_\u03b4))\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-uppercase-counter-STAGES_\u0394",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "count = MatchDatabaseRoundTripCount(len(STAGES_\u0394))\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "MatchDatabaseRoundTripCount",
+          "message": "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+        }
+      ]
+    },
+    {
+      "test": "matching-uppercase-counter-STAGES_\u01f0",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "count = MatchDatabaseRoundTripCount(len(STAGES_\u01f0))\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-uppercase-counter-STAGES_\u0131",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "count = MatchDatabaseRoundTripCount(len(STAGES_\u0131))\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-layer-arabic-low",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l\u0661\u0667\u0660\u0660_other/helper.py",
+          "source": "class Helper:\n    def match(self):\n        pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA003",
+          "path": "l\u0661\u0667\u0660\u0660_other/helper.py",
+          "line": 2,
+          "symbol": "Helper.match",
+          "message": "Lower transaction classes cannot define a matching method"
+        }
+      ]
+    },
+    {
+      "test": "matching-layer-arabic-high",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l\u0665\u0662\u0665\u0660_other/helper.py",
+          "source": "class Helper:\n    def match(self):\n        pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-layer-first-unicode",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l\u0667\u0660\u0660\u0660_owner/l1700_other/helper.py",
+          "source": "class Helper:\n    def match(self):\n        pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "matching-layer-fullwidth",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l\uff11\uff17\uff10\uff10_other/helper.py",
+          "source": "class Helper:\n    def match(self):\n        pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA003",
+          "path": "l\uff11\uff17\uff10\uff10_other/helper.py",
+          "line": 2,
+          "symbol": "Helper.match",
+          "message": "Lower transaction classes cannot define a matching method"
+        }
+      ]
+    },
+    {
+      "test": "matching-layer-supplementary",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l\ud835\udfd9\ud835\udfdf\ud835\udfd8\ud835\udfd8_other/helper.py",
+          "source": "class Helper:\n    def match(self):\n        pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA003",
+          "path": "l\ud835\udfd9\ud835\udfdf\ud835\udfd8\ud835\udfd8_other/helper.py",
+          "line": 2,
+          "symbol": "Helper.match",
+          "message": "Lower transaction classes cannot define a matching method"
+        }
+      ]
+    },
+    {
+      "test": "matching-layer-default-arabic",
+      "check": "matching_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "impl/common/l\u0661\u0667\u0660\u0660_other/helper.py",
+          "source": "class Helper:\n    def match(self):\n        pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l\u0661\u0667\u0660\u0660_other/helper.py",
+          "line": 2,
+          "code": "MA003",
+          "message": "Lower transaction classes cannot define a matching method"
+        }
+      ]
+    },
+    {
+      "test": "bounded-python-space-0x1c",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\n\u001cdef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "bounded-python-space-0x1d",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\n\u001ddef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "bounded-python-space-0x1e",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\n\u001edef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "bounded-python-space-0x1f",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\n\u001fdef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 5,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
     }
   ]
 }
