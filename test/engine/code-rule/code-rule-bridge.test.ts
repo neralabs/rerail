@@ -808,9 +808,9 @@ async function twoBranches(): Promise<string> {
   return root;
 }
 /** A bridge opened on `root` with its baseline taken, and its auditor's calls. */
-async function opened(root: string, extra: Partial<CodeRuleAuditor> = {}) {
+async function opened(root: string, extra: Partial<CodeRuleAuditor> = {}, worktreeWalkGapMs = 0) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
-  const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra }, { worktreeWalkGapMs: 0 });
+  const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra }, { worktreeWalkGapMs });
   await bridge.openWorkspace("session-1");
   await bridge.checkpoint("turn");
   await bridge.settleWorktreeWalk();
@@ -898,6 +898,81 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       git(root, "worktree", "add", "--quiet", later, "other");
       roots.push(await realpath(later));
     });
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  /** The paths `audit` was given, over every call. */
+  const auditedPaths = (audit: ReturnType<typeof vi.fn>): string[] =>
+    audit.mock.calls.flatMap(([, batch]) => (batch as CodeRuleEditBatch).edits.map(edit => edit.path));
+
+  it("walks again for a boundary that came while a walk was running, so a write the walk had passed is seen", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep", "deeper"), { recursive: true });
+    await writeFile(join(worktree, "top.py"), "old\n");
+    await awaitClockAfter(join(worktree, "top.py"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // The walk reads each level whole before the next, so this gate holds it after it has read `top.py`.
+    const walk = holdDiscovery("directories", join(worktree, "deep", "deeper"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    await writeFile(join(worktree, "top.py"), "old\nviolation\n");
+    await bridge.checkpoint("turn");
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "top.py"))]);
+  });
+
+  it("takes what a walk could not read in a worktree as a baseline once it can, but for what was written since", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    await writeFile(join(worktree, "deep", "old.py"), "violation\n");
+    await awaitClockAfter(join(worktree, "deep", "old.py"));
+    discovery.directories.set(join(worktree, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const { bridge, auditGeneratedEdits } = await opened(root, extra);
+      expect(stderr).toHaveBeenCalledWith(expect.stringContaining("worktree walk incomplete"));
+      await writeFile(join(worktree, "deep", "new.py"), "violation\n");
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+      expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
+  it("reports no deletions for a nested worktree the other walk dropped while the session's walk ran", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(root, "wt"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra, 200);
+    // Leaves the worktree walk timed, for after the next session walk has started.
+    await bridge.checkpoint("turn");
+    await writeFile(join(root, "src", "hold.py"), "mine\n");
+    const walk = holdDiscovery("reads", join(root, "src", "hold.py"));
+    await requestDiscovery(bridge, walk);
+    git(root, "worktree", "remove", worktree);
+    roots.length = 0;
+    await bridge.settleWorktreeWalk();
+    walk.release();
+    await bridge.checkpoint("turn");
+    expect(auditedPaths(auditGeneratedEdits)).toEqual(["src/hold.py"]);
+  });
+
+  it("reports no deletions for a worktree the session's walk dropped while the worktree walk ran", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    await mkdir(join(worktree, "deep"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const walk = holdDiscovery("directories", join(worktree, "deep"));
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", "--force", worktree);
+    roots.length = 0;
+    await bridge.checkpoint("turn");
+    walk.release();
+    await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 });

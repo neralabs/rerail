@@ -2,11 +2,13 @@ import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { runGit } from "../../../src/engine/git.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
+import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
@@ -103,6 +105,20 @@ describe("recordStartedWorktree", () => {
     expect(recordStartedWorktree(database, planted, location)).toBe(false);
     // The refusal leaves what the recorded checkout's registry says untouched.
     expect(recordStartedWorktree(database, join(root, "real"), repositoryIdentityLocation(join(root, "real")))).toBe(true);
+  });
+
+  it("records a worktree when a copy of its checkout made with its .git was recorded first", async () => {
+    const { root, main, database } = await startedRepository();
+    const copy = join(root, "copy");
+    execFileSync("cp", ["-a", main, copy]);
+    // The copy keeps the clone id; recorded again after it, the main checkout's row comes second.
+    expect(recordCheckout(database, copy).cloneId).toBe(recordCheckout(database, main).cloneId);
+    database.delete(checkouts).where(eq(checkouts.checkoutPath, main)).run();
+    recordCheckout(database, main);
+    const worktree = join(root, "w");
+    git(main, "worktree", "add", "--quiet", "-b", "linked", worktree);
+
+    expect(recordStartedWorktree(database, worktree, repositoryIdentityLocation(worktree))).toBe(true);
   });
 
   it("refuses a registered worktree of the recorded checkout when the location names another common directory", async () => {

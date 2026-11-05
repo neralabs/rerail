@@ -132,28 +132,28 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
 /**
  * Record the checkout at `root` (a physical top level, located at `location`, with no record yet) when it is a worktree
  * of a clone Rerail knows and Rerail runs there, so an edit a session makes in it is audited though no session started
- * there. Called from a path a tool call named, so only Git's own registry grants this: the clone's recorded checkout must
- * share `root`'s common directory and list `root`, as `git worktree add` registers it there. A `.git` file anyone can
- * write names the same common directory and clone id and is not listed; a Git folder of its own with the clone id copied
- * in is another common directory. Another clone of the same remote shares neither. Git runs in the recorded checkout,
- * and only for a clone that is known and started; false when nothing was recorded.
+ * there. Called from a path a tool call named, so only Git's own registry grants this: a recorded checkout of the clone
+ * must share `root`'s common directory and list `root`, as `git worktree add` registers it there. A `.git` file anyone
+ * can write names the same common directory and clone id and is not listed; a Git folder of its own with the clone id
+ * copied in is another common directory. Another clone of the same remote shares neither. A copy of a checkout made with
+ * its `.git` keeps the clone id but reads its own registry, so it neither grants nor refuses for the original. Git runs
+ * only in a recorded checkout Rerail runs in; false when nothing was recorded.
  */
 export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
   const cloneId = readCloneIdAt(location.identityPath);
   if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
+  const commonDirectory = physicalPath(dirname(location.identityPath));
   const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
-  const peer = recorded[0];
-  if (peer === undefined || !checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started) return false;
-  // Every checkout of a clone reads one registry, so the first that answers decides; a recorded folder may be gone.
-  for (const { path } of recorded) {
-    const registry = worktreeRegistry(path);
-    if (registry === undefined) continue;
-    if (registry.commonDirectory !== physicalPath(dirname(location.identityPath))) return false;
-    if (!registry.worktrees.some(worktree => physicalPath(worktree) === root)) return false;
-    recordCheckout(db, root);
-    return true;
-  }
-  return false;
+  const listed = recorded.some(peer =>
+    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registryLists(peer.path, commonDirectory, root));
+  if (listed) recordCheckout(db, root);
+  return listed;
+}
+
+/** Whether the recorded `checkout` reads Git's registry in `commonDirectory` and lists `root` there; a gone folder lists nothing. */
+function registryLists(checkout: string, commonDirectory: string, root: string): boolean {
+  const registry = worktreeRegistry(checkout);
+  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => physicalPath(worktree) === root);
 }
 
 /**

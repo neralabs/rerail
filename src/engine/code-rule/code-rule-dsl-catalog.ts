@@ -432,13 +432,7 @@ export class CheckoutCatalogs {
    * of a started clone that no session started in is recorded here, the first time a path in it is looked up.
    */
   #read(entry: CheckoutEntry): void {
-    let row = this.#row(entry);
-    if (row === undefined) {
-      // A folder outside Git may become a checkout, so only a Git location is kept.
-      const location = entry.location ?? repositoryIdentityLocation(entry.root);
-      if (location.git) entry.location = location;
-      if (recordStartedWorktree(this.database, entry.root, location)) row = this.#row(entry);
-    }
+    const row = this.#row(entry) ?? this.#recordWorktree(entry);
     if (row === undefined) {
       entry.checkout = undefined;
       entry.parents = [];
@@ -455,6 +449,14 @@ export class CheckoutCatalogs {
     entry.status = status;
     if (!status.started) entry.eligibility = "stopped";
     else entry.eligibility = status.setUp ? "ok" : "not-set-up";
+  }
+
+  /** The row of `entry` once recorded as a worktree of a started clone (`recordStartedWorktree`); undefined when it is not one. */
+  #recordWorktree(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
+    // A folder outside Git may become a checkout, so only a Git location is kept.
+    const location = entry.location ?? repositoryIdentityLocation(entry.root);
+    if (location.git) entry.location = location;
+    return recordStartedWorktree(this.database, entry.root, location) ? this.#row(entry) : undefined;
   }
 
   #row(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
