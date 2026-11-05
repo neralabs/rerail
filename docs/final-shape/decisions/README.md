@@ -35,3 +35,5 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0034 | The device keeps no per-thread memory (the driver's scratch, sized for every thread in flight and kept): walks run in pools with device stacks, pattern equality walks preorder runs, pattern kernels hold 8 patterns each | accepted |
 | 0035 | Cross-file rounds bound file crossings: a recursive atom whose node may be in another file reads the previous round (`@doc` split); digest cutoff; k = 2 | accepted |
 | 0036 | Rules are Datalog (joins, negation, recursion through facts, name sets, string tests, types, options); tree axes are built-ins computed as tapes in the transducer, as `nearest` is; the NFA is optimized and an optimizer may lower tape-shaped rules to tapes | accepted |
+| 0037 | Text tests are globs over typed text, run once per distinct string | accepted |
+| 0038 | Rule bodies simplified (nearest for inside-not-blocked, identical relations merged, implied atoms dropped); plans reused across chunks and re-priced; search bounded; estimates at least one row; nearest ancestors by pointer jumping on the device | accepted |
