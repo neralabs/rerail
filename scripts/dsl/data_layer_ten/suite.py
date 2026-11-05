@@ -19,9 +19,13 @@ class Suite(NineSuite):
   wrapped=super().wrap(check,entry,module,original)
   @wraps(wrapped)
   def adapter(*args,**kwargs):
-   self.adapter_depth=getattr(self,'adapter_depth',0)+1
-   try:return wrapped(*args,**kwargs)
-   finally:self.adapter_depth-=1
+   from contextlib import nullcontext
+   from data_layer_ten.source_lock import recording_lock
+   outer=self.oracle and getattr(self,'adapter_depth',0)==0
+   with recording_lock(self.root) if outer else nullcontext():
+    self.adapter_depth=getattr(self,'adapter_depth',0)+1
+    try:return wrapped(*args,**kwargs)
+    finally:self.adapter_depth-=1
   return adapter
  def pytest_configure(self):
   parse,walk=ast.parse,ast.walk
@@ -114,7 +118,9 @@ class Suite(NineSuite):
    for path in sorted(root.rglob('*')):
     if path.is_file() and path.suffix in {'.py','.rst','.md'} and not any(part in {'.git','.venv','venv','__pycache__'} for part in path.relative_to(root).parts):add(path)
   elif check=='hnsw_architecture':
-   for path in arguments['paths']:add(path)
+   for path in arguments['paths']:
+    add(path)
+    if path.is_absolute() and not path.is_relative_to(Path.cwd()):parameters.setdefault('cwdExternalPaths',[]).append(files[-1]['path'])
   else:
    path=arguments.get('path',arguments.get('file_path'));source=arguments.get('source');tree=arguments.get('tree',arguments.get('module'))
    if source is None and tree is not None:
@@ -167,7 +173,11 @@ class Suite(NineSuite):
   items[:]=items[getattr(self,'part',0)::getattr(self,'parts',1)]
 def main():
  p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--repo',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--policies',type=Path,required=True);p.add_argument('--oracle',action='store_true');p.add_argument('--baseline',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot');p.add_argument('--checks',default=','.join(CHECKS));p.add_argument('--mutant',action='store_true');p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);p.add_argument('tests',nargs='*');args=p.parse_args()
- workspace=Path.cwd();root=args.source.resolve();repo=args.repo.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True);os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
+ workspace=Path.cwd();root=args.source.resolve();repo=args.repo.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True)
+ if args.mutant:
+  from data_layer_ten.evidence import disabled_policies
+  args.policies=disabled_policies(args.policies.resolve(),output.parent/(output.stem+'-mutant-policies'))
+ os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
  from data_layer_ten.evidence import read_report
  baseline=expand(read_report(args.baseline)) if args.baseline else None
  if not args.oracle and baseline is None:p.error('A recorded original baseline is required')

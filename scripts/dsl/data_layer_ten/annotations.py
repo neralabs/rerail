@@ -14,7 +14,10 @@ def stages():
           JOIN a parent ON parent.__path=child.__path AND parent.id=child.parent
           WHERE parent.kind='Subscript' AND child.field='value') SELECT * FROM names""", ('__path','id')),
         S('annotation_parts', """WITH RECURSIVE parts(__path,root,id,address) AS (
-          SELECT __path,id,id,'' FROM a
+          SELECT n.__path,n.id,n.id,'' FROM a n LEFT JOIN a parent ON parent.__path=n.__path AND parent.id=n.parent
+          WHERE n.field IN ('annotation','bases','type','decorator_list','func')
+             OR n.field IN ('left','right') AND parent.kind='BinOp' AND parent.op='BitOr'
+             OR n.field='value' AND parent.kind='Attribute'
           UNION ALL SELECT p.__path,p.root,child.id,p.address||CASE WHEN child.field='right' THEN '2' ELSE '0' END
           FROM parts p JOIN a parent ON parent.__path=p.__path AND parent.id=p.id
           JOIN a child ON child.__path=parent.__path AND child.parent=parent.id

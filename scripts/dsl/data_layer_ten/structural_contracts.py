@@ -103,6 +103,6 @@ def record(source):
             expected = normalize(hnsw.find_hnsw_architecture_findings((target,)), root)
         cases.append(dict(test='structural-hnsw-outside-cwd-' + label, check='hnsw_architecture',
                           entry='find_hnsw_architecture_findings',
-                          parameters={'inventoryExcludedPaths': [path]}, production=False,
+                          parameters={'cwdExternalPaths': [path]}, production=False,
                           files=[dict(path=path, source=text)], expected=expected))
     return cases

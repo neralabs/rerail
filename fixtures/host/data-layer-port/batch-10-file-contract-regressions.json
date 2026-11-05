@@ -4682,7 +4682,7 @@
       "check": "hnsw_architecture",
       "entry": "find_hnsw_architecture_findings",
       "parameters": {
-        "inventoryExcludedPaths": [
+        "cwdExternalPaths": [
           "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py"
         ]
       },
@@ -4700,7 +4700,7 @@
       "check": "hnsw_architecture",
       "entry": "find_hnsw_architecture_findings",
       "parameters": {
-        "inventoryExcludedPaths": [
+        "cwdExternalPaths": [
           "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py"
         ]
       },

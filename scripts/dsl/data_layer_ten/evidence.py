@@ -10,6 +10,14 @@ from data_layer_ten.common import CHECKS,PIN
 def read_report(path):
  return json.loads(gzip.decompress(path.read_bytes()) if path.suffix=='.gz' else path.read_bytes())
 
+def disabled_policies(source,target):
+ target.mkdir(parents=True,exist_ok=True)
+ for check in CHECKS:
+  name='data-layer-'+check.replace('_','-')+'.json';document=read_report(source/name)
+  document['clauses']=[clause for clause in document['clauses'] if 'define' in clause]+[dict(id='disabled',forbid=dict(regex=dict(source='file.content',pattern=r'\b\B')),violation=dict(code='CONTROL',message='Disabled',anchor='witness.span'))]
+  (target/name).write_text(json.dumps(document,indent=2)+'\n')
+ return target
+
 def verify_contracts(oracle,reports):
  expected={'preserves raw files and complete original results: '+case['test'] for case in oracle['cases']}
  if len(expected)!=len(oracle['cases']):raise ValueError('Duplicate focused input identity')
