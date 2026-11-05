@@ -8,6 +8,11 @@
 //!   planner then reads the atom by its constant column (a lookup by string), where a separate `$v = "get"` binds
 //!   `$v` only after the atom is scanned some other way. A variable the head names stays (a head column filled from a
 //!   text column keeps its relation a string filter, decision 0037), as does one an aggregate, `nearest` or `ast` names.
+//! - **A test of one node read only positively is inlined.** `m($n) :- node(_, $n, _, _, _), !k($n)` (a complement:
+//!   the converter's `not`) read as `m($t)` becomes the reader's `node(_, $t, _, _, _), !k($t)`: where the reader has
+//!   bound `$t`, a probe of `k`, not a relation of every node less `k`'s. Such a relation has one rule, over its one
+//!   node variable alone and not recursive, and no negated or aggregated reader; kept relations (below) stay. (One
+//!   rule: a relation of several would copy each reader once per rule, its whole join run again.)
 //! - **Identical relations merge.** Derived relations whose rules are equal once their heads and variables are
 //!   renamed in order are one relation; readers read the first. Repeated to a fixpoint, so relations over merged
 //!   ones merge too. Outputs, inputs, lattices, relations with facts and demanded relations are kept as they are.
@@ -24,10 +29,13 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) constants: usize,
     /// Merged relations: (kept, merged into it).
     pub(in crate::code_rule_dsl) merged: Vec<(String, String)>,
+    /// Relations inlined into their readers.
+    pub(in crate::code_rule_dsl) inlined: Vec<String>,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     let mut report = Report::default();
+    report.inlined = inline_node_tests(prog);
     for rule in &mut prog.rules {
         report.constants += fold_constants(rule);
         report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
@@ -40,9 +48,9 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         }
     }
     if super::profile::on() {
-        let (i, k, c, m) = (report.implied, report.kind_tests, report.constants, report.merged.len());
+        let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
         super::profile::decision("simplified bodies (decision 0038)", || {
-            format!("{i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one")
+            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one")
         });
     }
     report
@@ -104,6 +112,162 @@ fn fold_constants(rule: &mut Rule) -> usize {
             }
         }
         folded += 1;
+    }
+}
+
+/// Whether a relation's rules may not change: outputs, inputs, lattices, relations with facts, demanded relations and
+/// gates.
+fn kept(prog: &Program, rel: &str) -> bool {
+    prog.outputs.iter().any(|o| o == rel)
+        || prog.inputs.iter().any(|i| i == rel)
+        || prog.lattice.contains_key(rel)
+        || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
+        || prog.demand.iter().any(|d| d == rel)
+        || prog.gates.iter().any(|(g, _)| g == rel)
+}
+
+/// Inlines each one-rule test of one node read only positively (the module's list); returns the relations inlined.
+fn inline_node_tests(prog: &mut Program) -> Vec<String> {
+    join_complements(prog);
+    // Each candidate's bodies, over the variable `$h`.
+    let mut bodies: BTreeMap<String, Vec<Vec<Literal>>> = BTreeMap::new();
+    let mut refused: BTreeSet<String> = BTreeSet::new();
+    for rule in &prog.rules {
+        let rel = &rule.head.rel;
+        let one_node = match rule.head.args.as_slice() {
+            [Term::Var(h)] => {
+                let tests_node = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel == "node" && a.args.get(1) == Some(&Term::Var(h.clone()))));
+                let alone = rule.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }) && l.vars().iter().all(|v| v == h));
+                let recursive = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == *rel));
+                (tests_node && alone && !recursive).then(|| rule.body.iter().map(|l| rename_var(l, h, "$h")).collect::<Vec<_>>())
+            }
+            _ => None,
+        };
+        match one_node {
+            Some(body) if !kept(prog, rel) => bodies.entry(rel.clone()).or_default().push(body),
+            _ => {
+                refused.insert(rel.clone());
+            }
+        }
+    }
+    // Read only as a positive atom over a variable, by rules of other relations.
+    for rule in &prog.rules {
+        for l in &rule.body {
+            match l {
+                Literal::Atom(a) if !a.neg && matches!(a.args.as_slice(), [Term::Var(_)]) => {}
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                    refused.insert(a.rel.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    bodies.retain(|rel, rules| !refused.contains(rel) && rules.len() == 1);
+    if bodies.is_empty() {
+        return Vec::new();
+    }
+    // A candidate's body may read another: inline readers in turn until none reads one (each pass removes a level).
+    let mut rules = prog.rules.clone();
+    for _ in 0..8 {
+        let mut changed = false;
+        let mut next = Vec::with_capacity(rules.len());
+        for mut rule in rules {
+            // Each read in turn: an inlined body may read another candidate, read on the next pass.
+            let mut at = 0;
+            while at < rule.body.len() {
+                let candidate = match &rule.body[at] {
+                    Literal::Atom(a) if !a.neg && bodies.contains_key(&a.rel) => match &a.args[0] {
+                        Term::Var(t) => Some((a.rel.clone(), t.clone())),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let Some((rel, t)) = candidate else {
+                    at += 1;
+                    continue;
+                };
+                changed = true;
+                let body: Vec<Literal> = bodies[&rel][0].iter().map(|l| rename_var(l, "$h", &t)).collect();
+                let len = body.len();
+                rule.body.splice(at..=at, body);
+                at += len;
+            }
+            next.push(rule);
+        }
+        rules = next;
+        if !changed {
+            break;
+        }
+    }
+    // Unfinished (a chain of reads deeper than the passes): nothing is inlined.
+    let reads = |r: &Rule| r.body.iter().any(|l| matches!(l, Literal::Atom(a) if bodies.contains_key(&a.rel)));
+    if rules.iter().any(|r| !bodies.contains_key(&r.head.rel) && reads(r)) {
+        return Vec::new();
+    }
+    rules.retain(|r| !bodies.contains_key(&r.head.rel));
+    prog.rules = rules;
+    for rel in bodies.keys() {
+        prog.decls.remove(rel);
+    }
+    bodies.into_keys().collect()
+}
+
+/// A relation of several rules each `node(_, $n, _, _, _), !x_i($n)` (the converter's `not` of an `all`: every node
+/// failing one of its parts) is one rule, `node(_, $n, _, _, _), !r_all($n)`, with `r_all($n) :- x_1($n), …, x_k($n)`
+/// (De Morgan): a test of one node, then inlined. `r_all` holds the nodes passing every part, a join of relations
+/// that are each a test already, not every node of the chunk.
+fn join_complements(prog: &mut Program) {
+    let mut by_rel: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
+    for rule in &prog.rules {
+        let negated = match (rule.head.args.as_slice(), rule.body.as_slice()) {
+            ([Term::Var(h)], [Literal::Atom(node), Literal::Atom(x)])
+                if !node.neg
+                    && node.rel == "node"
+                    && node.args.len() == 5
+                    && node.args.iter().enumerate().all(|(i, t)| if i == 1 { *t == Term::Var(h.clone()) } else { *t == Term::Wild })
+                    && x.neg
+                    && !x.gated
+                    && x.rel != rule.head.rel
+                    && x.args == [Term::Var(h.clone())] =>
+            {
+                Some(x.rel.clone())
+            }
+            _ => None,
+        };
+        by_rel.entry(rule.head.rel.clone()).or_default().push(negated);
+    }
+    for (rel, parts) in by_rel {
+        if parts.len() < 2 || kept(prog, &rel) {
+            continue;
+        }
+        let Some(parts) = parts.into_iter().collect::<Option<Vec<String>>>() else { continue };
+        let all = format!("{rel}_all");
+        if prog.decls.contains_key(&all) {
+            continue;
+        }
+        let h = || Term::Var("n".to_owned());
+        let atom = |rel: &str, neg: bool| Atom { rel: rel.to_owned(), args: vec![h()], neg, gated: false };
+        prog.rules.retain(|r| r.head.rel != rel);
+        prog.rules.push(Rule { head: atom(&all, false), body: parts.iter().map(|p| Literal::Atom(atom(p, false))).collect() });
+        let node = Atom { rel: "node".to_owned(), args: vec![Term::Wild, h(), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false };
+        prog.rules.push(Rule { head: atom(&rel, false), body: vec![Literal::Atom(node), Literal::Atom(atom(&all, true))] });
+        prog.decls.insert(all, vec![("n".to_owned(), "node".to_owned())]);
+    }
+}
+
+/// `l` with the variable `from` renamed `to`.
+fn rename_var(l: &Literal, from: &str, to: &str) -> Literal {
+    fn term(t: &Term, from: &str, to: &str) -> Term {
+        match t {
+            Term::Var(v) if v == from => Term::Var(to.to_owned()),
+            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, from, to)).collect()),
+            t => t.clone(),
+        }
+    }
+    match l {
+        Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| term(t, from, to)).collect(), ..a.clone() }),
+        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, from, to), op: *op, r: term(r, from, to) },
+        other => other.clone(),
     }
 }
 
@@ -228,14 +392,7 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         for r in &prog.rules {
             by_rel.entry(r.head.rel.as_str()).or_default().push(canonical(r));
         }
-        let keep = |rel: &str| {
-            prog.outputs.iter().any(|o| o == rel)
-                || prog.inputs.iter().any(|i| i == rel)
-                || prog.lattice.contains_key(rel)
-                || prog.facts.get(rel).is_some_and(|f| !f.is_empty())
-                || prog.demand.iter().any(|d| d == rel)
-                || prog.gates.iter().any(|(g, _)| g == rel)
-        };
+        let keep = |rel: &str| kept(prog, rel);
         let mut first: HashMap<(Vec<String>, Vec<String>), String> = HashMap::new();
         let mut rename: BTreeMap<String, String> = BTreeMap::new();
         for (rel, mut rules) in by_rel {
@@ -340,5 +497,44 @@ mod tests {
         assert!(rules[1].contains(r#"text($n, "set")"#) && !rules[1].contains("$v"), "{}", rules[1]);
         // A head variable stays: the head is filled from a text column.
         assert!(rules[2].contains(r#"doc(_, $s, _), $s = "a.py""#), "{}", rules[2]);
+    }
+
+    #[test]
+    fn a_test_of_one_node_read_positively_is_inlined() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .decl text(n: node, s: sym)
+            .input node
+            .input text
+            .decl k(n: node)
+            .decl not_k(n: node)
+            .decl named(n: node)
+            .decl read_negated(n: node)
+            .decl j(n: node)
+            .decl not_both(n: node)
+            .decl out(n: node)
+            .output out
+            k($n) :- text($n, "x").
+            j($n) :- text($n, "z").
+            not_both($n) :- node(_, $n, _, _, _), !k($n).
+            not_both($n) :- node(_, $n, _, _, _), !j($n).
+            not_k($m) :- node(_, $m, _, _, _), !k($m).
+            named($n) :- node(_, $n, "identifier", _, _), not_k($n).
+            read_negated($n) :- node(_, $n, _, _, _), !k($n), text($n, "y").
+            out($a) :- node(_, $a, "call", _, _), named($a), !read_negated($a), not_both($a).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        // `not_k`, then `named` (now `node(...), !k($n)` over `$n` alone); `read_negated` is read negated, and `k`
+        // has no node test.
+        // `not_both` is first one rule, `!not_both_all($n)` with `not_both_all($n) :- k($n), j($n)` (De Morgan).
+        assert_eq!(report.inlined, vec!["named".to_owned(), "not_both".to_owned(), "not_k".to_owned()]);
+        let rules: Vec<String> = prog.rules.iter().map(|r| r.to_string()).collect();
+        let out = rules.iter().find(|r| r.starts_with("out(")).unwrap();
+        assert!(out.contains("!k($a)") && out.contains("!not_both_all($a)") && !out.contains("named") && !out.contains("not_k"), "{out}");
+        assert!(rules.iter().any(|r| r == "not_both_all($n) :- k($n), j($n)"), "{rules:?}");
+        assert!(!prog.decls.contains_key("not_k") && !prog.decls.contains_key("named") && prog.decls.contains_key("read_negated"));
     }
 }
