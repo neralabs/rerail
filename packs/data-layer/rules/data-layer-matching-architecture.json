@@ -62,24 +62,33 @@
                               "kind": "module"
                             },
                             {
-                              "any": [
+                              "all": [
                                 {
                                   "filePath": {
-                                    "regex": "^(?:data_layer/matching\\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/"
+                                    "regex": "^(?:data_layer/|impl/common/|conform/l5250_matching/|l[0-9]{4}_[^/]+/)"
                                   }
                                 },
                                 {
-                                  "regex": "data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind"
-                                },
-                                {
-                                  "all": [
+                                  "any": [
                                     {
                                       "filePath": {
-                                        "regex": "(?:^|/)l[0-9]{4}_"
+                                        "regex": "^(?:data_layer/matching\\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/"
                                       }
                                     },
                                     {
-                                      "regex": "\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\("
+                                      "regex": "data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind"
+                                    },
+                                    {
+                                      "all": [
+                                        {
+                                          "filePath": {
+                                            "regex": "(?:^|/)l[0-9]{4}_"
+                                          }
+                                        },
+                                        {
+                                          "regex": "\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\("
+                                        }
+                                      ]
                                     }
                                   ]
                                 }
@@ -132,7 +141,7 @@
                   "scan_sources": "SELECT __path,id FROM cst WHERE kind='module'",
                   "_scan_tree": "SELECT __path,id FROM cst WHERE kind='module'"
                 },
-                "default": "SELECT __path,id FROM cst WHERE kind='module' AND (rx_matches(__path,'^(?:data_layer/matching\\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/') OR rx_matches(source_text(__path),'data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind') OR rx_matches(__path,'(?:^|/)l[0-9]{4}_') AND rx_matches(source_text(__path),'\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\(') OR EXISTS(SELECT 1 FROM matching_parameters,json_each(data,'$.applicationPaths') WHERE value=__path))"
+                "default": "SELECT __path,id FROM cst WHERE kind='module' AND (rx_matches(__path,'^(?:data_layer/|impl/common/|conform/l5250_matching/|l[0-9]{4}_[^/]+/)') AND (rx_matches(__path,'^(?:data_layer/matching\\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/') OR rx_matches(source_text(__path),'data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind') OR rx_matches(__path,'(?:^|/)l[0-9]{4}_') AND rx_matches(source_text(__path),'\\b(?:async\\s+)?def\\s+match(?:_async|_lazy)?\\s*\\(')) OR EXISTS(SELECT 1 FROM matching_parameters,json_each(data,'$.applicationPaths') WHERE value=__path))"
               },
               "fields": [
                 "ast_kind",
@@ -421,7 +430,8 @@
         "query": {
           "$option": "entryPoint",
           "cases": {
-            "scan_sources": "SELECT * FROM (SELECT 'l5250_matching/maintenance.py' path,0 start_byte,0 end_byte,1 line,'MA033' issue,'Authoritative matching maintenance must use the shared branch-aware index policy in production ownership' message,'MA033' identity,0 phase,0 ordering,'BranchAwareIndexPolicy' symbol,'' sort_name WHERE EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0) UNION ALL SELECT 'data_layer_testing/matching_operator.py' path,0 start_byte,0 end_byte,1 line,'MA034' issue,'Testing support cannot own the authoritative process-local matching maintenance mechanism' message,'MA034' identity,0 phase,0 ordering,'register_table_hook' symbol,'' sort_name WHERE instr(source_text('data_layer_testing/matching_operator.py'),'register_table_hook')>0) WHERE 0"
+            "scan_sources": "SELECT * FROM (SELECT 'l5250_matching/maintenance.py' path,0 start_byte,0 end_byte,1 line,'MA033' issue,'Authoritative matching maintenance must use the shared branch-aware index policy in production ownership' message,'MA033' identity,0 phase,0 ordering,'BranchAwareIndexPolicy' symbol,'' sort_name WHERE EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0) UNION ALL SELECT 'data_layer_testing/matching_operator.py' path,0 start_byte,0 end_byte,1 line,'MA034' issue,'Testing support cannot own the authoritative process-local matching maintenance mechanism' message,'MA034' identity,0 phase,0 ordering,'register_table_hook' symbol,'' sort_name WHERE instr(source_text('data_layer_testing/matching_operator.py'),'register_table_hook')>0) WHERE 0",
+            "_scan_tree": "SELECT * FROM (SELECT 'l5250_matching/maintenance.py' path,0 start_byte,0 end_byte,1 line,'MA033' issue,'Authoritative matching maintenance must use the shared branch-aware index policy in production ownership' message,'MA033' identity,0 phase,0 ordering,'BranchAwareIndexPolicy' symbol,'' sort_name WHERE EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0) UNION ALL SELECT 'data_layer_testing/matching_operator.py' path,0 start_byte,0 end_byte,1 line,'MA034' issue,'Testing support cannot own the authoritative process-local matching maintenance mechanism' message,'MA034' identity,0 phase,0 ordering,'register_table_hook' symbol,'' sort_name WHERE instr(source_text('data_layer_testing/matching_operator.py'),'register_table_hook')>0) WHERE 0"
           },
           "default": "SELECT 'l5250_matching/maintenance.py' path,0 start_byte,0 end_byte,1 line,'MA033' issue,'Authoritative matching maintenance must use the shared branch-aware index policy in production ownership' message,'MA033' identity,0 phase,0 ordering,'BranchAwareIndexPolicy' symbol,'' sort_name WHERE EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0) UNION ALL SELECT 'data_layer_testing/matching_operator.py' path,0 start_byte,0 end_byte,1 line,'MA034' issue,'Testing support cannot own the authoritative process-local matching maintenance mechanism' message,'MA034' identity,0 phase,0 ordering,'register_table_hook' symbol,'' sort_name WHERE instr(source_text('data_layer_testing/matching_operator.py'),'register_table_hook')>0"
         },

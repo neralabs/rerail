@@ -86,9 +86,10 @@ def candidate(root):
  production=r'^(?:data_layer/matching\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/'
  markers='|'.join(re.escape(marker) for marker in c['_MATCHING_SOURCE_MARKERS'])
  definition=r'\b(?:async\s+)?def\s+match(?:_async|_lazy)?\s*\('
- base=O({'filePath':{'regex':production}},RX(markers),A({'filePath':{'regex':r'(?:^|/)l[0-9]{4}_'}},RX(definition)))
+ domain=r'^(?:data_layer/|impl/common/|conform/l5250_matching/|l[0-9]{4}_[^/]+/)'
+ base=A({'filePath':{'regex':domain}},O({'filePath':{'regex':production}},RX(markers),A({'filePath':{'regex':r'(?:^|/)l[0-9]{4}_'}},RX(definition))))
  plan['inputs']['gate']['evidence']['query']['ast']['rule']=select_entry({'$option':'parameters','cases':{'{}':A(K('module'),base)},'default':K('module')},{'scan_sources':K('module'),'_scan_tree':K('module')})
- selected="rx_matches(__path,"+q(production)+") OR rx_matches(source_text(__path),"+q(markers)+") OR rx_matches(__path,'(?:^|/)l[0-9]{4}_') AND rx_matches(source_text(__path),"+q(definition)+") OR EXISTS(SELECT 1 FROM matching_parameters,json_each(data,'$.applicationPaths') WHERE value=__path)"
+ selected="rx_matches(__path,"+q(domain)+") AND (rx_matches(__path,"+q(production)+") OR rx_matches(source_text(__path),"+q(markers)+") OR rx_matches(__path,'(?:^|/)l[0-9]{4}_') AND rx_matches(source_text(__path),"+q(definition)+")) OR EXISTS(SELECT 1 FROM matching_parameters,json_each(data,'$.applicationPaths') WHERE value=__path)"
  for stage in plan['stages']:
   if stage['name']=='canonical':stage['pythonAst']['roots']=select_entry("SELECT __path,id FROM cst WHERE kind='module' AND ("+selected+")",{'scan_sources':"SELECT __path,id FROM cst WHERE kind='module'",'_scan_tree':"SELECT __path,id FROM cst WHERE kind='module'"})
  config=next(s for s in plan['stages'] if s['name']=='matching_parameters');plan['stages'].remove(config);plan['stages'].insert(0,config)
@@ -100,5 +101,5 @@ def candidate(root):
  for code,path,symbol,condition in [('MA033',maintenance,'BranchAwareIndexPolicy',"EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0)"),('MA034',operator,'register_table_hook',"instr(source_text("+q(operator)+"),'register_table_hook')>0")]:
   project.append("SELECT "+q(path)+" path,0 start_byte,0 end_byte,1 line,"+q(code)+" issue,"+q(messages[code])+" message,"+q(code)+" identity,0 phase,0 ordering,"+q(symbol)+" symbol,'' sort_name WHERE "+condition)
  project_query=' UNION ALL '.join(project)
- clauses.append({'id':'matching-project-ownership','relational':{'inputs':relation,'query':select_entry(project_query,{'scan_sources':'SELECT * FROM ('+project_query+') WHERE 0'}),'locations':[maintenance,operator],'key':['identity'],'code':'issue','line':'line','message':'message'},'violation':{'code':'architecture','message':'Architecture contract violation','anchor':'witness.span'}})
+ clauses.append({'id':'matching-project-ownership','relational':{'inputs':relation,'query':select_entry(project_query,{entry:'SELECT * FROM ('+project_query+') WHERE 0' for entry in ['scan_sources','_scan_tree']}),'locations':[maintenance,operator],'key':['identity'],'code':'issue','line':'line','message':'message'},'violation':{'code':'architecture','message':'Architecture contract violation','anchor':'witness.span'}})
  return make_document('matching_architecture',clauses,['data_layer/**/*.py','impl/common/**/*.py','conform/l5250_matching/**/*.py','l[0-9][0-9][0-9][0-9]_*/**/*.py',operator],exclude=['**/tests/**'])
