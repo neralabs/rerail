@@ -10,7 +10,7 @@ Seven directives configure it. None of them is a rule; each says what to do with
 | Directive | What it decides |
 |---|---|
 | `code {c}`, `tag {t}` | a finding's key: its code from a column; an extra key field |
-| `.on parse_error`, `.on input_error` | whether a file the parser rejects, or an input that failed, is also a finding |
+| `.on syntax_error`, `.on input_error` | whether a file the parser rejects, or an input that failed, is also a finding |
 | `.gate V` | that V's findings, when there are any, replace the policy's report |
 | `.budget V by … ` | how many findings may exist before they block |
 | `.mode`, `.severity` | which findings block, and how they are shown |
@@ -126,17 +126,25 @@ that matters: a bad signature stops a whole-repository scan before it starts.
 
 A gate finding blocks under the policy's mode like any other (section 7).
 
-## 5. `.on parse_error` and `.on input_error`
+## 5. `.on syntax_error` and `.on input_error`
 
-**Where `parse_error` comes from.** Rerail does not run CPython. `parse_error(d, line, msg)` is derived from the
-tree-sitter `ERROR` and `MISSING` nodes the engine already collects (`native/src/code_rule_dsl/soundness.rs`),
-with one row per document, at the first error's line, because CPython reports only the first error. The message
-is free text under the contract. The grammar is the patched one Rerail vendors, which is kept in line with
-CPython's own grammar: each divergence found is either patched
-(`native/grammars/tree-sitter-python/PATCHES.md`) or recorded as an accepted difference. On a repository whose
-CI already rejects syntax errors this fact is empty; it matters on branches and fixtures.
+**Where `syntax_error` comes from.** `syntax_error(d, line, msg)` has one row per document that does not parse,
+at the first error, as CPython reports one.
 
-**What happens by default.** A document with a `parse_error` row is withheld from the policy: none of its facts
+- **For Python** the verdict, line and message are CPython's own. They come from `ast.parse` in an isolated
+  worker (`python -I -S`), which parses the file and never imports or runs it. This is how the Data-layer rule
+  expressivity branch builds its AST facts. The same worker gives `@unparse`, `@ast_dump` and `str_part`.
+  Parsing is not running repository code. A missing worker makes these facts an incomplete input (section 2):
+  they are Unknown, never empty.
+- **For other languages** the fact comes from the tree-sitter `ERROR` and `MISSING` nodes the engine already
+  collects (`native/src/code_rule_dsl/soundness.rs`). The message is free text under the contract.
+
+Exact messages matter for the scripts that report them, for example `SAP000: … SyntaxError: …`. The message is
+not part of a finding's key, so tree-sitter's patched grammar (`native/grammars/tree-sitter-python/PATCHES.md`)
+remains enough for the keys wherever it agrees with CPython on whether a file parses. On a repository whose CI
+already rejects syntax errors this fact is empty; it matters on branches and fixtures.
+
+**What happens by default.** A document with a `syntax_error` row is withheld from the policy: none of its facts
 are visible, and it is incomplete in the sense of section 2. Most of the data-layer scripts do the same: a file
 that raises `SyntaxError` contributes nothing.
 
@@ -145,12 +153,12 @@ that cover less than half a file (`source-partial`). A Datalog policy's relation
 of error regions, and a cross-file fact from half a tree is hard to vouch for. Withholding the whole document is
 the sound choice until relations are classified.
 
-**`.on parse_error report CODE`** also makes each parse error a finding with that code, at the error's line;
+**`.on syntax_error report CODE`** also makes each parse error a finding with that code, at the error's line;
 `at line 1` puts it at the top of the file, where several scripts report it (`SAP000`, `GPO000`, `LAO000`,
 `RTA000`). The file's other findings stay withheld and its outcome stays `Unknown(parse)`. The finding says why.
 
 ```
-.on parse_error report SAP000 at line 1
+.on syntax_error report SAP000 at line 1
 ```
 
 **`.on input_error report CODE`** does the same for a repository file that is missing or malformed, at line 1
@@ -238,7 +246,7 @@ they are gaps, which is what a laptop without the artifacts wants.
 | `code {c}`, `tag {t}` | key extraction | the code field already in the id |
 | Gate stratum, evaluated first | the Datalog planner | stratification, which the checker already computes |
 | Incomplete inputs: withheld rules, Unknown places | the planner marks rules that cross `!` or an aggregate; one extra evaluation when needed | — |
-| `parse_error` and withheld documents | a native fact from the error ranges | `soundness.rs` `SyntaxErrors` |
+| `syntax_error` and withheld documents | a native fact: CPython's verdict for Python, the error ranges elsewhere | the isolated CPython worker of the Data-layer branch; `soundness.rs` `SyntaxErrors` |
 | `.budget … from base`, `floor`, `drop` | the findings layer, over consolidated keys | `ClauseKind::Budget` (`model.rs:598-604`), with ceilings per group from a relation instead of a literal |
 | Verdict and exit status | the scan CLI | `--fail-on-violations` counts every violation today (`src/cli/audit-cli.ts:256`); it should count blocking findings |
 | `--require-facts`, `--facts DIR` | the scan CLI | [RUN-FACTS.md](RUN-FACTS.md) |

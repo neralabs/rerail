@@ -8,6 +8,7 @@ introduces are lower case (n, k1, q2). A helper relation that reads a metavariab
 shares metavariables across utils) takes it as an extra column, and every call passes it on.
 """
 
+from textglob import text_test
 import json
 import re
 
@@ -105,7 +106,9 @@ def match(pattern, subject):
         return f"ast({subject}, {compact({'regex': pattern})})"
     if isinstance(pattern, OptVar):
         return f"match({pattern}, {subject})"
-    return f"match({q(whole(caps(pattern)))}, {subject})"
+    rx = whole(caps(pattern))
+    # A glob-family test where it is exactly the regex (ALIGNMENT.md, "Text"); `match` otherwise.
+    return text_test(rx, subject) or f"match({q(rx)}, {subject})"
 
 
 def _balanced(s):
@@ -466,10 +469,15 @@ def relation(prog, k, sub, v, vs):
     stop = sub.get("stopBy", "neighbor")
     c = vs.fresh("c" if k == "has" else "p" if k == "inside" else "s")
     lits = []
+    skip = ("field", "stopBy")
     if k in ("has", "inside"):
         lo, hi = (c, v) if k == "has" else (v, c)
         if stop == "neighbor":
             lits.append(f"field({hi}, {q(f)}, {lo})" if f else f"child({hi}, {lo}, _)")
+        elif stop == "end" and isinstance(sub.get("kind"), str):
+            # An ancestor or descendant of one kind: the tape axes inside(n, a, set) / has(a, n, set).
+            lits.append(f"{k}({v}, {c}, {q(sub['kind'])})")
+            skip = skip + ("kind",)
         elif stop == "end":
             lits.append(f"within({lo}, {hi})")
         else:
@@ -484,7 +492,7 @@ def relation(prog, k, sub, v, vs):
             lits.append(f"precedes({a}, {b})")
         else:
             lits.append(f"precedes_stop({a}, {b}, {stop_set(prog, stop)})")
-    lits.extend(lower(prog, sub, c, vs, skip=("field", "stopBy")))
+    lits.extend(lower(prog, sub, c, vs, skip=skip))
     return lits
 
 

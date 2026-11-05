@@ -69,7 +69,7 @@ confirm once a parser and engine exist. None is fixed yet.
 
 ## Data-layer design (data-layer/DESIGN.md)
 1. The findings layer is designed (data-layer/FINDINGS-LAYER.md), not built: outcomes per (policy, file), keys
-   and ids from keys, `code {c}`, `tag {t}`, the gate stratum, `.on parse_error`, `.budget … from base`, and the
+   and ids from keys, `code {c}`, `tag {t}`, the gate stratum, `.on syntax_error`, `.budget … from base`, and the
    verdict. Three things to measure once it runs:
    - how far Unknown spreads in cross-file policies when one file does not parse (the over-approximate places of
      section 2): if a typical edit with a syntax error makes whole policies Unknown, consider keeping the
@@ -91,3 +91,17 @@ confirm once a parser and engine exist. None is fixed yet.
    repository. test-budget.rr is the worked port; the other four checks are not ported yet.
 6. `.budget M by k from base` over a metric relation was dropped: a metric ratchet is a rule
    (noqa-sec-ratchet.rr, test-budget.rr). The coverage table's 16 `.budget … from` uses include metric ratchets.
+
+## Alignment with the other branches (ALIGNMENT.md)
+1. The final-shape `.rdl` parser would accept this notation with small changes: bare variables, `number` and
+   `symbol`, `glob(p, s)` argument order, relations of names in place of `{…}` sets, `@dot` for its `@cat`, the
+   magic-set pragma for `.demand`, and `syntax_error` with line and message. Those changes belong on that branch.
+2. Globs are exact but not always short: `.*` becomes `**`, because the translator does not know whether a subject
+   can hold `/`. On a name, `*` would read better and mean the same. With the typed text relations (`name`,
+   `str`), the translator could print `*` when the subject is a name.
+3. Soufflé's lattice declaration is confirmed from its grammar (`.lattice NAME<> { OP -> arg }`, operators Bottom,
+   Top, Lub, Glb, Leq). How the `Lub` functor's arguments are written is still to check against Soufflé's tests.
+4. `word(w, s)` is specified (0037: whole words, any separators), but the converter emits none: regexes with `\b`
+   stay `match`. Teaching it `\bWORD\b` (and `(?i)\bA\s+B\b` as `iword("a b", s)`) is the next exact case.
+5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is recorded as an accepted
+   difference under the findings contract, not reproduced.

@@ -232,11 +232,11 @@ These hold for every plugin-based check in this part, and are cited once here.
   - `EXISTS path_part, doc, match, contains`: the file filter. The "a part contains a keyword" test is
     `path_part(d, p), match(".*(connection|schema|executor|optimizer).*", lower(p))`. Lowercasing is via
     `@convert(p, "lowerCase", "")`, or a case-insensitive regex `(?i)`.
-  - `EXISTS match_all, text, string_value`: the annotation's name set is `re.findall(r"[A-Za-z_]\w*", text)` (`:892`).
+  - `EXISTS match_all, text, str`: the annotation's name set is `re.findall(r"[A-Za-z_]\w*", text)` (`:892`).
     That is `match_all("(?<x>[A-Za-z_]\\w*)", t)`, with t the annotation's text, or the string's contents for a
     string annotation (`_annotation_text`, `:885`). BTS001/002/005/006/013 test that set. BTS007 is text = "None",
     and BTS003 is `Optional\s*[`, or `|` together with `None` (`:899`). All are regex tests on the same text.
-  - `EXISTS kind, field, child, def_name, decorator, nearest, call_arg, string_value`: BTS006 (a class with a base
+  - `EXISTS kind, field, child, def_name, decorator, nearest, call_arg, str`: BTS006 (a class with a base
     whose root name is `Protocol` and no type params), BTS010 (`Unset` in the return names, and none of
     LazyResult/ScalarServerRef/ServerRef), BTS011 (callee root name in a fixed brand set, first argument `""`),
     BTS012 (`tuple([..])` or `tuple([.. for ..])`), BTS014 (a public function with a `tuple[X, ...]` parameter).
@@ -420,15 +420,15 @@ These hold for every plugin-based check in this part, and are cited once here.
     is tested by prefix (`m == p` or `m` starts with `p.`). In core files (`l2065_plan_core` among the path parts)
     the legacy and l2066 prefixes are forbidden. Elsewhere legacy prefixes are forbidden except in `adapter.py`.
     An I/O import reports only PV2-001 (`continue`).
-  - `EXISTS attr_of, call_arg, value/string_value, kind, field, text`: PV2-010 (attr `_bindings`/`_exports`, except in
+  - `EXISTS attr_of, call_arg, value/str, kind, field, text`: PV2-010 (attr `_bindings`/`_exports`, except in
     scope.py), PV2-011 (`.partition/.split/.rpartition/.rsplit(".")`), PV2-022 (`&` with a bare `set(...)` or
     `frozenset(...)` call on either side, or any `.intersection(...)`), PV2-023 (`ColumnSchema("…")` with a bare-name
     callee), PV2-060 (a non-async def named in a set, an attr in a set, a `.can_share_statement_after()` call; off in
     effects.py and adapter.py).
-  - `EXISTS kind, child, string_value`: PV2-020 (`:396-409`). Any operand of a comparison, chained ones included, is a
+  - `EXISTS kind, child, str`: PV2-020 (`:396-409`). Any operand of a comparison, chained ones included, is a
     constant in {count_only, count, exists}; adapter.py is exempt. `cmp` is not usable, because it drops chained
     comparisons. Use `child(c, o, _)` of the `comparison_operator`.
-  - `EXISTS kind, string_value, match`: PV2-021 (`:410-433`). Every str constant ending in `_count`, docstrings
+  - `EXISTS kind, str, match`: PV2-021 (`:410-433`). Every str constant ending in `_count`, docstrings
     included, and every literal segment of an f-string ending in `_count`. In tree-sitter the f-string segments are the
     `string_content` children between `interpolation` nodes. Byte strings must be excluded (prefix test on the string
     node).
@@ -438,7 +438,7 @@ These hold for every plugin-based check in this part, and are cited once here.
     `ast.Attribute` whose name is in {model_fields, model_sql_column_type_hints, model_json_schema, get_type_hints}.
     `nameref` would wrongly include `from typing import get_type_hints`. PV2-043 (`:707`) also needs it: the
     `PlanVerifier` Name test.
-  - `EXISTS within, kind, field, string_value, match`: PV2-031 (`:497-528`). For every def (sync or async, nested ones
+  - `EXISTS within, kind, field, str, match`: PV2-031 (`:497-528`). For every def (sync or async, nested ones
     too), take the raises inside it (nested defs included) whose exception is neither absent nor a bare Name. If no
     str constant anywhere inside the def matches `\b(Fix|Use|…|Keep)\b` (decorators, annotations, docstrings and nested
     defs included), each such raise is reported. Dedup per line keeps the first, outermost function, so: report a
@@ -789,7 +789,7 @@ These hold for every plugin-based check in this part, and are cited once here.
 - **Needs:**
   - `EXISTS` inline facts plus `cat`: `req(cat("Q2.", c), "query-read-results") :- q2_case(c).`, and proof sets as unions
     (`proof("RESULT", p) :- proof("READ", p).`).
-  - `EXISTS decorator, attr_of, call_arg, child, string_value, params, scope_node, def_name`: the decorator is found by
+  - `EXISTS decorator, attr_of, call_arg, child, str, params, scope_node, def_name`: the decorator is found by
     its name (a Name or an Attribute's attr), and must be a call with keywords only. Its keyword set must be exactly
     {ids, contract, proofs}, written `count : { call_arg(c, -1, k, _), !meta_kw(k) } = 0`. The tuple/list/set
     elements must all be plain strings, with at least one. `**kw` is not counted, as in the oracle (`:489`). A
@@ -817,7 +817,7 @@ These hold for every plugin-based check in this part, and are cited once here.
   (`:524`). In tree-sitter the parent is `decorated_definition` → `block` → `class_definition`, so use
   `scope_node(f, s), kind(s, "class_definition")`. `fixtures` comes from posonly, args and kwonly only (`:479`).
   `params` also names `*args`/`**kw`, which matters only for a parameter spelled `*read_permission_scenario`. An
-  f-string element makes the oracle report "must be literal", because a JoinedStr is not a Constant. `string_value`
+  f-string element makes the oracle report "must be literal", because a JoinedStr is not a Constant. `str`
   must therefore have no row for f-strings, or the rule must test `kind`.
 
 ### provider_storage_permissions (hard-fail, 213 lines)
@@ -854,7 +854,7 @@ These hold for every plugin-based check in this part, and are cited once here.
     "from api import" or "import api" (`:79`, `fact_engine.py:1177-1189`). The rule can test this on the module text.
   - `NATIVE` `str_const(n: node, v: symbol)`: every node that Python's ast reports as a str `Constant`, decoded. That
     is plain (non-bytes) strings, implicit concatenations (`"a" "b"`, one value at the first piece's
-    line), and the literal parts of f-strings (`:121-123`). `value`/`string_value` are defined on one `string` node.
+    line), and the literal parts of f-strings (`:121-123`). `value`/`str` are defined on one `string` node.
     The port's ledger records two false negatives here: an import split across adjacent literals, and two imports
     separated by an escaped `\n`. Decoding is literal parsing, which Datalog cannot do.
   - `LANG` a match offset on a symbol capture. Lines are `Constant.lineno + newlines in the *decoded* value before
@@ -972,7 +972,7 @@ These hold for every plugin-based check in this part, and are cited once here.
   nor a non-blank docstring. The message is prefixed by a qualname made of the enclosing classes only.
 - **Inputs:** Python AST of `l9900_auto_api/**`, tests excluded (`lint_auto_api_route_descriptions.py:255`).
 - **Needs:**
-  - `EXISTS decorator, attr_of, call_arg, string_value, match("(?s).*\\S.*", v)` for "non-blank after strip"
+  - `EXISTS decorator, attr_of, call_arg, str, match("(?s).*\\S.*", v)` for "non-blank after strip"
     (`:113-120`).
   - `LIB` `docstring(f: node, s: node)`: the first body statement is an expression statement holding a string (plain
     or concatenated, not an f-string). This generalises `module_doc` to defs and classes.

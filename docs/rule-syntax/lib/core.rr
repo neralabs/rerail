@@ -3,8 +3,9 @@
 // Tape relations are read in place from the parse tape (decision 0026); none is a table of rows per node.
 //
 // The language is Soufflé Datalog. Rules, `.decl`, `.input`, `.output`, `.type`, `.functor`, `#include`,
-// `!`, `_`, `count : { … }`, `match` and `@functors` mean what they mean in Soufflé. Six additions, each
-// described where it is used:
+// `!`, `_`, `count : { … }`, `.lattice`, `.pragma`, `match`, `contains` and `@functors` mean what they mean in
+// Soufflé. docs/rule-syntax/ALIGNMENT.md records how this matches the other branches' notations (the `.rdl`
+// dialect, the JSON policies). Six additions, each described where it is used:
 //   1. Patterns:  n ~ `code pattern`  matches a node against the language's grammar (matcher atoms, below).
 //   2. Captures:  named regex groups in match("…(?<X>…)…", s) bind X (value functions and captures, below).
 //   3. must, may: three-valued relations, for facts that may be unknown (the tsx and python libraries).
@@ -61,14 +62,41 @@
 .decl list_len(l: loc, k: number)
 // value(n, "a\nb") for the literal "a\\nb"; value(n, "255") for 0xff. Lets rules compare literals by meaning.
 .decl value(n: node, v: symbol)  // static value of a literal: strings unescaped, numbers normalised
-// string_value(n, "react") for the literal 'react' or "react": contents without quotes.
-.decl string_value(n: node, v: symbol)                   // a string literal's contents
+// str(n, "react") for the literal 'react' or "react": contents without quotes.
+.decl str(n: node, v: symbol)                            // a string literal's contents
+// strprefix(n, "rb") for rb"…": the literal's prefix letters, lowercased; "" for none.
+.decl strprefix(n: node, p: symbol)
+// name(n, "a.b.c"): an identifier's text, or the dotted text of an attribute chain or dotted name, no spaces.
+// The usual subject of a text test: names hold only word characters and dots.
+.decl name(n: node, s: symbol)
+// comment(n, "noqa: E501"): a comment's text without its marker (`#`, `//`).
+.decl comment(n: node, s: symbol)
 // With `const M = "react"; import(M)`, static_value(arg, "react"). Follows only constants in the same file.
 .decl static_value(n: node, v: symbol)                   // value after following file-local constant bindings
 // value_type("12", "int") for Python, "number" for TypeScript: the type of a value produced by `value`.
 .decl value_type(v: symbol, t: symbol)                   // "str", "int", "string", "number", …
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, string_value, static_value, value_type
+.input value, str, strprefix, name, comment, static_value, value_type
+
+// ---- text tests (built-in constraints) -----------------------------------------------------------------------
+// Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
+// written as globs, with built-in constraints shaped like Soufflé's match(re, s) and contains(sub, s): pattern
+// first, subject second, both bound; they bind nothing.
+//   glob(p, s)      s matches glob p: `*` any run without `/`, `**` any run, `?` one character other than `/`,
+//                   `[A-Z]` / `[0-9_]` one listed character, `{a,b}` alternatives, `\` escapes the next character
+//   prefix(p, s)    s starts with p;  suffix(p, s): ends with p;  contains(sub, s): Soufflé's own
+//   word(w, s)      w occurs in s as whole words, any separators between them: "on delete" in "ON  DELETE x"
+//   iglob, iprefix, isuffix, icontains, iword: the same, ignoring case
+// A set of patterns is a relation: `cache_pat(p), glob(p, s)` is true when any of them matches. The names are
+// reserved: no relation may be declared glob, prefix, suffix, contains, word or an `i` form.
+// Each distinct string is tested once per run, for every rule together (decision 0037): the engine compiles each
+// group of tests to a hash set, an Aho-Corasick automaton or a small DFA over the interned vocabulary, and rules
+// join on symbol ids. A test never runs per row.
+//
+// match(re, s) stays for what a glob cannot say: named captures, which bind variables, and real regular
+// expressions (entity references, attribute grammars in the web packs). The dialect is a DFA's: no look-around,
+// no back-references, ASCII \b. Captures are taken after the match, once per distinct string. The translator
+// writes a glob test wherever one is exactly the regex: 1,949 of 2,123 distinct patterns in the packs and ports.
 
 // ---- source text (every document, parsed or not) ------------------------------------------------------------
 // Checks that count lines, scan comments or read files with no grammar (Markdown, Rust read as text) need the
@@ -87,20 +115,27 @@
 // A two-word operator is one token: "not in", "is not". `op` (above) is the unordered view; chained comparisons
 // need the order.
 .decl op_at(n: node, i: number, s: symbol)
-// parse_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error, as
-// CPython reports one. Derived from tree-sitter's ERROR and MISSING nodes in Rerail's patched grammar, which is
-// kept in line with the language's own (PATCHES.md); Rerail runs no CPython. The document is withheld from the
-// policy and its outcome is Unknown(parse); a policy can also report it (`.on parse_error`, at the end).
-.decl parse_error(d: number, l: number, msg: symbol)
-.input source, src_line, line_count, end_line, col, op_at, parse_error
+// syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
+// For Python the verdict, line and message are CPython's: `ast.parse` in an isolated worker (`python -I -S`),
+// which never imports or runs the file. That worker also gives @unparse, @ast_dump and str_part; without it those
+// facts are an incomplete input (Unknown), never empty. Other languages use tree-sitter's ERROR and MISSING
+// nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
+// (`.on syntax_error`, at the end).
+.decl syntax_error(d: number, l: number, msg: symbol)
+.input source, src_line, line_count, end_line, col, op_at, syntax_error
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
 // would materialise every (node, ancestor) pair; on the tape each question is a range comparison.
 // In `function f() { g(); }`: within(call_g, body), within(call_g, f), but not within(f, call_g).
 .decl within(n: node, a: node)                           // n is strictly below a
+// inside(n, a, set) / has(a, n, set): a is a strict ancestor of n whose kind is in set (decision 0036); the same
+// pairs, read from either end. inside(call, f, "function_definition"): call is somewhere in f. These are the
+// forms rules use: the kind set is part of the axis, so the transducer answers them in one tape pass.
+.decl inside(n: node, a: node, set: relation)
+.decl has(a: node, n: node, set: relation)
 //
-// within_stop, precedes_stop and nearest take a stop set as their last argument: the name of a unary relation of kinds
+// inside, has, within_stop, precedes_stop and nearest take a set as their last argument: the name of a unary relation of kinds
 // (`scope`, `fdef`) or of nodes (`render_stop`), or one kind written as a string ("program"). This is the one
 // place a relation is passed as an argument, which Soufflé has no form for; the alternative, a recursive climb
 // per stop set, is what these relations exist to avoid.
@@ -132,7 +167,7 @@
 .decl earlier(m: node, n: node)
 .decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
-.input within, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
+.input within, inside, has, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
 .input earlier, visit_index, ast_depth
 
 // ---- matcher atoms ---------------------------------------------------------------------------------------------
@@ -177,8 +212,8 @@
 // Soufflé built-ins used here: cat(a, b) concatenation, strlen(s), to_number(s), to_string(n), contains(a, b),
 // and match(re, s).
 //
-// match("re", s)  s matches the regex re as a whole, as in Soufflé: write `.*` where the text may go on, so
-//                 match("test_.*", name) is "starts with test_". On a node or span, s is its text.
+// glob("re", s)  s matches the regex re as a whole, as in Soufflé: write `.*` where the text may go on, so
+//                 prefix("test_", name) is "starts with test_". On a node or span, s is its text.
 //                 It runs on the vocabulary: tested once per distinct interned string, not once per node.
 //                 Addition 2, captures: a named group (?<X>…) binds the variable X to what it matched, from
 //                 the first match (leftmost, then as the regex engine resolves alternatives).
@@ -355,7 +390,7 @@
 // .severity V warning | error                 presentation and `.budget … by severity`; never decides blocking
 // .gate V, W                                  when they have keys, those are the report; every other file of the
 //                                              policy is Unknown(gated). Gates may not depend on other violations.
-// .on parse_error report CODE [at line 1]     also report each parse error as a finding. Either way the document
+// .on syntax_error report CODE [at line 1]    also report each syntax error as a finding. Either way the document
 //                                              is withheld (no facts) and its outcome is Unknown(parse).
 // .on input_error report CODE                 a repository input that is missing or malformed is a finding.
 // .budget V by code { "A": 3 }                 findings may exist up to these counts without blocking. Counts are of

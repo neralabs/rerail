@@ -44,6 +44,9 @@ def main():
             for m in re.finditer(r"^\.(?:decl|edit)\s+(\w+)\(", open(g).read(), re.M):
                 decls[m.group(1)].append(os.path.relpath(g, ROOT))
         for k, v in decls.items():
+            if k in souffle.TEXT_TESTS or k in ("match", "match_all"):
+                bad += 1
+                print(f"{f}: {k} is a built-in constraint and cannot be declared ({', '.join(sorted(v))})")
             if len(v) > 1:
                 bad += 1
                 print(f"{f}: {k} declared {len(v)} times: {', '.join(sorted(v))}")

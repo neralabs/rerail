@@ -5,7 +5,7 @@
 .scope include "src/**/*.tsx", "src/**/*.jsx"
 .scope exclude "**/*.test.*", "**/*.spec.*", "**/fixtures/**"
 // Same-meaning version: the JSON rule's meaning, unchanged.
-// Inputs: the tape relations (kind, field, text, string_value), plus ref_site(ref, site) from the
+// Inputs: the tape relations (kind, field, text, str), plus ref_site(ref, site) from the
 // TypeScript scope table (the fact behind resolves.binding.site).
 //
 // How to read this file
@@ -47,7 +47,7 @@ tag(e, t) :- kind(e, "jsx_self_closing_element"), field(e, "name", t).
 // nearest(…, import_stmt) climbs from the specifier to its import statement; the JSON's `inside … stopBy: end`.
 .decl imported(spec: node, m: symbol, x: symbol)
 imported(s, m, x) :- kind(s, "import_specifier"), field(s, "name", n), text(n, x),
-    nearest(s, i, import_stmt), field(i, "source", src), string_value(src, m).
+    nearest(s, i, import_stmt), field(i, "source", src), str(src, m).
 
 // router_el(e): e is a JSX element whose tag is an identifier bound by an import of a router export.
 // ref_site follows the tag to the specifier that declares it: a local variable named BrowserRouter does not count.

@@ -227,7 +227,7 @@ Oracle: scripts at revision 2b1504ad. Cites are `script.py:LINE` (a bare `:LINE`
   included (`iter_python_files`, `lint_security_patterns.py:711-721`). Four path-substring allowlists with one
   combined signature in the script (`:123-186`). Baseline `.ratchet-baselines/lint_security_patterns.json`.
 - **Needs:**
-  - `EXISTS` pattern atoms, `call_arg`, `string_value`, `contains`, `min` for SEC001/003/004/005. SEC004 takes
+  - `EXISTS` pattern atoms, `call_arg`, `str`, `contains`, `min` for SEC001/003/004/005. SEC004 takes
     the first str constant among positional arguments 1 and later, and a `mode=` keyword overrides it
     (`:470-480`). SEC001's `import_module` is any attribute call, not only `importlib.` (`:358-359`).
   - `EXISTS signed_list` for the four lists (one signed file per list, or one file with a list-name column).
@@ -408,7 +408,7 @@ per-code counts, and it does not compute SPQ-029.
   - `LIB str_const(n: node, v: symbol)`: the Python AST's `Constant(str)` set.
     - It covers a `string` with no interpolation, a `concatenated_string` as one value, and each literal fragment of an
       f-string.
-    - Body: `string_value`/`value` over those kinds, with `match_all` over `string_content` for fragments.
+    - Body: `str`/`value` over those kinds, with `match_all` over `string_content` for fragments.
     - Used by: SPQ-049 fail_closed (:803), SPQ-024 word split (:2156), SPQ-042 constants (:3405, :3418), SPQ-047 CTE
       heads (:2866), and annotation strings (:3560).
   - `LIB py_if(i: node)`, `if_test(i, t)`, `if_body(i, s)`, `if_orelse(i, n)`: Python `If` nodes.

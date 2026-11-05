@@ -32,15 +32,15 @@
 #include "python/calls.rr"
 //   posarg, call_arg
 
-.decl suffix(s: symbol)
-suffix("_sparse"). suffix("_tip"). suffix("_staged"). suffix("_log"). suffix("_field_deltas").
+.decl vsuffix(s: symbol)
+vsuffix("_sparse"). vsuffix("_tip"). vsuffix("_staged"). vsuffix("_log"). vsuffix("_field_deltas").
 
 // ---- scope (_is_owner, _is_in_tree_source) ------------------------------------------------------------------------
 // broad_repo_scope without tests: the whole repository, minus test, tests and conform parts.
 .decl checked(d: number)
 checked(d) :- doc(d, p, _), !path_part(d, "conform"),
     !match(".*(?:^|/)(?:l1000_schema/table_utils|l7000_versioned_schema/versioned_table_info)\.py", p),
-    !match("(?:|.*/)(?:docs|impl/doltdb|impl/mongodb|impl/neo4j)/.*", p).
+    !glob("{**/,}{docs,impl/doltdb,impl/mongodb,impl/neo4j}/**", p).
 .decl here(n: node)
 here(n) :- docof(n, d), checked(d).
 
@@ -97,7 +97,7 @@ has_ev(p, x) :- last_ev(p, x, _).
 // ---- 3. suffix values and the two maps -----------------------------------------------------------------------------
 // sv(p, v): _suffix_value(v) is not None at point p.
 .decl sv(p: node, v: node)
-sv(p, v) :- at(p, v), str_const(v, s), suffix(s).
+sv(p, v) :- at(p, v), str_const(v, s), vsuffix(s).
 sv(p, v) :- at(p, v), unparen(v, m), m != v, sv(p, m).
 sv(p, v) :- at(p, v), kind(v, "conditional_expression"), (child(v, b, 0) ; child(v, b, 2)), sv(p, b).
 sv(p, v) :- at(p, v), ast_name(v, x), has_const(p, x).
@@ -139,12 +139,12 @@ interp(s, e) :- fstring(s), kind(s, "concatenated_string"), child(s, p, _), chil
 // csv(p, v): v is, or holds, a suffix value: a literal piece of an f-string counts when it is exactly a suffix.
 .decl csv(p: node, v: node)
 csv(p, v) :- sv(p, v).
-csv(p, v) :- at(p, v), fstring(v), str_part(v, _, s, _, 0), suffix(s).
+csv(p, v) :- at(p, v), fstring(v), str_part(v, _, s, _, 0), vsuffix(s).
 csv(p, v) :- at(p, v), interp(v, e), csv(p, e).
 csv(p, v) :- at(p, v), kind(v, k), coll(k), child(v, e, _), csv(p, e).
 // frag(p, v): v's string value contains a suffix: a literal with one inside, or a name holding one.
 .decl frag(p: node, v: node)
-frag(p, v) :- at(p, v), str_const(v, s), suffix(x), contains(x, s).
+frag(p, v) :- at(p, v), str_const(v, s), vsuffix(x), contains(x, s).
 frag(p, v) :- at(p, v), ast_name(v, x), has_const(p, x).
 
 // ---- 5. findings ---------------------------------------------------------------------------------------------------
@@ -171,7 +171,7 @@ VTN001(n) :- here(n), kind(n, "binary_operator"), op(n, "%"), field(n, "left", o
 .decl in_concat(s: node)
 in_concat(s) :- kind(c, "concatenated_string"), child(c, s, _).
 .decl lit_suffix(s: node, x: symbol)
-lit_suffix(s, x) :- fstring(s), str_part(s, _, x, _, 0), suffix(x).
+lit_suffix(s, x) :- fstring(s), str_part(s, _, x, _, 0), vsuffix(x).
 .decl exempt_fstr(s: node)
 exempt_fstr(s) :- lit_suffix(s, _), count : { lit_suffix(s, x), x != "_log", x != "_field_deltas" } = 0,
     count : { interp(s, _) } != 1.

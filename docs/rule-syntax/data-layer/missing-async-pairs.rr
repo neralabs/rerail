@@ -97,14 +97,14 @@ exempt_class("_CachedQuery").
 // named(f, n, b0): def f, named n with base b0 (n without a trailing _async), is not exempt and not a …_lazy member.
 // The non-greedy `.*?` lets the optional (?:_async)? group take the suffix when it is there.
 .decl named(f: node, n: symbol, b0: symbol)
-named(f, n, b0) :- def_name(f, n), !exempt(n), !match(".*_lazy", n),
+named(f, n, b0) :- def_name(f, n), !exempt(n), !suffix("_lazy", n),
     match("(?<b0>.*?)(?:_async)?", n), !exempt(b0).
 .decl side(f: node, b: symbol, k: symbol)
 // A plain def's base is its whole name, as in the Python linter's sync_methods[m.name]: a sync def foo_async has base
 // "foo_async" and is not the async side of foo.
-side(f, n, "sync")   :- named(f, n, _), !is_async(f), !match("_.*", n).
+side(f, n, "sync")   :- named(f, n, _), !is_async(f), !prefix("_", n).
 // An async def's base drops _async: async def foo_async and async def foo both have base "foo".
-side(f, b, "async")  :- named(f, _, b), is_async(f), !match("_.*", b).
+side(f, b, "async")  :- named(f, _, b), is_async(f), !prefix("_", b).
 
 // own(c, b, k, f): f sits directly in class c's body. sees(c, b, k, f): c has f as that side, own or inherited.
 .decl own(c: node, b: symbol, k: symbol, f: node)

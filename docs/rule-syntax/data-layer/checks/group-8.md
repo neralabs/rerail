@@ -26,7 +26,7 @@ Notes that apply to more than one check:
   the CLI default is 5 named files (`:54-60`).
 - **Needs:**
   - EXISTS `callee` + `text`/`attr_of` for `_call_name` (last identifier); `def_name`; `within` for `ast.walk(node)`;
-    `string_value` for `ast.Constant == "__readthrough_local_overlays"`; `!` for every "must contain" (RTA004–RTA009, RTA007).
+    `str` for `ast.Constant == "__readthrough_local_overlays"`; `!` for every "must contain" (RTA004–RTA009, RTA007).
   - EXISTS subset test (RTA008, `:193-205`): `missing(k, x) :- step(k), required(x), !has_const(k, x)`, then report if
     `missing(k, _)`. Same for RTA003's intersection.
   - EXISTS `assigned` dict test (RTA009, `:215-226`): `assignment` with `left` identifier `lease_conflict_update`,
@@ -152,7 +152,7 @@ Notes that apply to more than one check:
     by rules, not a file. `signed_list` verifies a file's lines. A relation argument is needed, as for
     `within_stop`'s stop set, because Datalog has no ordered string aggregation.
   - EXISTS policy entries as data: `call(c)`, callee name `CachedPureLazyPolicyEntry`, `call_arg(c, -1, "body_hash", v)`
-    + `string_value`. Tuples of pairs (`allowed_cache_members`) need `child` indexes.
+    + `str`. Tuples of pairs (`allowed_cache_members`) need `child` indexes.
   - LIB `py_qualname(f: node, q: symbol)`: Python `__qualname__` with `<locals>` after a function segment, defined
     only for defs reached through class/def *bodies*, not under `if`/`try` (`:290-359, 538-611`). `names.qualname`
     has no `<locals>` and no reachability restriction.
@@ -254,8 +254,8 @@ Notes that apply to more than one check:
   (`:79, 113-114`; at this revision only `.gitkeep`). Ceiling `scripts/allowlists/architecture_burn_down_ceilings/route_guardrail_policy.txt`,
   3 fields (`:81, 117-126`). Two signatures are script constants (`:80, 82`).
 - **Needs:**
-  - EXISTS the three detections: `call_arg(c, -1, "route_guardrails_mode", v), string_value(v, "warn")`;
-    `string_value(s, "warn"), nearest(s, a, "assert_statement")`; `decorator` + last name. Scope column = nearest def
+  - EXISTS the three detections: `call_arg(c, -1, "route_guardrails_mode", v), str(v, "warn")`;
+    `str(s, "warn"), nearest(s, a, "assert_statement")`; `decorator` + last name. Scope column = nearest def
     name or `"<module>"` (`:289-293`). Path test: first path part `conform` or any part `tests` (`:294-295`).
   - NATIVE fragment-directory reader `strict_allowlist(dir: symbol, fragment: symbol, line: number, entry: symbol)`,
     signed (`lint_lib/strict_allowlist.py:32-80`). It needs a directory of files (each fragment named after its source
@@ -275,7 +275,7 @@ Notes that apply to more than one check:
   - POLICY invalid signature is a finding that does not suppress the others (`:394-397`), unlike rtt_counting_workarounds.
 - **Hard parts:** matching is per payload `path\tcode\tscope\tmessage`, so two violations in one function with the same
   message need two allowlist entries. Which occurrence is reported as excess follows sort order. The cache key mixes in
-  the allowlist digest (`:132-149`), which is plumbing only. A `b"warn"` bytes constant is not `"warn"`, so `string_value`
+  the allowlist digest (`:132-149`), which is plumbing only. A `b"warn"` bytes constant is not `"warn"`, so `str`
   must not equate them. The source-trigger prefilter (`:143-148`) needs the literal `"warn"`/`'warn'` in the file text.
   `"""warn"""` and `f"warn"` both contain that substring, so the prefilter never hides them.
 
@@ -378,7 +378,7 @@ Notes that apply to more than one check:
   - EXISTS fixed-file assertions (`:820-920`): `doc(d, "impl/common/l2200_sql_dialect/sql_connection.py", _)` plus
     `!` over top-level classes and methods. "missing class" is reported at the module node, since the oracle's line is
     `None`, which the plugin turns into 1 (`:43`).
-  - EXISTS legacy lazy name (`:196-208`): the decorator keyword `lazy_name="…"` (`call_arg` + `string_value`), else
+  - EXISTS legacy lazy name (`:196-208`): the decorator keyword `lazy_name="…"` (`call_arg` + `str`), else
     `cat(@slice(n, 0, -6), "_lazy")` for `legacy_async` names ending `_async`, else `cat(n, "_lazy")`.
 - **Hard parts:** `_is_substantial_method`'s node-count branch (`sum(ast.walk) >= 90`, `:257-261`) is dead code. Not
   thin means at least 5 statements, so a node count (which would differ between `ast` and tree-sitter) is never

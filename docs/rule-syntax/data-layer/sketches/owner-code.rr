@@ -37,7 +37,7 @@ expr_child(p, c) :- child(p, a, _), kind(a, "argument_list"), child(a, c, _), !k
 .decl src_code(v: node, c: symbol) ordered by earlier
 src_code(v, "EOP001") :- attr_of(v, _, "name").
 src_code(v, "EOP002") :- attr_of(v, o, "field"), !kind(o, "call").
-src_code(v, "EOP002") :- call_name(v, "getattr"), posarg(v, 1, s), string_value(s, "field").
+src_code(v, "EOP002") :- call_name(v, "getattr"), posarg(v, 1, s), str(s, "field").
 // Any expression part with EOP002 (EOP001 is not inherited). Names and the two attribute shapes answer first.
 src_code(v, "EOP002") :- expr_child(v, ch), src_code(ch, "EOP002"), !ast_name(v, _), !attr_of(v, _, "name"),
     !attr_of(v, _, "field").

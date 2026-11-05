@@ -184,14 +184,18 @@ w('''  <section class="sect">
           <td>Captures: a named group in <code>match("…(?&lt;X&gt;…)…", s)</code> binds <code>X</code>; <code>match_all</code> gives one row per match</td></tr>
       <tr><td><code>count</code>, <code>min</code>, <code>max</code>, <code>sum : { … }</code></td>
           <td><code>.decl r(…) must, may</code>: a relation that may be unknown, and <code>must</code> / <code>may</code> rules (see "Unknown is not false")</td></tr>
-      <tr><td><code>match</code>, <code>cat</code>, <code>strlen</code>, <code>substr</code>, <code>to_number</code>; <code>@functor(…)</code> with <code>.functor</code></td>
+      <tr><td><code>match</code>, <code>contains</code>, <code>cat</code>, <code>strlen</code>, <code>substr</code>, <code>to_number</code>; <code>@functor(…)</code> with <code>.functor</code></td>
           <td><code>.violation</code>, <code>fix</code>, <code>=&gt; edits</code> and <code>.edit</code>: findings and fixes</td></tr>
+      <tr><td>Built-in constraints take the pattern first: <code>match(re, s)</code>, <code>contains(sub, s)</code></td>
+          <td>Text tests in the same shape: <code>glob("_*cache*", s)</code>, <code>prefix</code>, <code>suffix</code>, <code>word</code>, and <code>i</code> forms that ignore case. Each distinct string is tested once per run, for every rule together</td></tr>
       <tr><td><code>.decl</code>, <code>.type</code>, <code>.input</code>, <code>.output</code>, <code>.pragma</code>, <code>#include</code></td>
-          <td>A relation name as the stop-set argument of <code>within_stop</code>, <code>nearest</code> and <code>precedes_stop</code>: <code>nearest(f, s, scope)</code></td></tr>
+          <td>A relation name, or one kind as a string, as the set argument of the tree axes <code>inside</code>, <code>has</code>, <code>nearest</code>, <code>within_stop</code> and <code>precedes_stop</code>: <code>inside(c, f, "function_definition")</code>, <code>nearest(f, s, scope)</code>. They are tape passes, not recursion</td></tr>
       <tr><td>Aggregates <code>count</code>, <code>min</code>, <code>max</code>, <code>sum</code>, <code>mean</code>; none builds a string</td>
           <td><code>s = join x by k sep "," : { … }</code>: the rows' x values in k order, joined. For sorted lists in keys and for the exact bytes a signature covers</td></tr>
       <tr><td>Stratified negation: a relation is complete before anything negates it</td>
           <td><code>.decl r(…) ordered by earlier</code>: r may read itself under <code>!</code> or an aggregate at strictly earlier nodes. For "the latest earlier write that counts" (see "What the data-layer checks need")</td></tr>
+      <tr><td><code>.lattice flat&lt;&gt; { Bottom -&gt; …, Lub -&gt; … }</code>; <code>.pragma "magic-transform" "rel"</code></td>
+          <td>Used as Soufflé defines them, for typing's lattices and for demand-driven evaluation</td></tr>
       <tr><td></td>
           <td>Policy directives: <code>.policy</code>, <code>.description</code>, <code>.language</code>, <code>.mode</code>, <code>.scope</code>, <code>.budget</code>, …; <code>#include</code> loads each file once</td></tr>
     </table></div>
@@ -228,7 +232,7 @@ w('''  <section class="sect">
       <tr><td><code>.mode log CODE</code></td><td>These codes are reported and never block, for findings that only a ratchet enforces.</td></tr>
       <tr><td><code>.requires "data-layer:a", …</code></td><td>A suite: one finding per member policy that blocks or ends Unknown (budget, timeout).</td></tr>
       <tr><td><code>.gate CODE</code></td><td>When CODE has findings they are the report: a bad signature replaces it. The policy's other files are Unknown, not silently clean.</td></tr>
-      <tr><td><code>.on parse_error report CODE</code></td><td>Also report files that do not parse. Either way such a file gives no facts and its outcome is Unknown.</td></tr>
+      <tr><td><code>.on syntax_error report CODE</code></td><td>Also report files that do not parse. Either way such a file gives no facts and its outcome is Unknown.</td></tr>
       <tr><td><code>.budget V by code from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. It counts distinct findings. A ratchet on a metric (annotations, tests) is an ordinary rule comparing the metric with its ceiling.</td></tr>
       <tr><td><code>.scope report dirs "api"</code><br><code>.scope text "**/*.md"</code></td><td>Findings only land under these directories / read these files as text only (lines, no tree).</td></tr>
       <tr><td><code>.input r(IO=json, filename="b.json", path="/counts")</code></td><td>Read a repository file: json, yaml, lines (<code>dir=</code> for a directory), file. A missing or malformed file gives an <code>input_error</code> row.</td></tr>
@@ -242,9 +246,12 @@ sect("Bodies", [
     "Each rule below is one construct, with what it matches. All of them are Soufflé. A variable inside <code>{ … }</code> stays there unless it is also used outside.",
 ], [
  ("rr", '''
-// Regex: match tests the whole text, as in Soufflé, so `.*` stands for "anything after".
+// A text test: glob tests the whole text; `*` is any run, `[a-z]` one character of a class.
 // On a node it reads the node's text. Matches <div>'s tag `div`, not <Card>'s `Card`.
-host_tag(t) :- kind(t, "identifier"), match("[a-z].*", t).
+host_tag(t) :- kind(t, "identifier"), glob("[a-z]*", t).
+
+// match is Soufflé's regex test, for what a glob cannot say: here the shape of a hex literal.
+hex_literal(n) :- kind(n, "integer"), match("0[xX][0-9a-fA-F_]+", n).
 
 // A constant set is a relation of facts; membership is an atom.
 .decl barrier(kind: symbol)
@@ -317,13 +324,15 @@ w('''  <section class="sect">
     <div class="tablewrap"><table class="map">
       <tr><th>JSON</th><th>.rr</th></tr>
       <tr><td><code>"kind": "call"</code></td><td><code>kind(n, "call")</code></td></tr>
-      <tr><td><code>"regex": "^exec$"</code></td><td><code>match("exec", n)</code>: whole-text, so <code>^</code> and <code>$</code> go and <code>.*</code> marks open ends</td></tr>
+      <tr><td><code>"regex": "^exec$"</code>, <code>"_async$"</code>, <code>"^(?:api/)?impl/"</code></td><td><code>glob("exec", n)</code>, <code>suffix("_async", n)</code>, <code>glob("{api/,}impl/**", n)</code>: a glob test wherever it is exactly the regex (1,949 of 2,123 distinct patterns)</td></tr>
+      <tr><td><code>"regex": "0[xbo][0-9A-Fa-f_]*_(?:8|16)"</code></td><td><code>match("0[xbo][0-9A-Fa-f_]*_(?:8|16)", n)</code>: whole-text, so <code>^</code> and <code>$</code> go and <code>.*</code> marks open ends</td></tr>
       <tr><td><code>"regex": "(?&lt;D&gt;todo)"</code></td><td><code>match(".*(?&lt;D&gt;todo).*", n)</code>, which binds the span <code>D</code></td></tr>
       <tr><td><code>"pattern": "$F($$$)"</code></td><td><code>n ~ `$F($$$)`</code>, which binds <code>F</code></td></tr>
       <tr><td><code>"has": {"field": "f", …}</code></td><td><code>field(n, "f", c), …</code></td></tr>
       <tr><td><code>"has": {…}</code></td><td><code>child(n, c, _), …</code></td></tr>
-      <tr><td><code>"has": {"stopBy": "end", …}</code></td><td><code>within(c, n), …</code></td></tr>
-      <tr><td><code>"inside": {"stopBy": "end", …}</code></td><td><code>within(n, p), …</code></td></tr>
+      <tr><td><code>"has": {"stopBy": "end", "kind": "k", …}</code></td><td><code>has(n, c, "k"), …</code></td></tr>
+      <tr><td><code>"inside": {"stopBy": "end", "kind": "k", …}</code></td><td><code>inside(n, p, "k"), …</code></td></tr>
+      <tr><td><code>"has"</code> / <code>"inside"</code> <code>{"stopBy": "end", …}</code>, no kind</td><td><code>within(c, n), …</code> / <code>within(n, p), …</code></td></tr>
       <tr><td><code>"inside": {"stopBy": R, …}</code></td><td><code>within_stop(n, p, R), …</code></td></tr>
       <tr><td><code>"precedes"</code> / <code>"follows"</code></td><td><code>next_sibling</code>, <code>precedes</code>, <code>precedes_stop</code></td></tr>
       <tr><td><code>"all": […]</code></td><td>Commas</td></tr>

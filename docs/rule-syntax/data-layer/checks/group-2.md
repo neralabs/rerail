@@ -244,7 +244,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
   `l2050_transaction.execution_authority_tokens` at load time (`:69`). That file is a literal tuple of
   `ExecutionAuthorityCallsite(module=…, function=…, signature_b64=…)` calls.
 - **Needs:**
-  - `EXISTS call_arg, string_value, kind, docof`: read the registry statically, from the keyword arguments of the calls in
+  - `EXISTS call_arg, str, kind, docof`: read the registry statically, from the keyword arguments of the calls in
     the tuple assigned to `EXPLICIT_EXECUTION_AUTHORITY_CALLSITES`. That file is in scope.
   - `LIB local_qualname` variant with `<locals>` (`:306-322`): class names are appended plainly. Each def that
     has any enclosing *def* gets `<locals>.` before it, and a class inside a def does not. So `f.C.m` comes out
@@ -253,7 +253,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
   - `EXISTS replace_all(path)`: the module is the path parts joined with dots, `__init__` kept (`:141-142`).
   - `LIB py_name_node` for AUTH001's Name case. `field(_, "attribute", n)` gives the Attribute case (`:154-159`).
     The Attribute is reported at the start line of the whole attribute expression.
-  - `EXISTS leaf_name, call_arg, string_value, contains`: AUTH003's two argument forms (`:170-187`). The first
+  - `EXISTS leaf_name, call_arg, str, contains`: AUTH003's two argument forms (`:170-187`). The first
     argument is a string containing a marker. Or the second argument is a string literal in a 4-name set and the
     first is the name or attribute leaf `execution_boundary`.
   - `EXISTS facts + negation, modnode`: AUTH004/005 are set differences. The oracle anchors them at line 0 of the
@@ -290,7 +290,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     `_iter_non_nested_returns` really stop at nested def, class and lambda, so they are `within_stop`. Every
     `for node in _walk_nodes(fn): if <nested def>: continue` loop skips only the def node itself and still visits
     its body, so it is plain `within` (see Hard parts).
-  - `EXISTS method_of, def_name, retval, call_arg, callee, nameref, string_value, kind/field/child`, and `min` over
+  - `EXISTS method_of, def_name, retval, call_arg, callee, nameref, str, kind/field/child`, and `min` over
     `node` start offsets for "first": `_get_method` takes the first body item with the name, `_get_class_level` the
     first `return <int>`, and STEP-026 `break`s at the first offending node (lint_serverplan_steps.py:361, 2474, 508).
   - `EXISTS count : {…}` for "exactly one non-docstring statement, `return ()`" (STEP-034b,
@@ -417,7 +417,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
   The runtime registry's signature is a string literal in `post_op_allowlist.py` (`ALLOWLIST_SIGNATURE`).
   No git, no baseline file.
 - **Needs:**
-  - `EXISTS doc, modnode, child, field, kind, text, string_value`: limit to the four files by path. The anchor of
+  - `EXISTS doc, modnode, child, field, kind, text, str`: limit to the four files by path. The anchor of
     every finding is `modnode` of post_op.py, since the oracle anchors all findings there at line 1.
   - `EXISTS kind/field/child/text, cat`: the enum members of top-level classes `PostOpKind`, `PostOpBehavior` (post_op.py,
     post_op_specs.py) and `DomainPostOpDecoderKind` (post_op_specs.py). A member is a direct class-body
@@ -434,7 +434,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
       name `dataclass` or by a call of it; `dataclasses.dataclass` does not count (`:591-628`).
     - "Top-level" means a direct child of `module`, or the `definition` of a `decorated_definition` that is one.
       `rdefn` is not that: it accepts defs nested under a module-level `if`.
-  - `EXISTS string_value, kind`: the entries of the runtime registry are the string elements of the set, list or
+  - `EXISTS str, kind`: the entries of the runtime registry are the string elements of the set, list or
     tuple literal assigned to `SIGNED_POST_OP_SYMBOLS` at module top. The literal may be wrapped in a call
     (`frozenset({...})` → its first argument) (`:632-652`). The signature is the `ALLOWLIST_SIGNATURE` value from
     an **annotated** assignment only. It is a string literal, or the bare name `NEEDS_SIGNING`/`UNSIGNED`, which
@@ -464,7 +464,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     - the attribute part of `x.attr`;
     - a string constant equal to the token (docstrings included).
 
-    The attribute part is `field(_, "attribute", n)` and the string case is `string_value`. One finding per node,
+    The attribute part is `field(_, "attribute", n)` and the string case is `str`. One finding per node,
     symbol `"path:line"`.
   - `LIB py_name_node(n: node, x: symbol)`: identifier n stands where CPython's AST has an `ast.Name` or an `ast.arg`.
     The sketch is `nameref(n,x)` minus several identifier positions, plus every parameter identifier
@@ -487,7 +487,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
     Case 4 is `min l : { … line(c, l) }` and a comparison.
   - `EXISTS match`: POSTOP204 is an entry that has none of the prefixes `assertion.`, `decoder.DomainPostOpDecoderKind.`,
     `materializer.`, or is one of five broad names (`:818-842`).
-  - `EXISTS within, string_value, match, negation`: the reachable set for POSTOP205/206 has two parts (`:845-872`).
+  - `EXISTS within, str, match, negation`: the reachable set for POSTOP205/206 has two parts (`:845-872`).
     - String constants under the first top-level `def post_op_runtime_symbol` in post_op.py that start with
       `assertion.` or `materializer.`. "Under" means anywhere: nested functions and conditional expressions count.
     - `"decoder." + member` for each `DomainPostOpDecoderKind` member.
@@ -518,7 +518,7 @@ the suite plugin is the hard-fail path, so it is the one followed here. Shared c
   - **Mapping CPython AST to tree-sitter.**
     - `ast.Name` vs identifier positions: see `py_name_node`. The keyword name in `f(runtime_ref=1)` and
       `def runtime_ref():` do **not** match.
-    - `ast.Constant` merges implicitly concatenated strings into one value; `string_value` must too.
+    - `ast.Constant` merges implicitly concatenated strings into one value; `str` must too.
     - The literal fragments of an f-string are `Constant` nodes in CPython, so `f"runtime_ref"` matches.
     - For enum members, `A = B = 1` gives both names, `A, B = …` gives none, and `X: int` (no value) gives X.
   - **Line numbers.** POSTOP200's symbol is `path:lineno` of the node's start line. Several tokens on one line give
@@ -878,7 +878,7 @@ Needs that are the same thing under different names are merged into one row. Che
 | LIB | `expr_name(e, s)` / `leaf_name(e, s)`: the unresolved dotted text of a Name/Attribute chain, and its last segment (oracle `_name`, `_call_name`, `_dotted_name`, `_node_name`, `cname`, `_call_chain`). A variant looks through a subscript or call to its value or function. | grammar_callable_constructors, generated_index_sources, serverplan_bypass, mandatory_imperative_tripwire, execution_authority_bypass, serverplan_steps, post_op_side_effects, versioned_table_name_manipulation, history_serverplan_projection, serverplan_state_tripwires (10) |
 | LIB | `sig_param(f, p, x, kind, ann, dflt)`: parameters with their kind (posonly / arg / kwonly / vararg / kwarg), annotation node and default node. names.rr `param` includes splats and keeps none of this | grammar_callable_constructors, grammar_str_params, generated_index_sources, mandatory_imperative_tripwire, serverplan_steps, serverplan_state_tripwires (6) |
 | POLICY | Outcome when a required input is missing, unparsable or unreadable as a literal (oracle crash, `PARSE` finding, or silent skip): a declared finding or a blocking engine error, per policy | mandatory_imperative_tripwire, execution_authority_bypass, post_op_side_effects, serverplan_steps, serverplan_state_tripwires, grammar_callable_constructors (6) |
-| NATIVE | `py_str_const(n, v)`: the string `ast.Constant`s CPython would build. Implicit concatenation is one value, and f-string literal pieces are values (escapes decoded, adjacent pieces merged). It extends `value`/`string_value` | mandatory_imperative_tripwire, post_op_side_effects, serverplan_steps, versioned_table_name_manipulation, history_serverplan_projection (5) |
+| NATIVE | `py_str_const(n, v)`: the string `ast.Constant`s CPython would build. Implicit concatenation is one value, and f-string literal pieces are values (escapes decoded, adjacent pieces merged). It extends `value`/`str` | mandatory_imperative_tripwire, post_op_side_effects, serverplan_steps, versioned_table_name_manipulation, history_serverplan_projection (5) |
 | LIB | `def_extent(n, f)`: n is inside def/class f, its decorators, bases, defaults and annotations included. Sketch: `within(n,f) ; (decorator(f,e), (n=e ; within(n,e)))` | grammar_callable_constructors, generated_index_sources, serverplan_bypass, execution_authority_bypass, serverplan_state_tripwires (5) |
 | NATIVE | `py_order(n, pre, depth)`: the CPython walk keys. `pre` is the pre-order index in `iter_child_nodes` field order; `depth` is AST depth, for BFS `ast.walk`. Start offsets approximate them | grammar_callable_constructors, serverplan_steps, versioned_table_name_manipulation, serverplan_state_tripwires (4) |
 | LIB | `py_name_node(n, x)`: identifier n where CPython has an `ast.Name` (or `ast.arg`). It is `nameref` minus import names, `global`/`nonlocal`, `except … as` and match captures, plus parameters | mandatory_imperative_tripwire, execution_authority_bypass, post_op_side_effects (3) |
@@ -903,5 +903,5 @@ Needs that are the same thing under different names are merged into one row. Che
 | POLICY | A report-only legacy mode with a count limit. A separate policy with `.budget * {"total": N}` and `.output` probably covers it | serverplan_steps (1) |
 
 Not needs: whole-file source-trigger gates (`contains` on the module text), module-anchored findings (`modnode`),
-reading a literal registry statically (`call_arg`/`string_value`), per-line deduplication (`min`), and zero
+reading a literal registry statically (`call_arg`/`str`), per-line deduplication (`min`), and zero
 baselines (`.budget * by code`) are all expressible today.

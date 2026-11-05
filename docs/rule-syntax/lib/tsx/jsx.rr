@@ -30,7 +30,7 @@ jsx_el(e) :- kind(e, k), (k = "jsx_element" ; k = "jsx_self_closing_element").
 // React's rule: a lowercase tag is an intrinsic (a DOM element, passed to the renderer as a string); a capitalised
 // or dotted tag is a component (a variable in scope). So <div> never resolves to a symbol, and <Div> must.
 .decl host_tag(t: node)  // a lowercase intrinsic: div, span, svg
-host_tag(t) :- kind(t, "identifier"), match("[a-z].*", t).
+host_tag(t) :- kind(t, "identifier"), glob("[a-z]**", t).
 // Fragments render only their children, so for render position they are transparent (see render_stop).
 .decl fragment(e: node)  // <>…</>, <Fragment>, <React.Fragment>
 // The short form <>…</> has an open tag with no name.
@@ -44,11 +44,11 @@ fragment(e) :- tag(e, t), sym_of(t, q), q = "react#Fragment".
 // joining sym_of(tag, q) with component(q, f). The capital letter is React's convention, used here as the test.
 .decl component(q: symbol, f: node)
 // function App() { return <div/>; }
-component(@qname(m, x), f) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x), match("[A-Z].*", x),
+component(@qname(m, x), f) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x), glob("[A-Z]**", x),
     docof(f, d), doc(d, _, m).
 // const App = () => <div/>;   const App = memo(function () { … });   const Input = forwardRef((p, ref) => …);
 // f is the inner function, which is where the returned JSX lives.
-component(@qname(m, x), f) :- kind(v, "variable_declarator"), field(v, "name", n), text(n, x), match("[A-Z].*", x),
+component(@qname(m, x), f) :- kind(v, "variable_declarator"), field(v, "name", n), text(n, x), glob("[A-Z]**", x),
     field(v, "value", e), component_fn(e, f), docof(v, d), doc(d, _, m).
 // component_fn(e, f): expression e evaluates to a component whose body is function f. Unwraps memo and
 // forwardRef (React's wrappers, recognised by symbol), recursively: memo(forwardRef(() => …)) works.

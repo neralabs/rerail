@@ -154,13 +154,13 @@ Several needs come up in more than one check. Each is described in full once and
   where `type(x).a` is compared with `Other.a` (same attribute, x not `self`).
 - **Inputs:** Python AST of production dirs, tests excluded.
 - **Needs:**
-  - EXISTS `call_arg(c, 1, "", v)`, `string_value`, a fact set of names, `callee` + `text` (`:137-147`).
+  - EXISTS `call_arg(c, 1, "", v)`, `str`, a fact set of names, `callee` + `text` (`:137-147`).
   - EXISTS for the comparison: `kind(c, "comparison_operator")`, operands by `child(c, n, i)`, and "every operator is
     is/is not" as `!op(c, o)` for o outside `{"is","not"}` with no `"in"` token. `cmp` (names.rr) is not usable because it
     drops chains, and the oracle accepts chains (`:161`). The left operand is paired with every comparator, not with
     adjacent ones (`:163-179`). Use `min` over comparator index for the reported attribute.
 - **Hard parts:** `getattr` is matched by spelling, so a shadowed `getattr` still counts. `len(node.args) < 2` counts
-  starred arguments. In Python's AST, implicit concatenation `"de" "fines"` folds into one Constant. `string_value` must
+  starred arguments. In Python's AST, implicit concatenation `"de" "fines"` folds into one Constant. `str` must
   fold `concatenated_string` too, and must reject `b"…"` and f-strings, which are not `str` Constants.
 
 ### publication_registry_writes (hard-fail, 271 lines)
@@ -187,7 +187,7 @@ Several needs come up in more than one check. Each is described in full once and
     the pair (b, c) spans two nodes. Body: recurse into the `left` child while it is a `boolean_operator` with op `or`
     and not parenthesized. The chain root is the outermost such node; the finding is at its line. Then
     `or_operand(t,i,l), or_operand(t,i+1,r)`.
-  - EXISTS empty-value tests (`:120-131`) with `kind` + child count + `string_value(n, "")` + bare-name `callee`
+  - EXISTS empty-value tests (`:120-131`) with `kind` + child count + `str(n, "")` + bare-name `callee`
     spelling, and `not_operator` and `call_arg` for the falsy forms (`:206-217`).
 - **Hard parts:** one finding per BoolOp, for the first adjacent pair that matches. `(a or b) or c` stays nested in
   Python too, so parentheses must stop the flattening. `b""` is not `== ""`. Without receiver typing, any receiver
@@ -371,7 +371,7 @@ Several needs come up in more than one check. Each is described in full once and
   - LIB for the fact families: `plan_io_calls`, eager sinks over `_looks_like_plan_expr`/`_looks_like_lazy_expr` name
     heuristics (`:2013-2142`), intent/native/grammar calls, dolt strings, LazyResult internals reads, side-queue and
     bootstrap mutations, and reconciliation surfaces. Each is EXISTS-composable (`match`, `attr_of`, `call_arg`,
-    `string_value`) over `la_leaf`; together they are a library.
+    `str`) over `la_leaf`; together they are a library.
   - LIB `reaches_pred(f, P)` with a witness line: `_transitive_line` returns the line of the first call, in walk order,
     whose callee has P directly or reaches it (`:2469-2505`). Datalog gives `reach` and a `min` over call offset for the
     line. The first-matching-callee and eager-taint variants also return the symbol, through a chain of chosen edges
@@ -427,4 +427,4 @@ Several needs come up in more than one check. Each is described in full once and
 | POLICY | output filtered to the six CONDA-005 messages that pass the marker filter (do not port the dropped families) | conditional_architecture |
 
 Checks that need nothing beyond EXISTS: publication_registry_writes and declared_fact_interrogation (the latter needs
-`string_value` to fold `concatenated_string`; check that core does).
+`str` to fold `concatenated_string`; check that core does).

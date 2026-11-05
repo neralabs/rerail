@@ -88,7 +88,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
 - **Inputs:** Python AST of `l1300_session l2000_connection l2050_transaction l4000_permissions data_layer
   data_layer_testing conform impl/common/l2070_server_plan benchmarks scripts`, tests included.
 - **Needs:**
-  - `EXISTS def_name, attr_of, import_alias, call_arg, string_value, file_name, decorator, params`.
+  - `EXISTS def_name, attr_of, import_alias, call_arg, str, file_name, decorator, params`.
   - `LIB ast_name(n: node, x: symbol)`: an identifier in a Python-ast `Name` position (load or store). `nameref` also
     yields parameter names, import-statement identifiers, `global`/`nonlocal` names, `except … as e` and match-capture
     names, none of which is an `ast.Name` (lint_no_system_grant_bypass.py:126-130). Body: `nameref(n, x)` minus
@@ -248,7 +248,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
 - **Inputs:** Python AST of `api/`, `impl/`, `data_layer/`, `_internal/` and every top-level `l\d{4}_.+` directory
   (tests excluded).
 - **Needs:**
-  - `EXISTS def_name, match, node, text, string_value`: the pair by capture `match("(?<x>.*)_async", n)`; "last
+  - `EXISTS def_name, match, node, text, str`: the pair by capture `match("(?<x>.*)_async", n)`; "last
     def with that name in the file" by start offsets and negation.
   - `LIB pos_param(f: node, x: symbol, p: node, i: number)`: the regular positional parameters (`args.args`):
     after a `/`, before any `*`, `*args` or `**kw`; `param` also gives `*args` rows (its 2nd rule takes child 0 of a
@@ -310,7 +310,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
 - **Inputs:** Python AST of `_internal/`, `api/`, `data_layer/`, `impl/` and every top-level `l[0-9]*` directory
   (tests excluded).
 - **Needs:**
-  - `EXISTS kind, field, text, node, def_name, method_of, within, match_all, string_value, max`: "latest earlier
+  - `EXISTS kind, field, text, node, def_name, method_of, within, match_all, str, max`: "latest earlier
     alias" as `max` over start offsets of earlier from-imports/assignments binding the name; the word test in string
     annotations by `match_all("(?<w>[A-Za-z0-9_]+)", s)` against the alias set (the batch-four root cause:
     words, not type syntax); reachable methods as a positive recursive closure over `self.m(…)`/`cls.m(…)` calls
@@ -355,7 +355,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
 - **Inputs:** Python AST of `scripts/` (tests excluded); the CLI reads only `lint_grammar_render_methods.py` and
   `lint_sql_grammar_escape_hatches.py`.
 - **Needs:**
-  - `EXISTS kind, field, text, string_value, count, modnode`: entries by a short recursion over `binary_operator`
+  - `EXISTS kind, field, text, str, count, modnode`: entries by a short recursion over `binary_operator`
     `|` and set elements (any call's first positional argument is unwrapped, not only `frozenset`,
     lint_grammar_allowlist_burndown.py:249-276); `count : { entry(a, v) }` per assignment; the threshold and the
     `grew by` arithmetic are plain comparisons; the finding sits on the module node (line 1).
@@ -404,7 +404,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
 - **Inputs:** Python source text (raw lines, comments and strings included) and AST of the six
   `KNOWN_RELATIVE_PATHS` (also under an `api/` prefix).
 - **Needs:**
-  - `EXISTS match_all, modnode, line, text, match, nearest, def_name, string_value`: line patterns as
+  - `EXISTS match_all, modnode, line, text, match, nearest, def_name, str`: line patterns as
     `match_all` over the module node's text with `\s` written `[^\S\n]` so a match cannot cross a line, as the
     oracle's per-line search cannot (lint_polymorphic_type_id_authority.py:291-303), and `(?i)` for the collision
     set; the span's `line` is the finding line, and set semantics give the (line, message) dedup of `_record`

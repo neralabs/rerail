@@ -66,10 +66,10 @@ post_op_file(n) :- docof(n, d), doc(d, "l2070_batching/post_op.py", _).
 // materializer(f): the Python linter's _is_materializer_function, by name. mat_body(f) is _is_post_op_materializer_body:
 // a materializer, or any _materialize_* function in post_op.py.
 .decl materializer(f: node)  // materialize_result, materialize_runtime_builder, materialize_*builder
-materializer(f) :- def_name(f, n), match("(materialize_result|materialize_runtime_builder|materialize_.*builder)", n).
+materializer(f) :- def_name(f, n), glob("{materialize_result,materialize_runtime_builder,materialize_**builder}", n).
 .decl mat_body(f: node)  // … or a _materialize_* function in post_op.py
 mat_body(f) :- materializer(f).
-mat_body(f) :- def_name(f, n), match("_materialize_.*", n), post_op_file(f).
+mat_body(f) :- def_name(f, n), prefix("_materialize_", n), post_op_file(f).
 
 // enum_cmp(c, s): comparison c tests enum case s ("RuntimeBuilderName.FOO") with a single == or is.
 // enum_ref(n, s): n names enum case s, written "Enum.CASE".
@@ -95,11 +95,11 @@ POSTOPDISPATCH001(c, x, s, k) :- enum_cmp(c, s), in_fn(c, f, x), count : { enum_
     k = count : { enum_cmp(d, s), in_fn(d, f, _) }, k > 1.
 // 002: a materializer (by name, post_op.py helpers excluded) compares a RuntimeBuilderName case at all.
 .violation POSTOPDISPATCH002(at: node, fn: symbol, case: symbol) "{fn}: materializers must not dispatch on {case}"
-POSTOPDISPATCH002(c, x, s) :- enum_cmp(c, s), match("RuntimeBuilderName\..*", s), in_fn(c, f, x), materializer(f).
+POSTOPDISPATCH002(c, x, s) :- enum_cmp(c, s), prefix("RuntimeBuilderName.", s), in_fn(c, f, x), materializer(f).
 // 004: a materialize_*builder function holds two or more enum comparisons in total, of any cases. Reported on the def.
 .violation POSTOPDISPATCH004(at: node, fn: symbol)
     "{fn}: materialize_*builder functions may not contain multiple post-op enum comparisons"
-POSTOPDISPATCH004(f, x) :- def_name(f, x), match("materialize_.*builder", x),
+POSTOPDISPATCH004(f, x) :- def_name(f, x), glob("materialize_**builder", x),
     k = count : { enum_cmp(c, _), in_fn(c, f, _) }, k > 1.
 
 // Literal-key probes. key_probe(c, r): `"k" in r`.  kw_probe(c): r is kwargs / literal_kwargs, or `….keys()`.
@@ -153,7 +153,7 @@ POSTOPDISPATCH005(n, x) :- kind(n, "identifier"), text(n, x), deleted(x), !field
 .violation POSTOPDISPATCH006(at: node, fn: symbol)
     "{fn}: domain-shaped post-op materializer helpers must move into SQL/IR/ServerPlan steps"
 // 006: a _materialize_* def in post_op.py that is not on the allowed list. Reported on the def.
-POSTOPDISPATCH006(f, x) :- def_name(f, x), match("_materialize_.*", x), !helper_ok(x), post_op_file(f).
+POSTOPDISPATCH006(f, x) :- def_name(f, x), prefix("_materialize_", x), !helper_ok(x), post_op_file(f).
 
 // 008: a class with ResultRowMaterializer among its bases, as a bare name or the last part of a dotted name.
 // Keyword arguments in the base list (metaclass=…) are neither, so last_name skips them.

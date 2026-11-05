@@ -182,7 +182,7 @@ dunder_all(m, x) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__
 // name not starting with an underscore. This is also what `from m import *` copies.
 .decl public_name(m: symbol, x: symbol)
 public_name(m, x) :- dunder_all(m, x).
-public_name(m, x) :- exported(m, x), count : { dunder_all(m, _) } = 0, !match("_.*", x).
+public_name(m, x) :- exported(m, x), count : { dunder_all(m, _) } = 0, !prefix("_", x).
 
 // ---- edits --------------------------------------------------------------------------------------------------------
 // Library edits for import fixes. Each expands to core's native edits; see python/flow for what `.edit` means.

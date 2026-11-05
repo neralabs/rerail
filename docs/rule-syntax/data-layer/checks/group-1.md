@@ -147,7 +147,7 @@ Oracle: data-layer scripts at revision 2b1504ad. Cited as `script.py:LINE`; a ba
     - A BinOp (any operator) gives left if its head contains "Connection", else right if that does.
 
     Over the tree-sitter type kinds `identifier`, `attribute`, `member_type`, `subscript`, `generic_type`,
-    `binary_operator`, `union_type`, `string` and `none`, with `string_value` and `contains`. Then
+    `binary_operator`, `union_type`, `string` and `none`, with `str` and `contains`. Then
     `conn_anno(t) :- anno_head(t, n), n != "ConnectionId", (contains("Connection", n) ; n = "conn").`
     (:661-665).
   - `LIB first_conn_param(f, x)`: the lowest index i with a conn annotation, via `min i : {…}`. The oracle stops
@@ -239,7 +239,7 @@ Oracle: data-layer scripts at revision 2b1504ad. Cited as `script.py:LINE`; a ba
   - `LIB param_kind` (as above): all kinds, posonly, kwonly, `*a`, `**kw` (:190-198).
   - `LIB anno_mentions(t: node, w: symbol)`: the annotation's text with comments and layout removed, as
     `ast.unparse` gives it (:178-184), contains w. Body: some identifier, attribute name or string contents at or
-    below t contains w (`within`, `text`, `string_value`, `contains`). It must not use the raw `text(t, …)` of the
+    below t contains w (`within`, `text`, `str`, `contains`). It must not use the raw `text(t, …)` of the
     annotation, which includes comments (the candidate hit exactly this; batch-three notes). A word cannot span two
     tokens, so per-token `contains` is exact. Then `cb_param(f) :- param_kind(f,_,_,_,t), anno_mentions(t,"Callable"),
     anno_mentions(t,"Transaction").` (:199-205).
@@ -249,7 +249,7 @@ Oracle: data-layer scripts at revision 2b1504ad. Cited as `script.py:LINE`; a ba
   - `EXISTS within, kind`: rule 2a is `reentrant(r), within(r, l), kind(l, "lambda"), callback_arg(c, l),
     entry_call(c), walk_owner(c, f)`. The oracle walks every AST ancestor lambda of r (:279-285), so r may sit in a
     nested def inside the lambda.
-  - `EXISTS call_arg, string_value, text`: `getattr` is textual (`func.id == "getattr"`, not resolved). Any
+  - `EXISTS call_arg, str, text`: `getattr` is textual (`func.id == "getattr"`, not resolved). Any
     positional argument after the first (`args[1:]`) that is a plain string in the versioned set counts (:304-311).
   - `LIB nested_reentrant(f, x)`: g has f as its walk_owner parent (`_function_stack[-1]` at g's exit), g's own
     walk-owned calls include a reentrant one, and `def_name(g, x)` (:297-301). Rule 2b:
@@ -727,7 +727,7 @@ Oracle: data-layer scripts at revision 2b1504ad. Cited as `script.py:LINE`; a ba
     - `_is_string_literal`, a str Constant only, bytes excluded (`:382`);
     - `on_JoinedStr` (`:273`);
     - `_is_string_expr` (`:385`).
-    core's `string_value` does not say which prefix a literal has.
+    core's `str` does not say which prefix a literal has.
   - `LIB literal_const(n)`: any `ast.Constant`. That is `string_form` "str"/"bytes", or `integer`, `float`, `true`,
     `false`, `none`, `ellipsis`. `.join` counts on any constant receiver (`:388-389`: `isinstance(…, ast.Constant)`),
     so `b"".join(...)` is reported and `f"…".join(...)` is not.

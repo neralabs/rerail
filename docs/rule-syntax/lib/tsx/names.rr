@@ -139,7 +139,7 @@ local_of(sp, l) :- field(sp, "alias", a), text(a, l).
 local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), text(n, l).
 // source_of: the module specifier string of the enclosing import statement, without quotes: "./util", "react".
 .decl source_of(n: node, m: symbol)
-source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), string_value(s, m).
+source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).
 
 // target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
 // Resolution, in the order TypeScript tries it:
@@ -149,14 +149,14 @@ source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str
 // So target(d, "./util", "src/util") and target(d, "react", "react").
 .decl target(d: number, spec: symbol, t: symbol)
 // Relative: `import "../c"` from src/a/b.ts joins to src/c, then tries src/c.ts, src/c.tsx, src/c/index.ts, ….
-target(d, s, t) :- docof(i, d), import_spec(i, s), match("\..*", s), doc(d, p, _),
+target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _),
     base = @join(@dir(p), s), resolve_base(base, t).
 // tsconfig paths: find the tsconfig governing the file, substitute the `*` of a matching pattern into its target.
 target(d, s, t) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
     tsconfig_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(@join(dir, sub), t).
 // Bare package: neither relative nor matched by a paths pattern. The package is opaque (no node_modules reading),
 // so symbols from it are just "react#useState" and rules match on those names.
-target(d, s, @package_of(s)) :- docof(i, d), import_spec(i, s), !match("\..*", s), !path_mapped(d, s).
+target(d, s, @package_of(s)) :- docof(i, d), import_spec(i, s), !prefix(".", s), !path_mapped(d, s).
 // path_mapped(d, s): some tsconfig paths pattern for d's tsconfig matches s, so s is not a package name.
 // Needed as its own relation so the bare-package rule can negate it.
 .decl path_mapped(d: number, s: symbol)
@@ -174,7 +174,7 @@ ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
 // import_spec(i, s): statement i names module s. Covers `import … from "s"` and `export … from "s"`, since a
 // re-export has to resolve its source the same way an import does.
 .decl import_spec(i: node, s: symbol)
-import_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), string_value(n, s).
+import_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).
 
 // exports(m, x, q): module m exports x, which is symbol q.
 // Three ways a name gets exported, one rule each:
@@ -208,7 +208,7 @@ def_of(d, x) :- kind(d, k),
 def_of(d, x) :- kind(d, "lexical_declaration"), child(d, v, _), kind(v, "variable_declarator"), field(v, "name", n), text(n, x).
 // export_from(e, s, y, x): e re-exports s's name y under the name x.
 .decl export_from(e: node, s: symbol, y: symbol, x: symbol)  // export { y as x } from "s"
-export_from(e, s, y, x) :- field(e, "source", src), string_value(src, s), child(e, c, _), kind(c, "export_clause"),
+export_from(e, s, y, x) :- field(e, "source", src), str(src, s), child(e, c, _), kind(c, "export_clause"),
     child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), text(n, y), export_name(sp, x).
 // export_name: the name the outside world sees: the alias if present (`y as x` -> x), else the name itself.
 .decl export_name(sp: node, x: symbol)
@@ -216,7 +216,7 @@ export_name(sp, x) :- field(sp, "alias", a), text(a, x).
 export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), text(n, x).
 // star_export: an export with a source and no `{ … }` clause is `export * from "s"`.
 .decl star_export(e: node, s: symbol)  // export * from "s"
-star_export(e, s) :- field(e, "source", src), string_value(src, s), count : { child(e, c, _), kind(c, "export_clause") } = 0.
+star_export(e, s) :- field(e, "source", src), str(src, s), count : { child(e, c, _), kind(c, "export_clause") } = 0.
 
 // symbol(t, x, q): name x of resolved target t is symbol q.
 // Workspace module: follow its exports (possibly through re-exports to another file).

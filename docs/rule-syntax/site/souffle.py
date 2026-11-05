@@ -391,7 +391,9 @@ if __name__ == "__main__":
 
 BUILTIN_FN = {"cat", "strlen", "to_number", "to_string", "contains", "substr", "ord", "min", "max", "sum",
               "count", "mean", "join"}
-RELATION_ARG = {"within_stop": 2, "nearest": 2, "precedes_stop": 2}
+RELATION_ARG = {"within_stop": 2, "nearest": 2, "precedes_stop": 2, "inside": 2, "has": 2}
+# The text tests (ALIGNMENT.md): built-in constraints like Soufflé's match and contains, pattern first.
+TEXT_TESTS = {"glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword"}
 STMT_TOK = re.compile(r'"(?:[^"\\]|\\.)*"|`+|//[^\n]*|:-|=>|!=|<=|>=|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|@[A-Za-z_]\w*|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\S', re.S)
 
 
@@ -596,6 +598,9 @@ def _literal(l, bound, force=False):
     if "~" in l and any(t.startswith("`") for t in l):    # pattern
         k = l.index("~")
         return _vars(l[:k]) | _vars(l[k + 1:]), set(), True
+    if l[0] in TEXT_TESTS and len(l) > 2 and l[1] == "(":    # glob(p, s) …: tests, binding nothing
+        vs = _vars(l)
+        return set(), vs, force or vs <= bound
     if l[0] in ("match", "match_all") and len(l) > 2:
         args = _split_top(l[2:-1], ",")
         groups = set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", l[2]))

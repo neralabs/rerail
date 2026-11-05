@@ -102,8 +102,8 @@ deco(f, t) :- decorator(f, d), deco_expr(d, e), !sym_of(e, _), text(e, t).
 // legacy(f, k): f carries @legacy_sync / @legacy_module_sync (k = "sync") or the async pair. The regex anchors the end
 // of the resolved name, so "pkg.decorators.legacy_sync" matches.
 .decl legacy(f: node, k: symbol)
-legacy(f, "sync")  :- deco(f, q), match(".*(legacy_sync|legacy_module_sync)", q).
-legacy(f, "async") :- deco(f, q), match(".*(legacy_async|legacy_module_async)", q).
+legacy(f, "sync")  :- deco(f, q), glob("**{legacy_sync,legacy_module_sync}", q).
+legacy(f, "async") :- deco(f, q), glob("**{legacy_async,legacy_module_async}", q).
 // own_private(f): f is marked internal by @internal_api, @private_api or @private_public_api, compared on the last
 // dotted segment as the Python linter's _is_marked_private_public_api does.
 .decl own_private(f: node)
@@ -139,29 +139,29 @@ data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\.py", p).
 .decl root(o: symbol, f: node)
 // An exported module-level function, public (no leading _), not defined under _internal/.
 root(m, f) :- data_layer_module(m), exports(m, _, q), qualname(f, q), !nearest(f, _, nonmod),
-    def_name(f, n), !match("_.*", n), count : { docof(f, d), doc(d, p, _), match("_internal/.*", p) } = 0.
+    def_name(f, n), !prefix("_", n), count : { docof(f, d), doc(d, p, _), prefix("_internal/", p) } = 0.
 // A public method of an exported class, own or inherited (mro_method follows the bases, across files).
 // Skipped as in the Python linter: private classes, Protocol classes (by name or by a base), classes named Async…,
 // _-prefixed methods, the method_skip names, private-decorated methods, and properties (getter, setter, deleter).
 root(cq, f) :- data_layer_module(m), exports(m, _, cq), class_def(c, cq), def_name(c, x), !private(c),
-    !match(".*(?:Protocol$|^Async).*", x), count : { class_base(c, b), match(".*Protocol.*", b) } = 0,
-    mro_method(cq, n, f), !match("_.*", n), !method_skip(n), !private(f),
-    count : { deco(f, q), match(".*(property|\.setter|\.deleter)", q) } = 0.
+    !match(".*(?:Protocol$|^Async).*", x), count : { class_base(c, b), contains("Protocol", b) } = 0,
+    mro_method(cq, n, f), !prefix("_", n), !method_skip(n), !private(f),
+    count : { deco(f, q), glob("**{property,.setter,.deleter}", q) } = 0.
 // mixed(f): the name contains "lazy" and also "sync" or "async" (case-insensitive; "async" contains "sync").
 // Mixed names are not grouped; they are reported by invalid_mixed_lazy_execution_name.
 .decl mixed(f: node)
-mixed(f) :- def_name(f, n), match("(?i).*lazy.*", n), match("(?i).*sync.*", n).
+mixed(f) :- def_name(f, n), icontains("lazy", n), icontains("sync", n).
 // member(o, b, slot, f): root f is the `slot` member of group (o, b). Base name b strips one _lazy/_async/_sync
 // suffix (the non-greedy `.*?` leaves the suffix to the optional group). The slot comes from the suffix, as in
 // _group_base_name, except that an unsuffixed (or _sync) def with @legacy_async is the async member, as in the Python linter.
 // The suffix tests come before the decorator test (each rule requires the earlier ones to fail), so foo_lazy
 // with @legacy_async stays lazy.
 .decl member(o: symbol, b: symbol, slot: symbol, f: node)
-member(o, b, "lazy", f)  :- grouped(o, b, f, n), match(".*_lazy", n).
-member(o, b, "async", f) :- grouped(o, b, f, n), !match(".*_lazy", n), match(".*_async", n).
-member(o, b, "async", f) :- grouped(o, b, f, n), !match(".*_lazy", n), !match(".*_async", n),
+member(o, b, "lazy", f)  :- grouped(o, b, f, n), suffix("_lazy", n).
+member(o, b, "async", f) :- grouped(o, b, f, n), !suffix("_lazy", n), suffix("_async", n).
+member(o, b, "async", f) :- grouped(o, b, f, n), !suffix("_lazy", n), !suffix("_async", n),
     legacy(f, "async").
-member(o, b, "sync", f)  :- grouped(o, b, f, n), !match(".*_lazy", n), !match(".*_async", n),
+member(o, b, "sync", f)  :- grouped(o, b, f, n), !suffix("_lazy", n), !suffix("_async", n),
     !legacy(f, "async").
 // grouped(o, b, f, n): root f, named n, belongs to group (o, b).
 .decl grouped(o: symbol, b: symbol, f: node, n: symbol)
@@ -201,39 +201,39 @@ owner_name(o, b, x) :- member(o, b, _, _), match("(?:.*\.)?(?<x>[^.]+)", o).
 // Lifecycle methods (commit/rollback on caches and migrations, execute_ddl on schema transactions).
 exempt(o, b) :- owner_name(o, b, x), lifecycle(x, b).
 // table_exists on any …Connection.
-exempt(o, b) :- owner_name(o, b, x), match(".*Connection", x), b = "table_exists".
+exempt(o, b) :- owner_name(o, b, x), suffix("Connection", x), b = "table_exists".
 // One-mode facades: the named list, and any Sync…/Async…/Lazy… transaction or handle class.
 exempt(o, b) :- owner_name(o, b, x), facade(x).
-exempt(o, b) :- owner_name(o, b, x), match("(Sync|Async|Lazy).*(Transaction|SessionHandle|VersionHandle)", x).
+exempt(o, b) :- owner_name(o, b, x), glob("{Sync,Async,Lazy}**{Transaction,SessionHandle,VersionHandle}", x).
 // Transaction factories: plan/query on the transaction classes, when the group's exemplar is in a factory file.
 exempt(o, b) :- owner_name(o, b, x), factory_owner(x), factory_base(b),
     exemplar(o, b, e), path_of(e, p), factory_path(p).
 // execute_ddl defined in the schema-transaction file, whatever the owner.
 exempt(o, b) :- exemplar(o, b, e), b = "execute_ddl", path_of(e, "l2000_connection/schema_transaction.py").
 // Lazy-only bootstrap groups: the base or owner says bootstrap, or the base is one of the listed bootstrap probes.
-exempt(o, b) :- lazy_only(o, b), match(".*bootstrap.*", b).
+exempt(o, b) :- lazy_only(o, b), contains("bootstrap", b).
 exempt(o, b) :- lazy_only(o, b), bootstrap_base(b).
-exempt(o, b) :- lazy_only(o, b), owner_name(o, b, x), match("(?i).*bootstrap.*", x).
+exempt(o, b) :- lazy_only(o, b), owner_name(o, b, x), icontains("bootstrap", x).
 
 // Python linter _looks_execution_surface. A group is enforced only if some member is a surface (see live below).
 // true_lazy(f): named …_lazy, or its signature mentions LazyResult / LazySeq / ServerPlan (_is_true_lazy_surface).
 // surface(f): f looks like an execution surface.
 .decl true_lazy(f: node)
 true_lazy(f) :- member(_, _, "lazy", f).
-true_lazy(f) :- sig_type(f, x), match("(?i)(lazyresult|lazyseq|serverplan)", x).
+true_lazy(f) :- sig_type(f, x), iglob("{lazyresult,lazyseq,serverplan}", x).
 // hint(f): the Python linter's contextual_hint, any one of: the file path names a transaction or graph-query module;
 // the defining class's name mentions connection/query/transaction/versioned; or a signature type is one of the
 // connection, transaction or lazy types.
 .decl hint(f: node)
-hint(f) :- path_of(f, p), match(".*/(graph_query|schema_transaction|transaction|versioned_transactions).*", p).
-hint(f) :- nearest(f, c, cdef), def_name(c, x), match("(?i).*(?:connection|query|schematransaction|transaction|versioned).*", x).
-hint(f) :- sig_type(f, x), match("(?i)(?:(versioned)?(databaseconnection|readtransaction|writetransaction)|(lazyresult|lazyseq|serverplan))", x).
+hint(f) :- path_of(f, p), glob("**/{graph_query,schema_transaction,transaction,versioned_transactions}**", p).
+hint(f) :- nearest(f, c, cdef), def_name(c, x), iglob("**{connection,query,schematransaction,transaction,versioned}**", x).
+hint(f) :- sig_type(f, x), iglob("{{versioned,}{databaseconnection,readtransaction,writetransaction},{lazyresult,lazyseq,serverplan}}", x).
 // not_surface(f): the Python linter's early `return False` cases: abstract methods, private members, lazy primitive
 // builders (module-level lazy_* in the primitive files), runtime context classes, and chainable builders.
 .decl not_surface(f: node)
-not_surface(f) :- deco(f, q), match(".*abstractmethod", q).
+not_surface(f) :- deco(f, q), suffix("abstractmethod", q).
 not_surface(f) :- private(f).
-not_surface(f) :- path_of(f, p), primitive_path(p), !nearest(f, _, cdef), def_name(f, n), match("lazy_.*", n), true_lazy(f).
+not_surface(f) :- path_of(f, p), primitive_path(p), !nearest(f, _, cdef), def_name(f, n), prefix("lazy_", n), true_lazy(f).
 not_surface(f) :- path_of(f, p), ctx_path(p), nearest(f, c, cdef), def_name(c, x), ctx_class(x).
 // A chainable builder returns its own class: the return annotation is the class name, optionally quoted and
 // optionally subscripted (`-> "Query[T]"`). The regex captures the bare name; it must equal the class name x.
@@ -298,7 +298,7 @@ missing_lazy_decorator(l) :- checked(o, b), member(o, b, "lazy", l), !lazy_decor
 direct_wrapper_bypasses_lazy_owner(f) :- checked(o, b), member(o, b, "lazy", _), member(o, b, s, f), s != "lazy",
     deco(f, q), match(".*(^|\.)direct_legacy[^.]*", q),
     within(c, f), cname(c, x),
-    match("(grammar_effect_lazy|grammar_rows_lazy|grammar_row_lazy|(execute_grammar|grammar_fetch).*_lazy)", x).
+    glob("{grammar_effect_lazy,grammar_rows_lazy,grammar_row_lazy,{execute_grammar,grammar_fetch}**_lazy}", x).
 
 // Every mixed-name root, checked or not: the Python linter reports these before any exemption or surface test.
 .violation invalid_mixed_lazy_execution_name(at: node, owner: symbol)

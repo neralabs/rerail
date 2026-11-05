@@ -24,9 +24,12 @@ registries, behaviour probes) get those facts from a file a CI step writes. Rera
 Two companion pages say how the engine runs what this page designs:
 
 - [FINDINGS-LAYER.md](FINDINGS-LAYER.md): how rows become findings, which files are Unknown, and what `.gate`,
-  `.budget`, `.on parse_error`, `code {c}`, `.mode` and `.severity` do;
+  `.budget`, `.on syntax_error`, `code {c}`, `.mode` and `.severity` do;
 - [RUN-FACTS.md](RUN-FACTS.md): the artifacts a CI step writes, how Rerail knows they are for the code being
   checked, and the five checks that need them.
+
+[../ALIGNMENT.md](../ALIGNMENT.md) records how this notation matches the other branches': the `.rdl` dialect of
+the final shape, and the JSON policies of the lowering and data-layer branches.
 
 How this was done:
 
@@ -128,7 +131,7 @@ says why Datalog cannot derive it.
 | `source(d, sp)`, `src_line(d, l, sp)`, `line_count(d, k)`, `end_line(n, l)`, `col(n, c)` | the raw text, physical lines (Python's `str.splitlines()` terminators), extents | Comments and blank lines are not in the tree; splitlines has eight terminators |
 | `.scope text "**/*.md"` | Markdown, Rust or SQL files read as text, with no tree | No grammar for them |
 | `op_at(n, i, s)` | operator tokens in order; `not in`, `is not` as one token | `op` is unordered; chained comparisons need the order |
-| `parse_error(d, l, msg)` | CPython rejects the file | Tree-sitter recovers from errors, so the tree cannot show it |
+| `syntax_error(d, l, msg)` | CPython rejects the file | Tree-sitter recovers from errors, so the tree cannot show it |
 | `earlier(m, n)`, `visit_index(n, i)`, `ast_depth(n, k)` | CPython's `ast` visit order and depth | Decorators and return annotations come after a def's body, defaults after all parameters; rebuilding that from fields needs ancestor pairs |
 | `str_part(lit, i, v, at, spec)` | str constants as CPython builds them: escapes decoded, adjacent literals merged, f-string pieces | CPython's decoder |
 | `@place(path, line)` | a location with no node: a file, a line of it, a missing file | A finding needs a location |
@@ -142,6 +145,10 @@ A fact that only a run of repository code can produce is read with `IO=json` fro
 declared input of the policy, so a missing file is an `input_error`, never a silent "no findings".
 
 ## Library relations
+
+A library relation is a named derived fact, and follows the admission rules of the derived-facts design (Pulling
+it all together, decision 0005): its name is a concept, not a rule's name; at least two checks use it; and it has
+at most as many rows per document as the document has nodes. A helper that one check needs stays in that check.
 
 **lib/python/ast.rr** (new) is Python as CPython's `ast` module sees it. The scripts walk `ast`, not tree-sitter,
 and the two differ in ways that change findings:
@@ -194,7 +201,7 @@ dropped out under it: messages that list joined names, two findings at one key, 
 | `.severity V warning` | per-code severity, for presentation; it never decides blocking | warning-only checks |
 | `.mode log CODE` | these codes are reported and never block | findings that only a ratchet enforces |
 | `.gate V` | when V has keys they are the report, and the policy's other files are Unknown | bad signatures, missing baselines: the scripts exit before scanning |
-| `.on parse_error report CODE`, `.on input_error report CODE` | report those as findings too | scripts that report their own extraction failures |
+| `.on syntax_error report CODE`, `.on input_error report CODE` | report those as findings too | scripts that report their own extraction failures |
 | `.budget V by code from base [floor] [drop N%]` | findings may exist up to ceilings that are rows of a relation, usually a verified baseline; counts are of distinct keys | ratchets over findings, read from `.ratchet-baselines/*.json` and similar |
 | `.artifact "name" inputs …`, `.input … artifact=` | facts from a file a CI step wrote, and the files it was built from | the five checks that run repository code |
 | `.group G = "A", "B"` | a named set of codes for budgets | ratchets over category groups |
@@ -251,7 +258,7 @@ What the checks use most:
 | dropped by the findings contract | 20 |
 | `.budget … from` (metric ratchets among them are now rules; FINDINGS-LAYER.md §6) | 16 |
 | `join` | 16 |
-| `parse_error` | 14 |
+| `syntax_error` | 14 |
 | `str_part` | 12 |
 | visit order | 10 |
 | `ordered by earlier` | 2 (plan_helpers_allowlist, expression_owner_propagation) |

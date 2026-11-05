@@ -36,14 +36,14 @@ stmt_def(b, f) :- body_stmt(b, s, _), kind(s, "decorated_definition"), field(s, 
 .decl test_module(m: node)
 test_module(m) :- conform_test(d), kind(m, "module"), docof(m, d).
 .decl lb_function(f: node)
-lb_function(f) :- test_module(m), stmt_def(m, f), kind(f, "function_definition"), def_name(f, x), match("test.*", x).
+lb_function(f) :- test_module(m), stmt_def(m, f), kind(f, "function_definition"), def_name(f, x), prefix("test", x).
 .decl test_class(c: node, b: node)
-test_class(c, b) :- test_module(m), stmt_def(m, c), kind(c, "class_definition"), def_name(c, x), match("Test.*", x),
+test_class(c, b) :- test_module(m), stmt_def(m, c), kind(c, "class_definition"), def_name(c, x), prefix("Test", x),
     field(c, "body", b),
     count : { stmt_def(b, g), kind(g, "function_definition"), def_name(g, y), (y = "__init__" ; y = "__new__") } = 0.
 .decl lb_method(c: node, x: symbol)
 lb_method(c, x) :- test_class(c, b), stmt_def(b, f), kind(f, "function_definition"), def_name(f, x),
-    match("test.*", x).
+    prefix("test", x).
 .decl static_tests(n: number)
 .output static_tests
 static_tests(n) :- n = count : { lb_function(_) } + count : { lb_method(_, _) }.

@@ -69,7 +69,7 @@ internal_import(i, m, "type_checking") :- internal_alias(i, m), tc(i).
 internal_import(i, m, "deferred")      :- internal_alias(i, m), !tc(i), nearest(i, _, fdef).
 internal_import(i, m, "module_level")  :- internal_alias(i, m), !tc(i), !nearest(i, _, fdef).
 .decl internal_alias(i: node, m: symbol)
-internal_alias(i, m) :- import_alias(i, _, m, _, _), match("(api|impl)\..*", m).
+internal_alias(i, m) :- import_alias(i, _, m, _, _), glob("{api,impl}.**", m).
 
 // layer_dependency: a file in layer lNNNN imports from a higher-numbered layer.
 // Python linter: check_layer_dependency. Each negated test below is one of its early returns.
@@ -140,7 +140,7 @@ api_exempt(d) :- file_name(d, f), bridge(f, p), path_part(d, p).
 
 // api_impl: an api/ file (not an __init__.py, not exempt) imports a module under impl.
 .violation api_impl(at: node, module: symbol) "api/ modules cannot import from impl/ (except api/__init__.py): {module}"
-api_impl(i, m) :- edge(i, d, m), match("impl\..*", m), path_part(d, "api"), !file_name(d, "__init__.py"), !api_exempt(d).
+api_impl(i, m) :- edge(i, d, m), prefix("impl.", m), path_part(d, "api"), !file_name(d, "__init__.py"), !api_exempt(d).
 
 // White-box conform tests allowed to import impl/ (the Python linter's whitebox_test_files set, matched by file name only).
 .decl whitebox(v: symbol)
@@ -175,7 +175,7 @@ whitebox("test_pgvector_stress.py"). whitebox("test_pgvector_vs_hnsw_comparison.
 // Python linter: check_conform_imports. It does not require api/ or impl/ in the path, so conform/ files are checked here
 // even though the layer-number rule skips them.
 .violation conform_impl(at: node, module: symbol) "conform/ tests must be backend-agnostic, cannot import from impl/: {module}"
-conform_impl(i, m) :- edge(i, d, m), match("impl\..*", m), path_part(d, "conform"),
+conform_impl(i, m) :- edge(i, d, m), prefix("impl.", m), path_part(d, "conform"),
     file_name(d, f), f != "conftest.py", !whitebox(f).
 
 // Input facts read from a policy file, not from the code: which layers form each group, and which groups each may use.

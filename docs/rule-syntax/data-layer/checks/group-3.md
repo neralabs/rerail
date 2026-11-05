@@ -48,7 +48,7 @@ These come up in several checks. Each check's list names the ones it needs and g
   `names.rr` `param(f, x, i)` has neither the annotation nor the kind.
 - **str_const** (LIB) `str_const(n: node, v: symbol)`: n is an `ast.Constant` whose value is a `str`, meaning a
   `string` or `concatenated_string` with no `interpolation` child and no `b`/`B` prefix; v is its value. Sketch:
-  `string_value` restricted by `kind`, `child` and a prefix regex. Also `docstring(s: node)`: s is the first
+  `str` restricted by `kind`, `child` and a prefix regex. Also `docstring(s: node)`: s is the first
   statement of a class/def/module body and is an `expression_statement` of a `str_const`. `module_doc` exists for
   modules only.
 - **py_frame** (LIB) `py_frame(n: node, f: node)`: f is the innermost function whose *Python-ast* subtree holds n.
@@ -91,7 +91,7 @@ These come up in several checks. Each check's list names the ones it needs and g
 - **Inputs:** Python AST of the 9 `HOT_PATHS` (`lint_hot_path_reflection.py:54-64`); test paths dropped.
 - **Needs:**
   - EXISTS `.scope include` (the explicit file list), `doc` path equality for the allowlists, `call_arg` +
-    `string_value` for `_string_arg`, `attr_of` for `.model_fields`.
+    `str` for `_string_arg`, `attr_of` for `.model_fields`.
   - LIB `dotted_expr(e: node, s: symbol)`: `_call_name`. An identifier gives its text. An attribute whose object has
     a dotted_expr gives `@dot(base, attr)`. An attribute whose object does not gives the bare attr. Recursive.
     `lint_hot_path_reflection.py:95-101`. `qn` needs an import binding and does not fall back to the bare attr, so it

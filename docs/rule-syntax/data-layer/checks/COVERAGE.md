@@ -6,7 +6,7 @@ needs are left out: the suite plugin is the path followed. The design read is li
 names/imports/calls/flow, lib/data-layer/signing.rr and the worked ports in data-layer/.
 
 IDs: L5 `join`, L6 `ordered by earlier`; N-src (source, src_line, line_count, end_line, col), N-op (op_at), N-parse
-(parse_error), N-order (earlier, visit_index, ast_depth), N-str (str_part), N-fn:@name, N-git, N-read (`.input IO=…`,
+(syntax_error), N-order (earlier, visit_index, ast_depth), N-str (str_part), N-fn:@name, N-git, N-read (`.input IO=…`,
 input_error), N-artifact (a CI-written JSON artifact); P-ast:rel, P-lib:rel, P-sign (signing.rr); LOCAL (a helper in
 the check's own file); D-place (`@place` findings), D-code, D-sev, D-gate, D-on, D-budget, D-group, D-scope, D-mode;
 CONTRACT (the loose findings contract makes the need go away).
