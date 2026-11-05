@@ -4,10 +4,9 @@
 # The bot reviews only when asked: request the @neralabs/reviewer team as a reviewer (it clears the request
 # after each review, so request it again for another), or comment "@neralabs-reviewer review"
 # ("@neralabs-reviewer help" lists the commands). Only people with write access can trigger it. Pushes do
-# nothing. The review reads the PR and its CI results; it never builds, runs or pushes anything. It never
-# approves (allow_approve: false): a PR's text is the model's input, so its verdict is a comment review and
-# never counts toward this repo's required review. It reviews only pull requests whose head branch is in this
-# repo: a fork PR is never reviewed by the bot, whoever asks.
+# nothing. The review reads the PR and its CI results; it never builds, runs or pushes anything. It may approve
+# (allow_approve: true). It reviews only pull requests whose head branch is in this repo: a fork PR is never
+# reviewed by the bot, whoever asks.
 name: reviewer
 
 on:
@@ -73,7 +72,7 @@ jobs:
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
       reviewer_ref: a5661b2d02971b4e51667c230eb7664c699d643a
-      allow_approve: false
+      allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
       # Claude Opus 5.5 on Amazon Bedrock. The repo variable REVIEWER_MODEL holds the pinned model id or
