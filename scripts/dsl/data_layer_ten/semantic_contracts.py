@@ -37,4 +37,19 @@ def record(source,seeds):
    expected=[dict(path=(f.path.relative_to(root) if f.path.is_absolute() else f.path).as_posix(),line=f.line,code=f.code,message=f.message) for f in bounded.collect_violations(root)]
   assert len(expected)==1 and expected[0]['code']=='BCGP002'
   cases.append(dict(test='bounded-python-space-'+hex(point),check='bounded_composed_graph_paths',entry='all',parameters={},production=True,files=files,expected=expected))
+ graphql=importlib.import_module('scripts.lint_graphql_plan_ownership')
+ for label,annotation in [('closure',''),('shadow', 'scope'),('both','scope: PlanScope')]:
+  path='l9750_graphql/probe.py';text='def outer(scope: PlanScope):\n    def inner('+annotation+'):\n        return scope._private\n    return inner\n'
+  cases.append(dict(test='graphql-nested-'+label,check='graphql_plan_ownership',entry='scan_source',parameters={},production=False,files=[dict(path=path,source=text)],expected=normalize(graphql.scan_source(Path(path),text),source)))
+ generated=importlib.import_module('scripts.lint_generated_index_sources')
+ for label,text in [
+  ('alias-before','from l1000_schema.schema_def import Index as Ix\ndef use():\n    return Ix()\n# _generated_index\n'),
+  ('alias-after','def use():\n    return Ix()\nfrom l1000_schema.schema_def import Index as Ix\n# _generated_index\n'),
+  ('lambda','def _generated_index(*,source: IndexSource):\n    return lambda: Index(source=source)\n'),
+  ('async','async def _generated_index():\n    return Index(source=source)\n')]:
+  path='impl/common/l7245_versioned_backends/generic_sparse.py'
+  with tempfile.TemporaryDirectory() as temporary:
+   root=Path(temporary);target=root/path;target.parent.mkdir(parents=True);target.write_bytes(text.encode())
+   expected=[text.removeprefix(str(root)+'/') for text in generated.check_file(target)]
+  cases.append(dict(test='generated-event-'+label,check='generated_index_sources',entry='check_file',parameters={},production=False,files=[dict(path=path,source=text)],expected=expected))
  return cases

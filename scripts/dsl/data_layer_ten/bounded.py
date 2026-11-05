@@ -6,8 +6,8 @@ import re,ast
 def candidate(root):
  c=constants(root/'scripts/lint_bounded_composed_graph_paths.py');paths={n.targets[0].id:n.value.args[0].value for n in ast.parse((root/'scripts/lint_bounded_composed_graph_paths.py').read_text()).body if isinstance(n,ast.Assign) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Name) and n.value.func.id=='Path' and len(n.value.args)==1 and isinstance(n.value.args[0],ast.Constant)};rows=[];required=[]
  def src(key):return 'replace(replace(source_text('+q(paths[key])+'),char(13)||char(10),char(10)),char(13),char(10))'
- def rx(text,pattern,group=0):return f'rx_extract({text},{q(pattern)},{group})'
- def matches(text,pattern):return f'coalesce(rx_matches({text},{q(pattern)}),0)'
+ def rx(text,pattern,group=0):return f'rx_extract({text},{q(pattern.replace(r'\s',PY_SPACE))},{group})'
+ def matches(text,pattern):return f'coalesce(rx_matches({text},{q(pattern.replace(r'\s',PY_SPACE))}),0)'
  def line(prefix):return f"1+length({prefix})-length(replace({prefix},char(10),''))"
  def prefix(text,pattern):return rx(text,r'(?ms)\A(.*?)'+pattern,1)
  def block(key,name,method=False):
@@ -57,7 +57,7 @@ def candidate(root):
    b,ln=block(key,name);field=rx(b,r'(?m)^    graph_type\s*:\s*([^\n=]+)(?:\s*=\s*([^\n]+))?',1);default=rx(b,r'(?m)^    graph_type\s*:\s*([^\n=]+)(?:\s*=\s*([^\n]+))?',2)
    emit('BCGP009',key,f'required graph contract {name} is missing',src(key)+' IS NOT NULL AND '+b+' IS NULL')
    emit('BCGP009',key,f'{name} must carry graph_type',b+' IS NOT NULL AND '+field+' IS NULL',ln)
-   emit('BCGP009',key,f'{name}.graph_type must be required and non-optional',f"instr({field},'None')>0 OR "+matches(default,r'^[\s\x1c-\x1f]*None[\s\x1c-\x1f]*$'),ln)
+   emit('BCGP009',key,f'{name}.graph_type must be required and non-optional',f"instr({field},'None')>0 OR "+matches(default,'^'+PY_SPACE+'*None'+PY_SPACE+'*$'),ln)
  require('SQL_GRAPH_QUERY_BUILDER')
  for token,description in [('_try_build_sparse_union_recursive_bindings_grammar','legacy sparse-union recursion'),('_try_build_sparse_recursive_bindings_grammar','legacy one-edge recursion'),('_SqlSparseUnionRecursiveBindingGrammar','legacy sparse binding grammar'),('_SqlSparseUnionRecursiveBindingFinalSelect','legacy sparse binding final selection')]:
   pattern='(SELECT left_word||'+q(token)+'||right_word FROM python_word_boundaries)'

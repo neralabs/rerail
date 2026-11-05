@@ -29,6 +29,38 @@ def python_word(pattern,prefix=False):
     # A prefix capture includes the consumed delimiter for correct line numbers.
     return (r'(?s)\A(.*?'+PY_LEFT+r')' if prefix else PY_LEFT)+'(?:'+pattern+')'+PY_RIGHT
 
+def python_upper_prefix(words):
+    """Preimage of uppercase ASCII prefixes under CPython's full upper mapping.
+
+    A final character may expand beyond the requested prefix, as with ẗ -> T̈.
+    Keep Unicode case operations out of SQLite's ASCII-only upper function.
+    """
+    import re
+    from functools import lru_cache
+    assert all(word and word.isascii() and word==word.upper() for word in words)
+    images={}
+    for point in range(0x110000):
+        char=chr(point);upper=char.upper()
+        if upper[0].isascii():images.setdefault(upper,[]).append(char)
+    @lru_cache(None)
+    def suffix(remaining):
+        arms={}
+        for image,chars in images.items():
+            if image.startswith(remaining):tail=''
+            elif remaining.startswith(image):tail=suffix(remaining[len(image):])
+            else:continue
+            arms.setdefault(tail,[]).extend(chars)
+        return '(?:'+'|'.join('['+''.join(re.escape(c) for c in sorted(chars))+']'+tail for tail,chars in arms.items())+')'
+    return '(?:'+'|'.join(suffix(word) for word in words)+')'
+
+def python_decimal_patterns():
+    """The decimal digits accepted by CPython regex and int, with their values."""
+    digits=[[] for _ in range(10)]
+    for point in range(0x110000):
+        char=chr(point)
+        if char.isdecimal():digits[int(char)].append(char)
+    return python_character_class(str.isdecimal),['['+''.join(chars)+']' for chars in digits]
+
 
 def extended():
     stages=nine_base()

@@ -2763,6 +2763,115 @@
           "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
         }
       ]
+    },
+    {
+      "test": "graphql-nested-closure",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def outer(scope: PlanScope):\n    def inner():\n        return scope._private\n    return inner\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "graphql-nested-shadow",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def outer(scope: PlanScope):\n    def inner(scope):\n        return scope._private\n    return inner\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "graphql-nested-both",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def outer(scope: PlanScope):\n    def inner(scope: PlanScope):\n        return scope._private\n    return inner\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "graphql_plan_ownership",
+          "code": "GPO001",
+          "path": "l9750_graphql/probe.py",
+          "line": 3,
+          "message": "inner reads private plan authority attribute _private; add a typed public plan-scope contract",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "generated-event-alias-before",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "from l1000_schema.schema_def import Index as Ix\ndef use():\n    return Ix()\n# _generated_index\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:3: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ]
+    },
+    {
+      "test": "generated-event-alias-after",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def use():\n    return Ix()\nfrom l1000_schema.schema_def import Index as Ix\n# _generated_index\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "generated-event-lambda",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*,source: IndexSource):\n    return lambda: Index(source=source)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "generated-event-async",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "async def _generated_index():\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": []
     }
   ]
 }
