@@ -20,7 +20,6 @@ import {
   type CheckoutRecord,
   type EffectiveRule,
   type LibraryRule,
-  type RepositoryStartState,
   type RepositoryStatus,
   type RuleCatalog,
   type RuleConfig,
@@ -30,7 +29,7 @@ import {
 } from "../engine/catalog/repository-model.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, repositoryHistoryIds, type RepositoryListing } from "../engine/catalog/repository-registry.js";
-import { setCheckoutStarted, setRepositoryStarted } from "../runtime/repository-start.js";
+import { setCheckoutStarted, setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
 import {
   copyRerailRuleToLibrary,
@@ -217,11 +216,6 @@ function guardAgent(stores: RerailApiStores, caller: ApiCaller, target: Target, 
   throw new ApiError(403, "agent-not-permitted",
     `${target.repository.displayName} is set up, so a coding agent can't change its rules for the whole repository. `
     + `Change them for this worktree instead, or ask the person to change them in the dashboard: ${url}`);
-}
-
-function stateOf(status: RepositoryStatus): RepositoryStartState {
-  if (!status.started) return "stopped";
-  return status.setUp ? "started" : "not-set-up";
 }
 
 function contextOfRecord(record: CheckoutRecord): CheckoutContext {

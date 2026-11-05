@@ -14,6 +14,7 @@ import {
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { rerailRunsIn } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
@@ -52,7 +53,7 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
   if (databasePath === undefined) {
     const answered = await readRepositoryState(workspace, host);
-    if (answered !== null) return answered !== "stopped";
+    if (answered !== null) return rerailRunsIn(answered);
   }
   return isRerailStarted(workspace, databasePath);
 }

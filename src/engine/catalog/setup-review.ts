@@ -4,12 +4,13 @@
  * no longer offers the review. While such a repository is still not set up, set-up goes straight to its confirm question
  * there. Any set-up (the dashboard's included), a start and a stop delete it: a repository set up is just set up.
  */
-import { eq, sql } from "drizzle-orm";
+import { eq, getTableName } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
 import type { RepositoryKey } from "./repository-model.js";
 import { repositories, setupReviews } from "../storage/schema.js";
+import { holdsTable } from "../storage/table-probe.js";
 
-type Reader = Pick<RerailDatabase, "select" | "get">;
+type Reader = Pick<RerailDatabase, "select" | "$client">;
 type Deleter = Pick<RerailDatabase, "delete">;
 
 /** Set-up offered the review in `repositoryKey` (earlier versions); nothing is recorded once the repository is set up. */
@@ -27,8 +28,7 @@ export function offerSetupReview(database: RerailDatabase, repositoryKey: Reposi
  * no table for it until a writer opens it (read-only opens apply no schema), and no offer either.
  */
 export function setupReviewOffered(db: Reader, repositoryKey: RepositoryKey): boolean {
-  const kept = db.get<{ name: string } | undefined>(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'setup_reviews'`);
-  if (kept === undefined) return false;
+  if (!holdsTable(db.$client, getTableName(setupReviews))) return false;
   return db.select({ key: setupReviews.repositoryKey }).from(setupReviews)
     .where(eq(setupReviews.repositoryKey, repositoryKey)).get() !== undefined;
 }
