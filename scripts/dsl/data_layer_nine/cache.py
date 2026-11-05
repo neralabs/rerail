@@ -13,8 +13,8 @@ def candidate(root):
  queries=[row('BCH001',"n.callee||'() inside a test/fixture can create repeated cold bootstraps; prefer module-level TEST_BOOTSTRAP_TABLES or TEST_BOOTSTRAP_VERSIONING_DOMAINS'",'cache_calls n',f'n.inside_test AND n.callee IN {helpers}'),
  row('BCH002',"n.callee||'() uses an explicit manifest_key; per-test manifest keys commonly cause BOOT-WARM-CACHE-MISS'",'cache_calls n',f'n.callee IN {helpers} AND '+child('n','keywords',condition="v.name='manifest_key'"),order='n.id+0.0001'),
  row('BCH003',"n.callee||'() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES'",'cache_calls n',f"n.inside_test AND n.callee_kind='Name' AND n.callee IN {literals(c['CREATE_TABLES_HELPERS'])}")]
- item=document('bootstrap_cache_health',[source_triggers(clause('bootstrap-cache',stages,' UNION ALL '.join(queries)),c['BOOTSTRAP_HELPERS']|c['CREATE_TABLES_HELPERS'])],['conform/**/test_*.py'])
+ item=document('bootstrap_cache_health',[source_triggers(clause('bootstrap-cache',stages,' UNION ALL '.join(queries)),c['BOOTSTRAP_HELPERS']|c['CREATE_TABLES_HELPERS'])],['conform/**/*.py'])
  from .parser_errors import clause_
- item['clauses'].append(clause_('BCH000','SyntaxError: ',item['clauses'][1]['relational']['inputs']['gate']['evidence']['query']['ast']['rule']))
- item['scope']['exclude']=['**/__pycache__/**','**/.pytest_cache/**']
+ item['clauses'].append(clause_('BCH000','SyntaxError: ',A(item['clauses'][1]['relational']['inputs']['gate']['evidence']['query']['ast']['rule'],{'$option':'entryPoint','cases':{'all':FALSE},'default':TRUE})))
+ item['scope']['exclude']=['**/'+part+'/**' for part in ['.git', '.venv', 'venv', '__pycache__', 'tmp']]
  return item

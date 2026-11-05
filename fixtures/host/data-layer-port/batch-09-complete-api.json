@@ -4,7 +4,7 @@
   "mode": "snapshot",
   "exitCode": 0,
   "sourceFilesChecked": 1500,
-  "engineSha256": "ee97f553efb77a5f5d97c0313bdb22bb677c0e8e9aa455e653702cb948263031",
+  "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
   "records": [
     {
       "test": "scripts/tests/test_lint_bootstrap_cache_health.py::test_fact_engine_skips_files_without_bootstrap_tokens",
@@ -6961,6 +6961,96 @@
       }
     },
     {
+      "test": "::test_raw_surface_locations_preserve_the_complete_source[pass\\n\\n# COLD_APPLICATION\\n]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_file_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "4b10311b5ed55257be40dd79b20bd00792f60a20ed379e1999cf36035504a5e4"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": []
+      },
+      "expected": [
+        {
+          "code": "BEI035",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 3,
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced"
+        }
+      ]
+    },
+    {
+      "test": "::test_raw_surface_locations_preserve_the_complete_source[\\n\\n# COLD_APPLICATION\\npass\\n]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_file_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "2563efbe14c3a1bd11b48956f814837b9634899b5220f4c654f931a6a2a2d827"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": []
+      },
+      "expected": [
+        {
+          "code": "BEI035",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 3,
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced"
+        }
+      ]
+    },
+    {
+      "test": "::test_raw_surface_locations_preserve_the_complete_source[text = '''first\\n\\xe9 COLD_APPLICATION\\n'''\\n]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_file_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "453e8bf164bab3e2297fa72f3b6f7a3fa318c07de6fb83de07947103685c447e"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": []
+      },
+      "expected": [
+        {
+          "code": "BEI035",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "deleted cold-bootstrap surface 'COLD_APPLICATION' must not be reintroduced"
+        }
+      ]
+    },
+    {
+      "test": "::test_cache_health_configured_plugin_scans_helper_modules",
+      "check": "bootstrap_cache_health",
+      "entry": "collector",
+      "files": [
+        {
+          "path": "conform/helpers.py",
+          "sourceSha256": "93ca9f8948168ff61c5cf5ec447ed139f76cc9cb1701a288a8c72de4f3c0b242"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/helpers.py",
+          "line": 2,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES",
+          "key": "BCH003:conform/helpers.py:2"
+        }
+      ]
+    },
+    {
       "test": "::test_schema_contracts_do_not_treat_lambda_arguments_as_function_parameters",
       "check": "schema_bootstrap_contracts",
       "entry": "lint_file",
@@ -9950,6 +10040,62 @@
         "outcome": "passed"
       }
     ],
+    "::test_raw_surface_locations_preserve_the_complete_source[pass\\n\\n# COLD_APPLICATION\\n]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_raw_surface_locations_preserve_the_complete_source[\\n\\n# COLD_APPLICATION\\npass\\n]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_raw_surface_locations_preserve_the_complete_source[text = '''first\\n\\xe9 COLD_APPLICATION\\n'''\\n]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_cache_health_configured_plugin_scans_helper_modules": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
     "::test_schema_contracts_do_not_treat_lambda_arguments_as_function_parameters": [
       {
         "phase": "setup",
@@ -10114,10 +10260,10 @@
     "connection_service_architecture": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
     "schema_architecture": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
     "schema_bootstrap_contracts": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
-    "bootstrap_engine_invariants": "e26c8867b8321d83fa26312c12a3273e2f4f170bd4a45044e1bb70ead6438b1d",
-    "bootstrap_lazy_sql": "7fb29ffcb43910b8e5ed21fbfe2fd32b5b1111c78dbece23275f03ab88bdbd70",
-    "bootstrap_eager_resolve": "9744402aa96ae17ec632a1020f80c22bd6e9130eaaa05507c04ab99e237c05c5",
-    "bootstrap_cache_health": "1fcc50fbd71dd49d28e29fe02c492a181d1215f0b680de0fbf1129eee9e772e8",
+    "bootstrap_engine_invariants": "1dd9321910ddd610ae1a84700c10133c3f4a3222a5b84a0ff0d983d23403e2cb",
+    "bootstrap_lazy_sql": "02a754c39dd520f3e972effe6f4f70676516883afe39484511858976148b85af",
+    "bootstrap_eager_resolve": "885aa4e3c92ae3fbf4e7a76e28e50296a754dd175abbdad8559f08291a17b54a",
+    "bootstrap_cache_health": "f9fc461297410ddcf5d1d17c9cfde21845fe159adfa2fe5618cf513aa2ce0013",
     "plan_composition_architecture": "5079ff97db88eeee2a757c66613e13c1be0c280a4f358a884411f867f388bacf"
   },
   "sources": {
@@ -10412,6 +10558,10 @@
     "519dc0a44914d6f5d103f550edee5a4c5bb6b1031bb070fa16bd7cd6ffaa8cf9": "class Example:\n @legacy_sync\n def fetch(self):\n  _legacy_delegate_stub()\n @pure_lazy\n def fetch_lazy(self):\n  pass\n",
     "a0bfd3a71f54443c9fe2548021c0ce3da853b9a088baee24c4addba7c00199c6": "def ensure_versioning_domain_schema():\n ensure_tables()\n",
     "c8b3357bb6cd28cb4b483ddd884a132a2f9819bab8dcf87ce64c00902f5dc4e1": "def ensure_versioning_domain_schema():\n ensure_table()\n",
+    "4b10311b5ed55257be40dd79b20bd00792f60a20ed379e1999cf36035504a5e4": "pass\n\n# COLD_APPLICATION\n",
+    "2563efbe14c3a1bd11b48956f814837b9634899b5220f4c654f931a6a2a2d827": "\n\n# COLD_APPLICATION\npass\n",
+    "453e8bf164bab3e2297fa72f3b6f7a3fa318c07de6fb83de07947103685c447e": "text = '''first\n\u00e9 COLD_APPLICATION\n'''\n",
+    "93ca9f8948168ff61c5cf5ec447ed139f76cc9cb1701a288a8c72de4f3c0b242": "def test_probe():\n    create_tables()\n",
     "e635463b9657b0f16bab0a8e54291389bbcd9cb7efcc56c140e865abb5476fa7": "def outer(value: int):\n    return lambda untyped: untyped\n",
     "a51638b66b0b0ace9452cbe97c3a0c257f69951f9b82a45da1a015e298932c7a": "def outer(value: int = (lambda untyped: untyped)(1)):\n    pass\n",
     "cd9a39ffd673d3225a333536dcfde9e4861eafbd399a98522da51b43bb2d7426": "@pure_lazy\ndef bootstrap_schema_tail_lazy() -> LazyResult[object]:\n    return lambda produced_ref: produced_ref\n",

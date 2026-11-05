@@ -17,7 +17,7 @@ export interface DataLayerAuditOptions {
   snapshot: { format: string; revision: number; files: { path: string; source: string; language: string }[]; facts?: unknown[] };
 }
 export interface DataLayerAuditResult {
-  violations: { code: string; message: string; path: string; span?: { startLine: number; startByte: number; endByte: number } }[];
+  violations: { code: string; message: string; path: string; mode: "log" | "steer" | "block"; span?: { startLine: number; startByte: number; endByte: number } }[];
   failures: { code: string; message: string }[];
 }
 
@@ -94,5 +94,5 @@ export async function runDataLayerCommand(args: readonly string[], stdout: Pick<
   const result = await runDataLayerAudit({ repositoryRoot: values.get("--repo")!, packDirectory: values.get("--pack")!,
     snapshot: JSON.parse(readFileSync(values.get("--snapshot")!, "utf8")), ...(values.has("--rules") ? { ruleIds: values.get("--rules")!.split(",") } : {}), ...(values.has("--python") ? { python: values.get("--python")! } : {}) });
   stdout.write(JSON.stringify(result) + "\n");
-  return result.failures.length ? 2 : result.violations.length ? 1 : 0;
+  return result.failures.length ? 2 : result.violations.some(row => row.mode !== "log") ? 1 : 0;
 }

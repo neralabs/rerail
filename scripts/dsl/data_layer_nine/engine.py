@@ -11,7 +11,7 @@ def candidate(root):
  c=constants(root/'scripts/lint_bootstrap_engine_invariants.py')
  stages=[S('configuration',{'$option':'parameters','escape':'sql','template':'SELECT {} data'}),
  S('entry',{'$option':'entryPoint','escape':'sql','template':'SELECT {} name'}),
- S('effective_source',"SELECT source.__path,coalesce(json_extract(configuration.data,'$.rawSources.'||json_quote(source.__path)),source.source) source FROM source CROSS JOIN configuration"),
+ S('effective_source',"SELECT source.__path,coalesce(json_extract(configuration.data,'$.rawSources.'||json_quote(source.__path)),source_text(source.__path,0,source.__end)) source FROM source CROSS JOIN configuration"),
  S('file_scope',f"""SELECT source.__path,rx_replace(source.__path,'^.*/','') basename,
  EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.enginePaths'),{q(json.dumps(DEFAULT))})) p WHERE p.value=source.__path) OR EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),{q(json.dumps(DEFAULT))})) p WHERE p.value=source.__path) engine,
  EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),{q(json.dumps(DEFAULT))})) p WHERE p.value=source.__path) bootstrap
@@ -50,11 +50,19 @@ def candidate(root):
  disabled={'$option':'entryPoint','cases':{'_collect_primitive_install_coverage_violations':FALSE},'default':TRUE}
  item['relational']['inputs']['gate']['evidence']['query']['ast']['rule']=A(K('module'),disabled)
  item['relational']['requireNonemptyInput']='gate'
+ item['relational']['line']='line'
+ # The configured project extractor discards its complete derived result if a
+ # coverage dependency raises SyntaxError. Source APIs retain file-local behavior.
+ errors=E(A(K('module'),{'filePath':{'regex':r'^l3200_metadata/bootstrap_(?:coordinator|data_plan)\.py$'}},{'$option':'entryPoint','cases':{'all':TRUE},'default':FALSE}),{'path':'file.path'})
+ errors['evidence']['query']['ast']['syntax']='invalid'
+ item['relational']['inputs']['coverage_errors']=errors
+ valid_project="NOT EXISTS(SELECT 1 FROM coverage_errors error WHERE error.__path='l3200_metadata/bootstrap_coordinator.py' OR EXISTS(SELECT 1 FROM gate WHERE __path='l3200_metadata/bootstrap_coordinator.py'))"
+ item['relational']['query']={'$option':'entryPoint','cases':{'all':'SELECT * FROM ('+all_query+') WHERE '+valid_project},'default':query}
  item['relational']['inputs']['source']=E(A(K('module'),P('SOURCE'),disabled),{'source':'capture.SOURCE'})
  cov=clause('primitive-install-coverage',coverage_stages,coverage,partition=False)
  cov['relational']['inputs']['gate']['evidence']['query']['ast']['rule']=A(K('module'),{'$option':'entryPoint','cases':{'_collect_primitive_install_coverage_violations':TRUE,'all':TRUE},'default':FALSE})
  cov['relational']['requireNonemptyInput']='gate'
- invalid=E(A(K('module'),P('SOURCE')),{'source':'capture.SOURCE'})
+ invalid=E(A(K('module'),P('SOURCE'),{'$option':'entryPoint','cases':{'all':FALSE},'default':TRUE}),{'source':'capture.SOURCE'})
  invalid['evidence']['query']['ast']['syntax']='invalid'
  scope_query=next(stage['query'] for stage in stages if stage['name']=='file_scope').replace('FROM effective_source source','FROM invalid_source source')
  syntax={'id':'bootstrap-source-syntax','relational':{'inputs':{'invalid_source':invalid},'stages':[S('configuration',{'$option':'parameters','escape':'sql','template':'SELECT {} data'}),S('entry',{'$option':'entryPoint','escape':'sql','template':'SELECT {} name'}),S('invalid_scope',scope_query)],

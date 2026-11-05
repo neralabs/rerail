@@ -1,15 +1,15 @@
 {
   "format": "rerail.data-layer-batch-nine-assertions/v1",
   "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
-  "engineSha256": "ee97f553efb77a5f5d97c0313bdb22bb677c0e8e9aa455e653702cb948263031",
+  "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
   "executionPaths": {
     "snapshot": {
-      "cases": 212,
-      "completeResults": 253,
-      "positiveResults": 147,
+      "cases": 216,
+      "completeResults": 257,
+      "positiveResults": 151,
       "perRule": {
-        "bootstrap_cache_health": 15,
-        "bootstrap_engine_invariants": 133,
+        "bootstrap_cache_health": 16,
+        "bootstrap_engine_invariants": 136,
         "connection_mode_split": 13,
         "connection_service_architecture": 33,
         "connection_structural_boundaries": 12,
@@ -20,8 +20,8 @@
         "bootstrap_lazy_sql": 3
       },
       "positivePerRule": {
-        "bootstrap_cache_health": 10,
-        "bootstrap_engine_invariants": 65,
+        "bootstrap_cache_health": 11,
+        "bootstrap_engine_invariants": 68,
         "connection_mode_split": 9,
         "connection_service_architecture": 22,
         "connection_structural_boundaries": 10,
@@ -31,17 +31,17 @@
         "bootstrap_lazy_sql": 1,
         "bootstrap_eager_resolve": 1
       },
-      "engineSha256": "ee97f553efb77a5f5d97c0313bdb22bb677c0e8e9aa455e653702cb948263031",
+      "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
       "policySha256": {
-        "connection_mode_split": "290347a63f74a05fed41aa9175cdac771060563b7943364ef990c39bfd3716b7",
+        "connection_mode_split": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
         "connection_structural_boundaries": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
         "connection_service_architecture": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
         "schema_architecture": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
         "schema_bootstrap_contracts": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
-        "bootstrap_engine_invariants": "e26c8867b8321d83fa26312c12a3273e2f4f170bd4a45044e1bb70ead6438b1d",
-        "bootstrap_lazy_sql": "7fb29ffcb43910b8e5ed21fbfe2fd32b5b1111c78dbece23275f03ab88bdbd70",
-        "bootstrap_eager_resolve": "9744402aa96ae17ec632a1020f80c22bd6e9130eaaa05507c04ab99e237c05c5",
-        "bootstrap_cache_health": "1fcc50fbd71dd49d28e29fe02c492a181d1215f0b680de0fbf1129eee9e772e8",
+        "bootstrap_engine_invariants": "149bb65ce794c2e494c404df7b719609618d64effd45a45fa527871652ec438e",
+        "bootstrap_lazy_sql": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
+        "bootstrap_eager_resolve": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
+        "bootstrap_cache_health": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
         "plan_composition_architecture": "5079ff97db88eeee2a757c66613e13c1be0c280a4f358a884411f867f388bacf"
       },
       "rejected": [],
@@ -747,6 +747,20 @@
           }
         ],
         "::test_schema_plugin_preserves_parser_errors": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_cache_health_configured_plugin_scans_helper_modules": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -1475,6 +1489,20 @@
           }
         ],
         "::test_publication_preserves_repeated_empty_dependency_keywords": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_raw_surface_locations_preserve_the_complete_source[pass\\n\\n# COLD_APPLICATION\\n]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -2230,6 +2258,20 @@
             "outcome": "passed"
           }
         ],
+        "::test_raw_surface_locations_preserve_the_complete_source[\\n\\n# COLD_APPLICATION\\npass\\n]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
         "::test_schema_contracts_do_not_treat_lambda_defaults_as_function_parameters": [
           {
             "phase": "setup",
@@ -2959,6 +3001,20 @@
           }
         ],
         "::test_versioning_owner_rejects_duplicate_table_installation": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_raw_surface_locations_preserve_the_complete_source[text = '''first\\n\\xe9 COLD_APPLICATION\\n'''\\n]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -3031,12 +3087,12 @@
       ]
     },
     "workspace": {
-      "cases": 212,
-      "completeResults": 253,
-      "positiveResults": 147,
+      "cases": 216,
+      "completeResults": 257,
+      "positiveResults": 151,
       "perRule": {
-        "bootstrap_cache_health": 15,
-        "bootstrap_engine_invariants": 133,
+        "bootstrap_cache_health": 16,
+        "bootstrap_engine_invariants": 136,
         "connection_mode_split": 13,
         "connection_service_architecture": 33,
         "connection_structural_boundaries": 12,
@@ -3047,8 +3103,8 @@
         "bootstrap_lazy_sql": 3
       },
       "positivePerRule": {
-        "bootstrap_cache_health": 10,
-        "bootstrap_engine_invariants": 65,
+        "bootstrap_cache_health": 11,
+        "bootstrap_engine_invariants": 68,
         "connection_mode_split": 9,
         "connection_service_architecture": 22,
         "connection_structural_boundaries": 10,
@@ -3058,17 +3114,17 @@
         "bootstrap_lazy_sql": 1,
         "bootstrap_eager_resolve": 1
       },
-      "engineSha256": "ee97f553efb77a5f5d97c0313bdb22bb677c0e8e9aa455e653702cb948263031",
+      "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
       "policySha256": {
-        "connection_mode_split": "290347a63f74a05fed41aa9175cdac771060563b7943364ef990c39bfd3716b7",
+        "connection_mode_split": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
         "connection_structural_boundaries": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
         "connection_service_architecture": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
         "schema_architecture": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
         "schema_bootstrap_contracts": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
-        "bootstrap_engine_invariants": "e26c8867b8321d83fa26312c12a3273e2f4f170bd4a45044e1bb70ead6438b1d",
-        "bootstrap_lazy_sql": "7fb29ffcb43910b8e5ed21fbfe2fd32b5b1111c78dbece23275f03ab88bdbd70",
-        "bootstrap_eager_resolve": "9744402aa96ae17ec632a1020f80c22bd6e9130eaaa05507c04ab99e237c05c5",
-        "bootstrap_cache_health": "1fcc50fbd71dd49d28e29fe02c492a181d1215f0b680de0fbf1129eee9e772e8",
+        "bootstrap_engine_invariants": "149bb65ce794c2e494c404df7b719609618d64effd45a45fa527871652ec438e",
+        "bootstrap_lazy_sql": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
+        "bootstrap_eager_resolve": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
+        "bootstrap_cache_health": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
         "plan_composition_architecture": "5079ff97db88eeee2a757c66613e13c1be0c280a4f358a884411f867f388bacf"
       },
       "rejected": [],
@@ -3774,6 +3830,20 @@
           }
         ],
         "::test_schema_plugin_preserves_parser_errors": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_cache_health_configured_plugin_scans_helper_modules": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -4502,6 +4572,20 @@
           }
         ],
         "::test_publication_preserves_repeated_empty_dependency_keywords": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_raw_surface_locations_preserve_the_complete_source[pass\\n\\n# COLD_APPLICATION\\n]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -5257,6 +5341,20 @@
             "outcome": "passed"
           }
         ],
+        "::test_raw_surface_locations_preserve_the_complete_source[\\n\\n# COLD_APPLICATION\\npass\\n]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
         "::test_schema_contracts_do_not_treat_lambda_defaults_as_function_parameters": [
           {
             "phase": "setup",
@@ -5986,6 +6084,20 @@
           }
         ],
         "::test_versioning_owner_rejects_duplicate_table_installation": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_raw_surface_locations_preserve_the_complete_source[text = '''first\\n\\xe9 COLD_APPLICATION\\n'''\\n]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -6059,12 +6171,12 @@
     }
   },
   "positiveControls": {
-    "cases": 212,
-    "completeResults": 250,
+    "cases": 216,
+    "completeResults": 254,
     "positiveResults": 0,
     "perRule": {
-      "bootstrap_cache_health": 14,
-      "bootstrap_engine_invariants": 132,
+      "bootstrap_cache_health": 15,
+      "bootstrap_engine_invariants": 135,
       "connection_mode_split": 13,
       "connection_service_architecture": 32,
       "connection_structural_boundaries": 12,
@@ -6075,17 +6187,17 @@
       "bootstrap_lazy_sql": 3
     },
     "positivePerRule": {},
-    "engineSha256": "ee97f553efb77a5f5d97c0313bdb22bb677c0e8e9aa455e653702cb948263031",
+    "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
     "policySha256": {
-      "connection_mode_split": "f4bc5e69c683029a8d27ece1d350c99fc89d6f48331b06208ab01aadec8e6465",
+      "connection_mode_split": "81abef9af019c1a039c95971aead886bbad776352df13a0a44ba1888f9844281",
       "connection_structural_boundaries": "fcd250fc384370a24ceef5740b04678d41087d5dc2d945eb1ed6839ba3165591",
       "connection_service_architecture": "8ecbc67ba6817ab9fac21a3d946340f90800aa77d6406edabaf059be9e8f75ce",
       "schema_architecture": "d8572b113080ef61dcef54ec6596b5997c89e2a2becab27e42fc41691fe6d0c6",
       "schema_bootstrap_contracts": "cb2d7516dfc13a3d3f9f95afe85441244d532e8071f53f82377a4de0fd76e8f0",
       "bootstrap_engine_invariants": "ec8d1994e735f4dd7eea3ad96ba2d2b7b1a20db45ac678fa2de9cf4d9715e6bd",
-      "bootstrap_lazy_sql": "af5add2042f80a91da6febf6f852f459d2f5807488eb9ab52a153eee227cbd82",
-      "bootstrap_eager_resolve": "63f742c2b205fdd8f83dd6580b9b82401b0e70f55a8b686eb0c16acdc24b39a8",
-      "bootstrap_cache_health": "89453f3d396932b3adc0cb807e2db89b889e1bce848f782676106a093d927ab1",
+      "bootstrap_lazy_sql": "b819c09d132fcc369f92861fefe567874e07c053a43addcc1d93f3cf5a5bc628",
+      "bootstrap_eager_resolve": "8cba9b40189abf0ca3f843dea282d34546b968263819da0251b03c9cccf2af15",
+      "bootstrap_cache_health": "106f21637efebef3baf7389d7a38db1f7a0e71df09bee4872c52bb513b2a32f1",
       "plan_composition_architecture": "f4c365ac287cca218bf1a4ff5d0839df624c446a8f87b268243f2771391a2f72"
     },
     "rejected": [
@@ -6100,7 +6212,7 @@
       "schema_architecture",
       "schema_bootstrap_contracts"
     ],
-    "failedCases": 152,
+    "failedCases": 156,
     "caseOutcomes": {
       "scripts/tests/test_lint_bootstrap_cache_health.py::test_fact_engine_skips_files_without_bootstrap_tokens": [
         {
@@ -6803,6 +6915,20 @@
         }
       ],
       "::test_schema_plugin_preserves_parser_errors": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_cache_health_configured_plugin_scans_helper_modules": [
         {
           "phase": "setup",
           "outcome": "passed"
@@ -7531,6 +7657,20 @@
         }
       ],
       "::test_publication_preserves_repeated_empty_dependency_keywords": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_raw_surface_locations_preserve_the_complete_source[pass\\n\\n# COLD_APPLICATION\\n]": [
         {
           "phase": "setup",
           "outcome": "passed"
@@ -8286,6 +8426,20 @@
           "outcome": "passed"
         }
       ],
+      "::test_raw_surface_locations_preserve_the_complete_source[\\n\\n# COLD_APPLICATION\\npass\\n]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
       "::test_schema_contracts_do_not_treat_lambda_defaults_as_function_parameters": [
         {
           "phase": "setup",
@@ -9028,6 +9182,20 @@
           "outcome": "passed"
         }
       ],
+      "::test_raw_surface_locations_preserve_the_complete_source[text = '''first\\n\\xe9 COLD_APPLICATION\\n'''\\n]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
       "::test_bootstrap_tail_lambda_does_not_satisfy_the_required_function_parameter": [
         {
           "phase": "setup",
@@ -9073,32 +9241,35 @@
     }
   },
   "fileSha256": {
-    ".github/workflows/ci.yml": "8c703062f055d3094cedfe7cdd49837565902642735cd4393aec7d5f1ebd9fb5",
+    ".github/workflows/ci.yml": "61cef30b65d86a0bf681392cacda13db6231d57bfe2bd48fa11740c34caf56a0",
     "conformance/data-layer/batch-nine-kernels.ts": "2ef08025997f38f42afbefeb25687d8ab36d0e55a2d1d398dcda4a848dbb7219",
-    "conformance/data-layer/batch-nine.ts": "a772ca2570b6eecfb679e64501275462f27da0bb9882e2a0389828ebebda0442",
+    "conformance/data-layer/batch-nine.ts": "4ef367786d1d3310a16689a685d59eb20ab566a47fe4fe4bf0310b61f70907f0",
     "conformance/data-layer/execution.ts": "77f8aa8b4d4926e67951482cd349d24f582bbe3d36fe3938678722c35ccb312a",
     "conformance/data-layer/native-worker.ts": "0442e206679ecb381faa3d0be2adf357a7f6adf38991f21bc797b68850820e50",
     "conformance/engine.ts": "3b0cde9aaf439fe494aae4cb20bf39cb7e0b8215bc38fefdd99e218cf104dbfb",
-    "fixtures/host/data-layer-port/batch-09-complete-api.json": "8ab79ff347d57ddb95ea6ec8eaacd098c4619f5bc4c88772b938d451ca7a4688",
+    "fixtures/host/data-layer-port/batch-09-complete-api.json": "d6ddacc65d5d708527a61625de2fb1dc6f64b714a98f40e7d6a2747c34799ee4",
+    "fixtures/host/data-layer-port/batch-09-configured-defaults.json": "912d52560888e4c24576e9bb220d1e05e822279ebfd87b7148a289da036fc618",
     "fixtures/host/data-layer-port/batch-09-kernels.json": "d87fe8289b44dc739f771613f0310eb8f7f0a316f146b3e34f18c94df20b4a4f",
-    "native/src/code_rule_dsl/compile/relational.rs": "3458569baad739fd9d34156e6bca68195a8572cc1a7c670d7ae6b21c8a47c946",
+    "fixtures/host/data-layer-port/batch-09-public-audit-20261105.json": "d2432b0dbd43a3f9b2d9287aff69d59377b783263be3bd283f491ea5edcc62cd",
+    "fixtures/host/data-layer-port/batch-09-public-scope-oracle.json": "34283d5b2e5eb158610ee6f0e609d2a1574d26283e2a72bd93107b8f9543ccb3",
+    "native/src/code_rule_dsl/compile/relational.rs": "685f9c56c29586f43c7e668e79550e59b29e8ef500513dfda63fd00f712f3650",
     "native/src/code_rule_dsl/relational/producer/layout.rs": "0a23da6e6740f073a904a6390322ef1a88bd22009fb1c45f7f13efdf306f9f32",
     "native/src/code_rule_dsl/relational/producer.rs": "acf7a42632d0a23551a402c3533de63fe9d0fb2b26b47a4b34cc2ef9cf87703e",
     "native/src/code_rule_dsl/relational/python_ast.rs": "bcca18a561957886c7526b16e9ef9abfbf8c45426641500e33c955f77181363d",
     "native/src/code_rule_dsl/relational/shared.rs": "b467a39fe1212ef04ee70fbec06b87c3936760be58fb153cc9a462aedb1d91cb",
-    "native/src/code_rule_dsl/relational/syntax.rs": "8f3fb285b5ad1cd7edc70957fc6ad74178c2fd3f3aadd8e4fa67aa1f6ee3a34b",
-    "native/src/code_rule_dsl/relational.rs": "744aa405ddeea3059eacc6a2ff79cb1b9b6dd2948f809f9c16b88c334454b35c",
+    "native/src/code_rule_dsl/relational/syntax.rs": "ae961e306a4d37dff6d8692bc539bf872c3ed55e2eddf915cfb91a38df62c283",
+    "native/src/code_rule_dsl/relational.rs": "3cb353d90d1eea42bbba299de84cd78c331479da7373ac09682c26394ae42fcd",
     "native/src/code_rule_dsl/value/python_ast/metadata.py": "81dfb7e250d6c85648ca57d1b94f6075d5488477f318590cefbf8fb7365d91d6",
     "native/src/code_rule_dsl/value/python_ast/tests.rs": "15aefa7914a5d07ab2fbb5095ae2fc5690e82e43aea0c62020172964b9715764",
     "native/src/code_rule_dsl/value/python_ast/worker.py": "49d6e295e33c3642455e677810311cd6fd2eb22ee9adc8b29d3e736860aed396",
     "native/src/code_rule_dsl/value/python_ast.rs": "2a7e9b3e7538843edd8512b9ef37c1133ed31a19f9da98d382dc1c86ee645329",
     "packs/data-layer/rules/data-layer-authentication-plan-purity.json": "ccfc568bc6a298bb64a553cadb0f094ae723a6da3610adcd57464e0cc6235dd5",
-    "packs/data-layer/rules/data-layer-bootstrap-cache-health.json": "1fcc50fbd71dd49d28e29fe02c492a181d1215f0b680de0fbf1129eee9e772e8",
-    "packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json": "9744402aa96ae17ec632a1020f80c22bd6e9130eaaa05507c04ab99e237c05c5",
-    "packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json": "e26c8867b8321d83fa26312c12a3273e2f4f170bd4a45044e1bb70ead6438b1d",
-    "packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json": "7fb29ffcb43910b8e5ed21fbfe2fd32b5b1111c78dbece23275f03ab88bdbd70",
+    "packs/data-layer/rules/data-layer-bootstrap-cache-health.json": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
+    "packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
+    "packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json": "149bb65ce794c2e494c404df7b719609618d64effd45a45fa527871652ec438e",
+    "packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
     "packs/data-layer/rules/data-layer-cached-pure-lazy-allowlist.json": "30a298621259d10251e0591993b11d45d28a8b7df8fee8b40e7ebec7fb95fe46",
-    "packs/data-layer/rules/data-layer-connection-mode-split.json": "290347a63f74a05fed41aa9175cdac771060563b7943364ef990c39bfd3716b7",
+    "packs/data-layer/rules/data-layer-connection-mode-split.json": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
     "packs/data-layer/rules/data-layer-connection-service-architecture.json": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
     "packs/data-layer/rules/data-layer-connection-structural-boundaries.json": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
     "packs/data-layer/rules/data-layer-eager-resolve.json": "ea04fb60a27b8cb60c48f426b38bebf06a76e62a46629fb06d37c609ba325e3d",
@@ -9121,50 +9292,51 @@
     "scripts/dsl/data_layer_eight/python_repr.py": "22226120c2e042f4ca67d18b745aa7585d5700b3f120b85c7b44bc0107eff313",
     "scripts/dsl/data_layer_generate_batch_seven.py": "281e6ae0abc1add18f2730b19cdd11f8fac53b0ce0d0552d0e009e933c2cbdec",
     "scripts/dsl/data_layer_nine/__init__.py": "0b23d6306229c7fd32b20f9eb50d03cdd01f641b26f186df458eb6ed33634eea",
-    "scripts/dsl/data_layer_nine/audit_cases.py": "f434b3c90c693b8c142e44a525ccca4a0d1b4d394ab41ab51021d46866f56690",
-    "scripts/dsl/data_layer_nine/cache.py": "40533fe3dee57f2640568bbec36b746421ef93e7f5df569291106d24fd8df650",
-    "scripts/dsl/data_layer_nine/common.py": "62672da65567e23117830cb785ee7cfc36838884250cfddbe57c6e2329c30c53",
+    "scripts/dsl/data_layer_nine/audit_cases.py": "d186d8a919a5575a53ff077a876a1d529fae9f6e6c042a30a3565c5a3cf3ffc2",
+    "scripts/dsl/data_layer_nine/cache.py": "14d555f483aff725798158df1b8ae4b8720e2323eecff4f280831b9847012c77",
+    "scripts/dsl/data_layer_nine/common.py": "4b8f179d81c74258d8dc3f4e141eeed22d5c0df8b76e26d1fb086b1130b28f68",
     "scripts/dsl/data_layer_nine/composition.py": "7e7c757659b6960405b623fdaf08cb17bd3e9b3fa15d0b221fe3dc945350bc69",
     "scripts/dsl/data_layer_nine/contracts.py": "90c1b0705d3126587735901db879c44df6f3b7baa26dd50794babf6415239b53",
     "scripts/dsl/data_layer_nine/discovery.py": "70f75afe8d801d96a24057c859ce9e34a5af182bf1b28d8f111f558b91a057ae",
-    "scripts/dsl/data_layer_nine/engine.py": "a76ebab1661246692e5b8ff20bc64f1c5f6f8dd189f41a9f14e89e312603a2ad",
+    "scripts/dsl/data_layer_nine/engine.py": "33a7e7b9be587c6bca5a8f600e1c02302a1d93516e3977519a42631601a5c86f",
     "scripts/dsl/data_layer_nine/engine_functions.py": "7c2ea3f532925cfe9f3ffa321ea8e007e5a245fb2f28b3572796b6cc8aaee392",
     "scripts/dsl/data_layer_nine/engine_nodes.py": "44cc1e7aa68951f90a7d28c645457a05f1114815a05a98a691f430ed4fb1eadc",
     "scripts/dsl/data_layer_nine/engine_shapes.py": "70a6bbe925d159584af668f62aefc1dd7e8eda6b074408eabc54eac45da5d6c2",
     "scripts/dsl/data_layer_nine/evidence.py": "8719ff319df5a62c559f25dfe752db259546e42ef67e01a2ece1498e849fd2b9",
-    "scripts/dsl/data_layer_nine/lazy_sql.py": "4dfe253abbd33f63a5271a1c94784759795fbde4f9abee5c4fb9b17f1982a94f",
+    "scripts/dsl/data_layer_nine/lazy_sql.py": "eaefd76ad60cb46bbd783e893000171851a0768301da54d028cf2ffd1d897ac6",
     "scripts/dsl/data_layer_nine/live.py": "acf6cd1ecdffbaac69a6d982ed9cdd1c3bf013cf2ddf2f6bd544f1d3764aee1d",
-    "scripts/dsl/data_layer_nine/mode.py": "c785c9212c165294a4b10162a9a7d0205687b19a4991b99f4b996a2c30c533b0",
+    "scripts/dsl/data_layer_nine/mode.py": "ee5be5db9a7eadaeb2f30636e71eb899b956a53c8a6e30069dc4184ca0307de5",
     "scripts/dsl/data_layer_nine/parser_errors.py": "b9a0ed0c3196b808a38f7b549773836d1c0b65033d0549c135d886d7234069b1",
     "scripts/dsl/data_layer_nine/probe_cases.py": "ea9a2b95684a38931839429db665b6a13cef00a5bab10488622df3bd23bb6a37",
-    "scripts/dsl/data_layer_nine/receipt.py": "8adf8a06545f12152180ba81482caf55d93a869493ff04343013ef9d0fac3c97",
+    "scripts/dsl/data_layer_nine/receipt.py": "7a356c87d8eeffe491b9399f23e6eaad605fb2090dceff22bf5775d92330a43b",
     "scripts/dsl/data_layer_nine/schema.py": "f6a21fa96717a0975374d55541377701c2ef551dff351c1093d00a5ad6c38ab6",
     "scripts/dsl/data_layer_nine/schema_lifecycle.py": "bd333f51157939f1b0d23c56cc0792be5fd465df3be5c94d08703bce090de932",
     "scripts/dsl/data_layer_nine/service.py": "1e7c657cdf0799cc67d2ece1ece2bbb0a8437dd99428e6e95f5b168beecb3e37",
     "scripts/dsl/data_layer_nine/service_repository.py": "80a9dcd90d4eed426604c7d7a36333f63ef9df268225a54188796ff531821ec2",
-    "scripts/dsl/data_layer_nine/source_contracts.py": "ce68d5ba9c64315b72deea4b2301c0aaf73af59d82de7b59d50d4f0ac6a2245a",
+    "scripts/dsl/data_layer_nine/source_contracts.py": "352f0a0892ac5a4b3f9680d64eea03c2b29e3224c8c4df1def544f4faeffa3d7",
     "scripts/dsl/data_layer_nine/structural.py": "93d518ae2db4bb18dec414acce47b5a42822dbc21ab5dfc193bb57d15b62c222",
-    "scripts/dsl/data_layer_nine/suite.py": "bbfde2e21ac69fdc0efa26f9266335249478723b6c6ac7b01797429cff5ef65c",
+    "scripts/dsl/data_layer_nine/suite.py": "461f057b4b4c62d853e4faedcc6e3a716452f64ca081b6f908e1399b5457b636",
     "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
     "scripts/dsl/data_layer_six/common.py": "046f23be8a373223f01a4e03d0490c37d9f24a669005b41000dda407ea8667a0",
     "scripts/dsl/data_layer_six/sql_columns.py": "1f64108d03d5e6ebf9d1d21c522ad48002d487a6012a1adf5350594fabc2022c",
     "scripts/generate/packs/data_layer_batch_nine.py": "c6844344bfbed71fdd3f86d399466c3d2e87fa481957b618e3e89edb405642f6",
     "src/cli/cli.ts": "dd46336ca30858ca4e697aa688d30cff29ec4461d633dfc8c00542c096566d45",
-    "src/cli/data-layer-audit.ts": "7d4bf8f6311b230ef22342c6bd01e3474eba76ec23204d6a2d2a70e0d15eed28",
+    "src/cli/data-layer-audit.ts": "6cfe9574923864dc504221c72bde4a7af640f8ed8ebf9b234a88941d344b905d",
     "src/cli/index.ts": "4da16cb03eb9b77272796f23cbe5deec49eb2ae1ae33d9a1db4285ffee96cd8d",
-    "src/engine/code-rule/code-rule-schema.ts": "09894c598aa4e10433c8327210fe93ce114d45974fedfff7eb6a75b4d0feeed3",
-    "src/engine/code-rule/code-rule.ts": "c04d246f934162496420bd4dbb1143da2c36cf0b7741577af19795440fd474f1",
-    "test/conformance/data-layer/batch-nine-production-regressions.test.ts": "e3ff5755f01470d4f9643670e1d9a63ea3dfc6a208c21607da31c41615560249",
-    "test/conformance/data-layer/batch-nine.test.ts": "28fc85c4c92258b89a234e2607b300b236019e922cb4d2fca53af64245cd59fb",
+    "src/engine/code-rule/code-rule-schema.ts": "b2932c5fabdf527a45bc519399d2419c0a613f0f5ba7cbd3ed8c489146945765",
+    "src/engine/code-rule/code-rule.ts": "70016c4d93e28422d5ba67b95c9f62f17c5d59e4bb3a4de3b2ebc46cf0f61f69",
+    "test/conformance/data-layer/batch-nine-production-regressions.test.ts": "fad9155841063a1304505fc4331346a67a786b66831100b2147af3d6a8238377",
+    "test/conformance/data-layer/batch-nine-public-contract.test.ts": "07e487634cf20d2daaeb34c2980005985d721791fa2286247ae41d2c6829e022",
+    "test/conformance/data-layer/batch-nine.test.ts": "44843f7ad1207cbfc37abd29b52bd670714e8682593bddab53cede39c784b2a4",
     "test/conformance/data-layer/production-runtime.test.ts": "22410d9215aafd2e7607c0b24f777e4f4d4c30540564f37ccfdb7933fcb7fd99",
     "test/engine/native/data-layer-nine/canonical-structure.test.ts": "8e723ece3544e83f2fd3b8006a60d2aa09ce6790dc6f3c010ae65ebc8997d884",
-    "test/engine/native/data-layer-nine/parser-source.test.ts": "de5797f8704e9c3f64b3a9e51ed7113f0649793bf93a8017ce82bfc15c31cdb6"
+    "test/engine/native/data-layer-nine/parser-source.test.ts": "9f58b523ae11de7f9fad3c45f83131eeac5a626f4152c6e87be707939ad788d6"
   },
   "coverage": {
     "upstreamLinterFrameworkCases": 137,
     "adjacentHostCodemodCases": 13,
-    "additionalCases": 62,
-    "recordedApiResults": 254,
-    "recordedPositiveResults": 147
+    "additionalCases": 66,
+    "recordedApiResults": 258,
+    "recordedPositiveResults": 151
   }
 }

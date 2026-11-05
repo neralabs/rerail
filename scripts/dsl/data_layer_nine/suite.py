@@ -57,7 +57,14 @@ class Suite(NativeSuite):
   values=dict(options or {})
   if parameters is not None:values['parameters']=json.dumps(parameters)
   with self.protocol_lock:
-   try:return super().execute(check,entry,files,values,contract)
+   try:
+    rows=super().execute(check,entry,files,values,contract)
+    for finding in rows:
+     if finding['code']=='NATIVE-SYNTAX':continue
+     row=finding['variables']['row']
+     assert finding['code']==row['issue'] and finding['message']==row['message'] and finding['path']==row['path'],('Public diagnostic differs from replay DTO',finding)
+     assert row['issue']=='CONN000' or finding['span']['startLine']+1==row['line'],('Public diagnostic line differs from replay DTO',finding)
+    return rows
    except AssertionError as error:
     if check=='connection_service_architecture' and 'legacy decorator cardinality' in str(error):
      self.calls.append(dict(test=self.item.nodeid,check=check,entry=entry,files=len(files),findings=0,expectedError='ValueError'))

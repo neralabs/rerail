@@ -86,6 +86,8 @@ def document(name,clauses,scope=None,options=None):
         if name=='schema_architecture':error_rule=A(error_rule,{'$option':'entryPoint','cases':{'scan_source':TRUE},'default':FALSE})
         if name=='bootstrap_cache_health':
             error_rule=clauses[0]['relational']['inputs']['gate']['evidence']['query']['ast']['rule']
+        if name in {'bootstrap_lazy_sql','bootstrap_eager_resolve'}:
+            error_rule=A(error_rule,{'$option':'entryPoint','cases':{'all':FALSE},'default':TRUE})
         if name=='connection_service_architecture':
             error_rule=A(error_rule,{'$option':'entryPoint','cases':{e:TRUE for e in ['_lint_schema_transaction_facades_source','_lint_sql_services','_lint_backend_cores']},'default':FALSE})
         if name=='bootstrap_engine_invariants':error_rule=A(error_rule,O({'filePath':{'regex':r'bootstrap|schema_transaction\.py$|sql_connection\.py$'}},RX('Bootstrap|bootstrap|schema_transaction|materialized_pipeline|physical_table|reconciliation')))

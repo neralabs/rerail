@@ -2,7 +2,7 @@
   "format": "rerail.policy/v1",
   "id": "data-layer-bootstrap-lazy-sql",
   "revision": 1,
-  "mode": "block",
+  "mode": "log",
   "description": "Exact port of nera-data-layer bootstrap_lazy_sql at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
@@ -170,7 +170,26 @@
           "language": "python",
           "syntax": "invalid",
           "rule": {
-            "kind": "module"
+            "all": [
+              {
+                "kind": "module"
+              },
+              {
+                "$option": "entryPoint",
+                "cases": {
+                  "all": {
+                    "filePath": {
+                      "regex": "\\b\\B"
+                    }
+                  }
+                },
+                "default": {
+                  "filePath": {
+                    "regex": "(?s).*"
+                  }
+                }
+              }
+            ]
           }
         }
       },

@@ -112,3 +112,27 @@ The native DSL suite passes 1,576 tests, with 23 existing ignores.
 The [current report](data-layer-batch-nine.md) describes runtime requirements and reproduction.
 The [current receipt](../fixtures/host/data-layer-port/batch-09-native-assertions.json) binds the expanded suite to the implementation.
 These results establish the stated acceptance coverage. They do not turn the original incomplete claim into valid historical evidence.
+
+## Second audit of the repair claim — 2026-11-05
+
+Commit `8e4cede5f` fixed the first audit defects but still did not establish completion.
+The [public audit evidence](../fixtures/host/data-layer-port/batch-09-public-audit-20261105.json) preserves new reproductions against that commit.
+
+| Confirmed gap | Why prior tests passed | Repair and permanent gate |
+| --- | --- | --- |
+| BEI035 points to line one instead of line three | DTO adapters use a SQL line field rather than the public span | A bounded `relational.line` anchor narrows the proven witness; both replay paths compare public diagnostics |
+| Leading blank lines shift raw-source findings | The captured module text omits initial blank lines | Read full snapshot source; retain blank-line and Unicode regressions |
+| Cache-health misses `conform/helpers.py` | Shipped scope only includes `test_*.py` | Use the configured plugin's full Python scope |
+| Ignored directory scope differs | Single positive and unrelated-path tests miss directory exclusions | Compare original `FactEngine.plan()` selections for cache-health and mode-split |
+| Report-only checks become blocking | Shared policy generator assigns `block` to both aliases | Use `log` and retain a successful command exit with visible findings |
+| Source parser behavior replaces configured defaults | BCH000 and exception tests call source APIs | Observe actual plugin reporters; compare default malformed-input results in both native modes |
+| Partial bootstrap findings survive failed project derivation | No invalid coverage dependency case | Preserve the original discarded project result for malformed coordinator or enum dependencies |
+
+The configured observation recorder verifies 121 loaded upstream files against the source pin.
+Nine malformed-input and dependency scenarios cover configured behavior.
+Two scope inventories cover original directory discovery.
+The real production composition command also ran against the pinned application and matched its clean original result.
+The positive runtime tests still use deliberately defective builder behavior to exercise the detector.
+
+The earlier repair section records historical acceptance results. Its numbers do not certify complete production semantics.
+The current [batch report](data-layer-batch-nine.md) states the expanded evidence and its limits.

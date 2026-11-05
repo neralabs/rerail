@@ -14,4 +14,7 @@ def candidate(root,alias=False):
  row('BLB-003',"'bootstrap/server-plan Python model materializer '||n.callee||' must stay out of lowering paths'",'calls n',"n.callee_kind='Attribute' AND n.callee IN ('model_dump','model_copy')",order='n.bfs'),
  row('BLB-002',"'bootstrap Python row iteration over '||n.iter_repr||' must move to SQL/proof-owned matching'",'iterations n',f'n.iter_name IN {literals(c["ROW_COLLECTION_NAMES"])}',order='n.bfs')]
  query='SELECT * FROM ('+' UNION ALL '.join(queries)+") WHERE instr(path,'bootstrap')>0"
- return document('bootstrap_eager_resolve' if alias else 'bootstrap_lazy_sql',[clause('bootstrap-sql',stages,query)],list(c['DEFAULT_BOOTSTRAP_PATHS']))
+ item=document('bootstrap_eager_resolve' if alias else 'bootstrap_lazy_sql',[clause('bootstrap-sql',stages,query)],list(c['DEFAULT_BOOTSTRAP_PATHS']))
+
+ item['mode']='log'
+ return item

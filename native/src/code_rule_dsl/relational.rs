@@ -84,6 +84,7 @@ pub(super) struct Plan {
     pub(super) key: Vec<String>,
     pub(super) code: Option<String>,
     pub(super) message: Option<String>,
+    pub(super) line: Option<String>,
     pub(super) last_uses: BTreeMap<String, usize>,
     pub(super) reads_source: bool,
 }
@@ -1272,6 +1273,15 @@ impl<'a> Session<'a> {
             if ignored || syntax_ignored {
                 continue;
             }
+            let span = if let Some(field) = &plan.line {
+                let line = values.get(field).and_then(Value::as_u64)
+                    .and_then(|line| usize::try_from(line).ok())
+                    .and_then(|line| line.checked_sub(1))
+                    .ok_or_else(|| invalid("relational diagnostic line must be a positive integer"))?;
+                syntax_files.iter().find(|(p, _)| p == path)
+                    .and_then(|(_, facts)| facts.diagnostic_line(span, line))
+                    .ok_or_else(|| invalid("relational diagnostic line must lie within its input witness span"))?
+            } else { span };
             let mut output_clause = (*clause).clone();
             if let Some(field) = &plan.code {
                 output_clause.violation.code = values

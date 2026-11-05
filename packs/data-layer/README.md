@@ -1,7 +1,8 @@
 # Data-layer rules
 
 This private pack contains the twenty batch-eight and batch-nine architecture rules for nera-data-layer.
-Batch-nine audited defects are fixed, and its expanded acceptance suite passes.
+A second audit exposed public-contract gaps after the earlier batch-nine repair claim.
+The current report records the repairs, measured coverage and remaining certification limits.
 The [audit](../../docs/data-layer-batch-nine-audit.md) retains the original failures and their resolutions.
 Load it explicitly with `readBundledCatalog([packDirectory])` for repository integration.
 It is not part of the default core catalog.

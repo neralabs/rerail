@@ -53,7 +53,7 @@ it.each(scopes.rules as { ruleId: string; paths: { path: string; inScope: boolea
 });
 
 const configured = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-09-configured-defaults.json", "utf8"));
-for (const mode of ["snapshot", "workspace"] as const) it.each(configured.cases as { check: string; files: { path: string; source: string }[]; expected: { code: string; path: string; line: number; message: string }[] }[])(`${mode} retains configured parser behavior for $check`, async spec => {
+for (const mode of ["snapshot", "workspace"] as const) it.each(configured.cases as { id: string; check: string; files: { path: string; source: string }[]; expected: { code: string; path: string; line: number; message: string }[] }[])(`${mode} retains configured parser behavior for $id`, async spec => {
   const result = await runDataLayerAudit({ repositoryRoot: ".", packDirectory: "packs/data-layer", mode,
     ruleIds: [`data-layer-${spec.check.replaceAll("_", "-")}`], snapshot: { format: "rerail.repository-snapshot/v1", revision: 0,
       files: spec.files.map(file => ({ ...file, language: "python" })) } });

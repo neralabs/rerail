@@ -1,6 +1,6 @@
 # Restart the data-layer rule ports
 
-Updated: 2026-11-05. Status: 90 ports are authored. Batch-nine audited defects are fixed, and its expanded acceptance suite passes.
+Updated: 2026-11-05. Status: 90 ports are authored. A second batch-nine audit exposed public-contract gaps after the earlier repair claim.
 See [the completion audit](data-layer-batch-nine-audit.md). The historical complete repository result covers 80.
 
 The recovery survey below describes the original 60-rule restart point.
@@ -10,8 +10,8 @@ The first cumulative run failed with 22 engine errors; its results are not a par
 The admission and legacy-query regressions now pass. The corrected 70-rule repository gate matches all findings with zero engine failures.
 There are now 90 ports and 52 checks left in the pinned scope.
 Twenty documents ship in the opt-in pack; seventy earlier ports remain candidates.
-Batch nine passes 212 assertion cases and records 254 original API results.
-Both native modes match 253 complete results, including 147 positive results.
+Batch nine has 216 assertion cases and 258 original API results.
+Both native modes match 257 complete results, including 151 positive results.
 The remaining record checks native parse and walk counters.
 See [its report](data-layer-batch-nine.md) for native coverage and runtime contracts.
 Batch eight now matches 534 source observations and 15 exact cached-discovery observations.

@@ -258,6 +258,14 @@ impl Facts {
     pub(super) fn python_spans(&self) -> Option<Arc<Vec<(u32, u32)>>> {
         self.python_spans.lock().clone()
     }
+    /// A line diagnostic can narrow its proven witness, never leave that witness.
+    pub(super) fn diagnostic_line(&self, witness: Span, line: usize) -> Option<Span> {
+        if line < witness.start_line || line > witness.end_line {
+            return None;
+        }
+        let start = self.lines.start(line).max(witness.start_byte);
+        (start <= witness.end_byte).then(|| self.lines.span(start, start))
+    }
     /// Restored only from this SQL owner's proof cache for the exact source version.
     pub(super) fn restore_python_spans(&self, spans: Arc<Vec<(u32, u32)>>) {
         self.python_spans.lock().get_or_insert(spans);

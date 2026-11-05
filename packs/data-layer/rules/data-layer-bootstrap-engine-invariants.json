@@ -79,6 +79,47 @@
               }
             }
           },
+          "coverage_errors": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "invalid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "filePath": {
+                          "regex": "^l3200_metadata/bootstrap_(?:coordinator|data_plan)\\.py$"
+                        }
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "(?s).*"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "\\b\\B"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          },
           "source": {
             "evidence": {
               "as": "row",
@@ -258,7 +299,7 @@
           },
           {
             "name": "effective_source",
-            "query": "SELECT source.__path,coalesce(json_extract(configuration.data,'$.rawSources.'||json_quote(source.__path)),source.source) source FROM source CROSS JOIN configuration"
+            "query": "SELECT source.__path,coalesce(json_extract(configuration.data,'$.rawSources.'||json_quote(source.__path)),source_text(source.__path,0,source.__end)) source FROM source CROSS JOIN configuration"
           },
           {
             "name": "file_scope",
@@ -340,9 +381,15 @@
         "query": {
           "$option": "entryPoint",
           "cases": {
-            "_collect_fake_executor_violations": "SELECT * FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4) WHERE issue='BEI007'"
+            "all": "SELECT * FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4) WHERE NOT EXISTS(SELECT 1 FROM coverage_errors error WHERE error.__path='l3200_metadata/bootstrap_coordinator.py' OR EXISTS(SELECT 1 FROM gate WHERE __path='l3200_metadata/bootstrap_coordinator.py'))"
           },
-          "default": "SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4"
+          "default": {
+            "$option": "entryPoint",
+            "cases": {
+              "_collect_fake_executor_violations": "SELECT * FROM (SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4) WHERE issue='BEI007'"
+            },
+            "default": "SELECT * FROM diagnostics_0 UNION ALL SELECT * FROM diagnostics_1 UNION ALL SELECT * FROM diagnostics_2 UNION ALL SELECT * FROM diagnostics_3 UNION ALL SELECT * FROM diagnostics_4"
+          }
         },
         "key": [
           "issue",
@@ -350,7 +397,8 @@
         ],
         "code": "issue",
         "message": "message",
-        "requireNonemptyInput": "gate"
+        "requireNonemptyInput": "gate",
+        "line": "line"
       },
       "violation": {
         "code": "architecture",
@@ -538,6 +586,21 @@
                       },
                       {
                         "pattern": "$SOURCE"
+                      },
+                      {
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "\\b\\B"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
                       }
                     ]
                   }

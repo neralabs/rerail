@@ -23,5 +23,5 @@ def candidate(root):
  trigger_pattern='|'.join(sorted(c['OLD_PUBLIC_NAMES']|c['PRIVATE_CORE_NAMES']|c['PRIVATE_HANDLE_CORE_NAMES']|{'Async','Connection','SessionHandle','Sync','VersionHandle'}))
  query="SELECT * FROM ("+' UNION ALL '.join(sql)+") WHERE EXISTS(SELECT 1 FROM mode_configuration p WHERE json_extract(p.data,'$.probeSource') IS NULL OR rx_matches(json_extract(p.data,'$.probeSource'),"+q(trigger_pattern)+'))'
  item=document('connection_mode_split',[source_triggers(clause('mode-split',stages,query),c['OLD_PUBLIC_NAMES']|c['PRIVATE_CORE_NAMES']|c['PRIVATE_HANDLE_CORE_NAMES']|{'Async','Connection','SessionHandle','Sync','VersionHandle'})],[p+'/**/*.py' for p in c['SCAN_ROOTS']])
- item['scope']['exclude']=['**/__pycache__/**','**/tests/**','**/test/**']
+ item['scope']['exclude']=['**/'+part+'/**' for part in ['.git', '.venv', 'venv', '__pycache__', 'tmp', 'tests', 'test']]
  return item

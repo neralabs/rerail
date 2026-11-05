@@ -46,6 +46,7 @@ pub(super) fn compile(
             "key",
             "code",
             "message",
+            "line",
             "references",
             "locations",
             "partitionBy",
@@ -729,7 +730,14 @@ pub(super) fn compile(
         .get("message")
         .map(|value| non_empty_str(Some(value), &format!("{path}/message")).map(str::to_owned))
         .transpose()?;
-    for field in key.iter().chain(code.iter()).chain(message.iter()) {
+    let line = spec
+        .get("line")
+        .map(|value| non_empty_str(Some(value), &format!("{path}/line")).map(str::to_owned))
+        .transpose()?;
+    if line.is_some() && syntax.is_none() {
+        return Err(invalid("relational line anchors require a syntax source"));
+    }
+    for field in key.iter().chain(code.iter()).chain(message.iter()).chain(line.iter()) {
         if !columns.contains(field) {
             return Err(invalid(format!("{path}: unknown output column {field}")));
         }
@@ -753,6 +761,7 @@ pub(super) fn compile(
         key,
         code,
         message,
+        line,
         last_uses,
         reads_source,
     };

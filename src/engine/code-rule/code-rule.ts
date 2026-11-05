@@ -206,6 +206,8 @@ export interface CodeRuleDslRelational {
   code?: string;
   /** Output column containing the exact diagnostic message. */
   message?: string;
+  /** One-based diagnostic line within the result's proven input witness span. Requires syntax. */
+  line?: string;
 }
 
 

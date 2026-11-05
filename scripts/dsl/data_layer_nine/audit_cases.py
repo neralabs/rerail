@@ -1,4 +1,26 @@
 from pathlib import Path
+import pytest
+
+
+@pytest.mark.parametrize('source', ['pass\n\n# COLD_APPLICATION\n','\n\n# COLD_APPLICATION\npass\n',"text = '''first\né COLD_APPLICATION\n'''\n"])
+def test_raw_surface_locations_preserve_the_complete_source(tmp_path,source):
+ from scripts import lint_bootstrap_engine_invariants as lint
+ path=tmp_path/'l3200_metadata/bootstrap_state.py';path.parent.mkdir(parents=True)
+ path.write_text(source)
+ result=lint._collect_file_violations(path)
+ assert [(row.code,row.line) for row in result]==[('BEI035',2 if source.startswith('text') else 3)]
+
+
+def test_cache_health_configured_plugin_scans_helper_modules(tmp_path):
+ from scripts import lint_bootstrap_cache_health as lint
+ from scripts.lint_lib.fact_engine import FactEngine
+ from scripts.lint_lib.fact_store import JsonFactStore
+ path=tmp_path/'conform/helpers.py';path.parent.mkdir(parents=True)
+ path.write_text('def test_probe():\n    create_tables()\n')
+ plugin=lint.bootstrap_cache_health_plugin(tmp_path)
+ engine=FactEngine(root=tmp_path,fact_store=JsonFactStore(tmp_path/'cache'),extractors=lint.bootstrap_cache_health_fact_extractors(tmp_path))
+ view=engine.materialize((plugin,),max_workers=1)
+ assert [row.code for row in plugin.reporter(view)]==['BCH003']
 
 
 def test_schema_contracts_do_not_treat_lambda_arguments_as_function_parameters(tmp_path):

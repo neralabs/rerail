@@ -11,7 +11,7 @@ export interface NineRecord {
 }
 export interface NineOracle { cases: Record<string, unknown>; sources: Record<string, string>; records: NineRecord[] }
 type Row = Record<string, string | number | null>;
-type Finding = { code: string; path: string; variables: { row: Row } };
+type Finding = { code: string; message: string; path: string; span: { startLine: number }; variables: { row: Row } };
 const scalarCompare = (a: unknown, b: unknown): number => typeof a === "number" && typeof b === "number" ? a - b
   : Buffer.compare(Buffer.from(String(a)), Buffer.from(String(b)));
 
@@ -90,6 +90,12 @@ export class NineReplay {
       const filename = ["schema_architecture", "schema_bootstrap_contracts", "bootstrap_lazy_sql", "bootstrap_eager_resolve", "plan_composition_architecture", "bootstrap_cache_health"].includes(record.check) ? file.path.split("/").at(-1) : "<unknown>";
       const message = `${detail.msg} (${filename}, line ${detail.lineno})`;
       return { exception: { type: "SyntaxError", message, ...detail } };
+    }
+    for (const finding of result.violations) {
+      const row = finding.variables.row;
+      if (finding.code !== row.issue || finding.message !== row.message || finding.path !== row.path
+        || (row.issue !== "CONN000" && finding.span.startLine + 1 !== row.line))
+        throw new Error(`Public diagnostic differs from the replay DTO: ${record.test}: ${JSON.stringify(finding)}`);
     }
     return nineResult(record, result.violations);
   }

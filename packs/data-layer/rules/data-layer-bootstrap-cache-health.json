@@ -6,11 +6,14 @@
   "description": "Exact port of nera-data-layer bootstrap_cache_health at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
-      "conform/**/test_*.py"
+      "conform/**/*.py"
     ],
     "exclude": [
+      "**/.git/**",
+      "**/.venv/**",
+      "**/venv/**",
       "**/__pycache__/**",
-      "**/.pytest_cache/**"
+      "**/tmp/**"
     ]
   },
   "clauses": [
@@ -208,10 +211,29 @@
                   "rule": {
                     "all": [
                       {
-                        "kind": "module"
+                        "all": [
+                          {
+                            "kind": "module"
+                          },
+                          {
+                            "regex": "bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables"
+                          }
+                        ]
                       },
                       {
-                        "regex": "bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables"
+                        "$option": "entryPoint",
+                        "cases": {
+                          "all": {
+                            "filePath": {
+                              "regex": "\\b\\B"
+                            }
+                          }
+                        },
+                        "default": {
+                          "filePath": {
+                            "regex": "(?s).*"
+                          }
+                        }
                       }
                     ]
                   }

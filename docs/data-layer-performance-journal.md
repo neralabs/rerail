@@ -6523,3 +6523,53 @@ The [batch report](data-layer-batch-nine.md) and [assertion receipt](../fixtures
 The previous kernel receipt remains historical. It does not measure this repaired build.
 No cumulative cold repository run or new performance claim forms part of this repair.
 No capacity or statement limit increased. No Linear issues were created.
+
+## 2026-11-05 — Second audit: public contracts concealed by replay adapters
+
+The previous repair claim at `8e4cede5f` still overstated completion.
+A passing DTO comparison did not establish correct public diagnostics or configured-plugin behavior.
+The [second audit evidence](../fixtures/host/data-layer-port/batch-09-public-audit-20261105.json) preserves the actual failing output.
+
+BEI035 reported line three in a SQL field, but its public span pointed to line one.
+Both adapters read the SQL field, so both passed the same incorrect production result.
+Leading blank lines also changed the SQL field because the captured module text omitted them.
+The production tests selected one positive per rule and missed these raw-source locations.
+
+The same audit found incorrect cache-health scope, ignored-directory differences and blocking enforcement for both report-only lazy-SQL checks.
+It also found incorrect configured parser behavior and partial results after a failed bootstrap project derivation.
+BCH000 belongs to the cache source API. The configured plugin does not emit it for the same malformed source.
+The earlier parser repair copied the source API contract into the plugin default.
+
+| TDD commit | Observed red result | Repair |
+| --- | --- | --- |
+| `8596c1b29` | Ten public tests fail; the bounded line primitive is unsupported | Add a validated line anchor, preserve complete source, widen helper-file scope and restore report-only behavior |
+| `ca77a1a89` | Both scope comparisons fail original `FactEngine.plan()` output | Preserve actual ignored directories for both configured plugins |
+| `92ecf48f9` | Eight configured parser comparisons fail | Separate source entry points from configured plugin defaults |
+| `261fea8eb` | Both native modes retain findings after the original project extractor discards its result | Suppress the derived result for malformed coverage dependencies |
+
+The line anchor narrows a proven witness to a selected line.
+It rejects noninteger, nonpositive or out-of-witness locations. It cannot create arbitrary source ranges.
+Both replay paths now compare public diagnostic fields before constructing upstream DTOs.
+The original source and configured-plugin paths retain distinct acceptance cases.
+
+The configured observation recorder executes actual upstream plugins and verifies 121 loaded source files against the pin.
+Its two scope inventories and nine parser/dependency scenarios reproduce byte for byte.
+The production composition CLI also matches the original clean result against the pinned application's real builder.
+Positive composition controls still require the SQL detector to reject defective builder observations.
+
+No cumulative cold repository benchmark ran. The previous performance limitations remain open.
+No capacity or statement limit increased. No Linear issues were created.
+
+The refreshed oracle passes 216 cases and records 258 API results.
+Both native modes pass 216 cases and match 257 complete results, including 151 positive results.
+The remaining original result maps to actual native parse and walk counters.
+Disabled controls produce 156 expected failed cases and 60 passing cases. All ten detectors are rejected.
+The native DSL suite passes 1,576 tests, with 23 existing ignores and 114 non-DSL tests outside the command.
+Retained checks pass 44 API/capability cases and four selected earlier receipt cases.
+TypeScript typecheck and boundary checks pass. All ten documents regenerate byte for byte.
+The structure check retains three pre-existing directory-size findings.
+
+These results cover recorded inputs and explicit public contracts. They do not certify untested production behavior.
+The remaining 52 rules are unauthored. Repository activation remains separate from authored-rule inventory.
+
+The final combined TypeScript acceptance run passes 86 tests, including 30 public-contract regressions.
