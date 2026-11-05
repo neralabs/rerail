@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { globPattern } from "../../../src/engine/glob-pattern.js";
 import {
   candidateSchema,
+  candidatesInForce,
   cleanDecision,
   newCandidateId,
   parseCandidateText,
@@ -155,5 +156,42 @@ describe("candidate ids", () => {
 
   it("gives up rather than loop forever when every id is taken", () => {
     expect(() => unusedCandidateId("Keep retries.", () => true)).toThrow("no unused candidate id");
+  });
+});
+
+describe("candidatesInForce", () => {
+  const decision = (slug: string, overrides: Record<string, unknown> = {}): Candidate => candidateSchema.parse(candidate({ id: `candidate:${slug}`, ...overrides }));
+  const ids = (candidates: readonly Candidate[]): string[] => candidates.map(entry => entry.id);
+
+  it("takes an amended decision out of force and keeps its amendment, through a chain of amendments", () => {
+    const original = decision("dates-0a0a0a");
+    const amendment = decision("dates-formats-1b1b1b", { supersedes: original.id });
+    const again = decision("dates-zones-2c2c2c", { supersedes: amendment.id });
+    const other = decision("retries-3f9a1c");
+
+    expect(ids(candidatesInForce([original, amendment, other]))).toEqual([amendment.id, other.id]);
+    expect(ids(candidatesInForce([original, amendment, again, other]))).toEqual([again.id, other.id]);
+  });
+
+  it("leaves rejected decisions out, and puts a decision back in force when its amendment is rejected", () => {
+    const original = decision("dates-0a0a0a");
+    const amendment = decision("dates-formats-1b1b1b", { supersedes: original.id });
+
+    expect(ids(candidatesInForce([original, { ...amendment, state: "rejected" }]))).toEqual([original.id]);
+    expect(ids(candidatesInForce([{ ...original, state: "rejected" }, amendment]))).toEqual([amendment.id]);
+  });
+
+  it("treats an amendment of a missing decision, or of itself, as an ordinary decision", () => {
+    const orphan = decision("dates-formats-1b1b1b", { supersedes: "candidate:gone-9f9f9f" });
+    const own = decision("retries-3f9a1c", { supersedes: "candidate:retries-3f9a1c" });
+
+    expect(ids(candidatesInForce([orphan, own]))).toEqual([orphan.id, own.id]);
+  });
+
+  it("lets a cycle of amendments amend nothing, so none of its decisions drops out", () => {
+    const first = decision("dates-0a0a0a", { supersedes: "candidate:dates-formats-1b1b1b" });
+    const second = decision("dates-formats-1b1b1b", { supersedes: first.id });
+
+    expect(ids(candidatesInForce([first, second]))).toEqual([first.id, second.id]);
   });
 });

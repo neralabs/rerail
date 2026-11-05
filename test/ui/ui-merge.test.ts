@@ -22,7 +22,7 @@ const finding = (id: string, tier: Finding["tier"], status: Finding["status"], o
 
 const own = (id: string, state: OwnDecision["state"]): OwnDecision => ({
   id, decision: `Own ${id}`, generality: "branch", scope: ["src/api/**"], level: "note", state, createdAt: "2026-11-02T09:00:00Z",
-  committed: false, source: { sessionId: null, at: null },
+  committed: false, amends: null, amendedBy: null, source: { sessionId: null, at: null },
 });
 
 const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({

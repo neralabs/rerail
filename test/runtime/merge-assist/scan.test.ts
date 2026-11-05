@@ -428,6 +428,27 @@ describe("Merge Assist scan", { timeout: 30_000 }, () => {
     expect(ws.rulesOn(ws.repo)).toEqual([]);
   });
 
+  it("applies a teammate's amendment in place of the decision it amends", async () => {
+    const ws = await workspace();
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    const peer = ws.worktree("jbarnes-retry");
+    commit(peer, candidateFiles(RETRY));
+    await service.scan(ws.repo);
+    expect(ws.rulesOn(ws.repo)).toEqual([peerRule(ws.repo, { kind: "branch", ref: "jbarnes-retry" })]);
+
+    const amendmentId = "candidate:retries-in-transport-only-5e6f7a";
+    const amendment = candidate({
+      id: amendmentId,
+      decision: "Retries live in the transport layer only; callers never retry.",
+      rule: forbidRule(amendmentId, String.raw`\bretry\(`),
+      supersedes: RETRY.id,
+    });
+    commit(peer, candidateFiles(amendment));
+    expect((await service.scan(ws.repo)).findings).toMatchObject([{ candidate: { id: amendmentId }, tier: "absorb", status: "applied" }]);
+    expect(ws.rulesOn(ws.repo)).toEqual([peerRule(ws.repo, { kind: "branch", ref: "jbarnes-retry" }, amendment)]);
+  });
+
   it("never lets another branch's candidate replace this branch's own rule of the same id", async () => {
     const ws = await workspace();
     const mine = candidate({ id: RETRY_ID, author: "tbelanger", rule: forbidRule(RETRY_ID, String.raw`\bsleep\(`) });

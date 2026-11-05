@@ -12,7 +12,8 @@
  * whatever the variant (the control included), the entry holds each scope-matching decision's signal hits and
  * embedding similarity, so guard thresholds can be swept offline. `orient: focus` starts the session-focus ranker
  * (merge-assist-context-rank.ts) in the background at SessionStart; `orient: area-focus` starts one per area, at the
- * area's first touch. A failure is logged and never reaches Codex: the hook then prints nothing.
+ * area's first touch, and with `sessionRankMax` the session's too. A failure is logged and never reaches Codex: the
+ * hook then prints nothing.
  */
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -101,6 +102,17 @@ export interface VariantParameters {
    * most a fallback ranks for it; null for no per-area limit (a fallback then takes `focusK`).
    */
   readonly areaCap: number | null;
+  /**
+   * `orient: area-focus`: the session ranker runs too, from the session's start, answered as at most this many ids,
+   * and each area's ranker lists the session's picks first, in their order, waiting up to {@link SESSION_WAIT_MS} for
+   * them; null for no session ranker.
+   */
+  readonly sessionRankMax: number | null;
+  /**
+   * `orient: area-focus` with `sessionRankMax`: an area ranker's picks after its first `agreeAfter` are injected only
+   * when the session ranker picked them too, so the two rankers agree on them; null for every pick.
+   */
+  readonly agreeAfter: number | null;
 }
 
 export type DecisionSource = "team" | "peer" | "own";
@@ -195,7 +207,7 @@ export interface HookState {
   seenAreas: string[];
   /** `prompt-embed`: the task prompt's embedding, computed once per run. */
   promptVector: number[] | null;
-  /** `orient: focus`: whether the ranker was started. */
+  /** `orient: focus`, or `area-focus` with `sessionRankMax`: whether the session ranker was started. */
   focusStarted: boolean;
   /** `orient: focus` or `area-focus`: files whose area got its conflict pairs before its ranker answered; its picks follow when it does. */
   pendingPaths: string[];
@@ -216,6 +228,8 @@ export interface FocusFile {
   /** The ranking prompt's length: judge tokens are estimated as a quarter of it. */
   readonly promptChars: number;
   readonly candidates: number;
+  /** An area ranker under `sessionRankMax`: the session's picks it listed first, in order (empty when the session ranker failed or was late). */
+  readonly session?: readonly string[];
 }
 
 export interface FocusLog {
@@ -712,20 +726,45 @@ function chooseHybrid(candidates: readonly Candidate[], triggerPaths: readonly s
 const RANKER = fileURLToPath(new URL("./merge-assist-context-rank.ts", import.meta.url));
 /** How long a pre-edit in an area the ranker has not answered for waits before ranking the area by prompt embedding. */
 const FOCUS_WAIT_MS = 15_000;
-const FOCUS_POLL_MS = 250;
+export const FOCUS_POLL_MS = 250;
+/** How long an area's ranker under `sessionRankMax` waits for the session ranker's answer before ranking in index order. */
+export const SESSION_WAIT_MS = 20_000;
+
+/** What a focus ranker is asked about: the task prompt and decisions under opaque ids; `entries` maps the ids back to index ids. */
+export interface RankerInput {
+  readonly task: string;
+  readonly decisions: Array<{ id: string; decision: string }>;
+  readonly entries: string[];
+}
 
 /**
  * A focus ranker's input: the task prompt, and every index entry whose scope covers a project file, in index order;
  * for an area's ranker (`path`, the file whose touch started it), only those covering `path` or a project file in its
  * area. Entries go under opaque ids (`d1`, `d2`, …) so no id hints at what an entry is; `entries` maps them back.
  */
-export function rankerInput(config: Pick<HookConfig, "index" | "files" | "prompt">, path: string | null = null): { task: string; decisions: Array<{ id: string; decision: string }>; entries: string[] } {
+export function rankerInput(config: Pick<HookConfig, "index" | "files" | "prompt">, path: string | null = null): RankerInput {
   const files = path === null ? config.files : [path, ...config.files.filter(file => file !== path && areaOf(file) === areaOf(path))];
   const entries = config.index.filter(entry => {
     const matcher = scopeMatcher(entry.scope);
     return files.some(file => matcher.specificity(file, false) >= 0);
   });
   return { task: config.prompt, decisions: entries.map((entry, position) => ({ id: `d${position + 1}`, decision: entry.decision })), entries: entries.map(entry => entry.id) };
+}
+
+/** `input` with the entries `first` names (index ids, in that order) moved to the front, the rest in index order, opaque ids renumbered. */
+export function sessionFirst(input: RankerInput, first: readonly string[]): RankerInput {
+  const text = new Map(input.entries.map((id, position) => [id, input.decisions[position]!.decision]));
+  const entries = [...new Set(first.filter(id => text.has(id))), ...input.entries.filter(id => !first.includes(id))];
+  return { task: input.task, decisions: entries.map((id, position) => ({ id: `d${position + 1}`, decision: text.get(id)! })), entries };
+}
+
+/** An area ranker's picks as they are injected: under `agreeAfter`, those after the first `agreeAfter` only if the session ranker it waited for picked them too. */
+export function agreedPicks(answer: Pick<FocusFile, "ids" | "session">, variant: Pick<VariantParameters, "agreeAfter">): readonly string[] {
+  const { agreeAfter } = variant;
+  const session = answer.session ?? [];
+  // Without the session's answer there is nothing to agree with: the area's picks go out as the ranker gave them.
+  if (agreeAfter === null || session.length === 0) return answer.ids;
+  return answer.ids.filter((id, position) => position < agreeAfter || session.includes(id));
 }
 
 export function focusPath(folder: string): string {
@@ -737,7 +776,7 @@ export function areaFocusPath(folder: string, area: string): string {
   return join(folder, `focus-${area === "" ? "root" : area.replaceAll("/", "-")}.json`);
 }
 
-function readFocusFile(path: string): FocusFile | undefined {
+export function readFocusFile(path: string): FocusFile | undefined {
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as FocusFile : undefined;
 }
 
@@ -866,10 +905,11 @@ async function focusTurn(config: HookConfig, variant: VariantParameters, initial
 
 /**
  * One call under `orient: area-focus`. An area's first touch sends its conflict pairs at once and starts that area's
- * ranker in the background, over the decisions covering the touched file or a project file in the area; its picks
- * (`areaCap` at most) go out at the first call after it answers. A pre-edit patching an area whose ranking is pending
- * waits up to {@link FOCUS_WAIT_MS} for it, then ranks the area by prompt embedding (`areaCap` at most); a failed
- * ranker means the same for its area. Areas rank concurrently, each into its own `focus-<area>.json`.
+ * ranker in the background, over the decisions covering the touched file or a project file in the area (under
+ * `sessionRankMax`, the session ranker's picks listed first); its picks (`agreedPicks`, `areaCap` at most) go out at the
+ * first call after it answers. A pre-edit patching an area whose ranking is pending waits up to {@link FOCUS_WAIT_MS}
+ * for it, then ranks the area by prompt embedding (`areaCap` at most); a failed ranker means the same for its area.
+ * Areas rank concurrently, each into its own `focus-<area>.json`.
  */
 async function areaFocusTurn(config: HookConfig, configPath: string, variant: VariantParameters, initial: HookState, trigger: string, triggering: readonly Touched[]): Promise<FocusTurn> {
   const fresh = freshPaths(initial, trigger, triggering);
@@ -903,7 +943,7 @@ async function areaFocusTurn(config: HookConfig, configPath: string, variant: Va
   };
   const served = waiting.filter(path => via(path) !== null);
   const pending = waiting.filter(path => via(path) === null);
-  const turn = await focusChoice(config, variant, initial, fresh, served.map(path => ({ path, picks: via(path) === "ranker" ? answers.get(areaOf(path))!.ids : null })));
+  const turn = await focusChoice(config, variant, initial, fresh, served.map(path => ({ path, picks: via(path) === "ranker" ? agreedPicks(answers.get(areaOf(path))!, variant) : null })));
   const areas = served.map((path): AreaFocusLog => {
     const answer = answers.get(areaOf(path));
     return { area: areaOf(path), via: via(path)!, ids: answer?.ids ?? null, rankerMs: answer?.ms ?? null, promptChars: answer?.promptChars ?? null };
@@ -1139,8 +1179,9 @@ async function main(): Promise<void> {
     let state = readState(config.state);
     const variant = config.variant;
     const focusing = variant?.orient === "focus";
-    // The ranker starts at SessionStart, or at the first call when no SessionStart came.
-    if (focusing && !state.focusStarted) {
+    // The session ranker starts at SessionStart, or at the first call when no SessionStart came; under `area-focus`
+    // only with `sessionRankMax`, for the area rankers to list its picks first.
+    if ((focusing || (variant?.orient === "area-focus" && variant.sessionRankMax !== null)) && !state.focusStarted) {
       startRanker(configPath);
       state = { ...state, focusStarted: true };
     }

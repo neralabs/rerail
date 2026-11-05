@@ -627,7 +627,7 @@ decisions rather than lines, it works across coding agents, and its shared layer
 | Remote work | Open pull requests through `gh` only | Remote-tracking branches first, `gh` for metadata |
 | Comparisons | One judge call per peer; any new decision invalidates all | Per pair of rule contents; exact for code rules |
 | Capture | At every turn end with a correction | Marked at turn end, judged in a batch at commit or idle; amendments |
-| Changing a decision | Not modelled | Amendments, reviewed |
+| Changing a decision | Capture writes an amendment of a decision in force in the checkout (its own or merged from the base): a new candidate whose `supersedes` names it, which takes it out of force there and on a branch that scans this one; rejecting the amendment restores it. Another branch triages an amendment like any other decision (being an amendment does not send it to review); `revision` is not used | Amendments, reviewed |
 | Exact checks | At each scan | At landing and on demand, counted against the base |
 | Approval | Not used (library rules) | Rerail's approval, with an opt-in policy |
 | Built and carried over | Judge runner and prompts with fences and repair; `gh` client; capture validation; tier model and its tests; notes' framing and escaping; agent guards; dashboard page structure | |

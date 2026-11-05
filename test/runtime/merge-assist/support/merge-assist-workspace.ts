@@ -133,6 +133,7 @@ export function captureVerdict(overrides: Partial<CaptureVerdict> = {}): Capture
   return {
     generality: "repository",
     duplicateOf: null,
+    amends: null,
     decision: "Retries live in the transport layer; callers don't wrap requests in retry loops.",
     scope: ["src/api/**"],
     check: { kind: "regex", pattern: String.raw`\bretry\(` },

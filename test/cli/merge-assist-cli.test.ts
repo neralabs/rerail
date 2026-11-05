@@ -96,11 +96,17 @@ describe("rerail merge-assist", () => {
       own: [
         {
           id: "candidate:throw-api-errors-7a8b9c", decision: "API errors are thrown as ApiError.", generality: "repository", scope: ["src/api/**"],
-          level: "code", state: "active", createdAt: "2026-11-01T08:30:00Z", committed: false, source: { sessionId: "s1", at: "2026-11-01T08:30:00Z" },
+          level: "code", state: "active", createdAt: "2026-11-01T08:30:00Z", committed: false,
+          amends: { id: "candidate:throw-errors-1f2e3d", decision: "API errors are thrown." }, amendedBy: null, source: { sessionId: "s1", at: "2026-11-01T08:30:00Z" },
+        },
+        {
+          id: "candidate:throw-errors-1f2e3d", decision: "API errors are thrown.", generality: "repository", scope: ["src/api/**"],
+          level: "note", state: "active", createdAt: "2026-11-01T08:10:00Z", committed: true,
+          amends: null, amendedBy: "candidate:throw-api-errors-7a8b9c", source: { sessionId: null, at: null },
         },
         {
           id: "candidate:tabs-2c3d4e", decision: "Indent with tabs.", generality: "branch", scope: [],
-          level: "note", state: "rejected", createdAt: "2026-11-01T08:00:00Z", committed: true, source: { sessionId: null, at: null },
+          level: "note", state: "rejected", createdAt: "2026-11-01T08:00:00Z", committed: true, amends: null, amendedBy: null, source: { sessionId: null, at: null },
         },
       ],
     });
@@ -128,10 +134,14 @@ describe("rerail merge-assist", () => {
       "      Added automatically; Rerail checks it exactly. Undo: rerail merge-assist undo finding-added",
       "    finding-adopted  \"Retries live in the transport layer; callers don't wrap requests in retry loops.\" (pull request #12 \"Session retry\" by jbarnes)",
       "      Adopted; Rerail checks it exactly. Undo: rerail merge-assist undo finding-adopted",
-      "  Decisions on this branch (2):",
+      "  Decisions on this branch (3):",
       "    candidate:throw-api-errors-7a8b9c  \"API errors are thrown as ApiError.\"",
+      "      amends \"API errors are thrown.\"",
       "      Rerail checks it exactly · src/api/** · saved 2026-11-01 08:30 UTC · not committed yet",
       "      Not a rule: rerail merge-assist reject candidate:throw-api-errors-7a8b9c",
+      "    candidate:throw-errors-1f2e3d  \"API errors are thrown.\"  (amended by candidate:throw-api-errors-7a8b9c)",
+      "      your agent judges it · src/api/** · saved 2026-11-01 08:10 UTC · committed",
+      "      Not a rule: rerail merge-assist reject candidate:throw-errors-1f2e3d",
       "    candidate:tabs-2c3d4e  \"Indent with tabs.\"  (not a rule)",
       "      your agent judges it · the whole repository · saved 2026-11-01 08:00 UTC · committed",
       "  Dismissed: 1 finding, hidden until their decisions change.",

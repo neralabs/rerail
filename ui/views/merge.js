@@ -266,8 +266,10 @@ const GENERALITY = { branch: "For this branch", repository: "Repository conventi
 function ownRow(decision, ignored) {
   return h("article.mrow", null,
     h("p.mq", null, decision.decision),
+    decision.amends === null ? null : h("p.mamends", null, "Amends ", quoted(decision.amends.decision)),
     h("div.mmeta", null, levelBadge(decision.level), h("span", null, GENERALITY[decision.generality] ?? decision.generality),
-      scopeChips(decision.scope), h("span", null, "Saved ", ageSlot()), shareHint(decision, ignored)),
+      scopeChips(decision.scope), h("span", null, "Saved ", ageSlot()), shareHint(decision, ignored),
+      decision.amendedBy === null ? null : h("span.badge.mwarn", { title: "A later decision on this branch amends it, so it no longer applies." }, "Amended")),
     h("div.macts", null,
       button(".danger.quiet", "mareject", decision.id, "Not a rule", {
         aria: `Mark ${quoted(decision.decision)} as not a rule`,
@@ -465,7 +467,7 @@ function renderSections(status) {
   const ignored = on && status.readiness.candidatesIgnored;
   renderSection(page.own, {
     show: on, title: "Decisions on this branch", items: own, row: d => ownRow(d, ignored),
-    content: d => [d.decision, d.level, d.generality, d.scope, d.committed, ignored], when: d => d.createdAt,
+    content: d => [d.decision, d.level, d.generality, d.scope, d.committed, d.amends, d.amendedBy, ignored], when: d => d.createdAt,
     lead: ignored
       ? ["Saved from your corrections. Git ignores ", { code: ".rerail/candidates/" }, " here, so they stay on this machine."]
       : ["Saved from your corrections in ", { code: ".rerail/candidates/" }, ". Commit them to share them; Rerail never commits."],

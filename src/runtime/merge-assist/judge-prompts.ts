@@ -113,7 +113,8 @@ export interface CaptureInput {
   correction: string;
   priorCalls: string[];
   edits: Array<{ path: string; before: string | null; after: string | null }>;
-  ownDecisions: Array<{ id: string; decision: string }>;
+  /** The decisions in force on the branch, with the scope each covers. */
+  ownDecisions: Array<{ id: string; decision: string; scope: string[] }>;
 }
 
 /** One node of an AST check: exactly one of `pattern` (an ast-grep pattern) and `nodeKind` (a tree-sitter node kind). */
@@ -132,8 +133,10 @@ export type CaptureCheck = { kind: "regex"; pattern: string } | { kind: "ast"; l
 
 export interface CaptureVerdict {
   generality: "one-off" | "branch" | "repository";
-  /** An ownDecisions id the correction restates. */
+  /** An ownDecisions id the correction only restates. */
   duplicateOf: string | null;
+  /** An ownDecisions id the correction changes or extends: the decision stated here replaces it. */
+  amends: string | null;
   /** At most 280 characters, one sentence, no code fences. */
   decision: string;
   /** 1 to 8 repository-relative globs. */
@@ -155,19 +158,32 @@ const signalsSchema = z.array(z.string()).transform(raw => [...new Set(raw.flatM
   return parsed.success ? [parsed.data] : [];
 }))].slice(0, MAX_SIGNALS));
 
-export const captureVerdictSchema: z.ZodType<CaptureVerdict> = z.object({
-  generality: z.enum(["one-off", "branch", "repository"]),
-  duplicateOf: candidateIdSchema.nullable(),
-  decision: verdictDecisionSchema,
-  scope: z.array(scopePatternSchema).min(1).max(MAX_VERDICT_SCOPE),
-  check: checkSchema.nullable(),
-  message: shownText(MAX_CHECK_MESSAGE),
-  cases: z.object({
-    caught: z.array(caseSchema).max(MAX_VERDICT_CASES),
-    passed: z.array(caseSchema).max(MAX_VERDICT_CASES),
-  }).strict(),
-  signals: signalsSchema,
-}).strict();
+/** The decisions already made on the branch that the capture prompt lists: the only ones a verdict may name. */
+function promptedDecisions(input: CaptureInput): CaptureInput["ownDecisions"] {
+  return input.ownDecisions.slice(0, MAX_PROMPT_DECISIONS);
+}
+
+/**
+ * The capture answer for `input`, closed: `amends` names one of the decisions its prompt lists, or null, and a verdict
+ * never both restates and amends.
+ */
+export function captureVerdictSchemaFor(input: CaptureInput): z.ZodType<CaptureVerdict> {
+  const listed = new Set(promptedDecisions(input).map(own => own.id));
+  return z.object({
+    generality: z.enum(["one-off", "branch", "repository"]),
+    duplicateOf: candidateIdSchema.nullable(),
+    amends: candidateIdSchema.refine(id => listed.has(id), "amends names a decision already made on this branch").nullable(),
+    decision: verdictDecisionSchema,
+    scope: z.array(scopePatternSchema).min(1).max(MAX_VERDICT_SCOPE),
+    check: checkSchema.nullable(),
+    message: shownText(MAX_CHECK_MESSAGE),
+    cases: z.object({
+      caught: z.array(caseSchema).max(MAX_VERDICT_CASES),
+      passed: z.array(caseSchema).max(MAX_VERDICT_CASES),
+    }).strict(),
+    signals: signalsSchema,
+  }).strict().refine(verdict => verdict.duplicateOf === null || verdict.amends === null, "a correction restates a decision or amends it, not both");
+}
 
 const caseJsonSchema = {
   type: "object",
@@ -190,14 +206,11 @@ const checkNodeJsonSchema = {
 
 const signalListJsonSchema = { type: "array", maxItems: MAX_SIGNALS, items: { type: "string", maxLength: MAX_SIGNAL_LENGTH } };
 
-/**
- * The capture answer as a JSON schema for the agent CLI. Every property is required and objects are closed, as Codex's
- * `--output-schema` requires; `captureVerdictSchema` remains the check that counts.
- */
-export const captureJsonSchema: Record<string, unknown> = {
+/** The capture answer's JSON schema but for `amends`, which {@link captureJsonSchemaFor} closes per input. */
+const CAPTURE_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["generality", "duplicateOf", "decision", "scope", "check", "message", "cases", "signals"],
+  required: ["generality", "duplicateOf", "amends", "decision", "scope", "check", "message", "cases", "signals"],
   properties: {
     generality: { type: "string", enum: ["one-off", "branch", "repository"] },
     duplicateOf: { type: ["string", "null"] },
@@ -243,6 +256,16 @@ export const captureJsonSchema: Record<string, unknown> = {
   },
 };
 
+/**
+ * The capture answer for `input` as a JSON schema for the agent CLI: `amends` is null or one of the decisions its prompt
+ * lists. Every property is required and objects are closed, as Codex's `--output-schema` requires;
+ * {@link captureVerdictSchemaFor} remains the check that counts.
+ */
+export function captureJsonSchemaFor(input: CaptureInput): Record<string, unknown> {
+  const amends = { type: ["string", "null"], enum: [...promptedDecisions(input).map(own => own.id), null] };
+  return { ...CAPTURE_JSON_SCHEMA, properties: { ...CAPTURE_JSON_SCHEMA.properties, amends } };
+}
+
 /** How a judge writes a decision's signals; the capture and signals tasks share it. */
 const SIGNAL_GUIDANCE = `signals: 0 to ${MAX_SIGNALS} short literal code fragments, each 2 to ${MAX_SIGNAL_LENGTH} characters on one line, whose presence in new code means the decision is at stake. Rerail matches each as plain text, case-sensitively, against the lines an agent adds; they are not regexes.
 - Cover every form the construct can take, not just the one in the example: for a ban on console logging "console." rather than "console.log"; for "no default exports" both "export default" and "as default".
@@ -257,7 +280,9 @@ generality:
 - "branch": how the work on this branch is done, which later edits on the branch should follow. Example: "Keep the old column until the backfill has run."
 - "repository": a convention for the whole codebase. Examples: "Retries live in the transport layer; callers don't wrap requests in retry loops." "Log through logger, not console.log."
 
-duplicateOf: the id of a decision already made on this branch that the correction restates, else null.
+duplicateOf and amends compare the correction with the decisions already made on this branch. At most one of them is an id; both are null when the correction is about something none of them covers.
+- duplicateOf: the id of a decision the correction only restates: following that decision as it is written already gives the corrected code, so the correction adds nothing to it. Else null.
+- amends: the id of a decision the correction changes or extends: it adds, removes or changes an obligation of that decision (one more thing to do, an exception, a different place or way to do it). Your decision then replaces that one: state the whole decision as it now stands, not only the change. Rerail keeps the files that decision covers in the scope, with yours. Else null.
 decision: one sentence of at most ${MAX_DECISION_LENGTH} characters, imperative or declarative, with no code fences, links, names of people or file contents.
 scope: 1 to ${MAX_VERDICT_SCOPE} repository-relative globs, the narrowest that cover the files the correction touched ("src/api/**", "src/api/client.ts"). Never start with / and never use "..".
 check: a check Rerail runs on code text. Draft one whenever the decision forbids a construct you can see in the code before the correction: Rerail tests it against the cases and the repository and asks you once to fix it if it fails, so a careful attempt beats null. Answer null only when code text alone cannot show the decision is broken (a naming scheme, an architecture across files, runtime behaviour).
@@ -271,7 +296,7 @@ cases: when there is a check, at most ${MAX_VERDICT_CASES} "caught" and ${MAX_VE
 Rerail keeps the check only when it compiles, catches every caught case, passes every passed case, and matches nothing in the repository as it is after the correction: neither the corrected code in the files the correction touched nor legitimate code elsewhere, such as the place the decision says the code belongs. Otherwise it saves the decision without a check.
 ${SIGNAL_GUIDANCE}
 Rerail adds the fragments the correction removed, and keeps a form of a signal only when it occurs in the code before the correction and not in the code after it.
-For one-off: duplicateOf null, check null, empty cases, empty signals, and the simplest valid decision, scope and message.`;
+For one-off: duplicateOf and amends null, check null, empty cases, empty signals, and the simplest valid decision, scope and message.`;
 
 /** The capture prompt for one correction, with every input fenced as data. */
 export function capturePrompt(input: CaptureInput, nonce: string): string {
@@ -292,12 +317,12 @@ export function capturePrompt(input: CaptureInput, nonce: string): string {
   if (input.edits.length > MAX_EDITS) parts.push(`(${input.edits.length - MAX_EDITS} more edits left out.)`);
   const touched = [...new Set(input.edits.map(edit => edit.path))].slice(0, MAX_TOUCHED_PATHS);
   if (touched.length > 0) parts.push(fenceData("files the correction touched", touched.join("\n"), nonce));
-  const decisions = input.ownDecisions.slice(0, MAX_PROMPT_DECISIONS).map(own => `- ${own.id}: ${own.decision}`);
+  const decisions = promptedDecisions(input).map(own => `- ${own.id}: ${own.decision}`);
   parts.push(decisions.length > 0 ? fenceData("decisions already made on this branch", decisions.join("\n"), nonce) : "No decisions have been made on this branch yet.");
   return parts.join("\n");
 }
 
-const REPAIR_INSTRUCTIONS = `Your earlier answer to this capture task is below, with why Rerail could not keep its check. Answer again with the same generality, duplicateOf, decision, scope and signals, and a corrected check, message and cases that fix the failure. If no check can express the decision without matching correct code, answer check null and empty cases.`;
+const REPAIR_INSTRUCTIONS = `Your earlier answer to this capture task is below, with why Rerail could not keep its check. Answer again with the same generality, duplicateOf, amends, decision, scope and signals, and a corrected check, message and cases that fix the failure. If no check can express the decision without matching correct code, answer check null and empty cases.`;
 
 /**
  * The capture prompt asked again after the drafted check failed Rerail's validation: the same task, with the earlier

@@ -53,6 +53,9 @@ export const ownDecisionSchema = z.object({
   state: z.enum(CANDIDATE_STATES),
   createdAt: z.string(),
   committed: z.boolean().describe("Whether the candidate file is in the branch's last commit, so pushing shares it."),
+  amends: z.object({ id: z.string(), decision: z.string() }).nullable()
+    .describe("The decision on this branch this one amends (its supersedes), which it replaces while it is in force."),
+  amendedBy: z.string().nullable().describe("The decision on this branch that amends this one, which is then not in force."),
   source: z.object({
     sessionId: z.string().nullable(),
     at: z.string().nullable(),

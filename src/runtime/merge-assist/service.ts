@@ -10,7 +10,7 @@ import { repositoryIdentityLocation } from "../../engine/catalog/repository-iden
 import { lookupCheckout, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
 import { gitText } from "../../engine/git.js";
 import { baseBranch, currentBranch, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
-import { candidateHash, type Candidate, type CandidateState } from "../../engine/merge-assist/candidate.js";
+import { candidateHash, candidatesInForce, type Candidate, type CandidateState } from "../../engine/merge-assist/candidate.js";
 import { candidatesIgnored, committedCandidates, readWorktreeCandidates, writeWorktreeCandidate } from "../../engine/merge-assist/candidate-files.js";
 import {
   findingSchema,
@@ -286,7 +286,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const ownItems = new Map(items.filter(item => item.origin === "own").map(item => [item.candidateId, item]));
     const { candidates } = await readWorktreeCandidates(root);
     const committed = committedCandidates(root, candidates.map(candidate => candidate.id));
+    const inForce = new Set(candidatesInForce(candidates).map(candidate => candidate.id));
     const own: OwnDecision[] = candidates.map(candidate => {
+      const amended = candidates.find(entry => entry.id === candidate.supersedes);
+      // Active but not in force: a later amendment replaced it.
+      const amendedBy = candidate.state === "active" && !inForce.has(candidate.id)
+        ? candidates.find(entry => entry.state === "active" && entry.supersedes === candidate.id)
+        : undefined;
       const item = ownItems.get(candidate.id);
       return {
         id: candidate.id,
@@ -297,6 +303,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
         state: candidate.state,
         createdAt: candidate.createdAt,
         committed: committed.has(candidate.id),
+        amends: amended === undefined || amended.id === candidate.id ? null : { id: amended.id, decision: amended.decision },
+        amendedBy: amendedBy?.id ?? null,
         source: { sessionId: item?.sessionId ?? null, at: item === undefined ? null : isoSeconds(item.createdAt) },
       };
     });

@@ -10,6 +10,7 @@
  *   node --import tsx benchmark/merge-assist-context.ts --index index.json --sweep control.json [--thresholds 0.3,0.35,...]
  *   node --import tsx benchmark/merge-assist-context.ts --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id]
  *     [--concurrency N] [--timeout-min N] [--json out.json] [--keep]
+ *   node --import tsx benchmark/merge-assist-context.ts --index index.json --amend out.json
  *
  * The decision index is built once, from the product's own code paths, never by hand: `--build-index` runs
  * `draftDecision` with the person's agent CLI judge on each real decision's capture case in cases.json (its correction,
@@ -17,7 +18,10 @@
  * it produces; a decision the judge calls one-off, or does not answer, stays out of the index. Distractors and the
  * conflict tasks' teammate decisions, hand-written noise with no example, get their signals from `deriveSignals`. Each
  * entry records its provenance, and its decision text's embedding (the bundled model) is stored beside it. Every run
- * reads that file through `--index`, and an integrity check refuses an index that carries grader knowledge.
+ * reads that file through `--index`, and an integrity check refuses an index that carries grader knowledge. A decision
+ * changes the way the product changes one: `--amend` runs `draftDecision` on each amendment case in cases.json (the
+ * decision's author's correction, with the decision among `ownDecisions`) and writes a new index whose entry for it is
+ * the amendment the product drafted (a candidate superseding it), or nothing when the product drafts anything else.
  *
  * Each run (variant × task × trial) gets a fresh temporary folder:
  * - `repo/`: a Git repository with cases.json's project committed on `main` and `tbelanger/work` checked out;
@@ -93,6 +97,7 @@ import {
   rankerInput,
   render,
   scopeMatcher,
+  sessionFirst,
   type VariantParameters,
   WHEN,
 } from "./merge-assist-context-hook.js";
@@ -108,19 +113,20 @@ const OWN_AUTHOR = "Tim Belanger";
 const DEFAULT_TIMEOUT_MIN = 6;
 /**
  * `dev` for tuning, `heldout` to confirm, `size` for the cost-to-clean comparison (`--arms`), `confirm` for the
- * pre-registered confirmatory `--arms` runs (spent: its comparison is done, and it is tuning data now, like `size`),
- * `heldout-large` for a new confirmation on large tasks (held out: no agent runs on it before its pre-registration).
+ * pre-registered confirmatory `--arms` runs and `heldout-large` for the large-task one (both spent: their comparisons
+ * are done, and they are tuning data now, like `size`), `heldout-large2` for the next confirmation on large tasks
+ * (held out: no agent runs on it before its pre-registration).
  */
-const SPLITS = ["dev", "heldout", "size", "confirm", "heldout-large"] as const;
+const SPLITS = ["dev", "heldout", "size", "confirm", "heldout-large", "heldout-large2"] as const;
 /** The splits whose tasks name their size. */
-const SIZED_SPLITS: ReadonlyArray<(typeof SPLITS)[number]> = ["size", "confirm", "heldout-large"];
+const SIZED_SPLITS: ReadonlyArray<(typeof SPLITS)[number]> = ["size", "confirm", "heldout-large", "heldout-large2"];
 export const SIZES = ["small", "medium", "large"] as const;
 const KINDS = ["tempt", "neutral", "conflict"] as const;
 
 // ---------------------------------------------------------------------------------------------------------- variants
 
 /** One selection channel: everything but `hybrid`. */
-const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null, focusK: null, rankMax: null, areaCap: null } as const;
+const SINGLE = { channels: "single", orient: null, areaRank: null, guard: null, embedThreshold: null, guardCap: null, focusK: null, rankMax: null, areaCap: null, sessionRankMax: null, agreeAfter: null } as const;
 /** Round one's protocol defaults: directories trigger, no budget per run, the agent is asked to tell the user. */
 const LISTINGS = { ...SINGLE, dirs: true, sessionCap: null, conflict: "tell", budget: "session", threshold: null } as const;
 /** Only files read or edited trigger, each new file at most two items, the conflict as a line to end with. */
@@ -175,6 +181,14 @@ const VARIANTS: Readonly<Record<string, VariantParameters | null>> = {
   "focus-area": FOCUS_AREA,
   /** Per-area focus with each area's ranking call naming at most 5, all 5 injected. */
   "focus-area5": { ...FOCUS_AREA, rankMax: 5, areaCap: 5 },
+  /**
+   * Per-area focus that agrees with session focus: the session ranker (12 picks) runs from the start, each area's
+   * ranker (3 picks) lists the session's picks first, and an area gets its ranker's first pick plus whichever of its
+   * other picks the session ranker picked too.
+   */
+  "focus-precise": { ...FOCUS_AREA, rankMax: 3, areaCap: 3, sessionRankMax: 12, agreeAfter: 1 },
+  /** `focus-precise` without the agreement: every one of the area ranker's 3 picks goes out. */
+  "focus-precise3": { ...FOCUS_AREA, rankMax: 3, areaCap: 3, sessionRankMax: 12, agreeAfter: null },
   /** At an area's first touch, its conflict pairs and every undelivered decision covering it: no ranking, no cap. */
   "area-all": { ...FOCUS_AREA, orient: "area-all", rankMax: null, areaCap: null },
   /**
@@ -192,7 +206,7 @@ function describeVariant(parameters: VariantParameters | null): string {
   if (parameters === null) return "control: no injection (the hook only logs)";
   const embed = parameters.guard === "embed" || parameters.guard === "both" ? ` embedThreshold=${parameters.embedThreshold ?? "NOT FROZEN"}` : "";
   const focus = parameters.orient === "focus" || parameters.orient === "area-focus"
-    ? ` focusK=${parameters.focusK ?? "all"} rankMax=${parameters.rankMax ?? MAX_RANKED} areaCap=${parameters.areaCap ?? "none"}`
+    ? ` focusK=${parameters.focusK ?? "all"} rankMax=${parameters.rankMax ?? MAX_RANKED} areaCap=${parameters.areaCap ?? "none"}${parameters.orient === "area-focus" && parameters.sessionRankMax !== null ? ` sessionRankMax=${parameters.sessionRankMax} (area rankers list its picks first) agreeAfter=${parameters.agreeAfter ?? "none"}` : ""}`
     : parameters.orient === "area-all" || parameters.orient === "targets" ? ` areaCap=none callChars=${HOOK_CONTEXT_CHARS} (the rest at the next call)` : "";
   const orient = `orient=${parameters.orient}${parameters.orient === "area" ? ` areaRank=${parameters.areaRank}` : ""}${focus}`;
   const channels = parameters.channels === "hybrid" ? ` channels=hybrid ${orient} guard=${parameters.guard ?? "none"} guardCap=${parameters.guardCap ?? "none"}${embed}` : "";
@@ -220,7 +234,7 @@ type DatasetEntry = z.infer<typeof entrySchema>;
 const taskSchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/u),
   split: z.enum(SPLITS),
-  /** `size`, `confirm` and `heldout-large` splits only: how big the task is. */
+  /** `size`, `confirm`, `heldout-large` and `heldout-large2` splits only: how big the task is. */
   size: z.enum(SIZES).optional(),
   kind: z.enum(KINDS),
   prompt: z.string().min(1),
@@ -343,7 +357,7 @@ const provenanceSchema = z.object({
   /** The judge runners its judge calls went to. */
   runner: z.string(),
   at: z.string(),
-  /** `draftDecision`: the capture case in cases.json it ran on, and what the candidate became. */
+  /** `draftDecision`: the capture case in cases.json it ran on (an amendment case for `--amend`), and what the candidate became. */
   case: z.string().optional(),
   candidateId: z.string().optional(),
   generality: z.string().optional(),
@@ -351,6 +365,8 @@ const provenanceSchema = z.object({
   ruleDropped: z.string().nullable().optional(),
   /** `--live`: the entry was captured in the trial from agent A's session, not built from a cases.json case. */
   via: z.literal("live-capture").optional(),
+  /** `--amend`: the candidate id of the decision this entry's amendment replaced (its `supersedes`). */
+  amends: z.string().optional(),
 }).strict();
 
 const builtEntrySchema = z.object({
@@ -525,25 +541,35 @@ export function teammateLeaks(dataset: Dataset, calls: readonly JudgeCall[]): st
  * What a focus ranker's prompt for `task` would hold that it must not: anything but the task prompt as the person
  * wrote it and the decision texts of the run's index under opaque ids. An index id (`x-…` names a distractor, a real
  * id names its oracle's topic), an oracle's regex, or the task's labels (kind, split, targets) fails it. Every prompt
- * the variants would send is built offline: the session ranker's for `focus`, and one per area the project has for
- * `area-focus` (an area's ranker sees the same decisions whichever of its files was touched).
+ * the variants would send is built offline: the session ranker's for `focus` and for `area-focus` with
+ * `sessionRankMax`, and one per area the project has for `area-focus` (an area's ranker sees the same decisions
+ * whichever of its files was touched); under `sessionRankMax` the area's decisions are listed with a session answer
+ * first (`sessionFirst`, every session candidate in reverse index order: the order changes, never the texts).
  */
 function rankerLeaks(dataset: Dataset, built: BuiltIndex, task: Task, distractors: number, seed: number, variants: readonly VariantParameters[]): { prompts: number; failures: string[] } {
   const index = runIndex(dataset, built, task, distractors, seed);
   const files = Object.keys(dataset.project);
   const areaFiles = [...new Map(files.map(file => [areaOf(file), file])).values()];
   const texts = new Set(index.map(entry => entry.decision));
+  const sessionAnswer = rankerInput({ index, files, prompt: task.prompt }).entries.toReversed();
   const checked = new Set<string>();
   const failures: string[] = [];
   for (const variant of variants) {
     const max = variant.rankMax ?? MAX_RANKED;
-    for (const path of variant.orient === "focus" ? [null] : variant.orient === "area-focus" ? areaFiles : []) {
-      const where = `${task.id} (${path === null ? "session" : `area ${areaOf(path) || "."}`}, at most ${max})`;
+    const sessionMax = variant.orient === "area-focus" ? variant.sessionRankMax : null;
+    const plans = variant.orient === "focus"
+      ? [{ path: null, max }]
+      : variant.orient === "area-focus" ? [...(sessionMax === null ? [] : [{ path: null, max: sessionMax }]), ...areaFiles.map(path => ({ path, max }))] : [];
+    for (const { path, max: limit } of plans) {
+      const ordered = path !== null && sessionMax !== null;
+      const where = `${task.id} (${path === null ? "session" : `area ${areaOf(path) || "."}`}, at most ${limit}${ordered ? ", session's picks first" : ""})`;
       if (checked.has(where)) continue;
       checked.add(where);
-      const input = rankerInput({ index, files, prompt: task.prompt }, path);
-      const prompt = rankPrompt({ task: input.task, decisions: input.decisions }, "0".repeat(32), max);
+      const plain = rankerInput({ index, files, prompt: task.prompt }, path);
+      const input = ordered ? sessionFirst(plain, sessionAnswer) : plain;
+      const prompt = rankPrompt({ task: input.task, decisions: input.decisions }, "0".repeat(32), limit);
       if (input.task !== task.prompt) failures.push(`${where}: the ranker's task is not the task prompt`);
+      if (input.decisions.length !== plain.decisions.length) failures.push(`${where}: the session's order changed which decisions the ranker sees`);
       for (const decision of input.decisions) {
         if (!/^d\d+$/u.test(decision.id)) failures.push(`${where}: decision id ${decision.id} is not opaque`);
         if (!texts.has(decision.decision)) failures.push(`${where}: ${decision.id}'s text is not an index decision`);
@@ -648,6 +674,8 @@ interface Options {
   /** The decision index every run reads (`--index`), or the file `--build-index` writes. */
   index: string | undefined;
   buildIndex: string | undefined;
+  /** `--amend`: the index to write from `--index` with cases.json's amendment cases applied by the product. */
+  amend: string | undefined;
   /** How long one Codex call may take, in minutes. */
   timeoutMin: number;
   /** `--arms`: the cost-to-clean comparison's arms (`focus-k3`, `posthoc`) instead of `--variants`; null otherwise. */
@@ -658,7 +686,7 @@ interface Options {
   decisions: string[] | null;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|heldout-large|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm|heldout-large] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id] [--concurrency N] [--timeout-min N] [--json out.json] [--keep] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-context.ts --build-index out.json [--distractors N] [--concurrency N] | --index index.json --variants none,guard-signals,... --split dev|heldout|size|confirm|heldout-large|heldout-large2|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N] [--seed N] [--timeout-min N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value] | --index index.json --arms focus-k3,posthoc [--split size|confirm|heldout-large|heldout-large2] [--tasks id,id] [--trials N] [--timeout-min N] ... | --index index.json --live [--trials N] [--decisions id,id] [--tasks id,id] [--concurrency N] [--timeout-min N] [--json out.json] [--keep] | --index index.json --replay run.json [--thresholds 0,0.1,...] | --index index.json --amend out.json | --sweep control.json [--thresholds 0.3,0.35,...] | --list-variants | --validate-oracles";
 
 function positive(flag: string, value: string | undefined): number {
   const number = Number(value);
@@ -694,6 +722,7 @@ function parseOptions(argv: readonly string[]): Options {
     thresholds: null,
     index: undefined,
     buildIndex: undefined,
+    amend: undefined,
     timeoutMin: DEFAULT_TIMEOUT_MIN,
     arms: null,
     live: false,
@@ -752,6 +781,7 @@ function parseOptions(argv: readonly string[]): Options {
       case "--sweep": options.sweep = value(); if (options.sweep === undefined) throw new Error(USAGE); break;
       case "--index": options.index = value(); if (options.index === undefined) throw new Error(USAGE); break;
       case "--build-index": options.buildIndex = value(); if (options.buildIndex === undefined) throw new Error(USAGE); break;
+      case "--amend": options.amend = value(); if (options.amend === undefined) throw new Error(USAGE); break;
       case "--thresholds": {
         const thresholds = list(flag, value()).map(Number);
         if (thresholds.some(threshold => !Number.isFinite(threshold) || threshold < 0 || threshold > 1)) throw new Error(`--thresholds takes numbers from 0 to 1\n${USAGE}`);
@@ -1171,7 +1201,7 @@ interface RunResult {
 }
 
 interface FocusRun {
-  /** `focus`: the ranker's answer, read after the run (waiting for it if it landed after Codex finished); null if it never came, and under `area-focus`. */
+  /** `focus`, and `area-focus` with `sessionRankMax`: the session ranker's answer, read after the run (waiting for it if it landed after Codex finished); null if it never came, and under other `area-focus` variants. */
   readonly file: FocusFile | null;
   /**
    * `area-focus`: each area's ranker, in the order the areas were first touched: its answer (read as `file` is; its
@@ -1325,13 +1355,15 @@ function readLog(path: string): HookLogEntry[] {
 const FOCUS_SETTLE_MS = 150_000;
 
 /**
- * The rankers' part in a run, from the hook log and `focus.json` (`focus`) or each touched area's `focus-<area>.json`
- * (`area-focus`); waits for rankers still at work so none outlives the run.
+ * The rankers' part in a run, from the hook log and `focus.json` (`focus`, and `area-focus` with `sessionRankMax`) and
+ * each touched area's `focus-<area>.json` (`area-focus`); waits for rankers still at work so none outlives the run.
  */
-async function focusRun(folder: string, orient: VariantParameters["orient"], log: readonly HookLogEntry[]): Promise<FocusRun> {
+async function focusRun(folder: string, variant: VariantParameters, log: readonly HookLogEntry[]): Promise<FocusRun> {
+  const { orient } = variant;
+  const session = orient === "focus" || (orient === "area-focus" && variant.sessionRankMax !== null);
   const calls = log.flatMap(entry => (entry.focus === undefined ? [] : [entry.focus]));
   const touched = orient === "area-focus" ? [...new Set(calls.flatMap(call => call.fresh))] : [];
-  const paths = orient === "area-focus" ? touched.map(area => areaFocusPath(folder, area)) : [focusPath(folder)];
+  const paths = [...(session ? [focusPath(folder)] : []), ...touched.map(area => areaFocusPath(folder, area))];
   const started = performance.now();
   while (paths.some(path => !existsSync(path)) && performance.now() - started < FOCUS_SETTLE_MS) await sleep(1_000);
   const read = (path: string) => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) as FocusFile : null);
@@ -1339,7 +1371,7 @@ async function focusRun(folder: string, orient: VariantParameters["orient"], log
   const first = calls.find(call => call.fresh.length > 0);
   const fallbacks = calls.map(call => call.fallback);
   return {
-    file: orient === "area-focus" ? null : read(focusPath(folder)),
+    file: session ? read(focusPath(folder)) : null,
     areas: touched.map(area => ({ area, file: read(areaFocusPath(folder, area)), via: served.find(entry => entry.area === area)?.via ?? null })),
     readyAtFirstArea: first === undefined ? null : first.ready,
     waits: calls.flatMap(call => (call.waitedMs === null ? [] : [call.waitedMs])),
@@ -1437,8 +1469,7 @@ async function runJob(job: Job, dataset: Dataset, built: BuiltIndex, options: Op
     const outcome = await runCodex(repo, codexHome, configPath, task.prompt, options, join(folder, "rerail-home"));
     const events = readEvents(outcome.stdout);
     const log = readLog(logPath);
-    const orient = config.variant?.orient ?? null;
-    const focus = orient === "focus" || orient === "area-focus" ? await focusRun(folder, orient, log) : null;
+    const focus = config.variant?.orient === "focus" || config.variant?.orient === "area-focus" ? await focusRun(folder, config.variant, log) : null;
     const changes = diffAgainstMain(repo);
     const hits = grade(changes, dataset.decisions);
     const graded = task.kind === "neutral" ? Object.keys(hits) : task.targets;
@@ -1899,11 +1930,11 @@ function replay(dataset: Dataset, built: BuiltIndex, path: string, thresholds: r
 
 /**
  * The cost-to-clean comparison (`--arms`): an injection protocol (`focus-k3`, `focus-k5`, `focus-pool`, `focus-area`,
- * `focus-area5`, `area-all`, or the diagnostic ceiling `oracle-area`) against no injection with the violations fixed
- * after the agent finishes (`posthoc`, the control's hooks), the way a landing check or a reviewer would. Both arms
- * then go through the same fix rounds, so both end clean when they can.
+ * `focus-area5`, `focus-precise`, `focus-precise3`, `area-all`, or the diagnostic ceiling `oracle-area`) against no
+ * injection with the violations fixed after the agent finishes (`posthoc`, the control's hooks), the way a landing
+ * check or a reviewer would. Both arms then go through the same fix rounds, so both end clean when they can.
  */
-export const ARMS = ["focus-k3", "focus-k5", "focus-pool", "focus-area", "focus-area5", "area-all", "oracle-area", "posthoc"] as const;
+export const ARMS = ["focus-k3", "focus-k5", "focus-pool", "focus-area", "focus-area5", "focus-precise", "focus-precise3", "area-all", "oracle-area", "posthoc"] as const;
 export type Arm = (typeof ARMS)[number];
 const ARM_VARIANTS: Readonly<Record<Arm, string>> = {
   "focus-k3": "focus-k3",
@@ -1911,6 +1942,8 @@ const ARM_VARIANTS: Readonly<Record<Arm, string>> = {
   "focus-pool": "focus-pool",
   "focus-area": "focus-area",
   "focus-area5": "focus-area5",
+  "focus-precise": "focus-precise",
+  "focus-precise3": "focus-precise3",
   "area-all": "area-all",
   "oracle-area": "oracle-area",
   posthoc: CONTROL,
@@ -2066,7 +2099,7 @@ async function runArmJob(arm: Arm, task: Task, trial: number, dataset: Dataset, 
       wallMs: calls.reduce((sum, phase) => sum + phase.wallMs, 0),
       tokens: calls.reduce((total, phase) => addUsage(total, phase.usage), { input: 0, cached: 0, output: 0 }),
       error,
-      focus: variant?.orient === "focus" || variant?.orient === "area-focus" ? await focusRun(folder, variant.orient, log) : null,
+      focus: variant?.orient === "focus" || variant?.orient === "area-focus" ? await focusRun(folder, variant, log) : null,
       hookLog: log.map(({ text: _text, ...entry }) => entry),
       folder: options.keep ? folder : null,
     };
@@ -2539,6 +2572,145 @@ function printBuild(dataset: Dataset, entries: readonly BuiltEntry[], absent: Bu
       ...absent.filter(entry => !dataset.decisions.some(decision => decision.id === entry.id)).map(entry => [entry.id, "ABSENT", clip(entry.detail, 100)]),
     ],
   ));
+}
+
+// ---------------------------------------------------------------------------------------------------------- amend
+
+/** cases.json, whose `amend` list holds the amendment cases `--amend` runs. */
+const CASES = fixturesPath("host", "benchmark", "merge-assist", "cases.json");
+
+/**
+ * A person's correction that changes one of the index's real decisions (`amends`, its dataset id): the decision's
+ * author corrects their agent, whose code (each edit's `before`) followed the decision as it stood. `correction` is
+ * the person's words and `after` the code it led to: human input, like a capture case's correction.
+ */
+const amendCaseSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/u),
+  amends: z.string(),
+  why: z.string().min(1),
+  correction: z.string().min(1),
+  priorCalls: z.array(z.object({ tool: z.string().min(1), path: z.string().min(1) }).strict()),
+  edits: z.array(z.object({ path: z.string().min(1), before: z.string().nullable(), after: z.string() }).strict()).min(1),
+}).strict();
+type AmendCase = z.infer<typeof amendCaseSchema>;
+
+/**
+ * The product's amendment of `entry` from `amendment`: `draftDecision` with the real judge, in the author's checkout
+ * (the project with each edit's `after` in the working tree), with the decisions on `entry`'s branch or pull request
+ * as `ownDecisions` under their candidate ids. Only a candidate whose `supersedes` names `entry`'s candidate is an
+ * amendment; anything else is reported as what it is.
+ */
+async function draftAmendment(dataset: Dataset, entries: readonly BuiltEntry[], entry: BuiltEntry, amendment: AmendCase, folder: string, calls: JudgeCall[]): Promise<{ entry: BuiltEntry } | { outcome: string }> {
+  const amended = entry.provenance.candidateId!;
+  const root = join(folder, amendment.id);
+  const { database, checkout } = judgeWorkspace(root, join(folder, `${amendment.id}.sqlite`), dataset.project);
+  try {
+    writeTree(root, Object.fromEntries(amendment.edits.map(edit => [edit.path, edit.after])));
+    const ownDecisions = entries
+      .filter(other => other.provenance.candidateId !== undefined && other.source === entry.source && other.branch === entry.branch && other.pr === entry.pr)
+      .map(other => ({ id: other.provenance.candidateId!, decision: other.decision, scope: [...other.scope.include] }));
+    const judge = recordingJudge(createAgentJudge({ database, preferredHost: JUDGE_HOST, limitPerHour: JUDGE_LIMIT }), entry.id, calls);
+    const outcome = await draftDecision({ database, checkout, judge, author: async () => entry.author, now: () => Date.now() }, {
+      correction: amendment.correction,
+      priorCalls: amendment.priorCalls.map(call => `${call.tool} ${join(root, call.path)}`),
+      edits: amendment.edits.map(edit => ({ ...edit })),
+      ownDecisions,
+    });
+    if ("oneOff" in outcome) return { outcome: "one-off: the judge called the correction one-off" };
+    if ("duplicateOf" in outcome) return { outcome: `duplicate: the judge called it a duplicate of ${outcome.duplicateOf}` };
+    if ("unjudged" in outcome) return { outcome: `unjudged: ${outcome.unjudged}` };
+    const { candidate, dropped } = outcome;
+    if (candidate.supersedes !== amended) return { outcome: `a new decision, not an amendment of ${amended} (supersedes ${candidate.supersedes ?? "nothing"}): ${candidate.decision}` };
+    return {
+      entry: {
+        ...entry,
+        decision: candidate.decision,
+        scope: { include: candidate.scope, exclude: [] },
+        signals: candidate.signals ?? [],
+        provenance: {
+          by: "draftDecision",
+          runner: runnersOf(calls, entry.id),
+          at: new Date().toISOString(),
+          case: amendment.id,
+          candidateId: candidate.id,
+          generality: candidate.generality,
+          level: candidate.rule === undefined ? "note" : "code",
+          ruleDropped: dropped,
+          amends: amended,
+        },
+      },
+    };
+  } finally {
+    database.$client.close();
+  }
+}
+
+/**
+ * `--amend`: a new index from `built` in which each decision an amendment case in cases.json names is replaced by the
+ * amendment the product drafts (text, scope and signals), with a fresh embedding; every other entry, embedding and
+ * recorded judge call is kept, and the amendment's judge calls are added. A case the product does not turn into an
+ * amendment (a one-off, a duplicate, a new decision, no answer) writes nothing. Refuses to overwrite a file.
+ */
+async function amendIndex(dataset: Dataset, built: BuiltIndex, out: string): Promise<void> {
+  if (existsSync(out)) throw new Error(`${out} exists: an index is built once. Remove it yourself to build another.`);
+  const cases = z.array(amendCaseSchema).min(1).parse(pointer(JSON.parse(readFileSync(CASES, "utf8")), "/amend"));
+  const home = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-context-home-")));
+  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-context-amend-")));
+  process.env.RERAIL_HOME = home;
+  const calls: JudgeCall[] = [];
+  const entries = [...built.entries];
+  const refused: string[] = [];
+  try {
+    for (const amendment of cases) {
+      const position = entries.findIndex(entry => entry.id === amendment.amends);
+      const entry = entries[position];
+      if (entry?.provenance.by !== "draftDecision" || entry.provenance.candidateId === undefined) throw new Error(`${amendment.id} amends ${amendment.amends}, which is no decision the product drafted in ${built.path}`);
+      const result = await draftAmendment(dataset, entries, entry, amendment, folder, calls);
+      console.log(`\n${amendment.id} (amends ${entry.id}, ${entry.provenance.candidateId})`);
+      console.log(`  correction (the person's words): ${JSON.stringify(amendment.correction)}`);
+      console.log(`  before:   ${JSON.stringify(entry.decision)}  scope ${entry.scope.include.join(", ")}  signals ${JSON.stringify(entry.signals)}`);
+      console.log(`  judge:    ${calls.filter(call => call.entryId === entry.id).map(call => `${call.kind}${call.ok ? "" : " FAILED"} ${(call.ms / 1000).toFixed(0)}s`).join(", ")}`);
+      if ("outcome" in result) {
+        console.log(`  NOT AMENDED: ${result.outcome}`);
+        refused.push(amendment.id);
+        continue;
+      }
+      const after = result.entry;
+      console.log(`  after:    ${JSON.stringify(after.decision)}  scope ${after.scope.include.join(", ")}  signals ${JSON.stringify(after.signals)}`);
+      console.log(`  ${after.provenance.candidateId} supersedes ${after.provenance.amends}; ${after.provenance.generality}, ${after.provenance.level}${after.provenance.ruleDropped === null ? "" : ` (rule dropped: ${after.provenance.ruleDropped})`}, runner ${after.provenance.runner}`);
+      entries[position] = after;
+    }
+    const leaks = teammateLeaks(dataset, calls);
+    console.log(`Teammate files in judge prompts: ${leaks.length === 0 ? `none (${calls.length} prompts checked)` : `${leaks.length} LEAKED`}`);
+    for (const leak of leaks) console.log(`  LEAK ${leak}`);
+    const report = checkIntegrity(entries);
+    printIntegrity(report);
+    if (refused.length > 0 || leaks.length > 0 || report.failures.length > 0) {
+      console.log(`\nWrote nothing: ${refused.length > 0 ? `${refused.join(", ")} not amended by the product` : "the amended index fails its checks"}.`);
+      process.exitCode = 1;
+      return;
+    }
+    const amended = entries.filter(entry => entry.provenance.amends !== undefined);
+    const { embedder } = loadEmbedder(MODEL_PATH);
+    const vectors = await embedder.embed(amended.map(entry => entry.decision));
+    const embeddings = { ...built.embeddings, ...Object.fromEntries(amended.map((entry, position) => [entry.id, [...vectors[position]!].map(value => Math.round(value * 1e6) / 1e6)])) };
+    const index = {
+      format: INDEX_FORMAT,
+      builtAt: new Date().toISOString(),
+      distractors: built.distractors,
+      model: { fingerprint: embedder.fingerprint(), maxInputTokens: EMBED_MAX_TOKENS },
+      entries,
+      embeddings,
+      absent: built.absent,
+      judgeCalls: [...built.judgeCalls, ...calls],
+    };
+    mkdirSync(dirname(out), { recursive: true });
+    await writeFile(out, `${JSON.stringify(index, null, 2)}\n`);
+    console.log(`\nWrote ${out}: ${built.path} with ${amended.map(entry => entry.id).join(", ")} amended`);
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------- live
@@ -3171,6 +3343,10 @@ async function main(): Promise<void> {
   }
   if (options.index === undefined) throw new Error(`Every run reads a built index: --index index.json (build it once with --build-index)\n${USAGE}`);
   const built = loadIndex(options.index);
+  if (options.amend !== undefined) {
+    await amendIndex(dataset, built, options.amend);
+    return;
+  }
   // Every distractor the index holds, unless --distractors asks for fewer: an index built for noise is run with it.
   if (options.distractors === null) options.distractors = built.distractors;
   if (options.replay !== undefined) {

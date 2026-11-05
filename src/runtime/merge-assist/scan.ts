@@ -28,7 +28,7 @@ import { followsGitignore, mergeAssistEnabled } from "../../engine/catalog/repos
 import { globPattern } from "../../engine/glob-pattern.js";
 import type { CodeRule } from "../../engine/code-rule/code-rule-schema.js";
 import { checkCodeRule } from "../../engine/code-rule/rule-check.js";
-import { candidateHash, type Candidate } from "../../engine/merge-assist/candidate.js";
+import { candidateHash, candidatesInForce, type Candidate } from "../../engine/merge-assist/candidate.js";
 import { readTreeCandidates, readWorktreeCandidates, type CandidateSet } from "../../engine/merge-assist/candidate-files.js";
 import {
   baseBranch,
@@ -433,7 +433,7 @@ export async function scanPeers(context: ScanContext): Promise<LastScan> {
 
   const own = await readWorktreeCandidates(root);
   const ownIds = new Set(own.candidates.map(candidate => candidate.id));
-  const mine = own.candidates.filter(candidate => candidate.state === "active");
+  const mine = candidatesInForce(own.candidates);
   let changes: Changes;
   if (base === null) {
     problems.push(NO_BASE_PROBLEM);
@@ -455,8 +455,9 @@ export async function scanPeers(context: ScanContext): Promise<LastScan> {
   for (const peer of [...local, ...pulls.peers]) {
     const fresh: Array<{ candidate: Candidate; hash: string; prior: MergeAssistItemRow | undefined }> = [];
     const peerFields = { peerCommit: peer.commit, peerTitle: peer.title, peerUrl: peer.url, peerAuthor: peer.author, trusted: peer.distrust === null };
-    for (const candidate of peer.candidates) {
-      if (ownIds.has(candidate.id) || candidate.state !== "active") continue;
+    // A peer's decision it amended or rejected is not in force there, so it is no finding here.
+    for (const candidate of candidatesInForce(peer.candidates)) {
+      if (ownIds.has(candidate.id)) continue;
       const hash = candidateHash(candidate);
       // The same version on a local branch and its pull request is one finding: the local branch's, read first.
       if (versions.has(`${candidate.id}\0${hash}`)) continue;

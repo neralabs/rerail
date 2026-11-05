@@ -107,6 +107,8 @@ const datasetSchema = z.object({
   project: z.record(z.string(), z.string()),
   capture: z.array(captureCaseSchema),
   compare: z.array(comparePairSchema),
+  /** Amendments of the context eval's decisions, which `merge-assist-context.ts --amend` reads; this eval does not. */
+  amend: z.array(z.unknown()),
 }).strict();
 type Dataset = z.infer<typeof datasetSchema>;
 

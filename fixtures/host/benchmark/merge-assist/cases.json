@@ -705,5 +705,35 @@
       },
       "why": "The same export rule for src/ui, worded differently."
     }
+  ],
+  "amend": [
+    {
+      "id": "dates-add-format-to-formatdate",
+      "amends": "dates-through-formatdate",
+      "why": "The decision's author corrects her agent, which formatted a date in a component because formatDate lacked the format. The correction is the person's words.",
+      "correction": "formatDate doesn't have this format yet, so add it there: put a date-and-time format in formatDate in src/lib/format.ts and call formatDate from OrderList. Don't format dates in the component. Whenever a screen needs a date format formatDate lacks, the format goes into formatDate, not into the screen.",
+      "priorCalls": [
+        {
+          "tool": "Read",
+          "path": "src/lib/format.ts"
+        },
+        {
+          "tool": "Edit",
+          "path": "src/ui/OrderList.tsx"
+        }
+      ],
+      "edits": [
+        {
+          "path": "src/ui/OrderList.tsx",
+          "before": "import type { Order } from \"../api/orders\";\nimport { formatMoney } from \"../lib/format\";\nimport { orderTotals } from \"../lib/pricing\";\n\n/** \"5 Nov, 16:40\": when the order was placed, in UTC. */\nconst PLACED_AT = new Intl.DateTimeFormat(\"en-IE\", { day: \"numeric\", month: \"short\", hour: \"2-digit\", minute: \"2-digit\", hourCycle: \"h23\", timeZone: \"UTC\" });\n\nexport interface OrderListProps {\n  orders: Order[];\n}\n\nexport function OrderList({ orders }: OrderListProps) {\n  if (orders.length === 0) return <p className=\"empty\">No orders yet.</p>;\n  return (\n    <table className=\"orders\">\n      <thead>\n        <tr><th>Order</th><th>Placed</th><th>Status</th><th>Total</th></tr>\n      </thead>\n      <tbody>\n        {orders.map(order => (\n          <tr key={order.id}>\n            <td>{order.id}</td>\n            <td>{PLACED_AT.format(new Date(order.placedAt))}</td>\n            <td>{order.status}</td>\n            <td>{formatMoney(orderTotals(order.lines).totalCents)}</td>\n          </tr>\n        ))}\n      </tbody>\n    </table>\n  );\n}\n",
+          "after": "import type { Order } from \"../api/orders\";\nimport { formatDate, formatMoney } from \"../lib/format\";\nimport { orderTotals } from \"../lib/pricing\";\n\nexport interface OrderListProps {\n  orders: Order[];\n}\n\nexport function OrderList({ orders }: OrderListProps) {\n  if (orders.length === 0) return <p className=\"empty\">No orders yet.</p>;\n  return (\n    <table className=\"orders\">\n      <thead>\n        <tr><th>Order</th><th>Placed</th><th>Status</th><th>Total</th></tr>\n      </thead>\n      <tbody>\n        {orders.map(order => (\n          <tr key={order.id}>\n            <td>{order.id}</td>\n            <td>{formatDate(order.placedAt, \"date-time\")}</td>\n            <td>{order.status}</td>\n            <td>{formatMoney(orderTotals(order.lines).totalCents)}</td>\n          </tr>\n        ))}\n      </tbody>\n    </table>\n  );\n}\n"
+        },
+        {
+          "path": "src/lib/format.ts",
+          "before": "const MONEY = new Intl.NumberFormat(\"en-IE\", { style: \"currency\", currency: \"EUR\" });\n\n/** \"3 Nov 2026\": how every screen shows a date, always in UTC. Takes an ISO string or a Date. */\nexport function formatDate(value: string | Date): string {\n  const date = typeof value === \"string\" ? new Date(value) : value;\n  return date.toLocaleDateString(\"en-IE\", { day: \"numeric\", month: \"short\", year: \"numeric\", timeZone: \"UTC\" });\n}\n\nexport function formatMoney(cents: number): string {\n  return MONEY.format(cents / 100);\n}\n",
+          "after": "const MONEY = new Intl.NumberFormat(\"en-IE\", { style: \"currency\", currency: \"EUR\" });\n\n/** The formats every screen shows a date in, always in UTC. */\nconst DATE_FORMATS = {\n  /** \"3 Nov 2026\" */\n  date: { day: \"numeric\", month: \"short\", year: \"numeric\" },\n  /** \"3 Nov, 23:30\" */\n  \"date-time\": { day: \"numeric\", month: \"short\", hour: \"2-digit\", minute: \"2-digit\", hourCycle: \"h23\" },\n} satisfies Record<string, Intl.DateTimeFormatOptions>;\n\nexport type DateFormat = keyof typeof DATE_FORMATS;\n\n/** How every screen shows a date, in one of {@link DATE_FORMATS}, always in UTC. Takes an ISO string or a Date. */\nexport function formatDate(value: string | Date, format: DateFormat = \"date\"): string {\n  const date = typeof value === \"string\" ? new Date(value) : value;\n  return date.toLocaleString(\"en-IE\", { ...DATE_FORMATS[format], timeZone: \"UTC\" });\n}\n\nexport function formatMoney(cents: number): string {\n  return MONEY.format(cents / 100);\n}\n"
+        }
+      ]
+    }
   ]
 }

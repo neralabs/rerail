@@ -20,7 +20,7 @@ const finding = (id: string, tier: Finding["tier"], status: Finding["status"], u
 
 const own = (id: string, state: OwnDecision["state"], createdMinutesAgo = 0): OwnDecision => ({
   id, decision: `Own ${id}`, generality: "branch", scope: ["src/api/**"], level: "note", state, createdAt: at(createdMinutesAgo),
-  committed: false, source: { sessionId: null, at: null },
+  committed: false, amends: null, amendedBy: null, source: { sessionId: null, at: null },
 });
 
 const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({

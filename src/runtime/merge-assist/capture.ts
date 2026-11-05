@@ -23,7 +23,9 @@ import {
   CANDIDATE_FORMAT,
   candidateFileName,
   candidateHash,
+  candidatesInForce,
   candidateSchema,
+  MAX_SCOPE_PATTERNS,
   scopePatternSchema,
   unusedCandidateId,
   type Candidate,
@@ -36,10 +38,10 @@ import { stableJsonText } from "../../engine/stable-json.js";
 import type { SessionEventRecord } from "../session-store.js";
 import type { AgentJudge } from "./agent-judge.js";
 import {
-  captureJsonSchema,
+  captureJsonSchemaFor,
   capturePrompt,
   captureRepairPrompt,
-  captureVerdictSchema,
+  captureVerdictSchemaFor,
   newJudgeNonce,
   signalsJsonSchema,
   signalsPrompt,
@@ -420,8 +422,8 @@ async function draftedRule(
     kind: "capture",
     repositoryKey: context.checkout.repositoryKey,
     prompt: captureRepairPrompt(input, verdict, first.detail, newJudgeNonce()),
-    jsonSchema: captureJsonSchema,
-    parse: value => captureVerdictSchema.parse(value),
+    jsonSchema: captureJsonSchemaFor(input),
+    parse: value => captureVerdictSchemaFor(input).parse(value),
     cacheKey: judgeCacheKey("capture-repair", { input, verdict, failure: first.detail }),
   });
   if (!outcome.ok) return { problem: `${first.reason}; the repair round failed: ${outcome.detail}` };
@@ -442,7 +444,10 @@ async function candidateOf(
 ): Promise<{ candidate: Candidate; dropped: string | null } | undefined> {
   const { checkout } = context;
   const usable = verdict.scope.filter(pattern => scopePatternSchema.safeParse(pattern).success);
-  const scope = usable.length > 0 ? usable : fallbackScope(input.edits);
+  const stated = usable.length > 0 ? usable : fallbackScope(input.edits);
+  // An amendment keeps covering what the decision it amends covered, with what the correction touched.
+  const amended = input.ownDecisions.find(own => own.id === verdict.amends)?.scope ?? [];
+  const scope = [...new Set([...amended, ...stated])].slice(0, MAX_SCOPE_PATTERNS);
   // A random suffix can repeat: an id whose file is already there (even one that no longer reads) is never reused.
   const id = unusedCandidateId(verdict.decision, taken => {
     try {
@@ -461,7 +466,7 @@ async function candidateOf(
     author: await context.author(),
     createdAt: isoSeconds(context.now()),
     state: "active",
-    supersedes: null,
+    supersedes: verdict.amends,
     signals: validateSignals(verdict.signals, editExample(input.edits), { root: checkout.checkoutPath, scope }),
   };
   const drafted = await draftedRule(id, verdict, input, scope, context);
@@ -484,16 +489,17 @@ export type DraftOutcome =
 
 /**
  * The candidate one correction states, as capture would save it: the same judgment, check repair and signal
- * validation, but nothing is written to the checkout or the database. Tooling uses it to judge corrections it chose
- * itself, without capture's correction filter.
+ * validation, but nothing is written to the checkout or the database. A correction that changes or extends one of
+ * `ownDecisions` drafts its amendment: a new candidate whose `supersedes` names it. Tooling uses it to judge
+ * corrections it chose itself, without capture's correction filter.
  */
 export async function draftDecision(context: CaptureContext, input: CaptureInput): Promise<DraftOutcome> {
   const outcome = await context.judge.judge({
     kind: "capture",
     repositoryKey: context.checkout.repositoryKey,
     prompt: capturePrompt(input, newJudgeNonce()),
-    jsonSchema: captureJsonSchema,
-    parse: value => captureVerdictSchema.parse(value),
+    jsonSchema: captureJsonSchemaFor(input),
+    parse: value => captureVerdictSchemaFor(input).parse(value),
     cacheKey: judgeCacheKey("capture", input),
   });
   if (!outcome.ok) return { unjudged: outcome.detail };
@@ -567,7 +573,7 @@ export async function captureCorrections(context: CaptureContext, request: Captu
   const unjudged: string[] = [];
   if (found.length > 0) {
     const own = await readWorktreeCandidates(root);
-    const ownDecisions = own.candidates.filter(candidate => candidate.state === "active").map(({ id, decision }) => ({ id, decision }));
+    const ownDecisions = candidatesInForce(own.candidates).map(({ id, decision, scope }) => ({ id, decision, scope }));
     for (const correction of found.slice(-MAX_CORRECTIONS_PER_CAPTURE)) {
       const input: CaptureInput = {
         correction: correction.text,
@@ -600,7 +606,10 @@ export async function captureCorrections(context: CaptureContext, request: Captu
         createdAt: now,
         updatedAt: now,
       }).onConflictDoNothing().run();
-      ownDecisions.push({ id: made.candidate.id, decision: made.candidate.decision });
+      // An amendment replaces the decision it amends for the rest of this batch too.
+      const amended = ownDecisions.findIndex(decision => decision.id === made.candidate.supersedes);
+      if (amended >= 0) ownDecisions.splice(amended, 1);
+      ownDecisions.push({ id: made.candidate.id, decision: made.candidate.decision, scope: made.candidate.scope });
       saved.push(made.candidate);
     }
   }

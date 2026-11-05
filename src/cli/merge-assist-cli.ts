@@ -142,8 +142,11 @@ function ownEntry(decision: OwnDecision): string[] {
   const how = decision.level === "code" ? "Rerail checks it exactly" : "your agent judges it";
   const scope = decision.scope.length === 0 ? "the whole repository" : decision.scope.map(plain).join(", ");
   const shared = decision.committed ? "committed" : "not committed yet";
+  const amended = plain(decision.amends?.decision ?? "");
+  const note = decision.state === "rejected" ? "  (not a rule)" : decision.amendedBy === null ? "" : `  (amended by ${decision.amendedBy})`;
   return [
-    `${decision.id}  ${quoted(decision.decision)}${decision.state === "rejected" ? "  (not a rule)" : ""}`,
+    `${decision.id}  ${quoted(decision.decision)}${note}`,
+    ...(decision.amends === null ? [] : [`  amends "${amended.length > 60 ? `${amended.slice(0, 59).trimEnd()}…` : amended}"`]),
     `  ${how} · ${scope} · saved ${timeText(decision.createdAt)} · ${shared}`,
     ...(decision.state === "rejected" ? [] : [`  Not a rule: rerail merge-assist reject ${decision.id}`]),
   ];

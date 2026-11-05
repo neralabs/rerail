@@ -29,6 +29,7 @@ import { addAttachment, setRuleSetting } from "../../engine/catalog/rule-configu
 import { removeLibraryRule, validateLibraryDocument, writeLibraryRule } from "../../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../../engine/catalog/rule-store.js";
 import type { CodeRule } from "../../engine/code-rule/code-rule-schema.js";
+import { candidatesInForce } from "../../engine/merge-assist/candidate.js";
 import { readWorktreeCandidates } from "../../engine/merge-assist/candidate-files.js";
 import { ruleDocumentDigest } from "../../engine/stable-json.js";
 import { STATE_KEYS, deleteState, readState, writeState, type StateQueries } from "./state.js";
@@ -78,12 +79,12 @@ interface WantedRule {
   readonly rule: CodeRule;
 }
 
-/** The rules the checkout's candidates call for: its own active ones with a rule, and the peers' it applied. */
+/** The rules the checkout's candidates call for: its own in force with a rule, and the peers' it applied. */
 async function wantedRules(db: RerailDatabase, checkout: CheckoutContext): Promise<WantedRule[]> {
   const root = checkout.checkoutPath;
   const own = await readWorktreeCandidates(root);
-  const wanted: WantedRule[] = own.candidates
-    .filter(candidate => candidate.state === "active" && candidate.rule !== undefined)
+  const wanted: WantedRule[] = candidatesInForce(own.candidates)
+    .filter(candidate => candidate.rule !== undefined)
     .map(candidate => {
       const ruleId = ownRuleId(root, candidate.id);
       return { ruleId, rule: { ...(candidate.rule as CodeRule), id: ruleId } };

@@ -25,22 +25,29 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   results are never committed.
 - `merge-assist-context.ts` (`node --import tsx benchmark/merge-assist-context.ts --build-index out.json
   [--distractors N]`, then `--index index.json --variants none,guard-signals,...
-  --split dev|heldout|size|confirm|heldout-large|all [--tasks id,id] [--trials N] [--concurrency N] [--distractors N]
-  [--seed N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value]`, `--sweep control.json`,
-  `--list-variants`, `--validate-oracles`) asks whether injecting teammates' decisions into
-  a real Codex loop, when it touches files they cover, makes its code follow them, and which protocol does so with the
-  least chatter. The dataset, `fixtures/host/benchmark/merge-assist/context.json`, reuses cases.json's project and
+  --split dev|heldout|size|confirm|heldout-large|heldout-large2|all [--tasks id,id] [--trials N] [--concurrency N]
+  [--distractors N] [--seed N] [--no-control] [--json out.json] [--keep] [--verbose] [--model m] [-c key=value]`,
+  `--sweep control.json`, `--list-variants`, `--validate-oracles`, `--index index.json --amend out.json`) asks
+  whether injecting teammates' decisions into a real Codex loop, when it touches files they cover, makes its code
+  follow them, and which protocol does so with the least chatter. The dataset,
+  `fixtures/host/benchmark/merge-assist/context.json`, reuses cases.json's project and
   names its ten lasting decisions (team or peer, with the hand-written text and scope the oracles grade through), the
-  distractor pool and 69 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
-  two neutral ones and two where this branch's decision contradicts a teammate's; then the `size`, `confirm` and
-  `heldout-large` splits of `--arms` below. Nothing hand-written about a real
+  distractor pool and 85 tasks: per split (`dev` for tuning, `heldout` to confirm), nine that tempt one decision each,
+  two neutral ones and two where this branch's decision contradicts a teammate's; then the `size`, `confirm`,
+  `heldout-large` and `heldout-large2` splits of `--arms` below. Nothing hand-written about a real
   decision reaches the agent: `--build-index` runs the product's `draftDecision` with the person's agent CLI judge on
   each decision's capture case (correction, before and after) and keeps the decision text, scope and validated signals
   it produces, leaving out any the judge calls one-off or does not answer; distractors and the conflict tasks'
   teammate decisions get their signals from `deriveSignals`. The index stores each entry's provenance, every judge
-  prompt and each decision's embedding (the bundled model), and is never rebuilt over an existing file. Every run reads
-  it through `--index`, after an integrity check that refuses an entry with a field the product does not produce or
-  an oracle's regex in it, and reports the oracles' code text the product's own output holds. Each run gets a
+  prompt and each decision's embedding (the bundled model), and is never rebuilt over an existing file. A decision
+  changes the way the product changes one: `--index index.json --amend out.json` runs `draftDecision` on each
+  amendment case in cases.json's `amend` list (the decision's author's correction, in the person's words, with the
+  code before and after it and the decisions on that decision's branch as `ownDecisions`) and writes a new index in
+  which that decision's entry is the candidate the product drafted, only when its `supersedes` names the decision
+  (provenance `case` the amendment case, `amends` the candidate it replaced; a fresh embedding), and nothing when the
+  product calls the correction one-off, a duplicate or a new decision. Every run reads it through `--index`, after an
+  integrity check that refuses an entry with a field the product does not produce or an oracle's regex in it, and
+  reports the oracles' code text the product's own output holds. Each run gets a
   temporary repository and `CODEX_HOME` (`auth.json` a symlink to `~/.codex/auth.json`, an empty `config.toml`, and
   `hooks.json` running `merge-assist-context-hook.ts` on PreToolUse and PostToolUse), then `codex exec --json
   --dangerously-bypass-hook-trust --sandbox workspace-write` for at most six minutes. The hook injects the variant's
@@ -71,7 +78,12 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   the touched file or a project file in that area, answered as at most 3 and written to `focus-<area>.json`; areas rank
   concurrently, the picks go out at the first hook call after the answer, and a pre-edit patching an area still
   ranking waits up to 15 s, then falls back to `area-embed` for that area, 3 at most. `focus-area5` is `focus-area`
-  with each area's ranker answering at most 5, all 5 injected. `area-all` calls no ranker: an area's first touch (as
+  with each area's ranker answering at most 5, all 5 injected. `focus-precise3` runs both: the session call (12 picks)
+  from SessionStart, and at an area's first touch that area's ranker (3 picks), which waits up to 20 s for the
+  session's answer and lists the session's picks first, in their order, then the area's other decisions in index
+  order (in index order alone when the session call failed or was late). `focus-precise` is `focus-precise3` with
+  the two rankers agreeing: an area gets its ranker's first pick, and its other picks only when the session call
+  picked them too (all of them when there was no session answer). `area-all` calls no ranker: an area's first touch (as
   focus counts it) injects its conflict pairs, then every undelivered decision covering the touched file or a project
   file in that area, in index order, with no cap, the conflict's line to end with last. Whole decisions that would
   take one hook call past 9,000 characters (Codex keeps about 2,500 tokens of one hook's `additionalContext` and shows
@@ -81,9 +93,10 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   never a product arm: `area-all`'s delivery with the task's targets (the grader's labels, which its hook config
   carries) as the picks, so it shows what perfect selection would deliver; its injected text is still the index's
   decision text, and the run prints that its selection uses the task's labels. Before any focus run every prompt
-  its rankers would send (the session's, and one per project area for `focus-area`) is built offline and checked to
-  hold no index id, oracle regex or task label; the report adds whether focus was ready at the first area touch,
-  pre-edit waits, fallbacks, ranker time (per area for `focus-area`) and its prompt tokens (characters / 4).
+  its rankers would send (the session's, and one per project area for `focus-area`, listed with a session answer
+  first for `focus-precise`) is built offline and checked to hold no index id, oracle regex or task label; the report
+  adds whether focus was ready at the first area touch, pre-edit waits, fallbacks, ranker time (per area for
+  `focus-area`) and its prompt tokens (characters / 4).
   `--seed N` draws other distractors and, above 1, shuffles the run index, so ties and prompt order change; 1 is the
   default layout. `--replay run.json`
   re-chooses a report's injections from its logs. Deterministic oracles grade `git diff main`, and every oracle is
@@ -95,17 +108,17 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   budget. `--timeout-min N` (default 6) bounds each Codex call.
 
   `--arms focus-k3,posthoc` asks what a clean, finished result costs: an injection protocol (`focus-k3`, `focus-k5`,
-  `focus-pool`, `focus-area`, `focus-area5`, `area-all`, or the diagnostic `oracle-area`), against no injection
-  with the violations fixed afterwards. It runs the `size` split by default: nine tasks, three each small (one file,
-  one tempted decision), medium (two to four files, two) and large (api, db, ui and routes, three or four). Each run
-  goes to the agent's end, then, in both arms, the oracles grade it and, while a target is violated, at most three fix
-  rounds resume the same Codex session (`codex exec resume`) with a reviewer message naming the broken decision as
-  the index states it and every violating line (`path:line: code`). That reviewer is perfect, which favours
-  `posthoc`, and human review latency is left out. It prints per size and arm (medians and means, with n): time to
-  completion, total and uncached tokens, fix rounds and the share of runs needing one, first-pass and final clean,
-  done, churn (lines changed by the fixes), and the focus − posthoc difference per size; and per run its injections
-  (decisions, targets among them, injected tokens, the most characters one hook call injected) and per area the
-  decisions it got.
+  `focus-pool`, `focus-area`, `focus-area5`, `focus-precise`, `focus-precise3`, `area-all`, or the diagnostic
+  `oracle-area`), against no injection with the violations fixed afterwards. It runs the `size` split by default:
+  nine tasks, three each small (one file, one tempted decision), medium (two to four files, two) and large (api, db,
+  ui and routes, three or four). Each run goes to the agent's end, then, in both arms, the oracles grade it and, while
+  a target is violated, at most three fix rounds resume the same Codex session (`codex exec resume`) with a reviewer
+  message naming the broken decision as the index states it and every violating line (`path:line: code`). That
+  reviewer is perfect, which favours `posthoc`, and human review latency is left out. It prints per size and arm
+  (medians and means, with n): time to completion, total and uncached tokens, fix rounds and the share of runs needing
+  one, first-pass and final clean, done, churn (lines changed by the fixes), and the focus − posthoc difference per
+  size; and per run its injections (decisions, targets among them, injected tokens, the most characters one hook call
+  injected) and per area the decisions it got.
 
   `--split confirm` holds 18 more tasks for the pre-registered confirmatory comparison, six per size (small one
   target, medium two, large three or four in at least three areas), with prompts, features and file names new to the
@@ -118,6 +131,15 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   lib), and prompts, features and file names new to the dataset. Each was checked offline, with no agent, against a
   clean and a violating reference: the violating one breaks every target and no other decision, the clean one none,
   and both meet every done check. It is held out: no agent runs on it before its pre-registration is committed.
+
+  `heldout-large`'s pre-registered comparison is done too, so its tasks are tuning data now, with `size` and
+  `confirm`. `--split heldout-large2` holds 16 more large tasks for the next confirmation on large tasks, built the
+  same way and checked the same way offline: three or four of the nine graded decisions each (every one at least five
+  times), violations invited in at least three areas, and ids, features, file names, components, outside services,
+  hosts and settings new to the dataset, `heldout-large` included. Eight of them show dates, and four of those ask for
+  a format the project's shared date helper does not have yet (a weekday, a time, a day spelled out), so a decision
+  that only says to use the existing helper is tested where it falls short as well as where it suffices. It is held
+  out: no agent runs on it before its pre-registration is committed.
 
   `--live [--trials N] [--decisions id,id] [--tasks id,id]` is the two-agent coordination check: does a person's
   correction of their agent (A) on one branch reach another agent (B) on another branch through the product's capture,

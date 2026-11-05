@@ -92,7 +92,11 @@ background, without delaying the agent:
 
 1. A cheap filter (the correction phrases `rerail rules evidence` already recognises) skips ordinary prompts.
 2. The agent CLI classifies the correction: a **one-off** fix (dropped), a decision for **this branch**, or a
-   **repository** convention, and states it as one sentence with the folders it covers.
+   **repository** convention, and states it as one sentence with the folders it covers. It reads the decisions in
+   force on this branch with the correction and says whether the correction only restates one of them (nothing is
+   saved) or **amends** one: adds, removes or changes what that decision asks. An amendment states the whole
+   decision as it now stands, may only name a decision it was shown, and keeps covering what that decision covered:
+   Rerail adds its scope to the amendment's.
 3. When the decision can be a code rule, the agent CLI drafts one: a regex, or an AST check that names a pattern or a
    node kind, optionally narrowed by a node it has or is inside (a `for_statement` that has `request($$$ARGS)`). Its
    test cases are complete files taken from the correction itself: the code the agent wrote is a caught case, the
@@ -108,7 +112,11 @@ Rerail saved your correction as a decision for this branch: "Retries live in the
 requests in retry loops." It applies from now on. Undo: Merge Assist page, or `rerail merge-assist reject <id>`.
 ```
 
-A code-rule candidate steers like any rule. A note reaches the agent as guidance once, when it is saved.
+A code-rule candidate steers like any rule. A note reaches the agent as guidance once, when it is saved. An amendment
+is a new candidate, with its own id, whose `supersedes` names the one it amends; from then on the amendment is in
+force on this branch and the decision it amends is not (its file stays, so the change shows in the diff). The page
+and `rerail merge-assist status` show "amends …" under an amendment and mark the decision it replaced as amended;
+rejecting the amendment puts that decision back in force.
 
 ### 5.3 Scanning other branches
 
@@ -204,6 +212,10 @@ hold for the MCP tools and the HTTP API; the CLI runs as the person (§7).
   decision without it can have signals derived by the judge from its text.
 - `state` is `active` or `rejected`. A rejected file stays so that a teammate who already absorbed it sees the
   withdrawal on their next scan.
+- `supersedes` is null, or the id of the decision on the same branch this one amends. Among one branch's candidates,
+  the ones in force are the active ones no other active candidate supersedes; a scan reads another branch's the same
+  way, so a teammate's amendment replaces the decision it amends. An amendment of a missing or rejected candidate is
+  an ordinary decision, and amendments that lead back to themselves amend nothing.
 - The file never holds the correction text, code beyond its signals, paths outside `scope`, session ids or anything
   else from the transcript. The link from a candidate to the session and correction it came from stays in the local
   database.

@@ -23,7 +23,8 @@ export const MAX_CANDIDATE_BYTES = 16 * 1024;
 export const MAX_DECISION_LENGTH = 280;
 /** The longest message a candidate's rule steers with. */
 export const MAX_RULE_MESSAGE_LENGTH = 200;
-const MAX_SCOPE_PATTERNS = 16;
+/** The most scope globs a candidate holds. */
+export const MAX_SCOPE_PATTERNS = 16;
 const MAX_PATTERN_LENGTH = 200;
 /** The most `*` and `**` tokens one scope pattern holds. */
 const MAX_PATTERN_WILDCARDS = 4;
@@ -160,6 +161,31 @@ export function serializeCandidate(candidate: Candidate): string {
 /** The content hash that identifies one version of a candidate. */
 export function candidateHash(candidate: Candidate): string {
   return createHash("sha256").update(serializeCandidate(candidate)).digest("hex");
+}
+
+/**
+ * The candidates in force among one branch's: the active ones that no other active candidate there amends
+ * (`supersedes` names it). An amendment of a candidate that is missing or rejected is an ordinary decision, and a
+ * rejected amendment puts the decision it amended back in force. Amendments that lead back to themselves amend
+ * nothing, so a cycle never takes its decisions out of force. Order is kept.
+ */
+export function candidatesInForce(candidates: readonly Candidate[]): Candidate[] {
+  const active = new Map(candidates.filter(candidate => candidate.state === "active").map(candidate => [candidate.id, candidate]));
+  /** Whether following `supersedes` from `from` through active candidates comes to `to`. */
+  const leadsTo = (from: Candidate, to: string): boolean => {
+    const seen = new Set<string>();
+    for (let next = from.supersedes; next !== null && !seen.has(next); next = active.get(next)?.supersedes ?? null) {
+      if (next === to) return true;
+      seen.add(next);
+    }
+    return false;
+  };
+  const amended = new Set<string>();
+  for (const candidate of active.values()) {
+    const target = candidate.supersedes === null ? undefined : active.get(candidate.supersedes);
+    if (target !== undefined && target.id !== candidate.id && !leadsTo(target, candidate.id)) amended.add(target.id);
+  }
+  return candidates.filter(candidate => active.get(candidate.id) === candidate && !amended.has(candidate.id));
 }
 
 /** `candidate:retries-3f9a1c` → `retries-3f9a1c.json`. */

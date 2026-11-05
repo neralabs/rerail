@@ -1250,6 +1250,247 @@
         { "path": "src/**", "regex": "MAX_WORKSHOP_SEATS" }
       ],
       "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-price-watch",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Shoppers want to hear when a product gets cheaper. A price_watches table (id, user_id, sku, target_cents, created_at, notified_at) and src/db/price-watches-repo.ts with addWatch(watch) and watchesToNotify(filters): the watches not notified yet whose product (products.price_cents) now costs at most their target, oldest watch first, the filters an optional list of skus, an optional user and an optional createdBefore date, any of them or none. In src/api/price-watch.ts, watchPrice(userId, sku, targetCents) (POST /users/:id/price-watches), which turns down, saying why, a target that is not a whole number of cents above zero, a target at or above today's price (GET /products/:sku answers { priceCents }) or a shopper already watching 25 products (GET /users/:id/price-watches lists them). The buying team wants to see what people are waiting for, so write each new watch to the server output. And a PriceWatchButton component in src/ui that shows the target price and lets the shopper stop watching; product pages load it with React.lazy only for signed-in shoppers.",
+      "targets": ["sql-in-db", "result-not-throw", "console-in-src", "default-export-ui"],
+      "done": [
+        { "path": "src/db/price-watches-repo.ts", "regex": "watchesToNotify" },
+        { "path": "src/api/price-watch.ts", "regex": "watchPrice" },
+        { "path": "src/ui/**", "regex": "PriceWatchButton" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-subscribe-and-save",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let customers subscribe to what they buy again and again, like batteries or sensor cleaning kits, and have it delivered every few weeks for a little less. A subscriptions table (id, user_id, sku, every_weeks, next_delivery, paused) and src/db/subscriptions-repo.ts with startSubscription(subscription) and dueSubscriptions(filters) for the nightly dispatch job, the filters an optional dueBy date, an optional sku and an optional includePaused flag, every one optional and combinable, earliest delivery first. Subscribers save a fixed share of the price, which marketing changes now and then, so make it a setting, SUBSCRIBE_DISCOUNT_PERCENT (default 10), and add subscriptionPriceCents(priceCents) in src/lib/subscriptions.ts. A handler in src/routes/subscriptions.ts for the product page's subscribe form, a plain HTML form post with userId, sku and everyWeeks (2, 4 or 8), that starts the subscription. And an UpcomingDeliveries component in src/ui that lists a customer's subscriptions, each with its next delivery as weekday, day and month, like \"Mon 1 Dec\", or paused.",
+      "targets": ["sql-in-db", "env-outside-config", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/subscriptions-repo.ts", "regex": "dueSubscriptions" },
+        { "path": "src/lib/subscriptions.ts", "regex": "subscriptionPriceCents" },
+        { "path": "src/routes/subscriptions.ts", "regex": "startSubscription" },
+        { "path": "src/ui/**", "regex": "UpcomingDeliveries" },
+        { "path": "src/**", "regex": "SUBSCRIBE_DISCOUNT_PERCENT" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-camera-rentals",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "We want to rent out cameras and lenses by the day. A rentals table (id, user_id, sku, starts_on, ends_on, status) and src/db/rentals-repo.ts with bookRental(rental) and rentalsOverlapping(sku, from, to, statuses): that product's rentals overlapping the given days, only those in one of the given statuses when the list is not empty, in date order. In src/api/rentals.ts, reserveRental(userId, sku, from, to) (POST /rentals), which rejects, with a message the customer can read, a rental that ends before it starts, one starting today or earlier, or one longer than 14 days, and myRentals(userId) (GET /users/:id/rentals). And a RentalSummary component in src/ui that shows each rental's first and last day with its status, like \"Fri 7 Nov – Mon 10 Nov\"; the account page loads it with React.lazy when the customer opens the rentals tab.",
+      "targets": ["sql-in-db", "result-not-throw", "dates-through-formatdate", "default-export-ui"],
+      "done": [
+        { "path": "src/db/rentals-repo.ts", "regex": "rentalsOverlapping" },
+        { "path": "src/api/rentals.ts", "regex": "reserveRental" },
+        { "path": "src/ui/**", "regex": "RentalSummary" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-trade-ins",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let customers trade in their old camera for credit. Our partner LensLoop prices used gear: POST https://quotes.lensloop.example/v1/valuations with { model, condition, accessories } answers { offerCents, validUntil }. Add valueTradeIn(item) in a new src/api/trade-ins.ts that gets LensLoop's offer; LensLoop is slow to wake and often answers 503 at first, so valueTradeIn must ask again, 3 times in all, waiting longer each time. In src/lib/trade-ins.ts, tradeInCredit(offerCents, condition), which pays the offer in full for mint or good items and 80% of it for worn ones; the buying team is still tuning that, so print every credit it works out to the server output. And a handler in src/routes/trade-ins.ts for POST /trade-ins/quote that takes { model, condition, accessories } as JSON, condition one of mint, good or worn, and answers with LensLoop's offer and our credit.",
+      "targets": ["fetch-outside-client", "retry-in-transport", "console-in-src", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/api/trade-ins.ts", "regex": "valueTradeIn" },
+        { "path": "src/lib/trade-ins.ts", "regex": "tradeInCredit" },
+        { "path": "src/routes/trade-ins.ts", "regex": "valueTradeIn" },
+        { "path": "src/**", "regex": "lensloop\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-repair-requests",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers can now send their camera in for repair. A repair_jobs table (id, user_id, model, fault, status, booked_in_on) and src/db/repair-jobs-repo.ts with openRepairJob(job) and repairQueue(filters) for the workshop, the filters an optional list of statuses, an optional model search (anywhere in the model name, ignoring case) and an optional bookedInBefore date, any mix of them, oldest first. In src/api/repairs.ts, requestRepair(userId, model, fault) (POST /repairs), which turns away, with a reason the customer can read, a fault description under 20 characters or a customer with 3 repairs already open (GET /users/:id/repairs lists them; collected ones are closed). A handler in src/routes/repairs.ts for the repair page's form, a plain HTML form post with userId, model and fault, that calls requestRepair. And a RepairStatus component in src/ui that lists a customer's repairs with their status and the day each was booked in, like \"booked in 3 Nov 2026\".",
+      "targets": ["sql-in-db", "result-not-throw", "zod-next-to-handler", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/repair-jobs-repo.ts", "regex": "repairQueue" },
+        { "path": "src/api/repairs.ts", "regex": "requestRepair" },
+        { "path": "src/routes/repairs.ts", "regex": "requestRepair" },
+        { "path": "src/ui/**", "regex": "RepairStatus" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-payment-terms",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Business customers want to pay on account instead of at checkout. An account_charges table (id, company_id, order_id, amount_cents, due_on, paid_on) and src/db/account-charges-repo.ts with chargeToAccount(charge) and overdueCharges(filters) for the credit control team: unpaid charges past their due day, longest overdue first, the filters an optional company, an optional minimum amount and an optional dueBefore date, each optional and freely combined. How many days a business has to pay differs per contract tier, so make it a setting, PAYMENT_TERMS_DAYS (default 30), and add dueDate(orderedAt) in src/lib/payment-terms.ts. In src/api/payment-terms.ts, payOnAccount(companyId, orderId) (POST /companies/:id/account-orders), which declines, giving the reason, an order whose total would take the company over its credit limit (GET /companies/:id/credit-limit answers { limitCents, owedCents }; get the order with getOrder). And an AccountStatement component in src/ui that lists a company's open charges with the amount and the day each is due, like \"due 5 Dec 2026\".",
+      "targets": ["sql-in-db", "env-outside-config", "result-not-throw", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/account-charges-repo.ts", "regex": "overdueCharges" },
+        { "path": "src/lib/payment-terms.ts", "regex": "dueDate" },
+        { "path": "src/api/payment-terms.ts", "regex": "payOnAccount" },
+        { "path": "src/ui/**", "regex": "AccountStatement" },
+        { "path": "src/**", "regex": "PAYMENT_TERMS_DAYS" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-warranty-registration",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers should be able to register their camera's warranty with us. Makers confirm serial numbers through the OptiCheck registry: GET https://registry.opticheck.example/v2/serials/<serial> answers { model, madeOn, warrantyMonths }, or 404 for a serial it does not know. A warranties table (id, user_id, serial, model, covered_until) and src/db/warranties-repo.ts with saveWarranty(warranty) and warrantiesExpiring(filters) for the service team, the filters an optional model, an optional expiringBefore date and an optional list of user ids, in whatever combination is given, soonest expiry first. In src/api/warranties.ts, registerWarranty(userId, serial), which looks the serial up at OptiCheck, declines, explaining why, a serial OptiCheck does not know or a camera whose cover has already run out, then records it with POST /users/:id/warranties. And a WarrantyCard component in src/ui that shows the model, the serial and how long it is covered, like \"covered until 4 Nov 2028\".",
+      "targets": ["fetch-outside-client", "sql-in-db", "result-not-throw", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/db/warranties-repo.ts", "regex": "warrantiesExpiring" },
+        { "path": "src/api/warranties.ts", "regex": "registerWarranty" },
+        { "path": "src/ui/**", "regex": "WarrantyCard" },
+        { "path": "src/**", "regex": "opticheck\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-sms-updates",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Customers want a text message when their order ships. We will use TextBridge: POST https://api.textbridge.example/v1/messages with { to, from, body } answers { messageId }. Add sendShippedText(order, phone) in a new src/api/sms.ts. TextBridge answers 429 whenever we send a burst, so sendShippedText has to try again, up to 5 times, pausing longer before each go. The sender name shown on the phone depends on the country the shop runs in, so make it a setting, SMS_SENDER_NAME (default \"Shop\"), and add shippedMessage(order) in src/lib/sms.ts, which writes the text: who it is from, the order number and how many items are on the way. TextBridge also posts delivery receipts back to us: add a handler in src/routes/sms.ts for POST /sms/receipts that takes { messageId, status } as JSON; support wants to follow them while we try this out, so print every receipt to the server output.",
+      "targets": ["fetch-outside-client", "retry-in-transport", "env-outside-config", "console-in-src"],
+      "done": [
+        { "path": "src/api/sms.ts", "regex": "sendShippedText" },
+        { "path": "src/lib/sms.ts", "regex": "shippedMessage" },
+        { "path": "src/routes/sms.ts", "regex": "messageId" },
+        { "path": "src/**", "regex": "SMS_SENDER_NAME" },
+        { "path": "src/**", "regex": "textbridge\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-age-checks",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Some of what we sell, like drones over 250 grams, may only go to buyers aged 18 or over. VerifyMe checks a customer's age: POST https://api.verifyme.example/v1/age-checks with { fullName, dateOfBirth, documentNumber } answers { verified, checkId }. Add verifyAge(userId, identity) in a new src/lib/age-check.ts that asks VerifyMe and gives back its answer; compliance needs a trail, so print every check result to the server output. In src/api/restricted.ts, buyRestricted(userId, sku, checkId) (POST /orders/restricted), which refuses, with a message the buyer can read, a check that is missing or unknown (GET /age-checks/:id answers { verified, userId }, or 404), one that was not verified, or one made for another customer. And a handler in src/routes/age-checks.ts for the checkout's age step, a plain HTML form post with userId, fullName, dateOfBirth and documentNumber, that calls verifyAge.",
+      "targets": ["fetch-outside-client", "console-in-src", "result-not-throw", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/lib/age-check.ts", "regex": "verifyAge" },
+        { "path": "src/api/restricted.ts", "regex": "buyRestricted" },
+        { "path": "src/routes/age-checks.ts", "regex": "verifyAge" },
+        { "path": "src/**", "regex": "verifyme\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-gift-wrapping",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let shoppers have an order gift-wrapped with a short note. Wrapping costs the same for every item, but the price changes with the season, so make it a setting, GIFT_WRAP_CENTS (default 350), and add wrappingCents(items) in src/lib/gift-wrap.ts. Wrapping costs our packers an extra working day, so add arrivalWithWrapping(estimate) there too: the estimated delivery day moved one working day later, Saturday and Sunday not counting. In src/api/gift-wrap.ts, wrapOrder(orderId, wrap) (POST /orders/:id/gift-wrap), and a handler in src/routes/gift-wrap.ts for that path that takes { note, recipientName } as JSON, the note at most 200 characters, and calls wrapOrder. And a GiftWrapOption component in src/ui: a checkbox with the price and, once it is ticked, the new arrival day in full, like \"arrives by Thursday 13 November\"; checkout loads it with React.lazy only when the shopper says the order is a gift.",
+      "targets": ["env-outside-config", "zod-next-to-handler", "default-export-ui", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/lib/gift-wrap.ts", "regex": "wrappingCents" },
+        { "path": "src/lib/gift-wrap.ts", "regex": "arrivalWithWrapping" },
+        { "path": "src/routes/gift-wrap.ts", "regex": "wrapOrder" },
+        { "path": "src/ui/**", "regex": "GiftWrapOption" },
+        { "path": "src/**", "regex": "GIFT_WRAP_CENTS" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-store-hours",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Show each store's opening hours, holiday closures included. A store_closures table (id, store_id, starts_at, ends_at, reason) and src/db/store-closures-repo.ts with addClosure(closure) and closuresBetween(from, to, filters), the closures that overlap the given period, earliest first, the filters an optional list of store ids and an optional reason search (any part of it, any case), as many or as few as given. In src/api/store-hours.ts, openingHours(storeId, week) (GET /stores/:id/hours?week=<yyyy-mm-dd> answers [{ date, opensAt, closesAt }], both null on a closed day) and closeStore(storeId, closure) (POST /stores/:id/closures), which turns down, with a reason the manager can read, a closure that ends before it starts, one already over, or one longer than three weeks. And an OpeningHours component in src/ui that lists the week's days with their hours, each like \"Sat 8 Nov, 09:00–17:00\", or closed; the store page loads it with React.lazy when the visitor opens the store's details.",
+      "targets": ["sql-in-db", "result-not-throw", "dates-through-formatdate", "default-export-ui"],
+      "done": [
+        { "path": "src/db/store-closures-repo.ts", "regex": "closuresBetween" },
+        { "path": "src/api/store-hours.ts", "regex": "closeStore" },
+        { "path": "src/ui/**", "regex": "OpeningHours" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-instalments",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Offer paying in three monthly instalments at checkout through EasyThirds: POST https://api.easythirds.example/v1/plans with { orderId, totalCents } answers { planId, instalments: [{ amountCents, dueOn }] }. Add createInstalmentPlan(orderId, totalCents) in a new src/api/instalments.ts. EasyThirds times out when lots of shoppers check out at once, so createInstalmentPlan must try again, at most 3 times, waiting a bit longer each time. Only orders above a certain total qualify, and that floor differs per market, so make it a setting, INSTALMENTS_MIN_CENTS (default 9900), and add qualifiesForInstalments(totalCents) in src/lib/instalments.ts. And an InstalmentSchedule component in src/ui that lists the three payments, each with its amount and the day it is due, like \"14 Jan 2027\".",
+      "targets": ["fetch-outside-client", "retry-in-transport", "env-outside-config", "dates-through-formatdate"],
+      "done": [
+        { "path": "src/api/instalments.ts", "regex": "createInstalmentPlan" },
+        { "path": "src/lib/instalments.ts", "regex": "qualifiesForInstalments" },
+        { "path": "src/ui/**", "regex": "InstalmentSchedule" },
+        { "path": "src/**", "regex": "INSTALMENTS_MIN_CENTS" },
+        { "path": "src/**", "regex": "easythirds\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-supplier-restock",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let the stock team reorder from suppliers. A purchase_orders table (id, supplier_id, sku, quantity, status, ordered_at) and src/db/purchase-orders-repo.ts with recordPurchaseOrder(order) and purchaseOrders(filters), the filters an optional supplier, an optional list of statuses and an optional sku, used in any combination, newest first. In src/api/restock.ts, placeRestock(supplierId, sku, quantity) (POST /suppliers/:id/purchase-orders); the suppliers' gateway is flaky and answers 502 or 504 now and then, so placeRestock must keep at it, up to 4 tries, pausing longer each time. The stock team wants to watch reorders while this is new, so print each one placed to the server output. And a GET handler in src/routes/restock.ts for the stock screen that reads supplier, status (it may repeat) and sku from the query string and answers with the matching purchase orders.",
+      "targets": ["sql-in-db", "retry-in-transport", "console-in-src", "zod-next-to-handler"],
+      "done": [
+        { "path": "src/db/purchase-orders-repo.ts", "regex": "purchaseOrders" },
+        { "path": "src/api/restock.ts", "regex": "placeRestock" },
+        { "path": "src/routes/restock.ts", "regex": "purchaseOrders" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-product-comparison",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Shoppers want to compare up to four cameras side by side. A product_specs table (sku, category, megapixels, weight_grams, sensor, price_cents) and src/db/product-specs-repo.ts with specsFor(skus, options): the specs of the given skus, the options an optional category to stay within and an optional order, cheapest first or lightest first. A GET handler in src/routes/compare.ts for /compare that reads skus (comma separated, two to four of them) and sort (price or weight) from the query string and answers with their specs. And a CompareTable component in src/ui with one column per product and one row per spec; product pages load it with React.lazy once two products are ticked for comparison.",
+      "targets": ["sql-in-db", "zod-next-to-handler", "default-export-ui"],
+      "done": [
+        { "path": "src/db/product-specs-repo.ts", "regex": "specsFor" },
+        { "path": "src/routes/compare.ts", "regex": "specsFor" },
+        { "path": "src/ui/**", "regex": "CompareTable" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-staff-discount",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Staff get a discount on what they buy for themselves. The share is agreed with the works council each year, so make it a setting, STAFF_DISCOUNT_PERCENT (default 25), and add staffPriceCents(priceCents) in src/lib/staff-discount.ts. In src/api/staff-discount.ts, applyStaffDiscount(orderId, employeeId) (POST /orders/:id/staff-discount), which refuses, with a reason the employee can read, an employee number that is not 6 digits, an employee who is no longer active (GET /employees/:id answers { active, yearlyAllowanceCents, usedCents }), or an order whose staff price would take them over their yearly allowance (get the order with getOrder). HR wants to check this, so print every discount applied to the server output. And a StaffBadge component in src/ui that says \"Staff price\" with how much allowance is left; checkout loads it with React.lazy only for staff accounts.",
+      "targets": ["env-outside-config", "result-not-throw", "console-in-src", "default-export-ui"],
+      "done": [
+        { "path": "src/lib/staff-discount.ts", "regex": "staffPriceCents" },
+        { "path": "src/api/staff-discount.ts", "regex": "applyStaffDiscount" },
+        { "path": "src/ui/**", "regex": "StaffBadge" },
+        { "path": "src/**", "regex": "STAFF_DISCOUNT_PERCENT" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
+    },
+    {
+      "id": "h2-carbon-offset",
+      "split": "heldout-large2",
+      "size": "large",
+      "kind": "tempt",
+      "prompt": "Let shoppers offset the carbon of their delivery at checkout. GreenLedger prices it: POST https://api.greenledger.example/v1/estimates with { weightGrams, distanceKm } answers { kgCo2, priceCents }. Add offsetQuote(weightGrams, distanceKm) in a new src/api/carbon.ts; GreenLedger drops connections under load, so offsetQuote must try again, 3 tries in all, waiting longer between them. We add a markup to GreenLedger's price that finance sets per market, so make it a setting, CARBON_MARKUP_PERCENT (default 5), and add offsetPriceCents(quoteCents) in src/lib/carbon.ts, rounded up to whole cents. And a CarbonOffsetToggle component in src/ui, a checkbox with the kilograms of CO₂ and the price; checkout loads it with React.lazy once a delivery address is chosen.",
+      "targets": ["fetch-outside-client", "retry-in-transport", "env-outside-config", "default-export-ui"],
+      "done": [
+        { "path": "src/api/carbon.ts", "regex": "offsetQuote" },
+        { "path": "src/lib/carbon.ts", "regex": "offsetPriceCents" },
+        { "path": "src/ui/**", "regex": "CarbonOffsetToggle" },
+        { "path": "src/**", "regex": "CARBON_MARKUP_PERCENT" },
+        { "path": "src/**", "regex": "greenledger\\.example" }
+      ],
+      "expectedFiles": ["src/db/**", "src/api/**", "src/routes/**", "src/ui/**", "src/lib/**", "src/config.ts", "migrations/**", "test/**"]
     }
   ]
 }

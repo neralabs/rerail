@@ -126,7 +126,7 @@ An experimental, per-repository feature, off until a person turns it on, that sh
 
 ## Candidate Rule
 
-One decision a developer made while correcting their coding agent, saved as a file on the branch (`.rerail/candidates/<id>.json`, `rerail.candidate/v1`) so it travels with commits. It holds the decision text, its scope and author, and a Code Rule in `steer` mode when Rerail could check it exactly; without one it is a note only the person's coding agent judges. It is `active` or `rejected` (Not a rule), never stronger than steer, and never holds the correction or code it came from.
+One decision a developer made while correcting their coding agent, saved as a file on the branch (`.rerail/candidates/<id>.json`, `rerail.candidate/v1`) so it travels with commits. It holds the decision text, its scope and author, and a Code Rule in `steer` mode when Rerail could check it exactly; without one it is a note only the person's coding agent judges. It is `active` or `rejected` (Not a rule), never stronger than steer, and never holds the correction or code it came from. An **amendment** is a Candidate Rule whose `supersedes` names another on the same branch: while it is active, it is in force and the one it amends is not.
 
 ## Finding Tiers
 

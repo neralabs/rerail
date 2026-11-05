@@ -68,6 +68,8 @@
 .mrow.off .mq{color:var(--muted-foreground)}
 /* The decision itself: someone's own words, so it reads as a quotation, plain and full width. */
 .mq{margin:0;font-size:14px;line-height:1.5;font-weight:500;color:var(--foreground);max-width:var(--measure);overflow-wrap:anywhere}
+/* The decision an amendment replaces, quoted under it. */
+.mamends{margin:0;font-size:12px;color:var(--muted-foreground);max-width:var(--measure);overflow-wrap:anywhere}
 .mmeta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--muted-foreground)}
 .mmeta .mauthor{font-weight:500;color:var(--foreground)}
 .mmeta .mtitle{color:var(--foreground);overflow-wrap:anywhere}

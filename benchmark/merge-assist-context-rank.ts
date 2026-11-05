@@ -6,26 +6,53 @@
  *
  * It asks the product's judge (`createAgentJudge`, Codex first, a scratch database in the run folder) which of the
  * index's decisions the task needs, with `rankPrompt`: the task prompt and every decision whose scope covers a project
- * file, under opaque ids (`rankerInput`), answered as at most the variant's `rankMax` ids. Without a touched file it
- * ranks for the session and writes `focus.json` in the run folder; with one, it ranks the decisions covering that file
- * or a project file in its area and writes `focus-<area>.json` (`areaFocusPath`). Either is written atomically: the
- * picked index ids, most relevant first, how long it took, and why it failed when it did.
+ * file, under opaque ids (`rankerInput`), answered as at most the variant's `rankMax` ids (the session's under
+ * `area-focus`: `sessionRankMax`). Without a touched file it ranks for the session and writes `focus.json` in the run
+ * folder; with one, it ranks the decisions covering that file or a project file in its area and writes
+ * `focus-<area>.json` (`areaFocusPath`), under `sessionRankMax` after waiting up to `SESSION_WAIT_MS` for `focus.json`
+ * and listing the session's picks first (`sessionFirst`). Either is written atomically: the picked index ids, most
+ * relevant first, how long it took, and why it failed when it did.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
+import { setTimeout as sleep } from "node:timers/promises";
 import { openRerailDatabase } from "../src/engine/index.js";
 import { createAgentJudge, MAX_RANKED, rankJsonSchemaFor, rankPrompt, rankVerdictSchemaFor } from "../src/runtime/index.js";
-import { areaFocusPath, areaOf, type FocusFile, focusPath, type HookConfig, rankerInput } from "./merge-assist-context-hook.js";
+import {
+  areaFocusPath,
+  areaOf,
+  FOCUS_POLL_MS,
+  type FocusFile,
+  focusPath,
+  type HookConfig,
+  rankerInput,
+  readFocusFile,
+  SESSION_WAIT_MS,
+  sessionFirst,
+} from "./merge-assist-context-hook.js";
 
 /** The repository key the ranker's judge calls are budgeted and recorded under, in its scratch database. */
 const RANKER_REPOSITORY = "eval:merge-assist-context";
 
+/** The session ranker's picks once `focus.json` is there, at most {@link SESSION_WAIT_MS} from now; none if it failed or is late. */
+async function sessionPicks(folder: string): Promise<string[]> {
+  const started = performance.now();
+  let focus = readFocusFile(focusPath(folder));
+  while (focus === undefined && performance.now() - started < SESSION_WAIT_MS) {
+    await sleep(FOCUS_POLL_MS);
+    focus = readFocusFile(focusPath(folder));
+  }
+  return focus?.ok === true ? [...focus.ids] : [];
+}
+
 async function rank(config: HookConfig, path: string | null, out: string): Promise<Omit<FocusFile, "ms">> {
-  const input = rankerInput(config, path);
-  const max = config.variant?.rankMax ?? MAX_RANKED;
+  const sessionMax = config.variant?.orient === "area-focus" ? config.variant.sessionRankMax : null;
+  const session = path !== null && sessionMax !== null ? await sessionPicks(config.folder) : undefined;
+  const input = session === undefined ? rankerInput(config, path) : sessionFirst(rankerInput(config, path), session);
+  const max = (path === null ? sessionMax : null) ?? config.variant?.rankMax ?? MAX_RANKED;
   const prompt = rankPrompt({ task: input.task, decisions: input.decisions }, randomBytes(16).toString("hex"), max);
-  const base = { promptChars: prompt.length, candidates: input.decisions.length };
+  const base = { promptChars: prompt.length, candidates: input.decisions.length, ...(session === undefined ? {} : { session }) };
   // Each ranker its own database: area rankers run at once, in separate processes.
   const database = openRerailDatabase(out.replace(/\.json$/u, ".sqlite"));
   try {

@@ -13,6 +13,7 @@ import {
   candidateFiles,
   captureVerdict,
   FakeJudge,
+  forbidRule,
   mergeAssistWorkspaces,
   ORDERS_CLEAN,
   ORDERS_RETRY,
@@ -176,6 +177,11 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     expect(ws.database.select().from(mergeAssistItems).all()).toEqual([]);
     expect(await draftDecision({ ...context, judge: new FakeJudge(() => captureVerdict({ generality: "one-off" })) }, input)).toEqual({ oneOff: true });
     expect(await draftDecision({ ...context, judge: new FakeJudge(() => captureVerdict({ duplicateOf: "candidate:retries-3f9a1c" })) }, input)).toEqual({ duplicateOf: "candidate:retries-3f9a1c" });
+    // An amendment keeps the scope of the decision it amends, with what the correction touched.
+    const own = { ...input, ownDecisions: [{ id: "candidate:retries-3f9a1c", decision: "Retries live in the transport layer.", scope: ["src/http/**"] }] };
+    expect(await draftDecision({ ...context, judge: new FakeJudge(() => captureVerdict({ amends: "candidate:retries-3f9a1c" })) }, own))
+      .toMatchObject({ candidate: { decision: captureVerdict().decision, scope: ["src/http/**", "src/api/**"], supersedes: "candidate:retries-3f9a1c" } });
+    expect(drafted).toMatchObject({ candidate: { supersedes: null } });
     expect(await draftDecision({ ...context, judge: new FakeJudge(() => ({ ok: false, reason: "budget", detail: "the hourly budget is spent" })) }, input))
       .toEqual({ unjudged: "the hourly budget is spent" });
   });
@@ -309,6 +315,33 @@ describe("Merge Assist capture", { timeout: 30_000 }, () => {
     const service = ws.service({ judge: new FakeJudge(() => captureVerdict({ duplicateOf: "candidate:retries-in-transport-3f9a1c" })) });
     await service.setEnabled(ws.repo, true);
     expect((await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved).toEqual([]);
+  });
+
+  it("saves a correction that changes a decision already made as its amendment, which replaces it", async () => {
+    const ws = await workspace();
+    const original = candidate({ id: "candidate:no-sleep-in-api-0a0b0c", author: "Tim Belanger", decision: "API code never sleeps.", rule: forbidRule("candidate:no-sleep-in-api-0a0b0c", String.raw`\bsleep\(`) });
+    writeFiles(ws.repo, candidateFiles(original));
+    const judge = new FakeJudge(() => captureVerdict({ amends: original.id }));
+    const service = ws.service({ judge });
+    await service.setEnabled(ws.repo, true);
+    expect(ws.rulesOn(ws.repo)).toEqual([ownRuleId(ws.repo, original.id)]);
+
+    const [saved] = (await service.captureSession({ sessionId: "s", host: "codex", checkoutPath: ws.repo, events: correctedSession(ws.repo, "s") })).saved;
+
+    expect(judge.tasks[0]!.prompt).toContain(`- ${original.id}: API code never sleeps.`);
+    expect(saved).toMatchObject({ decision: captureVerdict().decision, supersedes: original.id, state: "active" });
+    expect(saved!.id).not.toBe(original.id);
+    expect(ws.rulesOn(ws.repo)).toEqual([ownRuleId(ws.repo, saved!.id)]);
+    const status = await service.status(ws.repo);
+    expect(status.own).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: saved!.id, amends: { id: original.id, decision: original.decision }, amendedBy: null }),
+      expect.objectContaining({ id: original.id, state: "active", amends: null, amendedBy: saved!.id }),
+    ]));
+
+    // Not a rule, for the amendment: the decision it amended is in force again.
+    await service.setCandidateState(ws.repo, saved!.id, "rejected");
+    expect(ws.rulesOn(ws.repo)).toEqual([ownRuleId(ws.repo, original.id)]);
+    expect((await service.status(ws.repo)).own).toEqual(expect.arrayContaining([expect.objectContaining({ id: original.id, amendedBy: null })]));
   });
 
   it("does nothing while Merge Assist is off", async () => {
