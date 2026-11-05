@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { createRequire, registerHooks } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isVariantPath, unitLanguage, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
+import { codePointColumn, ECMA_EXTENSIONS, isVariantPath, unitLanguage, withOrigins, writeRenameVariants } from "../../../scripts/pack-data/eslint-expected.mjs";
 import { variantEntries, writeProvenance } from "../../../scripts/pack-data/provenance.mjs";
 import { expectedFindingsWritten } from "../../../scripts/s3/pack-fixtures.mjs";
 
@@ -41,7 +41,6 @@ const PACK = JSON.parse(readFileSync(join(HERE, "..", "conformance.json"), "utf8
 const TOOL = "eslint";
 const VERSIONS = { eslint: "10.11.0", "@typescript-eslint/parser": "8.70.1", typescript: "6.0.3" };
 const CHECKOUT = { repository: "https://github.com/eslint/eslint", commit: "3c0b7c6e1fe2dec778b97a996018126f22d437ae" };
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 /** Larger cases are performance stress tests, not rule behaviour; see the header. */
 const MAX_CASE_BYTES = 64 * 1024;
@@ -109,15 +108,6 @@ export default {
   return pathToFileURL(path);
 }
 
-/** ESLint's 1-based UTF-16 column on `line`, as 1-based code points. */
-function codePointColumn(lines, line, column) {
-  const text = lines[line - 1] ?? "";
-  return [...text.slice(0, column - 1)].length + 1;
-}
-
-/** ESLint's line terminators (`\r\n`, `\r`, `\n`, U+2028, U+2029). */
-const splitLines = text => text.split(/\r\n|[\r\n\u2028\u2029]/u);
-
 /** Lints `files` (relative to `cwd`) with `rules` on; returns findings and the files ESLint could not parse. */
 async function lint(cwd, files, rules, languages) {
   const eslint = await ESLint.fromOptionsModule(optionsModule(cwd, rules, languages));
@@ -135,9 +125,9 @@ async function lint(cwd, files, rules, languages) {
     // ESLint reads the text without a leading byte order mark; the file's first line, as the runner counts it, has it.
     const text = readFileSync(result.filePath, "utf8");
     const bom = text.startsWith("\uFEFF") ? 1 : 0;
-    const lines = splitLines(text.slice(bom));
+    const body = text.slice(bom);
     for (const message of reported) {
-      const column = codePointColumn(lines, message.line, message.column) + (message.line === 1 ? bom : 0);
+      const column = codePointColumn(body, message.line, message.column) + (message.line === 1 ? bom : 0);
       findings.push({ rule: message.ruleId, path, line: message.line, column });
     }
   }
