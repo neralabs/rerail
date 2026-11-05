@@ -182,25 +182,37 @@ impl NthChild {
         rows
     }
 
-    /// `rows` as bits over the tape's nodes, from the sibling positions it counts (`Positions`,
-    /// shared by every `nthChild` on the tape with the same `ofRule`): a lookup per start.
+    /// `rows` as bits over the tape's nodes, for starts of `kinds` (any node where `None`), from
+    /// the counted children of each parent (`Positions`): the child at the position where `An+B`
+    /// names one (`B` alone), else each counted child tested. No pass over the tape's nodes.
     pub(in crate::code_rule_dsl) fn bits(
         &self,
-        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
-        starts: impl Iterator<Item = u32>,
-        siblings: &SiblingPositions,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        positions: &Positions,
+        kinds: Option<&std::collections::BTreeSet<u16>>,
     ) -> Vec<u64> {
-        let tape = file.root().get_doc();
-        let positions = siblings.of(self, file);
         let mut bits = vec![0_u64; tape.transducer_len().div_ceil(64)];
-        for node in starts {
-            let at = node as usize;
-            if !positions.counted[at] {
-                continue;
+        let mut mark = |node: u32| {
+            if kinds.is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))) {
+                bits[node as usize / 64] |= 1 << (node % 64);
             }
-            let index = if self.reverse { positions.count[at] - 1 - positions.index[at] } else { positions.index[at] };
-            if self.position.holds(index as usize) {
-                bits[at / 64] |= 1 << (at % 64);
+        };
+        for &parent in &positions.parents {
+            let counted = positions.counted(parent);
+            let at = |index: usize| if self.reverse { counted[counted.len() - 1 - index] } else { counted[index] };
+            if self.position.step == 0 {
+                // `holds(index)` is `index + 1 == B`.
+                if let Ok(index) = usize::try_from(i64::from(self.position.offset) - 1)
+                    && index < counted.len()
+                {
+                    mark(at(index));
+                }
+            } else {
+                for index in 0..counted.len() {
+                    if self.position.holds(index) {
+                        mark(at(index));
+                    }
+                }
             }
         }
         bits
@@ -272,22 +284,36 @@ impl NthChild {
 }
 
 /// `rule`'s verdict at a node of kind `kind`, where the rule tests only kinds.
-/// A tape's counted children by position: whether each node is counted among its parent's
-/// children (named, and matching the `ofRule`), its index among them and their number. A parent
-/// with a child of unknown verdict counts none of them (no rows, as `rows` has it).
+/// A tape's counted children by parent: each parent's named children (those its `ofRule`
+/// matches, where it has one), in order. A parent with a child of unknown verdict counts none of
+/// them (no rows, as `rows` has it).
 pub(in crate::code_rule_dsl) struct Positions {
-    counted: Vec<bool>,
-    index: Vec<u32>,
-    count: Vec<u32>,
+    /// The parents with a counted child, ascending.
+    parents: Vec<u32>,
+    /// `counted[offsets[parent]..offsets[parent + 1]]` is the parent's.
+    offsets: Vec<u32>,
+    counted: Vec<u32>,
 }
 
 impl Positions {
-    /// One pass in preorder: a node's index is its parent's count so far.
-    fn of(nth: &NthChild, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>) -> Self {
-        let tape = file.root().get_doc();
+    fn counted(&self, parent: u32) -> &[u32] {
+        &self.counted[self.offsets[parent as usize] as usize..self.offsets[parent as usize + 1] as usize]
+    }
+
+    /// Two passes in preorder (a node's siblings before it are below it): which nodes count, then
+    /// each into its parent's run.
+    fn of(nth: &NthChild, tape: &crate::code_rule_dsl::tape::TapeDoc) -> Self {
         let len = tape.transducer_len();
         let mut counted = vec![false; len];
         let mut unknown = vec![false; len];
+        // W's matcher reads the file through its own handle and scope slot, made where a probe is.
+        let file = std::cell::OnceCell::new();
+        let file = || {
+            file.get_or_init(|| {
+                let scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                (ast_grep_core::AstGrep::doc(tape.clone()), scopes)
+            })
+        };
         // Per kind: 0 not yet asked, 1 no, 2 yes, 3 W's matcher decides.
         let mut by_kind = Vec::<u8>::new();
         for node in 0..len as u32 {
@@ -311,7 +337,7 @@ impl Positions {
                     match by_kind[kind] {
                         1 => false,
                         2 => true,
-                        _ => nth.probe(file, rule, node).unwrap_or_else(|| {
+                        _ => nth.probe(&file().0, rule, node).unwrap_or_else(|| {
                             unknown[tape.transducer_parent(node).expect("a child") as usize] = true;
                             false
                         }),
@@ -319,45 +345,60 @@ impl Positions {
                 }
             };
         }
-        let (mut index, mut count) = (vec![0_u32; len], vec![0_u32; len]);
-        let mut so_far = vec![0_u32; len];
+        let mut offsets = vec![0_u32; len + 1];
         for node in 0..len as u32 {
-            let Some(parent) = tape.transducer_parent(node) else { continue };
-            let parent = parent as usize;
-            if unknown[parent] {
-                counted[node as usize] = false;
-            } else if counted[node as usize] {
-                index[node as usize] = so_far[parent];
-                so_far[parent] += 1;
+            if let Some(parent) = tape.transducer_parent(node)
+                && counted[node as usize]
+                && !unknown[parent as usize]
+            {
+                offsets[parent as usize + 1] += 1;
             }
         }
+        let parents = (0..len as u32).filter(|&parent| offsets[parent as usize + 1] != 0).collect();
+        for at in 0..len {
+            offsets[at + 1] += offsets[at];
+        }
+        let mut next = offsets[..len].to_vec();
+        let mut runs = vec![0_u32; offsets[len] as usize];
         for node in 0..len as u32 {
-            if let Some(parent) = tape.transducer_parent(node) {
-                count[node as usize] = so_far[parent as usize];
+            if let Some(parent) = tape.transducer_parent(node)
+                && counted[node as usize]
+                && !unknown[parent as usize]
+            {
+                runs[next[parent as usize] as usize] = node;
+                next[parent as usize] += 1;
             }
         }
-        Self { counted, index, count }
+        Self { parents, offsets, counted: runs }
     }
 }
 
-/// A tape's `Positions` by `ofRule` (none, or its key), made on first use and shared by the tape's
-/// `nthChild` facts.
+/// A tape's `Positions` by `ofRule` (none, or its key), and the answers of its `nthChild` facts by
+/// question (`Fact::question`): each made on first use and shared by the tape's facts.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct SiblingPositions(std::cell::RefCell<std::collections::HashMap<Option<String>, std::rc::Rc<Positions>>>);
+pub(in crate::code_rule_dsl) struct SiblingPositions {
+    positions: std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
+    answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
+}
 
 impl SiblingPositions {
-    fn of(&self, nth: &NthChild, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>) -> std::rc::Rc<Positions> {
+    pub(in crate::code_rule_dsl) fn of(&self, nth: &NthChild, tape: &crate::code_rule_dsl::tape::TapeDoc) -> std::sync::Arc<Positions> {
         // A rule without a key is its own.
         if nth.of_rule.is_some() && nth.of_rule_key.is_none() {
-            return std::rc::Rc::new(Positions::of(nth, file));
+            return std::sync::Arc::new(Positions::of(nth, tape));
         }
-        let key = nth.of_rule_key.clone();
-        if let Some(found) = self.0.borrow().get(&key) {
-            return std::rc::Rc::clone(found);
+        let mut positions = self.positions.lock().expect("sibling positions");
+        std::sync::Arc::clone(positions.entry(nth.of_rule_key.clone()).or_insert_with(|| std::sync::Arc::new(Positions::of(nth, tape))))
+    }
+
+    /// The answer to `question`, made by `answer` the first time it is asked.
+    pub(in crate::code_rule_dsl) fn answer(&self, question: &str, answer: impl FnOnce() -> Vec<u64>) -> std::sync::Arc<Vec<u64>> {
+        if let Some(found) = self.answers.lock().expect("nthChild answers").get(question) {
+            return std::sync::Arc::clone(found);
         }
-        let positions = std::rc::Rc::new(Positions::of(nth, file));
-        self.0.borrow_mut().insert(key, std::rc::Rc::clone(&positions));
-        positions
+        let found = std::sync::Arc::new(answer());
+        self.answers.lock().expect("nthChild answers").insert(question.to_owned(), std::sync::Arc::clone(&found));
+        found
     }
 }
 

@@ -188,8 +188,6 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
     }
     crate::code_rule_dsl::prof::count("labels.facts.distinct", distinct.len());
     crate::code_rule_dsl::prof::count("labels.facts.anywhere", distinct.iter().filter(|fact| fact.kinds.is_none()).count());
-    let questions = distinct.iter().map(|fact| fact.question()).collect::<Vec<_>>();
-    crate::code_rule_dsl::prof::count("labels.facts.questions", questions.iter().flatten().collect::<std::collections::HashSet<_>>().len());
     crate::code_rule_dsl::prof::time("labels.facts", || {
         tapes
             .par_iter()
@@ -197,41 +195,13 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
                 let source = Arc::as_ptr(tape.document_source()) as usize;
-                // The tape's sibling positions, shared by its `nthChild` facts; the findings of each
-                // question, shared by the facts that ask it; the nodes of each kind.
+                // The tape's sibling positions and `nthChild` answers, shared by its facts.
                 let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
-                let mut answered = HashMap::<&str, crate::code_rule_dsl::matcher::FactFound>::new();
-                let by_kind = std::cell::OnceCell::<HashMap<u16, Vec<u32>>>::new();
-                let by_kind = || {
-                    by_kind.get_or_init(|| {
-                        let mut by_kind = HashMap::<u16, Vec<u32>>::new();
-                        for node in 0..tape.transducer_len() as u32 {
-                            by_kind.entry(tape.transducer_kind(node)).or_default().push(node);
-                        }
-                        by_kind
-                    })
-                };
                 distinct
                     .iter()
-                    .zip(&questions)
-                    .map(|(fact, question)| {
-                        let found = match question {
-                            Some(question) if answered.contains_key(question.as_str()) => answered[question.as_str()].clone(),
-                            Some(question) => {
-                                // Its starts from the kinds' nodes: no pass over the tape.
-                                let found = match &fact.kinds {
-                                    Some(kinds) => fact.found(&file, kinds.iter().flat_map(|kind| by_kind().get(kind).into_iter().flatten().copied()), &siblings),
-                                    None => fact.found(&file, 0..tape.transducer_len() as u32, &siblings),
-                                };
-                                answered.insert(question.as_str(), found.clone());
-                                found
-                            }
-                            None => {
-                                let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                                fact.found(&file, domain(&starts, tape, &[]), &siblings)
-                            }
-                        };
-                        ((Arc::as_ptr(fact) as usize, source), found)
+                    .map(|fact| {
+                        let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
+                        ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
                     })
                     .collect::<Vec<_>>()
             })
@@ -1036,7 +1006,8 @@ impl LoweredWave {
         let active: &dyn Fn(&LoweredMatcher, usize) -> bool = &active;
         let mut sets = empty_sets(tapes, self.labels);
         let most = tapes.iter().map(TapeDoc::transducer_len).max().unwrap_or(0);
-        let facts = fact_rows(self.clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
+        // Facts that are node sets are the formulas' (`formulas`): only the others' rows are made here.
+        let facts = fact_rows(self.clauses.iter().flat_map(|clause| clause.labels.facts()).filter(|fact| !(formulas_on() && fact.is_node_set())), tapes);
         // Each tape's columns as sets, for the passes that are formulas (`compile_sets`).
         let indexes = tapes.iter().map(|_| std::sync::OnceLock::new()).collect::<Vec<_>>();
         for (recursive, levels) in &steps {
@@ -1898,6 +1869,36 @@ impl Packs {
 /// `RERAIL_SETS=walk` runs every pass as a walk; `RERAIL_SETS_CHECK` runs both and reports where
 /// they differ.
 #[allow(clippy::type_complexity)]
+/// Why a pass is neither a formula nor a packed walk, as a counter: `labels.fallback.<label kind>`,
+/// with the program's operations outside the formulas' fragment (hex) where it is a program, or
+/// `micro` where it is not a micro walk. Each common reason is a formula form to add (`compile_sets`).
+fn fallback(label: &Label) -> &'static str {
+    static NAMES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, &'static str>>> = std::sync::LazyLock::new(Default::default);
+    const FRAGMENT: [u8; 15] = [KIND, FIELD, FLAGS, SUPERTYPE, TEXT, SAVE_CURSOR, RESTORE_CURSOR, CHILD, DESCEND, PARENT, FOLLOWING, FORK, GOTO, CAPTURE, EMIT];
+    let outside = |program: &Program| match Micro::of(program) {
+        None => "micro".to_owned(),
+        Some(walk) => walk.words.iter().map(|&word| split(word).0).filter(|op| !FRAGMENT.contains(op)).collect::<BTreeSet<_>>().iter().map(|op| format!("{op:02x}")).collect::<Vec<_>>().join(","),
+    };
+    let name = match label {
+        Label::Pattern(..) => "pattern".to_owned(),
+        Label::Constrained(..) => "constrained".to_owned(),
+        Label::Roots(program, _) => format!("roots[{}]", outside(program)),
+        Label::Targets(program, _) => format!("targets[{}]", outside(program)),
+        Label::Count { program, .. } => format!("count[{}]", outside(program)),
+        Label::Complement(_) => "complement".to_owned(),
+        Label::Fact(..) => "fact".to_owned(),
+        Label::Empty => "empty".to_owned(),
+    };
+    NAMES.lock().expect("fallback names").entry(name).or_insert_with_key(|name| Box::leak(format!("labels.fallback.{name}").into_boxed_str()))
+}
+
+/// Whether label passes run as node-set formulas where they are ones (`compile_sets`); off with
+/// `RERAIL_SETS=walk`.
+fn formulas_on() -> bool {
+    static WALK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SETS").is_ok_and(|mode| mode == "walk"));
+    !*WALK
+}
+
 fn formulas(
     level: &[(&LoweredMatcher, u16)],
     views: &[TapeDoc],
@@ -1907,22 +1908,40 @@ fn formulas(
 ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
     use super::compile_sets::{Index, Reader, Set};
     use rayon::prelude::*;
-    static WALK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SETS").is_ok_and(|mode| mode == "walk"));
     static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
-    if *WALK {
+    if !formulas_on() {
         return vec![None; level.len()];
     }
     level
         .iter()
         .map(|&(clause, id)| {
-            let Label::Roots(program, domain) = clause.labels.def(id) else { return None };
+            // A fact whose findings are a node set (`nthChild`): read from the tape's sibling positions.
+            if let Label::Fact(fact, _) = clause.labels.def(id)
+                && fact.is_node_set()
+            {
+                let on = (0..views.len()).filter(|&tape| active(clause, tape)).collect::<Vec<_>>();
+                let found = on
+                    .par_iter()
+                    .map(|&tape| {
+                        let index = indexes[tape].get_or_init(|| Index::of(&views[tape]));
+                        let bits = fact.nth_bits(&views[tape], &index.siblings).expect("a node set");
+                        (tape, Arc::unwrap_or_clone(bits))
+                    })
+                    .collect::<Vec<_>>();
+                crate::code_rule_dsl::prof::count("labels.formula", 1);
+                return Some(found);
+            }
+            let (Label::Roots(program, domain) | Label::Targets(program, domain)) = clause.labels.def(id) else { return None };
             let walk = Micro::of(program)?;
-            let set = Set::of(&walk.words)?;
             // The starts: the domain's nodes.
-            let set = match domain {
-                Domain::All => set,
-                Domain::Kinds(kinds) => Set::And(vec![Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()), set]),
-                Domain::Label(label) => Set::And(vec![Set::Class(*label), set]),
+            let starts = match domain {
+                Domain::All => Set::All,
+                Domain::Kinds(kinds) => Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()),
+                Domain::Label(label) => Set::Class(*label),
+            };
+            let set = match clause.labels.def(id) {
+                Label::Targets(..) => Set::targets(&walk.words, starts)?,
+                _ => Set::And(vec![starts, Set::of(&walk.words)?]),
             };
             let on = (0..views.len()).filter(|&tape| active(clause, tape)).collect::<Vec<_>>();
             let found = on
@@ -1982,7 +2001,9 @@ fn label_level(
             }
             let on = (0..tapes.len()).filter(|&at| active(clause, at)).collect::<Vec<_>>();
             let (views, read) = (on.iter().map(|&at| views[at].clone()).collect::<Vec<_>>(), on.iter().map(|&at| Arc::clone(&sets[at])).collect::<Vec<_>>());
-            let found = clause.evaluate(clause.labels.def(id), &views, &read, facts)?;
+            let why = fallback(clause.labels.def(id));
+            crate::code_rule_dsl::prof::count(why, 1);
+            let found = crate::code_rule_dsl::prof::time("labels.fallback", || clause.evaluate(clause.labels.def(id), &views, &read, facts))?;
             Ok::<_, Error>(on.into_iter().zip(found).collect::<Vec<_>>())
         })
         .collect::<Result<Vec<_>, _>>()?;
