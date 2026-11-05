@@ -13,6 +13,7 @@ import json
 import re
 
 from souffle import check_rule, whole
+from simplify import simplify
 
 LANG_LIB = {
     "python": "python",
@@ -219,6 +220,11 @@ def one_of(prog, vs, fmt, values, p, note):
 def lower(prog, rule, v, vs, skip=()):
     """Literals that hold when node v matches the rule object."""
     lits = []
+    if isinstance(rule, list):
+        # A list of rules is their conjunction (an option case's `default: [...]`); an empty list holds for any node.
+        for sub in rule:
+            lits.extend(lower(prog, sub, v, vs))
+        return lits or [f"node(_, {v}, _, _, _)"]
     if not isinstance(rule, dict):
         prog.untranslated += 1
         return [f"ast({v}, {compact(rule)})"]
@@ -948,6 +954,14 @@ def translate(doc):
             body.append(("rule", {"head": hd, "lits": b + cons + tlits, "edits": edits}))
         for h, lits in local:
             body.append(("rule", {"head": h, "lits": lits}))
+
+    # Remove what the construct-by-construct lowering alone put there (simplify.py): duplicate helpers, helpers
+    # used once, and grounding atoms that something else already provides.
+    entries = [item for kind, item in body if kind == "rule"]
+    protected = set(seen_rel) | {e["head"].split("(")[0] for e in entries if "," in e["head"]}
+    simplify(entries, prog, protected)
+    keep = set(map(id, entries))
+    body = [(kind, item) for kind, item in body if kind != "rule" or id(item) in keep]
 
     # Helper relations (utils, alternatives, stop sets) share the JSON's metavariables with their callers.
     entries = [item for kind, item in body if kind == "rule"]
