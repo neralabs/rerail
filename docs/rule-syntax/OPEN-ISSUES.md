@@ -103,9 +103,14 @@ confirm once a parser and engine exist. None is fixed yet.
    Top, Lub, Glb, Leq). How the `Lub` functor's arguments are written is still to check against Soufflé's tests.
 4. `word(w, s)` is specified (0037: whole words, any separators), but the converter emits none: regexes with `\b`
    stay `match`. Teaching it `\bWORD\b` (and `(?i)\bA\s+B\b` as `iword("a b", s)`) is the next exact case.
-5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is now addition 7,
-   `dfs_first` / `dfs_first_memo` (data-layer/DESIGN.md). Open: the spike's search inside cycles is
-   Python, and the knot pass materialises the live edge table (0.4 s of 2.2 s at 500,000 edges); a native
-   engine would run Tarjan over the tape's edges directly. The producer's supplied `memo`/`visiting` inputs
-   (a supplied-fact API feature) are not modelled. `roots` ordered by a symbol column compares symbols as
-   text, which Soufflé does not (it orders symbols by table index).
+5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is addition 7, `dfs_first`
+   / `dfs_first_memo` (data-layer/DESIGN.md). Closed 2026-11-05:
+   - the search and the cycle pass are native in spikes/dfs-first/native: Tarjan reads the CSR edge array, no
+     table is materialised; 1,000,000 functions and 5,000,000 calls take 0.2 s of set passes;
+   - the producer's supplied visiting set and memo are a rewrite of `edge` and `target`, checked on 20,000
+     graphs; no extra arguments;
+   - ordering roots by a symbol column matches Soufflé after all: Soufflé's `<` on symbols compares the
+     decoded strings (interpreter Engine.cpp, COMPARE_STRING); only `ord()` is the table index. The earlier
+     note here was wrong.
+   Still open: no engine has the built-ins; the native spike is single-threaded, and the GPU waves for steps 1-3
+   are not written.

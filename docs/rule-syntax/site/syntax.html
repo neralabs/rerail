@@ -147,6 +147,8 @@ exec(code)                          # not reported: this exec is the local funct
           <td><code>s = join x by k sep "," : { … }</code>: the rows' x values in k order, joined. For sorted lists in keys and for the exact bytes a signature covers</td></tr>
       <tr><td>Stratified negation: a relation is complete before anything negates it</td>
           <td><code>.decl r(…) ordered by earlier</code>: r may read itself under <code>!</code> or an aggregate at strictly earlier nodes. For "the latest earlier write that counts" (see "What the data-layer checks need")</td></tr>
+      <tr><td>Recursion computes every path; nothing picks one</td>
+          <td><code>dfs_first(r, hit, first, edge, target)</code>: the first target a depth-first search from r reaches, edges tried in order. Computed set-based; only cycles need a search (see "The first target of a search")</td></tr>
       <tr><td><code>.lattice flat&lt;&gt; { Bottom -&gt; …, Lub -&gt; … }</code>; <code>.pragma "magic-transform" "rel"</code></td>
           <td>Used as Soufflé defines them, for typing's lattices and for demand-driven evaluation</td></tr>
       <tr><td></td>
@@ -197,6 +199,7 @@ exec(code)                          # not reported: this exec is the local funct
     <div class="txt">
       <h2>Bodies</h2>
       <p>Each rule below is one construct, with what it matches. All of them are Soufflé. A variable inside <code>{ … }</code> stays there unless it is also used outside.</p>
+      <p class="perf"><b>Performance.</b> <code>kind(n, "call")</code> is an index lookup: start a body with it. A text test (<code>glob</code>, <code>match</code>, …) runs once per distinct string in the run, for all rules together, never once per node. A test on <code>text(n, s)</code> of a large node pays for that text once; test a short typed text (<code>name</code>, <code>str</code>) when there is one. <code>!r(n)</code> and <code>count : { … } = 0</code> are anti-joins: r is computed completely first, then looked up.</p>
     </div>
     <div class="code">
 <div class="cap">Rules</div><div data-rr>
@@ -255,6 +258,7 @@ def handler():
       <p>Two additions bind variables from code. A pattern atom, <code>n ~ `…`</code>, matches node <code>n</code> against a code pattern in the policy's language, ast-grep's pattern syntax. Each <code>$X</code> in the pattern binds the variable <code>X</code>; by convention, variables bound by patterns are written in capitals and no others are.</p>
       <p>A named group in a regex binds a variable too: <code>(?&lt;D&gt;…)</code> binds <code>D</code>. Matched against a node, the capture is a <em>span</em>, a piece of that node's text. A span has <code>text</code> and <code>line</code>, can be a finding's <code>at</code>, and can be the target of an edit, so a finding and its fix can point at four characters of a comment. Matched against a string, the capture is a string.</p>
       <p>A group that takes no part in the match gives no row. Inside <code>!</code> or <code>count : { … }</code> a group binds only there, like any variable.</p>
+      <p class="perf"><b>Performance.</b> A pattern atom is matched only at candidate nodes: the anchor index picks them by kind and by literal text in the pattern, so <code>`exec($A)`</code> visits calls whose callee is <code>exec</code>, not every call. A pattern with no literal and a common kind (<code>`$F($$$)`</code>) visits every call: add the literal, or a cheap atom before it. <code>match</code> compiles to a DFA (no look-around, no back-references), so it costs what a glob costs; captures are extracted after a match, once per distinct string. <code>match_all</code> is linear in the text it scans.</p>
     </div>
     <div class="code">
 <div class="cap">Python</div><div data-src>
@@ -284,6 +288,7 @@ hook_name(f, x) :- def_name(f, n), match(&quot;use_(?&lt;x&gt;.*)&quot;, n).
     <div class="txt">
       <h2>From JSON to .rr</h2>
       <p>Every JSON construct has a fixed lowering. The tree axes become native tree relations: <code>within</code> is "below", and <code>within_stop</code> is "below, with no stop node in between". Utilities become relations. ast-grep shares metavariables between a rule and its utilities; a Datalog variable belongs to one rule, so a utility that reads or binds a metavariable its caller uses gets it as an extra column. Anything without a lowering stays as a matcher atom, <code>ast(n, {…})</code>, and runs as it does today.</p>
+      <p class="perf"><b>Performance.</b> The tree axes with a set (<code>inside</code>, <code>has</code>, <code>nearest</code>, <code>within_stop</code>, <code>precedes_stop</code>) are one pass over the document's tape per axis and set, not recursion. Plain <code>within(n, a)</code> relates a node to every ancestor, so its rows grow with nesting depth: prefer <code>inside(n, a, "kind")</code> or <code>nearest</code> when the ancestor's kind is known.</p>
     </div>
     <div class="tablewrap"><table class="map">
       <tr><th>JSON</th><th>.rr</th></tr>
@@ -325,6 +330,7 @@ hook_name(f, x) :- def_name(f, n), match(&quot;use_(?&lt;x&gt;.*)&quot;, n).
       <h2>Fixes</h2>
       <p>A fix is a set of edits, and rules derive edits like any other rows. A rule that ends in <code>=&gt; e1, e2</code> adds those edits to the fix named in its head. A fix relation has its violation's columns; Rerail fills them from each finding, so a fix's rules run once per finding.</p>
       <p>The binary applies four edits: <code>replace</code>, <code>delete</code>, <code>insert_before</code>, <code>insert_after</code>. Edits declared with <code>.edit</code>, such as <code>hoist</code> and <code>remove_stmt</code>, are Datalog in the libraries and expand to those four, so they change without a new binary.</p>
+      <p class="perf"><b>Performance.</b> Fix rules are asked for findings only, one question per finding, so a costly safety check in a fix body costs nothing on clean files.</p>
       <p>The example is from function-level-imports. One file has two imports inside functions:</p>
       <ol class="steps">
         <li><code>FUNCTION_IMPORT</code> finds both and gives each a code: <code>"deferred-no-cycle"</code> and <code>"unread"</code>.</li>
@@ -426,6 +432,7 @@ NO_DOUBLE_BANG(n) :- n ~ `$E!!` =&gt; replace(n, `$E!`).
         <li><code>python/names</code>, <code>python/imports</code>, <code>python/calls</code>: adapted from an earlier Datalog prototype of Python call resolution.</li>
         <li><code>tsx/names</code>, <code>tsx/jsx</code>: drafted for this page.</li>
       </ul>
+      <p class="perf"><b>Performance.</b> A library relation is computed once per run and shared by every policy that reads it, so a second policy over <code>python/names</code> adds only its own rules. Name resolution and imports span the workspace, so they cost the most: reach them through a selective atom (<code>sym_of(t, q)</code> after <code>kind(t, "identifier")</code> and a name test), not as a whole relation.</p>
     </div>
     <div class="code">
 <div class="cap">What a Python rule can use</div><div data-rr>
@@ -448,6 +455,7 @@ NO_DOUBLE_BANG(n) :- n ~ `$E!!` =&gt; replace(n, `$E!`).
       <p>A relation declared <code>must, may</code> is computed twice. <code>must</code> holds what is proven; <code>may</code> holds what is proven or unknown. A rule prefixed <code>must</code> or <code>may</code> adds rows to that side only. A rule with no prefix adds to both.</p>
       <p>Negation swaps sides. <code>must stuck(e) :- …, !passes(e)</code> reads the may side: the element is surely stuck only if it surely does not pass. So a definite finding never rests on an unknown.</p>
       <p>A finding that holds only on the may side keeps its code, is tagged <code>possible</code>, and uses the <code>.possible</code> mode, here <code>log</code> instead of <code>block</code>.</p>
+      <p class="perf"><b>Performance.</b> A <code>must, may</code> relation is computed twice, and everything that negates it reads both sides. Declare it only where facts can really be missing.</p>
     </div>
     <div class="code">
 <div class="cap">TSX being checked</div><div data-src>
@@ -489,8 +497,9 @@ may  passes(e) :- tag(e, t), sym_of(t, q), !component(q, _).
     <div class="txt">
       <h2>What the data-layer checks need</h2>
       <p>The data-layer repository has 142 lint checks, written in Python. Each was read against the language, to find what it needs beyond what is here. Most needs are facts the Python checks take from CPython (its <code>ast</code>, its string decoder, its visit order) and repository files they read (allowlists, signed baselines, Markdown). Those became native facts and library relations, not syntax.</p>
-      <p>Two needs became language: <code>join</code>, because nothing else builds the exact text a signature covers, and <code>ordered by earlier</code>, for state where only some writes count. Most state needs no new form: when every assignment resets a name, the latest write is plain syntax, and the recursion is positive. Signatures are checked in Datalog, so a repository's own signing layout needs no new reader.</p>
+      <p>Three needs became language: <code>join</code>, because nothing else builds the exact text a signature covers; <code>ordered by earlier</code>, for state where only some writes count; and <code>dfs_first</code>, below. Most state needs no new form: when every assignment resets a name, the latest write is plain syntax, and the recursion is positive. Signatures are checked in Datalog, so a repository's own signing layout needs no new reader.</p>
       <p>Checks that run repository code (pytest collection, import-time registries) stay outside: a CI step writes the facts to a file and the policy reads it. Rerail never runs the code it checks.</p>
+      <p class="perf"><b>Performance.</b> <code>join</code> sorts each group, so it is meant for short lists (an allowlist, a key), not whole files. An <code>ordered by earlier</code> relation is evaluated one document at a time in visit order, which is sequential: use it only when which write counts depends on the relation itself; a plain <code>max</code> over <code>earlier</code> is set-based. <code>@unparse</code>, <code>@ast_dump</code> and <code>str_part</code> come from an isolated CPython worker, one batch per wave: put a cheap filter before them so only the nodes that need them are sent.</p>
     </div>
     <div class="code">
 <div class="cap">Signatures in Datalog (checked against the repository's real signatures)</div><div data-rr>
@@ -522,6 +531,87 @@ src_code(n, c) :- ast_name(n, x), expr_ctx(n, &quot;load&quot;), frame(n, f),
     visit_index(w, k), write(w, f, x, v), src_code(v, c).
 </div>
     </div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>The first target of a search</h2>
+      <p>Recursion finds every path. Some checks report the path a depth-first search finds first: "the function reaches an eager <code>resolve()</code>, reported at the first call that leads there". Which call is first depends on order, so a closure cannot say it, and a closure reports every call that leads there.</p>
+      <p><code>dfs_first(r, hit, first, edge, target)</code> answers it. <code>edge(src, dst, ord)</code> is any relation of three columns: from each node the search tries edges in increasing <code>ord</code>, enters each node once, and skips nodes on its current path. <code>hit</code> is the first node of <code>target</code> an edge reaches, and <code>first</code> is the <code>ord</code> of r's edge that starts the path, so <code>visit_index(c, first)</code> gives the call to report. r is never its own hit; write <code>target(r)</code> beside it for that. No row means no target is reachable.</p>
+      <p><code>dfs_first_memo(…, roots)</code> is the variant some scripts have: roots are searched in the order of <code>roots</code>' second column (numbers, or symbols compared as text, as Soufflé's <code>&lt;</code> does), one memo is shared, and a node finished while a cycle was open counts as reaching nothing. It reports fewer findings on cycles. Use it only where findings must match such a script.</p>
+      <p>Both take relations as arguments, like <code>nearest</code>, so those relations must be complete first: the checker treats them as negated. A known answer or a node to avoid is a rewrite of the arguments, not an option: drop a node's edges to avoid it; replace them with one edge to its target to fix its answer.</p>
+      <p class="perf"><b>Performance.</b> Set passes, then a search only where cycles are. The engine computes which nodes can reach a target, each node's first edge into one, and where each chain of first edges ends; a root whose chain stays out of every cycle is answered from that, whatever the order of roots. Only chains that enter a cycle are searched, inside the cycle, and without the shared memo each entry point is searched once. A cycle through most of the graph keeps a search that large: depth-first order on general graphs is inherently sequential.</p>
+    </div>
+    <div class="code">
+<div class="cap">Rule (data-layer/sketches/transitive-eager.rr)</div><div data-rr>
+// The call graph: f&#x27;s calls in visit order, to the eager call itself
+// or to the def it resolves to.
+leg_edge(f, c, i) :- eager_resolve(c), py_frame(c, f), visit_index(c, i).
+leg_edge(f, g, i) :- name_call_target(c, g), py_frame(c, f),
+    visit_index(c, i).
+eager_call(c) :- eager_resolve(c).
+
+// One finding per function that reaches an eager call, at the call
+// that starts the first path.
+LEG_083(c) :- leg_root(f, _), dfs_first(f, _, i, leg_edge, eager_call),
+    py_frame(c, f), visit_index(c, i).
+</div>
+<div class="cap">Python being checked</div><div data-src>
+def load(x):
+    check(x)          # check reaches no eager call
+    return fetch(x)   # fetch -&gt; resolve()   ← LEG_083 reported here
+
+def fetch(x):
+    return plan(x).resolve()
+</div>
+<div class="cap">Known answers and avoided nodes, as a rewrite of the edges</div><div data-rr>
+// Avoid node u: drop its edges and the edges into it (an edge into
+// an avoided target still counts as a hit, so keep those).
+// Fix node v&#x27;s answer to target t at location l: one edge, v -&gt; t.
+edge2(u, d, o) :- leg_edge(u, d, o), !avoid(u),
+    (!avoid(d) ; eager_call(d)), !known(u, _, _).
+edge2(v, t, l) :- known(v, t, l).
+</div>
+    </div>
+  </section>
+
+  <section class="sect">
+    <div class="txt">
+      <h2>Performance</h2>
+      <p>Nothing in this language runs in an engine yet, so this is the cost model the engine is designed to, with the measured numbers marked. It explains why rules should be written as sets.</p>
+      <p><b>How a run works.</b> Each document is parsed once into a tape, from which <code>kind</code>, <code>field</code>, <code>child</code>, <code>text</code> and the tree axes are read. The distinct strings of the run are collected, and every text test of every rule runs over them once. Rules are evaluated a stratum at a time, set at a time, in waves: a wave joins whole relations, and recursion repeats waves on the new rows only, until nothing changes. Library relations are shared by every policy in the run. Findings come last, and fixes are asked for findings only.</p>
+      <p><b>What follows from it.</b></p>
+      <ul class="tight">
+        <li>Cost is in rows, not in lines of rule. A body that starts with <code>kind(n, "call")</code> and a name test touches a few rows; a body that starts with <code>within(n, a)</code> touches every ancestor pair.</li>
+        <li>Everything is per distinct value. A text test, a regex capture or a CPython request is made once per distinct string or node, however many rules ask.</li>
+        <li>Nothing scans text per node. Text tests are DFA, glob or literal-set passes over strings; only <code>.scope text</code> checks read a file's lines.</li>
+        <li>A relation is complete before anything negates it, counts it or passes it as an argument. Deep chains of such strata add waves, not passes over the code.</li>
+        <li>Asking for one answer is cheaper than asking for all: <code>nearest</code> rather than <code>within</code>, <code>dfs_first</code> rather than a closure, the magic-set pragma rather than a whole relation read for a few rows.</li>
+        <li>The working set is bounded: rows live in SQLite on disk, and the engine keeps to 1 GB of memory.</li>
+      </ul>
+    </div>
+    <div class="tablewrap"><table class="map">
+      <tr><th>Operation</th><th>Cost</th><th>Use it well</th></tr>
+      <tr><td><code>kind</code>, <code>field</code>, <code>child</code>, <code>text</code>, <code>value</code></td><td>Tape lookups, indexed per document</td><td>Start bodies with a kind: it is the cheapest filter there is</td></tr>
+      <tr><td><code>n ~ `pattern`</code></td><td>Matched at candidates the anchor index picks by kind and literal text</td><td>Keep a literal in the pattern (a callee name), or put a cheap atom first</td></tr>
+      <tr><td><code>glob</code>, <code>prefix</code>, <code>suffix</code>, <code>contains</code>, <code>word</code>, <code>i</code> forms</td><td>Once per distinct string, all rules together: exact sets are hash sets, affix sets Aho-Corasick automata, the rest small DFAs</td><td>Test typed text (<code>name</code>, <code>str</code>) rather than the <code>text</code> of a big node; a set of patterns is a relation, and costs one automaton</td></tr>
+      <tr><td><code>match</code>, captures, <code>match_all</code></td><td>A glob's DFA cost; captures after a match, once per distinct string; <code>match_all</code> linear in the text</td><td>Use a glob when one says it; <code>match</code> for captures and real grammars</td></tr>
+      <tr><td><code>inside</code>, <code>has</code>, <code>nearest</code>, <code>within_stop</code>, <code>precedes_stop</code></td><td>One tape pass per axis and set</td><td>Prefer them to recursive climbs; keep the set a small relation of kinds</td></tr>
+      <tr><td><code>within</code>, <code>precedes</code></td><td>Rows grow with nesting depth, or with the number of siblings</td><td>Narrow both ends first, or use the set axes</td></tr>
+      <tr><td>Joins</td><td>Hash or index joins on bound columns</td><td>Bind the selective side first; a variable shared only by two large relations is a large join</td></tr>
+      <tr><td><code>!r(…)</code>, <code>count : { … } = 0</code></td><td>r complete first, then an anti-join</td><td>Negate a narrow relation, not a broad one</td></tr>
+      <tr><td><code>count</code>, <code>min</code>, <code>max</code>, <code>sum</code></td><td>A group-by over the body's rows</td><td>"First" and "latest" are <code>min</code>/<code>max</code> over <code>visit_index</code>, which is set-based</td></tr>
+      <tr><td><code>join</code></td><td>Sorts each group</td><td>Short lists: keys, allowlists, signed messages</td></tr>
+      <tr><td>Recursion</td><td>Waves over new rows only; a transitive closure can hold a row per pair of nodes</td><td>Restrict closures to the nodes rules ask about (<code>.pragma "magic-transform"</code>), or ask for one answer (<code>nearest</code>, <code>dfs_first</code>)</td></tr>
+      <tr><td><code>ordered by earlier</code></td><td>One document at a time, in visit order: sequential</td><td>Only when which write counts depends on the relation itself</td></tr>
+      <tr><td><code>dfs_first</code></td><td>Set passes, then a search only where chains enter cycles. <b>Measured</b> (native spike, 1,000,000 functions, 5,000,000 calls): 0.2 s of set passes, 0.06 s for every root, 435 MB peak</td><td>Order edges by <code>visit_index</code>; leave out edges a check does not follow, so cycles stay small</td></tr>
+      <tr><td><code>dfs_first_memo</code></td><td>As <code>dfs_first</code>, plus a search in root order for roots that enter cycles. <b>Measured</b>: 0.03 s for every root, against 0.32 s for the scripts' own search</td><td>For parity with a script only</td></tr>
+      <tr><td><code>must, may</code></td><td>The relation, and what negates it, twice</td><td>Only where facts can be missing</td></tr>
+      <tr><td><code>@unparse</code>, <code>@ast_dump</code>, <code>str_part</code>, <code>syntax_error</code> messages</td><td>An isolated CPython worker, one batch per wave</td><td>Behind cheap filters, so few nodes are sent</td></tr>
+      <tr><td><code>parsed(s, g, root)</code></td><td>Parses the string, once per distinct string</td><td>For annotations and embedded code, not every string literal</td></tr>
+      <tr><td><code>.input</code> files, artifacts</td><td>Read once per run; an artifact is checked against the digest of its inputs</td><td>Keep allowlists and baselines as files, not as facts in rules</td></tr>
+      <tr><td>Fixes</td><td>Asked per finding only</td><td>Put a costly safety argument in the fix, not in the finding rule</td></tr>
+    </table></div>
   </section>
 
   <section class="sect">

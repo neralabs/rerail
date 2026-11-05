@@ -147,6 +147,27 @@ that wants it writes `target(r)` beside the call, which is exactly the producer'
 checks this). `dfs_first_memo(…, roots)` is the scripts' variant: roots are searched in the order of `roots`'
 second column with one shared memo, and a node finished while a cycle was open is remembered as reaching
 nothing. That memo is why the scripts miss some paths through cycles. Use `dfs_first_memo` only for parity.
+The second column may be a number or a symbol; symbols compare as text, which is what Soufflé's `<` on symbols
+does (its interpreter decodes both and compares the strings; only `ord()` gives the table index), and what the
+scripts' `sorted(symbol)` does.
+
+**Supplied state is a rewrite, not an argument.** The producer also accepts an initial visiting set and an
+initial memo (its supplied-fact API). Both are expressible by rewriting the two relations the built-in already
+takes, so the language needs no further arguments:
+
+- a node in the visiting set (or with a negative memo entry, which behaves the same): drop its edges, and the
+  edges into it, except that an edge into a target still counts as a hit when edges are matched;
+- a node with a known answer (t at location l): replace its edges with one edge to t at l. In node mode it stops
+  being a target itself, because the memo is read before the node's own target test.
+
+```
+edge2(u, d, o) :- edge(u, d, o), !avoid(u), (!avoid(d) ; target(d)), !known(u, _, _).
+edge2(v, t, l) :- known(v, t, l).
+```
+
+The native spike checks the rewrite against the producer on 20,000 graphs with random visiting sets and memos,
+both modes, both variants. The one condition: a known answer names a target that is itself neither avoided nor
+known, as a memo entry the search wrote always does.
 
 **Stratification.** A relation passed as an argument is read whole: one more edge can change which target is
 first. `site/check_rr.py` now treats every relation argument (of `dfs_first`, `nearest`, `within_stop`, …) as a
@@ -173,8 +194,12 @@ on a cycle with the path. So the search follows the `next` chain until it enters
 The order of roots matters only to `dfs_first_memo`, and only where chains enter the knot. Which target is first
 matters only for rows that become findings, so with the magic-set pragma the search runs for those rows alone.
 
-**Measured** (spikes/dfs-first: SQLite for steps 1–3 and 5's lookups, Python for Tarjan and the searches; checked
-against a port of ordered_first.rs on 25,000 random graphs, both modes, both variants, no disagreement):
+**Measured.** Two implementations, both checked against a port of ordered_first.rs, both modes, both variants,
+with no disagreement: a SQLite + Python spike (25,000 random graphs) and a native Rust one with no SQL and no
+materialised tables (40,000 graphs, plus 20,000 with supplied state). Planted bugs (a fresh memo where the
+scripts share one; a rewrite that keeps a known node as a target) are caught by both.
+
+SQLite + Python:
 
 | Graph | Fresh-memo oracle | Shared-memo oracle (scripts) | Set-based |
 |---|---|---|---|
@@ -182,12 +207,24 @@ against a port of ordered_first.rs on 25,000 random graphs, both modes, both var
 | 100,000 functions, 500,000 calls, same shape | not run (quadratic) | 203 k steps, 0.25 s | 2.2 s SQL; 15 k / 36 k search steps; knot 739 nodes |
 | 5,000 functions, one cycle through almost all of them | 2.5 M steps, 0.45 s | 11 k steps, 0.01 s | 0.09 s SQL; 1.7 M search steps (fresh), 10 k (shared); knot 4,791 nodes |
 
-CPU time, user+sys, on a loaded machine (load average 20–60). Two readings. For the semantics this design
-recommends, `dfs_first` without the shared memo, the set-based plan replaces a search per root, quadratic, with
-a few set passes and a search confined to cycles. For the scripts' variant, their single linear search is
-already cheap on one core; the set-based plan pays SQLite's constant factors, and its gain is that it runs in
-waves with the other facts (and on the GPU path), not that it does less work. A cycle through most of the graph
-is the case no plan avoids: depth-first order on general graphs is P-complete (Reif 1985).
+Native (spikes/dfs-first/native; every set pass is a linear scan of a CSR edge array, Tarjan reads it directly):
+
+| Graph | Set passes | Every root, fresh memo | Every root, shared memo | Scripts' search (oracle) |
+|---|---|---|---|---|
+| 5,000 functions, 25,000 calls, module recursion | under 1 ms | 449 search steps, under 1 ms | 1,564 steps, under 1 ms | fresh: 7.7 M steps, 0.25 s; shared: 13 k steps, 1 ms |
+| 100,000 functions, 500,000 calls | 0.020 s | 15 k steps, 0.004 s | 31 k steps, 0.002 s | shared: 204 k steps, 0.026 s |
+| 1,000,000 functions, 5,000,000 calls | 0.20 s (load 0.04, live 0.05, next 0.004, first_of 0.03, knot 0.05, ent 0.03) | 369 k steps, 0.06 s | 441 k steps, 0.03 s | shared: 2.0 M steps, 0.32 s |
+| 5,000 functions, one cycle through almost all | under 1 ms | 4.3 M steps, 0.16 s | 11 k steps, 1 ms | fresh: 4.9 M steps, 0.21 s |
+
+Peak resident memory at 1,000,000 functions: 435 MB, including the oracle's memo. CPU time, user+sys; the machine
+was heavily loaded (load average 20–150), so times are upper bounds.
+
+Three readings. For `dfs_first`, the semantics this design recommends, the plan replaces a search per root,
+quadratic, with linear set passes and a search confined to cycles. For the scripts' variant, the native plan is
+also cheaper than their own linear search (0.23 s against 0.32 s at a million functions, set passes included),
+and it runs in waves with the other facts; the SQLite spike's extra cost was SQLite's, not the plan's. A cycle
+through most of the graph is the case no plan avoids: depth-first order on general graphs is P-complete (Reif
+1985), and the fresh-memo search there costs what the oracle's does.
 
 **Prior art.**
 

@@ -129,9 +129,11 @@
 // would materialise every (node, ancestor) pair; on the tape each question is a range comparison.
 // In `function f() { g(); }`: within(call_g, body), within(call_g, f), but not within(f, call_g).
 .decl within(n: node, a: node)                           // n is strictly below a
+// Cost: a range test per pair, but its rows are every (node, ancestor) pair. Bind both ends, or use inside/nearest.
 // inside(n, a, set) / has(a, n, set): a is a strict ancestor of n whose kind is in set (decision 0036); the same
 // pairs, read from either end. inside(call, f, "function_definition"): call is somewhere in f. These are the
 // forms rules use: the kind set is part of the axis, so the transducer answers them in one tape pass.
+// Cost (inside, has, nearest, within_stop, precedes_stop): one tape pass per axis and set; keep the set small.
 .decl inside(n: node, a: node, set: relation)
 .decl has(a: node, n: node, set: relation)
 //
@@ -153,6 +155,7 @@
 .decl precedes_stop(a: node, b: node, stop: relation)
 // Python `x: "List[int]"`: parsed(str, "annotation", root) gives the tree of the code inside the string, so
 // rules can resolve names in string annotations. Native because it runs the parser on the string's contents.
+// Cost: one parse per distinct string; ask for it only for strings that hold code (annotations, embedded SQL).
 .decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
 // argument-matching rules must treat the call as open.
@@ -164,6 +167,8 @@
 // CPython's ast order: a def's decorators and return annotation come after its body, defaults after all the
 // parameters. Elsewhere it is start offset. It is the order `ordered by` relations look back along (below), and
 // "the latest assignment before this use" is `max` over it.
+// Cost: earlier is a comparison of visit_index values, not a stored pair relation; `max i : { …, earlier(m, n),
+// visit_index(m, i) }` is set-based. Only relations declared `ordered by earlier` run sequentially per document.
 .decl earlier(m: node, n: node)
 .decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
@@ -174,11 +179,17 @@
 // edge reaches it; r itself is never its own hit (write `target(r)` beside it for that). first is the ord of
 // r's edge that starts the path, so `visit_index(c, first)` gives the call to report. No row: no target is
 // reachable. The engine computes it set-based (addition 7); only cycles need a search.
+// A known answer or a node to avoid is a rewrite of `edge`, not an extra argument: drop an avoided node's edges
+// (keep edges into it if it is a target); give a node with a known answer one edge, to that target.
+// Cost: four set passes (reach, first edge into a reaching node, chain ends, cycle components), then a search only
+// where a root's chain of first edges enters a cycle. Spike: 1,000,000 nodes and 5,000,000 edges in 0.2 s CPU of
+// set passes and 0.06 s for every root (spikes/dfs-first). A cycle through most of the graph keeps the search.
 .decl dfs_first(r: node, hit: node, first: number, edge: relation, target: relation)
 // dfs_first_memo(…, roots): the scripts' variant. Roots are searched in increasing order of roots' second
 // column (a number, or a symbol compared as text, for `sorted(symbol)`),
 // sharing one memo, and a node finished while a cycle was open is remembered as reaching nothing. Use it
 // only where a finding must match a script that does this; it reports fewer findings on cycles.
+// Cost: as dfs_first, plus a search in root order for each root whose chain enters a cycle.
 .decl dfs_first_memo(r: node, hit: node, first: number, edge: relation, target: relation, roots: relation)
 .input within, inside, has, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
 .input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo
@@ -193,6 +204,8 @@
 //                 Variables bound by patterns are written in capitals by convention; nothing else is.
 // text_rule(d, {…})  a document-level regex rule (forbid.regex), from a translated JSON rule
 // ast(n, { … })   a JSON matcher term with no Datalog form yet; compiled to a transducer program
+// Cost: a pattern is tried only at candidates the anchor index picks by kind and by the pattern's literal text;
+// a pattern with no literal (`$F($$$)`) is tried at every node of its kind.
 
 // ---- order and aggregation: additions 5 and 6 -------------------------------------------------------------------
 // 5. join, an ordered string aggregate. Soufflé's aggregates are count, sum, min, max and mean; none builds a string.
@@ -291,6 +304,8 @@
 // @unparse(n): the reference printer's text of n (Python: ast.unparse). Comments go, quotes and spacing are
 // normalised. Native because it is the reference implementation's printer, not a property of the tree.
 .functor unparse(n: node): symbol
+// Cost (@ast_dump, @unparse, str_part, syntax_error's message): the isolated CPython worker, one batch per wave.
+// Put cheap atoms first so only the nodes that need them are sent.
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
