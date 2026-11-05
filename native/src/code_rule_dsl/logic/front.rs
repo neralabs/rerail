@@ -281,7 +281,7 @@ impl LatticeDecl {
         self.merge.as_deref().unwrap_or(&self.ty)
     }
 
-    fn bounded(&self) -> bool {
+    pub(in crate::code_rule_dsl) fn bounded(&self) -> bool {
         self.widen.is_some() || (self.merge.is_none() && self.ty == "flat")
     }
 }
@@ -313,6 +313,8 @@ pub(in crate::code_rule_dsl) struct Program {
     pub(in crate::code_rule_dsl) gates: Vec<(String, crate::code_rule_dsl::logic::magic::Gate)>,
     /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
     pub(in crate::code_rule_dsl) policies: Vec<serde_json::Value>,
+    /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
+    pub(in crate::code_rule_dsl) settings: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -688,16 +690,24 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
         p.p(":-")?;
         let body = p.list(Parser::literal)?;
         p.p(".")?;
+        prog.rules.push(Rule { head, body });
+    }
+    finish(prog)
+}
+
+/// The checks and additions every program gets once parsed, whatever its syntax (this one or `.rr`, `logic::rr`):
+/// no computed term in a body atom, bounded lattices, the tree axes' input relations, bounded value cycles.
+pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Error> {
+    for rule in &prog.rules {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
-        if let Some(a) = body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
+        if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
             .find(|a| a.args.iter().any(|t| matches!(t, Term::Call(..))))
         {
             return Err(Error::Syntax(format!(
-                "computed term in body atom {} of the rule for {}: bind it with `$v = @f(...)`",
-                a.rel, head.rel
+                "computed term in body atom {} of the rule for {}: bind it with `v = @f(...)`",
+                a.rel, rule.head.rel
             )));
         }
-        prog.rules.push(Rule { head, body });
     }
     for (relation, decl) in &prog.lattice {
         if !decl.bounded() {
