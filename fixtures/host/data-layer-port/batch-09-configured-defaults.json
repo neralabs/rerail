@@ -1,0 +1,81 @@
+{
+  "format": "rerail.data-layer-configured-defaults/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "cases": [
+    {
+      "check": "bootstrap_cache_health",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "source": "create_tables(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail"
+    },
+    {
+      "check": "bootstrap_lazy_sql",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "table_exists_many(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "report"
+    },
+    {
+      "check": "bootstrap_eager_resolve",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "table_exists_many(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "report"
+    },
+    {
+      "check": "connection_mode_split",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "source": "class DatabaseConnection(\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail"
+    },
+    {
+      "check": "schema_architecture",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "source": "SchemaTransaction = (\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "schema_architecture",
+          "code": "SAP000",
+          "path": "l2000_connection/probe.py",
+          "line": 1,
+          "message": "cannot inspect schema lifecycle ownership: SyntaxError: '(' was never closed (probe.py, line 1)",
+          "severity": "error"
+        }
+      ],
+      "enforcement": "hard-fail"
+    },
+    {
+      "check": "bootstrap_engine_invariants",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "bootstrap = (\n"
+        }
+      ],
+      "expected": [],
+      "enforcement": "hard-fail"
+    }
+  ]
+}

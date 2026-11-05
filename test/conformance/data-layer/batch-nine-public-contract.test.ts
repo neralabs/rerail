@@ -51,3 +51,13 @@ it.each(scopes.rules as { ruleId: string; paths: { path: string; inScope: boolea
   const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(raw)), "json", capabilitiesJson());
   for (const path of spec.paths) expect(rule.inScope(path.path), path.path).toBe(path.inScope);
 });
+
+const configured = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-09-configured-defaults.json", "utf8"));
+for (const mode of ["snapshot", "workspace"] as const) it.each(configured.cases as { check: string; files: { path: string; source: string }[]; expected: { code: string; path: string; line: number; message: string }[] }[])(`${mode} retains configured parser behavior for $check`, async spec => {
+  const result = await runDataLayerAudit({ repositoryRoot: ".", packDirectory: "packs/data-layer", mode,
+    ruleIds: [`data-layer-${spec.check.replaceAll("_", "-")}`], snapshot: { format: "rerail.repository-snapshot/v1", revision: 0,
+      files: spec.files.map(file => ({ ...file, language: "python" })) } });
+  expect(result.failures).toEqual([]);
+  expect(result.violations.map(row => ({ code: row.code, path: row.path, line: row.span!.startLine + 1, message: row.message })))
+    .toEqual(spec.expected.map(({ code, path, line, message }) => ({ code, path, line, message })));
+});
