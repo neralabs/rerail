@@ -50,7 +50,7 @@ try {
       if (rule === undefined) {
         rule = loadNativeBinding().CodeRuleDslRuntime.compile(key, "json", capabilitiesJson()); compiled.set(key, rule);
       }
-      const files = request.files.map(file => ({ ...file, language: "python" }));
+      const files = request.files.map(file => ({ ...file, language: file.path.endsWith(".py") ? "python" : "text" }));
       let result: { violations: unknown[]; failures: unknown[]; telemetry?: unknown };
       if (request.mode === "snapshot") result = JSON.parse(execution.evaluate(rule,
         JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0, files, facts: [] }), "report"));
