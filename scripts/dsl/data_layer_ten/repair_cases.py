@@ -46,6 +46,8 @@ STATE_BODIES=[
  'for *child, tail in self.then_plan.steps:\n    child.compile(ctx)',
  'factory().compile(ctx)',
  'if ctx.backend_type.is_sql_backend:\n    pass',
+ 'a = 1 if flag else 0; b = 2 if ctx.backend_type else 3',
+ 'a = 1 if ctx.backend_type else 0; b = 2 if ctx.backend_type else 3',
 ]
 def shared_findings(tmp_path,source):
  from scripts import conditional_architecture_facts as shared
@@ -64,7 +66,21 @@ def test_shared_control_flow(tmp_path,body):
 
 @pytest.mark.parametrize('body',STATE_BODIES)
 def test_shared_state_and_provenance(tmp_path,body):
- source='class ConditionalStep:\n    pass\nclass Derived(ConditionalStep):\n    def run(self, ctx):\n        '+body.replace('\n','\n        ')+'\n'
+ source='from l2070_batching.conditional_step import ConditionalStep as Semantic\nclass ConditionalStep:\n    pass\nclass Derived(Semantic):\n    def run(self, ctx):\n        '+body.replace('\n','\n        ')+'\n'
+ assert isinstance(shared_findings(tmp_path,source),list)
+
+@pytest.mark.parametrize('source',[
+ 'class ConditionalStep:\n    callback: Callable[[Callable], Callable]\n',
+ 'class ConditionalStep:\n    def compile(self):\n        raise TypeError\n    def compile(self):\n        return None\n',
+ 'class ConditionalStep:\n    def compile(self):\n        return None\n    def compile(self):\n        raise TypeError\n',
+ 'class ConditionalStep:\n    def compile(self):\n        raise TypeError\nclass ConditionalStep:\n    pass\n',
+ 'class ConditionalStep:\n    def outer(self):\n        def compile():\n            raise TypeError\n',
+ 'class ConditionalStep:\n    pass\nclass Derived(ConditionalStep):\n    def __init__(self, callback: Callable):\n        self.callback = callback\n',
+ 'class ConditionalStep:\n    pass\nclass Derived(ConditionalStep):\n    def run(self):\n        self.value = 1\n        def run():\n            self.value = 2\n',
+ 'class ConditionalStep:\n    pass\nclass Derived(ConditionalStep):\n    def outer(self):\n        class Derived(ConditionalStep):\n            def run(self):\n                self.value = 2\n',
+])
+def test_shared_declaration_ownership(tmp_path,source):
+ source='from l2070_batching.conditional_step import ConditionalStep as Semantic\n'+source.replace('Derived(ConditionalStep)','Derived(Semantic)')
  assert isinstance(shared_findings(tmp_path,source),list)
 
 @pytest.mark.parametrize('signature',['def match(self):','def \\\n match(self):','async def match(self):','async \\\n def match(self):'])
