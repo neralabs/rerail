@@ -506,6 +506,34 @@ fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
     }
 }
 
+/// Above this many join literals a body is ordered greedily, not searched (decision 0038).
+const GREEDY: usize = 12;
+/// A kept plan is searched again where its work per node grew more than this (decision 0038).
+const REPLAN: f64 = 4.0;
+
+thread_local! {
+    /// Plans kept across a corpus run's chunks, on the thread that runs them: per rule (head, body, delta, the
+    /// component solved), its order and its work per node when planned. `None` outside a corpus run: every plan is
+    /// searched.
+    static PLANS: std::cell::RefCell<Option<HashMap<String, (Vec<Step>, f64)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Plans kept across chunks on this thread while held (a corpus run), none kept at the start.
+pub(in crate::code_rule_dsl) struct KeepPlans;
+
+impl KeepPlans {
+    pub(in crate::code_rule_dsl) fn start() -> Self {
+        PLANS.with(|p| *p.borrow_mut() = Some(HashMap::new()));
+        KeepPlans
+    }
+}
+
+impl Drop for KeepPlans {
+    fn drop(&mut self) {
+        PLANS.with(|p| *p.borrow_mut() = None);
+    }
+}
+
 /// A rule body in plan order, its estimated work and its estimated output rows.
 pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 
@@ -534,6 +562,55 @@ impl Model {
         head: &Atom,
         body: &[Literal],
         first: Option<usize>,
+    ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        self.plan_inner(prog, head, body, first, None)
+    }
+
+    /// `plan_rule_explained`, reusing this rule's plan from an earlier chunk (decision 0038): the kept order is
+    /// re-priced with this chunk's statistics, and searched again only where its work per node grew more than
+    /// `REPLAN` times, or it no longer runs (a relation it reads is missing). The planner's cache lives for a
+    /// corpus run (`reset_plans`).
+    pub(in crate::code_rule_dsl) fn plan_rule_reused(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        body: &[Literal],
+        first: Option<usize>,
+    ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        let key = format!("{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","));
+        let nodes = self.stats.nodes.max(1.0);
+        let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
+            return self.plan_inner(prog, head, body, first, None);
+        };
+        if let Some((order, per_node)) = kept {
+            match self.plan_inner(prog, head, body, first, Some(&order)) {
+                Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) => {
+                    super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
+                    return Ok(got);
+                }
+                Ok(_) => super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x")),
+                Err(_) => super::profile::decision("plan cache (decision 0038)", || "replanned: the kept order no longer runs".into()),
+            }
+        } else {
+            super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
+        }
+        let got = self.plan_inner(prog, head, body, first, None)?;
+        PLANS.with(|p| {
+            if let Some(p) = p.borrow_mut().as_mut() {
+                p.insert(key, (got.0.0.clone(), got.0.1 / nodes));
+            }
+        });
+        Ok(got)
+    }
+
+    /// The search, or with `fixed`, the pricing of that order (an error where it cannot run).
+    fn plan_inner(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        body: &[Literal],
+        first: Option<usize>,
+        fixed: Option<&[Step]>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let stats = &self.stats;
         // var → constant kind, from kind($v, "k") atoms.
@@ -665,7 +742,15 @@ impl Model {
             None
         };
         // (work, rows out, mode) of adding join literal `l`, or None if it can't run yet.
+        let long = body.iter().filter(|l| is_join(l)).count() > GREEDY;
         let step = |l: &Literal, rows: f64, bound: &BTreeSet<String>| -> Option<(f64, f64, Option<Mode>)> {
+            // In a long body's greedy order, a step that reads with no bound variable (a scan, a cross product) is
+            // priced from at least one binding (Postgres's `clamp_row_est`): an estimate near 0 would make every next
+            // step look free (decision 0038). The search keeps T's pricing, which takes a cross product after an
+            // unfilled relation (`magic_returns`) on purpose; a kept plan made where a relation was empty is re-priced
+            // in the next chunk and replanned where it grew.
+            let unbound = matches!(l, Literal::Atom(a) if !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))));
+            let rows = if long && unbound && !bound.is_empty() { rows.max(1.0) } else { rows };
             match l {
                 Literal::Atom(a) => {
                     let out = rows * atom_rows(a, bound);
@@ -719,10 +804,72 @@ impl Model {
         if !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
-        type Best = (f64, f64, Vec<Step>, BTreeSet<String>, Vec<usize>);
         let mut candidates = 0u64;
+        let (work, rows, order, subsets) = if let Some(fixed) = fixed {
+            // The kept order, priced now: each join step as the search prices it, each filter once ready.
+            let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, BTreeSet::new(), Vec::new());
+            for s in fixed {
+                let l = body.get(s.at).filter(|l| **l == s.lit).ok_or_else(|| Error::Plan("a kept plan of another body".into()))?;
+                if is_join(l) {
+                    let (w, out, mode) = step(l, rows, &bound).ok_or_else(|| Error::Plan("a kept step cannot run".into()))?;
+                    work += w;
+                    rows = out;
+                    order.push(Step { at: s.at, lit: l.clone(), mode });
+                } else {
+                    if !ready(l, &bound) {
+                        return Err(Error::Plan("a kept filter cannot run".into()));
+                    }
+                    if !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. })) {
+                        rows *= 0.5;
+                    }
+                    order.push(s.clone());
+                }
+                bound.extend(l.vars());
+            }
+            (work, rows, order, 0)
+        } else {
+        type Best = (f64, f64, Vec<Step>, BTreeSet<String>, Vec<usize>);
         let mut best_of: HashMap<u64, Best> = HashMap::new();
         best_of.insert(0, (0.0, 1.0, Vec::new(), BTreeSet::new(), (0..body.len()).filter(|&i| !is_join(&body[i])).collect()));
+        // The greedy order's next step shares a variable with what is joined, while one can (no cross product while a
+        // connected step remains, decision 0038). The search prices cross products itself: a cheap one with a tiny
+        // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
+        let connected = |l: &Literal, bound: &BTreeSet<String>| bound.is_empty() || !l.vars().is_disjoint(bound);
+        let full_mask: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
+        let disconnected = |i: usize, prev: u64, bound: &BTreeSet<String>| {
+            !connected(&body[joins[i]], bound) && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && connected(&body[joins[j]], bound))
+        };
+        if joins.len() > GREEDY {
+            // Long bodies are ordered greedily (Postgres's `geqo_threshold`): the cheapest connected step next.
+            let (mut work, mut rows, mut order, mut bound, mut rest) = best_of.remove(&0).expect("the empty order");
+            let mut done: u64 = 0;
+            while done != full_mask {
+                let mut best: Option<(usize, f64, f64, Option<Mode>)> = None;
+                for i in 0..joins.len() {
+                    let l = &body[joins[i]];
+                    if done & (1 << i) != 0 || order.is_empty() && (!matches!(l, Literal::Atom(_)) || first.is_some_and(|f| f != joins[i])) {
+                        continue;
+                    }
+                    if disconnected(i, done, &bound) {
+                        continue;
+                    }
+                    let Some((w, out, mode)) = step(l, rows, &bound) else { continue };
+                    candidates += 1;
+                    if best.is_none_or(|b| w < b.1) {
+                        best = Some((i, w, out, mode));
+                    }
+                }
+                let Some((i, w, out, mode)) = best else { break };
+                order.push(Step { at: joins[i], lit: body[joins[i]].clone(), mode });
+                bound.extend(body[joins[i]].vars());
+                rows = close(&mut order, out, &mut bound, &mut rest);
+                work += w;
+                done |= 1 << i;
+            }
+            if done == full_mask {
+                best_of.insert(full_mask, (work, rows, order, bound, rest));
+            }
+        } else {
         for size in 1..=joins.len() {
             for subset in combinations(joins.len(), size) {
                 let mask: u64 = subset.iter().map(|&i| 1u64 << i).sum();
@@ -751,6 +898,7 @@ impl Model {
                     best_of.insert(mask, b);
                 }
             }
+        }
         }
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel) {
@@ -789,6 +937,8 @@ impl Model {
             let rest: Vec<String> = rest.iter().map(|&i| body[i].to_string()).collect();
             return Err(Error::Plan(format!("unplaced literals {rest:?} in {head}")));
         }
+        (work, rows, order, subsets)
+        };
         let explained = super::profile::on().then(|| {
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();
@@ -2053,7 +2203,7 @@ impl Run<'_> {
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
-            let ((order, _, rows), x) = self.model.plan_rule_explained(prog, &r.head, &r.body, None)?;
+            let ((order, _, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
             let Some(spec) = self.join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
@@ -2073,7 +2223,7 @@ impl Run<'_> {
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
-                let ((order, _, _), x) = self.model.plan_rule_explained(prog, &r.head, &r.body, Some(ai))?;
+                let ((order, _, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
@@ -2083,7 +2233,7 @@ impl Run<'_> {
                 let x = x.map(|x| delta_sources(x, &order, at, scc));
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
-                let (whole, _, _) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
+                let ((whole, _, _), _) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
                 let wspec = if whole[0].at != ai { self.join_spec(&r.head, &whole, None, &ri, scc, &native_rels) } else { None };
                 let mut line = format!("join {} {} {}", ri[&r.head.rel], ri[&a.rel], hex(&spec));
                 if let Some(w) = wspec {
@@ -2896,7 +3046,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         let planning = super::profile::span(|| "plan".into());
         for rule in &rules {
             let t0 = if super::profile::on() { super::profile::now() } else { 0.0 };
-            let ((order, work, _), x) = run.model.plan_rule_explained(prog, &rule.head, &rule.body, None)?;
+            let ((order, work, _), x) = run.model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
             explained.push((x, if super::profile::on() { super::profile::now() - t0 } else { 0.0 }));
             run.ensure_indexes(&order)?;
             outcome.chosen.push(Chosen {

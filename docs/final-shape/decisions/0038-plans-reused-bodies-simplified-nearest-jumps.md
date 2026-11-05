@@ -91,15 +91,22 @@ given, so a hand-written rule gets the same treatment.
 
 ### 3. The search is bounded
 
-- Only orders whose next atom shares a variable with what is already joined are considered, while
-  one exists (no cross product while a connected step remains).
-- Above 12 join literals the planner orders greedily: the cheapest connected step first. This is
-  Postgres's `geqo_threshold` of 12.
+- Above 12 join literals the planner orders greedily, as Postgres does above its `geqo_threshold`
+  of 12. The next step is the cheapest one that shares a variable with what is already joined,
+  while such a step exists, so there is no cross product while a connected step remains.
+- Up to 12, the full search stays, and it prices cross products itself. A cheap cross product
+  with a tiny relation is what T's planner picks on its programs. Forbidding it made one plan cost
+  7,001 instead of 67 (`t_programs_plan_and_run_like_t`).
 
 ### 4. Estimates stay at least one row
 
-- When later steps are priced, the running row estimate is at least 1, as Postgres's
-  `clamp_row_est`.
+- In a long body's greedy order, a step that reads with no bound variable (a scan, or a cross
+  product) is priced from at least one binding, as Postgres's `clamp_row_est` does.
+- The full search keeps T's pricing. T takes a cross product after a relation not yet filled
+  (`magic_returns`, estimated at 0) on purpose, and clamping there changed T's golden plans: 3
+  estimates, and one climb became a descent.
+- The hazard the floor was meant for is covered by plan reuse. A plan made where a text test was
+  empty is re-priced in the next chunk, and replanned where its work grew.
 - Column `a` of `nearest_<set>` and `inside_<set>` has a kind in the set, so a kind test on it
   passes every row.
 

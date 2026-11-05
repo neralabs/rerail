@@ -647,8 +647,12 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
 mod tests {
     use super::*;
 
+    /// The profile is process-wide: its tests run one at a time.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn spans_nest_and_charge_their_own_cpu() {
+        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         set(true);
         reset();
         {
@@ -667,16 +671,18 @@ mod tests {
         set(false);
         assert!(s["a/b"].total > 0.0 && s["a"].total >= s["a/b"].total);
         assert!(s["a"].own < s["a"].total);
-        assert_eq!(statements()[0].0, "a/b");
+        // Other tests' statements may land while profiling is on: this one's is there.
+        assert!(statements().iter().any(|(p, t, _)| p == "a/b" && t == "SELECT 1"));
     }
 
     #[test]
     fn explain_shows_engines_plans_devices_and_decisions() {
+        let _serial = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
         set(true);
         reset();
-        decision("chunks", || "2 chunks".into());
-        stratum("violation", "native set engine", || "every rule has a native step".into());
-        stratum("violation", "native set engine", String::new);
+        decision("xtopic", || "2 chunks".into());
+        stratum("xstratum", "native set engine", || "every rule has a native step".into());
+        stratum("xstratum", "native set engine", String::new);
         let plan = RulePlan {
             work: 10.0,
             rows: 2.0,
@@ -687,23 +693,23 @@ mod tests {
                 StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0 },
             ],
         };
-        planned("violation", "seed violation", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
-        planned("violation", "seed violation", Some(3), &plan, 0.01, 1, Some(&[(1, 4), (4, 1)]), None);
+        planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
+        planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 1, Some(&[(1, 4), (4, 1)]), None);
         {
-            let _s = span(|| "nearest".into());
-            device("nearest ancestors", 1, 0.002, 0.003, 100);
+            let _s = span(|| "xspan".into());
+            device("xkernel", 1, 0.002, 0.003, 100);
         }
         let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
         write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
         set(false);
-        assert!(report.contains("Stratum violation  [engine: native set engine]  (loops=2"), "{report}");
+        assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
-        assert!(report.contains("rule #0003 (seed violation)") && report.contains("loops=2 replans=1"));
+        assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");
-        assert!(report.contains("nearest ancestors  (nearest)"));
-        assert!(report.contains("chunks:\n  - 2 chunks"));
+        assert!(report.contains("xkernel  (xspan)"));
+        assert!(report.contains("xtopic:\n  - 2 chunks"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

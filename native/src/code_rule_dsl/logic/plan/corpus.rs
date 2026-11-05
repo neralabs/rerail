@@ -210,6 +210,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     if profiling {
         crate::code_rule_dsl::logic::profile::reset();
     }
+    // Plans are kept across this run's chunks only (decision 0038).
+    let _plans = super::KeepPlans::start();
     let mut prog = front::parse(program)?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
