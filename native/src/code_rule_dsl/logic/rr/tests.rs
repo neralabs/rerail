@@ -213,12 +213,11 @@ fn difference(a: &front::Program, b: &front::Program) -> Option<String> {
 fn authored() -> Vec<(String, String, PathBuf)> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     let mut out = Vec::new();
-    for dir in ["typing/programs", "logic/plan/golden/programs", "logic/programs/data_layer"] {
+    for dir in ["typing/programs", "logic/plan/golden/programs"] {
         let mut found = Vec::new();
         files(&src.join(dir), "rdl", &mut found);
         out.extend(found.into_iter().map(|p| (format!("{dir}/{}", p.file_name().unwrap().to_string_lossy()), p)));
     }
-    out.push(("gate/data-layer/final-shape/data-layer-serverplan-quality.rdl".to_owned(), repo().join("gate/data-layer/final-shape/data-layer-serverplan-quality.rdl")));
     out.into_iter().map(|(name, path)| (name, std::fs::read_to_string(&path).unwrap(), path)).collect()
 }
 
@@ -249,17 +248,12 @@ fn error_name(e: &Error) -> String {
     format!("{e:?}").split(['(', ' ', '{']).next().unwrap_or_default().to_owned()
 }
 
-/// Every authored `.rdl` program translates to `.rr` that lowers to the program the `.rdl` parses to (or fails with
-/// the same named error), and its `.rr` beside it is that translation.
+/// Each copied `.rdl` program (T's, until step 31 removes them) translates to `.rr` that lowers to the program the
+/// `.rdl` parses to (or fails with the same named error), and its `.rr` beside it is that translation.
 #[test]
 fn rdl_programs_translate_to_the_same_program() {
-    let prelude_rdl = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer/prelude.rdl")).unwrap();
-    let prelude_rr = translate(&prelude_rdl).unwrap();
     let mut failures = Vec::new();
     for (name, text, path) in authored() {
-        if name.ends_with("prelude.rdl") {
-            continue;
-        }
         let rr = match translate(&text) {
             Ok(rr) => rr,
             Err(e) => {
@@ -271,8 +265,7 @@ fn rdl_programs_translate_to_the_same_program() {
         if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
             failures.push(format!("{name}: {} is not its translation", beside.display()));
         }
-        let (rdl, rr) = if name.contains("data_layer/") { (format!("{prelude_rdl}\n{text}"), format!("{prelude_rr}\n{rr}")) } else { (text, rr) };
-        match (front::parse(&rdl).map(normalized), parse(&rr)) {
+        match (front::parse(&text).map(normalized), parse(&rr)) {
             (Ok(a), Ok(b)) => {
                 failures.extend(difference(&a, &b).map(|d| format!("{name}: {d}")));
                 // Printed, the program reads back as itself.
@@ -286,6 +279,35 @@ fn rdl_programs_translate_to_the_same_program() {
         }
     }
     assert!(failures.is_empty(), "{} programs differ:\n{}", failures.len(), failures.join("\n\n"));
+}
+
+/// The engine's own programs (the data-layer programs on their prelude, the serverplan quality program), printed,
+/// read back as themselves.
+#[test]
+fn rr_programs_print_as_themselves() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer");
+    let prelude = std::fs::read_to_string(dir.join("prelude.rr")).unwrap();
+    let mut found = Vec::new();
+    files(&dir, "rr", &mut found);
+    let mut programs: Vec<(String, String)> = found
+        .into_iter()
+        .filter(|p| !p.ends_with("prelude.rr"))
+        .map(|p| (short(&p), format!("{prelude}\n{}", std::fs::read_to_string(&p).unwrap())))
+        .collect();
+    let quality = repo().join("gate/data-layer/final-shape/data-layer-serverplan-quality.rr");
+    programs.push((short(&quality), std::fs::read_to_string(&quality).unwrap()));
+    let mut failures = Vec::new();
+    let mut lowered = 0;
+    for (name, text) in programs {
+        let Ok(b) = parse(&text) else { continue };
+        lowered += 1;
+        match print(&b).and_then(|text| parse(&text)) {
+            Ok(c) => failures.extend(difference(&b, &c).map(|d| format!("{name}, printed: {d}"))),
+            Err(e) => failures.push(format!("{name}, printed: {e}")),
+        }
+    }
+    assert!(lowered >= 20, "{lowered} programs lowered");
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
 /// Writes each authored program's `.rr` beside it (run once per change of an `.rdl`).

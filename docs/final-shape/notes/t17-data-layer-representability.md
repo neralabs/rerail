@@ -8,8 +8,8 @@ Nothing here runs a rule. Every count comes from one of two checked sources:
 - **The census** (`gate/data-layer/census/*.tsv`). `logic::front::data_layer_census_tests` derives it from the rule
   files on every test run and fails if a file drifts. `recursion.tsv` is classified by hand, and the test checks that
   its keys are exactly the recursions the rules contain.
-- **The programs** (`cr/logic/programs/data_layer/*.rdl`). These are the eight recursive rules written in Rerail
-  logic. `logic::front::data_layer_tests` parses and stratifies each one after `prelude.rdl` (front end only). It also
+- **The programs** (`cr/logic/programs/data_layer/*.rr`). These are the eight recursive rules written in Rerail
+  logic. `logic::front::data_layer_tests` parses and stratifies each one after `prelude.rr` (front end only). It also
   checks that every relation used in a rule or a fact is declared at its arity, and that every matcher atom holds JSON.
 
 `[INFERENCE]` marks reasoning that no run or file shows.
@@ -182,7 +182,7 @@ Every rule also uses `findings` (its violation template). The per-clause reading
 - **`block_results`** (E0 row 27) folds a JSON map in block order. Its tree form, in `serverplan_quality.block_results.rdl`, says a block raises when every block of its if/match raises. That is a negation of `raises` in its own component, so the front end reports `NotStratifiable`. It is stratified by tree depth, which §12's check cannot see; a bottom-up tree fold, or a per-file lattice inside the dispatch (03 §7), would carry it.
 
 **Facts no producer makes, by program:**
-- `module_of` and `reference_edge` (internal-dead-code, in `prelude.rdl`);
+- `module_of` and `reference_edge` (internal-dead-code, in `prelude.rr`);
 - `file_content` (serverplan-quality's line-count forbid);
 - the `parse` sub-grammar nodes (quality-contracts-1's f-string and annotation re-parses).
 

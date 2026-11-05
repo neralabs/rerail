@@ -41,3 +41,4 @@ This continues the series in Pulling-it-all-together's `docs/rule-engine-directi
 | 0040 | Nearest ancestors in one dispatch per chunk: a cell's state (target, final bit) is read and advanced in place by its thread until final; one command buffer, one wait, any depth | accepted |
 | 0041 | Text matching is chunk-at-a-time and per file: host DFAs and literal prefilters with no work limit, device chunked automata (O66); never a byte-at-a-time NFA per node | accepted (host done) |
 | 0042 | One text layer: every text test (regex, glob, affix, name set) is normalized to a canonical matcher and key, so a regex costs what its best rewrite costs; vocabulary text runs once per distinct string, other text by one file scan placed on nodes through the tape | proposed |
+| 0043 | Every rule the engine runs is `.rr` (Soufflé Datalog plus `core.rr`): one reader, one printer, the converter writes `.rr`; `.rdl` stays only as T's copies until step 31 | accepted |

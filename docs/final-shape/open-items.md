@@ -1296,3 +1296,36 @@ Authored rules find a node's nearest enclosing scope by joining every scope's by
 file (t18 § 4): quadratic per file, 10 s of the authored logic's 24 s at 1,000 files. The wave's
 rules cannot use `nearest` or `tape`'s subtree intervals without arithmetic. **Closure:** with O63,
 an `ancestor`/`nearest` relation over syntax ids, bound with the chunk like the base relations.
+
+## O71. The converter still builds `.rdl` fragments inside
+
+The converter's emitter assembles each rule as `.rdl` text and translates the result to `.rr` at
+the end (decision 0043). The output is `.rr`, but the emitter's own strings are the old dialect.
+**Closure:** the emitter builds `.rr` (or the `Program`) directly; `rr::translate` then serves only
+the copies, and goes with them at step 31.
+
+## O72. The newer data-layer rules and recordings are not converted yet
+
+Ten rules copied from Data-layer-rule-expressivity (`require_each` and other new forms) and the
+batch 7–8 recordings and probes are outside the converter, the census and the replay, which still
+cover the 60 rules and batches 1–6. **Closure:** the converter reads the new forms; the census
+counts 70 rules; the replay reads batches 7–8 and the probes.
+
+## O73. Hand-written `.rr` constructs that lowering refuses
+
+`.violation`, `~` patterns, `must`/`may`, `=> edits`, `ordered by`, `sum`/`mean`/`join`, `match`
+captures, arithmetic, built-in functions, negated disjunctions, `.input` with parameters and the
+relation-argument built-ins (`within_stop` …) are refused by name. Every hand-written data-layer
+rule stops at one of them. **Closure:** list step 30.
+
+## O74. Translated programs declare the base relations themselves
+
+Each translated program declares the engine's base relations (`node`, `text`, `child` …) instead of
+`#include "core.rr"`. **Closure:** the engine's base relations and `core.rr` agree, and the programs
+include it.
+
+## O75. The `.rdl` copies and T's tools
+
+T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
+reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
+`.rdl` left. **Closure:** step 31 (O19) removes them.

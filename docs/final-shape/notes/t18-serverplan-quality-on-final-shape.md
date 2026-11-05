@@ -89,7 +89,7 @@ The Metal backend does not help at this size: candidates fall to 0.3 s, but labe
 
 A relational clause was SQL stages over capture rows. On the final shape it is three parts,
 in one `.rdl` file beside the policy
-(`gate/data-layer/final-shape/data-layer-serverplan-quality.rdl`):
+(`gate/data-layer/final-shape/data-layer-serverplan-quality.rr`):
 
 1. **A `.policy` of anchor clauses.** Each is a forbid clause whose matcher finds the nodes
    a violation is reported at, with the clause's code and message.
