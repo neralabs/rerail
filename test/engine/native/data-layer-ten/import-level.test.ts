@@ -6,3 +6,9 @@ it("publishes the Python import level independently of source whitespace",()=>{
  const rows=JSON.parse(response.documents[0][0].ast_nodes);
  expect(rows.ast_kind.flatMap((kind:string,i:number)=>kind==="ImportFrom"?[rows.ast_level[i]]:[])).toEqual(["1","0"]);
 });
+it("retains unlocated structural containers so match cases have parent rows",()=>{
+ const source="match value:\n    case 1:\n        raise TypeError()\n";
+ const response=JSON.parse(loadNativeBinding().CodeRuleDslRuntime.pythonAstBatch(JSON.stringify([{source,requests:[{start:0,end:Buffer.byteLength(source),kind:"module",fields:["ast_nodes"],columns:["ast_kind","ast_preorder","ast_parent"]}]}])));
+ const rows=JSON.parse(response.documents[0][0].ast_nodes);
+ const raised=rows.ast_kind.indexOf("Raise");expect(rows.ast_kind[rows.ast_preorder.indexOf(rows.ast_parent[raised])]).toBe("match_case");
+});
