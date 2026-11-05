@@ -634,7 +634,17 @@ impl<'a> Session<'a> {
             return Err(invalid("relational input row budget exceeded"));
         }
         work.store(allowance - spent, Ordering::Relaxed);
-        let anchors = anchors::collect(plan, &rows);
+        let mut anchors = anchors::collect(plan, &rows);
+        if plan.stages.iter().any(|s| s.python_ast.as_ref().is_some_and(|p| p.source && p.expand.as_deref()==Some("nodes"))) {
+            use sha2::{Digest, Sha256};
+            for file in &snapshot.files {
+                if !anchors.contains_key(file.path.as_str()) { continue; }
+                let digest: [u8;32] = Sha256::digest(file.source.as_bytes()).into();
+                if let Some(spans) = db.bindings.borrow().source_spans(&digest) {
+                    anchors::canonical(&mut anchors, file, &spans, &work)?;
+                }
+            }
+        }
         let visible = Snapshot {
             revision: snapshot.revision,
             files: snapshot
@@ -1141,6 +1151,21 @@ impl<'a> Session<'a> {
     }
     fn publish_source(&mut self, source: Arc<dyn syntax::Source>) -> Result<()> {
         self.activate()?;
+        // Only the canonical producer can attest new spans. SQL cannot fabricate
+        // offsets or substitute transformed source for the admitted module.
+        if let Some(proofs) = source.canonical_spans() {
+            use sha2::{Digest, Sha256};
+            for (path, proof) in proofs {
+                let Some(file) = self.visible.files.iter().find(|file| file.path == *path) else {
+                    continue;
+                };
+                if <[u8; 32]>::from(Sha256::digest(file.source.as_bytes())) != proof.digest {
+                    continue;
+                }
+                let retained = self.db.bindings.borrow_mut().retain_source_spans(proof.digest, &proof.spans);
+                anchors::canonical(&mut self.anchors, file, &retained, &self.work)?;
+            }
+        }
         let stage = &self.physical_stages[self.next];
         #[cfg(feature = "code-rule-profile")]
         self.db.stage(&self.plan.stages[self.next].name);

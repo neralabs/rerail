@@ -87,11 +87,18 @@ def candidate(root):
  markers='|'.join(re.escape(marker) for marker in c['_MATCHING_SOURCE_MARKERS'])
  definition=PY_LEFT+r'(?:async'+PY_SPACE+r'+)?def'+PY_SPACE+r'+match(?:_async|_lazy)?'+PY_SPACE+r'*\('
  domain=r'^(?:data_layer/|impl/common/|conform/l5250_matching/|l[0-9]{4}_[^/]+/)'
- base=A({'filePath':{'regex':domain}},O({'filePath':{'regex':production}},RX(markers),A({'filePath':{'regex':r'(?:^|/)l[0-9]{4}_'}},RX(definition))))
- plan['inputs']['gate']['evidence']['query']['ast']['rule']=select_entry({'$option':'parameters','cases':{'{}':A(K('module'),base)},'default':K('module')},{'scan_sources':K('module'),'_scan_tree':K('module')})
  selected="rx_matches(__path,"+q(domain)+") AND (rx_matches(__path,"+q(production)+") OR rx_matches(source_text(__path),"+q(markers)+") OR rx_matches(__path,'(?:^|/)l[0-9]{4}_') AND rx_matches(source_text(__path),"+q(definition)+")) OR EXISTS(SELECT 1 FROM matching_parameters,json_each(data,'$.applicationPaths') WHERE value=__path)"
+ # Narrow the syntax schema before moving module demand onto raw file sources.
+ # SQL selects the source batch; CPython parses it without building a second CST index.
+ project_columns(clause_)
+ del plan['syntax']
+ plan['inputs']={'files':{'evidence':{'as':'file','query':{'regex':{'source':'file.content','pattern':r'(?s)\A.*\z'}},'project':{'path':'file.path'}}}}
+ plan['requireNonemptyInput']='files'
  for stage in plan['stages']:
-  if stage['name']=='canonical':stage['pythonAst']['roots']=select_entry("SELECT __path,id FROM cst WHERE kind='module' AND ("+selected+")",{'scan_sources':"SELECT __path,id FROM cst WHERE kind='module'",'_scan_tree':"SELECT __path,id FROM cst WHERE kind='module'"})
+  if stage['name']=='canonical':
+   spec=stage['pythonAst'];del spec['syntax'];spec['source']='files'
+   roots='SELECT __path,source_text(__path) AS source FROM files'
+   spec['roots']=select_entry(roots+' WHERE '+selected,{'scan_sources':roots,'_scan_tree':roots})
  config=next(s for s in plan['stages'] if s['name']=='matching_parameters');plan['stages'].remove(config);plan['stages'].insert(0,config)
  clauses=[clause_]
  # Project obligations have file-start anchors and inspect the same selected owner scope.

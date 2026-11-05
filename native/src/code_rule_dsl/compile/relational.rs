@@ -344,7 +344,6 @@ pub(super) fn compile(
                         relational::inspect_fields(&db, &roots, &tables)?;
                     let columns = if from_source { ["__path", "source"] } else { ["__path", "id"] };
                     if selected != columns { return Err(invalid("pythonAst roots must select its path and source or node identity in order")); }
-                    if from_source && (fields != ["syntax_error"] || shape.contains_key("expand")) { return Err(invalid("source parser requests require syntax_error without expansion")); }
                     reads_source |= source_bytes;
                     stage_reads_source |= source_bytes;
                     for (name, fields) in reads {

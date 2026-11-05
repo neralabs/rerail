@@ -193,6 +193,7 @@ pub(super) struct Bindings {
     definitions: HashMap<Key, usize>,
     retained: HashSet<(u8, usize)>,
     canonical_spans: HashMap<(u32, [u8; 32]), Arc<Vec<(u32, u32)>>>,
+    source_spans: HashMap<[u8; 32], Arc<Vec<(u32, u32)>>>,
     next_lease: usize,
     next_id: usize,
     bytes: usize,
@@ -207,6 +208,7 @@ impl Bindings {
     pub fn forget(&mut self) {
         self.definitions.clear();
         self.canonical_spans.clear();
+        self.source_spans.clear();
         self.fingerprints.clear();
         self.retained.clear();
         self.bytes = 0;
@@ -225,6 +227,18 @@ impl Bindings {
                 self.canonical_spans.insert(version, spans);
             }
         }
+    }
+    pub fn source_spans(&self, digest: &[u8; 32]) -> Option<Arc<Vec<(u32, u32)>>> {
+        self.source_spans.get(digest).cloned()
+    }
+    pub fn retain_source_spans(&mut self, digest: [u8; 32], spans: &[(u32, u32)]) -> Arc<Vec<(u32, u32)>> {
+        if let Some(retained) = self.source_spans(&digest) {
+            return retained;
+        }
+        let retained = Arc::new(spans.to_vec());
+        self.bytes = self.bytes.saturating_add(retained.capacity() * std::mem::size_of::<(u32, u32)>() + 96);
+        self.source_spans.insert(digest, Arc::clone(&retained));
+        retained
     }
     pub fn lease(&mut self) -> usize {
         self.next_lease += 1;

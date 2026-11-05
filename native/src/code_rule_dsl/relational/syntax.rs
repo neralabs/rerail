@@ -46,6 +46,9 @@ pub(in crate::code_rule_dsl) struct Spec {
 }
 
 pub(super) trait Source: Send + Sync {
+    fn canonical_spans(&self) -> Option<&BTreeMap<String, CanonicalSpans>> {
+        None
+    }
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -71,6 +74,10 @@ pub(super) trait Source: Send + Sync {
     fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>>;
     fn column(&self, row: usize, column: usize, ctx: &mut Context) -> rusqlite::Result<()>;
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
+}
+pub(super) struct CanonicalSpans {
+    pub digest: [u8; 32],
+    pub spans: Vec<(u32, u32)>,
 }
 #[derive(Default)]
 pub(super) struct Counters {

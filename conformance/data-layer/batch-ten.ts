@@ -74,10 +74,11 @@ export class TenReplay {
     if(selectionOnly){
       if(record.check!=="matching_architecture"||!production)throw new Error("Selection probe requires matching production defaults");
       const stages=authored.clauses.find((c:{id:string})=>c.id==="matching-file-checks").relational.stages;
-      const roots=stages.find((s:{name:string})=>s.name==="canonical").pythonAst.roots;
+      const parser=stages.find((s:{name:string})=>s.name==="canonical").pythonAst;
+      const roots=parser.roots;
       // Observe the actual SQL source predicate before AST validity removes files.
       const inputs={files:{evidence:{as:"file",query:{regex:{source:"file.content",pattern:"(?s)\\A(?P<TEXT>.*)\\z"}},project:{path:"file.path"}}}};
-      const probe=[stages.find((s:{name:string})=>s.name==="matching_parameters"),{name:"cst",query:"SELECT __path,0 id,'module' kind FROM files"}];
+      const probe=[stages.find((s:{name:string})=>s.name==="matching_parameters"),...(parser.syntax?[{name:"cst",query:"SELECT __path,0 id,'module' kind FROM files"}]:[])];
       authored.clauses=authored.clauses.filter((c:{define?:unknown})=>c.define!==undefined).concat([{id:"selection-observation",relational:{inputs,stages:probe,query:sqlChoice(roots,sql=>`SELECT DISTINCT __path path,0 start_byte,0 end_byte FROM (${sql})`)},violation:{code:"SELECTION",message:"Selected source",anchor:"witness.span"}}]);
     }
     if(!production)for(const clause of authored.clauses)if(clause.define?.options!==undefined)clause.define.config={...clause.define.config,entryPoint:record.entry,parameters:JSON.stringify(record.parameters)};

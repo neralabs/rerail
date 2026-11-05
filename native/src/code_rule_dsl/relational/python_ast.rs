@@ -115,7 +115,7 @@ pub(super) fn demand(
             work,
             python_ast: Some(DemandSpec {
                 fields: spec.fields.clone(),
-                expand: None,
+                expand: spec.expand.clone(),
                 sources: Some(sources),
             }),
         });
@@ -143,6 +143,7 @@ pub(in crate::code_rule_dsl) struct Output {
     values: Vec<Vec<String>>,
     files: Vec<u32>,
     nodes: Vec<u32>,
+    spans: BTreeMap<String, syntax::CanonicalSpans>,
 }
 impl Output {
     fn new(fields: Vec<String>) -> Self {
@@ -151,6 +152,7 @@ impl Output {
             fields,
             files: Vec::new(),
             nodes: Vec::new(),
+            spans: BTreeMap::new(),
         }
     }
 }
@@ -175,6 +177,12 @@ pub(super) fn execute(
         let prepared = contexts[*index].run(|| -> Result<()> {
             if let Some(sources) = &demand.python_ast.as_ref().unwrap().sources {
                 for source in sources {
+                    let expansion = demand.python_ast.as_ref().unwrap().expand.as_deref();
+                    let requested = match expansion {
+                        Some("nodes") => vec!["ast_nodes".into()],
+                        Some("annotations") => vec!["ast_annotations".into()],
+                        _ => fields.clone(),
+                    };
                     let document = documents.len();
                     documents.push(canonical::Document {
                         source: source.clone(),
@@ -182,8 +190,8 @@ pub(super) fn execute(
                             start: 0,
                             end: source.len(),
                             kind: "module".into(),
-                            fields: fields.clone(),
-                            columns: None,
+                            fields: requested,
+                            columns: (expansion == Some("nodes")).then(|| fields.clone()),
                         }],
                     });
                     mapping.push((document, 0));
@@ -287,9 +295,26 @@ pub(super) fn execute(
                                     ))
                                 })
                                 .collect::<Result<Vec<_>>>()?;
-                            demand.trees[root.file as usize]
-                                .facts
-                                .register_python_spans(spans)?;
+                            if let Some(sources) = &request.sources {
+                                use sha2::{Digest, Sha256};
+                                let text = &sources[root.file as usize];
+                                if spans.iter().any(|&(start, end)| {
+                                    start > end || end as usize > text.len()
+                                        || !text.is_char_boundary(start as usize)
+                                        || !text.is_char_boundary(end as usize)
+                                }) {
+                                    return Err(invalid("canonical Python span exceeds its source"));
+                                }
+                                output.spans.insert(
+                                    demand.paths[root.file as usize].clone(),
+                                    syntax::CanonicalSpans {
+                                        digest: Sha256::digest(text.as_bytes()).into(),
+                                        spans,
+                                    },
+                                );
+                            } else {
+                                demand.trees[root.file as usize].facts.register_python_spans(spans)?;
+                            }
                         }
                         source::charge(&demand.work, len)?;
                         output.files.extend(std::iter::repeat_n(root.file, len));
@@ -358,6 +383,9 @@ struct Published {
     work: Arc<AtomicUsize>,
 }
 impl syntax::Source for Published {
+    fn canonical_spans(&self) -> Option<&BTreeMap<String, syntax::CanonicalSpans>> {
+        Some(&self.output.spans)
+    }
     fn columns(&self) -> Vec<String> {
         let mut c = vec!["__path".into(), "id".into()];
         c.extend(self.output.fields.clone());
