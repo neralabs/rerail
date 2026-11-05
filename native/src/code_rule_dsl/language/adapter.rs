@@ -276,6 +276,23 @@ impl Adapter for Ecma {
     }
 }
 
+impl Ecma {
+    /// The module system of a file by its extension and its nearest `package.json`'s `type` alone
+    /// (`SourceType::by_package_type`).
+    pub(crate) fn source_type_by_package_type(
+        path: &str,
+        package: Option<PackageType>,
+    ) -> SourceType {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("mjs" | "mts") => SourceType::Module,
+            Some("cjs" | "cts") => SourceType::CommonJs,
+            _ if package == Some(PackageType::Module) => SourceType::Module,
+            _ => SourceType::CommonJs,
+        }
+    }
+}
+
 impl Adapter for Php {
     const FAMILY: Family = Family::Php;
     const LABEL: &'static str = "php";
@@ -438,18 +455,6 @@ pub(crate) fn parsed_by_forte(dialect: GrammarDialect) -> bool {
 /// Whether an ast query in `dialect` may use `importTarget`: its family's `Adapter::IMPORT_TARGETS`.
 pub(crate) fn has_import_targets(dialect: GrammarDialect) -> bool {
     with_adapter!(Family::of(dialect), A => A::IMPORT_TARGETS)
-}
-
-/// The module system of an ECMA file by its extension and its nearest `package.json`'s `type` alone
-/// (`SourceType::by_package_type`).
-pub(crate) fn source_type_by_package_type(path: &str, package: Option<PackageType>) -> SourceType {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    match name.rsplit_once('.').map(|(_, extension)| extension) {
-        Some("mjs" | "mts") => SourceType::Module,
-        Some("cjs" | "cts") => SourceType::CommonJs,
-        _ if package == Some(PackageType::Module) => SourceType::Module,
-        _ => SourceType::CommonJs,
-    }
 }
 
 /// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.

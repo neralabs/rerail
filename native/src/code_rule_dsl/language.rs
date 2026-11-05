@@ -531,7 +531,7 @@ impl SourceType {
     /// module only where `type` is `module`, CommonJS where it is anything else and where there
     /// is no manifest. No syntax is read.
     pub(crate) fn by_package_type(path: &str, package: Option<PackageType>) -> Self {
-        adapter::source_type_by_package_type(path, package)
+        adapter::Ecma::source_type_by_package_type(path, package)
     }
 }
 
