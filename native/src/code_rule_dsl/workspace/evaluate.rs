@@ -440,6 +440,7 @@ pub(super) fn evaluate_file(
     #[cfg(feature = "code-rule-profile")]
     let regex_timer = profile::PhaseTimer::start(profile::Phase::Regex);
     let regex_started = Instant::now();
+    let _regex_projections = violations::projection::Scope::enter();
     for &id in &file.candidates.regex {
         let code_rule = &code_rules[id.0];
         let clause = &code_rule.clauses[id.1];
@@ -541,6 +542,12 @@ pub(super) fn evaluate_file(
                     Some(&clause.violation),
                     span,
                 ));
+            }
+            if !clause.violation.project.is_empty() {
+                let witness = witnesses.last_mut().expect("regex witness");
+                let projection = crate::code_rule_dsl::eval::evidence::project_text(
+                    &clause.violation.project, &file.input, witness);
+                witness.captures.set_typed_projection(projection);
             }
             // A decision is answered by its first witness.
             if clause.decision {

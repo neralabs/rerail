@@ -107,6 +107,7 @@ pub(super) fn record_evidence(state: &mut WorkspaceState, path: &str, file: &Fil
         let witnesses = file.witnesses.get(&id).cloned().unwrap_or_default();
         let failure = file.failures.get(&id).map(|&(_, message)| message);
         let syntax = match &state.code_rules[id.0].clauses[id.1].kind {
+            ClauseKind::Forbid(Query::Regex { .. }) => None,
             ClauseKind::Forbid(Query::Ast { matchers, .. })
                 if crate::code_rule_dsl::eval::grammar_matcher(matchers, &file.input)
                     .is_some_and(|grammar| grammar.invalid_syntax.is_some()) =>

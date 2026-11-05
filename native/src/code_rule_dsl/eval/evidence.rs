@@ -72,7 +72,7 @@ pub(crate) fn producer_violation(
 }
 
 /// Typed projections for text matches retain shared source slices, as AST evidence does.
-pub(super) fn project_text(project: &[Projection], file: &FileInput, witness: &Witness) -> violations::projection::Row {
+pub(in crate::code_rule_dsl) fn project_text(project: &[Projection], file: &FileInput, witness: &Witness) -> violations::projection::Row {
     use std::{borrow::Cow, sync::Arc};
     use violations::projection::{self, Input};
     let (directory, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
