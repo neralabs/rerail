@@ -85,7 +85,7 @@ def candidate(root):
  plan=clause_['relational']
  production=r'^(?:data_layer/matching\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/'
  markers='|'.join(re.escape(marker) for marker in c['_MATCHING_SOURCE_MARKERS'])
- definition=r'\b(?:async\s+)?def\s+match(?:_async|_lazy)?\s*\('
+ definition=PY_LEFT+r'(?:async'+PY_SPACE+r'+)?def'+PY_SPACE+r'+match(?:_async|_lazy)?'+PY_SPACE+r'*\('
  domain=r'^(?:data_layer/|impl/common/|conform/l5250_matching/|l[0-9]{4}_[^/]+/)'
  base=A({'filePath':{'regex':domain}},O({'filePath':{'regex':production}},RX(markers),A({'filePath':{'regex':r'(?:^|/)l[0-9]{4}_'}},RX(definition))))
  plan['inputs']['gate']['evidence']['query']['ast']['rule']=select_entry({'$option':'parameters','cases':{'{}':A(K('module'),base)},'default':K('module')},{'scan_sources':K('module'),'_scan_tree':K('module')})

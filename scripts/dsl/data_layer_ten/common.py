@@ -6,6 +6,28 @@ from data_layer_nine.common import base as nine_base
 
 CHECKS=('graph_lazy_sql_plan','bounded_composed_graph_paths','graphql_plan_ownership','plan_optimizer_v2','conditional_architecture','schema_introspection_data_paths','matching_architecture','hnsw_architecture','embedding_vector_orchestration','generated_index_sources')
 EXCLUDES=['**/'+part+'/**' for part in ['.git','.venv','venv','__pycache__','tmp','tests','test']]
+def python_character_class(matches):
+    import unicodedata
+    if unicodedata.unidata_version!='15.1.0':raise ValueError('Rule generation requires CPython 3.13 Unicode 15.1')
+    ranges=[];start=last=None
+    for point in range(0x110000):
+        if matches(chr(point)):
+            if start is None:start=point
+            last=point
+        elif start is not None:ranges.append((start,last));start=None
+    if start is not None:ranges.append((start,last))
+    return '['+''.join(chr(a) if a==b else chr(a)+'-'+chr(b) for a,b in ranges)+']'
+
+PY_WORD=python_character_class(lambda c:c=='_' or c.isalnum())
+PY_SPACE=python_character_class(str.isspace)
+PY_NONWORD='[^'+PY_WORD[1:]
+PY_LEFT=r'(?:\A|'+PY_NONWORD+')'
+PY_RIGHT=r'(?:\z|'+PY_NONWORD+')'
+
+def python_word(pattern,prefix=False):
+    # Use CPython's character set, independently of the Rust Unicode version.
+    # A prefix capture includes the consumed delimiter for correct line numbers.
+    return (r'(?s)\A(.*?'+PY_LEFT+r')' if prefix else PY_LEFT)+'(?:'+pattern+')'+PY_RIGHT
 
 
 def extended():

@@ -60,7 +60,11 @@ def candidate(root):
    emit('BCGP009',key,f'{name}.graph_type must be required and non-optional',f"instr({field},'None')>0 OR "+matches(default,r'^[\s\x1c-\x1f]*None[\s\x1c-\x1f]*$'),ln)
  require('SQL_GRAPH_QUERY_BUILDER')
  for token,description in [('_try_build_sparse_union_recursive_bindings_grammar','legacy sparse-union recursion'),('_try_build_sparse_recursive_bindings_grammar','legacy one-edge recursion'),('_SqlSparseUnionRecursiveBindingGrammar','legacy sparse binding grammar'),('_SqlSparseUnionRecursiveBindingFinalSelect','legacy sparse binding final selection')]:
-  pattern=rf'\b{token}\b';emit('BCGP014','SQL_GRAPH_QUERY_BUILDER',description+' must not bypass the relation-algebra path',matches(src('SQL_GRAPH_QUERY_BUILDER'),pattern),line(prefix(src('SQL_GRAPH_QUERY_BUILDER'),pattern)))
+  pattern='(SELECT left_word||'+q(token)+'||right_word FROM python_word_boundaries)'
+  prefix_pattern="(SELECT '(?s)\\A(.*?'||left_word||')'||"+q(token)+'||right_word FROM python_word_boundaries)'
+  condition='rx_matches('+src('SQL_GRAPH_QUERY_BUILDER')+','+pattern+')'
+  prefix_value='rx_extract('+src('SQL_GRAPH_QUERY_BUILDER')+','+prefix_pattern+',1)'
+  emit('BCGP014','SQL_GRAPH_QUERY_BUILDER',description+' must not bypass the relation-algebra path',condition,line(prefix_value))
  require('SPARQL_EXECUTOR');emit('BCGP010','SPARQL_EXECUTOR','SPARQL must acquire builders through graph_lazy(...).query_builder(...)',f"instr({src('SPARQL_EXECUTOR')},'graph_query_builder')>0")
  require('SPARQL_AST')
  for name in sorted(c['REQUIRED_SPARQL_PATH_SYMBOLS']):emit('BCGP010','SPARQL_AST',f'required SPARQL path type {name} is missing',src('SPARQL_AST')+' IS NOT NULL AND NOT '+matches(src('SPARQL_AST'),rf'(?m)^(?:class|def|async def)\s+{name}(?:[^A-Za-z0-9_]|\z)'))
@@ -73,4 +77,5 @@ def candidate(root):
  clauses=[]
  for index,query in enumerate(rows):
   clauses.append({'id':'text-contract-'+str(index),'relational':{'inputs':{'files':{'evidence':{'as':'f','query':{'regex':{'source':'file.content','pattern':r'(?s)\A(?P<SOURCE>.*)\z'}},'project':{'path':'file.path'}}}},'query':query,'locations':list(paths.values()),'key':['identity'],'line':'line','code':'issue','message':'message'},'violation':{'code':'architecture','message':'Architecture contract violation','anchor':'witness.span'}})
+  if 'python_word_boundaries' in query:clauses[-1]['relational']['stages']=[S('python_word_boundaries','SELECT '+q(PY_LEFT)+' left_word,'+q(PY_RIGHT)+' right_word')]
  return make_document('bounded_composed_graph_paths',clauses,list(paths.values()),exclude=[])
