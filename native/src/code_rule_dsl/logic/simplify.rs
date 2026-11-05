@@ -214,24 +214,25 @@ mod tests {
 
     #[test]
     fn implied_atoms_kind_tests_and_identical_relations_go() {
-        let mut prog = super::super::front::parse(
+        let mut prog = super::super::rr::parse(
             r#"
-            .decl node(d: int, n: node, kind: sym, start: int, end: int)
-            .decl doc(d: int, path: sym, module: sym)
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .decl doc(d: number, path: symbol, module: symbol)
             .input node
             .input doc
-            .kindset k0 = "function_definition"
+            .decl k0(kind: symbol)
+            k0("function_definition").
             .decl b1(l: node, h: node)
             .decl b2(l: node, h: node)
             .decl m1(n: node)
             .decl m2(n: node)
-            .decl out(n: node, p: sym)
+            .decl out(n: node, p: symbol)
             .output out
-            b1($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
-            b2($x, $y) :- inside($x, $z, k0), node(_, $z, "function_definition", _, _), inside($z, $y, k0).
-            m1($n) :- inside($n, $v, k0), !b1($n, $v).
-            m2($q) :- inside($q, $w, k0), !b2($q, $w).
-            out($n, $p) :- node($d, $n, "call", _, _), !m1($n), !m2($n), doc($d, $p, $m), doc($d, $p, _).
+            b1(low, high) :- inside(low, s, k0), node(_, s, "function_definition", _, _), inside(s, high, k0).
+            b2(x, y) :- inside(x, z, k0), node(_, z, "function_definition", _, _), inside(z, y, k0).
+            m1(n) :- inside(n, v, k0), !b1(n, v).
+            m2(q) :- inside(q, w, k0), !b2(q, w).
+            out(n, p) :- node(d, n, "call", _, _), !m1(n), !m2(n), doc(d, p, m), doc(d, p, _).
             "#,
         )
         .unwrap();

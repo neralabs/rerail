@@ -1,5 +1,6 @@
 use super::*;
-use crate::code_rule_dsl::logic::front::{parse, prune};
+use crate::code_rule_dsl::logic::front::prune;
+use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
 use crate::code_rule_dsl::typing::cross_rounds;
@@ -19,7 +20,7 @@ fn facts() -> std::path::PathBuf {
 
 /// T's `rdl.py sql` front: prune, demand (adornment for `.demand *`), prune.
 fn program(name: &str) -> Program {
-    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rdl"))).unwrap();
+    let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
     let p = prune(parse(&src).unwrap());
     let options = Options::default();
     prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap())
@@ -400,7 +401,7 @@ fn product_programs_derive_t_outputs() {
     let facts = facts();
     let mut failures = Vec::new();
     for name in ["workload", "workload_demand", "calls"] {
-        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
+        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let p = prune(parse(&src).unwrap());
         let options = Options::default();
         let p = prune(if p.demand.iter().any(|d| d == "*") { magic_adorn(p, &options) } else { magic_sets(p, &options) }.unwrap());
@@ -450,7 +451,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     };
     let read = |out: &std::path::Path, rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     for name in ["workload", "calls"] {
-        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rdl"))).unwrap();
+        let src = std::fs::read_to_string(root().join(format!("../typing/programs/{name}.rr"))).unwrap();
         let with_t = dir.join(format!("out-{name}-t"));
         let report = corpus::run(&src, &dir, Some(&facts), &with_t, "program", Binding::Cpu, 1 << 18).unwrap();
         assert!(report.rows.values().any(|&n| n > 0), "{name}: no outputs");
@@ -496,7 +497,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     write("decl/make.pyi", "# rerail.types/v1\n# module: vendor.core\ndef make() -> str: ...\n");
     write("app/main.py", "from vendor import version\nfrom vendor.core import make\nimport other\na = version()\nb = make()\nc = other.thing()\n");
     write("decl/other.pyi", "# rerail.types/v1\n# module: other\ndef thing() -> bytes | None: ...\n");
-    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rdl")).unwrap();
+    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rr")).unwrap();
     let cache = dir.join("cache");
 
     let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
@@ -527,8 +528,8 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Step 30's primitives through the corpus runner: `line(n, l)`, and literal tests on names and paths (`@glob`,
-/// `@prefix`, `@suffix`) in place of regexes.
+/// Step 30's primitives through the corpus runner: `line(n, l)`, and literal tests on names and paths (`glob`,
+/// `prefix`, `suffix`) in place of regexes.
 #[test]
 fn rules_test_names_paths_and_lines_without_regexes() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("strings");
@@ -542,16 +543,16 @@ fn rules_test_names_paths_and_lines_without_regexes() {
         std::fs::write(p, text).unwrap();
     }
     let program = r#"
-.decl doc(d: int, path: sym, module: sym)
-.decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl text(n: node, s: sym)
-.decl line(n: node, l: int)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
 .input doc, node, text, line
-.decl private_in_impl(p: sym, s: sym, l: int)
-private_in_impl($p, $s, $l) :- doc($d, $p, _), @glob($p, "impl/**/*.py"), node($d, $n, "identifier", _, _), text($n, $s),
-    @prefix($s, "_"), line($n, $l).
-.decl async_in_fts(s: sym)
-async_in_fts($s) :- doc($d, $p, _), @glob($p, "impl/*/fts/**"), node($d, $n, "identifier", _, _), text($n, $s), @suffix($s, "_async").
+.decl private_in_impl(p: symbol, s: symbol, l: number)
+private_in_impl(p, s, l) :- doc(d, p, _), glob("impl/**/*.py", p), node(d, n, "identifier", _, _), text(n, s),
+    prefix("_", s), line(n, l).
+.decl async_in_fts(s: symbol)
+async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifier", _, _), text(n, s), suffix("_async", s).
 .output private_in_impl, async_in_fts
 "#;
     let out = dir.join("out");
@@ -563,32 +564,33 @@ async_in_fts($s) :- doc($d, $p, _), @glob($p, "impl/*/fts/**"), node($d, $n, "id
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The tree axes (decision 0036): `inside($n, $a, set)` holds every ancestor of `$n` whose kind is in the set, not
-/// only the nearest; `has($a, $n, set)` is the same pairs read from the ancestor; both negate.
+/// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
+/// only the nearest; `has(a, n, set)` is the same pairs read from the ancestor; both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def outer():\n    def inner():\n        g()\n    f()\nh()\n").unwrap();
     let program = r#"
-.decl node(d: int, n: node, kind: sym, start: int, end: int)
-.decl field(p: node, f: sym, c: node)
-.decl text(n: node, s: sym)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
 .input node, field, text
-.kindset fn = "function_definition"
-.decl callee(c: node, s: sym)
-callee($c, $s) :- node(_, $c, "call", _, _), field($c, "function", $x), text($x, $s).
-.decl fname(f: node, s: sym)
-fname($f, $s) :- node(_, $f, "function_definition", _, _), field($f, "name", $x), text($x, $s).
+.decl fn(kind: symbol)
+fn("function_definition").
+.decl callee(c: node, s: symbol)
+callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
 // Every function a call is inside.
-.decl call_in(c: sym, f: sym)
-call_in($c, $f) :- callee($n, $c), inside($n, $a, fn), fname($a, $f).
+.decl call_in(c: symbol, f: symbol)
+call_in(c, f) :- callee(n, c), inside(n, a, fn), fname(a, f).
 // Functions that have a call to g somewhere below them.
-.decl calls_g(f: sym)
-calls_g($f) :- fname($a, $f), has($a, $n, fn), callee($n, "g").
+.decl calls_g(f: symbol)
+calls_g(f) :- fname(a, f), has(a, n, fn), callee(n, "g").
 // Calls inside no function.
-.decl top(c: sym)
-top($c) :- callee($n, $c), !inside($n, _, fn).
+.decl top(c: symbol)
+top(c) :- callee(n, c), !inside(n, _, fn).
 .output call_in, calls_g, top
 "#;
     let out = dir.join("out");
@@ -612,18 +614,19 @@ fn measure_inside_three_ways() {
     let corpus = std::path::PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let way = std::env::var("RERAIL_MEASURE").unwrap_or_else(|_| "tape".into());
     let head = r#"
-.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .input node
-.kindset fn = "function_definition"
+.decl fn(kind: symbol)
+fn("function_definition").
 .decl hit(c: node)
 .output hit
 "#;
     let body = match way.as_str() {
         // No inside test: the fixed cost of the run and of its `hit` rows.
-        "baseline" => "hit($c) :- node(_, $c, \"call\", _, _).\n",
-        "tape" => "hit($c) :- node(_, $c, \"call\", _, _), nearest($c, $f, fn).\n",
-        "interval" => "hit($c) :- node($d, $c, \"call\", $s, $e), node($d, $f, \"function_definition\", $fs, $fe), $fs <= $s, $e <= $fe.\n",
-        "recursive" => ".decl child(p: node, c: node, i: int)\n.input child\n.decl up(c: node, a: node)\nup($c, $p) :- node(_, $c, \"call\", _, _), child($p, $c, _).\nup($c, $a) :- up($c, $p), child($a, $p, _).\nhit($c) :- up($c, $f), node(_, $f, \"function_definition\", _, _).\n",
+        "baseline" => "hit(c) :- node(_, c, \"call\", _, _).\n",
+        "tape" => "hit(c) :- node(_, c, \"call\", _, _), nearest(c, f, fn).\n",
+        "interval" => "hit(c) :- node(d, c, \"call\", s, e), node(d, f, \"function_definition\", fs, fe), fs <= s, e <= fe.\n",
+        "recursive" => ".decl child(p: node, c: node, i: number)\n.input child\n.decl up(c: node, a: node)\nup(c, p) :- node(_, c, \"call\", _, _), child(p, c, _).\nup(c, a) :- up(c, p), child(a, p, _).\nhit(c) :- up(c, f), node(_, f, \"function_definition\", _, _).\n",
         other => panic!("no way {other}"),
     };
     let binding = if std::env::var("RERAIL_MEASURE_METAL").is_ok() { crate::code_rule_dsl::typing::file_local::Binding::Metal } else { crate::code_rule_dsl::typing::file_local::Binding::Cpu };

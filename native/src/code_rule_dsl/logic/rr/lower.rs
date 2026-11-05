@@ -524,7 +524,7 @@ pub(super) fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     let mut out: Vec<Literal> = Vec::new();
     for literal in body {
         let negated_test = |l: &Literal| match l {
-            Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0) } if args.len() == 2 && op != "rx" && op != "irx" => Some((op.clone(), args[0].clone(), args[1].clone())),
+            Literal::Cmp { l: Term::Call(op, args), op: "=", r: Term::Int(0) } if args.len() == 2 && crate::code_rule_dsl::logic::strings::is_test(op) && op != "rx" && op != "irx" => Some((op.clone(), args[0].clone(), args[1].clone())),
             _ => None,
         };
         if let (Some((op, s, p)), Some(last)) = (negated_test(&literal), out.last_mut())

@@ -170,7 +170,7 @@ pub(crate) struct Report {
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Runs `program` (`.rdl` text) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
+/// Runs `program` (`.rr` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
 ///
 /// The program is split at its file-local relations (`typing::file_local::programs`, list step 29). Documents are
@@ -212,7 +212,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     }
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
-    let mut prog = front::parse(program)?;
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(program)?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
         Some(t) => {
@@ -236,7 +236,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = front::parse(&format!("{program}\n{facts}"))?;
+            prog = crate::code_rule_dsl::logic::rr::parse(&format!("{program}\n{facts}"))?;
         }
         declared = d;
     }

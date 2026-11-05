@@ -4,7 +4,7 @@
 //! clause's label passes over the chunk's tapes together (`LoweredWave`), and registers the
 //! clauses' root programs from those candidates as the chunk's `demand(batch)` (the CPU JIT, over
 //! the chunk's files in one execution; it tests each label as one bit of the batch, `PackedBatch::derived`). The step
-//! reads the batch's terminal matches into `match(clause, d, node)`, and each matched node's bytes
+//! reads the batch's terminal matches into `matched(clause, d, node)`, and each matched node's bytes
 //! into `span(d, node, start, end)` for the findings layer (`findings`, S5); the planner emits them
 //! from `SOURCE`, over two batch inputs (O14, `logic::plan::emit_batch`). The loop records the relation as one
 //! fact family per clause (`partitions`) and `statistics` writes their row estimates to
@@ -31,31 +31,31 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 pub(in crate::code_rule_dsl) const PROGRAM: &str = "matches";
-const RELATION: &str = "match";
+const RELATION: &str = "matched";
 /// The demand relation the step reads, whose row estimate `statistics` writes.
 const TERMINAL: &str = "rerail_terminal_match";
 /// The wave's program: a batch's terminal matches by document, and the matched nodes' bytes.
 /// `terminal` is the chunk's `rerail_terminal_match` (file, clause, node, start byte, end byte);
 /// `document` is `temp.wave_document` (the batch's file index, the document's key).
 const SOURCE: &str = "
-.decl terminal(f: int, c: int, n: int, s: int, e: int)
-.decl document(f: int, d: int)
+.decl terminal(f: number, c: number, n: number, s: number, e: number)
+.decl document(f: number, d: number)
 .input terminal, document
-.decl match(c: int, d: int, n: int)
-.decl span(d: int, n: int, s: int, e: int)
-.output match, span
-match($c, $d, $n) :- terminal($f, $c, $n, _, _), document($f, $d).
-span($d, $n, $s, $e) :- terminal($f, _, $n, $s, $e), document($f, $d).
+.decl matched(c: number, d: number, n: number)
+.decl span(d: number, n: number, s: number, e: number)
+.output matched, span
+matched(c, d, n) :- terminal(f, c, n, _, _), document(f, d).
+span(d, n, s, e) :- terminal(f, _, n, s, e), document(f, d).
 ";
 /// A warm run's rules besides `SOURCE`'s (06 S6): the rows of the documents it does not evaluate,
 /// kept from the run before (`KEPT_MATCH`, `KEPT_SPAN`), so its relations, and the families
 /// recorded from them, are of every document.
 const KEPT: &str = "
-.decl kept_match(c: int, d: int, n: int)
-.decl kept_span(d: int, n: int, s: int, e: int)
+.decl kept_match(c: number, d: number, n: number)
+.decl kept_span(d: number, n: number, s: number, e: number)
 .input kept_match, kept_span
-match($c, $d, $n) :- kept_match($c, $d, $n).
-span($d, $n, $s, $e) :- kept_span($d, $n, $s, $e).
+matched(c, d, n) :- kept_match(c, d, n).
+span(d, n, s, e) :- kept_span(d, n, s, e).
 ";
 /// The kept rows a warm run reads, filled by its caller (`slice`).
 pub(in crate::code_rule_dsl) const KEPT_MATCH: &str = "temp.wave_kept_match";

@@ -1,0 +1,147 @@
+// data-layer-serverplan-state-tripwires in Rerail logic, part file: clause `state-projection-recovery-2` (8 stages),
+// options at their defaults (oracleAnalyzer false, entryPoint "all": the matchers read them, verbatim; the final query is
+// its entryPoint "all" / oracleAnalyzer "false" case; partitionBy is its default, file). Source:
+// gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+//
+// One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here; a nullable
+// column is a side relation that holds where the column is not NULL. The clause is per file: joins on node identity
+// stay in one document, joins on text or spans add `docof`. Span comparisons (`__start`/`__end`) are kept as written.
+// The syntax table `nodes` is the tape of a document the syntax_gate matched, less its excludeKinds; `parent` is `child`,
+// `X_id`/`X_source` are `field` and `text`, `line` is @line. `ownership.fn` of an if/elif (ancestor-or-self
+// function_definition; the node is none) is `nearest` (E0 § 2.5 row 40). `descendants` (reachability over the syntax
+// tree, every node a root, `expand` fixed at the root; E0 row 41) is the root itself, or, for an expanding root, a node
+// `@within` it: no recursion.
+// The raw_strings inputs export the DECODED transform's text. A function_definition/class_definition always has a
+// `name`, an attribute its `object` and `attribute`: their `*_source` columns are not NULL there.
+//
+// Builtins: @line (the 1-based line of a node's first byte, the syntax table's `line`), @rx_matches. A builtin with no
+// value (SQL NULL) binds nothing.
+// requireNonemptyInput (syntax_gate): an empty gate gives no nodes, hence no rows.
+// signed_exceptions: json_each over a constant array, as facts; the default-option final query does not read it.
+// findings layer (§8): the final query's columns (path, start_byte, end_byte, identity, detector); the finding key is
+// the `issue` column (the clause's `code`).
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+
+// ---- inputs (evidence) ----
+.decl raw_strings_0(s: node, value: symbol)
+raw_strings_0(s, v) :- ast(d, s, {"language": "python", "syntax": "valid", "rule": {"all": [{"filePath": {"regex": "auto_api|lazy_orm|query_builder"}}, {"any": [{"matches": "state-projection-source"}, {"inside": {"matches": "state-projection-source", "stopBy": "end"}}]}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$STRING"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}]}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"value": {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|connection|materialized_pipeline|row|rows|sql_conn|sql_connection|txn)$"}}}]}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v).
+.decl raw_strings_1(s: node, value: symbol)
+raw_strings_1(s, v) :- ast(d, s, {"language": "python", "syntax": "valid", "rule": {"all": [{"filePath": {"regex": "auto_api|lazy_orm|query_builder"}}, {"any": [{"matches": "state-projection-source"}, {"inside": {"matches": "state-projection-source", "stopBy": "end"}}]}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$STRING"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}]}, {"all": [{"not": {"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"value": {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|connection|materialized_pipeline|row|rows|sql_conn|sql_connection|txn)$"}}}]}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v).
+.decl raw_strings_2(s: node, value: symbol)
+raw_strings_2(s, v) :- ast(d, s, {"language": "python", "syntax": "valid", "rule": {"all": [{"filePath": {"regex": "auto_api|lazy_orm|query_builder"}}, {"any": [{"matches": "state-projection-source"}, {"inside": {"matches": "state-projection-source", "stopBy": "end"}}]}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"all": [{"any": [{"kind": "string"}, {"kind": "concatenated_string"}]}, {"pattern": "$STRING"}, {"not": {"has": {"kind": "interpolation", "stopBy": "end"}}}]}, {"not": {"any": [{"regex": "^[rRuUbBfF]*[\\\"']{1,3}_"}, {"regex": "^[rRuUbBfF]*[\\\"']{1,3}[a-z]"}]}}, {"$option": "entryPoint", "cases": {"scan_project_sources": {"filePath": {"regex": "(?s).*"}}}, "default": {"value": {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|connection|materialized_pipeline|row|rows|sql_conn|sql_connection|txn)$"}}}]}]}]}, "transform": {"DECODED": {"replace": {"source": "$STRING", "value": true, "replace": "\\b\\B", "by": ""}}}}, DECODED: v).
+.decl syntax_gate(d: number)
+syntax_gate(d) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"filePath": {"regex": "auto_api|lazy_orm|query_builder"}}, {"any": [{"matches": "state-projection-source"}, {"inside": {"matches": "state-projection-source", "stopBy": "end"}}]}, {"all": [{"$option": "oracleAnalyzer", "cases": {"true": {"filePath": {"regex": "(?s).*"}}, "false": {"any": [{"matches": "state-project-source"}, {"inside": {"matches": "state-project-source", "stopBy": "end"}}]}}}, {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_project_sources": {"filePath": {"regex": "(?s).*"}}, "scan_source": {"filePath": {"regex": "(?s).*"}}, "scan_tree": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"kind": "module"}]}]}]}}).
+
+// ---- the syntax table `nodes` ----
+.decl excluded_kind(k: symbol)
+excluded_kind("comment"). excluded_kind("string_start"). excluded_kind("string_content"). excluded_kind("string_end").
+excluded_kind("escape_sequence"). excluded_kind("line_continuation").
+.decl nodes(n: node)
+nodes(n) :- syntax_gate(d), node(d, n, k, _, _), !excluded_kind(k).
+
+// ---- projection_scopes (rows: __path, __start, __end) ----
+.decl projection_scopes(d: number, s: number, e: number)
+projection_scopes(d, s, e) :- nodes(n), kind(n, "function_definition"), field(n, "name", x), text(x, t),
+    @rx_matches(t, "alias|extract|project|projected|projection|tuple") = 1, node(d, n, _, s, e).
+projection_scopes(d, s, e) :- nodes(n), kind(n, "class_definition"), field(n, "name", x), text(x, t),
+    @rx_matches(t, "alias|extract|project|projected|projection|tuple") = 1, node(d, n, _, s, e).
+
+// ---- functions, attributes ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- nodes(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- nodes(a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+
+// ---- calls: callee = coalesce(a.attr, f.text) over the call's `function` f ----
+.decl calls(n: node, callee_id: node, callee: symbol)
+calls(n, f, c) :- nodes(n), kind(n, "call"), field(n, "function", f), nodes(f), attributes(f, c, _, _).
+calls(n, f, c) :- nodes(n), kind(n, "call"), field(n, "function", f), nodes(f), !is_attribute(f), text(f, c).
+.decl is_attribute(a: node)
+is_attribute(a) :- attributes(a, _, _, _).
+// receiver = a.object (LEFT JOIN attributes).
+.decl call_receiver(n: node, receiver: node)
+call_receiver(n, o) :- calls(n, f, _), attributes(f, _, o, _).
+
+// ---- descendants: expand = kind NOT IN (…), fixed at the root ----
+.decl unexpanded_kind(k: symbol)
+unexpanded_kind("module"). unexpanded_kind("block"). unexpanded_kind("expression_statement"). unexpanded_kind("argument_list").
+unexpanded_kind("decorated_definition"). unexpanded_kind("type").
+.decl descendants(root: node, n: node)
+descendants(r, r) :- nodes(r).
+descendants(r, n) :- nodes(r), kind(r, k), !unexpanded_kind(k), docof(r, d), node(d, n, _, _, _), nodes(n), @within(n, r) = 1.
+
+// ---- assignments ----
+.decl assignments(n: node, target: node, target_kind: symbol, target_text: symbol)
+assignments(n, l, lk, lt) :- nodes(n), kind(n, "assignment"), field(n, "left", l), nodes(l), kind(l, lk), text(l, lt).
+// value (LEFT JOIN nodes r ON r.id = n.right_id); expr_kind/expr_text are kind/text of the value.
+.decl assignment_value(n: node, value: node)
+assignment_value(n, r) :- assignments(n, _, _, _), field(n, "right", r), nodes(r).
+// fn (LEFT JOIN ownership).
+.decl assignment_fn(n: node, fn: node)
+assignment_fn(n, f) :- assignments(n, _, _, _), nearest(n, f, fdef).
+
+// ---- string_values (rows: __path, __start, __end, value) ----
+.decl raw_strings(s: node, value: symbol)
+raw_strings(s, v) :- raw_strings_0(s, v).
+raw_strings(s, v) :- raw_strings_1(s, v).
+raw_strings(s, v) :- raw_strings_2(s, v).
+// module_strings: a module-level `name = "<raw string>"`, the string matched on the assignment's right span.
+.decl module_strings(d: number, name: symbol, value: symbol)
+module_strings(d, name, v) :- assignments(a, _, "identifier", name), child(stmt, a, _), nodes(stmt), child(root, stmt, _), nodes(root),
+    kind(root, "module"), field(a, "right", r), node(d, r, _, rs, re), raw_strings(s, v), node(d, s, _, rs, re).
+.decl string_values(d: number, s: number, e: number, value: symbol)
+string_values(d, s, e, v) :- raw_strings(x, v), node(d, x, _, s, e).
+string_values(d, s, e, v) :- nodes(n), kind(n, "identifier"), text(n, name), node(d, n, _, s, e), module_strings(d, name, v).
+
+// ---- signed_exceptions ----
+.decl signed_exceptions(key: symbol)
+signed_exceptions("SPT-003::USearchVectorIndex.search_lazy::l5200_vector_index/index_implementations/usearch_index.py").
+signed_exceptions("SPT-026::_USearchScopedPersistStep.compile::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_ComputeContentHashKeyedHnswPlanStep._compute_plan::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_ComputeSourceKeyedHnswPlanStep._compute_plan::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_USearchScopedPersistStep._build_instance::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_USearchScopedPersistStep.tables_written::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_build_source_keyed_usearch_steps::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_coerce_sql_table_hnsw_query_vector::impl/common/l2070_server_plan/backend_profiles.py").
+signed_exceptions("SPT-027::_compute_similarity::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_runtime_embedding_vector_rows::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::_sql_table_hnsw_query_vector::impl/common/l2070_server_plan/steps/versioned_hybrid_search.py").
+signed_exceptions("SPT-027::_sql_table_hnsw_query_vector::impl/common/l2070_server_plan/steps/versioned_vector_search.py").
+signed_exceptions("SPT-027::_usearch_scoped_persist_post_op::impl/common/l2070_server_plan/intent_vector_index_maintenance.py").
+signed_exceptions("SPT-027::runtime_materialize_embedding_projection_rows_compiled_step::impl/common/l2070_server_plan/steps/intent_embedding_runtime_projection.py").
+
+// ---- the clause's query: SPT-029, an if/elif in a projection scope that tests rows/keys and recovers by re-execution ----
+.decl branch(n: node, d: number)
+branch(n, d) :- nodes(n), kind(n, "if_statement"), docof(n, d), doc(d, p), @rx_matches(p, "/tests/") = 0, @rx_matches(p, "auto_api|lazy_orm|query_builder") = 1.
+branch(n, d) :- nodes(n), kind(n, "elif_clause"), docof(n, d), doc(d, p), @rx_matches(p, "/tests/") = 0, @rx_matches(p, "auto_api|lazy_orm|query_builder") = 1.
+// scope.__start < n.__start AND scope.__end >= n.__end
+.decl in_projection_scope(n: node)
+in_projection_scope(n) :- branch(n, d), node(d, n, _, ns, ne), projection_scopes(d, s, e), s < ns, e >= ne.
+.decl row_name(t: symbol)
+row_name("row"). row_name("rows"). row_name("alias"). row_name("key"). row_name("keys").
+.decl row_value(v: symbol)
+row_value("row"). row_value("rows").
+.decl tests_rows(n: node)
+tests_rows(n) :- branch(n, _), field(n, "condition", c), descendants(c, a), kind(a, "identifier"), text(a, t), row_name(t).
+tests_rows(n) :- branch(n, d), field(n, "condition", c), descendants(c, a), node(d, a, _, s, e), string_values(d, s, e, v), row_value(v).
+.decl tests_membership(n: node)
+tests_membership(n) :- branch(n, _), field(n, "condition", c), descendants(c, t), kind(t, "comparison_operator"), text(t, x),
+    @rx_matches(x, "\\b(?:in|is)\\b") = 1.
+tests_membership(n) :- branch(n, _), field(n, "condition", c), descendants(c, t), calls(t, _, "isinstance").
+.decl recovery_callee(c: symbol)
+recovery_callee("evaluate"). recovery_callee("execute"). recovery_callee("execute_async"). recovery_callee("resolve"). recovery_callee("resolve_async").
+.decl recovery(r: node, d: number, s: number, e: number)
+recovery(r, d, s, e) :- calls(r, _, c), recovery_callee(c), node(d, r, _, s, e).
+// A recovery call in an elif/else child of n, or in a statement of n's function body on a later line than n.
+.decl recovers(n: node)
+recovers(n) :- branch(n, d), child(n, alt, _), nodes(alt), kind(alt, "elif_clause"), node(d, alt, _, as, ae), recovery(_, d, s, e),
+    s >= as, e <= ae.
+recovers(n) :- branch(n, d), child(n, alt, _), nodes(alt), kind(alt, "else_clause"), node(d, alt, _, as, ae), recovery(_, d, s, e),
+    s >= as, e <= ae.
+recovers(n) :- branch(n, d), nearest(n, f, fdef), functions(f, _), field(f, "body", b), child(b, stmt, _), nodes(stmt), sl = @line(stmt),
+    nl = @line(n), sl > nl, node(d, stmt, _, ts, te), recovery(_, d, s, e), s >= ts, e <= te.
+finding("state-projection-recovery-2", "SPT-029", n) :- branch(n, _), in_projection_scope(n), tests_rows(n), tests_membership(n), recovers(n).

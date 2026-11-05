@@ -1,0 +1,25 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl strprefix(n: node, s: symbol)
+.input doc, node, child, strprefix
+.decl k0(kind: symbol)
+k0("function_definition").
+.decl k1(kind: symbol)
+k1("module").
+.decl in_scope(d: number)
+.decl m3(n: node)
+.decl m6(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+m3(n) :- child(v2, n, _), node(_, v2, "concatenated_string", _, _).
+m6(n) :- node(_, n, "string", _, _), strprefix(n, v1), contains("f", v1), !m3(n).
+m6(n) :- node(_, n, "concatenated_string", _, _), child(n, v4, _), node(_, v4, "string", _, _), strprefix(v4, v5), contains("f", v5).
+m6(n) :- node(_, n, "format_specifier", _, _).
+.output violation

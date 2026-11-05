@@ -1,0 +1,73 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.input doc, node, child, field, text, name, strprefix
+.decl in_scope(d: number)
+.decl m1(n: node)
+.decl m12(n: node)
+.decl m16(n: node)
+.decl m22(n: node)
+.decl m25(n: node)
+.decl m30(n: node)
+.decl m32(n: node)
+.decl m35(n: node)
+.decl m36(n: node)
+.decl m39(n: node)
+.decl m43(n: node)
+.decl m44(n: node)
+.decl m46(n: node)
+.decl m5(n: node)
+.decl m50(n: node)
+.decl out_scope(d: number)
+.decl u26(n: node)
+.decl u29(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("data_layer/_file_locking.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/_mime_sniffing.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/rippling.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/versioned_merge.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/versioned_rebase.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/versioned_squash.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+m1(n) :- node(_, n, "function_definition", _, _).
+m1(n) :- node(_, n, "class_definition", _, _).
+m5(n) :- child(v2, n, _), node(_, v2, "module", _, _).
+m5(n) :- child(v3, n, _), node(_, v3, "decorated_definition", _, _), child(v4, v3, _), node(_, v4, "module", _, _).
+m12(n) :- child(v9, n, _), node(_, v9, "module", _, _).
+m12(n) :- child(v10, n, _), node(_, v10, "decorated_definition", _, _), child(v11, v10, _), node(_, v11, "module", _, _).
+m16(n) :- child(v13, n, _), node(_, v13, "module", _, _).
+m16(n) :- child(v14, n, _), node(_, v14, "decorated_definition", _, _), child(v15, v14, _), node(_, v15, "module", _, _).
+m22(n) :- node(_, n, "dotted_name", _, _), text(n, v18), prefix("impl.", v18).
+m22(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v19), name(v19, v21), prefix("impl.", v21).
+m25(n) :- node(_, n, "assignment", _, _).
+m25(n) :- node(_, n, "augmented_assignment", _, _).
+m30(n) :- node(_, n, "string", _, _).
+m30(n) :- node(_, n, "concatenated_string", _, _).
+m32(n) :- strprefix(n, v31), contains("f", v31).
+m35(n) :- child(n, v33, _), node(_, v33, "string", _, _), strprefix(v33, v34), contains("f", v34).
+m36(n) :- node(_, n, "integer", _, _).
+m36(n) :- node(_, n, "float", _, _).
+m36(n) :- node(_, n, "true", _, _).
+m36(n) :- node(_, n, "false", _, _).
+m36(n) :- node(_, n, "none", _, _).
+m36(n) :- node(_, n, "ellipsis", _, _).
+m36(n) :- m30(n), !m32(n), !m35(n).
+m39(n) :- node(_, n, "list", _, _).
+m39(n) :- node(_, n, "tuple", _, _).
+m39(n) :- node(_, n, "set", _, _).
+m43(n) :- node(_, n, "assignment", _, _).
+m43(n) :- node(_, n, "augmented_assignment", _, _).
+m44(n) :- child(n, v42, _), m43(v42).
+m46(n) :- node(_, n, "string", _, _).
+m46(n) :- node(_, n, "concatenated_string", _, _).
+m50(n) :- child(v47, n, _), node(_, v47, "module", _, _).
+m50(n) :- child(v48, n, _), node(_, v48, "decorated_definition", _, _), child(v49, v48, _), node(_, v49, "module", _, _).
+.output violation

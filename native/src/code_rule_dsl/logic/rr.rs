@@ -3,6 +3,7 @@
 //!
 //! - `syntax`: tokens and statements as written;
 //! - `lower`: statements to the engine's `Program`, the form the planner, magic sets and the backends take;
+//! - `print`: a `Program` as `.rr` text, read back as the same program;
 //! - `check`: the checks of `docs/rule-syntax/site/check_rr.py` (grounded, declared once, stratified);
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
@@ -10,6 +11,7 @@
 
 mod check;
 mod lower;
+mod print;
 mod syntax;
 mod translate;
 
@@ -20,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
+pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
 pub(in crate::code_rule_dsl) use translate::translate;
 

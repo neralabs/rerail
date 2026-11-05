@@ -152,7 +152,7 @@ pub(super) fn relation(r: &str) -> String {
     if RESERVED.contains(&r) { format!("{r}_") } else { r.to_owned() }
 }
 
-fn var(v: &str) -> String {
+pub(super) fn var(v: &str) -> String {
     if KEYWORDS.contains(&v) { format!("{v}_") } else { v.to_owned() }
 }
 
@@ -162,18 +162,6 @@ fn ty(t: &str) -> &str {
         "sym" => "symbol",
         other => other,
     }
-}
-
-/// A glob matching exactly `s`.
-fn glob_literal(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if matches!(c, '*' | '?' | '[' | ']' | '{' | '}' | '\\') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
 }
 
 impl T {
@@ -210,7 +198,7 @@ fn test(op: &str, s: &T, pattern: &T, neg: bool) -> Result<String, Error> {
         let bang = if neg { "!" } else { "" };
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
-            "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
+            "iequals" => format!("{bang}iglob({}, {s})", quote(&super::print::glob_literal(p))),
             "rx" => format!("{bang}match({}, {s})", quote(&format!("(?s).*(?:{p}).*"))),
             "irx" => format!("{bang}match({}, {s})", quote(&format!("(?is).*(?:{p}).*"))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),

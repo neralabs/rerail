@@ -67,11 +67,11 @@ fn words_are_whole_and_phrases_in_order() {
 
 #[test]
 fn tests_on_text_relations_become_relations() {
-    let mut prog = crate::code_rule_dsl::logic::front::parse(
-        ".decl name(n: node, s: sym)\n.input name\n.decl a(n: node)\n.decl b(n: node)\n.decl c(s: sym)\n\
-         a($n) :- name($n, $s), @glob($s, {\"_*\", \"x*\"}), !@suffix($s, \"_async\").\n\
-         b($n) :- name($n, $s), $s in {\"conn\", \"db\"}, @glob($s, {\"x*\", \"_*\"}).\n\
-         c($s) :- name(_, $t), $s = @cat($t, \"x\"), @prefix($s, \"_\").\n.output a, b, c\n",
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(
+        ".decl name(n: node, s: symbol)\n.input name\n.decl a(n: node)\n.decl b(n: node)\n.decl c(s: symbol)\n\
+         a(n) :- name(n, s), (glob(\"_*\", s) ; glob(\"x*\", s)), !suffix(\"_async\", s).\n\
+         b(n) :- name(n, s), (s = \"conn\" ; s = \"db\"), (glob(\"x*\", s) ; glob(\"_*\", s)).\n\
+         c(s) :- name(_, t), s = @dot(t, \"x\"), prefix(\"_\", s).\n.output a, b, c\n",
     )
     .unwrap();
     let v = as_relations(&mut prog).unwrap();

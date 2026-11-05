@@ -3,7 +3,7 @@
 //! time and memory, and (`RERAIL_DL_W=1`) its keys against W's engine on the same files.
 //!
 //!   RERAIL_DL_POLICY=<policy.json>[:<policy.json>…] RERAIL_DL_ROOT=<dir>
-//!   [RERAIL_DL_LOGIC=<program.rdl>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
+//!   [RERAIL_DL_LOGIC=<program.rr>] [RERAIL_DL_BACKEND=cpu|metal] [RERAIL_DL_W=1] [RERAIL_PROF=1]
 //!   cargo test --profile profiling --lib -- slice::tests::data_layer::data_layer_bench --ignored --nocapture
 //!
 //! A clause the path cannot run is reported with its reason, and left out of the policy the slice
@@ -43,7 +43,7 @@ fn refusal(clause: &serde_json::Value) -> Option<String> {
 /// `options` where given.
 fn authored(options: &serde_json::Map<String, serde_json::Value>) -> crate::code_rule_dsl::logic::front::Program {
     let Ok(path) = std::env::var("RERAIL_DL_LOGIC") else { return Default::default() };
-    let mut program = crate::code_rule_dsl::logic::front::parse(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut program = crate::code_rule_dsl::logic::rr::parse(&std::fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
     for document in &mut program.policies {
         with_options(document, options);
     }

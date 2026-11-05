@@ -67,90 +67,90 @@ const RELATION: &str = "finding";
 
 /// The pack's reporting rule (`reported`) over the wave's violations and the clauses' and documents' facts above.
 const FINDINGS: &str = "
-.decl forbidden(p: int, k: int, d: int, n: int)
-.decl clause(c: int, p: int, k: int)
-.decl match(c: int, d: int, n: int)
-.decl span(d: int, n: int, s: int, e: int)
-.decl shape(c: int, r: int, k: int, a: int, i: int, g: int)
-.decl group(c: int, d: int, n: int, s: int)
-.decl applies(c: int, d: int, h: int)
-.decl around(c: int)
-.decl error(d: int, s: int, e: int)
-.decl line_span(d: int, l: int, s: int, e: int)
-.decl noqa(c: int, k: int)
-.decl parented(c: int)
-.decl stmt(d: int, s: int, e: int)
-.decl exempt(d: int, k: int)
-.decl mapped(d: int, s: int, e: int)
-.decl directive(d: int, s: int, e: int, x: int, k: int)
-.decl nosec(c: int, k: int)
-.decl bandit(d: int, l: int, k: int)
-.decl after(d: int, l: int, p: int)
-.decl cover(d: int, i: int, s: int, e: int)
-.decl ceiling(r: int, m: int)
+.decl forbidden(p: number, k: number, d: number, n: number)
+.decl clause(c: number, p: number, k: number)
+.decl matched(c: number, d: number, n: number)
+.decl span(d: number, n: number, s: number, e: number)
+.decl shape(c: number, r: number, k: number, a: number, i: number, g: number)
+.decl group(c: number, d: number, n: number, s: number)
+.decl applies(c: number, d: number, h: number)
+.decl around(c: number)
+.decl error(d: number, s: number, e: number)
+.decl line_span(d: number, l: number, s: number, e: number)
+.decl noqa(c: number, k: number)
+.decl parented(c: number)
+.decl stmt(d: number, s: number, e: number)
+.decl exempt(d: number, k: number)
+.decl mapped(d: number, s: number, e: number)
+.decl directive(d: number, s: number, e: number, x: number, k: number)
+.decl nosec(c: number, k: number)
+.decl bandit(d: number, l: number, k: number)
+.decl after(d: number, l: number, p: number)
+.decl cover(d: number, i: number, s: number, e: number)
+.decl ceiling(r: number, m: number)
 .input forbidden, clause, span, shape, group, applies, around, error, line_span, noqa, parented, stmt, exempt, mapped, directive, nosec, bandit, after, cover, ceiling
-.decl grouped(c: int, d: int, n: int)
-.decl kept(c: int, d: int, n: int)
-.decl anchored(c: int, d: int, n: int, b: int)
-.decl broken(c: int, d: int, n: int)
-.decl lined(c: int, d: int, n: int, b: int, l: int)
-.decl honoured(c: int, d: int, n: int, b: int)
-.decl outer(c: int, d: int, n: int, b: int, p: int)
-.decl point(c: int, d: int, n: int, b: int, o: int)
-.decl remapped(c: int, d: int, n: int, b: int, o: int)
-.decl resolved(c: int, d: int, n: int, b: int, o: int)
-.decl first(d: int, n: int, l: int)
-.decl last(d: int, n: int, l: int)
-.decl guarded(c: int, d: int, n: int, b: int)
-.decl tested(c: int, d: int, n: int, b: int, l: int)
-.decl named(c: int, d: int, n: int, b: int)
-.decl quiet(c: int, d: int, n: int, b: int)
-.decl reported(r: int, c: int, d: int, n: int, b: int)
-.decl total(r: int, x: int)
-.decl finding(r: int, k: int, d: int, l: int)
+.decl grouped(c: number, d: number, n: number)
+.decl kept(c: number, d: number, n: number)
+.decl anchored(c: number, d: number, n: number, b: number)
+.decl broken(c: number, d: number, n: number)
+.decl lined(c: number, d: number, n: number, b: number, l: number)
+.decl honoured(c: number, d: number, n: number, b: number)
+.decl outer(c: number, d: number, n: number, b: number, p: number)
+.decl point(c: number, d: number, n: number, b: number, o: number)
+.decl remapped(c: number, d: number, n: number, b: number, o: number)
+.decl resolved(c: number, d: number, n: number, b: number, o: number)
+.decl first(d: number, n: number, l: number)
+.decl last(d: number, n: number, l: number)
+.decl guarded(c: number, d: number, n: number, b: number)
+.decl tested(c: number, d: number, n: number, b: number, l: number)
+.decl named(c: number, d: number, n: number, b: number)
+.decl quiet(c: number, d: number, n: number, b: number)
+.decl reported(r: number, c: number, d: number, n: number, b: number)
+.decl total(r: number, x: number)
+.decl finding(r: number, k: number, d: number, l: number)
 .output finding
-match($c, $d, $n) :- forbidden($p, $k, $d, $n), clause($c, $p, $k).
-grouped($c, $d, $n) :- group($c, $d, $n, _).
-kept($c, $d, $n) :- match($c, $d, $n), applies($c, $d, _), shape($c, _, _, _, _, 0).
-kept($c, $d, $n) :- match($c, $d, $n), applies($c, $d, _), shape($c, _, _, _, _, 1), grouped($c, $d, $n).
-anchored($c, $d, $n, $s) :- kept($c, $d, $n), shape($c, _, _, 0, _, _), span($d, $n, $s, _).
-anchored($c, $d, $n, $e) :- kept($c, $d, $n), shape($c, _, _, 1, _, _), span($d, $n, _, $e).
-anchored($c, $d, $n, 0) :- kept($c, $d, $n), shape($c, _, _, 2, _, _).
-anchored($c, $d, $n, $s) :- kept($c, $d, $n), shape($c, _, _, 3, _, _), group($c, $d, $n, $s).
-anchored($c, $d, $n, $s) :- kept($c, $d, $n), shape($c, _, _, 3, _, 0), span($d, $n, $s, _), !grouped($c, $d, $n).
-broken($c, $d, $n) :- kept($c, $d, $n), around($c), span($d, $n, $w, $v), error($d, $s, $s), $w <= $s, $s <= $v.
-broken($c, $d, $n) :- kept($c, $d, $n), around($c), span($d, $n, $w, $w), error($d, $s, $e), $s < $e, $s <= $w, $w < $e.
-broken($c, $d, $n) :- kept($c, $d, $n), around($c), span($d, $n, $w, $v), $w < $v, error($d, $s, $e), $s < $e, $w < $e, $s < $v.
-lined($c, $d, $n, $b, $l) :- anchored($c, $d, $n, $b), line_span($d, $l, $s, $e), $s <= $b, $b < $e.
-honoured($c, $d, $n, $b) :- anchored($c, $d, $n, $b), applies($c, $d, 1), noqa($c, _).
-point($c, $d, $n, $b, $b) :- honoured($c, $d, $n, $b).
-outer($c, $d, $n, $b, $p) :- honoured($c, $d, $n, $b), parented($c), stmt($d, $p, $e), $p <= $b, $b < $e, stmt($d, $q, $f), $q <= $b, $b < $f, $p < $q.
-point($c, $d, $n, $b, $p) :- honoured($c, $d, $n, $b), parented($c), stmt($d, $p, $e), $p <= $b, $b < $e, !outer($c, $d, $n, $b, $p).
-remapped($c, $d, $n, $b, $o) :- point($c, $d, $n, $b, $o), mapped($d, $s, $e), $s <= $o, $o < $e.
-resolved($c, $d, $n, $b, $e) :- point($c, $d, $n, $b, $o), mapped($d, $s, $e), $s <= $o, $o < $e.
-resolved($c, $d, $n, $b, $o) :- point($c, $d, $n, $b, $o), !remapped($c, $d, $n, $b, $o).
-first($d, $n, $l) :- span($d, $n, $b, _), line_span($d, $l, $s, $e), $s <= $b, $b < $e.
-last($d, $n, $l) :- span($d, $n, $w, $v), $w < $v, line_span($d, $l, $s, $e), $s < $v, $v <= $e.
-last($d, $n, $l) :- span($d, $n, $v, $v), first($d, $n, $l).
-guarded($c, $d, $n, $b) :- anchored($c, $d, $n, $b), applies($c, $d, 1), nosec($c, _).
-tested($c, $d, $n, $b, $l) :- guarded($c, $d, $n, $b), lined($c, $d, $n, $b, $l), bandit($d, $l, 0).
-tested($c, $d, $n, $b, $p) :- guarded($c, $d, $n, $b), first($d, $n, $f), last($d, $n, $z), after($d, $f, $p), $p <= $z.
-named($c, $d, $n, $b) :- tested($c, $d, $n, $b, $l), bandit($d, $l, $k), $k > 0.
-quiet($c, $d, $n, $b) :- anchored($c, $d, $n, $b), broken($c, $d, $n).
-quiet($c, $d, $n, $b) :- honoured($c, $d, $n, $b), exempt($d, 0).
-quiet($c, $d, $n, $b) :- honoured($c, $d, $n, $b), noqa($c, $k), exempt($d, $k).
-quiet($c, $d, $n, $b) :- resolved($c, $d, $n, $b, $o), directive($d, $s, $e, _, 0), $s <= $o, $o < $e.
-quiet($c, $d, $n, $b) :- resolved($c, $d, $n, $b, $o), directive($d, $s, $e, _, $k), noqa($c, $k), $s <= $o, $o < $e.
-quiet($c, $d, $n, $b) :- resolved($c, $d, $n, $b, $o), directive($d, $s, $o, 1, 0), $s <= $o.
-quiet($c, $d, $n, $b) :- resolved($c, $d, $n, $b, $o), directive($d, $s, $o, 1, $k), noqa($c, $k), $s <= $o.
-quiet($c, $d, $n, $b) :- tested($c, $d, $n, $b, _), !named($c, $d, $n, $b).
-quiet($c, $d, $n, $b) :- tested($c, $d, $n, $b, $l), bandit($d, $l, $k), nosec($c, $k).
-quiet($c, $d, $n, $b) :- anchored($c, $d, $n, $b), shape($c, _, _, $a, $i, _), $a != 1, cover($d, $i, $s, $e), $s <= $b, $b < $e.
-quiet($c, $d, $n, $v) :- anchored($c, $d, $n, $v), shape($c, _, _, 1, $i, _), span($d, $n, $w, $v), $w < $v, cover($d, $i, $s, $e), $s < $v, $v <= $e.
-quiet($c, $d, $n, $v) :- anchored($c, $d, $n, $v), shape($c, _, _, 1, $i, _), span($d, $n, $v, $v), cover($d, $i, $s, $e), $s <= $v, $v < $e.
-reported($r, $c, $d, $n, $b) :- anchored($c, $d, $n, $b), !quiet($c, $d, $n, $b), shape($c, $r, _, _, _, _).
-total($r, $x) :- ceiling($r, _), $x = count { reported($r, _, _, _, _) }.
-finding($r, $k, $d, $l) :- reported($r, $c, $d, $n, $b), lined($c, $d, $n, $b, $l), shape($c, _, $k, _, _, _), ceiling($r, $m), total($r, $x), $x >= $m.
+matched(c, d, n) :- forbidden(p, k, d, n), clause(c, p, k).
+grouped(c, d, n) :- group(c, d, n, _).
+kept(c, d, n) :- matched(c, d, n), applies(c, d, _), shape(c, _, _, _, _, 0).
+kept(c, d, n) :- matched(c, d, n), applies(c, d, _), shape(c, _, _, _, _, 1), grouped(c, d, n).
+anchored(c, d, n, s) :- kept(c, d, n), shape(c, _, _, 0, _, _), span(d, n, s, _).
+anchored(c, d, n, e) :- kept(c, d, n), shape(c, _, _, 1, _, _), span(d, n, _, e).
+anchored(c, d, n, 0) :- kept(c, d, n), shape(c, _, _, 2, _, _).
+anchored(c, d, n, s) :- kept(c, d, n), shape(c, _, _, 3, _, _), group(c, d, n, s).
+anchored(c, d, n, s) :- kept(c, d, n), shape(c, _, _, 3, _, 0), span(d, n, s, _), !grouped(c, d, n).
+broken(c, d, n) :- kept(c, d, n), around(c), span(d, n, w, v), error(d, s, s), w <= s, s <= v.
+broken(c, d, n) :- kept(c, d, n), around(c), span(d, n, w, w), error(d, s, e), s < e, s <= w, w < e.
+broken(c, d, n) :- kept(c, d, n), around(c), span(d, n, w, v), w < v, error(d, s, e), s < e, w < e, s < v.
+lined(c, d, n, b, l) :- anchored(c, d, n, b), line_span(d, l, s, e), s <= b, b < e.
+honoured(c, d, n, b) :- anchored(c, d, n, b), applies(c, d, 1), noqa(c, _).
+point(c, d, n, b, b) :- honoured(c, d, n, b).
+outer(c, d, n, b, p) :- honoured(c, d, n, b), parented(c), stmt(d, p, e), p <= b, b < e, stmt(d, q, f), q <= b, b < f, p < q.
+point(c, d, n, b, p) :- honoured(c, d, n, b), parented(c), stmt(d, p, e), p <= b, b < e, !outer(c, d, n, b, p).
+remapped(c, d, n, b, o) :- point(c, d, n, b, o), mapped(d, s, e), s <= o, o < e.
+resolved(c, d, n, b, e) :- point(c, d, n, b, o), mapped(d, s, e), s <= o, o < e.
+resolved(c, d, n, b, o) :- point(c, d, n, b, o), !remapped(c, d, n, b, o).
+first(d, n, l) :- span(d, n, b, _), line_span(d, l, s, e), s <= b, b < e.
+last(d, n, l) :- span(d, n, w, v), w < v, line_span(d, l, s, e), s < v, v <= e.
+last(d, n, l) :- span(d, n, v, v), first(d, n, l).
+guarded(c, d, n, b) :- anchored(c, d, n, b), applies(c, d, 1), nosec(c, _).
+tested(c, d, n, b, l) :- guarded(c, d, n, b), lined(c, d, n, b, l), bandit(d, l, 0).
+tested(c, d, n, b, p) :- guarded(c, d, n, b), first(d, n, f), last(d, n, z), after(d, f, p), p <= z.
+named(c, d, n, b) :- tested(c, d, n, b, l), bandit(d, l, k), k > 0.
+quiet(c, d, n, b) :- anchored(c, d, n, b), broken(c, d, n).
+quiet(c, d, n, b) :- honoured(c, d, n, b), exempt(d, 0).
+quiet(c, d, n, b) :- honoured(c, d, n, b), noqa(c, k), exempt(d, k).
+quiet(c, d, n, b) :- resolved(c, d, n, b, o), directive(d, s, e, _, 0), s <= o, o < e.
+quiet(c, d, n, b) :- resolved(c, d, n, b, o), directive(d, s, e, _, k), noqa(c, k), s <= o, o < e.
+quiet(c, d, n, b) :- resolved(c, d, n, b, o), directive(d, s, o, 1, 0), s <= o.
+quiet(c, d, n, b) :- resolved(c, d, n, b, o), directive(d, s, o, 1, k), noqa(c, k), s <= o.
+quiet(c, d, n, b) :- tested(c, d, n, b, _), !named(c, d, n, b).
+quiet(c, d, n, b) :- tested(c, d, n, b, l), bandit(d, l, k), nosec(c, k).
+quiet(c, d, n, b) :- anchored(c, d, n, b), shape(c, _, _, a, i, _), a != 1, cover(d, i, s, e), s <= b, b < e.
+quiet(c, d, n, v) :- anchored(c, d, n, v), shape(c, _, _, 1, i, _), span(d, n, w, v), w < v, cover(d, i, s, e), s < v, v <= e.
+quiet(c, d, n, v) :- anchored(c, d, n, v), shape(c, _, _, 1, i, _), span(d, n, v, v), cover(d, i, s, e), s <= v, v < e.
+reported(r, c, d, n, b) :- anchored(c, d, n, b), !quiet(c, d, n, b), shape(c, r, _, _, _, _).
+total(r, x) :- ceiling(r, _), x = count : { reported(r, _, _, _, _) }.
+finding(r, k, d, l) :- reported(r, c, d, n, b), lined(c, d, n, b, l), shape(c, _, k, _, _, _), ceiling(r, m), total(r, x), x >= m.
 ";
 
 /// The wave's relations the program reads, each with its table: the policies' violations (list step 21)
@@ -160,7 +160,7 @@ const WAVE: [(&str, &str, usize); 2] = [("forbidden", "violation", 4), ("span", 
 /// The layer's tables: the program's inputs that are not the wave's, each with its declared columns
 /// (`FINDINGS`' `.decl`s), which `Layer::write` fills.
 fn tables() -> StoreResult<Vec<(String, Vec<String>)>> {
-    let program = crate::code_rule_dsl::logic::front::parse(FINDINGS).map_err(invalid)?;
+    let program = crate::code_rule_dsl::logic::rr::parse(FINDINGS).map_err(invalid)?;
     Ok(program
         .inputs
         .iter()
@@ -646,7 +646,7 @@ impl Layer {
     fn matched(&self, lease: &Lease<'_>) -> StoreResult<BTreeMap<(i64, i64), Vec<i64>>> {
         let mut out = BTreeMap::<_, Vec<_>>::new();
         let rows: Vec<(i64, i64, i64)> = lease
-            .prepare("SELECT c0, c1, c2 FROM match")?
+            .prepare("SELECT c0, c1, c2 FROM matched")?
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<rusqlite::Result<_>>()?;
         for (c, d, n) in rows {

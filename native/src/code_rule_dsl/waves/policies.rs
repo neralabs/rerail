@@ -7,7 +7,7 @@
 //!
 //! The wave runs the program's rules, not a list of clauses:
 //! - each `ast` atom whose Python matcher lowers is a clause of the wave (its index `i`), and the atom reads
-//!   `match(i, $D, $N)`, the wave's terminal matches;
+//!   `matched(i, D, N)`, the wave's terminal matches;
 //! - the rewritten rules join the wave's source (`Logic::rules`), so `violation` is derived as the rules say
 //!   and the findings layer reads it;
 //! - a rule with an `ast` atom that does not lower is left out (its clause is not covered, as before).
@@ -26,7 +26,7 @@
 //! `violation("p", "c", $D, $N) :- match(3, $D, $N)` and the next clause's. Each rule's constants in its head
 //! and positive atoms become variables, read from a constant table of the shape, so the rules that are equal
 //! once their variables are renamed in order are one rule
-//! `violation($K0, $K1, $V0, $V1) :- violation_shape_0($K0, $K1, $K2), match($K2, $V0, $V1)` and one row
+//! `violation(K0, K1, V0, V1) :- violation_shape_0(K0, K1, K2), matched(K2, V0, V1)` and one row
 //! each. The wave plans one statement per shape and one for the table, not one per rule (about 1,300 per
 //! chunk on the data-layer pack before). A shape of one rule is kept as written.
 
@@ -46,7 +46,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The relation the wave's matches are in (`matches::SOURCE`).
-const MATCH: &str = "match";
+const MATCH: &str = "matched";
 /// The chunk's documents in the demand program, and what it derives.
 const WAVE: &str = "wave";
 const DEMANDED: &str = "demanded";
@@ -70,7 +70,7 @@ pub(in crate::code_rule_dsl) struct Logic {
 }
 
 impl Logic {
-    /// Each clause as its own forbid rule, `violation(<policy>, <clause>, $d, $n) :- match(i, $d, $n)`,
+    /// Each clause as its own forbid rule, `violation(<policy>, <clause>, d, n) :- matched(i, d, n)`,
     /// demanded everywhere: the program of clauses given without their documents (tests, `rir` dumps of
     /// one clause).
     pub(in crate::code_rule_dsl) fn per_clause(clauses: &[Clause]) -> Self {
@@ -81,7 +81,7 @@ impl Logic {
             prog.rules.push(Rule { head, body: vec![matched(i, "D", "N")] });
         }
         declare_violation(&mut prog);
-        Self { rules: wave_text(&merged(prog)), demand: None, bound: Vec::new() }
+        Self { rules: wave_text(&merged(prog)).expect("a clause's forbid rule prints as .rr"), demand: None, bound: Vec::new() }
     }
 
     /// The demand statement on `store` (its atoms interned there): a SELECT of `(i, d)` rows over
@@ -124,7 +124,7 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
     Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false })
 }
 
-/// `match(i, $d, $n)`: clause `i`'s matches.
+/// `matched(i, d, n)`: clause `i`'s matches.
 fn matched(i: usize, document: &str, node: &str) -> Literal {
     atom(MATCH, vec![Term::Int(i as i64), var(document), var(node)])
 }
@@ -161,29 +161,11 @@ fn declare_violation(prog: &mut Program) {
     }
 }
 
-/// The rules' text for the wave: declarations (nodes are the wave's integers), outputs, rules.
-fn wave_text(prog: &Program) -> String {
-    let mut out = String::new();
-    for (rel, cols) in &prog.decls {
-        let cols = cols.iter().map(|(c, t)| format!("{c}: {}", if t == "node" { "int" } else { t })).collect::<Vec<_>>();
-        out += &format!(".decl {rel}({})\n", cols.join(", "));
-    }
-    if !prog.outputs.is_empty() {
-        out += &format!(".output {}\n", prog.outputs.join(", "));
-    }
-    for rule in &prog.rules {
-        out += &format!("{rule}.\n");
-    }
-    for (rel, rows) in &prog.facts {
-        for row in rows {
-            let values = row.iter().map(|v| match v {
-                Value::Int(i) => Term::Int(*i),
-                Value::Str(s) => Term::Str(s.clone()),
-            });
-            out += &format!("{rel}({}).\n", front::join(&values.collect::<Vec<_>>()));
-        }
-    }
-    out
+/// The rules' text for the wave, in `.rr`: declarations (nodes are the wave's integers), outputs, rules, facts.
+fn wave_text(prog: &Program) -> Result<String, crate::code_rule_dsl::logic::front::Error> {
+    let decls = prog.decls.iter().map(|(rel, cols)| (rel.clone(), cols.iter().map(|(c, t)| (c.clone(), if t == "node" { "int".to_owned() } else { t.clone() })).collect())).collect();
+    let printed = Program { decls, outputs: prog.outputs.clone(), rules: prog.rules.clone(), facts: prog.facts.clone(), ..Program::default() };
+    crate::code_rule_dsl::logic::rr::print(&printed)
 }
 
 /// A rule with its variables renamed `V0, V1, …` in order of appearance, and its constants in the head and in
@@ -467,7 +449,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
                 demand_body.push(literal.clone());
                 continue;
             };
-            // The wave's `match(i, $D, $N)` carries no captures (O60): a rule reading them stays out.
+            // The wave's `matched(i, D, N)` carries no captures (O60): a rule reading them stays out.
             if !captures.is_empty() {
                 covered = false;
                 break;
@@ -524,7 +506,7 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
         .filter(|rel| is_bound(rel))
         .filter_map(|rel| crate::code_rule_dsl::logic::sql::select::input_columns(rel).map(|columns| (rel.to_owned(), columns)))
         .collect();
-    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)), demand, bound }, program })
+    Ok(Lowered { clauses, shapes, logic: Logic { rules: wave_text(&merged(wave)).map_err(invalid)?, demand, bound }, program })
 }
 
 /// The demand program of `rules` (each reading `ast_i` atoms after `wave` seeds): `.demand` on every atom,

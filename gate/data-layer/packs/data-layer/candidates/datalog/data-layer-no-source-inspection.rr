@@ -1,0 +1,25 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl name(n: node, s: symbol)
+.decl line(n: node, l: number)
+.input doc, node, field, name, line
+.decl in_scope(d: number)
+.decl m13(n: node)
+.decl m20(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("tests/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("conform/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+violation("data-layer-no-source-inspection", "inspection-0", "NSI001", p, l) :- node(_, n, "call", _, _), field(n, "function", v1), node(_, v1, "attribute", _, _), name(v1, v2), (glob("*.inspect.getsource", v2) ; glob("inspect.getsource", v2)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-no-source-inspection", "inspection-1", "NSI001", p, l) :- node(_, n, "call", _, _), field(n, "function", v3), node(_, v3, "attribute", _, _), name(v3, v4), (glob("*.inspect.getsourcelines", v4) ; glob("inspect.getsourcelines", v4)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-no-source-inspection", "inspection-2", "NSI001", p, l) :- node(_, n, "call", _, _), field(n, "function", v5), node(_, v5, "attribute", _, _), name(v5, v6), (glob("*.inspect.getsourcefile", v6) ; glob("inspect.getsourcefile", v6)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+m13(n) :- field(v12, "module_name", n), node(_, v12, "import_from_statement", _, _).
+m20(n) :- field(v19, "module_name", n), node(_, v19, "import_from_statement", _, _).
+.output violation

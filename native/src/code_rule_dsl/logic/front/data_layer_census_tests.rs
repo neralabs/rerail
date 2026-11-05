@@ -458,7 +458,14 @@ struct Census {
 
 fn derive() -> Census {
     let dir = gate().join("packs/data-layer/candidates/rules");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    // The 60 rules the converter covers (a `.rr` beside them in `candidates/datalog`); the 10 copied later
+    // (`require_each` and the other new forms) join the census when the converter reads them.
+    let converted = gate().join("packs/data-layer/candidates/datalog");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.file_stem().is_some_and(|s| converted.join(s).with_extension("rr").exists()))
+        .collect();
     files.sort();
     let mut census = Census { clauses: BTreeMap::new(), recursions: Vec::new() };
     for path in files {

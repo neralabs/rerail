@@ -273,7 +273,14 @@ fn rdl_programs_translate_to_the_same_program() {
         }
         let (rdl, rr) = if name.contains("data_layer/") { (format!("{prelude_rdl}\n{text}"), format!("{prelude_rr}\n{rr}")) } else { (text, rr) };
         match (front::parse(&rdl).map(normalized), parse(&rr)) {
-            (Ok(a), Ok(b)) => failures.extend(difference(&a, &b).map(|d| format!("{name}: {d}"))),
+            (Ok(a), Ok(b)) => {
+                failures.extend(difference(&a, &b).map(|d| format!("{name}: {d}")));
+                // Printed, the program reads back as itself.
+                match print(&b).and_then(|text| parse(&text)) {
+                    Ok(c) => failures.extend(difference(&b, &c).map(|d| format!("{name}, printed: {d}"))),
+                    Err(e) => failures.push(format!("{name}, printed: {e}")),
+                }
+            }
             (Err(a), Err(b)) if error_name(&a) == error_name(&b) => {}
             (a, b) => failures.push(format!("{name}: .rdl {:?} but .rr {:?}", a.err().map(|e| e.to_string()), b.err().map(|e| e.to_string()))),
         }

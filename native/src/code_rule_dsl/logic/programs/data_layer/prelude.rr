@@ -1,0 +1,27 @@
+// The inputs every data-layer program reads (prepended to each by `logic::front`'s data-layer test).
+//
+// The tape, in T's relations (`typing/programs/calls.rdl`): one row per node. `text` is a node's source text, any
+// node's (a builtin over the tape's source; decision 0026 stores no per-node rows). `doc` holds the document's path.
+.decl doc(d: number, path: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input doc, node, child, field, text
+.decl kind(n: node, k: symbol)
+kind(n, k) :- node(_, n, k, _, _).
+.decl docof(n: node, d: number)
+docof(n, d) :- node(d, n, _, _, _).
+.decl start(n: node, s: number)
+start(n, s) :- node(_, n, _, s, _).
+
+// Facts the rules read that no producer makes yet (t17, census category `facts:crossfile`).
+// `module_of`: the document's module from the package roots (W's `file.module`; facts-a refused it at compile).
+// `reference_edge`: W's `references` linker, a definition referring to another, across files.
+.decl module_of(d: number, m: symbol)
+.decl reference_edge(n: node, t: node)
+.input module_of, reference_edge
+
+// The document's module from its path alone, as the rules' SQL computes it.
+.decl path_module(d: number, m: symbol)
+path_module(d, m) :- doc(d, p), s = @rx_replace(p, "/__init__\\.py$|\\.py$", ""), m = @replace(s, "/", ".").

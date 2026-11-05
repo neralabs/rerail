@@ -36,7 +36,7 @@ fn store() -> ContentStore {
 }
 
 /// The Python pack through the logic language: every document round-trips, every lowered clause is an
-/// `ast` atom of its forbid rule, and the wave's rules derive `violation` from `match`.
+/// `ast` atom of its forbid rule, and the wave's rules derive `violation` from `matched`.
 #[test]
 fn the_python_pack_runs_as_its_logic_program() {
     let policies = policies("python");
@@ -46,7 +46,7 @@ fn the_python_pack_runs_as_its_logic_program() {
     let forbids = lowered.program.rules.iter().filter(|rule| rule.body.iter().any(|l| matches!(l, Literal::Ast { .. }))).count();
     assert!(forbids >= lowered.clauses.len(), "{forbids} forbid rules, {} lowered", lowered.clauses.len());
     // Rules of one shape are one rule over its table: each lowered atom is a row, or a rule kept as written.
-    let wave = front::parse(&lowered.logic.rules).unwrap();
+    let wave = crate::code_rule_dsl::logic::rr::parse(&lowered.logic.rules).unwrap();
     let rows: usize = wave.facts.iter().filter(|(rel, _)| rel.starts_with("violation_shape_")).map(|(_, rows)| rows.len()).sum();
     let kept = wave.rules.iter().filter(|rule| !rule.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.starts_with("violation_shape_")))).count();
     assert!(rows > 0, "the pack's forbid rules share a shape");
@@ -121,15 +121,15 @@ fn py_families_narrow_demand_before_the_batch() {
 #[test]
 fn rules_of_one_shape_are_one_rule_over_their_constants() {
     let src = r#"
-        .decl violation(policy: sym, clause: sym, d: int, n: int)
-        violation("p", "a", $D, $N) :- match(0, $D, $N).
-        violation("q", "b", $X, $Y) :- match(1, $X, $Y).
-        violation("p", "c", $D, $N) :- match(2, $D, $N), $D = 7.
+        .decl violation(policy: symbol, clause: symbol, d: number, n: number)
+        violation("p", "a", D, N) :- matched(0, D, N).
+        violation("q", "b", X, Y) :- matched(1, X, Y).
+        violation("p", "c", D, N) :- matched(2, D, N), D = 7.
     "#;
-    let prog = merged(front::parse(src).unwrap());
+    let prog = merged(crate::code_rule_dsl::logic::rr::parse(src).unwrap());
     assert_eq!(prog.rules.len(), 2, "{:?}", prog.rules.iter().map(ToString::to_string).collect::<Vec<_>>());
-    assert_eq!(prog.rules[0].to_string(), "violation($K0, $K1, $V0, $V1) :- violation_shape_0($K0, $K1, $K2), match($K2, $V0, $V1)");
-    assert_eq!(prog.rules[1].to_string(), r#"violation("p", "c", $D, $N) :- match(2, $D, $N), $D = 7"#);
+    assert_eq!(prog.rules[0].to_string(), "violation($K0, $K1, $V0, $V1) :- violation_shape_0($K0, $K1, $K2), matched($K2, $V0, $V1)");
+    assert_eq!(prog.rules[1].to_string(), r#"violation("p", "c", $D, $N) :- matched(2, $D, $N), $D = 7"#);
     let rows = &prog.facts["violation_shape_0"];
     assert_eq!(rows, &vec![
         vec![Value::Str("p".into()), Value::Str("a".into()), Value::Int(0)],
@@ -137,7 +137,7 @@ fn rules_of_one_shape_are_one_rule_over_their_constants() {
     ]);
     assert_eq!(prog.decls["violation_shape_0"].iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(), ["sym", "sym", "int"]);
     // The wave's text parses back to the same program.
-    let back = front::parse(&wave_text(&prog)).unwrap();
+    let back = crate::code_rule_dsl::logic::rr::parse(&wave_text(&prog).unwrap()).unwrap();
     assert_eq!(back.rules, prog.rules);
     assert_eq!(back.facts, prog.facts);
 }

@@ -116,7 +116,9 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
         })();
         clauses.push((clause.id.clone(), result));
     }
-    Converted { program: e.program(&["violation"]), clauses, approx: e.approx.clone() }
+    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
+    let program = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    Converted { program, clauses, approx: e.approx.clone() }
 }
 
 fn rule_files() -> Vec<PathBuf> {
@@ -125,7 +127,7 @@ fn rule_files() -> Vec<PathBuf> {
     files
 }
 
-/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rdl`, and the
+/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rr`, and the
 /// coverage (`coverage.txt`): clauses converted, the gaps by kind, the approximations.
 #[test]
 #[ignore = "writes the converted rules into the pack"]
@@ -139,8 +141,8 @@ fn convert_the_data_layer_pack() {
     for path in rule_files() {
         let id = path.file_stem().unwrap().to_string_lossy().into_owned();
         let c = convert(&path, &Adjust::default());
-        crate::code_rule_dsl::logic::front::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
-        std::fs::write(out.join(format!("{id}.rdl")), &c.program).unwrap();
+        crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
+        std::fs::write(out.join(format!("{id}.rr")), &c.program).unwrap();
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
         total += c.clauses.len();
         done += ok;
@@ -277,10 +279,17 @@ fn regexes_become_exact_globs() {
     }
 }
 
-/// The recorded events (the upstream linters' tests, `fixtures/host/data-layer-port`), as `replay.ts` reads them.
+/// The recorded events (the upstream linters' tests, `fixtures/host/data-layer-port`), as `replay.ts` reads them:
+/// the recordings of batches 1–6, the 60 converted rules' tests. Batches 7 and 8 and the probes, copied later,
+/// cover the newer rules and join when the converter reads those.
 fn events() -> Vec<serde_json::Value> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    let first = |name: &str| (1..=6).any(|b| name == format!("batch-{b:02}-recording.json"));
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(first))
+        .collect();
     paths.sort();
     let mut out = Vec::new();
     for p in paths {
@@ -404,9 +413,9 @@ fn measure_converted_rules() {
     let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
     for id in rules.split(',') {
-        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rdl"))).unwrap();
+        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap();
         // The relations the cross-file part derives, and the base relations it reads.
-        let mut parsed = crate::code_rule_dsl::logic::front::parse(&program).unwrap();
+        let mut parsed = crate::code_rule_dsl::logic::rr::parse(&program).unwrap();
         crate::code_rule_dsl::logic::strings::as_relations(&mut parsed).unwrap();
         let split = crate::code_rule_dsl::typing::file_local::programs(&parsed);
         let cross: BTreeSet<&str> = split.cross.rules.iter().map(|r| r.head.rel.as_str()).collect();

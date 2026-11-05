@@ -1,4 +1,7 @@
+//! The front end's checks (stratification, lattices, value cycles, prune) on programs in `.rr` (`logic::rr`).
+
 use super::*;
+use crate::code_rule_dsl::logic::rr::parse;
 
 fn program(name: &str) -> Program {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/plan/golden/programs").join(name);
@@ -12,14 +15,14 @@ fn program(name: &str) -> Program {
 fn t_programs_match_t_front_end() {
     type Expected = (usize, usize, usize, usize, &'static [&'static str], usize, usize, usize, usize, usize, usize, usize);
     let golden: [(&str, Expected); 5] = [
-        ("calls.rdl", (98, 221, 160, 0, &[], 3, 7, 7, 76, 7, 221, 76)),
-        ("calls_rust.rdl", (61, 148, 9, 0, &[], 5, 6, 4, 45, 8, 147, 44)),
-        ("workload.rdl", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
+        ("calls.rr", (98, 221, 160, 0, &[], 3, 7, 7, 76, 7, 221, 76)),
+        ("calls_rust.rr", (61, 148, 9, 0, &[], 5, 6, 4, 45, 8, 147, 44)),
+        ("workload.rr", (42, 63, 35, 1, &[], 1, 7, 3, 29, 2, 63, 29)),
         (
-            "workload_demand.rdl",
+            "workload_demand.rr",
             (43, 63, 35, 1, &["class_ref", "cv", "fn_ref", "has_def", "lookup", "returns", "type_of"], 1, 7, 3, 30, 2, 63, 30),
         ),
-        ("workload_perdoc.rdl", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
+        ("workload_perdoc.rr", (45, 66, 35, 1, &[], 1, 10, 3, 29, 2, 66, 29)),
     ];
     for (name, expected) in golden {
         let p = program(name);
@@ -47,8 +50,8 @@ fn t_programs_match_t_front_end() {
         // O11: the value cycles, each bounded by the tree.
         let treed: Vec<String> = cycles::check(&p).unwrap().iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect();
         let expected: &[&str] = match name {
-            "calls.rdl" => &["qn"],
-            "calls_rust.rdl" => &["modn"],
+            "calls.rr" => &["qn"],
+            "calls_rust.rr" => &["modn"],
             _ => &["resolves"],
         };
         for rel in expected {
@@ -63,8 +66,9 @@ fn literals_parse_to_t_ast() {
         r#"// a comment
         .decl e(a: node, b: node)
         .input e
-        .kindset scope = "module" | "function_definition"
-        r($n, @cat($q, $a)) :- e($n, $o), !g($o), $k = count { e($o, _) }, $k >= 2, nearest($n, $s, scope), $q = "x", $a = top.
+        .decl scope(kind: symbol)
+        scope("module"). scope("function_definition").
+        r(n, @dot(q, a)) :- e(n, o), !g(o), k = count : { e(o, _) }, k >= 2, nearest(n, s, scope), q = "x", a = top.
         e(1, -2).
         "#,
     )
@@ -83,10 +87,11 @@ fn literals_parse_to_t_ast() {
 #[test]
 fn section_12_extensions_parse() {
     let p = parse(
-        r#".decl type_of(d: int, n: node; t: approx) merge @approx_join widen 8
-        .demand *
-        m($g, $lo) :- e($g, _), $lo = min $v : { e($g, $v) }.
-        t($d, $n) :- ast($d, $n, { kind: typed_parameter, not: { inside: { kind: lambda } } }).
+        r#".lattice approx_join<approx> { Lub -> @approx_join }
+        .decl type_of(d: number, n: node, t: approx_join<>) widen 8
+        .pragma "magic-transform" "*"
+        m(g, lo) :- e(g, _), lo = min v : { e(g, v) }.
+        t(d, n) :- ast(d, n, { kind: typed_parameter, not: { inside: { kind: lambda } } }).
         "#,
     )
     .unwrap();
@@ -102,46 +107,46 @@ fn section_12_extensions_parse() {
 /// A matcher atom exports metavariables: each binds a variable to its captured node, and prints back as written.
 #[test]
 fn matcher_atom_exports_captures() {
-    let src = r#"f($n, $s) :- ast($d, $f, {"rule": {"kind": "function_definition", "has": {"field": "name", "pattern": "$FNAME"}}}, FNAME: $n), text($n, $s)."#;
+    let src = r#"f(n, s) :- ast(d, f, {"rule": {"kind": "function_definition", "has": {"field": "name", "pattern": "$FNAME"}}}, FNAME: n), text(n, s)."#;
     let p = parse(src).unwrap();
     let Literal::Ast { captures, .. } = &p.rules[0].body[0] else { panic!("not a matcher atom") };
     assert_eq!(captures, &[("FNAME".to_owned(), "n".to_owned())]);
     assert_eq!(p.rules[0].body[0].vars(), ["d", "f", "n"].map(String::from).into());
-    assert_eq!(format!("{}.", p.rules[0]), src);
-    assert!(matches!(parse("f($n) :- ast($d, $f, {}, FNAME $n)."), Err(Error::Syntax(_))));
+    assert!(crate::code_rule_dsl::logic::rr::print(&p).unwrap().contains(src));
+    assert!(matches!(parse("f(n) :- ast(d, f, {}, FNAME n)."), Err(Error::Syntax(_))));
 }
 
 #[test]
 fn named_errors() {
-    let unbounded = parse(".decl hi(n: node; v: max)\n");
+    let unbounded = parse(".decl hi(n: node, v: max<>)\n");
     assert_eq!(unbounded.unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
-    assert!(parse(".decl hi(n: node; v: max) widen 4\n").is_ok());
+    assert!(parse(".decl hi(n: node, v: max<>) widen 4\n").is_ok());
 
-    let negation = parse("a($x) :- e($x), !b($x).\nb($x) :- a($x).\n").unwrap();
+    let negation = parse("a(x) :- e(x), !b(x).\nb(x) :- a(x).\n").unwrap();
     assert!(matches!(strata(&negation), Err(Error::NotStratifiable { negated, .. }) if negated == "b"));
 
-    let counting = "a($x, $k) :- e($x), $k = count { b($x, _) }.\nb($x, $y) :- a($x, $y).\n";
+    let counting = "a(x, k) :- e(x), k = count : { b(x, _) }.\nb(x, y) :- a(x, y).\n";
     assert!(matches!(strata(&parse(counting).unwrap()), Err(Error::AggregationInRecursion { head, .. }) if head == "a"));
     // Into a max lattice, a count only rises: monotone, so allowed.
-    let monotone = format!(".decl a(x: node; k: max) widen 8\n{counting}");
+    let monotone = format!(".decl a(x: node, k: max<>) widen 8\n{counting}");
     assert!(strata(&parse(&monotone).unwrap()).is_ok());
 
     // O11: names made along a tree edge are bounded by the tree; along a graph, they are not.
-    let decls = ".decl e(a: node, b: node)\n.decl field(p: node, f: sym, c: node)\n.decl nm(n: node, s: sym)\n.decl q(n: node, s: sym)\n.input e, field, nm\n";
-    let down = format!("{decls}q($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- field($n, \"object\", $o), q($o, $p), nm($n, $s).\n");
+    let decls = ".decl e(a: node, b: node)\n.decl field(p: node, f: symbol, c: node)\n.decl nm(n: node, s: symbol)\n.decl q(n: node, s: symbol)\n.input e, field, nm\n";
+    let down = format!("{decls}q(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- field(n, \"object\", o), q(o, p), nm(n, s).\n");
     assert!(parse(&down).is_ok());
-    let up = format!("{decls}.decl r(n: node, s: sym)\nr($n, $s) :- nm($n, $s).\nr($n, @cat($p, $s)) :- nearest($n, $a, k), r($a, $p), nm($n, $s).\n.kindset k = \"module\"\n");
+    let up = format!("{decls}.decl r(n: node, s: symbol)\nr(n, s) :- nm(n, s).\nr(n, @dot(p, s)) :- nearest(n, a, k), r(a, p), nm(n, s).\n.decl k(kind: symbol)\nk(\"module\").\n");
     assert!(parse(&up).is_ok(), "{:?}", parse(&up).err());
-    let graph = format!("{decls}q($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- e($n, $o), q($o, $p), nm($n, $s).\n");
+    let graph = format!("{decls}q(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- e(n, o), q(o, p), nm(n, s).\n");
     assert!(matches!(parse(&graph), Err(Error::UnboundedValueCycle { component, .. }) if component.contains("q")));
     // Down one way and up the other: no key moves one way.
-    let both = format!("{decls}q($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- field($n, \"object\", $o), q($o, $p), nm($n, $s).\nq($o, $s) :- field($n, \"object\", $o), q($n, $s).\n");
+    let both = format!("{decls}q(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- field(n, \"object\", o), q(o, p), nm(n, s).\nq(o, s) :- field(n, \"object\", o), q(n, s).\n");
     assert!(matches!(parse(&both), Err(Error::UnboundedValueCycle { .. })));
     // A derived relation's guarantee carries the bound (`attr_of` in T's calls.rdl).
-    let derived = format!("{decls}.decl at(n: node, o: node)\nat($n, $o) :- field($n, \"object\", $o).\nq($n, $s) :- nm($n, $s).\nq($n, @cat($p, $s)) :- at($n, $o), q($o, $p), nm($n, $s).\n");
+    let derived = format!("{decls}.decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\nq(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- at(n, o), q(o, p), nm(n, s).\n");
     assert!(parse(&derived).is_ok());
 
-    let computed = parse("a($x) :- e(@cat($x, $x)).\n");
+    let computed = parse("a(x) :- e(@dot(x, x)).\n");
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
 }
 
@@ -160,11 +165,11 @@ fn comparisons_bind_like_t() {
 /// The components come in T's order, which the planner and the native strata follow.
 #[test]
 fn components_in_t_order() {
-    let (sccs, _) = strata(&program("calls_rust.rdl")).unwrap();
+    let (sccs, _) = strata(&program("calls_rust.rr")).unwrap();
     let got = sccs.iter().map(|c| c.iter().cloned().collect::<Vec<_>>().join(",")).collect::<Vec<_>>().join(" | ");
     assert_eq!(
         got,
-        "kind | nm | impl_fn | iparent | modn | modchild | item | uent | bound_here | glob | modpar | inmod | isvis | pubitem | \
+        "kind | nm | impl_fn | iparent | modn | modchild | item | uent | bound_here | glob_ | modpar | inmod | isvis | pubitem | \
          pubuse | mpub | local | tbase | troot | wants | islocal | seg1 | lwalk | lfound | lglob | trait_fn | \
          assoc,globx,impl_of,impl_trait,member,mexport,res,ures | callee | sfield | ttype | call_target,etype | lethasfn | \
          pathk2 | tpname | generic | exttype | rext | call_open | owner | calls | crate_fn_name | macro_open | calls_open | \
