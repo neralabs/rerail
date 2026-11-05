@@ -508,8 +508,12 @@ fn combinations(n: usize, k: usize) -> Vec<Vec<usize>> {
 
 /// Above this many join literals a body is ordered greedily, not searched (decision 0038).
 const GREEDY: usize = 12;
-/// A kept plan is searched again where its work per node grew more than this (decision 0038).
+/// A kept plan is searched again where its work per node grew more than this (decision 0038)...
 const REPLAN: f64 = 4.0;
+/// ...and by more than this many rows of work: below it, running the kept order costs less than a search (about
+/// 1.6 ms for 12 joins, some 10^4 to 10^5 rows of native joins). A plan made where a text test matched nothing
+/// prices at a few rows, and any later chunk is 4 times that.
+const REPLAN_ROWS: f64 = 10_000.0;
 
 thread_local! {
     /// Plans kept across a corpus run's chunks, on the thread that runs them: per rule (head, body, delta, the
@@ -577,24 +581,33 @@ impl Model {
         body: &[Literal],
         first: Option<usize>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        let key_span = super::profile::span(|| "key".into());
         let key = format!("{head} :- {} @{first:?} /{}", body.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "), self.stats.solving.iter().cloned().collect::<Vec<_>>().join(","));
+        drop(key_span);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.get(&key).cloned())) else {
             return self.plan_inner(prog, head, body, first, None);
         };
         if let Some((order, per_node)) = kept {
-            match self.plan_inner(prog, head, body, first, Some(&order)) {
-                Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) => {
+            let priced = {
+                let _span = super::profile::span(|| "re-price".into());
+                self.plan_inner(prog, head, body, first, Some(&order))
+            };
+            match priced {
+                Ok(got) if got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
                     return Ok(got);
                 }
-                Ok(_) => super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x")),
+                Ok(_) => super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x, by over {REPLAN_ROWS} rows")),
                 Err(_) => super::profile::decision("plan cache (decision 0038)", || "replanned: the kept order no longer runs".into()),
             }
         } else {
             super::profile::decision("plan cache (decision 0038)", || "planned (first sight of the rule)".into());
         }
-        let got = self.plan_inner(prog, head, body, first, None)?;
+        let got = {
+            let _span = super::profile::span(|| "search".into());
+            self.plan_inner(prog, head, body, first, None)?
+        };
         PLANS.with(|p| {
             if let Some(p) = p.borrow_mut().as_mut() {
                 p.insert(key, (got.0.0.clone(), got.0.1 / nodes));
@@ -829,6 +842,7 @@ impl Model {
             (work, rows, order, 0)
         } else {
         type Best = (f64, f64, Vec<Step>, BTreeSet<String>, Vec<usize>);
+        let mut subsets_reached = 0u64;
         let mut best_of: HashMap<u64, Best> = HashMap::new();
         best_of.insert(0, (0.0, 1.0, Vec::new(), BTreeSet::new(), (0..body.len()).filter(|&i| !is_join(&body[i])).collect()));
         // The greedy order's next step shares a variable with what is joined, while one can (no cross product while a
@@ -870,35 +884,177 @@ impl Model {
                 best_of.insert(full_mask, (work, rows, order, bound, rest));
             }
         } else {
+        // The search keeps per subset only its best cost and a back pointer (the last join, its mode, the subset
+        // before). What a subset binds and which filters it has placed do not depend on the order that reached it
+        // (readiness only grows with what is bound), so they are worked out once per subset, not per candidate; the
+        // chosen order is rebuilt from the back pointers at the end, its filters placed as `close` places them.
+        struct Cell {
+            work: f64,
+            rows: f64,
+            prev: u64,
+            last: usize,
+            mode: Option<Mode>,
+        }
+        let filters: Vec<usize> = (0..body.len()).filter(|&i| !is_join(&body[i])).collect();
+        let halves = |l: &Literal| !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. }));
+        // A subset's bound variables and how many halving filters it has placed.
+        let closure = |mask: u64| -> (BTreeSet<String>, usize) {
+            let mut bound = BTreeSet::new();
+            if mask == 0 {
+                return (bound, 0);
+            }
+            for (i, &j) in joins.iter().enumerate() {
+                if mask & (1 << i) != 0 {
+                    bound.extend(body[j].vars());
+                }
+            }
+            let mut placed = vec![false; filters.len()];
+            let mut progressed = true;
+            while progressed {
+                progressed = false;
+                for (k, &f) in filters.iter().enumerate() {
+                    if !placed[k] && ready(&body[f], &bound) {
+                        placed[k] = true;
+                        bound.extend(body[f].vars());
+                        progressed = true;
+                    }
+                }
+            }
+            let h = filters.iter().zip(&placed).filter(|(f, p)| **p && halves(&body[**f])).count();
+            (bound, h)
+        };
+        // A join's pricing depends on which of its variables are bound (and, for a range read, those of the body's
+        // `docof` atoms), not on the rows coming in: its factors are worked out once per such pattern, and each
+        // candidate applies them to its rows exactly as `step` does.
+        #[derive(Clone, Copy)]
+        enum Price {
+            No,
+            Atom(f64, Option<f64>),
+            Climb(f64),
+            Descend(f64),
+        }
+        let docof_vars: BTreeSet<String> = body
+            .iter()
+            .filter_map(|d| match d {
+                Literal::Atom(d) if !d.neg && self.docof.contains_key(&d.rel) => Some(d.vars()),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        let relevant: Vec<Vec<String>> = joins
+            .iter()
+            .map(|&j| {
+                let mut v = body[j].vars();
+                if matches!(body[j], Literal::Atom(_)) {
+                    v.extend(docof_vars.iter().cloned());
+                }
+                v.into_iter().collect()
+            })
+            .collect();
+        let mut prices: HashMap<(usize, u64), Price> = HashMap::new();
+        let mut price = |i: usize, bound: &BTreeSet<String>| -> Price {
+            let vars = &relevant[i];
+            let pattern = vars.iter().enumerate().fold(0u64, |m, (k, v)| if k < 64 && bound.contains(v) { m | 1 << k } else { m });
+            let compute = || match &body[joins[i]] {
+                Literal::Atom(a) => Price::Atom(atom_rows(a, bound), doc_range(a, bound).map(|(_, r)| r)),
+                l @ Literal::Nearest { n, a, kindset } => {
+                    if !ready(l, bound) {
+                        Price::No
+                    } else if bound.contains(n) {
+                        Price::Climb(stats.steps(kinds.get(n.as_str()).map(String::as_str), kindset))
+                    } else {
+                        Price::Descend(kinds.get(a.as_str()).and_then(|k| stats.size.get(k)).copied().unwrap_or(stats.nodes / 1000.0))
+                    }
+                }
+                _ => Price::No,
+            };
+            if vars.len() > 64 {
+                return compute();
+            }
+            *prices.entry((i, pattern)).or_insert_with(compute)
+        };
+        // `step` (outside a long body's greedy order) from a price.
+        let priced = |p: Price, rows: f64| -> Option<(f64, f64, Option<Mode>)> {
+            match p {
+                Price::No => None,
+                Price::Atom(ar, range) => {
+                    let out = rows * ar;
+                    if let Some(r) = range
+                        && rows * r < out
+                    {
+                        let out = rows * r;
+                        return Some((out + rows, out, Some(Mode::Range)));
+                    }
+                    Some((out + rows, out, None))
+                }
+                Price::Climb(steps) => Some((rows * steps, rows, Some(Mode::Climb))),
+                Price::Descend(size) => Some((rows * size, rows * size, Some(Mode::Descend))),
+            }
+        };
+        let mut cells: HashMap<u64, Cell> = HashMap::new();
+        let mut closed: HashMap<u64, (BTreeSet<String>, usize)> = HashMap::new();
+        cells.insert(0, Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
+        closed.insert(0, closure(0));
         for size in 1..=joins.len() {
             for subset in combinations(joins.len(), size) {
                 let mask: u64 = subset.iter().map(|&i| 1u64 << i).sum();
-                let mut best: Option<Best> = None;
+                let mut best: Option<Cell> = None;
+                let mine = closure(mask);
                 for i in py_set_order(&subset) {
-                    let Some((work, rows, order, bound, rest)) = best_of.get(&(mask & !(1 << i))) else { continue };
+                    let prev = mask & !(1 << i);
+                    let Some(from) = cells.get(&prev) else { continue };
                     let l = &body[joins[i]];
-                    if order.is_empty() && !matches!(l, Literal::Atom(_)) {
+                    if prev == 0 && !matches!(l, Literal::Atom(_)) {
                         continue; // an anchor is an atom
                     }
-                    if order.is_empty() && first.is_some_and(|f| f != joins[i]) {
+                    if prev == 0 && first.is_some_and(|f| f != joins[i]) {
                         continue; // semi-naive: the delta first
                     }
-                    let Some((w, out, mode)) = step(l, *rows, bound) else { continue };
+                    let (bound, h_prev) = &closed[&prev];
+                    let Some((w, mut out, mode)) = priced(price(i, bound), from.rows) else { continue };
                     candidates += 1;
-                    let (mut order2, mut bound2, mut rest2) = (order.clone(), bound.clone(), rest.clone());
-                    order2.push(Step { at: joins[i], lit: l.clone(), mode });
-                    bound2.extend(l.vars());
-                    let out = close(&mut order2, out, &mut bound2, &mut rest2);
-                    let cand = (work + w, out, order2, bound2, rest2);
-                    if best.as_ref().is_none_or(|b| cand.0 < b.0) {
+                    // `close`'s halving filters newly placed by this join.
+                    for _ in *h_prev..mine.1 {
+                        out *= 0.5;
+                    }
+                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode };
+                    if best.as_ref().is_none_or(|b| cand.work < b.work) {
                         best = Some(cand);
                     }
                 }
                 if let Some(b) = best {
+                    cells.insert(mask, b);
+                    closed.insert(mask, mine);
+                }
+            }
+        }
+        // The best orders, rebuilt: the full one, and (for `RDL_EXPLAIN`) the two-join prefixes.
+        let rebuild = |mask: u64| -> Option<Best> {
+            let cell = cells.get(&mask)?;
+            let mut path = Vec::new();
+            let mut at = mask;
+            while at != 0 {
+                let c = &cells[&at];
+                path.push((c.last, c.mode));
+                at = c.prev;
+            }
+            let (mut order, mut bound, mut rest) = (Vec::new(), BTreeSet::new(), filters.clone());
+            for (i, mode) in path.into_iter().rev() {
+                order.push(Step { at: joins[i], lit: body[joins[i]].clone(), mode });
+                bound.extend(body[joins[i]].vars());
+                close(&mut order, 1.0, &mut bound, &mut rest);
+            }
+            Some((cell.work, cell.rows, order, bound, rest))
+        };
+        let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel);
+        for &mask in cells.keys() {
+            if mask == full_mask || (explain && mask.count_ones() == 2) {
+                if let Some(b) = rebuild(mask) {
                     best_of.insert(mask, b);
                 }
             }
         }
+        subsets_reached = cells.len() as u64;
         }
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r == head.rel) {
@@ -929,7 +1085,7 @@ impl Model {
                 }
             }
         }
-        let subsets = best_of.len() as u64;
+        let subsets = if subsets_reached > 0 { subsets_reached } else { best_of.len() as u64 };
         let Some((work, rows, order, _, rest)) = best_of.remove(&full) else {
             return Err(Error::Plan(format!("cannot order the body of {head}")));
         };
@@ -939,6 +1095,7 @@ impl Model {
         }
         (work, rows, order, subsets)
         };
+        let _explain = super::profile::span(|| "explain record".into());
         let explained = super::profile::on().then(|| {
             // The chosen order step by step, priced as the search priced it.
             let mut bound: BTreeSet<String> = BTreeSet::new();

@@ -175,3 +175,31 @@ Left:
   buffers per piece is 7–16 ms of it, now removed by pre-pinned blocks. Most of the rest is the
   host thread being rescheduled under CPU load.
 - Parsing (2.5 s) and measuring each chunk's statistics are now the largest costs.
+
+## Later: the search's own cost (2026-11-05)
+
+With plans reused, the profile's new planner spans (`key`, `search`, `re-price`, `explain record`)
+showed that re-pricing costs almost nothing: 0.02 s for 1,300 re-prices. The remaining planning,
+1.24 s in the main stratum, was the search itself: 160 searches at 5–14 ms each. Two changes:
+
+- **The search keeps a cost and a back pointer per subset, not an order.**
+  - What a subset binds, and which filters it has placed, does not depend on the order that
+    reached it, because readiness only grows as more is bound. So each is worked out once per
+    subset.
+  - A join's price depends only on which of its variables are bound, so it is worked out once per
+    such pattern, and each candidate applies it to its rows with the same arithmetic as before.
+  - The chosen order is rebuilt from the back pointers, with its filters placed as before. T's
+    golden plans are unchanged.
+- **A replan also needs the work to have grown by more than 10,000 rows** (`REPLAN_ROWS`), about
+  what one search costs. A plan made in a chunk where a text test matched nothing prices at a few
+  rows, so any later chunk was more than 4 times that and triggered a new search.
+
+Results:
+
+| | Before | After |
+|---|---|---|
+| Planning in the main stratum | 1.24 s | 0.33 s |
+| Searches | 160 | 135 (100 first sight, 35 replans) |
+| Cost per search | 5–14 ms | about 2.2 ms |
+
+The "after" runs were at load 82–85. Findings are unchanged.
