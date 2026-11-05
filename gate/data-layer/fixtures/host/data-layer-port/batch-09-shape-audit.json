@@ -1,0 +1,1819 @@
+{
+  "format": "rerail.data-layer-source-shapes/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 124,
+  "cases": {},
+  "sources": {
+    "61585e1a46d38c74fe30f1775a7c5cf0242b04269156c8e822f1efd7138f7aae": "@pure_lazy\ndef public(value: Sequence[Widget]) -> None:\n    pass\n",
+    "6bb1f91c5ebdbcca1c28b937f92a0d929e51d93dd20156c581e0d517aae8efdb": "@pure_lazy\ndef private_lazy(value: Sequence[Widget]) -> None:\n    pass\n",
+    "35ba69c6f7775600b2f03fb3fe24cca913d7cfa17f20ee71e14803d0392e159c": "@pure_lazy\ndef public(value: typing.Sequence[Widget]) -> None:\n    pass\n",
+    "20430c24b842bb5e272d33860b9c40b1151288cb89382045144e7484300b164b": "@pure_lazy\ndef private_lazy(value: typing.Sequence[Widget]) -> None:\n    pass\n",
+    "81ff73d866a981e733f2d7826676e6d3bc3a5f8f6bc06cbc654701aef66e0a65": "@pure_lazy\ndef public(value: Sequence[Widget | Other]) -> None:\n    pass\n",
+    "1293b5e97abe96917c95db9c88c5833603311e342b2906d7c04a2e221859cc81": "@pure_lazy\ndef private_lazy(value: Sequence[Widget | Other]) -> None:\n    pass\n",
+    "3f5ad816c478b476ea16d49afa2fbc65a08c5eef5ac18941c50a7ab4169e3b3d": "@pure_lazy\ndef public(value: tuple[Any, Mapping[str, Any]]) -> None:\n    pass\n",
+    "4f2dd549a23d8c77f6007f0f0bdfee9979ab3946b1738db3184af84bac60c411": "@pure_lazy\ndef private_lazy(value: tuple[Any, Mapping[str, Any]]) -> None:\n    pass\n",
+    "290087c6f08c86fdb9292f5e73b02ac0d630556d16b7729286db485e836e539a": "@pure_lazy\ndef public(value: Sequence[Literal[\"Widget\"]]) -> None:\n    pass\n",
+    "63a74b0a836c020708735b78404d271562d283a031972aab6e4276cbc6d851fd": "@pure_lazy\ndef private_lazy(value: Sequence[Literal[\"Widget\"]]) -> None:\n    pass\n",
+    "806a9b8764f246b746ecb18bf6a6da9e4a7d0798a54849e894431a6e66afce63": "@pure_lazy\ndef public(value: \"SyncSchemaTransaction\") -> None:\n    pass\n",
+    "3c45929943c5c8d784af11420dd2242a15408aa303434a2c94a73f199f1ff6ff": "@pure_lazy\ndef private_lazy(value: \"SyncSchemaTransaction\") -> None:\n    pass\n",
+    "efb8a6dd0ba8af00cf7d5ddc270ad96afb94023f223800744dfb6b924d38d3be": "@pure_lazy\ndef public(value: \"typing.Sequence[Widget]\") -> None:\n    pass\n",
+    "5ed88a7c916cffa242c8f2a8e87876172a302cbad5cdd9208320a29ae3fe6266": "@pure_lazy\ndef private_lazy(value: \"typing.Sequence[Widget]\") -> None:\n    pass\n",
+    "7dbf34e7b709f3425b401fb53b2bf474a34dd95e8d193bda0ac07e504cd0e860": "@pure_lazy\ndef public(value: tuple[AsyncSchemaTransaction,SyncSchemaTransaction]) -> None:\n    pass\n",
+    "f6258532082fb12ca03d2d2fbd16e08c3d6a7f9393a9e4976b4c578176be2668": "@pure_lazy\ndef private_lazy(value: tuple[AsyncSchemaTransaction,SyncSchemaTransaction]) -> None:\n    pass\n",
+    "dfe6c46d5bd6ca2c97ad8632da9627a85974a486421bafd3d097f29a34925a8a": "@pure_lazy\ndef public(value: Annotated[Sequence[Widget], Other]) -> None:\n    pass\n",
+    "cacf3168e001bad5cf1b9ac1895910d2a4c88265f5a54d2bd73295e48de3b9ed": "@pure_lazy\ndef private_lazy(value: Annotated[Sequence[Widget], Other]) -> None:\n    pass\n",
+    "153ab4f7f3893cc7cc3c036c48a0f2d421bc4287693f22de93a996ebb3ac7e03": "class One:\n    def table_exists(self):\n        pass\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "2ccd0ae84b7b05d5c0a4cdc621b581b42ae4d3e7aef323e27a7927a30f82dc71": "class One:\n    def table_exists(self):\n        ...\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "f4cd4f2c10214585a41162125f15614d4676ad5b6d57726ffcb32d0913b194d2": "class One:\n    def table_exists(self):\n        return 1\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "a3d20ed7f44dd0ac4b26e408920f78d7fa269b0898ea13fdd63f97d1068fc9bc": "class One:\n    def table_exists(self):\n        raise RuntimeError()\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "fa349f1e3abfcb36f4a9f5294364c76f59bf9c569a8fa89e98671622b9ceb4b5": "class One:\n    def table_exists(self):\n        return helper()\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "9c1b2f7dc234f51160e2d0bed7df159ba79e95cd996a2fd5560643be820df82d": "class One:\n    def table_exists(self):\n        first()\n        return last()\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "5b53e24fd2db861057a6d73560c62618fb83a2252deff341a334b6813e19edf2": "class One:\n    def table_exists(self):\n        x = 1\n        return x\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "aaece0243478dec9a2001b1a04f11f472633b518670b929e488167ce10051297": "class One:\n    def table_exists(self):\n        class Nested:\n            def other(self):\n                return 1\nclass Two:\n    def table_exists(self):\n        value = 1\n        return value\n",
+    "039f894533eb513a1601b2696c31e48371d2310a0bce59e944da285ec068d8a1": "def outer():\n    key = '_current_schema_transaction'; getattr(obj,key)\n",
+    "536416e076695109e2f9ceadecff193e64b9effaf1bca03ed9d28eef7134b55f": "def outer():\n    key = '_current_schema_transaction'; key = 'other'; getattr(obj,key)\n",
+    "ca90e236b4cccbd33082fcaf9207d3901fd4b4da79deb97d6fb614e0bf4b843b": "def outer():\n    key: str = '_current_schema_transaction'; getattr(obj,key)\n",
+    "5ce8854ae43911e7cade879c7c98e9910f70d7e7f6687fdff9b4bf791f587d4f": "def outer():\n    getattr(obj, key := '_current_schema_transaction')\n",
+    "e83add8b43a67d34949c313868fb0eb2f81acb87f3cf60e71aacaa2741b78523": "def outer():\n    class Nested:\n        key = '_current_schema_transaction'\n        getattr(obj,key)\n",
+    "3c4ea2f6183e1dc7d362bc4721a499a7d2fa983a463e611955d780f45e594b36": "def outer():\n    def nested():\n        key = '_current_schema_transaction'\n    getattr(obj,key)\n",
+    "15a3da2e4809f69f8ec429eadac0a80a9e12169fa181989d6f868d235c95ac8a": "@fixture\ndef helper():\n    (create_tables)()\n",
+    "859b5f29f423bab5cea635e0fd04d602f305d86e6e47c3bfc4a5d2f44aea2ecc": "@fixture\ndef test_example():\n    (create_tables)()\n",
+    "848e51982b6b2fb03aaccb32d55765a544c94b71cba088f4d7fe042d0c6ac315": "@pytest.fixture\ndef helper():\n    (create_tables)()\n",
+    "3e06c2dfd22cc67ae5de3fddd106483530a56984d5c78317bf67a07aab529160": "@pytest.fixture\ndef test_example():\n    (create_tables)()\n",
+    "bdca89d7a86e78b917c3c3d410f9016f6f8da16c9d6d927118b3b5756c2c1726": "@suite.pytest.fixture\ndef helper():\n    (create_tables)()\n",
+    "2155f05ea785225442989666c7585c1bcdbc5b1ac7bfb1c5d58d956ab19f346c": "@suite.pytest.fixture\ndef test_example():\n    (create_tables)()\n",
+    "3ec5cec76cddc1b5dc4b7ac0f309413eb184463756fd6ac5363b506e84f44d4d": "@notpytest.fixture\ndef helper():\n    (create_tables)()\n",
+    "fb7980a0f60d710131d2014e2214966904f6eacf92e1601fd4f22d743b795ac6": "@notpytest.fixture\ndef test_example():\n    (create_tables)()\n",
+    "9dd039f41fdd2ff1de697bdb9fd3bfb24438424fe7871cba09a9ad6d578cf2ae": "@pytest.fixture()\ndef helper():\n    (create_tables)()\n",
+    "69bcae85653b790eba4545d0e6542e4f5db6fe73dd7b757d21bd28cf95c308d4": "@pytest.fixture()\ndef test_example():\n    (create_tables)()\n",
+    "98338bf76137933b56c04f09cab567b8183bb9dd34ff6d055e473ea2fb92e7df": "def outer(txn: SchemaTransaction):\n    plan = txn._schema_operation_plan\n    plan.append(1)\n    execute()\n",
+    "e7ff9394f383ac98ac53a5558adc0e4b075710f56eb3d8b2da223aa88f3cbfdd": "def outer(txn: \"SchemaTransaction\"):\n    plan = txn._schema_operation_plan\n    plan.append(1)\n    execute()\n",
+    "9830c8a9e098e4e4fe9ad86798d0f9fb11753ddefe753ed38704b7cf757bf571": "def outer(txn: list[SchemaTransaction]):\n    plan = txn._schema_operation_plan\n    plan.append(1)\n    execute()\n",
+    "90670ca3bc458912ed7d1f8ba8639e6e069e10c5b5bc07880c546ed557b450c3": "def outer(txn: FooSchemaTransaction):\n    plan = txn._schema_operation_plan\n    plan.append(1)\n    execute()\n",
+    "92ce8b846826570737e641d58ade81a5c9d4b9f7946f5493aaf3776ec8cf16b9": "def outer(txn: SchemaTransaction | None):\n    plan = txn._schema_operation_plan\n    plan.append(1)\n    execute()\n",
+    "29ea5cea41bdf50654f12d9ab3cadc577e38ccfe0d818a327bef5f566b2e10e1": "class SemanticPlanBuilder:\n    def build(self) -> dict:\n        self.execute()\n",
+    "6ace1b1963cedbde63d2c9be92ba19401ffce490c6c2115601e906c6f2fdaafc": "class SemanticPlanBuilder:\n    def build(self) -> list[int]:\n        self.execute()\n",
+    "17f52a96bc1426bf2a5e569bb2ae6a72dc9cf036fc39b21f81c303c9a1dd8426": "class SemanticPlanBuilder:\n    def build(self) -> typing.dict[str,int]:\n        self.execute()\n",
+    "f2fd4eae91a3f9e20c39f60138243066e660134f9bfce0be03bc985c2734abec": "class SemanticPlanBuilder:\n    def build(self) -> \"list[int]\":\n        self.execute()\n",
+    "684ded97a0fa25cc4bb10b8082e50e0a5b86ab0d62e9ba0a1bf36377b6b3e113": "class SemanticPlanBuilder:\n    def build(self) -> set[int]:\n        self.execute()\n",
+    "e0494b3447570e47488d87e392c19a53d17f55df2e69377f0fe0ffbb35285415": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0,b=0,c=0,d=0))\n",
+    "9a044ccb019c389f3f3bb1423a8a7c12cdd9dc2a657a1485ef5c250ac2a2a6c6": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0.0,b=0.0,c=0.0,d=0.0))\n",
+    "ca1304655c92a4475d645492eb47e3e74e44d4f0054c7dae65516bbafbee5a42": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=False,b=False,c=False,d=False))\n",
+    "435bc75877027bccedd2edcec28bce76ad508eb2dfca324b9eec4eaaf1cbb3ee": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0j,b=0j,c=0j,d=0j))\n",
+    "5aa85558b51f97cc677b937a23ffa71f2aaf250bb2514ab05dc18bf8dbc38569": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1,b=1,c=1,d=1))\n",
+    "3943aa1c5c561b9b3078dea3a704795b86e1177be74a6c977d8da0252804819a": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1.0,b=1.0,c=1.0,d=1.0))\n",
+    "72361ff286310fc70703ff41c63ee4d782d93967c2f792ac2f9bac5f88a7b7f0": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1j,b=1j,c=1j,d=1j))\n",
+    "b9d38d5f7380e57e86cac9605f6124c193dbb50dfad718c635e790cfde69a9c0": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999,b=1e999,c=1e999,d=1e999))\n",
+    "b711608757970503049f86bd16ca9c50a210edd501226c93203c08351bf61d56": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999j,b=1e999j,c=1e999j,d=1e999j))\n",
+    "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c": "class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n",
+    "553eda8c53fc903895e005a1bc644c6058ffd91ce4df67c9fbdbe8763f6d8862": "def broken(\n",
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": "",
+    "6abcdc08bfb263839b05fa063c53385e100b3d534bdb89d937d06264ceddda9f": "for row in rows:\n    pass\n",
+    "1e63f98da0323165027959772843818d2d6772c04d6e63f5601abf0bd41b6a90": "for row in sorted(tuple(list(rows))):\n    pass\n",
+    "7b411cdac9f7bba311ae70f149be2ad8444aa0154a6396790c6c1f90c52a96b2": "async def read():\n    async for row in rows:\n        pass\n",
+    "29963852722a62acbacdbc13c0d3a5d0696b7d389559e494a511c12056ad2d43": "for row in iter(rows):\n    pass\n",
+    "acff54b7f31c3c468b098c23c7e2a83880c7d4c8daae5e96a512e947de13d07c": "query.query_lazy().execute_lazy()\n",
+    "baa7636f03964ac49926e44bb01371b5b001b54692ddba173123bd5fe57348d4": "value.model_dump()\n",
+    "e145640acf59b2ec8bf2a9ab6c122948239ce8566048af45af6e3e8ef054f723": "model_dump()\n",
+    "0b2a679a5651e4b6d7eb8f89c1f9c5410b4e50dffdc691fe72fe72db675fe382": "table_exists_many_async()\n",
+    "236ee2d9513a5922e3583f1178e43e3936ac63002b80b152d915cd389ec636e7": "class SyncConnection:\n    async def read(self): pass\n",
+    "916372dc6cb5acb244861f5c0bffa11880bf217e284b6dc7df2590ad0aa4505a": "class AsyncConnection:\n    def read(self): pass\n",
+    "6e9051d8ceaa2eceee638b9f9e5fe00b1c26a51acf492fe0c46924421a95b4a2": "class AsyncConnection:\n    def read_async(self): pass\n",
+    "f4650934c8114cc791914bc428258a3a28ea81a95d86e16c8aa3da7502e399c2": "class SyncOther:\n    async def read(self): pass\n",
+    "90ec2781ba90f7b569d37e4d157c3e757298d46f9249b642450c4a0ec0011de2": "from module import DatabaseConnection as Renamed\n",
+    "62d711ecfd89f4ec57d5fe17ac726c45310291c13f23ea1a6e86ddc26ad12c76": "import package.DatabaseConnection as Alias\n",
+    "11c9a226765ff8ffe2863b6b4cb71c7f772969356adc0769d6ed51e69a3e16dc": "class _SessionHandleCore:\n    def get_connection(self): pass\n",
+    "1706285f559ae21bdf6ce5b82fc4b56f0e4371884fa46549e719fc69f5fb5528": "value = module._SqlConnectionCore\n"
+  },
+  "records": [
+    {
+      "test": "shape-0",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "61585e1a46d38c74fe30f1775a7c5cf0242b04269156c8e822f1efd7138f7aae"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-1",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "6bb1f91c5ebdbcca1c28b937f92a0d929e51d93dd20156c581e0d517aae8efdb"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-2",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "35ba69c6f7775600b2f03fb3fe24cca913d7cfa17f20ee71e14803d0392e159c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter public(value) uses broad annotation Sequence; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-3",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "20430c24b842bb5e272d33860b9c40b1151288cb89382045144e7484300b164b"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter private_lazy(value) uses broad annotation Sequence; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-4",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "81ff73d866a981e733f2d7826676e6d3bc3a5f8f6bc06cbc654701aef66e0a65"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-5",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "1293b5e97abe96917c95db9c88c5833603311e342b2906d7c04a2e221859cc81"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-6",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "3f5ad816c478b476ea16d49afa2fbc65a08c5eef5ac18941c50a7ab4169e3b3d"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter public(value) uses broad annotation Any, Mapping; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-7",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "4f2dd549a23d8c77f6007f0f0bdfee9979ab3946b1738db3184af84bac60c411"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter private_lazy(value) uses broad annotation Any, Mapping; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-8",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "290087c6f08c86fdb9292f5e73b02ac0d630556d16b7729286db485e836e539a"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-9",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "63a74b0a836c020708735b78404d271562d283a031972aab6e4276cbc6d851fd"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-10",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "806a9b8764f246b746ecb18bf6a6da9e4a7d0798a54849e894431a6e66afce63"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-11",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "3c45929943c5c8d784af11420dd2242a15408aa303434a2c94a73f199f1ff6ff"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC006",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "private_lazy() uses sync/async type annotation SyncSchemaTransaction inside a lazy function; use LazySchemaTransaction or another lazy-universe contract"
+        }
+      ]
+    },
+    {
+      "test": "shape-12",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "efb8a6dd0ba8af00cf7d5ddc270ad96afb94023f223800744dfb6b924d38d3be"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter public(value) uses broad annotation Sequence; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-13",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "5ed88a7c916cffa242c8f2a8e87876172a302cbad5cdd9208320a29ae3fe6266"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter private_lazy(value) uses broad annotation Sequence; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-14",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "7dbf34e7b709f3425b401fb53b2bf474a34dd95e8d193bda0ac07e504cd0e860"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-15",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "f6258532082fb12ca03d2d2fbd16e08c3d6a7f9393a9e4976b4c578176be2668"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC006",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "private_lazy() uses sync/async type annotation AsyncSchemaTransaction, SyncSchemaTransaction inside a lazy function; use LazySchemaTransaction or another lazy-universe contract"
+        }
+      ]
+    },
+    {
+      "test": "shape-16",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "dfe6c46d5bd6ca2c97ad8632da9627a85974a486421bafd3d097f29a34925a8a"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter public(value) uses broad annotation Sequence; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-17",
+      "check": "schema_bootstrap_contracts",
+      "entry": "lint_file",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "cacf3168e001bad5cf1b9ac1895910d2a4c88265f5a54d2bd73295e48de3b9ed"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "SBC002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "parameter private_lazy(value) uses broad annotation Sequence; use a concrete contract type"
+        }
+      ]
+    },
+    {
+      "test": "shape-18",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "153ab4f7f3893cc7cc3c036c48a0f2d421bc4287693f22de93a996ebb3ac7e03"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-19",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "2ccd0ae84b7b05d5c0a4cdc621b581b42ae4d3e7aef323e27a7927a30f82dc71"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-20",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "f4cd4f2c10214585a41162125f15614d4676ad5b6d57726ffcb32d0913b194d2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "'table_exists' has multiple non-delegate owners in one connection surface: One, Two",
+          "line": 2,
+          "code": "CONN300"
+        },
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "'table_exists' has multiple non-delegate owners in one connection surface: One, Two",
+          "line": 5,
+          "code": "CONN300"
+        }
+      ]
+    },
+    {
+      "test": "shape-21",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "a3d20ed7f44dd0ac4b26e408920f78d7fa269b0898ea13fdd63f97d1068fc9bc"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-22",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "fa349f1e3abfcb36f4a9f5294364c76f59bf9c569a8fa89e98671622b9ceb4b5"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-23",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "9c1b2f7dc234f51160e2d0bed7df159ba79e95cd996a2fd5560643be820df82d"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-24",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "5b53e24fd2db861057a6d73560c62618fb83a2252deff341a334b6813e19edf2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "'table_exists' has multiple non-delegate owners in one connection surface: One, Two",
+          "line": 2,
+          "code": "CONN300"
+        },
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "'table_exists' has multiple non-delegate owners in one connection surface: One, Two",
+          "line": 6,
+          "code": "CONN300"
+        }
+      ]
+    },
+    {
+      "test": "shape-25",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "aaece0243478dec9a2001b1a04f11f472633b518670b929e488167ce10051297"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "'table_exists' has multiple non-delegate owners in one connection surface: One, Two",
+          "line": 2,
+          "code": "CONN300"
+        },
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "'table_exists' has multiple non-delegate owners in one connection surface: One, Two",
+          "line": 7,
+          "code": "CONN300"
+        }
+      ]
+    },
+    {
+      "test": "shape-26",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "039f894533eb513a1601b2696c31e48371d2310a0bce59e944da285ec068d8a1"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "getattr probe of schema transaction slot 'key'; pass schema authority explicitly",
+          "line": 2,
+          "code": "CONN100"
+        }
+      ]
+    },
+    {
+      "test": "shape-27",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "536416e076695109e2f9ceadecff193e64b9effaf1bca03ed9d28eef7134b55f"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "getattr probe of schema transaction slot 'key'; pass schema authority explicitly",
+          "line": 2,
+          "code": "CONN100"
+        }
+      ]
+    },
+    {
+      "test": "shape-28",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "ca90e236b4cccbd33082fcaf9207d3901fd4b4da79deb97d6fb614e0bf4b843b"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "getattr probe of schema transaction slot 'key'; pass schema authority explicitly",
+          "line": 2,
+          "code": "CONN100"
+        }
+      ]
+    },
+    {
+      "test": "shape-29",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "5ce8854ae43911e7cade879c7c98e9910f70d7e7f6687fdff9b4bf791f587d4f"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-30",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "e83add8b43a67d34949c313868fb0eb2f81acb87f3cf60e71aacaa2741b78523"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "l2000_connection/probe.py",
+          "detail": "getattr probe of schema transaction slot 'key'; pass schema authority explicitly",
+          "line": 4,
+          "code": "CONN100"
+        }
+      ]
+    },
+    {
+      "test": "shape-31",
+      "check": "connection_service_architecture",
+      "entry": "analyze_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "3c4ea2f6183e1dc7d362bc4721a499a7d2fa983a463e611955d780f45e594b36"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-32",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "15a3da2e4809f69f8ec429eadac0a80a9e12169fa181989d6f868d235c95ac8a"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-33",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "859b5f29f423bab5cea635e0fd04d602f305d86e6e47c3bfc4a5d2f44aea2ecc"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-34",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "848e51982b6b2fb03aaccb32d55765a544c94b71cba088f4d7fe042d0c6ac315"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-35",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "3e06c2dfd22cc67ae5de3fddd106483530a56984d5c78317bf67a07aab529160"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-36",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "bdca89d7a86e78b917c3c3d410f9016f6f8da16c9d6d927118b3b5756c2c1726"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-37",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "2155f05ea785225442989666c7585c1bcdbc5b1ac7bfb1c5d58d956ab19f346c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-38",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "3ec5cec76cddc1b5dc4b7ac0f309413eb184463756fd6ac5363b506e84f44d4d"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-39",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "fb7980a0f60d710131d2014e2214966904f6eacf92e1601fd4f22d743b795ac6"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-40",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "9dd039f41fdd2ff1de697bdb9fd3bfb24438424fe7871cba09a9ad6d578cf2ae"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-41",
+      "check": "bootstrap_cache_health",
+      "entry": "scan_file",
+      "files": [
+        {
+          "path": "conform/test_probe.py",
+          "sourceSha256": "69bcae85653b790eba4545d0e6542e4f5db6fe73dd7b757d21bd28cf95c308d4"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "conform/test_probe.py",
+          "line": 3,
+          "code": "BCH003",
+          "message": "create_tables() inside a conform test usually causes a warm schema mutation; prefer module-level TEST_BOOTSTRAP_TABLES"
+        }
+      ]
+    },
+    {
+      "test": "shape-42",
+      "check": "schema_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "98338bf76137933b56c04f09cab567b8183bb9dd34ff6d055e473ea2fb92e7df"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "linter_name": "schema_architecture",
+          "code": "SAP002",
+          "path": "l2000_connection/probe.py",
+          "line": 3,
+          "message": "outer mutates schema planning state while executing/materializing it",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "shape-43",
+      "check": "schema_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "e7ff9394f383ac98ac53a5558adc0e4b075710f56eb3d8b2da223aa88f3cbfdd"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-44",
+      "check": "schema_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "9830c8a9e098e4e4fe9ad86798d0f9fb11753ddefe753ed38704b7cf757bf571"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "linter_name": "schema_architecture",
+          "code": "SAP002",
+          "path": "l2000_connection/probe.py",
+          "line": 3,
+          "message": "outer mutates schema planning state while executing/materializing it",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "shape-45",
+      "check": "schema_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "90670ca3bc458912ed7d1f8ba8639e6e069e10c5b5bc07880c546ed557b450c3"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "linter_name": "schema_architecture",
+          "code": "SAP002",
+          "path": "l2000_connection/probe.py",
+          "line": 3,
+          "message": "outer mutates schema planning state while executing/materializing it",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "shape-46",
+      "check": "schema_architecture",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l2000_connection/probe.py",
+          "sourceSha256": "92ce8b846826570737e641d58ade81a5c9d4b9f7946f5493aaf3776ec8cf16b9"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "linter_name": "schema_architecture",
+          "code": "SAP002",
+          "path": "l2000_connection/probe.py",
+          "line": 3,
+          "message": "outer mutates schema planning state while executing/materializing it",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "shape-47",
+      "check": "plan_composition_architecture",
+      "entry": "scan_semantic_source",
+      "files": [
+        {
+          "path": "l2070_batching/semantic_plan.py",
+          "sourceSha256": "29ea5cea41bdf50654f12d9ab3cadc577e38ccfe0d818a327bef5f566b2e10e1"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "rule": "SPC-004",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 2,
+          "message": "semantic builder exposes mutable return from build"
+        },
+        {
+          "rule": "SPC-003",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 3,
+          "message": "semantic builder calls runtime terminal execute"
+        }
+      ]
+    },
+    {
+      "test": "shape-48",
+      "check": "plan_composition_architecture",
+      "entry": "scan_semantic_source",
+      "files": [
+        {
+          "path": "l2070_batching/semantic_plan.py",
+          "sourceSha256": "6ace1b1963cedbde63d2c9be92ba19401ffce490c6c2115601e906c6f2fdaafc"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "rule": "SPC-004",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 2,
+          "message": "semantic builder exposes mutable return from build"
+        },
+        {
+          "rule": "SPC-003",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 3,
+          "message": "semantic builder calls runtime terminal execute"
+        }
+      ]
+    },
+    {
+      "test": "shape-49",
+      "check": "plan_composition_architecture",
+      "entry": "scan_semantic_source",
+      "files": [
+        {
+          "path": "l2070_batching/semantic_plan.py",
+          "sourceSha256": "17f52a96bc1426bf2a5e569bb2ae6a72dc9cf036fc39b21f81c303c9a1dd8426"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "rule": "SPC-004",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 2,
+          "message": "semantic builder exposes mutable return from build"
+        },
+        {
+          "rule": "SPC-003",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 3,
+          "message": "semantic builder calls runtime terminal execute"
+        }
+      ]
+    },
+    {
+      "test": "shape-50",
+      "check": "plan_composition_architecture",
+      "entry": "scan_semantic_source",
+      "files": [
+        {
+          "path": "l2070_batching/semantic_plan.py",
+          "sourceSha256": "f2fd4eae91a3f9e20c39f60138243066e660134f9bfce0be03bc985c2734abec"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "rule": "SPC-003",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 3,
+          "message": "semantic builder calls runtime terminal execute"
+        }
+      ]
+    },
+    {
+      "test": "shape-51",
+      "check": "plan_composition_architecture",
+      "entry": "scan_semantic_source",
+      "files": [
+        {
+          "path": "l2070_batching/semantic_plan.py",
+          "sourceSha256": "684ded97a0fa25cc4bb10b8082e50e0a5b86ab0d62e9ba0a1bf36377b6b3e113"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "rule": "SPC-004",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 2,
+          "message": "semantic builder exposes mutable return from build"
+        },
+        {
+          "rule": "SPC-003",
+          "path": "l2070_batching/semantic_plan.py",
+          "line": 3,
+          "message": "semantic builder calls runtime terminal execute"
+        }
+      ]
+    },
+    {
+      "test": "shape-52",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "e0494b3447570e47488d87e392c19a53d17f55df2e69377f0fe0ffbb35285415"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "shape-53",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "9a044ccb019c389f3f3bb1423a8a7c12cdd9dc2a657a1485ef5c250ac2a2a6c6"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "shape-54",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "ca1304655c92a4475d645492eb47e3e74e44d4f0054c7dae65516bbafbee5a42"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "shape-55",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "435bc75877027bccedd2edcec28bce76ad508eb2dfca324b9eec4eaaf1cbb3ee"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "shape-56",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "5aa85558b51f97cc677b937a23ffa71f2aaf250bb2514ab05dc18bf8dbc38569"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-57",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "3943aa1c5c561b9b3078dea3a704795b86e1177be74a6c977d8da0252804819a"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-58",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "72361ff286310fc70703ff41c63ee4d782d93967c2f792ac2f9bac5f88a7b7f0"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-59",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "b9d38d5f7380e57e86cac9605f6124c193dbb50dfad718c635e790cfde69a9c0"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-60",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "b711608757970503049f86bd16ca9c50a210edd501226c93203c08351bf61d56"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "lifecycle-absent",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "sourceSha256": "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "CSB030",
+          "path": "l2000_connection/connection.py",
+          "line": 2,
+          "message": "_ConnectionLifecycleMixin.__enter__ auto-opens driver state"
+        }
+      ]
+    },
+    {
+      "test": "lifecycle-invalid",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "sourceSha256": "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c"
+        },
+        {
+          "path": "l2000_connection/connection_lifecycle.py",
+          "sourceSha256": "553eda8c53fc903895e005a1bc644c6058ffd91ce4df67c9fbdbe8763f6d8862"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "lifecycle-empty",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "sourceSha256": "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c"
+        },
+        {
+          "path": "l2000_connection/connection_lifecycle.py",
+          "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-64",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "6abcdc08bfb263839b05fa063c53385e100b3d534bdb89d937d06264ceddda9f"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-65",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "1e63f98da0323165027959772843818d2d6772c04d6e63f5601abf0bd41b6a90"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-66",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "7b411cdac9f7bba311ae70f149be2ad8444aa0154a6396790c6c1f90c52a96b2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-67",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "29963852722a62acbacdbc13c0d3a5d0696b7d389559e494a511c12056ad2d43"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-68",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "acff54b7f31c3c468b098c23c7e2a83880c7d4c8daae5e96a512e947de13d07c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-001",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap full query_lazy(...).execute_lazy() must move to proof/keyed SQL before hard-fail"
+        }
+      ]
+    },
+    {
+      "test": "shape-69",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "baa7636f03964ac49926e44bb01371b5b001b54692ddba173123bd5fe57348d4"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-003",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap/server-plan Python model materializer model_dump must stay out of lowering paths"
+        }
+      ]
+    },
+    {
+      "test": "shape-70",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "e145640acf59b2ec8bf2a9ab6c122948239ce8566048af45af6e3e8ef054f723"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-71",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "0b2a679a5651e4b6d7eb8f89c1f9c5410b4e50dffdc691fe72fe72db675fe382"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-004",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap eager schema probe table_exists_many_async must route through BootstrapScopeProof providers"
+        }
+      ]
+    },
+    {
+      "test": "shape-72",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "6abcdc08bfb263839b05fa063c53385e100b3d534bdb89d937d06264ceddda9f"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-73",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "1e63f98da0323165027959772843818d2d6772c04d6e63f5601abf0bd41b6a90"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-74",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "7b411cdac9f7bba311ae70f149be2ad8444aa0154a6396790c6c1f90c52a96b2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-75",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "29963852722a62acbacdbc13c0d3a5d0696b7d389559e494a511c12056ad2d43"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-76",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "acff54b7f31c3c468b098c23c7e2a83880c7d4c8daae5e96a512e947de13d07c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-001",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap full query_lazy(...).execute_lazy() must move to proof/keyed SQL before hard-fail"
+        }
+      ]
+    },
+    {
+      "test": "shape-77",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "baa7636f03964ac49926e44bb01371b5b001b54692ddba173123bd5fe57348d4"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-003",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap/server-plan Python model materializer model_dump must stay out of lowering paths"
+        }
+      ]
+    },
+    {
+      "test": "shape-78",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "e145640acf59b2ec8bf2a9ab6c122948239ce8566048af45af6e3e8ef054f723"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-79",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "0b2a679a5651e4b6d7eb8f89c1f9c5410b4e50dffdc691fe72fe72db675fe382"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-004",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap eager schema probe table_exists_many_async must route through BootstrapScopeProof providers"
+        }
+      ]
+    },
+    {
+      "test": "shape-80",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "236ee2d9513a5922e3583f1178e43e3936ac63002b80b152d915cd389ec636e7"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "message": "sync facade SyncConnection defines public async method 'read'"
+        }
+      ]
+    },
+    {
+      "test": "shape-81",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "916372dc6cb5acb244861f5c0bffa11880bf217e284b6dc7df2590ad0aa4505a"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "message": "async facade AsyncConnection defines public sync method 'read'"
+        }
+      ]
+    },
+    {
+      "test": "shape-82",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "6e9051d8ceaa2eceee638b9f9e5fe00b1c26a51acf492fe0c46924421a95b4a2"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-83",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "f4650934c8114cc791914bc428258a3a28ea81a95d86e16c8aa3da7502e399c2"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-84",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "90ec2781ba90f7b569d37e4d157c3e757298d46f9249b642450c4a0ec0011de2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "message": "old mixed connection name 'DatabaseConnection' is forbidden"
+        }
+      ]
+    },
+    {
+      "test": "shape-85",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "62d711ecfd89f4ec57d5fe17ac726c45310291c13f23ea1a6e86ddc26ad12c76"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "message": "old mixed connection name 'DatabaseConnection' is forbidden"
+        }
+      ]
+    },
+    {
+      "test": "shape-86",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "11c9a226765ff8ffe2863b6b4cb71c7f772969356adc0769d6ed51e69a3e16dc"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-87",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "1706285f559ae21bdf6ce5b82fc4b56f0e4371884fa46549e719fc69f5fb5528"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "message": "private connection core '_SqlConnectionCore' is not allowed here"
+        }
+      ]
+    }
+  ],
+  "sourceSha256": {
+    "_internal/__init__.py": "29d434ac810b38a959280469c92d946f39ce3f9744421306af7f3f89bc7c7bd5",
+    "_internal/current_plan.py": "74fe854be84b92ee626aba77d250eeac0b3af9a9f468a30d0a0cc04d4d3b5e24",
+    "_internal/dynamic_import.py": "7ab42ddd715ab01a4bed3a6b1d8b49f625eef592c566e195a968b505b2454eb4",
+    "_internal/pure_lazy.py": "2d0b6ec4a7f3ce2d38377256a9f64b57f1fd6f8482fe2c2e488ecfca177ace01",
+    "_internal/transaction_helpers.py": "e17098ded85bdc517cd29c0db9bb714854e12d29beead1857d0805761545f401",
+    "_internal/type_utils.py": "cae6c97fdf9b2a2ba6d9f1ebb978164af0a1c73061c66865a6055a47ffde676d",
+    "impl/__init__.py": "6c3db2009edcdad8b71413240513e77e9b2a88d59fc05d7a2801ae68af6a67e6",
+    "impl/common/__init__.py": "7a1a3a908b98e0fbb53565a79b5727b36c0bb84e35934fc5de6b042d792656a3",
+    "impl/common/l1000_cache/__init__.py": "08161bf5ae071d3673421e8916f6f78e6210452b70e5fa4c5548deadd4270b46",
+    "impl/common/l1000_cache/backends/__init__.py": "3edf15be1bfee03d2339b274339ab84b4ea997fb0221166c73153324c58054cd",
+    "impl/common/l1000_cache/backends/local_metadata.py": "a9d43c1c36fc11a4efec50133ed387bf821cb0fec1c16977de0c91afc06799e7",
+    "impl/common/l1000_cache/backends/memory.py": "2928f7b93b60ccb1164e11f834878464df2be78a658a195074e6b9b048c386c8",
+    "impl/common/l1000_cache/backends/object_cache.py": "8e370c7c8ac8a9f182fadb557839bda17612296cb1da45ed98ccf3393fafe352",
+    "impl/common/l1000_cache/cache.py": "08c19505bc330d595932f80a491d13517bd55414f5b59e68a2c49c3e6e8ca5fc",
+    "impl/common/l1000_cache/cache_generation_model.py": "0403ff3b5f503459e199448582464c4c61e6dc6b27a37a34326b467d63da5813",
+    "impl/common/l1000_cache/eventual_access.py": "d70bd81285ea18d7b7b24d98f0ffed5c94f629ea2e9c5f600fea5f80e0780d12",
+    "impl/common/l1000_cache/invalidation_broadcast.py": "1935aab0445ced80fa30a235925257b0b1dc84b51dd049d08e3af6919af13753",
+    "impl/common/l1000_cache/local_generation_snapshot.py": "025c7bd481b1cbcecab72133c25b8e461ea6994b44c490959da788f30d655549",
+    "impl/common/l1000_cache/manager.py": "9de3ba16b857aefc32063d7ae697f276de733034191f6d0c2df161de22d04710",
+    "impl/common/l1000_cache/metrics.py": "2742f2014d642d35a2d335b8e68aed65cb485c3a833c6451bd6fdb20b4148e2f",
+    "impl/common/l1000_cache/pagination_serialization.py": "3bb88ca1981f4ffc513a4c3c301426907e93e9376e6fe9cb248f91bccd5503d1",
+    "impl/common/l1000_cache/serialization.py": "8965aadfef0e6b56bbf2d77c4182ab918ab0ee90435258505c9a8efa8afa9df5",
+    "impl/common/l1000_cache/transaction.py": "9771ffef2d6f83a111c93dbfcea0abc66de76cd6d478975ef1f237c168c2a575",
+    "impl/common/l1000_cache/type_registry.py": "6cf3fcc6e13b2021f15ae525538ec39ffcadf7e42f86c522eb0e10527f20d019",
+    "impl/common/l2050_sql_types/__init__.py": "33e8d8a0d2a0b02619e67175304566f00269739681985b0f1452b4448945b05c",
+    "impl/common/l2050_sql_types/backend_type.py": "6d17bdd44886cc2b250ec7b48e4ca0ffeb6fac7d91589187d9ef32652957d116",
+    "impl/common/l2050_sql_types/binary_hamming.py": "ff3e39908ddb193e61a71811e51913068062df71b830ae8bb02138aacb7b05a6",
+    "impl/common/l2050_sql_types/sql_branded_types.py": "ec161f235d2e37d72cb42b6d1158d18411ec20ed32e77d3c7e271bd5a27e6e00",
+    "impl/common/l2050_sql_types/statement_batch.py": "bb5b76bd01f7c1eea19d223797559afee8590f761a1bd78df532cd658e7b5312",
+    "l1000_cache/__init__.py": "a543c70f7c997e83ddeec593f25cf70cf1f0980ed7f3e20b7d4ff3c9e981b6f3",
+    "l1000_cache/schema_generation.py": "c829b913b4bdc34827a65af30fe0ec223e921323cfe6729441fd1be222709af9",
+    "l1000_schema/__init__.py": "5a9c01faa4a790b41d5cb2c1b2f87763ca2d207bcbe9219600707f350b2af896",
+    "l1000_schema/blob_type.py": "f36880cbf5aa53f0c859af16fe1ea8e56d31f4b01cbf30a33681a1b4b986f319",
+    "l1000_schema/column_utils.py": "bce920681485300ecd908f303db3dc46164aba1761555836124f99f3996dc92c",
+    "l1000_schema/column_visibility.py": "c9d2e7c8a3ecb926d4fbef25da69b73e756e4e6038b96e90c8b1f5165543b4fc",
+    "l1000_schema/constraints.py": "77048afbd58ba8a71ea1cd512d16d2dc9f0c9f5a89e2459046cf153f9666c5e9",
+    "l1000_schema/expression_function_registry.py": "eab501ebef9b0799e2617b90f3ca56cc174533338a52fe65140a7144e192e7c8",
+    "l1000_schema/json_path_parser.py": "f93e984cc6c31fc62a86879a98f09f01ee0bc0d3488928351140bcee2b49e594",
+    "l1000_schema/json_schema_types.py": "91ca98d11dd9b56b568bf5f8e2b5a03f7dc5bb89da5b0b4a78fc65ab2b5fecc9",
+    "l1000_schema/json_type.py": "cb870988b7ae78529cb1d54819b9e5a4193d05d66c36439f7cf925563c19afbc",
+    "l1000_schema/large_column.py": "c887a3f89d4b26047391cde7836a315446644874790f1c7ed167acb3c61fd5df",
+    "l1000_schema/no_security_permissions.py": "a374163cce5567afa5c1a6f2ae089b8d0258f70b59554b2d46b7fa2e84c45366",
+    "l1000_schema/operators.py": "ae114731b8b6bcf1c04bbfc78c18d49856ef1564f92c03909a62043a559e4523",
+    "l1000_schema/reflection_cache.py": "2b9af04442ddb00cc5c19497696d2d3ef0bd789cfdc5dd0d3ef53be3186e076f",
+    "l1000_schema/schema_def.py": "63d8e757a68d69718fcbe6d009ce50a51bc1c7a47bae654f99770a5200a83cb1",
+    "l1000_schema/table_registry.py": "4c033679d8151bb3e7d44168bd7cc4a1a98219c324a3bd22c62cd98ebc3c8c22",
+    "l1000_schema/table_utils.py": "55cbf09c5f85b628bda72f2fe0586fbefc28a92dd0971cd58353c279b08b72b0",
+    "l1000_schema/this_field.py": "8753810ad83cf1fdc637dd357e878b88c44782dccb067ee39677a29bdb6efabb",
+    "l1000_schema/type_utils.py": "788348a9e0eda6f9cb20f9471a4dbcc3bf47f14b4144a5dde875a677e2ec211a",
+    "l1000_schema/typed_field.py": "436ab179cca55eb5ce63068d5fedbddda2f2960977443cd88f89f4db6c8b5aa7",
+    "l1000_schema/uuid_type.py": "f7d22ea2b16aabfa6322909c3de1f5dc461ccbef7463632d1ff866c7dce6dc54",
+    "l1050_polymorphism/__init__.py": "9b52fff17b74a17a7d1a3a3c5d12e57959eebed77db3bdf9642d2c761ca3ac0b",
+    "l1050_polymorphism/type_registry.py": "89977a888fa5126b6199d7900b36bffe5dec0b96ff7340a90341d2e4b73e066b",
+    "l1100_exceptions/__init__.py": "9068a594347151309ac177cd2a9ae79bb40ad5b0f4ce118914a3871122e153c8",
+    "l1100_exceptions/cleanup.py": "90e5426fa39a4c0040b3b399c5f322b9e50d67daf1c9512c345d4efc5f75a562",
+    "l1100_exceptions/exceptions.py": "d762570a5cda851114628a48ed953c82dbb49e6347de39b22839f700f2705ec1",
+    "l1100_exceptions/graph_exceptions.py": "8b12f2db7fc403a4957c0c7e81df1b2f301f86cf97b3121ab7f080df1eaa12a4",
+    "l1100_exceptions/native_list_binding.py": "8c73f3d4b84d3935e5fafc278eba969f41cd737e942ebd9a9e4cc6601c586653",
+    "l1100_exceptions/security.py": "a145dadc86f2ca29c053b10991e43f6dcd0ac0b27ce5f52977c459de1f845e6c",
+    "l1200_capabilities/__init__.py": "7ef36860ee136b011deb488bd31c4ce845a56f429105e1af584c61fa4ea500e8",
+    "l1200_capabilities/capabilities.py": "d3e8672ac6dc44d1baeb76431b231fddd768e4f9670a8991453ba44b2d2b37e8",
+    "l1300_session/__init__.py": "91c06b599deec78e4144e24e5caad3184d27934f3b9a776ddd145ee0574f5279",
+    "l1300_session/session.py": "48a8124d0bc48fb7ff286f0fb2420d71d93eff4e47d082afee8ea11b6b333d96",
+    "l1350_foundational_types/__init__.py": "efb3a7f4197297e5b2f553db8d15d4301d35fcbc16392c398abc413841715ea7",
+    "l1350_foundational_types/row_id.py": "73759e9c650a9bf91685fc6d49735a07a173ee62fbdc800f456a899606c94a0e",
+    "l1400_types/__init__.py": "dccc36750b69712a297265bcd4cd61e7956812d8439f9192c3ea50180d4c2158",
+    "l1400_types/row_id.py": "c5ee4a4052c964630d371f5883e3f6da4167c08cc75d5aa3c0d2cf41fb040209",
+    "l1400_types/type_surface_contracts.py": "f9f7f222a518d5debe9c4dafcc201f48518e65fc3748254cccdbc3f5ca2c7013",
+    "l1400_types/unset.py": "9a053b6f8e487072f1820f4fec3473fa8545b80db3840464d9f98a991e618ae0",
+    "l1450_index_policy_contracts/__init__.py": "4d2cba45efe07be77079e4de2f147f95ddf0976599254f2fd9e754b3a33f2b2c",
+    "l1450_index_policy_contracts/vector_implementation.py": "b54da01ab42be64d0685a031e1f7dfd166f040b9439a5a9531cfc95408c5385e",
+    "l1450_index_policy_contracts/vector_maintenance.py": "d6b7b26d6bf45753fc97c96cb08aab2b72e3e8466cbf45c2c8479692b8297d1c",
+    "l2055_lazy_result/__init__.py": "87b65ac702ce3cbf510e1f63aa468a09a075c1a6e176209a9e7a375a77ace12c",
+    "l2055_lazy_result/_state.py": "120cd207accbd2cb53e473809579d49c2192dc0c9b4890452f17464f77446a1b",
+    "l2055_lazy_result/cached_pure_lazy_policy.py": "207c343561dd98e368207e9dfe2bc294513be5fc5ec94142edeefc78ef50fc7c",
+    "l2055_lazy_result/execution_context.py": "6a18bba7955351259b44df9856a182ec9565b4f57b10436d5005a4900bcba058",
+    "l2055_lazy_result/lazy_operation.py": "897b1f2eef3a7d551bcc7129b3434c90c12843a0d4a25e54240fd0c22958399b",
+    "l2055_lazy_result/lazy_param.py": "fd2967faa09c166879fa150274c0d61b5a70c63e8ed17e71ee9b9d29ad4ca2b5",
+    "l2055_lazy_result/lazy_result.py": "a28257247c14a767a6ebfc615bc6f94e97c878d4d4d365bd9503cb984bae623f",
+    "l2055_lazy_result/lazy_seq.py": "89ed5418965099a6065c85c4b006270ff2a65a27d4d9379a57988e015d2f7d29",
+    "l2055_lazy_result/pure_helpers.py": "21dc2036a9af662e3ea2124996bff0a1d7f2a0c918ea8a0c8b9a5b979e287cfe",
+    "l2055_lazy_result/purity.py": "efa7aa8c4b04fe8188b7e121c88905334d14fd7a4236a0bc665ef91769db64f7",
+    "l2055_lazy_result/purity_integrity.py": "aa8af031218e6294135ca8261a8550c2a3590acee32b0ed74bab9faee62a1331",
+    "l2055_lazy_result/purity_signature.py": "00e29a146672bb621c04b388ef512d852523e0c1701c8d1ba7a9abd2c43529bf",
+    "l2070_batching/__init__.py": "af2f5000831c76593731cb21513bd5c98bf5ae1585c7cd1fc2d6d63f3dbd3f42",
+    "l2070_batching/backend_profile.py": "1b36dcc01bef9a915e63883b207e15f34bc1884bfe7c03ddb5d30a6412688e5f",
+    "l2070_batching/list_binding_metadata.py": "9d9ae9cca0c180871b108e1be236bfa1f1d6d022c868c9fd735fe982bc760496",
+    "l2070_batching/optimizer_diagnostics.py": "f7987cc8d1b8a323e476c934c9e342931fec027b35029be9ec0794eb521f4bc6",
+    "l2070_batching/plan_phase.py": "de32e6f2eb7a4b87931098a54fd322cac1773a8d933d0becbce1a7d5330d63e9",
+    "l2070_batching/scheduling_effects.py": "1e84b5f2d1882992199285bfefde10d2313e7298439f3105dedf6dee5e763ae4",
+    "l2070_batching/server_ref.py": "8b895ef8f98539fca3d76428321937af0fde475b89c21b0c9a725c305a94fe8e",
+    "l2070_batching/sql_column_type_hints.py": "ace4d672b4bb4ccf6c1e71d7d80f006769962ecb06fd9a1cdedc567a848d362f",
+    "l2070_batching/step_execution_role.py": "0d74a5c00f08a585be2c089b24be423d60bec5af49ee08297cba3beb5a2cafba",
+    "l4000_permissions/__init__.py": "eea9262525975bad109066c6f7ca8f9fe551810c24b881962d11dc518280974a",
+    "l4000_permissions/rbac_ids.py": "c8516e64b46e9fd90a5187ab8cc7f3e7bad398f4cbbf6adf4ba60b9fee223c77",
+    "scripts/__init__.py": "5981b72bd0b40549bb40abd48833c73656aa9b7c9843a0cacace161dfa53949c",
+    "scripts/lint_bootstrap_cache_health.py": "38ca210fd097f4de0a1002f2712bd43f25454415044efda31765ab40c4e6e44b",
+    "scripts/lint_bootstrap_engine_invariants.py": "1624281d5ef05840426e312422e043db41f2d7740ab8f1ee218f2691074bf883",
+    "scripts/lint_bootstrap_lazy_sql.py": "c4541d43ff3ae383b5c8b3eb0bb1a7c13a10f6a60195c5a19ab04e2cd4dbb749",
+    "scripts/lint_connection_mode_split.py": "6609bd0bde17b3a14c2f3fa62cf9e32ffe7a0e8e2292a4e6915e51c1e9d50eea",
+    "scripts/lint_connection_service_architecture.py": "5c1bbbaac7fd14dd3582895373f397ca4589ba0c677aa208da8659b8151e942f",
+    "scripts/lint_connection_structural_boundaries.py": "0ea7695945fc116110736540cb56fea64d1c1895dfe534bcf69cfb0d4336bff4",
+    "scripts/lint_lib/__init__.py": "c1562a30506373c2b556475957037245d201bc83ff0f701be5d0ec7ece7bbdb8",
+    "scripts/lint_lib/architectural_rules.py": "3d7c47caf791c9c6ec41d7c707177e55b455ac95ed9189bc190479d799006b51",
+    "scripts/lint_lib/ast_collectors.py": "f233cfa2acb8de556b79eaa3e5bb8f8ecdf8f376d69282494827f3d71bcebc1f",
+    "scripts/lint_lib/ast_poison.py": "2bef3e656f720cb4fefcc08eb21669886f3213831de76084f9cf1dc0e4f8cf9d",
+    "scripts/lint_lib/checker.py": "1fe9865ef6236b0e34875dbeb9fe2833918c467f6e95da694cf0de93d2974dfa",
+    "scripts/lint_lib/cli.py": "6f4b59ba6ddb3ddf1ae412754fe898dd60a104e0baff4d790628ecb99d061f7b",
+    "scripts/lint_lib/discovery.py": "f81ae21da16d66ee882d790fc1be602d2ec931bed2515ee2540f2744bbb9c9dd",
+    "scripts/lint_lib/fact_engine.py": "3256ab77785f1a63a9afdd30f55669fb3ce7fadb660558a9d7032c0eced3decd",
+    "scripts/lint_lib/fact_store.py": "68551dfb11908f05f41e35a61d110a8e794c3ad077c6d3105f10e26765998260",
+    "scripts/lint_lib/linter_plugin.py": "dec0057c885f80362767a0290433ac09dab90ded224b8ecf86b69d1cb992c9ab",
+    "scripts/lint_lib/output.py": "b255a8f3e27e52f153eb5dc13fa00306b65c16ed1cb9a3518b362420de69bf82",
+    "scripts/lint_lib/output_dir_filter.py": "515e13f5bee0dd31398c1c2cb9a7f4a1099ac24105c8ee595efa03824929bd14",
+    "scripts/lint_lib/parallel.py": "4a3a85d92e9a05c90fa63a980a1c029855dc6c9277ceb9e6ae514aa369f8467a",
+    "scripts/lint_lib/process_pool.py": "b305def7f81eac956ee91beb44b7cdfb2c12e678ba7c508e96d2bbebd42b102f",
+    "scripts/lint_lib/repository_state.py": "f8ee18919775c76de465bb746e3075a6997afa48cec4a4bcab3a59e3caa96b81",
+    "scripts/lint_lib/signing.py": "4e075e12d48afbee2e054c57c9e2e84daf866a44b6e4fd00309ad8d55b648a4e",
+    "scripts/lint_lib/source_taint_warning.py": "600bb7c39d5c5f61ba3ebe6884c9a679b34c90a021ca8f55d7708846d44696f2",
+    "scripts/lint_lib/spirit.py": "1300e581cbdbfe6b18b78378bcc77de28996b63d9041349c3496c6ad67d29b87",
+    "scripts/lint_lib/types.py": "b8af16217d4124f48171b864491a6c8c01b2699b53821c0ddd15511366c6d16a",
+    "scripts/lint_plan_composition_architecture.py": "395d0c5a7f7c05f6e51bfb8a2e8bcf84f1c869b9e3deeb2927799b6e95282283",
+    "scripts/lint_schema_architecture_plugin.py": "4156ae253e047f74e2831a9cca4dc009473669fc9e029aa593b0f902cec002be",
+    "scripts/lint_schema_bootstrap_contracts.py": "092051170c4310c3d347a93cc3863d1f176bc42be22a35bb0c798ed57f335234"
+  }
+}

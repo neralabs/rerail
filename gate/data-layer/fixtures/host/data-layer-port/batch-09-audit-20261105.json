@@ -1,0 +1,194 @@
+{
+  "format": "rerail.data-layer-batch-nine-audit/v1",
+  "date": "2026-11-05",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "auditedCommit": "1c2c3be73",
+  "engineSha256": "d000bf29dcf827d087409633bab7340357c192048d1e0145f9515a073ca3a5fd",
+  "completion": "withdrawn",
+  "counterexamples": {
+    "oraclePassed": 3,
+    "snapshotFailed": 3,
+    "workspaceFailed": 3,
+    "records": [
+      {
+        "test": "::test_schema_contracts_do_not_treat_lambda_arguments_as_function_parameters",
+        "check": "schema_bootstrap_contracts",
+        "entry": "lint_file",
+        "files": [
+          {
+            "path": "bootstrap.py",
+            "source": "def outer(value: int):\n    return lambda untyped: untyped\n"
+          }
+        ],
+        "expected": [],
+        "snapshot": [
+          {
+            "code": "SBC002",
+            "path": "bootstrap.py",
+            "line": 2,
+            "detail": "parameter outer(untyped) is missing an explicit type annotation"
+          }
+        ],
+        "workspace": [
+          {
+            "code": "SBC002",
+            "path": "bootstrap.py",
+            "line": 2,
+            "detail": "parameter outer(untyped) is missing an explicit type annotation"
+          }
+        ]
+      },
+      {
+        "test": "::test_schema_contracts_do_not_treat_lambda_defaults_as_function_parameters",
+        "check": "schema_bootstrap_contracts",
+        "entry": "lint_file",
+        "files": [
+          {
+            "path": "bootstrap.py",
+            "source": "def outer(value: int = (lambda untyped: untyped)(1)):\n    pass\n"
+          }
+        ],
+        "expected": [],
+        "snapshot": [
+          {
+            "code": "SBC002",
+            "path": "bootstrap.py",
+            "line": 1,
+            "detail": "parameter outer(untyped) is missing an explicit type annotation"
+          }
+        ],
+        "workspace": [
+          {
+            "code": "SBC002",
+            "path": "bootstrap.py",
+            "line": 1,
+            "detail": "parameter outer(untyped) is missing an explicit type annotation"
+          }
+        ]
+      },
+      {
+        "test": "::test_bootstrap_tail_lambda_does_not_satisfy_the_required_function_parameter",
+        "check": "bootstrap_engine_invariants",
+        "entry": "_collect_file_violations",
+        "files": [
+          {
+            "path": "l2000_connection/schema_transaction.py",
+            "source": "@pure_lazy\ndef bootstrap_schema_tail_lazy() -> LazyResult[object]:\n    return lambda produced_ref: produced_ref\n"
+          }
+        ],
+        "expected": [
+          {
+            "code": "BEI024",
+            "path": "l2000_connection/schema_transaction.py",
+            "line": 2,
+            "message": "bootstrap_schema_tail_lazy must accept the BootstrapApplicationPlan-produced tail ref"
+          }
+        ],
+        "snapshot": [],
+        "workspace": []
+      }
+    ]
+  },
+  "publicDefaultEvaluations": [
+    {
+      "id": "schema-invalid",
+      "check": "schema-architecture",
+      "path": "l2000_connection/probe.py",
+      "source": "def broken( # SchemaTransaction\n",
+      "violations": [],
+      "failures": [],
+      "expected": [
+        {
+          "code": "SAP000",
+          "line": 1,
+          "message": "cannot inspect schema lifecycle ownership: SyntaxError: '(' was never closed (probe.py, line 1)"
+        }
+      ]
+    },
+    {
+      "id": "cache-invalid",
+      "check": "bootstrap-cache-health",
+      "path": "conform/test_probe.py",
+      "source": "def broken( # create_tables\n",
+      "violations": [
+        {
+          "code": "NATIVE-SYNTAX",
+          "message": "Python source cannot be parsed",
+          "path": "conform/test_probe.py",
+          "line": 1
+        }
+      ],
+      "failures": [],
+      "expected": [
+        {
+          "code": "BCH000",
+          "line": 1,
+          "message": "SyntaxError: '(' was never closed (test_probe.py, line 1)"
+        }
+      ]
+    },
+    {
+      "id": "composition-default",
+      "check": "plan-composition-architecture",
+      "path": "l2070_batching/semantic_plan.py",
+      "source": "class SemanticPlan:\n    pass\n",
+      "violations": [],
+      "failures": [
+        {
+          "clauseId": "composition-runtime-observations",
+          "code": "relational-failed",
+          "message": "relational query: bad JSON path: '$[composition observations required]'"
+        }
+      ],
+      "expected": {
+        "sourceFindings": [],
+        "liveProbeFindings": [],
+        "producerWiring": "missing outside test harness"
+      }
+    },
+    {
+      "id": "contract-lambda",
+      "check": "schema-bootstrap-contracts",
+      "path": "l3200_metadata/bootstrap_state.py",
+      "source": "def outer(value: int):\n    return lambda untyped: untyped\n",
+      "violations": [
+        {
+          "code": "SBC002",
+          "message": "parameter outer(untyped) is missing an explicit type annotation",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2
+        }
+      ],
+      "failures": [],
+      "expected": []
+    },
+    {
+      "id": "bootstrap-lambda",
+      "check": "bootstrap-engine-invariants",
+      "path": "l2000_connection/schema_transaction.py",
+      "source": "@pure_lazy\ndef bootstrap_schema_tail_lazy() -> LazyResult[object]:\n    return lambda produced_ref: produced_ref\n",
+      "violations": [],
+      "failures": [],
+      "expected": [
+        {
+          "code": "BEI024",
+          "path": "l2000_connection/schema_transaction.py",
+          "line": 2,
+          "message": "bootstrap_schema_tail_lazy must accept the BootstrapApplicationPlan-produced tail ref"
+        }
+      ]
+    }
+  ],
+  "omittedCompositionTests": {
+    "tests": [
+      "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_imports",
+      "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_handle_fields",
+      "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_only_the_provider_executor_can_execute_mcp_plan_scopes",
+      "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_repository_plan_composition_probes_pass"
+    ],
+    "oraclePassed": 4,
+    "nativeAdaptedHarnessPassed": 4,
+    "presentInPreviousReceipt": false
+  },
+  "reproductionSourceSha256": "9488da6cc53a7ceaa41b883db3039f81c20867a8b764c0fea7c58e30d1d4e77e"
+}

@@ -1,0 +1,218 @@
+{
+  "format": "rerail.data-layer-kernel-measurement/v1",
+  "date": "2026-11-04",
+  "kernel": "canonical-columns",
+  "files": 20,
+  "sourceBytes": 44980,
+  "findings": 400,
+  "repetitions": 3,
+  "note": "External CPU includes startup and waited child processes. Node CPU excludes CPython. RSS is maximum per process. These are new-kernel measurements, not repository baselines.",
+  "builds": {
+    "row": {
+      "compile": {
+        "wallMs": 1.6646670000000086,
+        "nodeCpuMs": 1.797
+      },
+      "cold": {
+        "wallMs": 414.795792,
+        "nodeCpuMs": 108.868,
+        "findings": 400
+      },
+      "warm": {
+        "wallMs": 342.560958,
+        "nodeCpuMs": 100.143,
+        "findings": 400
+      },
+      "external": {
+        "real": 1.53,
+        "user": 1.15,
+        "sys": 0.17,
+        "maxRssBytes": 227164160
+      },
+      "addonSha256": "eaf894625eefc4b1bf0b59204da4bcb3a199be6c77978b04c3c5cbf9b898e091",
+      "runs": [
+        {
+          "kernel": "canonical-columns",
+          "addon": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/data-layer-batch-nine/engine/pre-columnar.node",
+          "files": 20,
+          "sourceBytes": 44980,
+          "compile": {
+            "wallMs": 34.40783299999998,
+            "nodeCpuMs": 12.32
+          },
+          "cold": {
+            "wallMs": 348.95687499999997,
+            "nodeCpuMs": 112.535,
+            "findings": 400
+          },
+          "warm": {
+            "wallMs": 332.149083,
+            "nodeCpuMs": 100.143,
+            "findings": 400
+          },
+          "external": {
+            "real": 1.42,
+            "user": 1.14,
+            "sys": 0.18,
+            "maxRssBytes": 233259008
+          }
+        },
+        {
+          "kernel": "canonical-columns",
+          "addon": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/data-layer-batch-nine/engine/pre-columnar.node",
+          "files": 20,
+          "sourceBytes": 44980,
+          "compile": {
+            "wallMs": 1.5753750000000082,
+            "nodeCpuMs": 1.644
+          },
+          "cold": {
+            "wallMs": 414.795792,
+            "nodeCpuMs": 108.868,
+            "findings": 400
+          },
+          "warm": {
+            "wallMs": 410.753917,
+            "nodeCpuMs": 100.728,
+            "findings": 400
+          },
+          "external": {
+            "real": 1.59,
+            "user": 1.15,
+            "sys": 0.17,
+            "maxRssBytes": 227164160
+          }
+        },
+        {
+          "kernel": "canonical-columns",
+          "addon": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/.rerail/data-layer-batch-nine/engine/pre-columnar.node",
+          "files": 20,
+          "sourceBytes": 44980,
+          "compile": {
+            "wallMs": 1.6646670000000086,
+            "nodeCpuMs": 1.797
+          },
+          "cold": {
+            "wallMs": 434.49325,
+            "nodeCpuMs": 103.355,
+            "findings": 400
+          },
+          "warm": {
+            "wallMs": 342.560958,
+            "nodeCpuMs": 97.591,
+            "findings": 400
+          },
+          "external": {
+            "real": 1.53,
+            "user": 1.17,
+            "sys": 0.17,
+            "maxRssBytes": 223592448
+          }
+        }
+      ]
+    },
+    "columnar": {
+      "compile": {
+        "wallMs": 1.594333000000006,
+        "nodeCpuMs": 1.702
+      },
+      "cold": {
+        "wallMs": 223.49474999999995,
+        "nodeCpuMs": 73.656,
+        "findings": 400
+      },
+      "warm": {
+        "wallMs": 210.988833,
+        "nodeCpuMs": 69.084,
+        "findings": 400
+      },
+      "external": {
+        "real": 1.08,
+        "user": 1.04,
+        "sys": 0.16,
+        "maxRssBytes": 222527488
+      },
+      "addonSha256": "d000bf29dcf827d087409633bab7340357c192048d1e0145f9515a073ca3a5fd",
+      "runs": [
+        {
+          "kernel": "canonical-columns",
+          "addon": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/native/rerail_engine.darwin-arm64.node",
+          "files": 20,
+          "sourceBytes": 44980,
+          "compile": {
+            "wallMs": 1.5272919999999885,
+            "nodeCpuMs": 1.628
+          },
+          "cold": {
+            "wallMs": 223.49474999999995,
+            "nodeCpuMs": 73.656,
+            "findings": 400
+          },
+          "warm": {
+            "wallMs": 206.31383400000004,
+            "nodeCpuMs": 69.068,
+            "findings": 400
+          },
+          "external": {
+            "real": 1.08,
+            "user": 1.01,
+            "sys": 0.16,
+            "maxRssBytes": 219889664
+          }
+        },
+        {
+          "kernel": "canonical-columns",
+          "addon": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/native/rerail_engine.darwin-arm64.node",
+          "files": 20,
+          "sourceBytes": 44980,
+          "compile": {
+            "wallMs": 1.6276249999999663,
+            "nodeCpuMs": 1.73
+          },
+          "cold": {
+            "wallMs": 220.156292,
+            "nodeCpuMs": 71.225,
+            "findings": 400
+          },
+          "warm": {
+            "wallMs": 210.988833,
+            "nodeCpuMs": 69.084,
+            "findings": 400
+          },
+          "external": {
+            "real": 1.07,
+            "user": 1.04,
+            "sys": 0.16,
+            "maxRssBytes": 222527488
+          }
+        },
+        {
+          "kernel": "canonical-columns",
+          "addon": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/native/rerail_engine.darwin-arm64.node",
+          "files": 20,
+          "sourceBytes": 44980,
+          "compile": {
+            "wallMs": 1.594333000000006,
+            "nodeCpuMs": 1.702
+          },
+          "cold": {
+            "wallMs": 227.36587499999996,
+            "nodeCpuMs": 73.931,
+            "findings": 400
+          },
+          "warm": {
+            "wallMs": 291.8703750000001,
+            "nodeCpuMs": 70.037,
+            "findings": 400
+          },
+          "external": {
+            "real": 1.3,
+            "user": 1.06,
+            "sys": 0.16,
+            "maxRssBytes": 230735872
+          }
+        }
+      ]
+    }
+  }
+}

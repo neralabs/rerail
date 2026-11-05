@@ -1,0 +1,574 @@
+{
+  "cases": [
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:decorator-generated-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @legacy_sync\n def read(self): return None\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-decorator-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Query:\n def read_lazy(self): return execute()\n @cache\n def read(self): return None\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:typed-field-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Transaction\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unknown-field-type-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Transaction:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n txn: Missing\n def run(self, x): return self.txn.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:super-method-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unrelated-super-method-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self, x): return x\n def read(self, x): return x\nclass Child(Base):\n def run(self, x): return super().read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:no-execution-roots",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def run(x): return x\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-named-field",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n def __init__(self, db: DB): self._db = db\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-renamed-field-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Holder:\n def __init__(self, db: DB): self.storage = db\n def run(self, x): return self.storage.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unqualified-owner-method",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def read(x): return execute(x)\nclass Store:\n def read(self, x): return read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unqualified-global-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def read(x): return execute(x)\nclass Store:\n def run(self, x): return read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:nested-parameter-context",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run():\n def inner(db: DB): return db.read(1)\n return inner\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:captured-outer-parameter-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(db: DB):\n def inner(): return db.read(1)\n return inner\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:module-self-parameter",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(self: DB): return self.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:ordinary-parameter-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\ndef run(db: DB): return db.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:local-value-does-not-name-method",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Store:\n def _query(self): return 1\n def query(self): return self._query()\n def run(self):\n  query = 1\n  return query\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:bare-method-callback-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Store:\n def _query(self): return 1\n def query(self): return self._query()\n def run(self): return map(query, [])\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-name-without-assignment",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, db: DB): pass\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-exact-name-before-rewrite",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, _db: Pure, db: DB): pass\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-before-class-annotation",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n db: Pure\n def __init__(self, db: DB): pass\n def run(self, x): return self.db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-unknown-type-blocks-class",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n db: DB\n def __init__(self, db: Missing): pass\n def run(self, x): return self.db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-unannotated-uses-class",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n db: DB\n def __init__(self, db): pass\n def run(self, x): return self.db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:inherited-constructor-field",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, db: DB): pass\nclass Child(Holder):\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-positional-only-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, db: DB, /): pass\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-vararg-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, *db: DB): pass\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-keyword-only",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, *, db: DB): pass\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:constructor-unannotated-exact-stops-rewrite",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self, x): return x\n def read(self, x): return self._query(x)\nclass Pure:\n def read(self, x): return x\nclass Holder:\n def __init__(self, _db, db: DB): pass\n def run(self, x): return self._db.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:self-field-value-is-not-a-method",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Holder:\n field: DB\n def run(self): return self.field.read\n def value(self): return self.field\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:composed-mixin-self-edge",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class User:\n def run(self,x): return self.read(x)\nclass Effect:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Combined(User,Effect): pass\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:composed-mixin-parameter-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class User:\n def plain(self,x): return x\nclass Effect:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Combined(User,Effect): pass\ndef run(user:User): return user.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:breadth-first-base-selection",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Root:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Left(Root): pass\nclass Right(Root):\n def read(self,x): return x\nclass Child(Left,Right):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:breadth-first-base-clean-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Root:\n def read(self,x): return x\nclass Left(Root): pass\nclass Right(Root):\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Child(Left,Right):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:long-declared-base-chain",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class C0:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass C1(C0): pass\nclass C2(C1): pass\nclass C3(C2): pass\nclass C4(C3): pass\nclass C5(C4): pass\nclass C6(C5): pass\nclass C7(C6): pass\nclass C8(C7): pass\nclass C9(C8): pass\nclass C10(C9): pass\nclass C11(C10): pass\nclass C12(C11): pass\nclass C13(C12): pass\nclass C14(C13): pass\nclass C15(C14): pass\nclass C16(C15): pass\nclass C17(C16): pass\nclass C18(C17): pass\nclass C19(C18): pass\nclass C20(C19): pass\nclass C21(C20): pass\nclass Last(C21):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:inherited-field-type-needs-caller-binding",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Base:\n def __init__(self, dep:DB): pass\n"
+        },
+        {
+          "path": "impl/child.py",
+          "source": "from impl.base import Base\nclass Child(Base):\n def run(self): return self._dep.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:inherited-field-type-with-caller-binding",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Base:\n def __init__(self, dep:DB): pass\n"
+        },
+        {
+          "path": "impl/child.py",
+          "source": "from impl.base import Base,DB\nclass Child(Base):\n def run(self): return self._dep.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:declared-function-survives-reassignment",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "def _query(x): return x\ndef effect(x): return _query(x)\neffect = None\ndef run(x): return effect(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:nested-attribute-chain-control",
+      "files": [
+        {
+          "path": "impl/effects.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "import impl.effects as effects\ndef run(): return effects.DB.read(None,1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:rebound-parameter-keeps-declared-type",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\ndef run(db:DB):\n db = wrap(db)\n return db.read(1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:module-name-finds-class-method",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\ndef run(): return read(None,1)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:super-callback-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class Base:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass Child(Base):\n def run(self): return super().read\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:declared-base-import-survives-runtime-alias",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "if TYPE_CHECKING:\n from impl.base import DB\nelse:\n DB = load()\nclass User(DB):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:declared-base-ignores-runtime-value",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class Base:\n def read(self,x): return x\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nif TYPE_CHECKING:\n from impl.base import Base\nelse:\n Base = DB\nclass User(Base):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:conditional-field-annotation-control",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\nclass User:\n if TYPE_CHECKING:\n  field: DB\n def run(self,x): return self.field.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:qualified-field-type-control",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "import impl.base as base\nclass User:\n field: base.DB\n def run(self,x): return self.field.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:module-inventory-retains-local-imports",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "def _query(x): return x\ndef effect(x): return _query(x)\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "def setup():\n from impl.base import effect\ndef run(x): return effect(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:call-parameter-name-prefers-declared-import",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "def _query(x): return x\ndef effect(x): return _query(x)\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "def setup():\n from impl.base import effect\ndef run(effect:Callable,x): return effect(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:nested-parameter-bare-name-in-module-inventory",
+      "files": [
+        {
+          "path": "impl/query.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\ndef run():\n def helper(read): return read\n return helper(None)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:base-reexport-alias-control",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/exports.py",
+          "source": "from impl.base import DB as Base\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "from impl.exports import Base\nclass User(Base):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:base-reexport-unique-class-name",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/exports.py",
+          "source": "from impl.base import DB\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "from impl.exports import DB\nclass User(DB):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:unique-base-class-in-inventory",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "class User(DB):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    },
+    {
+      "check": "imperative_private_functions",
+      "test": "batch-05-remaining:ambiguous-base-class-control",
+      "files": [
+        {
+          "path": "impl/base.py",
+          "source": "class DB:\n def _query(self,x): return x\n def read(self,x): return self._query(x)\n"
+        },
+        {
+          "path": "impl/other.py",
+          "source": "class DB:\n def read(self,x): return x\n"
+        },
+        {
+          "path": "impl/query.py",
+          "source": "class User(DB):\n def run(self,x): return self.read(x)\n"
+        }
+      ]
+    }
+  ]
+}

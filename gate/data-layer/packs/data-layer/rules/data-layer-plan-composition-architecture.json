@@ -1,0 +1,306 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-plan-composition-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Exact port of nera-data-layer plan_composition_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2070_batching/semantic_plan.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "plan-composition",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_module",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_annotation",
+                "ast_annotation_repr"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,ast_module AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,ast_annotation AS annotation,ast_annotation_repr AS annotation_repr FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "methods",
+            "query": "SELECT f.*,c.name AS class_name FROM functions f JOIN a c ON c.__path=f.__path AND c.id=f.parent AND c.kind='ClassDef' WHERE f.field='body'",
+            "indexes": [
+              [
+                "__path",
+                "parent",
+                "name"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "imports",
+            "query": "SELECT n.*,CASE WHEN n.kind='ImportFrom' THEN n.module ELSE (SELECT group_concat(s.name,',') FROM (SELECT name FROM a s WHERE s.__path=n.__path AND s.parent=n.id AND s.kind='alias' ORDER BY position) s) END AS imported FROM a n WHERE n.kind IN ('Import','ImportFrom')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "composition_methods",
+            "query": "SELECT m.* FROM methods m JOIN a c ON c.__path=m.__path AND c.id=m.parent WHERE m.class_name='SemanticPlanBuilder' AND c.parent=0 AND m.kind='FunctionDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "actual_annotations",
+            "query": "SELECT id AS record_id,0 AS ordinal,imported AS annotation FROM imports"
+          },
+          {
+            "name": "annotation_reprs",
+            "query": "WITH RECURSIVE chars(record_id,ordinal,value,delimiter,position,piece) AS (\n      SELECT record_id,ordinal,annotation,CASE WHEN instr(annotation,'''')>0 AND instr(annotation,'\"')=0 THEN '\"' ELSE '''' END,0,'' FROM actual_annotations\n      UNION ALL SELECT record_id,ordinal,value,delimiter,position+1,\n        CASE WHEN substr(value,position+1,1)='\\' THEN '\\\\'\n          WHEN substr(value,position+1,1)=delimiter THEN '\\'||delimiter\n          WHEN unicode(substr(value,position+1,1))=9 THEN '\\t'\n          WHEN unicode(substr(value,position+1,1))=10 THEN '\\n'\n          WHEN unicode(substr(value,position+1,1))=13 THEN '\\r'\n          WHEN substr(value,position+1,1)!=' ' AND rx_matches(substr(value,position+1,1),'^[\\p{C}\\p{Z}]$') THEN\n            CASE WHEN unicode(substr(value,position+1,1))<256 THEN printf('\\x%02x',unicode(substr(value,position+1,1)))\n                 WHEN unicode(substr(value,position+1,1))<65536 THEN printf('\\u%04x',unicode(substr(value,position+1,1)))\n                 ELSE printf('\\U%08x',unicode(substr(value,position+1,1))) END\n          ELSE substr(value,position+1,1) END\n      FROM chars WHERE position<length(value))\n      SELECT record_id,ordinal,delimiter||group_concat(piece,'')||delimiter repr FROM\n        (SELECT * FROM chars ORDER BY record_id,ordinal,position) GROUP BY record_id,ordinal,delimiter",
+            "indexes": [
+              [
+                "record_id",
+                "ordinal"
+              ]
+            ]
+          }
+        ],
+        "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SPC-001' AS issue,'semantic plan imports runtime module '||r.repr AS message,n.id||':SPC-001:'||(n.bfs) AS identity,0 AS phase,n.bfs AS ordering,'' AS symbol,'' AS sort_name FROM imports n JOIN annotation_reprs r ON r.record_id=n.id WHERE instr(n.imported,'cache')>0 OR instr(n.imported,'connection')>0 OR instr(n.imported,'executor')>0 OR instr(n.imported,'plan_flush')>0 OR instr(n.imported,'runtime_services')>0 OR instr(n.imported,'transaction')>0 OR substr(n.imported,-12)='.lazy_result' OR substr(n.imported,-9)='.lazy_seq' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SPC-002' AS issue,'semantic field uses runtime type '||v.annotation_repr AS message,n.id||':SPC-002:'||(n.bfs) AS identity,0 AS phase,n.bfs AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='annotation' WHERE n.kind='AnnAssign' AND (instr(v.annotation,'Connection')>0 OR instr(v.annotation,'Cursor')>0 OR instr(v.annotation,'Executor')>0 OR instr(v.annotation,'LazyResult')>0 OR instr(v.annotation,'PlanFlushContext')>0 OR instr(v.annotation,'Transaction')>0) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SPC-004' AS issue,'semantic builder exposes mutable return from '||n.name AS message,n.id||':SPC-004:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM composition_methods n WHERE substr(n.name,1,1)!='_' AND EXISTS(SELECT 1 FROM a v LEFT JOIN a root ON root.__path=v.__path AND root.parent=v.id AND root.field='value' WHERE v.__path=n.__path AND v.parent=n.id AND v.field='returns' AND (v.kind IN ('Name','Attribute') AND v.name IN ('dict','list','set') OR v.kind='Subscript' AND root.kind IN ('Name','Attribute') AND root.name IN ('dict','list','set'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SPC-003' AS issue,'semantic builder calls runtime terminal '||n.callee AS message,n.id||':SPC-003:'||(m.id+n.bfs*0.000001+0.000001) AS identity,1 AS phase,m.id+n.bfs*0.000001+0.000001 AS ordering,'' AS symbol,'' AS sort_name FROM composition_methods m JOIN calls n ON n.__path=m.__path AND n.id BETWEEN m.id AND m.last WHERE n.callee_kind='Attribute' AND n.callee IN ('commit','execute','execute_async','execute_sync','resolve','resolve_async','rollback') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'SPC-005' AS issue,'fragment import must use typed exact ref remapping' AS message,n.id||':SPC-005:'||((SELECT cls.last FROM a cls WHERE cls.__path=n.__path AND cls.id=n.parent)+0.999999) AS identity,1 AS phase,(SELECT cls.last FROM a cls WHERE cls.__path=n.__path AND cls.id=n.parent)+0.999999 AS ordering,'' AS symbol,'' AS sort_name FROM composition_methods n WHERE n.name='add_fragment' AND NOT EXISTS(SELECT 1 FROM composition_methods m WHERE m.__path=n.__path AND m.parent=n.parent AND m.name='add_fragment' AND m.id<n.id) AND (NOT EXISTS(SELECT 1 FROM a n2 WHERE n2.__path=n.__path AND n2.id BETWEEN n.id AND n.last AND (n2.kind='Name' AND n2.name='RefRemap')) OR NOT EXISTS(SELECT 1 FROM a n2 WHERE n2.__path=n.__path AND n2.id BETWEEN n.id AND n.last AND (n2.kind='Name' AND n2.name='rewrite_exact_plan_refs_payload')))",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "composition-runtime-observations",
+      "relational": {
+        "inputs": {
+          "empty": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "locations": [
+          "l2070_batching/semantic_plan.py"
+        ],
+        "stages": [
+          {
+            "name": "supplied",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "observations",
+            "query": {
+              "$option": "entryPoint",
+              "cases": {
+                "all": "SELECT CASE WHEN json_type(data,'$.fingerprints')='array' AND json_array_length(data,'$.fingerprints')=2\n      AND NOT EXISTS(SELECT 1 FROM json_each(data,'$.fingerprints') WHERE type!='text')\n      AND json_type(data,'$.firstRefs')='array' AND json_type(data,'$.secondRefs')='array'\n      AND NOT EXISTS(SELECT 1 FROM json_each(data,'$.firstRefs') WHERE type!='text')\n      AND NOT EXISTS(SELECT 1 FROM json_each(data,'$.secondRefs') WHERE type!='text')\n      THEN data ELSE json_extract('[]','$[composition observations required]') END data FROM supplied",
+                "run_behavior_probes": "SELECT CASE WHEN json_type(data,'$.fingerprints')='array' AND json_array_length(data,'$.fingerprints')=2\n      AND NOT EXISTS(SELECT 1 FROM json_each(data,'$.fingerprints') WHERE type!='text')\n      AND json_type(data,'$.firstRefs')='array' AND json_type(data,'$.secondRefs')='array'\n      AND NOT EXISTS(SELECT 1 FROM json_each(data,'$.firstRefs') WHERE type!='text')\n      AND NOT EXISTS(SELECT 1 FROM json_each(data,'$.secondRefs') WHERE type!='text')\n      THEN data ELSE json_extract('[]','$[composition observations required]') END data FROM supplied"
+              },
+              "default": "SELECT '{\"fingerprints\":[\"same\",\"same\"],\"firstRefs\":[],\"secondRefs\":[]}' data"
+            }
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "all": "SELECT 'l2070_batching/semantic_plan.py' path,0 start_byte,0 end_byte,1 line,'SPC-012' issue,'equivalent semantic plans produced different fingerprints' message,'fingerprints' identity,0 phase,0 ordering,'' symbol,'' sort_name FROM observations WHERE json_extract(data,'$.fingerprints[0]')!=json_extract(data,'$.fingerprints[1]') UNION ALL SELECT 'l2070_batching/semantic_plan.py' path,0 start_byte,0 end_byte,1 line,'SPC-005' issue,'colliding fragment imports reused destination refs' message,'fragment-refs' identity,0 phase,1 ordering,'' symbol,'' sort_name FROM observations WHERE EXISTS(SELECT 1 FROM json_each(data,'$.firstRefs') first JOIN json_each(data,'$.secondRefs') second ON first.value=second.value)",
+            "run_behavior_probes": "SELECT 'l2070_batching/semantic_plan.py' path,0 start_byte,0 end_byte,1 line,'SPC-012' issue,'equivalent semantic plans produced different fingerprints' message,'fingerprints' identity,0 phase,0 ordering,'' symbol,'' sort_name FROM observations WHERE json_extract(data,'$.fingerprints[0]')!=json_extract(data,'$.fingerprints[1]') UNION ALL SELECT 'l2070_batching/semantic_plan.py' path,0 start_byte,0 end_byte,1 line,'SPC-005' issue,'colliding fragment imports reused destination refs' message,'fragment-refs' identity,0 phase,1 ordering,'' symbol,'' sort_name FROM observations WHERE EXISTS(SELECT 1 FROM json_each(data,'$.firstRefs') first JOIN json_each(data,'$.secondRefs') second ON first.value=second.value)"
+          },
+          "default": "SELECT 'l2070_batching/semantic_plan.py' path,0 start_byte,0 end_byte,1 line,'SPC-012' issue,'' message,'' identity,0 phase,0 ordering,'' symbol,'' sort_name WHERE 0"
+        },
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message"
+      },
+      "violation": {
+        "code": "composition-observation",
+        "message": "Composition runtime observations",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "source-syntax",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "syntax": "invalid",
+          "rule": {
+            "kind": "module"
+          }
+        }
+      },
+      "violation": {
+        "code": "NATIVE-SYNTAX",
+        "message": "Python source cannot be parsed",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

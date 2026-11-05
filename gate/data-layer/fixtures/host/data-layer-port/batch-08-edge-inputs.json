@@ -1,0 +1,76 @@
+{
+  "cases": [
+    {
+      "id": "frozenset-list-is-mutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = frozenset([1])\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ]
+    },
+    {
+      "id": "nested-tuple-is-immutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = (frozenset((1,2)), (None,))\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ]
+    },
+    {
+      "id": "tuple-fstring-is-mutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = (f\"{dynamic}\",)\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ]
+    },
+    {
+      "id": "negative-number-is-mutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = -1\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ]
+    },
+    {
+      "id": "complex-is-immutable",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "policy_violations",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l3100_profile/edge.py",
+          "source": "from l2055_lazy_result.purity import pure_lazy, cached_pure_lazy\nfrom l2070_batching.optimizer_run_cache import OptimizerRunCache\nSTATE = 1j\n@cached_pure_lazy(cache_args=(\"cache\",))\n@pure_lazy\ndef compute(*, cache: OptimizerRunCache):\n    return STATE\n"
+        }
+      ]
+    },
+    {
+      "id": "memoized-duplicate-distinct-errors",
+      "check": "cached_pure_lazy_allowlist",
+      "entry": "memoized_policy_violations",
+      "compareMessage": true,
+      "files": [
+        {
+          "path": "l3100_profile/duplicate.py",
+          "source": "from l2055_lazy_result.purity import memoized_pure_lazy, pure_lazy\n@memoized_pure_lazy(max_entries=2)\ndef compute(x): return x\n@memoized_pure_lazy(max_entries=2)\n@pure_lazy\ndef compute(x): return x*2\n"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "format": "rerail.data-layer-third-audit/v1",
+  "auditedCommit": "e5d9cc2a7",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
+  "evaluations": [
+    {
+      "mode": "snapshot",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999,b=1e999,c=1e999,d=1e999))\n"
+        }
+      ],
+      "expected": [],
+      "actual": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "mode": "snapshot",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999j,b=1e999j,c=1e999j,d=1e999j))\n"
+        }
+      ],
+      "expected": [],
+      "actual": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "mode": "snapshot",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "test": "::test_lifecycle_fallback_depends_on_file_presence[invalid]",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "source": "class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n"
+        },
+        {
+          "path": "l2000_connection/connection_lifecycle.py",
+          "source": "def broken(\n"
+        }
+      ],
+      "expected": [],
+      "actual": [
+        {
+          "code": "CSB030",
+          "path": "l2000_connection/connection.py",
+          "line": 2,
+          "message": "_ConnectionLifecycleMixin.__enter__ auto-opens driver state"
+        }
+      ]
+    },
+    {
+      "mode": "workspace",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999,b=1e999,c=1e999,d=1e999))\n"
+        }
+      ],
+      "expected": [],
+      "actual": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "mode": "workspace",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "source": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999j,b=1e999j,c=1e999j,d=1e999j))\n"
+        }
+      ],
+      "expected": [],
+      "actual": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "mode": "workspace",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "test": "::test_lifecycle_fallback_depends_on_file_presence[invalid]",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "source": "class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n"
+        },
+        {
+          "path": "l2000_connection/connection_lifecycle.py",
+          "source": "def broken(\n"
+        }
+      ],
+      "expected": [],
+      "actual": [
+        {
+          "code": "CSB030",
+          "path": "l2000_connection/connection.py",
+          "line": 2,
+          "message": "_ConnectionLifecycleMixin.__enter__ auto-opens driver state"
+        }
+      ]
+    }
+  ]
+}

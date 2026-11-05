@@ -1,0 +1,426 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-revision-ancestry-invariants",
+  "revision": 1,
+  "mode": "block",
+  "description": "Candidate port of nera-data-layer revision_ancestry_invariants at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "impl/common/l2100_sql_grammar/domain/versioning/**/*.py",
+      "impl/common/l2070_server_plan/steps/**/*.py"
+    ],
+    "exclude": [
+      "**/tests/**",
+      "**/test/**",
+      "**/conform/**",
+      "**/.git/**",
+      "**/.venv/**",
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/node_modules/**",
+      "**/tmp/**",
+      "**/browser_build/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "boundary",
+      "define": {
+        "options": {
+          "oracleAnalyzer": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "descriptor-SqlAncestryChainCte",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlAncestryChainCte\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor SqlAncestryChainCte"
+      }
+    },
+    {
+      "id": "descriptor-SqlNativeRevisionValue",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlNativeRevisionValue\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor SqlNativeRevisionValue"
+      }
+    },
+    {
+      "id": "descriptor-SqlRevisionAncestryDefinition",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlRevisionAncestryDefinition\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor SqlRevisionAncestryDefinition"
+      }
+    },
+    {
+      "id": "descriptor-SqlRevisionInAncestryCondition",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+SqlRevisionInAncestryCondition\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor SqlRevisionInAncestryCondition"
+      }
+    },
+    {
+      "id": "descriptor-SparseRowVisibleAtRevisionCondition",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SparseRowVisibleAtRevisionCondition\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor _SparseRowVisibleAtRevisionCondition"
+      }
+    },
+    {
+      "id": "descriptor-SqlCopyVisibleSparseAncestors",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SqlCopyVisibleSparseAncestors\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor _SqlCopyVisibleSparseAncestors"
+      }
+    },
+    {
+      "id": "descriptor-SqlVisibleAncestorsDefinition",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<DESCRIPTOR>(?m:^class\\s+_SqlVisibleAncestorsDefinition\\b))",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "forbidden_descriptor",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.DESCRIPTOR"
+          }
+        },
+        "message": "forbidden ancestry descriptor _SqlVisibleAncestorsDefinition"
+      }
+    },
+    {
+      "id": "removed-surface",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "\\A[\\s\\S]*?(?P<SURFACE>stmt_ancestry_chain)",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "removed_surface",
+        "anchor": {
+          "$option": "oracleAnalyzer",
+          "cases": {
+            "true": "file.start",
+            "false": "capture.SURFACE"
+          }
+        },
+        "message": "Removed ancestry surface"
+      }
+    },
+    {
+      "id": "stored-text-cast-0",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?i)(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}::\\s*text",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "stored_revision_text_cast",
+        "anchor": "witness.span",
+        "message": "Stored revision column cast to text"
+      }
+    },
+    {
+      "id": "stored-text-cast-1",
+      "forbid": {
+        "regex": {
+          "source": "file.content",
+          "pattern": "(?i)CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\)",
+          "content": {
+            "include": [
+              {
+                "$option": "oracleAnalyzer",
+                "cases": {
+                  "true": "(?s).*",
+                  "false": "revision|ancestry|stmt_ancestry_chain"
+                }
+              }
+            ]
+          },
+          "paths": {
+            "include": [
+              "**/*.py"
+            ],
+            "exclude": [
+              "**/tests/**",
+              "**/test_*.py"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "stored_revision_text_cast",
+        "anchor": "witness.span",
+        "message": "Stored revision column cast to text"
+      }
+    }
+  ]
+}

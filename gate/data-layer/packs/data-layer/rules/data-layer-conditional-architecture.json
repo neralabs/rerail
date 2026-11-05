@@ -1,0 +1,1056 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-conditional-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer conditional_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "l2070_batching/conditional_step.py",
+      "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+      "impl/common/l2070_server_plan/steps/sql_conditional.py",
+      "impl/common/l2070_server_plan/sql_backend_executor.py",
+      "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "conditional-local-0",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "\\.compile\\(|ConditionalStep|compile_conditional_step|not\\ ctx\\.backend_type\\.is_sql_backend|not\\ ctx\\.supports_data_modifying_ctes"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_module",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,ast_module AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "conditional_architecture_findings": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not import impl SQL compiler modules.' AS message,n.id||':CONDA-001:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND (substr(n.module,1,29)='impl.common.l2100_sql_grammar' OR substr(n.module,1,29)='impl.common.l2070_server_plan') AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not import SQL grammar classes.' AS message,n.id||':CONDA-001:'||(n.id+0.01+alias.position*0.001) AS identity,0 AS phase,n.id+0.01+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND substr(alias.name,1,3)='Sql' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-002' AS issue,'l2070_batching.conditional_step must not import impl SQL compiler modules.' AS message,n.id||':CONDA-002:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND (substr(n.module,1,29)='impl.common.l2100_sql_grammar' OR substr(n.module,1,29)='impl.common.l2070_server_plan') AND NOT (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-002' AS issue,'l2070_batching.conditional_step must not import SQL grammar classes.' AS message,n.id||':CONDA-002:'||(n.id+0.01+alias.position*0.001) AS identity,0 AS phase,n.id+0.01+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND substr(alias.name,1,3)='Sql' AND NOT (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile'))) WHERE 0"
+          },
+          "default": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not import impl SQL compiler modules.' AS message,n.id||':CONDA-001:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND (substr(n.module,1,29)='impl.common.l2100_sql_grammar' OR substr(n.module,1,29)='impl.common.l2070_server_plan') AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not import SQL grammar classes.' AS message,n.id||':CONDA-001:'||(n.id+0.01+alias.position*0.001) AS identity,0 AS phase,n.id+0.01+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND substr(alias.name,1,3)='Sql' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-002' AS issue,'l2070_batching.conditional_step must not import impl SQL compiler modules.' AS message,n.id||':CONDA-002:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND (substr(n.module,1,29)='impl.common.l2100_sql_grammar' OR substr(n.module,1,29)='impl.common.l2070_server_plan') AND NOT (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-002' AS issue,'l2070_batching.conditional_step must not import SQL grammar classes.' AS message,n.id||':CONDA-002:'||(n.id+0.01+alias.position*0.001) AS identity,0 AS phase,n.id+0.01+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='ImportFrom' AND substr(alias.name,1,3)='Sql' AND NOT (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile'))"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "conditional-local-1",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "\\.compile\\(|ConditionalStep|compile_conditional_step|not\\ ctx\\.backend_type\\.is_sql_backend|not\\ ctx\\.supports_data_modifying_ctes"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "conditional_architecture_findings": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-002' AS issue,'l2070_batching.conditional_step must not import impl SQL compiler modules.' AS message,n.id||':CONDA-002:'||(n.id+alias.position*0.001) AS identity,0 AS phase,n.id+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Import' AND (substr(alias.name,1,29)='impl.common.l2100_sql_grammar' OR substr(alias.name,1,29)='impl.common.l2070_server_plan') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not import SQL grammar classes.' AS message,n.id||':CONDA-001:'||(n.id+0.01+alias.position*0.001) AS identity,0 AS phase,n.id+0.01+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Import' AND substr(alias.name,1,3)='Sql' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not compile branch children directly.' AS message,n.id||':CONDA-001:'||(n.id+0*0.001) AS identity,0 AS phase,n.id+0*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='l2070_batching/conditional_step.py' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) AND (n.callee='compile') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not assemble SQL grammar locally.' AS message,n.id||':CONDA-001:'||(n.id+1*0.001) AS identity,0 AS phase,n.id+1*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='l2070_batching/conditional_step.py' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) AND (substr(n.callee,1,3)='Sql')) WHERE 0"
+          },
+          "default": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-002' AS issue,'l2070_batching.conditional_step must not import impl SQL compiler modules.' AS message,n.id||':CONDA-002:'||(n.id+alias.position*0.001) AS identity,0 AS phase,n.id+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Import' AND (substr(alias.name,1,29)='impl.common.l2100_sql_grammar' OR substr(alias.name,1,29)='impl.common.l2070_server_plan') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not import SQL grammar classes.' AS message,n.id||':CONDA-001:'||(n.id+0.01+alias.position*0.001) AS identity,0 AS phase,n.id+0.01+alias.position*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM a n JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Import' AND substr(alias.name,1,3)='Sql' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not compile branch children directly.' AS message,n.id||':CONDA-001:'||(n.id+0*0.001) AS identity,0 AS phase,n.id+0*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='l2070_batching/conditional_step.py' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) AND (n.callee='compile') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not assemble SQL grammar locally.' AS message,n.id||':CONDA-001:'||(n.id+1*0.001) AS identity,0 AS phase,n.id+1*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='l2070_batching/conditional_step.py' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) AND (substr(n.callee,1,3)='Sql')"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "conditional-local-2",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "\\.compile\\(|ConditionalStep|compile_conditional_step|not\\ ctx\\.backend_type\\.is_sql_backend|not\\ ctx\\.supports_data_modifying_ctes"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "conditional_architecture_findings": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not return CompiledStep(grammar=...).' AS message,n.id||':CONDA-001:'||(n.id+2*0.001) AS identity,0 AS phase,n.id+2*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='l2070_batching/conditional_step.py' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) AND (n.callee='CompiledStep' AND EXISTS(SELECT 1 FROM a kw WHERE kw.__path=n.__path AND kw.parent=n.id AND kw.kind='keyword' AND kw.name='grammar')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-003' AS issue,'Conditional dialect tests must compile SqlConditionalStep, not a semantic conditional.' AS message,n.id||':CONDA-003:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py' AND n.callee_kind='Attribute' AND n.callee='compile' AND n.receiver_kind='Name' AND n.receiver_name IN ('cs','conditional','conditional_step') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep must define compile() as an explicit architecture boundary.' AS message,n.id||':CONDA-001:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM classes n WHERE n.__path='l2070_batching/conditional_step.py' AND n.name='ConditionalStep' AND n.id=(SELECT max(c.id) FROM classes c WHERE c.__path=n.__path AND c.name=n.name) AND NOT EXISTS(SELECT 1 FROM functions f JOIN classes c ON c.__path=f.__path AND c.id=f.cls WHERE f.__path=n.__path AND f.name='compile' AND c.name='ConditionalStep') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-004' AS issue,'ConditionalStep branch validation must retain DDL and not_where_gatable guard constants.' AS message,n.id||':CONDA-004:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Module' AND (NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.kind='Name' AND v.name='_DDL_TAGS') OR NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.kind='Name' AND v.name='_UNGATABLE_TAG'))) WHERE 0"
+          },
+          "default": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep.compile() must not return CompiledStep(grammar=...).' AS message,n.id||':CONDA-001:'||(n.id+2*0.001) AS identity,0 AS phase,n.id+2*0.001 AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='l2070_batching/conditional_step.py' AND (EXISTS(SELECT 1 FROM classes cls WHERE cls.__path=n.__path AND cls.id=n.cls AND cls.name='ConditionalStep') AND EXISTS(SELECT 1 FROM functions fn WHERE fn.__path=n.__path AND fn.id=n.fn AND fn.name='compile')) AND (n.callee='CompiledStep' AND EXISTS(SELECT 1 FROM a kw WHERE kw.__path=n.__path AND kw.parent=n.id AND kw.kind='keyword' AND kw.name='grammar')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-003' AS issue,'Conditional dialect tests must compile SqlConditionalStep, not a semantic conditional.' AS message,n.id||':CONDA-003:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM calls n WHERE n.__path='impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py' AND n.callee_kind='Attribute' AND n.callee='compile' AND n.receiver_kind='Name' AND n.receiver_name IN ('cs','conditional','conditional_step') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-001' AS issue,'ConditionalStep must define compile() as an explicit architecture boundary.' AS message,n.id||':CONDA-001:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM classes n WHERE n.__path='l2070_batching/conditional_step.py' AND n.name='ConditionalStep' AND n.id=(SELECT max(c.id) FROM classes c WHERE c.__path=n.__path AND c.name=n.name) AND NOT EXISTS(SELECT 1 FROM functions f JOIN classes c ON c.__path=f.__path AND c.id=f.cls WHERE f.__path=n.__path AND f.name='compile' AND c.name='ConditionalStep') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-004' AS issue,'ConditionalStep branch validation must retain DDL and not_where_gatable guard constants.' AS message,n.id||':CONDA-004:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Module' AND (NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.kind='Name' AND v.name='_DDL_TAGS') OR NOT EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.kind='Name' AND v.name='_UNGATABLE_TAG'))"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "conditional-local-3",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "all": [
+                      {
+                        "kind": "module"
+                      },
+                      {
+                        "regex": "\\.compile\\(|ConditionalStep|compile_conditional_step|not\\ ctx\\.backend_type\\.is_sql_backend|not\\ ctx\\.supports_data_modifying_ctes"
+                      }
+                    ]
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_function",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,NULL AS module,NULL AS value,NULL AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(NULL,'') AS INTEGER) AS position,CAST(NULLIF(NULL,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,NULL AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(NULL,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "conditional_architecture_findings": "SELECT * FROM (SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,coalesce((SELECT f.line FROM functions f JOIN classes c ON c.__path=f.__path AND c.id=f.cls WHERE f.__path=n.__path AND c.name='ConditionalStep' AND f.name='__init__' ORDER BY f.id DESC LIMIT 1),1) line,'CONDA-004' AS issue,'ConditionalStep.__init__ must validate both then and else branch contents.' AS message,n.id||':CONDA-004:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Module' AND (SELECT count(*) FROM calls v JOIN functions f ON f.__path=v.__path AND f.id=v.fn JOIN classes c ON c.__path=v.__path AND c.id=v.cls WHERE v.__path=n.__path AND v.callee='_validate_branch_content' AND f.name='__init__' AND c.name='ConditionalStep')<2) WHERE 0"
+          },
+          "default": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,coalesce((SELECT f.line FROM functions f JOIN classes c ON c.__path=f.__path AND c.id=f.cls WHERE f.__path=n.__path AND c.name='ConditionalStep' AND f.name='__init__' ORDER BY f.id DESC LIMIT 1),1) line,'CONDA-004' AS issue,'ConditionalStep.__init__ must validate both then and else branch contents.' AS message,n.id||':CONDA-004:'||(n.id) AS identity,1 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name FROM a n WHERE n.__path='l2070_batching/conditional_step.py' AND n.kind='Module' AND (SELECT count(*) FROM calls v JOIN functions f ON f.__path=v.__path AND f.id=v.fn JOIN classes c ON c.__path=v.__path AND c.id=v.cls WHERE v.__path=n.__path AND v.callee='_validate_branch_content' AND f.name='__init__' AND c.name='ConditionalStep')<2"
+        },
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file",
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "conditional-structural-contracts",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_alias",
+                "ast_module",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_breadth_order",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_op",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_context",
+                "ast_name_repr",
+                "ast_value_repr",
+                "ast_annotation",
+                "ast_annotation_repr",
+                "ast_class",
+                "ast_level"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,ast_alias AS alias,ast_module AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(ast_breadth_order,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,ast_context AS context,ast_name_repr AS name_repr,ast_value_repr AS value_repr,ast_annotation AS annotation,ast_annotation_repr AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls,CAST(NULLIF(ast_level,'') AS INTEGER) AS level FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "local_names",
+            "query": "WITH RECURSIVE walk(__path,root,id,suffix) AS (SELECT __path,id,id,'' FROM a WHERE kind IN ('Name','Attribute','Call') UNION ALL SELECT w.__path,w.root,child.id,CASE WHEN parent.kind='Attribute' THEN '.'||parent.name||w.suffix ELSE w.suffix END FROM walk w JOIN a parent ON parent.__path=w.__path AND parent.id=w.id JOIN a child ON child.__path=parent.__path AND child.parent=parent.id WHERE parent.kind='Attribute' AND child.field='value' OR parent.kind='Call' AND child.field='func') SELECT w.__path,w.root id,CASE WHEN n.kind='Name' THEN n.name||w.suffix ELSE nullif(substr(w.suffix,2),'') END name FROM walk w JOIN a n ON n.__path=w.__path AND n.id=w.id WHERE n.kind='Name' OR (n.kind NOT IN ('Name','Attribute','Call'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "context_names",
+            "query": "WITH RECURSIVE walk(__path,root,id,suffix) AS (SELECT __path,id,id,'' FROM a WHERE kind IN ('Name','Attribute','Call') UNION ALL SELECT w.__path,w.root,child.id,CASE WHEN parent.kind='Attribute' THEN '.'||parent.name||w.suffix ELSE w.suffix END FROM walk w JOIN a parent ON parent.__path=w.__path AND parent.id=w.id JOIN a child ON child.__path=parent.__path AND child.parent=parent.id WHERE parent.kind='Attribute' AND child.field='value') SELECT w.__path,w.root id,CASE WHEN n.kind='Name' THEN n.name||w.suffix ELSE nullif(substr(w.suffix,2),'') END name FROM walk w JOIN a n ON n.__path=w.__path AND n.id=w.id WHERE n.kind='Name' OR (n.kind NOT IN ('Name','Attribute'))",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "shared_aliases",
+            "query": "SELECT alias.__path,alias.id,CASE WHEN alias.alias!='' THEN alias.alias WHEN owner.kind='Import' THEN rx_extract(alias.name,'^([^.]+)',1) ELSE alias.name END local,CASE WHEN owner.kind='ImportFrom' THEN owner.module||'.'||alias.name ELSE alias.name END origin FROM a alias JOIN a owner ON owner.__path=alias.__path AND owner.id=alias.parent WHERE alias.kind='alias' AND (owner.kind='Import' OR owner.kind='ImportFrom' AND owner.module!='')",
+            "indexes": [
+              [
+                "__path",
+                "local",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "class_events",
+            "query": "SELECT c.*,replace(coalesce(rx_extract(c.__path,'(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$',1),rx_extract(c.__path,'(?:^|/)([^/]+)\\.py$',1)),'/','.')||'.'||c.name qualified_name FROM classes c",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "shared_classes",
+            "query": "SELECT n.* FROM class_events n WHERE n.id=(SELECT max(last.id) FROM class_events last WHERE last.__path=n.__path AND last.name=n.name)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "qualified_name"
+              ]
+            ]
+          },
+          {
+            "name": "method_events",
+            "query": "SELECT f.*,owner.name class_name,(SELECT max(c.id) FROM class_events c WHERE c.__path=f.__path AND c.name=owner.name AND c.id<f.id) class_event FROM functions f JOIN classes owner ON owner.__path=f.__path AND owner.id=f.cls",
+            "indexes": [
+              [
+                "__path",
+                "class_event",
+                "name",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "shared_methods",
+            "query": "SELECT m.*,c.qualified_name FROM method_events m JOIN shared_classes c ON c.__path=m.__path AND c.id=m.class_event WHERE m.id=(SELECT max(last.id) FROM method_events last WHERE last.__path=m.__path AND last.class_event=m.class_event AND last.name=m.name)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "class_event",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "shared_functions",
+            "query": "SELECT f.*,replace(coalesce(rx_extract(f.__path,'(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$',1),rx_extract(f.__path,'(?:^|/)([^/]+)\\.py$',1)),'/','.')||'.'||f.name qualified_name FROM functions f WHERE f.cls IS NULL AND f.id=(SELECT max(last.id) FROM functions last WHERE last.__path=f.__path AND last.cls IS NULL AND last.name=f.name)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "qualified_name"
+              ]
+            ]
+          },
+          {
+            "name": "resolved_bases",
+            "query": "SELECT c.__path,c.id,coalesce((SELECT alias.origin FROM shared_aliases alias WHERE alias.__path=c.__path AND alias.local=rx_extract(q.name,'^([^.]+)',1) AND alias.id<c.id ORDER BY alias.id DESC LIMIT 1),rx_extract(q.name,'^([^.]+)',1))||coalesce(rx_extract(q.name,'^[^.]+([.].*)$',1),'') base FROM shared_classes c JOIN a b ON b.__path=c.__path AND b.parent=c.id AND b.field='bases' JOIN local_names q ON q.__path=b.__path AND q.id=b.id",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "derived_conditionals",
+            "query": "WITH RECURSIVE derived(name) AS (SELECT 'l2070_batching.conditional_step.ConditionalStep' UNION SELECT c.qualified_name FROM derived d JOIN resolved_bases b ON b.base=d.name JOIN shared_classes c ON c.__path=b.__path AND c.id=b.id) SELECT * FROM derived",
+            "indexes": [
+              [
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "method_nodes",
+            "query": "SELECT n.*,m.id method,m.class_event,m.name method_name,m.class_name FROM a n JOIN functions owner ON owner.__path=n.__path AND owner.id=n.fn JOIN classes lexical ON lexical.__path=n.__path AND lexical.id=n.cls JOIN method_events m ON m.__path=n.__path AND m.class_name=lexical.name JOIN shared_classes final_class ON final_class.__path=m.__path AND final_class.id=m.class_event AND m.name=owner.name WHERE m.id<=n.id AND m.class_event=(SELECT max(c.id) FROM class_events c WHERE c.__path=n.__path AND c.name=lexical.name AND c.id<=n.id) AND m.id=(SELECT max(prior.id) FROM method_events prior WHERE prior.__path=n.__path AND prior.class_event=m.class_event AND prior.name=m.name AND prior.id<=n.id)",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "method"
+              ]
+            ]
+          },
+          {
+            "name": "type_error_raises",
+            "query": "SELECT r.__path,r.id FROM a r JOIN a exc ON exc.__path=r.__path AND exc.parent=r.id AND exc.field='exc' JOIN local_names q ON q.__path=exc.__path AND q.id=exc.id WHERE r.kind='Raise' AND q.name='TypeError'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "contract_blocks",
+            "query": "SELECT block.*,row_number() OVER(PARTITION BY block.__path ORDER BY block.last-block.id,block.id DESC,block.role) sequence FROM (SELECT owner.__path,owner.id,owner.last,child.field role FROM a owner JOIN a child ON child.__path=owner.__path AND child.parent=owner.id WHERE owner.kind IN ('FunctionDef','AsyncFunctionDef','If','match_case') AND child.field IN ('body','orelse') GROUP BY owner.__path,owner.id,child.field) block",
+            "indexes": [
+              [
+                "__path",
+                "sequence"
+              ],
+              [
+                "__path",
+                "id",
+                "role"
+              ]
+            ]
+          },
+          {
+            "name": "block_results",
+            "query": "WITH RECURSIVE fold(__path,sequence,state) AS (SELECT DISTINCT __path,0,'{}' FROM contract_blocks UNION ALL SELECT b.__path,b.sequence,substr(fold.state,1,length(fold.state)-1)||CASE WHEN length(fold.state)>2 THEN ',' ELSE '' END||json_quote(CAST(b.id AS TEXT)||':'||b.role)||':'||CAST((EXISTS(SELECT 1 FROM a stmt WHERE stmt.__path=b.__path AND stmt.parent=b.id AND stmt.field=b.role AND stmt.position<=coalesce((SELECT min(barrier.position) FROM a barrier WHERE barrier.__path=b.__path AND barrier.parent=b.id AND barrier.field=b.role AND barrier.kind IN ('Raise','Return','Yield','YieldFrom')),2147483647) AND (stmt.kind='Raise' AND EXISTS(SELECT 1 FROM type_error_raises r WHERE r.__path=stmt.__path AND r.id=stmt.id) OR stmt.kind='If' AND coalesce(json_extract(fold.state,'$.\"'||stmt.id||':body\"'),0)=1 AND coalesce(json_extract(fold.state,'$.\"'||stmt.id||':orelse\"'),0)=1 OR stmt.kind='Match' AND EXISTS(SELECT 1 FROM a arm WHERE arm.__path=stmt.__path AND arm.parent=stmt.id AND arm.field='cases') AND NOT EXISTS(SELECT 1 FROM a arm WHERE arm.__path=stmt.__path AND arm.parent=stmt.id AND arm.field='cases' AND NOT (coalesce(json_extract(fold.state,'$.\"'||arm.id||':body\"'),0)=1))))) AS TEXT)||'}' FROM fold JOIN contract_blocks b ON b.__path=fold.__path AND b.sequence=fold.sequence+1) SELECT __path,state FROM fold WHERE sequence=(SELECT max(b.sequence) FROM contract_blocks b WHERE b.__path=fold.__path)",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "method_colors",
+            "query": "SELECT m.__path,m.id,coalesce(json_extract(b.state,'$.\"'||m.id||':body\"'),0) always_raises,EXISTS(SELECT 1 FROM method_nodes n JOIN type_error_raises r ON r.__path=n.__path AND r.id=n.id WHERE n.__path=m.__path AND n.method=m.id) raises_type_error,EXISTS(SELECT 1 FROM a n WHERE n.__path=m.__path AND n.id BETWEEN m.id AND m.last AND n.kind='Name' AND n.name='BackendType') OR EXISTS(SELECT 1 FROM a n WHERE n.__path=m.__path AND n.id BETWEEN m.id AND m.last AND n.kind='Attribute' AND n.name IN ('backend_type','is_sql_backend','dialect')) AND EXISTS(SELECT 1 FROM a n WHERE n.__path=m.__path AND n.id BETWEEN m.id AND m.last AND n.kind IN ('If','IfExp','Match')) backend_selection FROM shared_methods m LEFT JOIN block_results b ON b.__path=m.__path",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "method_returns",
+            "query": "SELECT n.*,value.kind expression_kind,value.value value_text,q.name dotted FROM method_nodes n JOIN a value ON value.__path=n.__path AND value.parent=n.id AND value.field='value' LEFT JOIN local_names q ON q.__path=value.__path AND q.id=value.id WHERE n.kind='Return'",
+            "indexes": [
+              [
+                "__path",
+                "method"
+              ]
+            ]
+          },
+          {
+            "name": "shared_calls",
+            "query": "SELECT n.__path,n.method,n.id,n.line,q.name FROM method_nodes n JOIN calls call ON call.__path=n.__path AND call.id=n.id LEFT JOIN context_names q ON q.__path=call.__path AND q.id=call.callee_id WHERE n.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "method",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "callable_parameters",
+            "query": "SELECT DISTINCT m.__path,m.id method,p.name FROM shared_methods m JOIN parameters p ON p.__path=m.__path AND p.fn=m.id JOIN a name ON name.__path=p.__path AND name.id BETWEEN p.id AND p.last AND name.kind='Name' AND name.name='Callable'",
+            "indexes": [
+              [
+                "__path",
+                "method",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "branch_names",
+            "query": "WITH RECURSIVE targets(__path,method,event,id) AS (SELECT loop.__path,loop.method,loop.id,target.id FROM method_nodes loop JOIN a iter ON iter.__path=loop.__path AND iter.parent=loop.id AND iter.field='iter' JOIN local_names q ON q.__path=iter.__path AND q.id=iter.id JOIN a target ON target.__path=loop.__path AND target.parent=loop.id AND target.field='target' WHERE loop.kind='For' AND rx_matches(q.name,'then_plan\\.steps|else_plan\\.steps|conditional_branch_steps|then_steps|else_steps') UNION ALL SELECT t.__path,t.method,t.event,child.id FROM targets t JOIN a parent ON parent.__path=t.__path AND parent.id=t.id AND parent.kind IN ('Tuple','List') JOIN a child ON child.__path=parent.__path AND child.parent=parent.id AND child.field='elts') SELECT t.__path,t.method,t.event,n.name FROM targets t JOIN a n ON n.__path=t.__path AND n.id=t.id AND n.kind='Name'",
+            "indexes": [
+              [
+                "__path",
+                "method",
+                "name",
+                "event"
+              ]
+            ]
+          },
+          {
+            "name": "method_backend_controls",
+            "query": "SELECT n.* FROM method_nodes n JOIN a test ON test.__path=n.__path AND test.parent=n.id AND test.field IN ('test','subject') JOIN a attr ON attr.__path=test.__path AND attr.id BETWEEN test.id AND test.last AND attr.kind='Attribute' AND attr.name IN ('backend_type','is_sql_backend') WHERE n.kind IN ('If','IfExp','Match') AND NOT EXISTS(SELECT 1 FROM a nested JOIN a predicate ON predicate.__path=nested.__path AND predicate.parent=nested.id AND predicate.field IN ('test','subject') WHERE nested.__path=test.__path AND nested.id BETWEEN test.id AND test.last AND nested.kind IN ('If','IfExp','Match') AND attr.id BETWEEN predicate.id AND predicate.last) GROUP BY n.__path,n.id",
+            "indexes": [
+              [
+                "__path",
+                "class_name",
+                "method_name",
+                "line"
+              ]
+            ]
+          },
+          {
+            "name": "conditional_findings_0",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'semantic ConditionalStep must reject direct compilation with TypeError' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'semantic-compile' detector FROM shared_classes n WHERE n.qualified_name='l2070_batching.conditional_step.ConditionalStep' AND NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='compile' AND (EXISTS(SELECT 1 FROM method_colors color WHERE color.__path=m.__path AND color.id=m.id AND color.raises_type_error))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'semantic ConditionalStep lowering level must require physical lowering' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'semantic-level' detector FROM shared_classes n WHERE n.qualified_name='l2070_batching.conditional_step.ConditionalStep' AND (NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='level' AND (EXISTS(SELECT 1 FROM method_returns r WHERE r.__path=m.__path AND r.method=m.id AND r.expression_kind='Constant' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=r.__path AND v.parent=r.id AND v.field='value' AND v.value_kind IN ('int','bool'))))) OR EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='level' AND (EXISTS(SELECT 1 FROM method_returns r WHERE r.__path=m.__path AND r.method=m.id AND r.expression_kind='Constant' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=r.__path AND v.parent=r.id AND v.field='value' AND v.value_kind IN ('int','bool')) AND CASE r.value_text WHEN 'True' THEN 1 WHEN 'False' THEN 0 ELSE CAST(r.value_text AS INTEGER) END<=0)))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'SqlBackendExecutor must define _lower_conditional_step' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'executor-hook' detector FROM shared_classes n WHERE n.qualified_name='impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor' AND NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='_lower_conditional_step' AND (1)) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'SqlConditionalStep must be terminal at lowering level zero' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'physical-level' detector FROM shared_classes n WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND NOT (EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='level' AND ((SELECT count(*) FROM method_returns r WHERE r.__path=m.__path AND r.method=m.id AND r.expression_kind='Constant' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=r.__path AND v.parent=r.id AND v.field='value' AND v.value_kind IN ('int','bool')))=1 AND EXISTS(SELECT 1 FROM method_returns r WHERE r.__path=m.__path AND r.method=m.id AND r.expression_kind='Constant' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=r.__path AND v.parent=r.id AND v.field='value' AND v.value_kind IN ('int','bool')) AND (r.value_text='False' OR r.value_text='0')))))"
+          },
+          {
+            "name": "conditional_findings_1",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'SqlConditionalStep must have the SQL execution role' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'physical-role' detector FROM shared_classes n WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='execution_role' AND (EXISTS(SELECT 1 FROM method_returns r WHERE r.__path=m.__path AND r.method=m.id AND r.dotted='StepExecutionRole.SQL'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'SqlConditionalStep.compile must delegate to the approved physical compiler' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'physical-compile' detector FROM shared_classes n WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='compile' AND (EXISTS(SELECT 1 FROM shared_calls call WHERE call.__path=m.__path AND call.method=m.id AND (substr(call.name,-28)='compile_sql_conditional_step')))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'semantic typed conditional contract must unconditionally reject with TypeError' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'semantic-contract' detector FROM shared_classes n WHERE n.qualified_name='l2070_batching.conditional_step.ConditionalStep' AND (NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='require_sql_physical_conditional' AND (EXISTS(SELECT 1 FROM method_colors color WHERE color.__path=m.__path AND color.id=m.id AND color.always_raises)))) AND (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'l2070_batching/conditional_step.py' path,0 start_byte,0 end_byte,1 line,'CONDA-005' issue,'semantic typed conditional contract must unconditionally reject with TypeError' message,'missing' identity,0 phase,0 ordering,'' symbol,'' sort_name,'semantic-contract' detector WHERE (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name='l2070_batching.conditional_step.ConditionalStep')"
+          },
+          {
+            "name": "conditional_findings_2",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'physical typed conditional contract must override semantic rejection without backend selection' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'physical-contract' detector FROM shared_classes n WHERE n.qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep' AND (n.qualified_name NOT IN (SELECT name FROM derived_conditionals) OR NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='require_sql_physical_conditional' AND (EXISTS(SELECT 1 FROM method_colors color WHERE color.__path=m.__path AND color.id=m.id AND NOT color.always_raises AND NOT color.backend_selection)))) AND (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'impl/common/l2070_server_plan/steps/sql_conditional.py' path,0 start_byte,0 end_byte,1 line,'CONDA-005' issue,'physical typed conditional contract must override semantic rejection without backend selection' message,'missing' identity,0 phase,0 ordering,'' symbol,'' sort_name,'physical-contract' detector WHERE (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'lowering-contract' detector FROM shared_classes n WHERE n.qualified_name='impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor' AND (NOT EXISTS(SELECT 1 FROM shared_methods m WHERE m.__path=n.__path AND m.class_event=n.id AND m.name='_lower_conditional_step' AND (EXISTS(SELECT 1 FROM shared_calls call WHERE call.__path=m.__path AND call.method=m.id AND (substr(call.name,-32)='SqlConditionalStep.from_semantic'))))) AND (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'impl/common/l2070_server_plan/sql_backend_executor.py' path,0 start_byte,0 end_byte,1 line,'CONDA-005' issue,'lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional' message,'missing' identity,0 phase,0 ordering,'' symbol,'' sort_name,'lowering-contract' detector WHERE (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name='impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor')"
+          },
+          {
+            "name": "conditional_findings_3",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'compiler typed conditional contract must validate its SqlConditionalStep before strategy selection' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'compiler-contract' detector FROM shared_functions n WHERE n.qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step' AND NOT (EXISTS(SELECT 1 FROM parameters p JOIN a ann ON ann.__path=p.__path AND ann.parent=p.id AND ann.field='annotation' JOIN local_names q ON q.__path=ann.__path AND q.id=ann.id WHERE p.__path=n.__path AND p.fn=n.id AND p.name='step' AND p.field IN ('posonlyargs','args','kwonlyargs') AND coalesce((SELECT alias.origin FROM shared_aliases alias WHERE alias.__path=n.__path AND alias.local=rx_extract(q.name,'^([^.]+)',1) AND alias.id<n.id ORDER BY alias.id DESC LIMIT 1),rx_extract(q.name,'^([^.]+)',1))||coalesce(rx_extract(q.name,'^[^.]+([.].*)$',1),'')='impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep') AND NOT (EXISTS(SELECT 1 FROM a attr WHERE attr.__path=n.__path AND attr.id BETWEEN n.id AND n.last AND (attr.kind='Name' AND attr.name='BackendType')) OR (EXISTS(SELECT 1 FROM a attr WHERE attr.__path=n.__path AND attr.id BETWEEN n.id AND n.last AND (attr.kind='Attribute' AND attr.name IN ('backend_type','is_sql_backend','dialect'))) AND EXISTS(SELECT 1 FROM a control WHERE control.__path=n.__path AND control.id BETWEEN n.id AND n.last AND (control.kind IN ('If','IfExp','Match'))))) AND EXISTS(SELECT 1 FROM calls call JOIN local_names q ON q.__path=call.__path AND q.id=call.callee_id WHERE call.__path=n.__path AND call.id BETWEEN n.id AND n.last AND q.name='step.require_sql_physical_conditional' AND NOT EXISTS(SELECT 1 FROM calls strategy JOIN local_names sq ON sq.__path=strategy.__path AND sq.id=strategy.callee_id WHERE strategy.__path=n.__path AND strategy.id BETWEEN n.id AND n.last AND substr(sq.name,-21)='_conditional_strategy' AND strategy.line<=call.line))) AND (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) UNION ALL SELECT 'impl/common/l2070_server_plan/steps/_conditional_compile.py' path,0 start_byte,0 end_byte,1 line,'CONDA-005' issue,'compiler typed conditional contract must validate its SqlConditionalStep before strategy selection' message,'missing' identity,0 phase,0 ordering,'' symbol,'' sort_name,'compiler-contract' detector WHERE (EXISTS(SELECT 1 FROM shared_classes WHERE qualified_name IN ('impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor','impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep','l2070_batching.conditional_step.ConditionalStep')) OR EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step')) AND NOT EXISTS(SELECT 1 FROM shared_functions WHERE qualified_name='impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'conditional method '||n.class_name||'.'||n.method_name||' stores runtime instance state in '||n.name_repr AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'runtime-state' detector FROM method_nodes n JOIN a receiver ON receiver.__path=n.__path AND receiver.parent=n.id AND receiver.field='value' AND receiver.kind='Name' AND receiver.name='self' LEFT JOIN a owner ON owner.__path=n.__path AND owner.id=n.parent AND owner.kind IN ('Assign','AnnAssign') LEFT JOIN a expression ON expression.__path=owner.__path AND expression.parent=owner.id AND expression.field='value' WHERE EXISTS(SELECT 1 FROM shared_classes cls JOIN derived_conditionals d ON d.name=cls.qualified_name WHERE cls.__path=n.__path AND cls.id=n.class_event) AND n.method_name!='__init__' AND n.kind='Attribute' AND n.context='Store' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'conditional class '||char(39)||n.class_name||char(39)||' owns runtime callback field '||n.name_repr AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'runtime-callback' detector FROM method_nodes n JOIN a receiver ON receiver.__path=n.__path AND receiver.parent=n.id AND receiver.field='value' AND receiver.kind='Name' AND receiver.name='self' LEFT JOIN a owner ON owner.__path=n.__path AND owner.id=n.parent AND owner.kind IN ('Assign','AnnAssign') LEFT JOIN a expression ON expression.__path=owner.__path AND expression.parent=owner.id AND expression.field='value' WHERE EXISTS(SELECT 1 FROM shared_classes cls JOIN derived_conditionals d ON d.name=cls.qualified_name WHERE cls.__path=n.__path AND cls.id=n.class_event) AND n.method_name='__init__' AND n.kind='Attribute' AND n.context='Store' AND (expression.kind='Lambda' OR expression.kind='Name' AND EXISTS(SELECT 1 FROM callable_parameters p WHERE p.__path=n.__path AND p.method=n.method AND p.name=expression.name))"
+          },
+          {
+            "name": "conditional_findings_4",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'conditional class '||char(39)||cls.name||char(39)||' owns runtime callback field '||target.name_repr AS message,n.id||':CONDA-005:'||(n.id*1000+atom.id*0.001) AS identity,0 AS phase,n.id*1000+atom.id*0.001 AS ordering,'' AS symbol,'' AS sort_name,'declared-callback' detector FROM a n JOIN shared_classes cls ON cls.__path=n.__path AND cls.id=n.cls JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field='target' JOIN a atom ON atom.__path=n.__path AND atom.id BETWEEN n.id AND n.last AND atom.kind='Name' AND atom.name='Callable' WHERE n.kind='AnnAssign' AND n.fn IS NULL AND cls.qualified_name IN (SELECT name FROM derived_conditionals) AND (target.kind='Name' OR target.kind='Attribute' AND EXISTS(SELECT 1 FROM a recv WHERE recv.__path=target.__path AND recv.parent=target.id AND recv.field='value' AND (recv.kind='Name' AND recv.name='self'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'conditional method '||n.class_name||'.'||n.method_name||' performs child compilation' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'child-compilation' detector FROM method_nodes n JOIN calls call ON call.__path=n.__path AND call.id=n.id JOIN a receiver ON receiver.__path=call.__path AND receiver.id=call.receiver AND receiver.kind='Name' WHERE EXISTS(SELECT 1 FROM shared_classes cls JOIN derived_conditionals d ON d.name=cls.qualified_name WHERE cls.__path=n.__path AND cls.id=n.class_event) AND call.callee_kind='Attribute' AND call.callee='compile' AND EXISTS(SELECT 1 FROM branch_names b WHERE b.__path=n.__path AND b.method=n.method AND b.name=receiver.name AND b.event<n.id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'CONDA-005' AS issue,'conditional method '||n.class_name||'.'||n.method_name||' selects through backend identity' AS message,n.id||':CONDA-005:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'' AS symbol,'' AS sort_name,'backend-control' detector FROM method_backend_controls n WHERE EXISTS(SELECT 1 FROM shared_classes cls JOIN derived_conditionals d ON d.name=cls.qualified_name WHERE cls.__path=n.__path AND cls.id=n.class_event) AND n.id=(SELECT min(first.id) FROM method_backend_controls first WHERE first.__path=n.__path AND first.class_name=n.class_name AND first.method_name=n.method_name AND first.line=n.line)"
+          }
+        ],
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "conditional_architecture_findings": "SELECT * FROM conditional_findings_0 UNION ALL SELECT * FROM conditional_findings_1 UNION ALL SELECT * FROM conditional_findings_2 UNION ALL SELECT * FROM conditional_findings_3 UNION ALL SELECT * FROM conditional_findings_4"
+          },
+          "default": "SELECT * FROM (SELECT * FROM conditional_findings_0 UNION ALL SELECT * FROM conditional_findings_1 UNION ALL SELECT * FROM conditional_findings_2 UNION ALL SELECT * FROM conditional_findings_3 UNION ALL SELECT * FROM conditional_findings_4) WHERE detector IN ('compiler-contract','executor-hook','lowering-contract','physical-contract','semantic-compile','semantic-contract')"
+        },
+        "key": [
+          "detector",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "locations": [
+          "l2070_batching/conditional_step.py",
+          "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "impl/common/l2070_server_plan/sql_backend_executor.py"
+        ],
+        "line": "line"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}
