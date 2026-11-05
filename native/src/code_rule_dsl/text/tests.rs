@@ -140,17 +140,26 @@ fn spans(rng: &mut Lcg, len: usize) -> Vec<Range<usize>> {
 
 use std::ops::Range;
 
+/// Assertions read a node's text differently from the file's at the node's edges.
+const ASSERTIONS: &[&str] = &[r"\bab\b", r"(?:\A|\.)ab(?:\.|\z)", r"\Bb", r"(?m)a$", r"(?m)^a.", r"\b", r"(?-u:\b)x", r"(?i)\bsql\b", r"\bc\w*"];
+
 #[test]
 fn the_scan_engine_agrees_with_each_node_s_own_text() {
     let mut rng = Lcg(11);
-    for round in 0..30 {
+    for round in 0..60 {
         let len = 20 + rng.below(200) as usize;
-        let file = text(&mut rng, len);
+        let mut file = text(&mut rng, len);
+        // Some files are not ASCII: a Unicode word boundary's automaton gives up there.
+        if round % 4 == 3 {
+            file.extend_from_slice("é".as_bytes());
+            file.extend(text(&mut rng, 10));
+        }
+        let len = file.len();
         let tree = spans(&mut rng, len);
         let candidates = (0..tree.len() as u32).collect::<Vec<_>>();
         let span = |n: u32| tree[n as usize].clone();
         let nodes = scan::Nodes { text: &file, len: tree.len(), candidates: &candidates, span: &span };
-        for pattern in PATTERNS {
+        for pattern in PATTERNS.iter().chain(ASSERTIONS) {
             let lowered = regex(pattern);
             let bits = scan::bits(&lowered, &nodes).expect("decided");
             let truth = regex::bytes::Regex::new(pattern).unwrap();
@@ -158,6 +167,25 @@ fn the_scan_engine_agrees_with_each_node_s_own_text() {
                 let got = bits[n / 64] >> (n % 64) & 1 != 0;
                 assert_eq!(got, truth.is_match(&file[s.clone()]), "round {round}, {pattern} ({}), node {n} {:?}", lowered.production, String::from_utf8_lossy(&file[s.clone()]));
             }
+        }
+    }
+}
+
+#[test]
+fn a_batch_agrees_with_each_plan_alone() {
+    let mut rng = Lcg(13);
+    let lowered = PATTERNS.iter().map(|p| regex(p)).chain(["^(?:ab|b)$", "^a", "x$", "(?:ab|a)b", r"a\w*c$", r"^a\w*", r"(?i)\bsql\w*$", r"^\(.*\)$"].iter().map(|p| regex(p))).collect::<Vec<_>>();
+    let batch = scan::Batch::of(lowered.clone());
+    for _ in 0..30 {
+        let len = 20 + rng.below(200) as usize;
+        let file = text(&mut rng, len);
+        let tree = spans(&mut rng, len);
+        // Every other node: the batch reads candidates only.
+        let candidates = (0..tree.len() as u32).filter(|n| n % 2 == 0).collect::<Vec<_>>();
+        let span = |n: u32| tree[n as usize].clone();
+        let nodes = scan::Nodes { text: &file, len: tree.len(), candidates: &candidates, span: &span };
+        for (lowered, bits) in lowered.iter().zip(batch.bits(&nodes)) {
+            assert_eq!(bits, scan::bits(lowered, &nodes), "{:?}", lowered.plan);
         }
     }
 }

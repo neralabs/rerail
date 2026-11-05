@@ -6,6 +6,7 @@ use regex_syntax::hir::Hir;
 
 /// A test's spelling.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[allow(dead_code, reason = "the framework's spellings: `Glob` and `OneOf` have no rule front end yet")]
 pub(in crate::code_rule_dsl) enum Spelling {
     /// Rust `regex` syntax, as the `regex` crate reads it (W's matcher reads the same), with
     /// backreferences beyond it (`value.regex`, `value::text_regex`).

@@ -19,6 +19,7 @@ impl Domain {
     /// Any text: a node's, a file's, a string literal's.
     pub(in crate::code_rule_dsl) const ANY: Self = Self { single_line: false };
     /// One line at most: an identifier, a dotted name, a path.
+    #[allow(dead_code, reason = "the framework's API: no caller knows its text is one line yet")]
     pub(in crate::code_rule_dsl) const LINE: Self = Self { single_line: true };
 }
 
@@ -34,19 +35,6 @@ impl Pattern {
     /// The pattern of a parsed regex: unanchored where its anchors are inside it.
     pub(in crate::code_rule_dsl) fn of(hir: Hir) -> Self {
         Self { start: false, core: hir, end: false }
-    }
-
-    /// The pattern as one regex again, anchors included.
-    pub(in crate::code_rule_dsl) fn hir(&self) -> Hir {
-        let mut parts = Vec::new();
-        if self.start {
-            parts.push(Hir::look(Look::Start));
-        }
-        parts.push(self.core.clone());
-        if self.end {
-            parts.push(Hir::look(Look::End));
-        }
-        Hir::concat(parts)
     }
 
     /// Whether the core asserts anything about positions (a word boundary, a line's start).

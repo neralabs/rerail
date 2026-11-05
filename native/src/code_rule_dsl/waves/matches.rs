@@ -433,7 +433,6 @@ impl Wave {
     /// 4, `prefilter::terms`): one slot per distinct test (`Micro::slot_key`). `RERAIL_TEXTS=scan`
     /// tests each node's text instead.
     fn texts(&self, store: &ContentStore, tapes: &[Arc<Tape>], docs: Vec<crate::code_rule_dsl::tape::TapeDoc>) -> StoreResult<Vec<crate::code_rule_dsl::tape::TapeDoc>> {
-        use crate::code_rule_dsl::tape::TapeDoc;
         use crate::code_rule_dsl::prefilter::terms::{TextSlot, rows};
         use crate::code_rule_dsl::transducer::packed::Micro;
         if std::env::var("RERAIL_TEXTS").is_ok_and(|mode| mode == "scan") {
@@ -445,12 +444,11 @@ impl Wave {
         for (walk, program) in &walks {
             for slot in 0..walk.texts.len() {
                 let key = walk.slot_key(program, slot);
-                let Some((expression, literal)) = walk.predicate(program, slot) else { continue };
+                let Some(lowered) = walk.lowered(program, slot) else { continue };
                 if !seen.insert(key.clone()) {
                     continue;
                 }
-                let kind = walk.texts[slot].1;
-                slots.push(TextSlot { key, expression, literal, kind, confirm: Box::new(move |tape: &TapeDoc, node| walk.test(program, slot, tape, node)) });
+                slots.push(TextSlot { key, lowered });
             }
         }
         let ids = tapes.iter().map(|tape| tape.id.row()).zip(&docs).collect::<Vec<_>>();

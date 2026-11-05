@@ -2,7 +2,7 @@
 //! have equal keys, so a test spelt two ways is one job.
 //!
 //! A new family is a `Plan` variant with its case in `Plan::canonical`, `Compiled::of`,
-//! `vocabulary::evaluate` and `scan::bits`.
+//! `vocabulary::evaluate` and `scan::how`.
 
 use regex_syntax::hir::Hir;
 use sha2::{Digest as _, Sha256};

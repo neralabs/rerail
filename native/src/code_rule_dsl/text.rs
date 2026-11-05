@@ -23,7 +23,7 @@
 //!   canonical pattern into a plan, or declining. They are tried in order, cheapest plan first;
 //!   the first that accepts wins, and the last (`Automaton`) always accepts a regular pattern.
 //! - **Plan families** (`plan::Plan`): what the engines know how to run. A new family is a variant
-//!   with its case in `vocabulary::evaluate`, `scan::bits` and `Compiled`.
+//!   with its case in `vocabulary::evaluate`, `scan::how` and `Compiled`.
 //!
 //! A lowering records which rewrites applied and which production fired (`Lowered`), for
 //! diagnostics and counters (`text.production.<name>`).
@@ -46,6 +46,12 @@ pub(in crate::code_rule_dsl) use source::{Source, Spelling};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
+/// Installs the text layer's SQL functions on a store connection: `str_test(op, s, pattern)`, the
+/// rules' text tests (`logic::strings`), so every statement a store runs (a wave's included) has them.
+pub(crate) fn install(db: &rusqlite::Connection) -> rusqlite::Result<()> {
+    crate::code_rule_dsl::logic::strings::register(db)
+}
+
 /// Why a test could not be lowered: its spelling does not parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) struct Error(pub(in crate::code_rule_dsl) String);
@@ -59,6 +65,7 @@ pub(in crate::code_rule_dsl) struct Lowered {
     /// The rewrites that changed the pattern, in the order they applied.
     pub(in crate::code_rule_dsl) rewrites: Vec<&'static str>,
     compiled: std::sync::OnceLock<Arc<Compiled>>,
+    prepared: std::sync::OnceLock<Arc<scan::Prepared>>,
 }
 
 impl std::fmt::Debug for Lowered {
@@ -71,6 +78,16 @@ impl Lowered {
     /// The plan as a test of one string (a vocabulary term, a node's text, a Datalog value).
     pub(in crate::code_rule_dsl) fn compiled(&self) -> Arc<Compiled> {
         Arc::clone(self.compiled.get_or_init(|| Arc::new(Compiled::of(&self.plan))))
+    }
+
+    /// A plan made by the engines themselves (a part of another plan), not from a source.
+    pub(in crate::code_rule_dsl) fn of_plan(plan: Plan, production: &'static str) -> Arc<Self> {
+        Arc::new(Lowered { key: plan.key(), plan, production, rewrites: Vec::new(), compiled: Default::default(), prepared: Default::default() })
+    }
+
+    /// The plan's file-scan machinery (`scan`), built once.
+    pub(in crate::code_rule_dsl) fn prepared(&self) -> Arc<scan::Prepared> {
+        Arc::clone(self.prepared.get_or_init(|| Arc::new(scan::Prepared::of(&self.plan))))
     }
 }
 
@@ -95,7 +112,7 @@ fn counter(production: &'static str) -> &'static str {
 }
 
 fn lower_uncached(source: &Source, domain: Domain) -> Result<Lowered, Error> {
-    let lowered = |plan: Plan, production, rewrites| Lowered { key: plan.key(), plan, production, rewrites, compiled: Default::default() };
+    let lowered = |plan: Plan, production, rewrites| Lowered { key: plan.key(), plan, production, rewrites, compiled: Default::default(), prepared: Default::default() };
     match source.parse()? {
         source::Parsed::Regular(hir) => {
             let (pattern, rewrites) = canon::normalize(Pattern::of(hir), domain);

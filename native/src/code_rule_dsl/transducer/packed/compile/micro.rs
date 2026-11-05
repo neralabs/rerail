@@ -13,7 +13,8 @@
 //! emit (the walk stops at the first), a targets label every node captured on a path that emits. A
 //! program with an operation outside the walk's (size, assertions, repeats, greedy forks,
 //! directives) is not a micro walk. A text test is a fixed predicate of its node, so it is read
-//! from bits computed once per (value, node) on the host (`Micro::texts`), not run as a regex. A walk that needs more frames, captures or steps than it has
+//! from bits: the term index's row (`prefilter::terms`) or one pass over the file by the text layer
+//! (`text::scan`, decision 0039), never a regex run per node. A walk that needs more frames, captures or steps than it has
 //! fails, and its pass runs on the interpreter instead. Its steps scale with the file (`steps`).
 
 use super::*;
@@ -117,41 +118,6 @@ impl Emit {
 /// A walk's frames, kept between walks so a sweep allocates them once.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Frames(Vec<(State, Resume)>);
-
-/// `source` as a search (`regex_automata::meta`, the NFA's own syntax and defaults), built once
-/// per pattern.
-fn searcher(source: &str) -> Option<std::sync::Arc<regex_automata::meta::Regex>> {
-    static SEARCHERS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<regex_automata::meta::Regex>>>>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut searchers = SEARCHERS.lock().ok()?;
-    searchers
-        .entry(source.to_owned())
-        .or_insert_with(|| regex_automata::meta::Regex::new(source).ok().map(std::sync::Arc::new))
-        .clone()
-}
-
-/// The literals every match of `source` starts with (its prefix literals; at most 64, none empty), or
-/// `None` where there is no such finite set (`.*`, a class too wide). Decision 0038: a text test reads
-/// the file once for these, not every node's text.
-fn prefixes(source: &str) -> Option<std::sync::Arc<Vec<memchr::memmem::Finder<'static>>>> {
-    static PREFIXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Vec<memchr::memmem::Finder<'static>>>>>>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut known = PREFIXES.lock().ok()?;
-    known
-        .entry(source.to_owned())
-        .or_insert_with(|| {
-            let hir = regex_syntax::parse(source).ok()?;
-            let mut extractor = regex_syntax::hir::literal::Extractor::new();
-            extractor.kind(regex_syntax::hir::literal::ExtractKind::Prefix).limit_total(64);
-            let seq = extractor.extract(&hir);
-            let literals = seq.literals()?;
-            if literals.is_empty() || literals.iter().any(|literal| literal.as_bytes().is_empty()) {
-                return None;
-            }
-            Some(std::sync::Arc::new(literals.iter().map(|literal| memchr::memmem::Finder::new(literal.as_bytes()).into_owned()).collect()))
-        })
-        .clone()
-}
 
 impl Micro {
     /// Why `program` is not a micro walk: its first operation outside the walk's, by name.
@@ -299,100 +265,63 @@ impl Micro {
 
     /// Whether node `node`'s text passes slot `slot`'s test (its kind aside).
     pub(in crate::code_rule_dsl) fn test(&self, program: &Program, slot: usize, tape: &TapeDoc, node: u32) -> Option<bool> {
+        if let Some(lowered) = self.lowered(program, slot) {
+            return lowered.compiled().is_match(tape.transducer_text(node));
+        }
         let (value, _) = self.texts[slot];
         let mut work = 0;
         program.value_programs[usize::from(value)].is_match(tape.transducer_text(node), &program.strings, &mut work).ok()
     }
 
-    /// Slot `slot`'s test as the vocabulary's predicate: (expression, literal) for an equality, a
-    /// prefix (an anchored regex) or a regex; None for a Lua pattern.
-    pub(in crate::code_rule_dsl) fn predicate(&self, program: &Program, slot: usize) -> Option<(String, bool)> {
+    /// Slot `slot`'s test in the text layer (decision 0039); `None` for a Lua pattern, which keeps
+    /// its value program.
+    pub(in crate::code_rule_dsl) fn lowered(&self, program: &Program, slot: usize) -> Option<std::sync::Arc<crate::code_rule_dsl::text::Lowered>> {
+        use crate::code_rule_dsl::text::{Domain, Source, Spelling, lower};
         let (value, _) = self.texts[slot];
         let string = |index: u16| String::from_utf8(program.strings.get(usize::from(index))?.clone()).ok();
-        match &program.predicates[usize::from(value)] {
-            TextPredicate::Equal(index) => Some((string(*index)?, true)),
-            TextPredicate::Prefix(index) => Some((format!("^{}", regex_syntax::escape(&string(*index)?)), false)),
-            TextPredicate::Regex { source, .. } => Some((string(*source)?, false)),
-            TextPredicate::LuaPattern { .. } => None,
-        }
+        let source = match &program.predicates[usize::from(value)] {
+            TextPredicate::Equal(index) => Source::of(Spelling::Equal(string(*index)?)),
+            TextPredicate::Prefix(index) => Source::of(Spelling::Prefix(string(*index)?)),
+            TextPredicate::Regex { source, .. } => Source::regex(string(*source)?),
+            TextPredicate::LuaPattern { .. } => return None,
+        };
+        lower(&source, Domain::ANY).ok()
     }
 
-    /// Slot `slot`'s bits on `tape`, each node's text tested.
+    /// Slot `slot`'s bits on `tape`, from one pass over the file's text (`text::scan`), not each
+    /// node's; a Lua pattern on each node's text. A lowered test's bits cover every node, whatever
+    /// the slot's kind: they are keyed by plan alone (`slot_key`).
     fn scan(&self, program: &Program, slot: usize, tape: &TapeDoc) -> Option<Vec<u64>> {
         let (value, kind) = self.texts[slot];
         let len = tape.transducer_len();
+        if let Some(lowered) = self.lowered(program, slot) {
+            let candidates = (0..len as u32).collect::<Vec<_>>();
+            let span = |node: u32| tape.transducer_span(node);
+            let nodes = crate::code_rule_dsl::text::scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span };
+            return crate::code_rule_dsl::text::scan::bits(&lowered, &nodes);
+        }
+        let candidates = (0..len as u32).filter(|&node| kind.is_none_or(|kind| tape.transducer_kind(node) == kind));
         let mut bits = vec![0_u64; len.div_ceil(64)];
         let value_program = &program.value_programs[usize::from(value)];
-        // A regex's text bound under which the NFA cannot reach its work limit (`work_per_byte`):
-        // there a DFA search of the same pattern gives the same bit, without an NFA step per byte
-        // per state (06 S7: kindless tests read every node's text, ~0.8 s of CPU).
-        let fast = match (value_program, &program.predicates[usize::from(value)]) {
-            (super::value::ValueProgram::Regex(nfa), TextPredicate::Regex { source, .. }) => std::str::from_utf8(&program.strings[usize::from(*source)])
-                .ok()
-                .and_then(searcher)
-                .map(|regex| {
-                    let cache = regex.create_cache();
-                    let _ = nfa;
-                    (regex, cache, ())
-                }),
-            _ => None,
-        };
-        // The search's cache is this call's: the regex's own pool would keep one per thread for
-        // the process (06 S7: ~18 MB at the labels' GPU peak).
-        let mut fast = fast;
-        // Decision 0038: where every match starts with one of a few literals, the file is searched
-        // once for them (SIMD `memmem`); a node can match only if one starts inside its span, so
-        // only those are confirmed. Without it every node's text is searched, and nested spans
-        // read each byte once per ancestor.
-        let starts = match &program.predicates[usize::from(value)] {
-            TextPredicate::Regex { source, .. } => std::str::from_utf8(&program.strings[usize::from(*source)]).ok().and_then(prefixes).map(|finders| {
-                let text = tape.transducer_source();
-                let mut starts = finders.iter().flat_map(|finder| finder.find_iter(text)).collect::<Vec<_>>();
-                starts.sort_unstable();
-                starts.dedup();
-                starts
-            }),
-            _ => None,
-        };
-        crate::code_rule_dsl::prof::count(if starts.is_some() { "texts.scan_literal" } else { "texts.scan_nodes" }, 1);
-        if starts.as_ref().is_some_and(Vec::is_empty) {
-            return Some(bits);
-        }
-        for node in 0..len as u32 {
-            if kind.is_some_and(|kind| tape.transducer_kind(node) != kind) {
-                continue;
-            }
-            if let Some(starts) = &starts {
-                let span = tape.transducer_span(node);
-                let first = starts.partition_point(|&at| at < span.start);
-                if starts.get(first).is_none_or(|&at| at >= span.end) {
-                    continue;
-                }
-            }
-            let text = tape.transducer_text(node);
-            let matched = match &mut fast {
-                // On the host the DFA search has no work limit, and gives the NFA's bit at any
-                // length (W tests the same regex on the node's text): a long text (a module, a
-                // class) does not fail the slot.
-                Some((regex, cache, _)) => {
-                    regex.search_with(cache, &regex_automata::Input::new(text).earliest(true)).is_some()
-                }
-                _ => {
-                    let mut work = 0;
-                    value_program.is_match(text, &program.strings, &mut work).ok()?
-                }
-            };
-            if matched {
+        for node in candidates {
+            let mut work = 0;
+            if value_program.is_match(tape.transducer_text(node), &program.strings, &mut work).ok()? {
                 bits[node as usize / 64] |= 1 << (node % 64);
             }
         }
         Some(bits)
     }
 
-    /// What slot `slot`'s bits depend on, as a key: its value program (with the strings it reads)
-    /// and its kind. Passes whose slots share a key share their bits.
+    /// What slot `slot`'s bits depend on, as a key. Passes whose slots share a key share their bits.
+    /// A lowered test's key is its plan's (decision 0039: equal however spelt), with no kind: its
+    /// bits cover every node, and a walk reads them only after the slot's kind test, so one row
+    /// serves every walk with the test (a fused walk's slots, whose kind is unknown, included).
+    /// Another test's key is its value program, the strings it reads and its kind.
     pub(in crate::code_rule_dsl) fn slot_key(&self, program: &Program, slot: usize) -> String {
         let (value, kind) = self.texts[slot];
+        if let Some(lowered) = self.lowered(program, slot) {
+            return lowered.key.0.clone();
+        }
         let value = &program.value_programs[usize::from(value)];
         let strings = match value {
             ValueProgram::Equal { string } | ValueProgram::Prefix { string } => vec![program.strings[usize::from(*string)].clone()],
