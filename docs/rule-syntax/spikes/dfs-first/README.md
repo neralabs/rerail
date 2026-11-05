@@ -14,8 +14,12 @@ the scripts' depth-first search, and what does it cost.
 - `check.py`: differential test on random graphs (self-loops, duplicate edges, tied orders), in both
   match modes, with a fresh memo and a shared one.
 - `bench.py`: CPU time on synthetic call graphs.
-- `realgraph.py`: LEG-083's call graph from the real data-layer repository, and the script's own answers, for
-  `native real`. Reads blobs with `git cat-file`; parses with `ast`; runs nothing from the repository.
+- `realgraph.py`: LEG-083's call graph from the real data-layer repository, and the answers of four versions
+  of the script's search (as it is; one memo per root; lazy terminals only; both), for `native real`. Reads
+  blobs with `git cat-file`; parses with `ast`; runs nothing from the repository.
+- `vs_cache.py`: checks realgraph.py's copy of the script against the real linter's cached output.
+- `plugin_scope.py`: LEG-083's findings as each of the linter's two entry points (lint-all, `--check`) sees
+  them.
 - `native/`: the same plan in Rust, std only, with no SQL and no materialised tables. Every set pass is a
   linear scan of a CSR edge array; Tarjan reads the array directly. It carries its own port of
   `Graph::first`, including the producer's supplied visiting set and initial memo, and checks that those
@@ -40,7 +44,9 @@ cargo run --release -- par 5000                       # threads and GPU arrays =
 
 python3 -I ../realgraph.py DATA_LAYER_REPO COMMIT leg.graph leg   # LEG-083's files
 python3 -I ../realgraph.py DATA_LAYER_REPO COMMIT all.graph all   # every .py file
-cargo run --release -- real leg.graph
+cargo run --release -- real leg.graph                             # four versions x set-based, threads, GPU
+python3 -I ../vs_cache.py DATA_LAYER_REPO COMMIT leg.graph        # copy = real linter, where cached
+python3 -I ../plugin_scope.py SCRIPT leg.graph DATA_LAYER_REPO COMMIT
 ```
 
 ## Results (2026-11-05)
@@ -59,9 +65,19 @@ root with a fresh memo, 0.03 s with the shared one (the scripts' own search: 0.3
 planted bugs (a fresh memo for the shared variant; a rewrite that keeps a known node as a target) are
 caught.
 
-Real repository (LEG-083): the set-based `dfs_first_memo`, the oracle and the script's own search agree on all
-61,403 roots of LEG-083's files (18 findings) and all 152,753 roots of every .py file (1,830 findings). The
-fresh-memo `dfs_first` finds 34 more on the wider graph. Set passes: 1 ms and 4 ms.
+Real repository (LEG-083):
+
+- The copy of the script equals the real linter on all 355 files its fact cache covers (10 findings).
+- The set-based plan equals the copy on every root, for all four versions:
+  - 61,403 roots in LEG-083's files at 2b1504;
+  - 44,811 at 41ab36f;
+  - 152,753 over every .py file.
+- Set passes take 1–4 ms.
+- The script's eager test is the problem, not the search. At 2b1504 its 18 findings are all pathlib
+  `resolve()` or `resolve(arg)` calls, and the corrected test leaves 0. At 41ab36f it is 56 against 40.
+- The shared memo loses 34 functions repo-wide, all behind a pathlib call. With the corrected test it loses
+  none.
+- See data-layer/upstream/LEG-083.md and its patch.
 
 Threads and GPU: on 8 threads and on Metal (steps 1-3), every array equals the sequential pass on 10,000
 random graphs, the bench graphs and both real graphs. At a million functions, steps 1-3 take 0.004 s of GPU

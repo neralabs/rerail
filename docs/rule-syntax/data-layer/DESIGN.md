@@ -220,20 +220,44 @@ Peak resident memory at 1,000,000 functions: 435 MB, including the oracle's memo
 was heavily loaded (load average 20–150; 50–110 for the real-data, thread and GPU runs), so times are upper bounds.
 
 On the real repository. spikes/dfs-first/realgraph.py rebuilds LEG-083's call graph from the data-layer
-repository at its pinned commit, reading blobs through `git cat-file` and parsing them with `ast` (nothing from
-the repository runs), and runs a copy of the script's own `_transitive_eager_resolve`. Three answers are compared
-per root: the script's, the oracle's (legacy surfaces as the supplied visiting set) and the set-based plan's on the
-rewritten graph (legacy surfaces blocked).
+repository, reading blobs through `git cat-file` and parsing them with `ast` (nothing from the repository
+runs), and runs a copy of the script's own `_transitive_eager_resolve`. The copy is checked against the real
+linter's output: the data-layer worktree keeps the fact cache of a lint-all run at 41ab36f, and on all 355
+files it covers, the copy gives the same LEG-083 rows (spikes/dfs-first/vs_cache.py).
 
-| Scope | Graph | Findings | `dfs_first_memo` vs the script | Set passes | Search steps (memo / fresh) |
-|---|---|---|---|---|---|
-| LEG-083's files (`_is_internal_execution_path`) | 2,493 files, 63,191 functions, 73,848 calls, 21 eager, 1,785 legacy | 18 | equal on all 61,403 roots | 1 ms; 18 live, knot 2 | 10 / 11 |
-| every .py file, same rules | 8,123 files, 154,573 functions, 135,199 calls, 1,284 eager | 1,830 | equal on all 152,753 roots | 4 ms; 1,864 live, knot 65 | 455 / 17,378 |
+Four versions of the search are compared, each against the set-based plan on the rewritten graph (legacy
+surfaces blocked). The oracle is also compared with the script.
 
-On the wider graph, `dfs_first` (LEG_083_SOUND) reports 1,864 functions: 34 that the shared memo loses on a
-cycle, and 2 at a different call. On LEG-083's own files the two agree; no cycle there reaches an eager call
-through a poisoned entry. Real call graphs are mostly dead: under 2% of functions are live, so steps 2-5 touch
-few nodes.
+- R: the script as it is (`dfs_first_memo`, any `.resolve()` is eager);
+- S: one memo per root (`dfs_first`);
+- U: the corrected eager test (lazy terminals only: no arguments, receiver not a pathlib path);
+- T: both fixes.
+
+| Graph | Roots | R | S | U | T | Set passes |
+|---|---:|---:|---:|---:|---:|---|
+| LEG-083's files, 2b1504 (2026-10-18): 63,191 functions, 73,848 calls | 61,403 | 18 | 18 | 0 | 0 | 1 ms; knot 2 |
+| LEG-083's files, 41ab36f (2026-08-20): 46,070 functions | 44,811 | 56 | 56 | 40 | 40 | 1 ms; knot 0 |
+| every .py file, 2b1504: 154,573 functions, 135,199 calls | 152,753 | 1,830 | 1,864 | 1,234 | 1,234 | 4 ms; knot 65 (3 with lazy terminals) |
+
+The set-based plan equals the script's answer on every root of every version, on one core, 8 threads and
+the GPU.
+
+What the versions show (data-layer/upstream/LEG-083.md, with a patch for the script):
+
+- The eager test, not the search, is what is wrong today. At the October commit all 18 LEG-083 findings
+  in its files are a pathlib `resolve()` or a `resolve(arg)` lookup, and none is a lazy terminal.
+- The shared memo loses 34 functions over the whole repository, all in one group of mutually recursive
+  renderers in `scripts/generate_rust_intents.py`, behind a pathlib `resolve()`. With the corrected test
+  it loses none (U = T), but which functions it loses depends on how their names sort, so the port uses
+  `dfs_first`.
+- The script's two entry points scan different files. lint-all reads 14 directories, `--check` the whole
+  repository. In August lint-all's 10 LEG-083 findings were all false positives, and the 40 real ones were
+  outside its directories.
+
+The target relation decides how exact a `dfs_first` check is. The search reproduces the script exactly;
+the corrected `target` is what makes it right. The sketch (sketches/transitive-eager.rr) writes the
+receiver test as `path_value`, over python/names.rr's bindings. Real call graphs are mostly dead: under 2%
+of functions are live, so steps 2-5 touch few nodes.
 
 Threads and GPU. Steps 1-3 and 5 run as waves: `live` as a frontier per level, `next` as one pass per node,
 `first_of` and `ent` by pointer jumping (log₂ n rounds). Step 4, Tarjan, stays on one core. On 8 threads and on

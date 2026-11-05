@@ -538,7 +538,8 @@ src_code(n, c) :- ast_name(n, x), expr_ctx(n, &quot;load&quot;), frame(n, f),
       <h2>The first target of a search</h2>
       <p>Recursion finds every path. Some checks report the path a depth-first search finds first: "the function reaches an eager <code>resolve()</code>, reported at the first call that leads there". Which call is first depends on order, so a closure cannot say it, and a closure reports every call that leads there.</p>
       <p><code>dfs_first(r, hit, first, edge, target)</code> answers it. <code>edge(src, dst, ord)</code> is any relation of three columns: from each node the search tries edges in increasing <code>ord</code>, enters each node once, and skips nodes on its current path. <code>hit</code> is the first node of <code>target</code> an edge reaches, and <code>first</code> is the <code>ord</code> of r's edge that starts the path, so <code>visit_index(c, first)</code> gives the call to report. r is never its own hit; write <code>target(r)</code> beside it for that. No row means no target is reachable.</p>
-      <p><code>dfs_first_memo(…, roots)</code> is the variant some scripts have: roots are searched in the order of <code>roots</code>' second column (numbers, or symbols compared as text, as Soufflé's <code>&lt;</code> does), one memo is shared, and a node finished while a cycle was open counts as reaching nothing. It reports fewer findings on cycles. Use it only where findings must match such a script.</p>
+      <p><code>dfs_first_memo(…, roots)</code> is the variant some scripts have: roots are searched in the order of <code>roots</code>' second column (numbers, or symbols compared as text, as Soufflé's <code>&lt;</code> does), one memo is shared, and a node finished while a cycle was open counts as reaching nothing. It reports fewer findings on cycles, and which ones depends on the names: over the data layer's whole repository it lost 34 of 1,864 functions, all in one group of renderers that call each other. Use it only where findings must match such a script.</p>
+      <p>The answer is only as exact as <code>target</code>. LEG-083 counts any method named <code>resolve</code>. At the data layer's October commit, every one of its 18 findings in its own files is a pathlib path or a lookup with arguments. Saying what a lazy terminal is (no arguments, and a receiver that is not a path) removes them all, and keeps all 40 real findings at the August commit.</p>
       <p>Both take relations as arguments, like <code>nearest</code>, so those relations must be complete first: the checker treats them as negated. A known answer or a node to avoid is a rewrite of the arguments, not an option: drop a node's edges to avoid it; replace them with one edge to its target to fix its answer.</p>
       <p class="perf"><b>Performance.</b> Set passes, then a search only where cycles are. The engine computes which nodes can reach a target, each node's first edge into one, and where each chain of first edges ends; a root whose chain stays out of every cycle is answered from that, whatever the order of roots. Only chains that enter a cycle are searched, inside the cycle, and without the shared memo each entry point is searched once. A cycle through most of the graph keeps a search that large: depth-first order on general graphs is inherently sequential.</p>
     </div>
@@ -549,7 +550,10 @@ src_code(n, c) :- ast_name(n, x), expr_ctx(n, &quot;load&quot;), frame(n, f),
 leg_edge(f, c, i) :- eager_resolve(c), py_frame(c, f), visit_index(c, i).
 leg_edge(f, g, i) :- name_call_target(c, g), py_frame(c, f),
     visit_index(c, i).
-eager_call(c) :- eager_resolve(c).
+// The target decides what counts. A lazy terminal takes no
+// arguments, and a pathlib path&#x27;s resolve() is not one.
+eager_call(c) :- eager_resolve(c), callee(c, m), attr_of(m, o, _),
+    !call_arg(c, _, _, _), !path_value(o).
 
 // One finding per function that reaches an eager call, at the call
 // that starts the first path.
@@ -563,6 +567,9 @@ def load(x):
 
 def fetch(x):
     return plan(x).resolve()
+
+def home(p: Path):
+    return p.resolve()  # a path, not a lazy value: no finding
 </div>
 <div class="cap">Known answers and avoided nodes, as a rewrite of the edges</div><div data-rr>
 // Avoid node u: drop its edges and the edges into it (an edge into

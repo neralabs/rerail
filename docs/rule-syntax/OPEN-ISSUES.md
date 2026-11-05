@@ -91,6 +91,16 @@ confirm once a parser and engine exist. None is fixed yet.
    repository. test-budget.rr is the worked port; the other four checks are not ported yet.
 6. `.budget M by k from base` over a metric relation was dropped: a metric ratchet is a rule
    (noqa-sec-ratchet.rr, test-budget.rr). The coverage table's 16 `.budget … from` uses include metric ratchets.
+7. LEG-083 is wrong upstream (data-layer/upstream/LEG-083.md, with LEG-083.patch, not applied):
+   - any method named `resolve` counts as eager: all 18 findings at 2b1504 are pathlib or `resolve(arg)`
+     calls;
+   - one memo shared by a file's functions makes findings depend on name order;
+   - lint-all and `--check` scan different files: in August lint-all's 10 findings were all false positives,
+     and the 40 real ones were outside its directories.
+   The port keeps `LEG_083` (exact parity) and `LEG_083_SOUND` (lazy terminals, `dfs_first`). Open:
+   - the receiver test does not follow attributes (`args.root`); about 50 of 1,293 lazy-shaped calls
+     repo-wide have a path-like receiver, all but one outside LEG-083's files;
+   - the patch has not been run against the data layer's own test suite.
 
 ## Alignment with the other branches (ALIGNMENT.md)
 1. The final-shape `.rdl` parser would accept this notation with small changes: bare variables, `number` and
@@ -112,9 +122,9 @@ confirm once a parser and engine exist. None is fixed yet.
    - ordering roots by a symbol column matches Soufflé after all: Soufflé's `<` on symbols compares the
      decoded strings (interpreter Engine.cpp, COMPARE_STRING); only `ord()` is the table index. The earlier
      note here was wrong.
-   - on the real repository (spikes/dfs-first/realgraph.py), `dfs_first_memo` equals LEG-083's search on every
-     root: 61,403 roots in its files, 152,753 over every .py file. `dfs_first` adds 34 findings on the wider
-     graph;
+   - on the real repository (spikes/dfs-first/realgraph.py, checked against the real linter's fact cache on
+     355 files), `dfs_first_memo` equals LEG-083's search on every root: 61,403 roots in its files, 152,753
+     over every .py file. `dfs_first` adds 34 findings on the wider graph;
    - steps 1-3 and 5 run on 8 threads and steps 1-3 on Metal, with arrays equal to the sequential passes.
    Still open: no engine has the built-ins. Tarjan (step 4) is sequential; a GPU SCC pass would be needed only
    if knots grow large.
