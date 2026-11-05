@@ -6573,3 +6573,44 @@ These results cover recorded inputs and explicit public contracts. They do not c
 The remaining 52 rules are unauthored. Repository activation remains separate from authored-rule inventory.
 
 The final combined TypeScript acceptance run passes 86 tests, including 30 public-contract regressions.
+
+## 2026-11-05 — Third audit: equality and presence boundaries
+
+The audit of `e5d9cc2a7` finds two more SQL translation defects.
+The [audit evidence](../fixtures/host/data-layer-port/batch-09-third-audit-20261105.json) retains six failing API evaluations across both native modes.
+
+The BEI007 predicate casts canonical numeric text to a SQLite real value.
+Overflowing Python literals produce infinity. SQLite casts their text to zero, so the port reports a false positive.
+The repaired predicate recognizes canonical zero representations directly and preserves `False == 0`.
+
+The structural query uses valid-file evidence to choose its lifecycle owner.
+An existing malformed lifecycle file therefore triggers an incorrect fallback to `connection.py`.
+Explicit invalid-file evidence now preserves the original existence-based choice.
+Absent, empty and malformed files have separate regressions.
+
+Red-test commit `4b349d3df` precedes both repairs.
+The original reduced suite passes 23 cases. Both native modes initially fail three cases and pass twenty.
+The new TypeScript shape gate initially fails ten tests, including shipped-default comparisons.
+Both repairs pass the reduced suites and the expanded shape gate.
+
+A reproducible shape recorder now observes 88 cases across all ten original check implementations.
+The first 52 cases matched, before the numeric and lifecycle probes exposed these defects.
+The retained matrix includes positive and clean variants and verifies 124 loaded upstream source files.
+CI requires exact reproduction. The receipt binds the nested recorder modules and corpus.
+These are added audit observations, not additional upstream pytest cases.
+
+The complete oracle passes 228 cases and records 270 API results, including 156 positive results.
+The twelve new pytest cases cover nine numeric variants and three lifecycle states.
+No native code changed, so the prior 1,576-test native result still applies to the unchanged addon.
+No cumulative cold repository run or new performance claim forms part of this repair.
+No capacity or statement limit increased. No Linear issues were created.
+
+Both native modes pass all 228 cases and match 269 complete results, including 156 positive results.
+One original instrumentation record still maps to actual native parse and walk counters.
+Disabled controls fail 161 cases and pass 67; all ten detectors reject their positive controls.
+The separate 88-observation shape gate passes 44 TypeScript tests through both native modes and selected shipped defaults.
+TypeScript typecheck and boundary checks pass. All ten documents regenerate byte for byte.
+Retained API and capability checks pass 44 tests.
+The structure check reports only its three pre-existing directory-size findings.
+
+The final combined TypeScript acceptance run passes 130 tests across seven files in 35.53 seconds.

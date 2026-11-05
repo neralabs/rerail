@@ -1,7 +1,7 @@
 {
   "format": "rerail.data-layer-source-shapes/v1",
   "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
-  "sourceFilesChecked": 121,
+  "sourceFilesChecked": 124,
   "cases": {},
   "sources": {
     "61585e1a46d38c74fe30f1775a7c5cf0242b04269156c8e822f1efd7138f7aae": "@pure_lazy\ndef public(value: Sequence[Widget]) -> None:\n    pass\n",
@@ -67,7 +67,23 @@
     "b711608757970503049f86bd16ca9c50a210edd501226c93203c08351bf61d56": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999j,b=1e999j,c=1e999j,d=1e999j))\n",
     "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c": "class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n",
     "553eda8c53fc903895e005a1bc644c6058ffd91ce4df67c9fbdbe8763f6d8862": "def broken(\n",
-    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": ""
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855": "",
+    "6abcdc08bfb263839b05fa063c53385e100b3d534bdb89d937d06264ceddda9f": "for row in rows:\n    pass\n",
+    "1e63f98da0323165027959772843818d2d6772c04d6e63f5601abf0bd41b6a90": "for row in sorted(tuple(list(rows))):\n    pass\n",
+    "7b411cdac9f7bba311ae70f149be2ad8444aa0154a6396790c6c1f90c52a96b2": "async def read():\n    async for row in rows:\n        pass\n",
+    "29963852722a62acbacdbc13c0d3a5d0696b7d389559e494a511c12056ad2d43": "for row in iter(rows):\n    pass\n",
+    "acff54b7f31c3c468b098c23c7e2a83880c7d4c8daae5e96a512e947de13d07c": "query.query_lazy().execute_lazy()\n",
+    "baa7636f03964ac49926e44bb01371b5b001b54692ddba173123bd5fe57348d4": "value.model_dump()\n",
+    "e145640acf59b2ec8bf2a9ab6c122948239ce8566048af45af6e3e8ef054f723": "model_dump()\n",
+    "0b2a679a5651e4b6d7eb8f89c1f9c5410b4e50dffdc691fe72fe72db675fe382": "table_exists_many_async()\n",
+    "236ee2d9513a5922e3583f1178e43e3936ac63002b80b152d915cd389ec636e7": "class SyncConnection:\n    async def read(self): pass\n",
+    "916372dc6cb5acb244861f5c0bffa11880bf217e284b6dc7df2590ad0aa4505a": "class AsyncConnection:\n    def read(self): pass\n",
+    "6e9051d8ceaa2eceee638b9f9e5fe00b1c26a51acf492fe0c46924421a95b4a2": "class AsyncConnection:\n    def read_async(self): pass\n",
+    "f4650934c8114cc791914bc428258a3a28ea81a95d86e16c8aa3da7502e399c2": "class SyncOther:\n    async def read(self): pass\n",
+    "90ec2781ba90f7b569d37e4d157c3e757298d46f9249b642450c4a0ec0011de2": "from module import DatabaseConnection as Renamed\n",
+    "62d711ecfd89f4ec57d5fe17ac726c45310291c13f23ea1a6e86ddc26ad12c76": "import package.DatabaseConnection as Alias\n",
+    "11c9a226765ff8ffe2863b6b4cb71c7f772969356adc0769d6ed51e69a3e16dc": "class _SessionHandleCore:\n    def get_connection(self): pass\n",
+    "1706285f559ae21bdf6ce5b82fc4b56f0e4371884fa46549e719fc69f5fb5528": "value = module._SqlConnectionCore\n"
   },
   "records": [
     {
@@ -1246,6 +1262,432 @@
       ],
       "parameters": {},
       "expected": []
+    },
+    {
+      "test": "shape-64",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "6abcdc08bfb263839b05fa063c53385e100b3d534bdb89d937d06264ceddda9f"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-65",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "1e63f98da0323165027959772843818d2d6772c04d6e63f5601abf0bd41b6a90"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-66",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "7b411cdac9f7bba311ae70f149be2ad8444aa0154a6396790c6c1f90c52a96b2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-67",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "29963852722a62acbacdbc13c0d3a5d0696b7d389559e494a511c12056ad2d43"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-68",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "acff54b7f31c3c468b098c23c7e2a83880c7d4c8daae5e96a512e947de13d07c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-001",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap full query_lazy(...).execute_lazy() must move to proof/keyed SQL before hard-fail"
+        }
+      ]
+    },
+    {
+      "test": "shape-69",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "baa7636f03964ac49926e44bb01371b5b001b54692ddba173123bd5fe57348d4"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-003",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap/server-plan Python model materializer model_dump must stay out of lowering paths"
+        }
+      ]
+    },
+    {
+      "test": "shape-70",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "e145640acf59b2ec8bf2a9ab6c122948239ce8566048af45af6e3e8ef054f723"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-71",
+      "check": "bootstrap_lazy_sql",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "0b2a679a5651e4b6d7eb8f89c1f9c5410b4e50dffdc691fe72fe72db675fe382"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-004",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap eager schema probe table_exists_many_async must route through BootstrapScopeProof providers"
+        }
+      ]
+    },
+    {
+      "test": "shape-72",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "6abcdc08bfb263839b05fa063c53385e100b3d534bdb89d937d06264ceddda9f"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-73",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "1e63f98da0323165027959772843818d2d6772c04d6e63f5601abf0bd41b6a90"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-74",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "7b411cdac9f7bba311ae70f149be2ad8444aa0154a6396790c6c1f90c52a96b2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-002",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "detail": "bootstrap Python row iteration over 'rows' must move to SQL/proof-owned matching"
+        }
+      ]
+    },
+    {
+      "test": "shape-75",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "29963852722a62acbacdbc13c0d3a5d0696b7d389559e494a511c12056ad2d43"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-76",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "acff54b7f31c3c468b098c23c7e2a83880c7d4c8daae5e96a512e947de13d07c"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-001",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap full query_lazy(...).execute_lazy() must move to proof/keyed SQL before hard-fail"
+        }
+      ]
+    },
+    {
+      "test": "shape-77",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "baa7636f03964ac49926e44bb01371b5b001b54692ddba173123bd5fe57348d4"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-003",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap/server-plan Python model materializer model_dump must stay out of lowering paths"
+        }
+      ]
+    },
+    {
+      "test": "shape-78",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "e145640acf59b2ec8bf2a9ab6c122948239ce8566048af45af6e3e8ef054f723"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-79",
+      "check": "bootstrap_eager_resolve",
+      "entry": "scan_source",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "0b2a679a5651e4b6d7eb8f89c1f9c5410b4e50dffdc691fe72fe72db675fe382"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "code": "BLB-004",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 1,
+          "detail": "bootstrap eager schema probe table_exists_many_async must route through BootstrapScopeProof providers"
+        }
+      ]
+    },
+    {
+      "test": "shape-80",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "236ee2d9513a5922e3583f1178e43e3936ac63002b80b152d915cd389ec636e7"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "message": "sync facade SyncConnection defines public async method 'read'"
+        }
+      ]
+    },
+    {
+      "test": "shape-81",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "916372dc6cb5acb244861f5c0bffa11880bf217e284b6dc7df2590ad0aa4505a"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 2,
+          "message": "async facade AsyncConnection defines public sync method 'read'"
+        }
+      ]
+    },
+    {
+      "test": "shape-82",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "6e9051d8ceaa2eceee638b9f9e5fe00b1c26a51acf492fe0c46924421a95b4a2"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-83",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "f4650934c8114cc791914bc428258a3a28ea81a95d86e16c8aa3da7502e399c2"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-84",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "90ec2781ba90f7b569d37e4d157c3e757298d46f9249b642450c4a0ec0011de2"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "message": "old mixed connection name 'DatabaseConnection' is forbidden"
+        }
+      ]
+    },
+    {
+      "test": "shape-85",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "62d711ecfd89f4ec57d5fe17ac726c45310291c13f23ea1a6e86ddc26ad12c76"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "message": "old mixed connection name 'DatabaseConnection' is forbidden"
+        }
+      ]
+    },
+    {
+      "test": "shape-86",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "11c9a226765ff8ffe2863b6b4cb71c7f772969356adc0769d6ed51e69a3e16dc"
+        }
+      ],
+      "parameters": {},
+      "expected": []
+    },
+    {
+      "test": "shape-87",
+      "check": "connection_mode_split",
+      "entry": "_violations_for_files",
+      "files": [
+        {
+          "path": "api/probe.py",
+          "sourceSha256": "1706285f559ae21bdf6ce5b82fc4b56f0e4371884fa46549e719fc69f5fb5528"
+        }
+      ],
+      "parameters": {},
+      "expected": [
+        {
+          "path": "api/probe.py",
+          "line": 1,
+          "message": "private connection core '_SqlConnectionCore' is not allowed here"
+        }
+      ]
     }
   ],
   "sourceSha256": {
@@ -1347,9 +1789,12 @@
     "scripts/__init__.py": "5981b72bd0b40549bb40abd48833c73656aa9b7c9843a0cacace161dfa53949c",
     "scripts/lint_bootstrap_cache_health.py": "38ca210fd097f4de0a1002f2712bd43f25454415044efda31765ab40c4e6e44b",
     "scripts/lint_bootstrap_engine_invariants.py": "1624281d5ef05840426e312422e043db41f2d7740ab8f1ee218f2691074bf883",
+    "scripts/lint_bootstrap_lazy_sql.py": "c4541d43ff3ae383b5c8b3eb0bb1a7c13a10f6a60195c5a19ab04e2cd4dbb749",
+    "scripts/lint_connection_mode_split.py": "6609bd0bde17b3a14c2f3fa62cf9e32ffe7a0e8e2292a4e6915e51c1e9d50eea",
     "scripts/lint_connection_service_architecture.py": "5c1bbbaac7fd14dd3582895373f397ca4589ba0c677aa208da8659b8151e942f",
     "scripts/lint_connection_structural_boundaries.py": "0ea7695945fc116110736540cb56fea64d1c1895dfe534bcf69cfb0d4336bff4",
     "scripts/lint_lib/__init__.py": "c1562a30506373c2b556475957037245d201bc83ff0f701be5d0ec7ece7bbdb8",
+    "scripts/lint_lib/architectural_rules.py": "3d7c47caf791c9c6ec41d7c707177e55b455ac95ed9189bc190479d799006b51",
     "scripts/lint_lib/ast_collectors.py": "f233cfa2acb8de556b79eaa3e5bb8f8ecdf8f376d69282494827f3d71bcebc1f",
     "scripts/lint_lib/ast_poison.py": "2bef3e656f720cb4fefcc08eb21669886f3213831de76084f9cf1dc0e4f8cf9d",
     "scripts/lint_lib/checker.py": "1fe9865ef6236b0e34875dbeb9fe2833918c467f6e95da694cf0de93d2974dfa",

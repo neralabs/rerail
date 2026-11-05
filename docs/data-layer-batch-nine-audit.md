@@ -136,3 +136,23 @@ The positive runtime tests still use deliberately defective builder behavior to 
 
 The earlier repair section records historical acceptance results. Its numbers do not certify complete production semantics.
 The current [batch report](data-layer-batch-nine.md) states the expanded evidence and its limits.
+
+## Third audit — numeric equality and file-presence semantics
+
+The audit targets commit `e5d9cc2a7` and retains its [six failing evaluations](../fixtures/host/data-layer-port/batch-09-third-audit-20261105.json).
+
+| Defect | Reduced original behavior | Failing port behavior | Repair |
+| --- | --- | --- | --- |
+| BEI007 numeric coercion | Four overflowing real or imaginary values are not zero | SQLite casts canonical infinity text to zero and emits BEI007 | Compare canonical zero representations without numeric casts |
+| CSB030 lifecycle fallback | An existing malformed lifecycle file prevents fallback | Only valid-file evidence controls presence, so fallback emits CSB030 | Include invalid-file evidence in the presence decision |
+
+The original reduced suite passes 23 cases.
+Before the repair, both native modes fail three cases and pass twenty.
+The permanent shape gate initially fails ten TypeScript tests, including direct shipped-policy comparisons.
+After the repair, both reduced suites and the shape gate pass.
+
+The shape recorder retains 88 original observations across all ten checks.
+Twelve additional pytest cases cover nine numeric variants and three lifecycle states.
+The complete oracle now contains 228 cases and 270 API records.
+The additional matrix records are separate observations, rather than recovered upstream tests.
+The fixes change SQL policies and preserve existing engine limits. No native implementation changed in this round.

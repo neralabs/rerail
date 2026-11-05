@@ -4,15 +4,15 @@
   "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
   "executionPaths": {
     "snapshot": {
-      "cases": 216,
-      "completeResults": 257,
-      "positiveResults": 151,
+      "cases": 228,
+      "completeResults": 269,
+      "positiveResults": 156,
       "perRule": {
         "bootstrap_cache_health": 16,
-        "bootstrap_engine_invariants": 136,
+        "bootstrap_engine_invariants": 145,
         "connection_mode_split": 13,
         "connection_service_architecture": 33,
-        "connection_structural_boundaries": 12,
+        "connection_structural_boundaries": 15,
         "plan_composition_architecture": 14,
         "schema_bootstrap_contracts": 17,
         "schema_architecture": 11,
@@ -21,10 +21,10 @@
       },
       "positivePerRule": {
         "bootstrap_cache_health": 11,
-        "bootstrap_engine_invariants": 68,
+        "bootstrap_engine_invariants": 72,
         "connection_mode_split": 9,
         "connection_service_architecture": 22,
-        "connection_structural_boundaries": 10,
+        "connection_structural_boundaries": 11,
         "plan_composition_architecture": 10,
         "schema_bootstrap_contracts": 11,
         "schema_architecture": 8,
@@ -34,11 +34,11 @@
       "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
       "policySha256": {
         "connection_mode_split": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
-        "connection_structural_boundaries": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
+        "connection_structural_boundaries": "66e2731bb6b83e0d712bff916d0ed6dd38fd24955558d3adafb0c1a18ef94867",
         "connection_service_architecture": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
         "schema_architecture": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
         "schema_bootstrap_contracts": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
-        "bootstrap_engine_invariants": "149bb65ce794c2e494c404df7b719609618d64effd45a45fa527871652ec438e",
+        "bootstrap_engine_invariants": "f407874721ade3e87266777ea72451893c143976fc8593e41a3fda1dbb6c7926",
         "bootstrap_lazy_sql": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
         "bootstrap_eager_resolve": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
         "bootstrap_cache_health": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
@@ -775,6 +775,48 @@
           }
         ],
         "::test_signature_checks_ignore_lambda_keyword_only_parameters": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[0-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -1544,6 +1586,48 @@
             "outcome": "passed"
           }
         ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[0.0-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1.0-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_lifecycle_fallback_depends_on_file_presence[absent]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
         "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_handle_fields": [
           {
             "phase": "setup",
@@ -2300,6 +2384,48 @@
             "outcome": "passed"
           }
         ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[False-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1j-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_lifecycle_fallback_depends_on_file_presence[invalid]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
         "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_only_the_provider_executor_can_execute_mcp_plan_scopes": [
           {
             "phase": "setup",
@@ -3043,6 +3169,48 @@
           }
         ],
         "::test_evidence_verifier_rejects_a_changed_complete_result": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[0j-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_lifecycle_fallback_depends_on_file_presence[empty]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -3087,15 +3255,15 @@
       ]
     },
     "workspace": {
-      "cases": 216,
-      "completeResults": 257,
-      "positiveResults": 151,
+      "cases": 228,
+      "completeResults": 269,
+      "positiveResults": 156,
       "perRule": {
         "bootstrap_cache_health": 16,
-        "bootstrap_engine_invariants": 136,
+        "bootstrap_engine_invariants": 145,
         "connection_mode_split": 13,
         "connection_service_architecture": 33,
-        "connection_structural_boundaries": 12,
+        "connection_structural_boundaries": 15,
         "plan_composition_architecture": 14,
         "schema_bootstrap_contracts": 17,
         "schema_architecture": 11,
@@ -3104,10 +3272,10 @@
       },
       "positivePerRule": {
         "bootstrap_cache_health": 11,
-        "bootstrap_engine_invariants": 68,
+        "bootstrap_engine_invariants": 72,
         "connection_mode_split": 9,
         "connection_service_architecture": 22,
-        "connection_structural_boundaries": 10,
+        "connection_structural_boundaries": 11,
         "plan_composition_architecture": 10,
         "schema_bootstrap_contracts": 11,
         "schema_architecture": 8,
@@ -3117,11 +3285,11 @@
       "engineSha256": "73206347a1ef7e397516fee19b51b2e74d8b6422abe88735609a990fd0d45ca7",
       "policySha256": {
         "connection_mode_split": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
-        "connection_structural_boundaries": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
+        "connection_structural_boundaries": "66e2731bb6b83e0d712bff916d0ed6dd38fd24955558d3adafb0c1a18ef94867",
         "connection_service_architecture": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
         "schema_architecture": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
         "schema_bootstrap_contracts": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
-        "bootstrap_engine_invariants": "149bb65ce794c2e494c404df7b719609618d64effd45a45fa527871652ec438e",
+        "bootstrap_engine_invariants": "f407874721ade3e87266777ea72451893c143976fc8593e41a3fda1dbb6c7926",
         "bootstrap_lazy_sql": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
         "bootstrap_eager_resolve": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
         "bootstrap_cache_health": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
@@ -3858,6 +4026,48 @@
           }
         ],
         "::test_signature_checks_ignore_lambda_keyword_only_parameters": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[0-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -4627,6 +4837,48 @@
             "outcome": "passed"
           }
         ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[0.0-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1.0-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_lifecycle_fallback_depends_on_file_presence[absent]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
         "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_handle_fields": [
           {
             "phase": "setup",
@@ -5383,6 +5635,48 @@
             "outcome": "passed"
           }
         ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[False-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1j-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_lifecycle_fallback_depends_on_file_presence[invalid]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
         "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_only_the_provider_executor_can_execute_mcp_plan_scopes": [
           {
             "phase": "setup",
@@ -6126,6 +6420,48 @@
           }
         ],
         "::test_evidence_verifier_rejects_a_changed_complete_result": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[0j-True]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]": [
+          {
+            "phase": "setup",
+            "outcome": "passed"
+          },
+          {
+            "phase": "call",
+            "outcome": "passed"
+          },
+          {
+            "phase": "teardown",
+            "outcome": "passed"
+          }
+        ],
+        "::test_lifecycle_fallback_depends_on_file_presence[empty]": [
           {
             "phase": "setup",
             "outcome": "passed"
@@ -6171,15 +6507,15 @@
     }
   },
   "positiveControls": {
-    "cases": 216,
-    "completeResults": 254,
+    "cases": 228,
+    "completeResults": 266,
     "positiveResults": 0,
     "perRule": {
       "bootstrap_cache_health": 15,
-      "bootstrap_engine_invariants": 135,
+      "bootstrap_engine_invariants": 144,
       "connection_mode_split": 13,
       "connection_service_architecture": 32,
-      "connection_structural_boundaries": 12,
+      "connection_structural_boundaries": 15,
       "plan_composition_architecture": 14,
       "schema_bootstrap_contracts": 17,
       "schema_architecture": 11,
@@ -6212,7 +6548,7 @@
       "schema_architecture",
       "schema_bootstrap_contracts"
     ],
-    "failedCases": 156,
+    "failedCases": 161,
     "caseOutcomes": {
       "scripts/tests/test_lint_bootstrap_cache_health.py::test_fact_engine_skips_files_without_bootstrap_tokens": [
         {
@@ -6950,6 +7286,48 @@
         {
           "phase": "call",
           "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[0-True]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[1-False]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
         },
         {
           "phase": "teardown",
@@ -7712,6 +8090,48 @@
           "outcome": "passed"
         }
       ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[0.0-True]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[1.0-False]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_lifecycle_fallback_depends_on_file_presence[absent]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
       "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_handle_fields": [
         {
           "phase": "setup",
@@ -8455,6 +8875,48 @@
         }
       ],
       "::test_import_discovery_includes_all_mcp_composition_cases": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[False-True]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[1j-False]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_lifecycle_fallback_depends_on_file_presence[invalid]": [
         {
           "phase": "setup",
           "outcome": "passed"
@@ -9224,6 +9686,48 @@
           "outcome": "passed"
         }
       ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[0j-True]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "failed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
+      "::test_lifecycle_fallback_depends_on_file_presence[empty]": [
+        {
+          "phase": "setup",
+          "outcome": "passed"
+        },
+        {
+          "phase": "call",
+          "outcome": "passed"
+        },
+        {
+          "phase": "teardown",
+          "outcome": "passed"
+        }
+      ],
       "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_repository_plan_composition_probes_pass": [
         {
           "phase": "setup",
@@ -9241,17 +9745,19 @@
     }
   },
   "fileSha256": {
-    ".github/workflows/ci.yml": "61cef30b65d86a0bf681392cacda13db6231d57bfe2bd48fa11740c34caf56a0",
+    ".github/workflows/ci.yml": "dfa6c0b87fe507e1443cd649a89f9bdd8ecd7931134166f7e3f208250f2192cc",
     "conformance/data-layer/batch-nine-kernels.ts": "2ef08025997f38f42afbefeb25687d8ab36d0e55a2d1d398dcda4a848dbb7219",
     "conformance/data-layer/batch-nine.ts": "4ef367786d1d3310a16689a685d59eb20ab566a47fe4fe4bf0310b61f70907f0",
     "conformance/data-layer/execution.ts": "77f8aa8b4d4926e67951482cd349d24f582bbe3d36fe3938678722c35ccb312a",
     "conformance/data-layer/native-worker.ts": "0442e206679ecb381faa3d0be2adf357a7f6adf38991f21bc797b68850820e50",
     "conformance/engine.ts": "3b0cde9aaf439fe494aae4cb20bf39cb7e0b8215bc38fefdd99e218cf104dbfb",
-    "fixtures/host/data-layer-port/batch-09-complete-api.json": "d6ddacc65d5d708527a61625de2fb1dc6f64b714a98f40e7d6a2747c34799ee4",
+    "fixtures/host/data-layer-port/batch-09-complete-api.json": "7c487d28e363ae1e182e5556e97af20803f2f764b9c5a73eb8a0cedd1940c31e",
     "fixtures/host/data-layer-port/batch-09-configured-defaults.json": "912d52560888e4c24576e9bb220d1e05e822279ebfd87b7148a289da036fc618",
     "fixtures/host/data-layer-port/batch-09-kernels.json": "d87fe8289b44dc739f771613f0310eb8f7f0a316f146b3e34f18c94df20b4a4f",
     "fixtures/host/data-layer-port/batch-09-public-audit-20261105.json": "d2432b0dbd43a3f9b2d9287aff69d59377b783263be3bd283f491ea5edcc62cd",
     "fixtures/host/data-layer-port/batch-09-public-scope-oracle.json": "34283d5b2e5eb158610ee6f0e609d2a1574d26283e2a72bd93107b8f9543ccb3",
+    "fixtures/host/data-layer-port/batch-09-shape-audit.json": "e8db00ae79f1a9dc51f71eb6728b3660fac344f32ebce86c076e4296c76d288c",
+    "fixtures/host/data-layer-port/batch-09-third-audit-20261105.json": "2c1a0448e93fa12c8f9419c97e96c23d0f05f8877565ac922aab10fca2d95d6f",
     "native/src/code_rule_dsl/compile/relational.rs": "685f9c56c29586f43c7e668e79550e59b29e8ef500513dfda63fd00f712f3650",
     "native/src/code_rule_dsl/relational/producer/layout.rs": "0a23da6e6740f073a904a6390322ef1a88bd22009fb1c45f7f13efdf306f9f32",
     "native/src/code_rule_dsl/relational/producer.rs": "acf7a42632d0a23551a402c3533de63fe9d0fb2b26b47a4b34cc2ef9cf87703e",
@@ -9266,12 +9772,12 @@
     "packs/data-layer/rules/data-layer-authentication-plan-purity.json": "ccfc568bc6a298bb64a553cadb0f094ae723a6da3610adcd57464e0cc6235dd5",
     "packs/data-layer/rules/data-layer-bootstrap-cache-health.json": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
     "packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
-    "packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json": "149bb65ce794c2e494c404df7b719609618d64effd45a45fa527871652ec438e",
+    "packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json": "f407874721ade3e87266777ea72451893c143976fc8593e41a3fda1dbb6c7926",
     "packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
     "packs/data-layer/rules/data-layer-cached-pure-lazy-allowlist.json": "30a298621259d10251e0591993b11d45d28a8b7df8fee8b40e7ebec7fb95fe46",
     "packs/data-layer/rules/data-layer-connection-mode-split.json": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
     "packs/data-layer/rules/data-layer-connection-service-architecture.json": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
-    "packs/data-layer/rules/data-layer-connection-structural-boundaries.json": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
+    "packs/data-layer/rules/data-layer-connection-structural-boundaries.json": "66e2731bb6b83e0d712bff916d0ed6dd38fd24955558d3adafb0c1a18ef94867",
     "packs/data-layer/rules/data-layer-eager-resolve.json": "ea04fb60a27b8cb60c48f426b38bebf06a76e62a46629fb06d37c609ba325e3d",
     "packs/data-layer/rules/data-layer-lazy-adapter-ownership.json": "09d019e2deb70ea8478e0f86d72cfc416d69b995ca764ce14a6ff6ddd554120f",
     "packs/data-layer/rules/data-layer-lazy-architecture.json": "cdb2d8a19553e2a9d937d612e9c65271945065e88a711b9e159b03439adc3b65",
@@ -9292,14 +9798,16 @@
     "scripts/dsl/data_layer_eight/python_repr.py": "22226120c2e042f4ca67d18b745aa7585d5700b3f120b85c7b44bc0107eff313",
     "scripts/dsl/data_layer_generate_batch_seven.py": "281e6ae0abc1add18f2730b19cdd11f8fac53b0ce0d0552d0e009e933c2cbdec",
     "scripts/dsl/data_layer_nine/__init__.py": "0b23d6306229c7fd32b20f9eb50d03cdd01f641b26f186df458eb6ed33634eea",
-    "scripts/dsl/data_layer_nine/audit_cases.py": "d186d8a919a5575a53ff077a876a1d529fae9f6e6c042a30a3565c5a3cf3ffc2",
+    "scripts/dsl/data_layer_nine/audit/record.py": "44d5affcb2f2e372ac9610568b4c2d68b64f660998ec56817ca3cb338b85c467",
+    "scripts/dsl/data_layer_nine/audit/shapes.py": "d2cc921d74fb8b1f3a8abfd8c5827395e4d79948955937f64664e8be98bbb433",
+    "scripts/dsl/data_layer_nine/audit_cases.py": "51fe2a9d4a455024b76d1dab989d990801f1def393b5bd07218aefcacbf370be",
     "scripts/dsl/data_layer_nine/cache.py": "14d555f483aff725798158df1b8ae4b8720e2323eecff4f280831b9847012c77",
     "scripts/dsl/data_layer_nine/common.py": "4b8f179d81c74258d8dc3f4e141eeed22d5c0df8b76e26d1fb086b1130b28f68",
     "scripts/dsl/data_layer_nine/composition.py": "7e7c757659b6960405b623fdaf08cb17bd3e9b3fa15d0b221fe3dc945350bc69",
     "scripts/dsl/data_layer_nine/contracts.py": "90c1b0705d3126587735901db879c44df6f3b7baa26dd50794babf6415239b53",
     "scripts/dsl/data_layer_nine/discovery.py": "70f75afe8d801d96a24057c859ce9e34a5af182bf1b28d8f111f558b91a057ae",
     "scripts/dsl/data_layer_nine/engine.py": "33a7e7b9be587c6bca5a8f600e1c02302a1d93516e3977519a42631601a5c86f",
-    "scripts/dsl/data_layer_nine/engine_functions.py": "7c2ea3f532925cfe9f3ffa321ea8e007e5a245fb2f28b3572796b6cc8aaee392",
+    "scripts/dsl/data_layer_nine/engine_functions.py": "6f2b3064783b1a0ddde90f5a03b33b484510cad3848308b118a5d057c0daea27",
     "scripts/dsl/data_layer_nine/engine_nodes.py": "44cc1e7aa68951f90a7d28c645457a05f1114815a05a98a691f430ed4fb1eadc",
     "scripts/dsl/data_layer_nine/engine_shapes.py": "70a6bbe925d159584af668f62aefc1dd7e8eda6b074408eabc54eac45da5d6c2",
     "scripts/dsl/data_layer_nine/evidence.py": "8719ff319df5a62c559f25dfe752db259546e42ef67e01a2ece1498e849fd2b9",
@@ -9308,13 +9816,13 @@
     "scripts/dsl/data_layer_nine/mode.py": "ee5be5db9a7eadaeb2f30636e71eb899b956a53c8a6e30069dc4184ca0307de5",
     "scripts/dsl/data_layer_nine/parser_errors.py": "b9a0ed0c3196b808a38f7b549773836d1c0b65033d0549c135d886d7234069b1",
     "scripts/dsl/data_layer_nine/probe_cases.py": "ea9a2b95684a38931839429db665b6a13cef00a5bab10488622df3bd23bb6a37",
-    "scripts/dsl/data_layer_nine/receipt.py": "7a356c87d8eeffe491b9399f23e6eaad605fb2090dceff22bf5775d92330a43b",
+    "scripts/dsl/data_layer_nine/receipt.py": "a4d371a44c63d1c60d408d70425b7d53b2017edac21f32e04651d089aa5d2980",
     "scripts/dsl/data_layer_nine/schema.py": "f6a21fa96717a0975374d55541377701c2ef551dff351c1093d00a5ad6c38ab6",
     "scripts/dsl/data_layer_nine/schema_lifecycle.py": "bd333f51157939f1b0d23c56cc0792be5fd465df3be5c94d08703bce090de932",
     "scripts/dsl/data_layer_nine/service.py": "1e7c657cdf0799cc67d2ece1ece2bbb0a8437dd99428e6e95f5b168beecb3e37",
     "scripts/dsl/data_layer_nine/service_repository.py": "80a9dcd90d4eed426604c7d7a36333f63ef9df268225a54188796ff531821ec2",
     "scripts/dsl/data_layer_nine/source_contracts.py": "352f0a0892ac5a4b3f9680d64eea03c2b29e3224c8c4df1def544f4faeffa3d7",
-    "scripts/dsl/data_layer_nine/structural.py": "93d518ae2db4bb18dec414acce47b5a42822dbc21ab5dfc193bb57d15b62c222",
+    "scripts/dsl/data_layer_nine/structural.py": "745bc4c27d3962785d68421c6eadea8e3f67e4eff85cccf63c3a26f8919554c9",
     "scripts/dsl/data_layer_nine/suite.py": "461f057b4b4c62d853e4faedcc6e3a716452f64ca081b6f908e1399b5457b636",
     "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
     "scripts/dsl/data_layer_six/common.py": "046f23be8a373223f01a4e03d0490c37d9f24a669005b41000dda407ea8667a0",
@@ -9327,7 +9835,8 @@
     "src/engine/code-rule/code-rule.ts": "70016c4d93e28422d5ba67b95c9f62f17c5d59e4bb3a4de3b2ebc46cf0f61f69",
     "test/conformance/data-layer/batch-nine-production-regressions.test.ts": "fad9155841063a1304505fc4331346a67a786b66831100b2147af3d6a8238377",
     "test/conformance/data-layer/batch-nine-public-contract.test.ts": "07e487634cf20d2daaeb34c2980005985d721791fa2286247ae41d2c6829e022",
-    "test/conformance/data-layer/batch-nine.test.ts": "44843f7ad1207cbfc37abd29b52bd670714e8682593bddab53cede39c784b2a4",
+    "test/conformance/data-layer/batch-nine-shape-audit.test.ts": "40445436e1350c723caf9eb33dff25d59dc09c0f0ce090864db7d9ebef64fd7b",
+    "test/conformance/data-layer/batch-nine.test.ts": "481cf3da8da4d7fcc4e8a1c3646fa774cbf7d05b187452e5d2c44a17a6d5b430",
     "test/conformance/data-layer/production-runtime.test.ts": "22410d9215aafd2e7607c0b24f777e4f4d4c30540564f37ccfdb7933fcb7fd99",
     "test/engine/native/data-layer-nine/canonical-structure.test.ts": "8e723ece3544e83f2fd3b8006a60d2aa09ce6790dc6f3c010ae65ebc8997d884",
     "test/engine/native/data-layer-nine/parser-source.test.ts": "9f58b523ae11de7f9fad3c45f83131eeac5a626f4152c6e87be707939ad788d6"
@@ -9335,8 +9844,8 @@
   "coverage": {
     "upstreamLinterFrameworkCases": 137,
     "adjacentHostCodemodCases": 13,
-    "additionalCases": 66,
-    "recordedApiResults": 258,
-    "recordedPositiveResults": 151
+    "additionalCases": 78,
+    "recordedApiResults": 270,
+    "recordedPositiveResults": 156
   }
 }

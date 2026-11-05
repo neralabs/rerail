@@ -9,7 +9,7 @@ from data_layer_probe_record import verify_sources
 
 
 def observe(root,record):
-    module=importlib.import_module('scripts.lint_'+record['check']+('_plugin' if record['check']=='schema_architecture' else ''))
+    module=importlib.import_module('scripts.lint_'+('bootstrap_lazy_sql' if record['check']=='bootstrap_eager_resolve' else record['check'])+('_plugin' if record['check']=='schema_architecture' else ''))
     with tempfile.TemporaryDirectory() as directory:
         temporary=Path(directory)
         for file in record['files']:
@@ -24,6 +24,7 @@ def observe(root,record):
             finally:
                 for name,value in saved.items():setattr(module,name,value)
         elif record['entry']=='lint_file':result=module.lint_file(path)
+        elif record['entry']=='_violations_for_files':result=module._violations_for_files(temporary,(path,))
         elif record['entry']=='_collect_fake_executor_violations':result=module._collect_fake_executor_violations(path,ast.parse(source).body[0])
         else:result=getattr(module,record['entry'])(path,source)
         return [{**asdict(row),'path':row.path.relative_to(temporary).as_posix()} for row in result]

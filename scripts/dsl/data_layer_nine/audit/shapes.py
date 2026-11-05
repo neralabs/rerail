@@ -26,4 +26,9 @@ def cases():
         files=[dict(path='l2000_connection/connection.py',source='class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n')]
         if lifecycle!='absent':files.append(dict(path='l2000_connection/connection_lifecycle.py',source='def broken(\n' if lifecycle=='invalid' else ''))
         results.append(dict(test='lifecycle-'+lifecycle,check='connection_structural_boundaries',entry='lint',files=files,parameters={}))
+    for check in ['bootstrap_lazy_sql','bootstrap_eager_resolve']:
+        for source in ['for row in rows:\n    pass\n','for row in sorted(tuple(list(rows))):\n    pass\n','async def read():\n    async for row in rows:\n        pass\n','for row in iter(rows):\n    pass\n','query.query_lazy().execute_lazy()\n','value.model_dump()\n','model_dump()\n','table_exists_many_async()\n']:
+            add(check,'scan_source',source,'l3200_metadata/bootstrap_state.py')
+    for source in ['class SyncConnection:\n    async def read(self): pass\n','class AsyncConnection:\n    def read(self): pass\n','class AsyncConnection:\n    def read_async(self): pass\n','class SyncOther:\n    async def read(self): pass\n','from module import DatabaseConnection as Renamed\n','import package.DatabaseConnection as Alias\n','class _SessionHandleCore:\n    def get_connection(self): pass\n','value = module._SqlConnectionCore\n']:
+        add('connection_mode_split','_violations_for_files',source,'api/probe.py')
     return results

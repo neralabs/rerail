@@ -475,12 +475,17 @@ jobs:
             --output "$RUNNER_TEMP/batch-nine-public-contracts"
           diff fixtures/host/data-layer-port/batch-09-public-scope-oracle.json "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-public-scope-oracle.json"
           diff fixtures/host/data-layer-port/batch-09-configured-defaults.json "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-configured-defaults.json"
+          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_nine/audit/record.py \
+            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
+            --output "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-shape-audit.json"
+          diff fixtures/host/data-layer-port/batch-09-shape-audit.json "$RUNNER_TEMP/batch-nine-public-contracts/batch-09-shape-audit.json"
       - name: Verify shipped data-layer defaults and the live production boundary
         if: matrix.mode == 'snapshot'
         run: >-
           timeout 115s npx vitest run
           test/conformance/data-layer/batch-nine-production-regressions.test.ts
           test/conformance/data-layer/batch-nine-public-contract.test.ts
+          test/conformance/data-layer/batch-nine-shape-audit.test.ts
           test/conformance/data-layer/production-runtime.test.ts
           test/engine/native/data-layer-nine/parser-source.test.ts
       - name: Compare all batch-nine assertions and complete results

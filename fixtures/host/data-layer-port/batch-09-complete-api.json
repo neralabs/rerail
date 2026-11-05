@@ -7145,6 +7145,253 @@
       "expected": []
     },
     {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[0-True]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "e0494b3447570e47488d87e392c19a53d17f55df2e69377f0fe0ffbb35285415"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[0.0-True]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "9a044ccb019c389f3f3bb1423a8a7c12cdd9dc2a657a1485ef5c250ac2a2a6c6"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[False-True]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "ca1304655c92a4475d645492eb47e3e74e44d4f0054c7dae65516bbafbee5a42"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[0j-True]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "435bc75877027bccedd2edcec28bce76ad508eb2dfca324b9eec4eaaf1cbb3ee"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": [
+        {
+          "code": "BEI007",
+          "path": "l3200_metadata/bootstrap_state.py",
+          "line": 2,
+          "message": "bootstrap application executor returns synthetic zero mutation facts"
+        }
+      ]
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1-False]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "5aa85558b51f97cc677b937a23ffa71f2aaf250bb2514ab05dc18bf8dbc38569"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1.0-False]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "3943aa1c5c561b9b3078dea3a704795b86e1177be74a6c977d8da0252804819a"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1j-False]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "72361ff286310fc70703ff41c63ee4d782d93967c2f792ac2f9bac5f88a7b7f0"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "b9d38d5f7380e57e86cac9605f6124c193dbb50dfad718c635e790cfde69a9c0"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]",
+      "check": "bootstrap_engine_invariants",
+      "entry": "_collect_fake_executor_violations",
+      "files": [
+        {
+          "path": "l3200_metadata/bootstrap_state.py",
+          "sourceSha256": "b711608757970503049f86bd16ca9c50a210edd501226c93203c08351bf61d56"
+        }
+      ],
+      "parameters": {
+        "enginePaths": [],
+        "bootstrapPaths": [],
+        "functionLine": 1
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_lifecycle_fallback_depends_on_file_presence[absent]",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "sourceSha256": "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c"
+        }
+      ],
+      "parameters": {
+        "connectionPath": "l2000_connection/connection.py",
+        "lifecyclePath": "l2000_connection/connection_lifecycle.py",
+        "sqlPath": "missing.py"
+      },
+      "expected": [
+        {
+          "code": "CSB030",
+          "path": "l2000_connection/connection.py",
+          "line": 2,
+          "message": "_ConnectionLifecycleMixin.__enter__ auto-opens driver state"
+        }
+      ]
+    },
+    {
+      "test": "::test_lifecycle_fallback_depends_on_file_presence[invalid]",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "sourceSha256": "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c"
+        },
+        {
+          "path": "l2000_connection/connection_lifecycle.py",
+          "sourceSha256": "553eda8c53fc903895e005a1bc644c6058ffd91ce4df67c9fbdbe8763f6d8862"
+        }
+      ],
+      "parameters": {
+        "connectionPath": "l2000_connection/connection.py",
+        "lifecyclePath": "l2000_connection/connection_lifecycle.py",
+        "sqlPath": "missing.py"
+      },
+      "expected": []
+    },
+    {
+      "test": "::test_lifecycle_fallback_depends_on_file_presence[empty]",
+      "check": "connection_structural_boundaries",
+      "entry": "lint",
+      "files": [
+        {
+          "path": "l2000_connection/connection.py",
+          "sourceSha256": "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c"
+        },
+        {
+          "path": "l2000_connection/connection_lifecycle.py",
+          "sourceSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "parameters": {
+        "connectionPath": "l2000_connection/connection.py",
+        "lifecyclePath": "l2000_connection/connection_lifecycle.py",
+        "sqlPath": "missing.py"
+      },
+      "expected": []
+    },
+    {
       "test": "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_imports",
       "check": "plan_composition_architecture",
       "entry": "scan_semantic_source",
@@ -10194,6 +10441,174 @@
         "outcome": "passed"
       }
     ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[0-True]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[0.0-True]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[False-True]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[0j-True]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[1-False]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[1.0-False]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[1j-False]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[1e999-False]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_executor_zero_counts_preserve_python_numeric_equality[1e999j-False]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_lifecycle_fallback_depends_on_file_presence[absent]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_lifecycle_fallback_depends_on_file_presence[invalid]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "::test_lifecycle_fallback_depends_on_file_presence[empty]": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
     "tests/l9875_mcp/test_mcp_architecture_contracts.py::test_mcp_semantic_plans_reject_runtime_imports": [
       {
         "phase": "setup",
@@ -10255,15 +10670,15 @@
   "originalCalls": {},
   "instrumentationTranslations": [],
   "policySha256": {
-    "connection_mode_split": "290347a63f74a05fed41aa9175cdac771060563b7943364ef990c39bfd3716b7",
-    "connection_structural_boundaries": "308f837699ad0973a4e10982dbc72b17129f1596cee3856766ee904f41373ffa",
+    "connection_mode_split": "d943ca53deaca8c745c2fb8c7fd41f5b986739276df08d5c73d14573cbeba272",
+    "connection_structural_boundaries": "66e2731bb6b83e0d712bff916d0ed6dd38fd24955558d3adafb0c1a18ef94867",
     "connection_service_architecture": "41242e7ccb231d7b7206efaea883ffee62f9a0c71e69817d8d700eb85b35919c",
     "schema_architecture": "30856bfd29ae32869ff08f23a48c889ce803bcb4cbf35266a1d8adf7981dcc12",
     "schema_bootstrap_contracts": "416b458ae676bb46cd8b56926095632cb807e0bd139110df3884a59536e1a1b2",
-    "bootstrap_engine_invariants": "1dd9321910ddd610ae1a84700c10133c3f4a3222a5b84a0ff0d983d23403e2cb",
-    "bootstrap_lazy_sql": "02a754c39dd520f3e972effe6f4f70676516883afe39484511858976148b85af",
-    "bootstrap_eager_resolve": "885aa4e3c92ae3fbf4e7a76e28e50296a754dd175abbdad8559f08291a17b54a",
-    "bootstrap_cache_health": "f9fc461297410ddcf5d1d17c9cfde21845fe159adfa2fe5618cf513aa2ce0013",
+    "bootstrap_engine_invariants": "f407874721ade3e87266777ea72451893c143976fc8593e41a3fda1dbb6c7926",
+    "bootstrap_lazy_sql": "e210b5c3fb9a93698cee84e4b4bcf53827bfea37c43c2d67f60dedff59ee2750",
+    "bootstrap_eager_resolve": "de45969e800ffe9cab7bedfa3eb37196cb04a2b472c764c6004da45e5912ee58",
+    "bootstrap_cache_health": "cfb152530a226a898cca6e8c65c0cfcfaf2b32ac13d763991a7650322962dee8",
     "plan_composition_architecture": "5079ff97db88eeee2a757c66613e13c1be0c280a4f358a884411f867f388bacf"
   },
   "sources": {
@@ -10567,6 +10982,16 @@
     "cd9a39ffd673d3225a333536dcfde9e4861eafbd399a98522da51b43bb2d7426": "@pure_lazy\ndef bootstrap_schema_tail_lazy() -> LazyResult[object]:\n    return lambda produced_ref: produced_ref\n",
     "cd20a96949da93a69deea6b1dd836da19ed4a04674ddb228af8f4243862f3c2e": "@pure_lazy\ndef ensure_bootstrap_tables_lazy() -> LazyResult[object]:\n    return lambda *, produced_ref, dependency_refs: None\n",
     "3ec1c8d8e8cf03cfb602c6a2b524ff94c7e789d51f833ef32c29880bacc831eb": "def publish_bootstrap_metadata_lazy():\n    return lambda bootstrap_plan, model_classes: None\n",
+    "e0494b3447570e47488d87e392c19a53d17f55df2e69377f0fe0ffbb35285415": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0,b=0,c=0,d=0))\n",
+    "9a044ccb019c389f3f3bb1423a8a7c12cdd9dc2a657a1485ef5c250ac2a2a6c6": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0.0,b=0.0,c=0.0,d=0.0))\n",
+    "ca1304655c92a4475d645492eb47e3e74e44d4f0054c7dae65516bbafbee5a42": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=False,b=False,c=False,d=False))\n",
+    "435bc75877027bccedd2edcec28bce76ad508eb2dfca324b9eec4eaaf1cbb3ee": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=0j,b=0j,c=0j,d=0j))\n",
+    "5aa85558b51f97cc677b937a23ffa71f2aaf250bb2514ab05dc18bf8dbc38569": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1,b=1,c=1,d=1))\n",
+    "3943aa1c5c561b9b3078dea3a704795b86e1177be74a6c977d8da0252804819a": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1.0,b=1.0,c=1.0,d=1.0))\n",
+    "72361ff286310fc70703ff41c63ee4d782d93967c2f792ac2f9bac5f88a7b7f0": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1j,b=1j,c=1j,d=1j))\n",
+    "b9d38d5f7380e57e86cac9605f6124c193dbb50dfad718c635e790cfde69a9c0": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999,b=1e999,c=1e999,d=1e999))\n",
+    "b711608757970503049f86bd16ca9c50a210edd501226c93203c08351bf61d56": "def execute_application_plan():\n    return BootstrapExecutionFacts(mutation_counts=BootstrapMutationCounts(a=1e999j,b=1e999j,c=1e999j,d=1e999j))\n",
+    "868dc04daeda885c096f81cab2b11a10499135882b638bd616d8db682306525c": "class _ConnectionLifecycleMixin:\n    def __enter__(self):\n        self.connect()\n",
     "69e3b13374cfc2336ae1a7cdff6824b8fd8c1ff560386734a0b8cfe435abcc5f": "class SemanticPlan:\n    transaction: ReadTransaction\n",
     "484394189f2be035ad67b69dc23f98a379b5d0a6c6c010ad154882f40f1a3d5e": "class SemanticPlanBuilder:\n    def freeze(self):\n        return self.executor.execute()\n"
   }

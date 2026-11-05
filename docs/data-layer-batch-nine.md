@@ -1,6 +1,6 @@
 # Data-layer batch nine
 
-Status, 2026-11-05: a second audit invalidated the previous completion claim.
+Status, 2026-11-05: repeated audits invalidated the previous completion claims.
 The fixes and test results here cover the recorded cases and explicit public contracts.
 The [completion audit](data-layer-batch-nine-audit.md) retains the original failures and their resolutions.
 Both earlier completion claims were incorrect. The results here describe specific repairs and their measured coverage.
@@ -12,11 +12,11 @@ The private pack ships twenty documents. Seventy earlier ports remain candidates
 | Check | Preserved contract | Recorded API results with findings |
 | --- | --- | ---: |
 | `connection_mode_split` | Public names, imports, handle modes, method kinds and explicit file scope | 9 |
-| `connection_structural_boundaries` | File limits, class bases, lifecycle ownership, supplied trees and definition order | 10 |
+| `connection_structural_boundaries` | File limits, class bases, lifecycle ownership, supplied trees and definition order | 11 |
 | `connection_service_architecture` | Delegation, schema authority, facades, ownership across files and legacy wrappers | 22 |
 | `schema_architecture` | Standalone planning checks and the configured lifecycle plugin, SAP001–SAP005 | 8 |
 | `schema_bootstrap_contracts` | Exact annotation names, parameter kinds, lazy signatures and authority use | 11 |
-| `bootstrap_engine_invariants` | Function checks, raw-source checks, nested traversal, primitive installation and diagnostic multiplicity | 68 |
+| `bootstrap_engine_invariants` | Function checks, raw-source checks, nested traversal, primitive installation and diagnostic multiplicity | 72 |
 | `bootstrap_lazy_sql` | Eager materialization, query chains, row loops and helper calls | 1 |
 | `bootstrap_eager_resolve` | The same detector, exposed through its separate configured entry point | 1 |
 | `bootstrap_cache_health` | Bootstrap frequency, fixture ownership, table creation, exemptions and parser diagnostics | 11 |
@@ -29,11 +29,11 @@ Its upstream script delegates to the lazy-SQL CLI. Both ports receive independen
 
 ## Assertion and result coverage
 
-The corpus contains 216 pytest cases:
+The corpus contains 228 pytest cases:
 
 - 137 upstream linter and supplied-tree framework cases.
 - 13 adjacent upstream codemod cases, retained as host coverage.
-- 66 additional cases, evaluated first by the original Python implementation.
+- 78 additional cases, evaluated first by the original Python implementation.
 
 The 137 upstream cases include seven lifecycle-plugin cases outside `scripts/tests`.
 They also include the service-rule repository-clean test, which reads 100 files and 3,425,634 source bytes.
@@ -42,10 +42,10 @@ Four MCP composition cases now run through source-based discovery.
 Independent pytest collections preserve upstream contract ownership when modules declare the same contract markers.
 The additional cases include two harness checks for discovery and rejection of a changed diagnostic.
 
-The original implementation records 258 complete API results, including 151 results with findings.
+The original implementation records 270 complete API results, including 156 results with findings.
 One instrumentation case measures the original Python subtree walk.
 Its native replacement checks one actual module walk and one actual parse.
-The remaining 257 results compare complete return values through both native APIs.
+The remaining 269 results compare complete return values through both native APIs.
 Comparison includes ordering, multiplicity, messages, paths, line numbers, exception details and fact identifiers.
 Absolute paths inside fact identifiers receive the same root normalization as their path fields.
 
@@ -185,3 +185,26 @@ The bootstrap raw scanner reads the complete source, including leading blank lin
 The tests establish parity for their recorded inputs and the listed public contracts.
 They do not certify every reporter, signing flow, CLI option or possible Python input across all ten linters.
 The 90 authored ports and their passing tests remain distinct from completed repository activation.
+
+## Third audit: numeric coercion and file presence
+
+The [third audit evidence](../fixtures/host/data-layer-port/batch-09-third-audit-20261105.json) records six failing evaluations against `e5d9cc2a7`.
+Both native modes falsely classify overflowing real and imaginary literals as zero in BEI007.
+SQLite casts their canonical text to zero. Python compares their actual numeric values with zero.
+The repaired predicate uses canonical zero representations for integers, real numbers and complex numbers, plus `False`.
+Nine numeric cases preserve positive and negative results.
+
+The structural rule also confuses an invalid lifecycle file with an absent file.
+Upstream falls back to `connection.py` only if the lifecycle file does not exist.
+The repaired relation includes explicit invalid-file evidence in its presence decision.
+Three cases distinguish absent, empty and malformed lifecycle files.
+
+An independent [shape corpus](../fixtures/host/data-layer-port/batch-09-shape-audit.json) records 88 cases across all ten checks.
+It covers annotation variants, nested aliases, method bodies, fixture decorators, lazy iteration, facade methods and import names.
+The corpus also retains the numeric and lifecycle cases that failed this audit.
+The original implementation supplies every expected result. Native replay preserves public diagnostic checks.
+The numeric and lifecycle cases also run through the shipped defaults in both modes.
+
+Run `scripts/dsl/data_layer_nine/audit/record.py` with `--source`, `--repo` and `--output` to reproduce the shape corpus.
+The recorder verifies loaded upstream source against the pin. CI requires byte-for-byte reproduction.
+These 88 observations remain separate from the 228 pytest cases. Their counts must not be combined as upstream test coverage.
