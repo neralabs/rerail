@@ -75,7 +75,54 @@ pub(in crate::code_rule_dsl) struct Fact {
 /// One node a fact's producer reports: the node, and each slot's target.
 pub(in crate::code_rule_dsl) type FactRow = (u32, Vec<u32>);
 
+/// A fact's findings on one file: rows with their slots' targets, or (a fact with no slot) its
+/// nodes as bits.
+pub(in crate::code_rule_dsl) enum FactFound {
+    Rows(Vec<FactRow>),
+    Nodes(Vec<u64>),
+}
+
+impl FactFound {
+    /// Each row: a node and its slots' targets.
+    pub(in crate::code_rule_dsl) fn rows(&self) -> Box<dyn Iterator<Item = (u32, &[u32])> + '_> {
+        match self {
+            Self::Rows(rows) => Box::new(rows.iter().map(|(node, targets)| (*node, targets.as_slice()))),
+            Self::Nodes(bits) => Box::new(bits.iter().enumerate().flat_map(|(word, &bits)| {
+                (0..64).filter(move |bit| bits >> bit & 1 != 0).map(move |bit| (word as u32 * 64 + bit, &[][..]))
+            })),
+        }
+    }
+}
+
 impl Fact {
+    /// The findings of `file` (`rows`), as bits where the fact has no slot and its producer is a
+    /// position among siblings (`nthChild`).
+    pub(in crate::code_rule_dsl) fn found(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        starts: impl Iterator<Item = u32>,
+        positions: &std::cell::OnceCell<super::nth_child::Positions>,
+    ) -> FactFound {
+        match &self.producer {
+            AstMatcher::NthChild(nth) if self.slots.is_empty() => {
+                let starts = starts.collect::<Vec<_>>();
+                let positions = positions.get_or_init(|| super::nth_child::Positions::of(file.root().get_doc()));
+                let bits = nth.bits(file, starts.iter().copied(), positions);
+                // `RERAIL_SETS_CHECK`: the bits against the rows.
+                static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
+                if *CHECK {
+                    let rows = self.rows(file, starts.into_iter());
+                    let ones = bits.iter().enumerate().flat_map(|(w, &b)| (0..64u32).filter(move |i| b >> i & 1 != 0).map(move |i| w as u32 * 64 + i)).collect::<Vec<_>>();
+                    if ones != rows.iter().map(|row| row.0).collect::<Vec<_>>() {
+                        eprintln!("SETS_CHECK differs on nthChild {}", self.key);
+                    }
+                }
+                FactFound::Nodes(bits)
+            }
+            _ => FactFound::Rows(self.rows(file, starts)),
+        }
+    }
+
     /// The rows of `file`: every node the producer matches, with its slots' targets. The predicate's
     /// verdicts are read as W's matcher reads them (`match_root`'s settings): an unknown one is no row.
     pub(in crate::code_rule_dsl) fn rows(

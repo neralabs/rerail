@@ -48,7 +48,7 @@ use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
 pub(super) use analysis::RequiredText;
 #[cfg_attr(not(test), allow(unused_imports))]
-pub(super) use lower::{Axis, Fact, FactRow, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
+pub(super) use lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
 pub(crate) use analysis::calls_positive_only;
 pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).

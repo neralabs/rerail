@@ -179,6 +179,91 @@ impl NthChild {
         rows
     }
 
+    /// `rows` as bits over the tape's nodes, from the tape's sibling positions (`Positions`, shared
+    /// by every `nthChild` on the tape): without `ofRule`, a lookup per start; with one, each
+    /// parent's children counted once, an `ofRule` decided by kinds memoized per kind.
+    pub(in crate::code_rule_dsl) fn bits(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        starts: impl Iterator<Item = u32>,
+        positions: &Positions,
+    ) -> Vec<u64> {
+        let tape = file.root().get_doc();
+        let len = tape.transducer_len();
+        let mut bits = vec![0_u64; len.div_ceil(64)];
+        let Some(rule) = &self.of_rule else {
+            for node in starts {
+                let at = node as usize;
+                if !positions.named[at] || tape.transducer_parent(node).is_none() {
+                    continue;
+                }
+                let index = if self.reverse { positions.count[at] - 1 - positions.index[at] } else { positions.index[at] };
+                if self.position.holds(index as usize) {
+                    bits[at / 64] |= 1 << (at % 64);
+                }
+            }
+            return bits;
+        };
+        let mut wanted = vec![0_u64; bits.len()];
+        for node in starts {
+            wanted[node as usize / 64] |= 1 << (node % 64);
+        }
+        // Per kind: 0 not yet asked, 1 no, 2 yes, 3 W's matcher decides.
+        let mut by_kind = Vec::<u8>::new();
+        let mut list = Vec::new();
+        'parents: for parent in 0..len as u32 {
+            list.clear();
+            for child in tape.transducer_children(parent) {
+                if !positions.named[child as usize] {
+                    continue;
+                }
+                let kind = usize::from(tape.transducer_kind(child));
+                if by_kind.len() <= kind {
+                    by_kind.resize(kind + 1, 0);
+                }
+                if by_kind[kind] == 0 {
+                    by_kind[kind] = match on_kinds(rule, kind as u16) {
+                        Some(false) => 1,
+                        Some(true) => 2,
+                        None => 3,
+                    };
+                }
+                let counts = match by_kind[kind] {
+                    1 => false,
+                    2 => true,
+                    _ => match self.probe(file, rule, child) {
+                        Some(verdict) => verdict,
+                        // An unknown verdict leaves the parent's children without one.
+                        None => continue 'parents,
+                    },
+                };
+                if counts {
+                    list.push(child);
+                }
+            }
+            for (position, &child) in list.iter().enumerate() {
+                let index = if self.reverse { list.len() - 1 - position } else { position };
+                if wanted[child as usize / 64] >> (child % 64) & 1 != 0 && self.position.holds(index) {
+                    bits[child as usize / 64] |= 1 << (child % 64);
+                }
+            }
+        }
+        bits
+    }
+
+    /// W's matcher's verdict of `rule` at `child`; `None` where it is unknown.
+    fn probe(&self, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>, rule: &AstMatcher, child: u32) -> Option<bool> {
+        use super::util::{UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
+        THREE_VALUED.set(true);
+        UTIL_DEPTH.set(0);
+        UTIL_EXCEEDED.set(None);
+        UTIL_STEPS_LEFT.set(usize::MAX);
+        UNKNOWN.set(false);
+        let mut env = Cow::Owned(MetaVarEnv::new());
+        let matched = rule.match_node_with_env(super::node_at(file, child), &mut env).is_some();
+        (!UNKNOWN.replace(false)).then_some(matched)
+    }
+
     fn counted(
         &self,
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
@@ -186,6 +271,18 @@ impl NthChild {
         parent: u32,
     ) -> Option<Vec<u32>> {
         let mut list = Vec::new();
+        self.count_into(file, tape, parent, &mut list).then_some(list)
+    }
+
+    /// `parent`'s counted children into `list`; `false` where a child's verdict is unknown.
+    fn count_into(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        parent: u32,
+        list: &mut Vec<u32>,
+    ) -> bool {
+        list.clear();
         for child in tape.transducer_children(parent) {
             if !tape.transducer_is_named(child) {
                 continue;
@@ -205,7 +302,7 @@ impl NthChild {
                         let node = super::node_at(file, child);
                         let matched = rule.match_node_with_env(node, &mut env).is_some();
                         if UNKNOWN.replace(false) {
-                            return None;
+                            return false;
                         }
                         matched
                     }
@@ -215,11 +312,40 @@ impl NthChild {
                 list.push(child);
             }
         }
-        Some(list)
+        true
     }
 }
 
 /// `rule`'s verdict at a node of kind `kind`, where the rule tests only kinds.
+/// A tape's named children by position: each named node's index among its parent's named
+/// children and their number. Built once per tape for every `nthChild` on it.
+pub(in crate::code_rule_dsl) struct Positions {
+    named: Vec<bool>,
+    index: Vec<u32>,
+    count: Vec<u32>,
+}
+
+impl Positions {
+    pub(in crate::code_rule_dsl) fn of(tape: &crate::code_rule_dsl::tape::TapeDoc) -> Self {
+        let len = tape.transducer_len();
+        let named = (0..len as u32).map(|node| tape.transducer_is_named(node)).collect::<Vec<_>>();
+        let (mut index, mut count) = (vec![0_u32; len], vec![0_u32; len]);
+        for parent in 0..len as u32 {
+            let mut at = 0;
+            for child in tape.transducer_children(parent) {
+                if named[child as usize] {
+                    index[child as usize] = at;
+                    at += 1;
+                }
+            }
+            for child in tape.transducer_children(parent) {
+                count[child as usize] = at;
+            }
+        }
+        Self { named, index, count }
+    }
+}
+
 fn on_kinds(rule: &AstMatcher, kind: u16) -> Option<bool> {
     match rule {
         AstMatcher::Kind(matcher) => Some(matcher.potential_kinds()?.contains(usize::from(kind))),

@@ -170,7 +170,7 @@ enum Label {
 }
 
 /// Each fact's rows on each tape, by (fact, tape source) addresses: made before any pass.
-type FactRows = HashMap<(usize, usize), Vec<crate::code_rule_dsl::matcher::FactRow>>;
+type FactRows = HashMap<(usize, usize), crate::code_rule_dsl::matcher::FactFound>;
 
 /// The rows of `facts` on each of `tapes`, before any label pass (decision 0030): the producers read
 /// no label. Each tape is one file evaluation, so its scope table is built once and shared by every
@@ -195,11 +195,13 @@ fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::match
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
                 let source = Arc::as_ptr(tape.document_source()) as usize;
+                // The tape's sibling positions, shared by its `nthChild` facts.
+                let positions = std::cell::OnceCell::new();
                 distinct
                     .iter()
                     .map(|fact| {
                         let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        let rows = fact.rows(&file, domain(&starts, tape, &[]));
+                        let rows = fact.found(&file, domain(&starts, tape, &[]), &positions);
                         ((Arc::as_ptr(fact) as usize, source), rows)
                     })
                     .collect::<Vec<_>>()
@@ -574,10 +576,17 @@ impl LoweredMatcher {
                 .map(|(view, sets)| {
                     let mut bits = empty(view);
                     let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(view.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).map_or(&[][..], |rows| &rows[..]) {
-                        if targets.iter().zip(slots).all(|(&target, &label)| has(sets, label, target)) {
-                            set(&mut bits, *node);
+                    match facts.get(&key) {
+                        // No slot: the nodes are the verdicts.
+                        Some(crate::code_rule_dsl::matcher::FactFound::Nodes(nodes)) => bits.clone_from(nodes),
+                        Some(found) => {
+                            for (node, targets) in found.rows() {
+                                if targets.iter().zip(slots).all(|(&target, &label)| has(sets, label, target)) {
+                                    set(&mut bits, node);
+                                }
+                            }
                         }
+                        None => {}
                     }
                     bits
                 })
@@ -1262,7 +1271,7 @@ fn metal<'a>(
                         continue;
                     }
                     let key = (Arc::as_ptr(fact) as usize, Arc::as_ptr(tape.document_source()) as usize);
-                    for (node, targets) in facts.get(&key).map_or(&[][..], |rows| &rows[..]) {
+                    for (node, targets) in facts.get(&key).into_iter().flat_map(|found| found.rows()) {
                         rows.push((base + node, targets.iter().zip(labels).map(|(target, label)| (base + target, index(*label))).collect()));
                     }
                 }
