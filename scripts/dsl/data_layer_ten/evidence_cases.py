@@ -4,7 +4,7 @@ import copy,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import pytest
-from data_layer_ten.evidence import verify,verify_configured,verify_contracts
+from data_layer_ten.evidence import verify,verify_configured,verify_contracts,disabled_policies
 
 def pair():
  record=dict(test='case',check='graph_lazy_sql_plan',entry='_violations_for_sources',files=[],parameters={},expected=[])
@@ -65,3 +65,17 @@ def test_focused_contract_gate_requires_unique_complete_passed_assertions():
  with pytest.raises(ValueError,match='Duplicate focused'):verify_contracts(oracle,[report,report])
  report['testResults'][0]['assertionResults'][0]['status']='pending'
  with pytest.raises(ValueError,match='Missing or extra focused'):verify_contracts(oracle,[report])
+
+def test_mutant_pack_actually_replaces_every_detector_and_preserves_options(tmp_path):
+ import json
+ from data_layer_ten.common import CHECKS
+ source=tmp_path/'source';source.mkdir()
+ original=dict(id='rule',clauses=[dict(id='configuration',define=dict(options={'entryPoint':{'type':'string'}})),dict(id='detector',forbid={'regex':{'source':'file.content','pattern':'positive'}})])
+ for check in CHECKS:(source/('data-layer-'+check.replace('_','-')+'.json')).write_text(json.dumps(original))
+ target=disabled_policies(source,tmp_path/'mutants')
+ assert len(list(target.glob('*.json')))==len(CHECKS)
+ for file in target.glob('*.json'):
+  mutant=json.loads(file.read_text())
+  assert mutant['clauses'][0]==original['clauses'][0]
+  assert len(mutant['clauses'])==2
+  assert mutant['clauses'][1]['forbid']=={'regex':{'source':'file.content','pattern':r'\b\B'}}
