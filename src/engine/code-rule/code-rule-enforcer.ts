@@ -533,6 +533,18 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The graph reads the edit's own text, which disk may not hold yet. */
+function overlayOf(edit: CodeRuleEdit): SourceOverlay {
+  return { path: edit.path, source: edit.deleted ? undefined : edit.generatedText };
+}
+
+/** What the workspace now holds: the facts each file was sent with. */
+function recordSentPackages(packages: Map<string, string>, edit: CodeRuleEdit, files: readonly WorkspaceFile[]): void {
+  if (edit.deleted) packages.delete(edit.path);
+  for (const file of files)
+    if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
+}
+
 /** Generated snapshots and repository audits have independent native state. */
 export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #workspaceRoot: string;
@@ -1143,9 +1155,28 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     unreported: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
-    // Touched-files scope reports every source the edit gave another `package` (`#apply`). Any other scope reports each
-    // edit's own generated lines, so such a source is reported again only where the findings in its own edit's
-    // generated lines changed; the others keep their earlier findings and steers.
+    const reported = this.#reportedAgain(stored, repackaged, result);
+    const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
+    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
+    this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
+    if (this.#isSuperseded(path, stored)) {
+      if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
+      unreported();
+      return;
+    }
+    this.#recordPublished(path, stored, edit, own, base);
+    this.#evaluation = result;
+    this.#storeReadyViolations(path, stored, edit, own, reported);
+    await this.#steerAgainForReported(stored, reported);
+    if (this.#pending.size === 0) await this.#publishReady();
+  }
+
+  /**
+   * The repackaged sources an evaluation reports again. Touched-files scope reports every source the edit gave another
+   * `package` (`#apply`). Any other scope reports each edit's own generated lines, so such a source is reported again
+   * only where the findings in its own edit's generated lines changed; the others keep their earlier findings and steers.
+   */
+  #reportedAgain(stored: StoredEdit, repackaged: readonly CodeRuleEdit[], result: Evaluation): Map<string, CodeRuleViolation[]> {
     const reported = new Map<string, CodeRuleViolation[]>();
     for (const source of repackaged) {
       const findings = this.#selectViolations(stored.scope, source, result.violations);
@@ -1155,24 +1186,30 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       )
         reported.set(source.path, findings);
     }
-    const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
-    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
-    this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
-    if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
-      if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
-      unreported();
-      return;
-    }
-    if (stored.scope === "ai-output") {
-      if (edit.deleted || !own.some((violation) => steers(violation.mode))) this.#unreported.delete(path);
-      else this.#unreported.set(path, { base, published: true });
-    }
-    this.#evaluation = result;
-    let readyViolations = this.#readyViolations.get(stored.revision);
+    return reported;
+  }
+
+  #isSuperseded(path: string, stored: StoredEdit): boolean {
+    return this.#versions.get(path) !== stored.revision || this.#replacement !== undefined;
+  }
+
+  #recordPublished(path: string, stored: StoredEdit, edit: CodeRuleEdit, own: readonly CodeRuleViolation[], base: ReportBase): void {
+    if (stored.scope !== "ai-output") return;
+    if (edit.deleted || !own.some((violation) => steers(violation.mode))) this.#unreported.delete(path);
+    else this.#unreported.set(path, { base, published: true });
+  }
+
+  #readyViolationsAt(revision: number): Map<string, CodeRuleViolation[]> {
+    let readyViolations = this.#readyViolations.get(revision);
     if (readyViolations === undefined) {
       readyViolations = new Map();
-      this.#readyViolations.set(stored.revision, readyViolations);
+      this.#readyViolations.set(revision, readyViolations);
     }
+    return readyViolations;
+  }
+
+  #storeReadyViolations(path: string, stored: StoredEdit, edit: CodeRuleEdit, own: CodeRuleViolation[], reported: ReadonlyMap<string, CodeRuleViolation[]>): void {
+    const readyViolations = this.#readyViolationsAt(stored.revision);
     // Each source the evaluation reported again owns its findings: a later edit of it in the same batch replaces them,
     // and its later revisions supersede them (`#versions`).
     for (const source of reported.keys())
@@ -1185,13 +1222,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       else this.#sourceFindings.set(slot, { revision: stored.revision, mode: stored.mode, violations });
     }
     this.#readyModes.set(stored.revision, stored.mode);
-    // A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each
-    // such steer whole, so the other sources it spoke for are steered again with the findings they last reported.
-    if (reported.size > 0 && this.#sessionId !== undefined) {
-      const revised = [...reported.keys()].map(source => this.#presentPath(source));
-      await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
-    }
-    if (this.#pending.size === 0) await this.#publishReady();
+  }
+
+  /**
+   * A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each such
+   * steer whole, so the other sources it spoke for are steered again with the findings they last reported.
+   */
+  async #steerAgainForReported(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
+    if (reported.size === 0 || this.#sessionId === undefined) return;
+    const revised = [...reported.keys()].map(source => this.#presentPath(source));
+    await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
   }
 
   /**
@@ -1743,70 +1783,74 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const packages = this.#workspacePackages.get(workspace);
     if (packages === undefined) throw new Error("Policy workspace was disposed");
     const serverGraph = workspace.readsServerGraph();
-    const root = this.#workspaceRoot;
     const cache = pass ?? sourceFactsCache();
-    // The graph reads the edit's own text, which disk may not hold yet.
-    const overlay: SourceOverlay | undefined =
-      pass === undefined ? { path: edit.path, source: edit.deleted ? undefined : edit.generatedText } : undefined;
-    const files: WorkspaceFile[] =
-      edit.deleted || edit.generatedText === undefined
-        ? []
-        : [{
-            path: edit.path,
-            language: edit.language,
-            source: edit.generatedText,
-            ...(await sourceFileFacts(root, edit.path, edit.language, cache, serverGraph, overlay)),
-          }];
+    const overlay = pass === undefined ? overlayOf(edit) : undefined;
+    const files = await this.#filesOfEdit(edit, cache, serverGraph, overlay);
     const repackaged: CodeRuleEdit[] = [];
-    // A project configuration may be another package's base (`extends`), so its edit rechecks every applied source.
-    const manifest = manifestDirectory(edit.path);
-    const ignoreFile = ignoreFileDirectory(edit.path);
-    const directory =
-      pass !== undefined
-        ? undefined
-        : manifest !== undefined
-          ? this.#manifestEditFolder(manifest, serverGraph)
-          : ignoreFile !== undefined
-            ? ignoreFile
-            : isModuleConfig(edit.path)
-              ? ""
-              : serverGraph
-                ? this.#serverGraphFolder(edit)
-                : undefined;
-    if (directory !== undefined)
-      for (const [path, sent] of packages) {
-        const stored = this.#applied.get(path);
-        // A source whose own edit is still queued applies with the facts then on disk; resending its older text now would
-        // report that text's findings and supersede the edit.
-        if (
-          stored === undefined ||
-          path === edit.path ||
-          this.#pending.has(path) ||
-          (directory !== "" && !path.startsWith(`${directory}/`))
-        )
-          continue;
-        const facts = await sourceFileFacts(root, path, stored.language, cache, serverGraph, overlay);
-        if (JSON.stringify(facts.package ?? null) === sent) continue;
-        const applied = await this.#load(stored);
-        if (applied.generatedText === undefined) continue;
-        files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
-        repackaged.push(applied);
-      }
-    const evaluation = await this.#applyRequest(workspace, {
-      files,
-      removed: edit.deleted ? [edit.path] : [],
-      ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
-    });
-    if (edit.deleted) packages.delete(edit.path);
-    // What the workspace now holds: the facts each file was sent with.
-    for (const file of files)
-      if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
+    const directory = this.#recheckedFolder(edit, serverGraph, pass);
+    if (directory !== undefined) await this.#addRepackaged(edit, directory, { packages, cache, serverGraph, overlay, files, repackaged });
+    const evaluation = await this.#sendFiles(workspace, edit, files, pass);
+    recordSentPackages(packages, edit, files);
     if (pass === undefined) workspace.evictInactive();
     // A superseded evaluation's repackaged sources: no facts match the mark, so the next edit reaching them resends them.
     const unreported = () => {
       for (const { path } of repackaged) if (packages.has(path)) packages.set(path, UNREPORTED_FACTS);
     };
     return { evaluation, repackaged, unreported };
+  }
+
+  async #sendFiles(workspace: NativeCodeRuleDslWorkspace, edit: CodeRuleEdit, files: WorkspaceFile[], pass: SourceFactsCache | undefined): Promise<Evaluation> {
+    return await this.#applyRequest(workspace, {
+      files,
+      removed: edit.deleted ? [edit.path] : [],
+      ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
+    });
+  }
+
+  /** The file an edit sends, none for one that deletes its source or has no generated text. */
+  async #filesOfEdit(edit: CodeRuleEdit, cache: SourceFactsCache, serverGraph: boolean, overlay: SourceOverlay | undefined): Promise<WorkspaceFile[]> {
+    if (edit.deleted || edit.generatedText === undefined) return [];
+    return [{
+      path: edit.path,
+      language: edit.language,
+      source: edit.generatedText,
+      ...(await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlay)),
+    }];
+  }
+
+  /**
+   * The folder whose applied sources an edit may give other facts, "" for every applied source: a project configuration
+   * may be another package's base (`extends`), so its edit rechecks them all. None within a workspace replacement's pass.
+   */
+  #recheckedFolder(edit: CodeRuleEdit, serverGraph: boolean, pass: SourceFactsCache | undefined): string | undefined {
+    if (pass !== undefined) return undefined;
+    const manifest = manifestDirectory(edit.path);
+    if (manifest !== undefined) return this.#manifestEditFolder(manifest, serverGraph);
+    const ignoreFile = ignoreFileDirectory(edit.path);
+    if (ignoreFile !== undefined) return ignoreFile;
+    if (isModuleConfig(edit.path)) return "";
+    return serverGraph ? this.#serverGraphFolder(edit) : undefined;
+  }
+
+  /** A source whose own edit is still queued applies with the facts then on disk; resending its older text now would report that text's findings and supersede the edit. */
+  #mayRecheck(path: string, edit: CodeRuleEdit, directory: string): boolean {
+    return path !== edit.path && !this.#pending.has(path) && (directory === "" || path.startsWith(`${directory}/`));
+  }
+
+  /** Adds to `sending.files` each applied source under `directory` whose facts changed; `sending.repackaged` holds their edits. */
+  async #addRepackaged(edit: CodeRuleEdit, directory: string, sending: {
+    packages: ReadonlyMap<string, string>; cache: SourceFactsCache; serverGraph: boolean; overlay: SourceOverlay | undefined; files: WorkspaceFile[]; repackaged: CodeRuleEdit[];
+  }): Promise<void> {
+    for (const [path, sent] of sending.packages) {
+      const stored = this.#applied.get(path);
+      if (stored === undefined || !this.#mayRecheck(path, edit, directory)) continue;
+      const facts = await sourceFileFacts(this.#workspaceRoot, path, stored.language, sending.cache, sending.serverGraph, sending.overlay);
+      if (JSON.stringify(facts.package ?? null) === sent) continue;
+      const applied = await this.#load(stored);
+      if (applied.generatedText === undefined) continue;
+      sending.files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
+      sending.repackaged.push(applied);
+    }
   }
 
   /**
