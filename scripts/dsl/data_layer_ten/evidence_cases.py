@@ -4,7 +4,7 @@ import copy,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import pytest
-from data_layer_ten.evidence import verify,verify_configured
+from data_layer_ten.evidence import verify,verify_configured,verify_contracts
 
 def pair():
  record=dict(test='case',check='graph_lazy_sql_plan',entry='_violations_for_sources',files=[],parameters={},expected=[])
@@ -49,3 +49,19 @@ def test_distinct_inputs_from_one_upstream_test_need_distinct_assertion_identiti
  oracle={'records':[dict(check='example',test='case'*100,files=[],expected=[]),dict(check='example',test='case'*100,files=[{'path':'other.py'}],expected=[])]}
  report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName=f'configured example {mode}: observation {i}') for i in range(2) for mode in ['snapshot','workspace']])])
  assert verify_configured(oracle,[report])['assertions']==4
+
+def test_focused_contract_gate_rejects_an_empty_or_partial_test_selection():
+ oracle={'cases':[dict(test='positive',expected=[{'code':'ISSUE'}]),dict(test='clean',expected=[])]}
+ report=dict(numFailedTests=0,testResults=[dict(assertionResults=[])])
+ with pytest.raises(ValueError,match='Missing or extra focused'):verify_contracts(oracle,[report])
+ report['testResults'][0]['assertionResults']=[dict(status='passed',fullName='preserves raw files and complete original results: positive')]
+ with pytest.raises(ValueError,match='Missing or extra focused'):verify_contracts(oracle,[report])
+
+def test_focused_contract_gate_requires_unique_complete_passed_assertions():
+ oracle={'cases':[dict(test='positive',expected=[{'code':'ISSUE'}]),dict(test='clean',expected=[])]}
+ names=['preserves raw files and complete original results: '+c['test'] for c in oracle['cases']]+['retains canonical source proofs when SQL reuses prepared rows']
+ report=dict(numFailedTests=0,testResults=[dict(assertionResults=[dict(status='passed',fullName=name) for name in names])])
+ assert verify_contracts(oracle,[report])==dict(inputs=2,positiveInputs=1,apiComparisons=4,assertions=3)
+ with pytest.raises(ValueError,match='Duplicate focused'):verify_contracts(oracle,[report,report])
+ report['testResults'][0]['assertionResults'][0]['status']='pending'
+ with pytest.raises(ValueError,match='Missing or extra focused'):verify_contracts(oracle,[report])
