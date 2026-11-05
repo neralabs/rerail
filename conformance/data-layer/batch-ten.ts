@@ -39,7 +39,8 @@ export function positiveFamilies(oracle:TenOracle):{check:string;code:string;rec
 export function tenResult(record: TenRecord, findings: Finding[]): unknown {
   const rows = findings.map(f => f.variables.row);
   const order = (r: Row) => record.check === "conditional_architecture" ? record.entry==="conditional_architecture_findings"?[r.path,r.line,r.message]:[r.issue,r.path,String(r.line),r.message]
-    : ["hnsw_architecture","bounded_composed_graph_paths","matching_architecture"].includes(record.check) ? [r.path,r.line,r.issue,r.message]
+    : record.check === "matching_architecture" ? record.entry==="_scan_tree"?[r.phase,r.sort_name,r.ordering,r.issue]:[r.path,r.line,r.issue,...(record.entry==="lint"?[r.symbol]:[]),r.phase,r.sort_name,r.ordering]
+    : ["hnsw_architecture","bounded_composed_graph_paths"].includes(record.check) ? [r.path,r.line,r.issue,r.message]
     : record.check === "plan_optimizer_v2" && record.entry === "find_violations" ? [r.path,r.line,r.issue]
     : [r.phase ?? 0,r.sort_name ?? "",r.ordering ?? 0,r.issue];
   rows.sort((a,b) => { const l=order(a),r=order(b); for(let i=0;i<l.length;i++){const n=compare(l[i],r[i]);if(n)return n;} return 0; });

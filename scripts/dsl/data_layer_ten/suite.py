@@ -145,7 +145,8 @@ class Suite(NineSuite):
   values=[r['variables']['row'] for r in rows]
   values.sort(key=lambda r:(r['phase'],r.get('sort_name',''),r['ordering'],r['issue']))
   if check=='hnsw_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
-  if check in {'bounded_composed_graph_paths','matching_architecture','plan_optimizer_v2'}:values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
+  if check in {'bounded_composed_graph_paths','plan_optimizer_v2'}:values.sort(key=lambda r:(r['path'],r['line'],r['issue'],r['message']))
+  if check=='matching_architecture' and entry!='_scan_tree':values.sort(key=lambda r:(r['path'],r['line'],r['issue'],*((r['symbol'],) if entry=='lint' else ()),r['phase'],r.get('sort_name',''),r['ordering']))
   if check=='conditional_architecture':values.sort(key=lambda r:(r['path'],r['line'],r['message']) if entry=='conditional_architecture_findings' else (r['issue'],r['path'],str(r['line']),r['message']))
   result=[]
   for r in values:
