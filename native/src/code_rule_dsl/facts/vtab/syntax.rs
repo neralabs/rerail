@@ -811,15 +811,22 @@ pub(crate) fn with_nearest(
     binding: crate::code_rule_dsl::typing::file_local::Binding,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::typing::file_local;
+    let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
     let (batch, relations, (strings, symbols)) = Batch::build(store, documents)?;
+    drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
+    let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
     for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {
         let mut r = Relation::new(&["s"]);
         rows.into_iter().for_each(|s| r.push(&[s]));
         out.push((name.clone(), Arc::new(r)));
     }
+    drop(text);
+    let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().map(|(name, source)| (name.to_owned(), source)));
+    drop(viewing);
+    let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     let (parent, kind) = batch.trees();
     let kinds: Vec<Vec<i64>> = sets.iter().map(|(_, kinds)| kinds.clone()).collect();
     let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;

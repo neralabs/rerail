@@ -386,6 +386,10 @@ fn measure_converted_rules() {
         let not_local: BTreeSet<&str> = parsed.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| !local.contains(*r)).collect();
         println!("CROSS {id}: derives {cross:?}, not file-local {not_local:?}, reads base {:?}", split.base);
         let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{id}"));
+        // `RERAIL_PROFILE=<dir>`: each rule's profile in `<dir>/<id>` (`logic::profile`).
+        if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
+            crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(id));
+        }
         let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
         let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);

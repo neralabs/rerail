@@ -313,6 +313,9 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                 Some(r) => r.clone(),
                 None => {
                     let rel = format!("{RELATION}{}", ids.len());
+                    if super::profile::on() {
+                        super::profile::note(format!("test {rel}"), || format!("@{}({{{}}})", key.0, key.1.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>().join(", ")));
+                    }
                     tests.push((rel.clone(), Arc::new(Matcher::new(&key.0, &key.1)?)));
                     ids.insert(key, rel.clone());
                     rel

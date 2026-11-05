@@ -1370,6 +1370,7 @@ struct Fx<'a> {
 }
 impl Fx<'_> {
     fn open(&self, spec: &str) -> Result<()> {
+        let _span = super::profile::span(|| "engine open (load inputs, build indexes)".into());
         if self.direct {
             super::native::component::open(self.db, spec)?;
         } else {
@@ -1378,10 +1379,12 @@ impl Fx<'_> {
         Ok(())
     }
     fn run(&self, name: &str, waves: u32) -> Result<String> {
+        let _span = super::profile::span(|| "engine run (joins)".into());
         Ok(if self.direct { super::native::component::run(self.db, name, waves)? } else { self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, waves], |r| r.get(0))? })
     }
     /// Per probe, its steps' (in, out) bindings since the last call.
     fn steps(&self, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
+        let _span = super::profile::span(|| "engine step counts".into());
         if self.direct {
             return Ok(super::native::component::step_counts(self.db, name)?);
         }
@@ -1393,6 +1396,7 @@ impl Fx<'_> {
     }
     /// Each relation's live statistics, in spec order.
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
+        let _span = super::profile::span(|| "engine live statistics".into());
         if self.direct {
             return Ok(super::native::component::live(self.db, name)?
                 .into_iter()
@@ -1403,6 +1407,7 @@ impl Fx<'_> {
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
     }
     fn reprobe(&self, name: &str, i: usize, kind: &str, body: &str) -> Result<()> {
+        let _span = super::profile::span(|| "engine reprobe".into());
         if self.direct {
             super::native::component::reprobe(self.db, name, i, kind, body)?;
         } else {
@@ -1411,6 +1416,7 @@ impl Fx<'_> {
         Ok(())
     }
     fn close(&self, name: &str) -> Result<()> {
+        let _span = super::profile::span(|| "engine close".into());
         if self.direct {
             super::native::component::close(self.db, name)?;
         } else {
@@ -1419,6 +1425,7 @@ impl Fx<'_> {
         Ok(())
     }
     fn materialize(&self, table: &str) -> Result<()> {
+        let _span = super::profile::span(|| "engine materialize".into());
         if self.direct {
             super::native::component::materialize(self.db, table)?;
         } else {
@@ -1504,7 +1511,9 @@ impl Run<'_> {
         if self.prog.lattice.contains_key(&head.rel) {
             self.merge_lattice(&head.rel, select, false)?;
         } else {
-            self.db.execute(&format!("INSERT OR IGNORE INTO {} {select}", head.rel), [])?;
+            let statement = format!("INSERT OR IGNORE INTO {} {select}", head.rel);
+            super::profile::plan(self.db, &statement);
+            self.db.execute(&statement, [])?;
         }
         Ok(())
     }
@@ -1922,8 +1931,17 @@ impl Run<'_> {
         let mut est: HashMap<&str, f64> = HashMap::new();
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
+        // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
+        let planning = |r: &Rule, what: &str| {
+            super::profile::span(|| {
+                let no = prog.rules.iter().position(|x| std::ptr::eq(x, r)).map_or("?".to_owned(), |k| format!("{k:04}"));
+                format!("{what} #{no} {}, {} literals", r.head.rel, r.body.len())
+            })
+        };
         for r in &seeds {
+            let span = planning(r, "plan");
             let (order, _, rows) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
+            drop(span);
             let Some(spec) = self.join_spec(&r.head, &order, None, &ri, scc, &native_rels) else { return Ok(false) };
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
@@ -1935,6 +1953,7 @@ impl Run<'_> {
         let mut probes = Vec::new();
         for r in &rules {
             for (ai, a) in recursive(&r.body, scc) {
+                let _span = planning(r, "plan");
                 let (order, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else { return Ok(false) };
@@ -1996,7 +2015,9 @@ impl Run<'_> {
             }
             for k in 0..probes.len() {
                 let (r, ai) = (probes[k].0, probes[k].1);
+                let span = planning(r, "replan");
                 let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
+                drop(span);
                 if shown(&new) == shown(&probes[k].2) {
                     continue;
                 }
@@ -2008,6 +2029,13 @@ impl Run<'_> {
                 probes[k].2 = new;
             }
             chunk *= 2;
+        }
+        if super::profile::on() {
+            let empty = Vec::new();
+            let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
+            for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
+                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty));
+            }
         }
         if let Some(file) = std::env::var_os("RDL_COMPONENTS") {
             // The component's plans and each step's observed bindings in and out (`set_fixpoint_steps`), appended.
@@ -2563,6 +2591,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
+    let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
@@ -2587,12 +2616,16 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     if inputs.native.contains("nearest") {
         db.query_row("SELECT tape_load(?1)", [facts.trim_end_matches('.')], |_| Ok(()))?;
     }
+    drop(setup);
+    let planning = super::profile::span(|| "statistics and plan".into());
     let model = make_plan(prog, db, inputs)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
         rules_by.entry(r.head.rel.as_str()).or_default().push(r);
     }
+    drop(planning);
+    let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
     let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new() };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
@@ -2665,12 +2698,23 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .collect();
         insert_many(db, &format!("INSERT OR IGNORE INTO {rel}"), rows)?;
     }
+    drop(tables);
     let mut outcome = Outcome::default();
     for scc in &sccs {
         let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
+        let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
+        let rule_no = |r: &Rule| prog.rules.iter().position(|x| std::ptr::eq(x, r)).expect("a rule of the program");
+        if super::profile::on() {
+            for r in &rules {
+                super::profile::note(format!("rule #{:04}", rule_no(r)), || r.to_string());
+            }
+        }
         if native.contains("program") && !scc.iter().all(|r| run.views.contains(r)) {
-            if run.native_stratum(scc, &rules)? {
+            let native_span = super::profile::span(|| "native".into());
+            let ran = run.native_stratum(scc, &rules)?;
+            drop(native_span);
+            if ran {
                 outcome.native.insert(key);
                 continue;
             }
@@ -2700,6 +2744,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .collect();
         run.ensure(&read)?;
         let mut planned = Vec::new();
+        let planning = super::profile::span(|| "plan".into());
         for rule in &rules {
             let (order, work, _) = run.model.plan_rule(prog, &rule.head, &rule.body, None)?;
             run.ensure_indexes(&order)?;
@@ -2713,13 +2758,15 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             });
             planned.push((rule.head.clone(), order));
         }
+        drop(planning);
         if scc.iter().all(|r| run.views.contains(r)) {
             continue;
         }
         let recursive =
             scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)));
         if !recursive {
-            for (h, order) in &planned {
+            for ((h, order), rule) in planned.iter().zip(&rules) {
+                let _rule = super::profile::span(|| format!("sql #{:04} {}", rule_no(rule), h.rel));
                 let sql = run.model.sql_select(prog, h, order, None, None)?;
                 run.insert_rows(h, &sql)?;
             }
@@ -2764,6 +2811,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 outcome.iterations.insert(key, n);
             }
         }
+        let _refresh = super::profile::span(|| "refresh and distinct counts".into());
         for r in scc {
             run.refresh(r, false)?;
             for c in 0..prog.decls[r].len() {
@@ -2772,6 +2820,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             }
         }
     }
+    let _outputs = super::profile::span(|| "outputs".into());
     let kept = run.model.inputs.kept.clone();
     outcome.kept = kept.iter().filter(|r| run.native_rels.contains(*r)).cloned().collect();
     let written: Vec<String> = prog.outputs.iter().filter(|r| !outcome.kept.contains(*r)).cloned().collect();
