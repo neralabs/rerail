@@ -32,7 +32,7 @@ All rule decisions execute in SQLite. CPython supplies syntax facts without exec
 A further audit invalidated the 744-case completion claim. It found raw-newline normalization,
 malformed-file isolation, textual line ordering, auxiliary-file admission, and Python Unicode regex defects.
 The fixes preserve file APIs separately from source APIs and prevent project checks in tree-only calls.
-The focused corpus contains 102 original-evaluated inputs, replayed through both APIs.
+The focused corpus contains 276 original-evaluated inputs, replayed through both APIs.
 The receipt rejects original runs presented as native, missing call traces, changed policies, and incomplete configured coverage.
 
 Matching now selects raw sources in SQL before canonical expansion.
@@ -45,6 +45,10 @@ A subsequent audit found 43 counterexamples in matching and bounded-path checks.
 Python whitespace, uppercase expansion, uppercase-name equality, and Unicode decimal paths had non-equivalent SQL translations.
 The focused regressions now preserve those counterexamples and their clean controls.
 The [journal](data-layer-performance-journal.md) records the retraction and repair evidence.
+
+The [structural audit](data-layer-batch-ten-semantic-audit.md) records the subsequent predicate review and TDD repairs.
+It found annotation, nullable-field, Unicode-import, message, result-order, and embedded-NUL line defects.
+It also maps each detector's collector contract to its SQL implementation and test evidence.
 
 ## Evidence
 
@@ -71,9 +75,10 @@ The 708 transformations cover every rule and use positive and clean source seeds
 Their expected results come from original execution, without an assumption that formatting preserves results.
 
 There are 975 complete detector observations, including 870 positive observations, across 974 tests.
-Of these observations, 778 have distinct normalized inputs and results; 680 are positive.
+Of these observations, 781 have distinct normalized inputs and results; 683 are positive.
 The other 124 cases still execute Python helpers or CLI assertions. They are not native detector comparisons.
-The v3 receipt lists all their test IDs explicitly under `retainedPythonCaseIds`.
+The v4 receipt lists all their test IDs explicitly under `retainedPythonCaseIds`.
+The structural audit identifies their assertion targets and explains their relationship to the native ports.
 The conditional observations include 47 calls to the shared analyzer.
 Replay compares diagnostic multiplicity, path, code, message, line, and rule-specific DTO fields through both native APIs.
 It also checks that public diagnostics agree with SQL result rows.
@@ -84,15 +89,16 @@ The native selection gate has a separate file-set comparison against the origina
 The full matching assertion runs separately from the small cases to keep each command below two minutes.
 Compact replay omits that expensive repeated assertion; the native assertion receipt covers it through both APIs.
 
-The [configured corpus](../fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz) has 1,239 original reporter observations, including 875 positives.
+The [configured corpus](../fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz) has 1,392 original reporter observations, including 978 positives.
 It covers every distinct recorded input, owner-path relocation, and focused file-contract inputs.
 It covers shipped scopes, clean files, ignored directories, parser behavior, missing artifacts, and matching selection.
-Both APIs run it with default options: 2,478 complete-result comparisons.
-A further 716 comparisons check the exact matching file selection, including its 139-file repository subset.
+Both APIs run it with default options: 2,784 complete-result comparisons.
+A further 878 comparisons check the exact matching file selection, including its 139-file repository subset.
 There are also 106 diagnostic-family removal controls, each checked through both APIs.
 These controls remove one diagnostic code at a time and require all other original findings to remain.
 
 The [receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, and implementation hashes.
+It also requires the complete union of focused assertions: 276 inputs, including 194 positives, through both APIs.
 The [repair regressions](../fixtures/host/data-layer-port/batch-10-repair-regressions.json) preserve the nine disproving audit inputs.
 The [journal](data-layer-performance-journal.md) records failed attempts and subsequent verification.
 
@@ -139,9 +145,18 @@ Run compact replay and configured defaults separately:
 
 ```sh
 npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts
-npx vitest run --dir test test/conformance/data-layer/batch-ten-file-contracts.test.ts \
-  test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
+npx vitest run --dir test test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
 npx vitest run --dir test test/conformance/data-layer/batch-ten-families.test.ts
+```
+
+Run the focused file-contract tests in bounded groups:
+
+```sh
+for pattern in '^(?!.*(?:collector|structural)).*' 'structural' 'collector'
+do
+  timeout 115s npx vitest run --dir test \
+    test/conformance/data-layer/batch-ten-file-contracts.test.ts -t "$pattern"
+done
 ```
 
 Run configured observations in bounded groups, as CI does:

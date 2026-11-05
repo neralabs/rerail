@@ -91,11 +91,11 @@ def record(source,output):
    expected=[dict(path=str(f.path),line=f.line,code=f.code,message=f.message) for f in findings]
   assert len(expected)==1 and expected[0]['code']=='MA003'
   cases.append(dict(test='matching-selector-python-whitespace-'+str(index),check='matching_architecture',entry='all',parameters={},production=True,files=[dict(path=relative,source=text)],expected=expected))
- from data_layer_ten.semantic_contracts import record as semantic_contracts
+ from data_layer_ten.contracts.strings import record as semantic_contracts
  cases.extend(semantic_contracts(source,seeds))
- from data_layer_ten.structural_contracts import record as structural_contracts
+ from data_layer_ten.contracts.structures import record as structural_contracts
  cases.extend(structural_contracts(source))
- from data_layer_ten.collector_contracts import record as collector_contracts
+ from data_layer_ten.contracts.collectors import record as collector_contracts
  cases.extend(collector_contracts(source))
  output.write_text(json.dumps(dict(sourcePin=PIN,cases=cases),indent=2)+'\n')
 

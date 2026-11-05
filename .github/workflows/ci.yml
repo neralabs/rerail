@@ -567,7 +567,13 @@ jobs:
         run: |
           timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts
           timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-families.test.ts
-          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-file-contracts.test.ts test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
+          contract_index=0
+          for pattern in '^(?!.*(?:collector|structural)).*' 'structural' 'collector'; do
+            timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-file-contracts.test.ts -t "$pattern" \
+              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/contracts-$contract_index.json"
+            contract_index=$((contract_index + 1))
+          done
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
           report_index=0
           for pattern in 'configured (graph_lazy_sql_plan|bounded_composed_graph_paths|graphql_plan_ownership) ' 'configured (plan_optimizer_v2|conditional_architecture) ' 'matching_architecture' 'configured (schema_introspection_data_paths|hnsw_architecture|embedding_vector_orchestration|generated_index_sources) '; do
             timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-defaults.test.ts -t "$pattern" \
@@ -582,11 +588,13 @@ jobs:
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
           import json,os
           from pathlib import Path
-          from data_layer_ten.evidence import read_report,verify_configured
+          from data_layer_ten.evidence import read_report,verify_configured,verify_contracts
           reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
           paths=[reports/f'configured-{i}.json' for i in range(4)]+[reports/f'configured-repository-{mode}.json' for mode in ['snapshot','workspace']]
           summary=verify_configured(read_report(Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz')),[read_report(p) for p in paths])
           (reports/'configured-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          focused=verify_contracts(read_report(Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json')),[read_report(reports/f'contracts-{i}.json') for i in range(3)])
+          (reports/'contracts-summary.json').write_text(json.dumps(focused,indent=2)+'\n')
           PY
       - name: Upload batch-ten assertion receipts
         if: always()

@@ -6884,3 +6884,92 @@ The 106 diagnostic-removal controls, nine earlier repair cases, 103 focused cont
 Typecheck, boundaries, grammar validation, and byte-for-byte regeneration pass.
 The native engine is unchanged in this repair; the earlier Rust-suite results were not rerun or presented as new measurements.
 No claim of whole-batch semantic certification follows from these passing counts.
+
+## 2026-11-05 — Batch-ten predicate audit and TDD repairs
+
+The additional audit reproduced 37 failing detector regression cases before their repairs.
+These are failing cases, not 37 independent engine requirements.
+The defects affect matching, bounded paths, HNSW, optimizer v2, and generated-index checks.
+The [semantic audit](data-layer-batch-ten-semantic-audit.md) maps all ten source collectors to their SQL contracts.
+It also explains which original Python assertions remain outside native detector comparisons.
+
+| Red commit | Repair commit | Reproduced failure |
+| --- | --- | --- |
+| `8f4bec231` | `ab50e2d7b` | Annotation recursion, bare `None`, Unicode layer imports, distinct MA031 messages, and repeated-finding order: 15 cases |
+| `ab68164bc` | `ace8ed35a` | A bounded-path violation after NUL reported line 1 instead of line 7: one case |
+| `b845ca96f` | `1a4cb6b83` | Standalone HNSW inventory checks lost caller cwd context: two cases |
+| `ae1f47092` | `f90b0b3ae` | Separate imports became an import-from match; direct tree results lost collector ordering: 12 cases |
+| `17a711ec7` | `8feee5787` | First/last declaration policies and complete string suffix checks across NUL: seven cases |
+
+Matching now evaluates its actual annotation grammar in SQL.
+That grammar stops at calls and preserves an attribute when its prefix has no annotation name.
+It handles subscripts and unions without replacing Python semantics with a general qualified-name approximation.
+The producer expands only demanded expression roots.
+
+The precedence review checks the original traversal and replacement policies explicitly.
+Matching uses the first eligible model-config declaration and the last duplicate delegate parameter.
+Generated-index checks use the first source parameter and the last keyword-only default.
+Optimizer suffix checks inspect the complete value, including characters after NUL.
+Clean controls also reject a suffix followed by NUL.
+
+The source adapter transports HNSW cwd context as input metadata.
+SQL decides forbidden-file membership; Python does not precompute that rule decision.
+The configured repository rule retains the original reporter behavior.
+
+The harness received three separate corrections:
+
+- The v4 receipt requires every focused assertion identity. Empty selections, skipped cases, partial coverage, and duplicate coverage fail verification.
+- The source runner's `--mutant` option now creates an actual disabled-policy directory. Previously, it skipped baseline comparison and required separately supplied disabled policies.
+- Original detector recording now holds a process lock. Original source APIs rewrite shared files in content-addressed directories.
+
+An initial control invocation accidentally used active policies with `--mutant`.
+The verifier rejected its successful assertion result. That run is not negative-control evidence.
+The corrected disabled-policy run has 163 expected failures and 935 passes.
+Its native call traces contain no findings, and positive assertions reject all ten disabled detectors.
+The disabled programs reproduce byte for byte from the final policies.
+
+One initial full control command reached the 115-second cap while it still used active policies.
+It was stopped and was not counted as completed coverage.
+The corrected complete disabled-policy run finished within the cap.
+
+A parallel original recording also produced one inconsistent graph observation for unchanged recorded inputs.
+The original APIs use `write_text` on shared hash-named source files, which permits a concurrent truncation/read race.
+A separate recording reproduced the prior findings. The process lock prevents overlapping recorder calls.
+The refreshed original observations preserve all 975 expected results.
+Only 18 HNSW observations gain cwd transport metadata.
+This distinguishes three previously coalesced input contexts: 781 distinct observations, including 683 positives.
+
+The final evidence uses CPython 3.13.18 and Unicode 15.1.
+The native addon SHA-256 remains `464f424955f220cdf8ed74937c93d97cc461e9ba5b19e515f11cc68e86920ba8`.
+No Rust source, native capacity, or statement limit changed in this audit.
+
+| Final gate | Result |
+| --- | --- |
+| Unchanged source assertions | 1,098 cases pass per API; 974 invoke native detectors and 124 retain Python helper or CLI targets |
+| Complete source-result parity | 975 observations, including 870 positives, match through both APIs |
+| Focused contracts | 276 original-evaluated inputs, including 194 positives; 552 API comparisons and the cache-lifetime test: 277 passing tests |
+| Shipped defaults | 1,392 original reporter observations, including 978 positives; 2,784 result comparisons and 878 selection comparisons: 3,662 passing assertions |
+| Whole matching inventory | Both APIs pass for source assertions and shipped defaults; the input remains 2,871 files and 57,328,575 source bytes |
+| Diagnostic-removal controls | All 106 observed families pass through both APIs |
+| Earlier repair and native contract tests | Nine repair cases and eight engine contract tests pass |
+| Evidence verifier | Twelve tests pass, including subprocess exclusion for original recording |
+| Adjacent batch-nine compatibility | 32 TypeScript tests pass; its unchanged source observations were reused when refreshing file bindings |
+| Generation | All ten documents and the focused corpus reproduce byte for byte |
+| Typecheck, boundaries, and DSL grammar | Pass |
+
+The v4 receipt binds 126 implementation and evidence files.
+The new recorders are grouped under `data_layer_ten/contracts/`, and recursive receipt hashing includes them.
+This removes the new flat-directory violation introduced during the audit.
+The structure check returns to its three pre-existing findings in `native/src/code_rule_dsl/`, `scripts/dsl/`, and `test/engine/native/`.
+Its other 24 metrics pass.
+
+The 124 retained Python cases are identified and categorized in the semantic audit.
+They cover legacy helpers, decorator helpers, AST handoff, CLI behavior, Python DTOs, constants, paths, approval configuration, and Python cache instrumentation.
+Their passes do not count as native detector comparisons.
+
+This delivery validates the ten rules at the pinned source through the stated gates.
+It does not prove equivalence for every possible Python program or reimplement the original Python CLI.
+The branch has 100 authored ports out of 142, with 30 documents in the private pack.
+The historical complete repository result still covers 80 rules.
+No cumulative cold benchmark or new native-kernel measurement was run in this repair.
+The earlier Rust-suite result was not rerun or presented as new evidence.

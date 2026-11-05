@@ -3,8 +3,10 @@
 Updated: 2026-11-05. Status: 100 ports are authored. Further batch-nine audits exposed public-contract, numeric-equality and file-presence gaps after the earlier repair claims.
 See [the completion audit](data-layer-batch-nine-audit.md). The historical complete repository result covers 80.
 
-Batch ten repairs the disproved completion claim with 1,098 original and original-evaluated cases, 975 complete API results, and 1,239 configured-default observations.
+Batch ten repairs the disproved completion claim with 1,098 original and original-evaluated cases, 975 complete API results, and 1,392 configured-default observations.
 Both native APIs receive the full matching inventory; source selection no longer runs in Python.
+Its semantic audit adds 276 original-evaluated inputs, including 194 positives, and separates 124 Python helper and CLI cases from native detector coverage.
+The current batch-ten environment uses CPython 3.13.18 with Unicode 15.1.
 See [its report](data-layer-batch-ten.md). The cumulative repository result still covers 80 rules.
 
 The recovery survey below describes the original 60-rule restart point.
@@ -170,7 +172,6 @@ Record new performance changes alongside parity; the existing RSS failure remain
 
 | Batch | Checks | Focus |
 | --- | ---: | --- |
-| 10 | 10 | Graph plans, optimizer contracts, matching, and indexing |
 | 11 | 10 | Permissions, grants, provider storage, and API boundaries |
 | 12 | 10 | Performance assertions, types, and operational contracts |
 | 13 | 10 | Runner governance, documentation coverage, and repository budgets |

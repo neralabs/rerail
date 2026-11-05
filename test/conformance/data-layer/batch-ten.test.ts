@@ -28,9 +28,10 @@ it("ships the ten documents once in the private pack",()=>{
 
 it("binds complete runs and positive controls to the batch implementation",()=>{
  const receipt=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-native-assertions.json","utf8"));
- expect(receipt.format).toBe("rerail.data-layer-batch-ten-assertions/v3");
- for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:1098,completeResults:975,positiveResults:870,distinctObservations:778,distinctPositiveObservations:680,detectorCases:974,retainedPythonCases:124,semanticFallbacks:[]});expect(receipt.executionPaths[mode].retainedPythonCaseIds).toHaveLength(124);expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);expect(receipt.executionPaths[mode].originalCalls["matching_architecture:_source_requires_matching_scan"]).toBeUndefined();}
- expect(receipt.configured).toMatchObject({observations:1239,apiComparisons:2478,selectionComparisons:716,assertions:3194});
+ expect(receipt.format).toBe("rerail.data-layer-batch-ten-assertions/v4");
+ for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:1098,completeResults:975,positiveResults:870,distinctObservations:781,distinctPositiveObservations:683,detectorCases:974,retainedPythonCases:124,semanticFallbacks:[]});expect(receipt.executionPaths[mode].retainedPythonCaseIds).toHaveLength(124);expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);expect(receipt.executionPaths[mode].originalCalls["matching_architecture:_source_requires_matching_scan"]).toBeUndefined();}
+ expect(receipt.configured).toMatchObject({observations:1392,positiveObservations:978,apiComparisons:2784,selectionComparisons:878,assertions:3662});
+ expect(receipt.focusedContracts).toEqual({inputs:276,positiveInputs:194,apiComparisons:552,assertions:277});
  expect(receipt.positiveControls.rejected).toEqual([...checks].sort());
  for(const[path,digest]of Object.entries(receipt.fileSha256))expect(createHash("sha256").update(readFileSync(path)).digest("hex"),path).toBe(digest);
 });
