@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
-import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
+import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
@@ -43,6 +43,58 @@ describe("lockChangesCore and coreChanges", () => {
     expect(reads).toEqual([]);
     expect(coreChanges(["package-lock.json", "src/a.ts", "packs/python/package.json"], readLock)).toEqual(["src/a.ts"]);
     expect(reads).toEqual(["release", "head"]);
+  });
+});
+
+describe("publishRetryRefusal", () => {
+  const retry = { version: "0.1.2", ref: "refs/heads/main", packageVersion: "0.1.2", tagged: true, shipped: [] };
+
+  it("retries the version main names, tagged, with nothing shipped changed since", () => {
+    expect(publishRetryRefusal(retry)).toBeNull();
+    expect(publishRetryRefusal({ ...retry, version: "0.2.0-next.1", packageVersion: "0.2.0-next.1" })).toBeNull();
+  });
+
+  it("refuses another branch, a malformed version and a version main has moved past", () => {
+    expect(publishRetryRefusal({ ...retry, ref: "refs/heads/fix" })).toBe("a retry runs from main, not refs/heads/fix");
+    expect(publishRetryRefusal({ ...retry, version: "v0.1.2" })).toBe("v0.1.2 is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N");
+    expect(publishRetryRefusal({ ...retry, version: "0.1.2-rc.1" })).toBe("0.1.2-rc.1 is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N");
+    expect(publishRetryRefusal({ ...retry, packageVersion: "0.1.3" })).toBe("main's package.json says 0.1.3, so 0.1.2 can't be retried from it");
+  });
+
+  it("refuses a run that also asks for a put-back, so the retry is never dropped in silence", () => {
+    expect(publishRetryRefusal({ ...retry, latest: "0.1.1" })).toBe("publish retries 0.1.2 and latest puts core back to 0.1.1: run them separately");
+  });
+
+  it("refuses a version with no tag, which never went through the Release pull request", () => {
+    expect(publishRetryRefusal({ ...retry, tagged: false })).toContain("v0.1.2 has no tag");
+  });
+
+  it("refuses when what ships changed since the tag, naming the paths and the next version", () => {
+    const refusal = publishRetryRefusal({ ...retry, shipped: ["src/cli/cli.ts", "package-lock.json"] });
+    expect(refusal).toContain("src/cli/cli.ts, package-lock.json");
+    expect(refusal).toContain("the next version");
+  });
+});
+
+describe("retrySummary", () => {
+  it("counts the paths that build or are packed into the tarball, and no others", () => {
+    for (const path of [".github/workflows/package.yml", ".github/actions/lfs/action.yml", "scripts/release/shrinkwrap-pack.mjs", ".gitattributes", "CHANGELOG.md"]) expect(changesPackage(path)).toBe(true);
+    for (const path of [".github/workflows/release.yml", "docs/release.md", "scripts/host/azure/matrix.mjs", "scripts/release/core-paths.mjs"]) expect(changesPackage(path)).toBe(false);
+  });
+
+  it("lists what can change the tarball first, under its own heading, then every other path", () => {
+    const summary = retrySummary("0.1.2", ["docs/release.md", ".github/workflows/package.yml", "scripts/host/azure/matrix.mjs"]);
+    expect(summary).toContain("3 path(s) changed since the tag");
+    expect(summary).toContain("**Can change the tarball, so check these before approving (1):**\n\n- `.github/workflows/package.yml`");
+    expect(summary).toContain("**Other changes (2):**\n\n- `docs/release.md`\n- `scripts/host/azure/matrix.mjs`");
+    expect(summary.indexOf("package.yml")).toBeLessThan(summary.indexOf("docs/release.md"));
+  });
+
+  it("says so when nothing that builds the tarball changed, and when nothing changed at all", () => {
+    expect(retrySummary("0.1.2", ["docs/release.md"])).toContain("Nothing that builds or is packed into the tarball changed.");
+    const none = retrySummary("0.1.2", []);
+    expect(none).toContain("0 path(s) changed since the tag");
+    expect(none).not.toContain("Other changes");
   });
 });
 

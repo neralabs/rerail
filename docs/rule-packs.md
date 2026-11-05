@@ -23,12 +23,15 @@ Recommendations match the repository's files and dependency manifests against ea
 
 ## The packs
 
-Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)).
+Every pack lives under `packs/` in this repository and is published from there ([pack format](pack-format.md)), except
+a private pack (`"private": true` in its `package.json`): it is never published and is not in
+`src/engine/catalog/pack-list.generated.ts`; install it from a checkout with `rerail packs add packs/<id>`, and set-up
+then offers it from that copy.
 
 | Pack | Category | Rules (on) | Recommended for |
 |---|---|--:|---|
-| Cyclomatic complexity (limit 6) | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
-| JavaScript and TypeScript (ESLint core and eslint-plugin-unicorn) | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
+| Cyclomatic complexity | language | 7 (7) | Python, TypeScript, JavaScript, PHP, Blade, Rust or Vue source outside tests. See [Cyclomatic complexity](#cyclomatic-complexity). |
+| JavaScript | language | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
 | Python | language | 537 (318) | Python source outside tests, scripts and docs |
 | PHP | language | 15 (5) | PHP source: `*.php` files, not Blade views |

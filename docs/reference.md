@@ -608,6 +608,10 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 </details>
 
+### Session storage
+
+Each session keeps its ledger (events and file preimages) under a storage root, `<workspace>/.rerail/sessions` by default, and loads the bundled embedding model. `RERAIL_STORAGE_ROOT` and `RERAIL_MODEL_PATH` replace them: a relative value resolves against the session's workspace, the folder the coding agent runs in, and an empty one counts as unset. Hooks, `rerail events`, OMP and Pi (in process or through the daemon) and the daemon itself all resolve them this way. Only the default root gets a `.gitignore` of `*`; a custom one may hold your own files, so Rerail leaves it as it is.
+
 ### Event ordering and edit capture
 
 Each session has its own serialized lane, and native tool-call IDs pair edits with their results.
@@ -675,7 +679,7 @@ With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's proces
 
 #### How AI-output scope finds changed lines
 
-AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated.
+AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command.
 
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
@@ -683,6 +687,18 @@ AI-output scope diffs source, not violation IDs: it compares each edit with pre-
 Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
 
 If nothing matches, the edit reports its whole file, as `touched-files` does, until Rerail has seen the file change in the session. Parsing and cross-file query context may exceed reporting scope. Source, parse and match caches are incremental; repository scans stream bounded batches through a separate native workspace.
+
+</details>
+
+<details>
+<summary>What counts as Git's write</summary>
+
+- a file that now holds exactly its `HEAD` blob after anything but a commit moved `HEAD` (a checkout, switch, pull, merge, rebase, reset), or with `HEAD` where it was (`git restore`, `git stash`);
+- a file a move removed;
+- the files of a merge or rebase stopped on a conflict;
+- a new linked worktree's files.
+
+A file written and committed in one command stays an edit, measured from the tree before the commit. One written in the command that moved `HEAD` is measured from what Git wrote.
 
 </details>
 

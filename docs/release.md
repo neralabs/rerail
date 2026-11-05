@@ -98,10 +98,39 @@ after a reviewer approves.
 
 ### Manual runs and put-back
 
-`workflow_dispatch` builds a trial tarball, or puts `latest` back to an earlier version.
+`workflow_dispatch` builds a trial tarball, retries a failed release, or puts `latest` back to an earlier version.
 
 - **No inputs:** uploads the tarball as a run artifact, unpublished. Try it with `npm install <tarball>`.
+- **`publish` set to a version:** retries that version's release from `main`; see below.
 - **`latest` set to an earlier released version:** builds nothing and points `latest` back to it.
+
+<details>
+<summary>Retrying a failed release</summary>
+
+Release tags can't be moved or deleted, and re-running a failed run reuses the tag's scripts. So when a release fails
+before publishing because of something that doesn't ship, such as a workflow or a release script, fix that on `main`
+and run:
+
+```bash
+gh workflow run release.yml --ref main -f publish=<version>
+```
+
+The run builds `main`, runs every check and publishes behind the same approval. The tag stays where it is, and npm's
+provenance names the `main` commit. It is refused unless all of these hold, so core's own code is the tag's:
+
+- it runs from `main` with `latest` left empty, and `main`'s `package.json` names that version;
+- the `v<version>` tag exists;
+- nothing core ships has changed since the tag (`publishRetryRefusal` in `scripts/release/core-paths.mjs`).
+
+How the package is built and its changelog can still differ from the tag, so that a fix to the build can be retried
+too. The run summary lists every path changed since the tag, starting with those that can change the tarball (`PACKAGE_INPUTS`): the build
+workflow and its actions, the shrinkwrap step, `.gitattributes` and `CHANGELOG.md`. Check that list before approving.
+
+If the fix changes what ships, it takes the next version: the Release pull request offers one as soon as the fix is on
+`main`. Say in that version's lead that the failed version was never published, since its notes won't reach anyone
+updating past it.
+
+</details>
 
 <details>
 <summary>What a put-back also does</summary>
@@ -155,7 +184,8 @@ Release notes pitch the release to people who opt into each update; the GitHub R
   `main`: what the release gives and why to take it.
 - **Format.** From 0.1.1 the notes follow [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), with the two
   differences `CHANGELOG.md`'s header states: headings read `## <version> (<date>)`, and pending entries wait in
-  `.changelog/` rather than under `## Unreleased`.
+  `.changelog/` rather than under `## Unreleased`. A pack's notes take the same format and types, its lead and rule
+  entries written from `pack.json` ([pack-format.md](pack-format.md#release)).
 - **Versions.** Below 1.0.0 a release is a patch unless it names another, and a patch can change or remove behavior,
   which Semantic Versioning allows below 1.0.0. To release a minor or major, name it in the heading:
   `## 0.2.0 (unreleased)`. What core promises from 1.0.0 is not set yet.

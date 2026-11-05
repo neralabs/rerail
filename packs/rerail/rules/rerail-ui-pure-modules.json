@@ -1,0 +1,437 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-ui-pure-modules",
+  "revision": 1,
+  "mode": "log",
+  "description": "Keep the dashboard's pure derivation modules free of network, storage and DOM work and of imports of the modules that do it; they stay testable without a browser.",
+  "scope": {
+    "include": [
+      "ui/derive.js",
+      "ui/first-open.js",
+      "ui/pack-model.js",
+      "ui/history-model.js",
+      "ui/sessions-model.js",
+      "ui/settings-model.js",
+      "ui/repo-rules.js"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "io-module-import",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "string"
+                  },
+                  {
+                    "kind": "template_string"
+                  }
+                ],
+                "regex": "^[\\\"'`](?:\\./|\\.\\./ui/|/(?:ui/)?)(?:(?:api|poll|shell|dom|app|actions|sheet|attachments|rule-remove|settings-writes)\\.js|(?:views|render|frame)/[^\\\"'`]*)(?:[?#][^\\\"'`]*)?[\\\"'`]$",
+                "not": {
+                  "regex": "rule-sheet-model\\.js"
+                },
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "arguments",
+                      "inside": {
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "kind": "import"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "template_string",
+                "regex": "^`(?:\\./|\\.\\./ui/|/(?:ui/)?)(?:views|render|frame)/",
+                "not": {
+                  "regex": "rule-sheet-model\\.js"
+                },
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "import_statement"
+                    },
+                    {
+                      "kind": "export_statement"
+                    },
+                    {
+                      "kind": "arguments",
+                      "inside": {
+                        "kind": "call_expression",
+                        "has": {
+                          "field": "function",
+                          "kind": "import"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UI_PURE_MODULE_IO_IMPORT",
+        "anchor": "witness.span",
+        "message": "Take this data as an argument; do the request, write or DOM work in poll.js, a writes module or a view, and move a pure helper you need from there into a pure module."
+      }
+    },
+    {
+      "id": "io-global",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:fetch|EventSource|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|navigator|matchMedia|requestAnimationFrame|getComputedStyle|addEventListener|removeEventListener)$",
+                "not": {
+                  "any": [
+                    {
+                      "inside": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "arrow_function",
+                            "has": {
+                              "field": "parameter",
+                              "regex": "^(?:fetch|EventSource|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|navigator|matchMedia|requestAnimationFrame|getComputedStyle|addEventListener|removeEventListener)$"
+                            }
+                          },
+                          {
+                            "has": {
+                              "field": "parameters",
+                              "has": {
+                                "stopBy": "end",
+                                "kind": "identifier",
+                                "regex": "^(?:fetch|EventSource|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|navigator|matchMedia|requestAnimationFrame|getComputedStyle|addEventListener|removeEventListener)$"
+                              }
+                            }
+                          },
+                          {
+                            "any": [
+                              {
+                                "kind": "statement_block"
+                              },
+                              {
+                                "kind": "program"
+                              }
+                            ],
+                            "has": {
+                              "any": [
+                                {
+                                  "kind": "lexical_declaration"
+                                },
+                                {
+                                  "kind": "variable_declaration"
+                                }
+                              ],
+                              "has": {
+                                "kind": "variable_declarator",
+                                "has": {
+                                  "field": "name",
+                                  "regex": "^(?:fetch|EventSource|XMLHttpRequest|WebSocket|localStorage|sessionStorage|indexedDB|navigator|matchMedia|requestAnimationFrame|getComputedStyle|addEventListener|removeEventListener)$"
+                                }
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^document$",
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "arrow_function",
+                        "has": {
+                          "field": "parameter",
+                          "regex": "^document$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "regex": "^document$"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "statement_block"
+                          },
+                          {
+                            "kind": "program"
+                          }
+                        ],
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "lexical_declaration"
+                            },
+                            {
+                              "kind": "variable_declaration"
+                            }
+                          ],
+                          "has": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "regex": "^document$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^(?:window|globalThis|self)$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:location|history|localStorage|sessionStorage|navigator|document|addEventListener|removeEventListener|scrollTo|scrollBy|open|matchMedia|requestAnimationFrame|getComputedStyle|innerWidth|innerHeight|fetch)$"
+                    }
+                  }
+                ],
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "arrow_function",
+                        "has": {
+                          "field": "parameter",
+                          "regex": "^(?:window|globalThis|self)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "regex": "^(?:window|globalThis|self)$"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "statement_block"
+                          },
+                          {
+                            "kind": "program"
+                          }
+                        ],
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "lexical_declaration"
+                            },
+                            {
+                              "kind": "variable_declaration"
+                            }
+                          ],
+                          "has": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "regex": "^(?:window|globalThis|self)$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^location$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:hash|href|search|pathname|assign|replace|reload)$"
+                    }
+                  }
+                ],
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "arrow_function",
+                        "has": {
+                          "field": "parameter",
+                          "regex": "^location$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "regex": "^location$"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "statement_block"
+                          },
+                          {
+                            "kind": "program"
+                          }
+                        ],
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "lexical_declaration"
+                            },
+                            {
+                              "kind": "variable_declaration"
+                            }
+                          ],
+                          "has": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "regex": "^location$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "kind": "identifier",
+                      "regex": "^history$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "regex": "^(?:pushState|replaceState|back|forward|go)$"
+                    }
+                  }
+                ],
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "arrow_function",
+                        "has": {
+                          "field": "parameter",
+                          "regex": "^history$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "field": "parameters",
+                          "has": {
+                            "stopBy": "end",
+                            "kind": "identifier",
+                            "regex": "^history$"
+                          }
+                        }
+                      },
+                      {
+                        "any": [
+                          {
+                            "kind": "statement_block"
+                          },
+                          {
+                            "kind": "program"
+                          }
+                        ],
+                        "has": {
+                          "any": [
+                            {
+                              "kind": "lexical_declaration"
+                            },
+                            {
+                              "kind": "variable_declaration"
+                            }
+                          ],
+                          "has": {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "regex": "^history$"
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "code": "UI_PURE_MODULE_IO_GLOBAL",
+        "anchor": "witness.span",
+        "message": "Keep network, storage and DOM access out of this pure module: do it in poll.js, a writes module or a view, and pass the result in as an argument."
+      }
+    }
+  ]
+}

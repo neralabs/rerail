@@ -1,0 +1,118 @@
+{
+  "caught": [
+    {
+      "path": "native/src/git_workspace.rs",
+      "content": "/// The extensions of the files the host evaluates (`SOURCE_LANGUAGES` in\n/// code-rule-languages.ts): dialect sources and the text files regex clauses read.\nconst SOURCE_SUFFIXES: &[&str] = &[\n    \"bash\", \"cjs\", \"css\", \"cts\", \"html\", \"js\", \"json\", \"jsx\", \"md\", \"mdx\", \"mjs\", \"mts\", \"php\",\n    \"py\", \"pyi\", \"rs\", \"rst\", \"scss\", \"sh\", \"sql\", \"toml\", \"ts\", \"tsx\", \"txt\", \"yaml\", \"yml\",\n    \"zsh\",\n];\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/language.rs",
+      "content": "impl SourceType {\n    pub(crate) fn of_path(path: &str, package: Option<PackageType>) -> Option<Self> {\n        let name = path.rsplit('/').next().unwrap_or(path);\n        match name.rsplit_once('.').map(|(_, extension)| extension) {\n            Some(\"cjs\" | \"cts\") => Some(Self::CommonJs),\n            Some(\"ts\") if is_declaration_file(name) => Some(Self::Module),\n            Some(\"js\" | \"jsx\" | \"ts\") => match package {\n                None | Some(PackageType::Module) => Some(Self::Module),\n                Some(PackageType::CommonJs) => Some(Self::CommonJs),\n                Some(PackageType::Unset) => None,\n            },\n            _ => Some(Self::Module),\n        }\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/module_graph.rs",
+      "content": "fn ecma_label(path: &str) -> Option<&'static str> {\n    let extension = path.rsplit_once('.')?.1.to_ascii_lowercase();\n    match extension.as_str() {\n        \"ts\" | \"mts\" | \"cts\" => Some(\"typescript\"),\n        \"tsx\" => Some(\"tsx\"),\n        \"js\" | \"jsx\" | \"mjs\" | \"cjs\" => Some(\"javascript\"),\n        _ => None,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/ingest.rs",
+      "content": "const EXTENSIONS: [&str; 8] = [\".tsx\", \".ts\", \".jsx\", \".js\", \".mjs\", \".cjs\", \".mts\", \".cts\"];\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/mod.rs",
+      "content": "fn planned(language: &str) -> bool {\n    for planned in [\"vue\", \"sql\", \"rust\"] {\n        if planned == language { return true; }\n    }\n    false\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/resolve.rs",
+      "content": "fn typescript_importer(path: &str) -> bool {\n    matches!(extension(path), \".ts\" | \".tsx\" | \".cts\" | \".mts\")\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-languages.ts",
+      "content": "const TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([\n  [\".rs\", \"rust\"],\n  [\".json\", \"json\"],\n  [\".yaml\", \"yaml\"],\n  [\".sql\", \"text\"],\n]);\n"
+    },
+    {
+      "path": "src/code-rule-languages.ts",
+      "content": "export const CODE_RULE_AST_LANGUAGES = [\"python\", \"typescript\", \"javascript\", \"php\", \"blade\"] as const;\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-enforcer.ts",
+      "content": "const SOURCE_LANGUAGES = new Map<string, CodeRuleSourceLanguage>([\n  [\".py\", \"python\"], [\".pyi\", \"python\"], [\".ts\", \"typescript\"],\n]);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/calls/closure.rs",
+      "content": "pub(crate) fn path_module(path: &str) -> Option<String> {\n    let path = path\n        .strip_suffix(\".py\")\n        .or_else(|| path.strip_suffix(\".pyi\"))?;\n    Some(path.replace('/', \".\"))\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/index.rs",
+      "content": "const SOURCE_LANGUAGES: &[(&str, &str)] = &[(\".py\", \"python\"), (\".ts\", \"typescript\"), (\".php\", \"php\")];\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/eval/query.rs",
+      "content": "fn label(extension: &str) -> Option<&'static str> {\n    match extension {\n        \"py\" => Some(\"python\"),\n        \"php\" => Some(\"php\"),\n        _ => None,\n    }\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule.ts",
+      "content": "export type CodeRuleAstLanguage = \"python\" | \"typescript\" | \"javascript\" | \"php\" | \"blade\";\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-bridge.ts",
+      "content": "const LABELS: Record<string, string> = { \".py\": \"python\", \".php\": \"php\" };\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "native/src/code_rule_dsl/module_graph/labels.rs",
+      "content": "fn ecma_label(path: &str) -> Option<&'static str> {\n    label_of_path(path).filter(|label| package_manifests(label))\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-text-sources.ts",
+      "content": "const PLANNED_SUFFIXES: readonly string[] = LANGUAGE_REGISTRY.flatMap(entry => (entry.status === \"planned\" ? entry.dialects.flatMap(dialect => dialect.suffixes) : []));\nconst TEXT_SOURCE_SUFFIXES: ReadonlyMap<string, CodeRuleSourceLanguage> = new Map<string, CodeRuleSourceLanguage>([\n  [\".json\", \"json\"],\n  [\".yaml\", \"yaml\"],\n  [\".md\", \"markdown\"],\n  [\".sql\", \"text\"],\n]);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/compile/planned.rs",
+      "content": "fn planned(language: &str) -> bool {\n    crate::code_rule_dsl::language::PLANNED_LANGUAGES.contains(&language)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/language/adapter.rs",
+      "content": "impl Adapter for Ecma {\n    fn source_type(path: &str) -> Option<SourceType> {\n        match path.rsplit_once('.').map(|(_, extension)| extension) {\n            Some(\"cjs\" | \"cts\") => Some(SourceType::CommonJs),\n            _ => Some(SourceType::Module),\n        }\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/import_target/mod.rs",
+      "content": "const TS_EXTENSIONS: &[&str] = &[\n    \".js\", \".ts\", \".mjs\", \".mts\", \".cjs\", \".cts\", \".json\", \".node\",\n];\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/vue/sfc.rs",
+      "content": "fn lang_dialect(lang: &str) -> Option<GrammarDialect> {\n    match lang {\n        \"ts\" => Some(GrammarDialect::TypeScript),\n        \"tsx\" => Some(GrammarDialect::Tsx),\n        \"js\" | \"jsx\" => Some(GrammarDialect::JavaScript),\n        _ => None,\n    }\n}\n"
+    },
+    {
+      "path": "src/engine/code-rule/code-rule-schema.ts",
+      "content": "const style = z.enum([\"brace\", \"percent\", \"printf\", \"scanf\", \"rust\"]);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/module_graph/tsconfig.rs",
+      "content": "fn is_config(path: &str) -> bool {\n    path.ends_with(\"tsconfig.json\") || path.ends_with(\".ts\")\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/evaluate_tests_inline.rs",
+      "content": "pub(crate) fn evaluate() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn vendored() {\n        let vendored = [\"python\", \"sql\", \"typescript\", \"tsx\", \"javascript\", \"vue\"];\n        assert_eq!(vendored.len(), 6);\n    }\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/module_graph/extensions.rs",
+      "content": "/// The extensions Next resolves a module specifier with, in Next's (webpack's) order.\nconst EXTENSIONS: [&str; 8] = [\".tsx\", \".ts\", \".jsx\", \".js\", \".mjs\", \".cjs\", \".mts\", \".cts\"];\n"
+    },
+    {
+      "path": "src/engine/catalog/eslint-flat-config.ts",
+      "content": "const plugins = [\"typescript\", \"vue\"];\n"
+    },
+    {
+      "path": "src/daemon/daemon.ts",
+      "content": "const CONTENT_TYPES: Record<string, string> = {\n  \".js\": \"text/javascript; charset=utf-8\",\n  \".mjs\": \"text/javascript; charset=utf-8\",\n};\nconst SERVED = [\".js\", \".mjs\"];\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/options_lang.rs",
+      "content": "fn script(lang: Option<&str>) -> GrammarDialect {\n    match lang {\n        Some(\"ts\") => GrammarDialect::TypeScript,\n        _ => GrammarDialect::JavaScript,\n    }\n}\n"
+    },
+    {
+      "path": "native/src/git_index.rs",
+      "content": "/// The names of the files the host evaluates by their whole name (`SOURCE_NAMES` in\n/// code-rule-languages.ts): the package ignore files `file.package.published` reads.\nconst SOURCE_NAMES: &[&str] = &[\".npmignore\", \".gitignore\"];\n"
+    }
+  ]
+}

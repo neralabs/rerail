@@ -1,4 +1,5 @@
-import { rerailCommandList, type CommandSigil } from "./rerail-commands.js";
+import { rerailCommandList } from "./rerail-commands.js";
+import type { CommandSigil } from "../engine/adapter-contract.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { SessionPresentation } from "../presentation/session-presentation.js";
 

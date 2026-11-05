@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
@@ -20,7 +19,6 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
 import {
   isClaudeStatusLine,
   readClaudeStatusRegistration,
@@ -36,7 +34,11 @@ import { andList, shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { runGit } from "../engine/git.js";
 import { pinnedNodePath } from "./node-path.js";
+import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
+import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
+import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 
 export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
 
@@ -738,7 +740,9 @@ function replaceAddedEntries(
  * package. A new data file or folder in the Rerail home must be added here, or the agent's file tools can read it.
  */
 const RERAIL_HOME_DATA_ENTRIES: readonly string[] = [
-  "*.json*", "*.sqlite*", "*.log*", "*.lock", "access-token*", "active-profile*", "device-secrets/**", "profiles/**",
+  "*.json*", "*.sqlite*", "*.log*", "*.lock",
+  ...[DAEMON_ACCESS_TOKEN_FILE, ACTIVE_PROFILE_FILE].map(file => `${file}*`),
+  ...[DEVICE_SECRETS_DIR, PROFILES_DIR].map(folder => `${folder}/**`),
 ];
 
 /** `path` as the absolute path of a Read or Edit rule (`//path`), its gitignore pattern characters escaped. */
@@ -903,17 +907,16 @@ async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusL
   return script !== undefined && isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
 }
 
-const execGit = promisify(execFile);
-
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
 async function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {
   if (context.platform === "win32" || process.getuid === undefined) return workspaceDir;
   let root: string;
   try {
     // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.
-    await execGit("git", ["rev-parse", "--show-toplevel"], { cwd: workspaceDir });
-    const { stdout } = await execGit("git", ["worktree", "list", "--porcelain", "-z"], { cwd: workspaceDir });
-    const first = stdout.split("\0", 1)[0];
+    if (runGit(workspaceDir, ["rev-parse", "--show-toplevel"]).status !== 0) return workspaceDir;
+    const worktrees = runGit(workspaceDir, ["worktree", "list", "--porcelain", "-z"]);
+    if (worktrees.status !== 0) return workspaceDir;
+    const first = worktrees.stdout.split("\0", 1)[0];
     if (first === undefined || !first.startsWith("worktree ")) return workspaceDir;
     root = await realpath(first.slice("worktree ".length));
   } catch {

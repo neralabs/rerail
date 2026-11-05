@@ -130,9 +130,12 @@ function nulList(text: string): string[] {
   return text.split("\0").filter(entry => entry.length > 0);
 }
 
-/** Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. */
+/**
+ * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. With
+ * `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
+ */
 function diffPaths(root: string, against: string): string[] {
-  const changed = nulList(git(root, ["diff", "--name-only", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
+  const changed = nulList(git(root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
   const untracked = nulList(git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]));
   return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
 }

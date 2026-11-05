@@ -134,7 +134,7 @@ export function packSuppressions(rules, packId, owner, checkoutPath) {
   return { text, next: decided.length > 0 && decided.every(state => state.suppressions === "ignore") ? "honour" : "ignore" };
 }
 
-/** Conversation rules are in internal testing (README.md, Internal testing): Rerail 0.1.0 releases code rules only. */
+/** Conversation rules are in internal testing (README.md, Internal testing): Rerail's latest release ships code rules only. */
 export const INTERNAL_TESTING = "Internal testing";
 export const isInternalTesting = stored => stored.kind === "conversation";
 

@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
+import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
 const roots: string[] = [];
@@ -190,6 +191,30 @@ describe("headless rerail scan", () => {
     const listed = await scan(root, { paths: ["./b.py", "gone.py"] });
     expect(listed.paths).toEqual(["b.py"]);
     expect(listed.violations.map(violation => violation.path)).toEqual(["b.py"]);
+  });
+
+  it.skipIf(!honoursNoLazyFetch())("lists an edited rename in a partial clone without the source's blob, and fetches nothing", async () => {
+    const origin = checkout();
+    mkdirSync(join(origin, "old"));
+    writeFileSync(join(origin, "old", "before.py"), "a = 1\nb = 2\nc = 3\nx = NEEDLE\n");
+    git(origin, "add", ".");
+    git(origin, "commit", "--quiet", "-m", "old");
+    git(origin, "config", "uploadpack.allowFilter", "true");
+    const clone = `${origin}-clone`;
+    roots.push(clone);
+    // Sparse: only the top level and the rules are checked out, so old/before.py's blob is never fetched.
+    git(origin, "clone", "--quiet", "--filter=blob:none", "--sparse", `file://${origin}`, clone);
+    git(clone, "sparse-checkout", "set", ".rerail");
+    const source = git(clone, "rev-parse", "HEAD:old/before.py");
+    git(clone, "update-index", "--force-remove", "old/before.py");
+    writeFileSync(join(clone, "after.py"), "a = 1\nb = 2\nc = 4\nx = NEEDLE\n");
+    git(clone, "add", "after.py");
+
+    const report = await scan(clone, { scope: "git-diff" });
+    expect(report.status).toBe("completed");
+    expect(report.paths).toEqual(["after.py"]);
+    expect(report.violations.map(violation => violation.path)).toEqual(["after.py"]);
+    expect(partialCloneLacks(clone, source)).toBe(true);
   });
 
   it("uses the Rerail home's configuration when Rerail is set up and started in the checkout", async () => {

@@ -13,14 +13,31 @@ import {
   recordSeenCodingAgents,
   refreshCodingAgents,
   registrationRoot as packageRegistrationRoot,
+  SEEN_AGENTS_FILE,
   seenCodingAgents,
 } from "../setup/coding-agents.js";
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
-import { installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
+import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
-import { daemonUsesPackageRoot, lookupDaemon, openDashboard, processAlive, startDaemon, stopDaemon, type DaemonState } from "../runtime/daemon-control.js";
-import { DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
+import {
+  DAEMON_ACCESS_TOKEN_FILE,
+  DAEMON_LOG_FILE,
+  DAEMON_STATE_FILE,
+  daemonUsesPackageRoot,
+  lookupDaemon,
+  openDashboard,
+  processAlive,
+  START_LOCK_DIR,
+  startDaemon,
+  stopDaemon,
+  type DaemonState,
+} from "../runtime/daemon-control.js";
+import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
+import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
+import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
+import { CLAUDE_STATUS_DATABASE_FILE } from "../setup/claude-status-store.js";
 import {
   detectHarnesses,
   registerHarnesses,
@@ -32,7 +49,7 @@ import {
 import { checkNodeVersion } from "../setup/node-version.js";
 import { pinnedNodePath } from "../setup/node-path.js";
 import { setupPreflight, wslNote } from "../setup/preflight.js";
-import { addLauncherToPath, describeLauncherPath, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
+import { addLauncherToPath, describeLauncherPath, LAUNCHER_PATH_FILE, launcherPathMarker, recordLauncherPath, removeLauncherFromPath } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
@@ -40,9 +57,9 @@ import { workspaceStartState, type RepositorySetupIo } from "../runtime/reposito
 import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, shellQuote, type DashboardLink, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
-import { LAUNCHER_HEADER, type ManagedUpdater } from "../setup/updater.js";
+import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
-import { scrubHintOnce } from "./scrub-cli.js";
+import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
 
 export interface SetupContext {
   /** Rerail's own state directory (`~/.rerail` unless `RERAIL_HOME`); versions, launcher, daemon live here. */
@@ -340,13 +357,45 @@ function installedFiles(context: SetupContext): Array<{ path: string; what: stri
 /** What npm and the rule pack store put in the packs prefix, with the lock a pack change holds. */
 const RULE_PACK_PREFIX_ENTRIES: ReadonlySet<string> = new Set(["node_modules", "package.json", "package-lock.json", "staging", ".lock"]);
 
+/** In the Rerail home: the person's one approval that Rerail may read their coding agent sessions (T2b). */
+export const CONSENT_FILE = "consent.json";
+
 /**
- * What Rerail itself writes in its home: settings, records, logs, locks, its databases, `rerail activate`'s profiles
- * and device secrets, `rules export`'s `rules.json` and the installation, each with the `.<pid>[.<uuid>].tmp` or
- * `.old` a write cut short leaves beside it.
+ * What Rerail itself writes in its home, by the name its writer gives it: settings, records, locks, `rerail activate`'s
+ * profiles and device secrets, `rules export`'s dump and the installation.
  */
-const RERAIL_HOME_ENTRY =
-  /^(?:(?:coding-agents|consent|daemon|daemon-port|launcher-path|update-state|rules|scrub-hint)\.json|daemon\.log.*|(?:harness|rerail)\.sqlite.*|(?:start|update)\.lock|bin|current|versions|packs|profiles|active-profile|device-secrets)(?:\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old))?$/u;
+const RERAIL_HOME_ENTRIES: readonly string[] = [
+  CONSENT_FILE,
+  SEEN_AGENTS_FILE,
+  LAUNCHER_PATH_FILE,
+  DAEMON_STATE_FILE,
+  DAEMON_PORT_FILE,
+  DAEMON_ACCESS_TOKEN_FILE,
+  START_LOCK_DIR,
+  RULES_DUMP_FILE,
+  PROFILES_DIR,
+  ACTIVE_PROFILE_FILE,
+  DEVICE_SECRETS_DIR,
+  INSTALLED_PACKS_DIR,
+  UPDATE_STATE_FILE,
+  UPDATE_LOCK_DIR,
+  VERSIONS_DIR,
+  CURRENT_LINK,
+  LAUNCHER_DIR,
+  SCRUB_HINT_FILE,
+];
+
+/** What Rerail writes in its home under these names and longer ones: SQLite's `-wal` and `-shm`, `rerail update`'s `.pre-update` copy. */
+const RERAIL_HOME_ENTRY_PREFIXES: readonly string[] = [RERAIL_DATABASE_FILE, CLAUDE_STATUS_DATABASE_FILE, DAEMON_LOG_FILE];
+
+/** The `.<pid>[.<uuid>].tmp` or `.old` a write cut short leaves beside what it writes. */
+const CUT_SHORT_WRITE = /\.\d+(?:\.[0-9a-f-]+)?\.(?:tmp|old)$/u;
+
+/** Whether `name`, at the top of a Rerail home, is something Rerail wrote there. */
+function isRerailHomeEntry(name: string): boolean {
+  const written = name.replace(CUT_SHORT_WRITE, "");
+  return RERAIL_HOME_ENTRIES.includes(written) || RERAIL_HOME_ENTRY_PREFIXES.some(prefix => written.startsWith(prefix));
+}
 
 /**
  * The command that finishes removing `path` by hand. PowerShell: single quotes expand nothing, and `-LiteralPath` reads
@@ -453,7 +502,7 @@ async function removeInstallation(context: SetupContext, dryRun: boolean): Promi
   const kept = (await readdir(context.home).catch(() => [])).sort();
   // A folder kept for the files in it that are not Rerail's (`bin`, `versions`, `packs`) is not Rerail's to delete.
   const keptForOthers = new Set(keep.map(({ path }) => path));
-  const ours = kept.filter(name => RERAIL_HOME_ENTRY.test(name) && !keptForOthers.has(join(context.home, name)));
+  const ours = kept.filter(name => isRerailHomeEntry(name) && !keptForOthers.has(join(context.home, name)));
   // A Rerail home shared with other files (`RERAIL_HOME=$HOME`) is never offered for deletion as a whole.
   if (ours.length < kept.length) {
     process.stdout.write(`Kept ${context.home}, which also holds files that are not Rerail's.${ours.length === 0 ? "" : ` Rerail's settings, logs and records in it: ${ours.join(", ")}; delete those if you will not install Rerail again.`}\n`);
@@ -637,9 +686,6 @@ function pageUrl(origin: string, scope: RulesDashboardScope, page: DashboardPage
   url.hash = DASHBOARD_ROUTES[page];
   return url.href;
 }
-
-/** In the Rerail home: the person's one approval that Rerail may read their coding agent sessions (T2b). */
-const CONSENT_FILE = "consent.json";
 
 /** What set-up needs from this machine: the coding agents, their registration, the dashboard, and npm for rule packs. */
 export function setupEnvironment(context: SetupContext, port?: number): SetupEnvironment {

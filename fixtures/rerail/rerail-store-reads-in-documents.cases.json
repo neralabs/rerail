@@ -1,0 +1,66 @@
+{
+  "caught": [
+    {
+      "path": "native/src/code_rule_dsl/workspace/evaluate.rs",
+      "content": "                    if unanswered && file.input.source.is_empty() && file.stored.is_some() {\n                        let stored = stored_documents\n                            .objects\n                            .get(&source_hash)\n                            .ok_or_else(|| invalid(format!(\"{path} is not in the store\")))?;\n                        let source = storage\n                            .store\n                            .get_source(stored.source)\n                            .map_err(|error| invalid(error.to_string()))?;\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/facts/families.rs",
+      "content": "pub(crate) fn blob_source(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<Arc<String>>> {\n    let store = graph.store();\n    let Some(source) = store.source_by_alias(HashKey::git_sha1(blob))? else {\n        return Ok(None);\n    };\n    let bytes = store.get_source(source)?;\n    Ok(String::from_utf8(bytes).ok().map(Arc::new))\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/facts/tape.rs",
+      "content": "        let Some((bytes, _)) = store.get_tapes_bulk(&[id])?.remove(&id) else {\n            return Ok(None);\n        };\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/index.rs",
+      "content": "    let rows = store.file_documents_bulk(&tapes)?;\n    let texts = store.get_sources_bulk(&sources)?;\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/prefilter/store.rs",
+      "content": "    let (tape, cached) = store.get_tape_with_status(tape_id)?;\n    let one = store.get_tape(tape_id)?;\n    let by_hash = store.get_sources_by_hash_bulk(&hashes)?;\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/eval/mod.rs",
+      "content": "use crate::content_store::ContentStore as Store;\nfn text(store: &Store, id: SourceId) -> StoreResult<Vec<u8>> {\n    store.get_source(id)\n}\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/eval/store.rs",
+      "content": "    let bytes = ContentStore::get_source(&store, source_id)?;\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "native/src/code_rule_dsl/workspace/documents.rs",
+      "content": "        let source = store\n            .get_source(objects.source)\n            .map_err(|error| invalid(error.to_string()))?;\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/evaluate.rs",
+      "content": "                let document = documents::load(&storage, &version)?;\n                let unanswered = !file.candidates.regex.is_empty();\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/matcher/text.rs",
+      "content": "    let text = node.get_doc().get_source();\n    let range = node.range();\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/facts/families.rs",
+      "content": "    let Some(tape_id) = store.tape_by_source(source_id, tag, grammar_version(), version)? else {\n        return Ok(None);\n    };\n    // Read back with store.get_source(source_id) only through documents.rs.\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/index.rs",
+      "content": "    let blob = repository.read_source(&oid)?;\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/workspace/tests.rs",
+      "content": "        store.get_source(stored.source).unwrap(),\n"
+    },
+    {
+      "path": "native/src/content_store/objects.rs",
+      "content": "        let bytes = self.get_source(source_id)?;\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/eval/text.rs",
+      "content": "    let text = ast_grep_core::Doc::get_source(&doc).as_str();\n"
+    }
+  ]
+}

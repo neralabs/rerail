@@ -3,7 +3,8 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gitCandidates, gitInstalled, readGitBlobs } from "../../src/engine/git.js";
+import { gitCandidates, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobs, runGit } from "../../src/engine/git.js";
+import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -22,6 +23,16 @@ async function repository(files: Record<string, string>): Promise<string> {
   return root;
 }
 
+/** A `--filter=blob:none` clone of a one-file repository, and the id of the blob it does not hold. */
+async function partialClone(): Promise<{ clone: string; oid: string }> {
+  const origin = await repository({ "a.py": "print(1)\n" });
+  git(origin, "config", "uploadpack.allowFilter", "true");
+  const clone = join(origin, "..", `${origin.split("/").pop()}-clone`);
+  roots.push(clone);
+  git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", `file://${origin}`, clone);
+  return { clone, oid: git(clone, "rev-parse", "HEAD:a.py").trim() };
+}
+
 describe("readGitBlobs", () => {
   it("keeps every blob it was asked for when another in the batch is larger than the limit", async () => {
     const root = await repository({ "big.py": "x".repeat(5_000), "small.py": "print(1)\n" });
@@ -32,16 +43,50 @@ describe("readGitBlobs", () => {
       .toEqual({ ":./small.py": "print(2)\n", "HEAD:./small.py": "print(1)\n" });
   });
 
-  it("never fetches a blob a partial clone does not hold", async () => {
-    const origin = await repository({ "a.py": "print(1)\n" });
-    git(origin, "config", "uploadpack.allowFilter", "true");
-    const clone = join(origin, "..", `${origin.split("/").pop()}-clone`);
-    roots.push(clone);
-    git(origin, "clone", "--quiet", "--filter=blob:none", "--no-checkout", `file://${origin}`, clone);
-    const oid = git(clone, "rev-parse", "HEAD:a.py").trim();
+  it.skipIf(!honoursNoLazyFetch())("never fetches a blob a partial clone does not hold", async () => {
+    const { clone, oid } = await partialClone();
     expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
-    // Still missing: asking for it fetched nothing from the remote.
-    expect(() => execFileSync("git", ["cat-file", "-e", oid], { cwd: clone, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" }, stdio: "ignore" })).toThrow();
+    expect(partialCloneLacks(clone, oid)).toBe(true);
+  });
+});
+
+describe("runGit", () => {
+  it.skipIf(!honoursNoLazyFetch())("never fetches an object a partial clone does not hold", async () => {
+    const { clone, oid } = await partialClone();
+    expect(runGit(clone, ["cat-file", "-p", oid]).status).not.toBe(0);
+    expect(partialCloneLacks(clone, oid)).toBe(true);
+  });
+});
+
+describe("gitHead and headMovedOnlyByCommits", () => {
+  it("names no commit outside a repository, or where nothing is committed yet", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-head-"));
+    roots.push(root);
+    await expect(gitHead(root)).resolves.toBeUndefined();
+    git(root, "init", "--quiet");
+    await expect(gitHead(root)).resolves.toBeUndefined();
+  });
+
+  it("tells commits from anything else that moved HEAD since a commit", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const seed = (await gitHead(root))!;
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    git(root, "commit", "--quiet", "--allow-empty", "--amend", "-m", "two again");
+    expect(await headMovedOnlyByCommits(root, seed)).toBe(true);
+    const committed = (await gitHead(root))!;
+    git(root, "reset", "--quiet", "--hard", seed);
+    expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
+    // A commit after the move does not hide it.
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
+    expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
+  });
+
+  it("goes by HEAD's newest move for a checkout not seen before, and takes a commit it cannot find as moved", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    expect(await headMovedOnlyByCommits(root, undefined)).toBe(true);
+    git(root, "switch", "--quiet", "-c", "other");
+    expect(await headMovedOnlyByCommits(root, undefined)).toBe(false);
+    expect(await headMovedOnlyByCommits(root, "0".repeat(40))).toBe(false);
   });
 });
 
