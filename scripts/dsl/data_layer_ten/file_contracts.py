@@ -38,6 +38,20 @@ def record(source,output):
   location=path/relative;location.parent.mkdir();location.write_bytes(text.encode())
   expected=normalize(module.collect_violations(path),path)
  cases.append(dict(test='conditional-textual-line-order',check='conditional_architecture',entry='collect_violations',parameters={},production=False,files=[dict(path=relative,source=text)],expected=expected))
+ from scripts.lint_lib.fact_engine import FactEngine,_run_plugin_reporter
+ from scripts.lint_lib.fact_store import JsonFactStore
+ optimizer=importlib.import_module('scripts.lint_plan_optimizer_v2')
+ for ending,label in [('\n','lf'),('\r\n','crlf'),('\r','cr')]:
+  text=ending*601;relative='impl/common/l2065_plan_core/node.py'
+  cases.append(dict(test='optimizer-source-lines-'+label,check='plan_optimizer_v2',entry='scan_file',parameters={},production=False,files=[dict(path=relative,source=text)],expected=normalize(optimizer.scan_file(Path(relative),text),source)))
+  with tempfile.TemporaryDirectory() as temporary:
+   path=Path(temporary);location=path/relative;location.parent.mkdir(parents=True);location.write_bytes(text.encode())
+   plugin=optimizer.plan_optimizer_v2_plugin(path)
+   engine=FactEngine(root=path,fact_store=JsonFactStore(path/'.facts'),extractors=optimizer.plan_optimizer_v2_fact_extractors(path))
+   findings=_run_plugin_reporter(plugin,engine.materialize((plugin,),max_workers=1)).violations
+   expected=[dict(path=Path(f.path).relative_to(path).as_posix() if Path(f.path).is_absolute() else str(f.path),line=f.line,code=f.code,message=f.message) for f in findings]
+  assert len(expected)==1 and expected[0]['code']=='PV2-044'
+  cases.append(dict(test='optimizer-file-lines-'+label,check='plan_optimizer_v2',entry='all',parameters={},production=True,files=[dict(path=relative,source=text)],expected=expected))
  output.write_text(json.dumps(dict(sourcePin=PIN,cases=cases),indent=2)+'\n')
 
 if __name__=='__main__':
