@@ -4538,6 +4538,634 @@
       ]
     },
     {
+      "test": "structural-matching-order-application-aggregates",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "application/probe.py",
+          "source": "physical = \"hnsw\"\nbackend = BackendType.POSTGRES\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA002",
+          "path": "application/probe.py",
+          "line": 1,
+          "symbol": "physical_access_method",
+          "message": "Application matching declarations cannot name a physical access method"
+        },
+        {
+          "code": "MA001",
+          "path": "application/probe.py",
+          "line": 2,
+          "symbol": "BackendType",
+          "message": "Application matching behavior cannot switch on backend identity"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-application-aggregates",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "application/probe.py",
+          "source": "physical = \"hnsw\"\nbackend = BackendType.POSTGRES\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA001",
+          "path": "application/probe.py",
+          "line": 2,
+          "symbol": "BackendType",
+          "message": "Application matching behavior cannot switch on backend identity"
+        },
+        {
+          "code": "MA002",
+          "path": "application/probe.py",
+          "line": 1,
+          "symbol": "physical_access_method",
+          "message": "Application matching declarations cannot name a physical access method"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-implementation-aggregates",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "SqlRaw(\"sql\")\nbackend = BackendType.POSTGRES\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA027",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "raw_sql_boundary",
+          "message": "Matching implementation code must use typed SQL grammar"
+        },
+        {
+          "code": "MA026",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "BackendType",
+          "message": "Shared matching code cannot switch on backend identity"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-implementation-aggregates",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "SqlRaw(\"sql\")\nbackend = BackendType.POSTGRES\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA026",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "BackendType",
+          "message": "Shared matching code cannot switch on backend identity"
+        },
+        {
+          "code": "MA027",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "raw_sql_boundary",
+          "message": "Matching implementation code must use typed SQL grammar"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-assignment-and-counter",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "database_round_trips = planned_database_round_trips = len(database_receipts)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "planned_database_round_trips",
+          "message": "Round-trip limits must use observed transport work, not a predicted future stage count"
+        },
+        {
+          "code": "MA037",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "database_round_trips",
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-assignment-and-counter",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "database_round_trips = planned_database_round_trips = len(database_receipts)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA037",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "database_round_trips",
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
+        },
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "planned_database_round_trips",
+          "message": "Round-trip limits must use observed transport work, not a predicted future stage count"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-conformance-separate-imports",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-tree-order-conformance-separate-imports",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-order-conformance-from-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from data_layer_testing import matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA036",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "data_layer_testing.matching_operator",
+          "message": "Matching conformance must use public artifact operations from data_layer.matching"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-conformance-from-import",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from data_layer_testing import matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA036",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "data_layer_testing.matching_operator",
+          "message": "Matching conformance must use public artifact operations from data_layer.matching"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-conformance-multiple-boundaries",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import os, impl.common, data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "impl.common",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-conformance-multiple-boundaries",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import os, impl.common, data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "impl.common",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-consumer-conformance-separate-imports",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {
+        "applicationPaths": [
+          "conform/l5250_matching/probe.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-tree-order-consumer-conformance-separate-imports",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {
+        "applicationPaths": [
+          "conform/l5250_matching/probe.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-order-consumer-conformance-from-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {
+        "applicationPaths": [
+          "conform/l5250_matching/probe.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from data_layer_testing import matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA036",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "data_layer_testing.matching_operator",
+          "message": "Matching conformance must use public artifact operations from data_layer.matching"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-consumer-conformance-from-import",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {
+        "applicationPaths": [
+          "conform/l5250_matching/probe.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from data_layer_testing import matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA036",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "data_layer_testing.matching_operator",
+          "message": "Matching conformance must use public artifact operations from data_layer.matching"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-consumer-conformance-multiple-boundaries",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {
+        "applicationPaths": [
+          "conform/l5250_matching/probe.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import os, impl.common, data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "os",
+          "message": "Application matching code cannot import implementation modules"
+        },
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "impl.common",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-consumer-conformance-multiple-boundaries",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {
+        "applicationPaths": [
+          "conform/l5250_matching/probe.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import os, impl.common, data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "impl.common",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        },
+        {
+          "code": "MA010",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "os",
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-consumer-facade-separate-imports",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {
+        "applicationPaths": [
+          "data_layer/matching.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "import data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA041",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "data_layer_testing",
+          "message": "Production matching modules cannot import the testing package"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-consumer-facade-separate-imports",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {
+        "applicationPaths": [
+          "data_layer/matching.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "import data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA041",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "data_layer_testing",
+          "message": "Production matching modules cannot import the testing package"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-consumer-facade-from-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {
+        "applicationPaths": [
+          "data_layer/matching.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer_testing import matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA041",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "data_layer_testing",
+          "message": "Production matching modules cannot import the testing package"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-consumer-facade-from-import",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {
+        "applicationPaths": [
+          "data_layer/matching.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "from data_layer_testing import matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA041",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "data_layer_testing",
+          "message": "Production matching modules cannot import the testing package"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-order-consumer-facade-multiple-boundaries",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {
+        "applicationPaths": [
+          "data_layer/matching.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "import os, impl.common, data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "os",
+          "message": "Application matching code cannot import implementation modules"
+        },
+        {
+          "code": "MA019",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "os",
+          "message": "The public matching facade cannot select or import a physical implementation"
+        },
+        {
+          "code": "MA041",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "data_layer_testing",
+          "message": "Production matching modules cannot import the testing package"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-order-consumer-facade-multiple-boundaries",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {
+        "applicationPaths": [
+          "data_layer/matching.py"
+        ]
+      },
+      "production": false,
+      "files": [
+        {
+          "path": "data_layer/matching.py",
+          "source": "import os, impl.common, data_layer_testing, matching_operator\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "os",
+          "message": "Application matching code cannot import implementation modules"
+        },
+        {
+          "code": "MA041",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "data_layer_testing",
+          "message": "Production matching modules cannot import the testing package"
+        },
+        {
+          "code": "MA019",
+          "path": "data_layer/matching.py",
+          "line": 1,
+          "symbol": "os",
+          "message": "The public matching facade cannot select or import a physical implementation"
+        }
+      ]
+    },
+    {
       "test": "structural-hnsw-render-no-trigger",
       "check": "hnsw_architecture",
       "entry": "find_hnsw_architecture_findings",

@@ -12,17 +12,18 @@ def record(source):
     cases = []
     matching = importlib.import_module('scripts.lint_matching_architecture')
 
-    def match(label, path, text):
-        expected = normalize(matching.scan_sources({Path(path): text}), source)
+    def match(label, path, text, application=False):
+        expected = normalize(matching.scan_sources({Path(path): text}, application_paths=frozenset({Path(path)}) if application else frozenset()), source)
+        parameters = {'applicationPaths': [path]} if application else {}
         cases.append(dict(test='structural-matching-' + label, check='matching_architecture',
-                          entry='scan_sources', parameters={}, production=False,
+                          entry='scan_sources', parameters=parameters, production=False,
                           files=[dict(path=path, source=text)], expected=expected))
         if label in {'annotation-none', 'annotation-call-attribute', 'nested-validation',
-                     'multiline-counter', 'assignment-and-counter', 'keyword-and-assignment'}:
+                     'multiline-counter', 'assignment-and-counter', 'keyword-and-assignment'} or label.startswith('order-'):
             cases.append(dict(test='structural-tree-' + label, check='matching_architecture',
-                              entry='_scan_tree', parameters={}, production=False,
+                              entry='_scan_tree', parameters=parameters, production=False,
                               files=[dict(path=path, source=text)],
-                              expected=normalize(matching._scan_tree(Path(path), ast.parse(text)), source)))
+                              expected=normalize(matching._scan_tree(Path(path), ast.parse(text), application_path_override=application), source)))
 
     for label, annotation in [
         ('none', 'None'), ('none-union', 'None | str'), ('none-subscript', 'list[None]'),
@@ -72,6 +73,17 @@ def record(source):
             text = 'def run():\n' + ''.join('    ' + line + '\n' for line in text.splitlines())
         match(label, 'application/probe.py' if 'helper' in label or label == 'last-delegate-argument'
               else 'impl/common/l5250_matching/probe.py', text)
+    match('order-application-aggregates', 'application/probe.py', 'physical = "hnsw"\nbackend = BackendType.POSTGRES\n')
+    match('order-implementation-aggregates', 'impl/common/l5250_matching/probe.py', 'SqlRaw("sql")\nbackend = BackendType.POSTGRES\n')
+    match('order-assignment-and-counter', 'impl/common/l5250_matching/probe.py',
+          'database_round_trips = planned_database_round_trips = len(database_receipts)\n')
+    for owner, path, application in [('conformance', 'conform/l5250_matching/probe.py', False),
+                                     ('consumer-conformance', 'conform/l5250_matching/probe.py', True),
+                                     ('consumer-facade', 'data_layer/matching.py', True)]:
+        for label, text in [('separate-imports', 'import data_layer_testing, matching_operator\n'),
+                            ('from-import', 'from data_layer_testing import matching_operator\n'),
+                            ('multiple-boundaries', 'import os, impl.common, data_layer_testing, matching_operator\n')]:
+            match('order-' + owner + '-' + label, path, text, application)
 
     hnsw = importlib.import_module('scripts.lint_hnsw_architecture')
     for label, text in [('render-no-trigger', 'def render():\n    pass\n'),
