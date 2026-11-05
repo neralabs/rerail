@@ -52,4 +52,14 @@ def record(source,seeds):
    root=Path(temporary);target=root/path;target.parent.mkdir(parents=True);target.write_bytes(text.encode())
    expected=[text.removeprefix(str(root)+'/') for text in generated.check_file(target)]
   cases.append(dict(test='generated-event-'+label,check='generated_index_sources',entry='check_file',parameters={},production=False,files=[dict(path=path,source=text)],expected=expected))
+ for label,prefix in [('nul','# \x00\n\n'),('unicode','# é\n\n')]:
+  files=[dict(path=f['path'],source=seeds['sources'][f['sourceSha256']]) for f in clean['files']]
+  target=next(f for f in files if f['path']==bounded.VERSIONED_LAZY_MIXIN.as_posix())
+  target['source']=prefix+target['source']+'\ndef '+sorted(bounded.BANNED_TRANSACTION_ENDPOINTS)[0]+'():\n    pass\n'
+  with tempfile.TemporaryDirectory() as temporary:
+   root=Path(temporary)
+   for file in files:
+    path=root/file['path'];path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(file['source'].encode())
+   expected=[dict(path=(f.path.relative_to(root) if f.path.is_absolute() else f.path).as_posix(),line=f.line,code=f.code,message=f.message) for f in bounded.collect_violations(root)]
+  cases.append(dict(test='bounded-text-prefix-'+label,check='bounded_composed_graph_paths',entry='all',parameters={},production=True,files=files,expected=expected))
  return cases

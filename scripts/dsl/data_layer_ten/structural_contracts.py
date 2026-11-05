@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Record structural counterexamples using the original public detector APIs."""
+import ast
 import importlib
 import tempfile
 from pathlib import Path
@@ -16,6 +17,12 @@ def record(source):
         cases.append(dict(test='structural-matching-' + label, check='matching_architecture',
                           entry='scan_sources', parameters={}, production=False,
                           files=[dict(path=path, source=text)], expected=expected))
+        if label in {'annotation-none', 'annotation-call-attribute', 'nested-validation',
+                     'multiline-counter', 'assignment-and-counter', 'keyword-and-assignment'}:
+            cases.append(dict(test='structural-tree-' + label, check='matching_architecture',
+                              entry='_scan_tree', parameters={}, production=False,
+                              files=[dict(path=path, source=text)],
+                              expected=normalize(matching._scan_tree(Path(path), ast.parse(text)), source)))
 
     for label, annotation in [
         ('none', 'None'), ('none-union', 'None | str'), ('none-subscript', 'list[None]'),
@@ -58,6 +65,8 @@ def record(source):
         ('last-delegate-argument', 'def helper(first, second):\n    match(txn, first)\n    match(txn, second)\nhelper("lookup", value)\n'),
         ('nested-validation', 'def outer():\n    def inner():\n        return model.model_copy(update={})\n    return inner\n'),
         ('multiline-counter', 'def count():\n    return MatchDatabaseRoundTripCount(\n        len(STAGES_SQL_STAGES)\n    )\n'),
+        ('assignment-and-counter', 'MatchStageOperationCount(hydration_operations); planned_database_round_trips = 1\n'),
+        ('keyword-and-assignment', 'receipt(database_round_trips=len(database_receipts)); database_round_trips = len(database_receipts)\n'),
     ]:
         if 'handler' in label:
             text = 'def run():\n' + ''.join('    ' + line + '\n' for line in text.splitlines())

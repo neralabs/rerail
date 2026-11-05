@@ -95,6 +95,8 @@ def record(source,output):
  cases.extend(semantic_contracts(source,seeds))
  from data_layer_ten.structural_contracts import record as structural_contracts
  cases.extend(structural_contracts(source))
+ from data_layer_ten.collector_contracts import record as collector_contracts
+ cases.extend(collector_contracts(source))
  output.write_text(json.dumps(dict(sourcePin=PIN,cases=cases),indent=2)+'\n')
 
 if __name__=='__main__':

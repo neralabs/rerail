@@ -2874,9 +2874,217 @@
       "expected": []
     },
     {
+      "test": "bounded-text-prefix-nul",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "# \u0000\n\n\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\ndef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 7,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
+      "test": "bounded-text-prefix-unicode",
+      "check": "bounded_composed_graph_paths",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "conform/l9700_graph_query/test_bounded_composed_paths.py",
+          "source": "def test_contract(): pass\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_DESIGN.rst",
+          "source": "Design\n======\n"
+        },
+        {
+          "path": "docs/design/BOUNDED_COMPOSED_GRAPH_PATHS_IMPLEMENTATION_PLAN.rst",
+          "source": "Plan\n====\n"
+        },
+        {
+          "path": "docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md",
+          "source": "# bounded_composed_graph_paths\n"
+        },
+        {
+          "path": "docs/l7200_versioned_transactions.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9700_graph_query.rst",
+          "source": "Use graph_lazy.\n"
+        },
+        {
+          "path": "docs/l9720_sparql.rst",
+          "source": "SPARQL paths use PathExpression.\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/graph_path_relation_plan.py",
+          "source": "\nclass BoundedComposedPathRelationPlan: pass\nclass GraphPathRelationSchemas: pass\n"
+        },
+        {
+          "path": "impl/common/l2070_server_plan/steps/intent_graph.py",
+          "source": "\nclass _ResolveGraphExecutionCtxConfig:\n    graph_type: type\nclass _GraphExecuteConfig:\n    graph_type: type\nclass GraphPathEvidenceRelationRow: pass\nclass ExecuteGraphPathsStep:\n    def cte_publication_contract(self): ...\n    def compile(self): ...\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/sql_graph_query_builder.py",
+          "source": "\nclass SqlGraphQueryBuilder:\n    def _build_execute_paths_relation_plan(self): ...\n    def _build_execute_paths_grammar(self):\n        return self._build_execute_paths_relation_plan()\n"
+        },
+        {
+          "path": "impl/common/l9700_sql_graph_query/steps/graph_traverse.py",
+          "source": "\nclass _GraphTraversalApiConfig:\n    graph_type: type\nclass _GraphTraversalTerminalConfig:\n    graph_type: type\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/graph_lazy_sql.py",
+          "source": "\nclass SqlGraphExecutionCtx:\n    graph_type: type\nclass SqlPlanGraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "# \u00e9\n\n\nclass VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): ...\n\ndef graph_query_builder():\n    pass\n"
+        },
+        {
+          "path": "l7200_versioned_transactions/versioned_transactions.py",
+          "source": "\nclass LazyVersionedReadTransaction:\n    @legacy_sync\n    def graph(self): ...\n    @legacy_async\n    async def graph_async(self): ...\n"
+        },
+        {
+          "path": "l9700_graph_query/graph_pattern.py",
+          "source": "\nclass PathExpression: pass\nclass PathStep: pass\nclass PathSequence: pass\nclass PathChoice: pass\nclass QuantifiedPath: pass\nclass PathMode: pass\nclass PathSearch: pass\nclass GraphPathEvidenceRow: pass\nclass PathPattern:\n    expression: PathExpression\n"
+        },
+        {
+          "path": "l9700_graph_query/query_builder.py",
+          "source": "\nclass GraphQueryBuilder:\n    @pure_lazy\n    def execute_paths_lazy(self): ...\n    @legacy_sync\n    def execute_paths(self): ...\n    @legacy_async\n    async def execute_paths_async(self): ...\n"
+        },
+        {
+          "path": "l9720_sparql/ast.py",
+          "source": "\nclass SparqlPathExpression: pass\nclass SparqlPathAlternative: pass\nclass SparqlPathSequence: pass\nclass SparqlPathInverse: pass\nclass SparqlPathQuantifier: pass\n"
+        },
+        {
+          "path": "l9720_sparql/compiler.py",
+          "source": "from x import PathExpression\n"
+        },
+        {
+          "path": "l9720_sparql/executor.py",
+          "source": "def execute(txn): return txn.graph_lazy().query_builder()\n"
+        },
+        {
+          "path": "scripts/lint_all.py",
+          "source": "LinterConfig(name='bounded_composed_graph_paths', script='lint_bounded_composed_graph_paths.py', enforcement='hard-fail', in_ci=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line": 7,
+          "code": "BCGP002",
+          "message": "permissionless or redundant transaction endpoint graph_query_builder() must remain deleted"
+        }
+      ]
+    },
+    {
       "test": "structural-matching-annotation-none",
       "check": "matching_architecture",
       "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: None\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-tree-annotation-none",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
       "parameters": {},
       "production": false,
       "files": [
@@ -2997,6 +3205,28 @@
       "test": "structural-matching-annotation-call-attribute",
       "check": "matching_architecture",
       "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: factory().str\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA009",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe.field",
+          "message": "Public matching semantic values require nominal closed types"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-annotation-call-attribute",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
       "parameters": {},
       "production": false,
       "files": [
@@ -4105,6 +4335,35 @@
       ]
     },
     {
+      "test": "structural-tree-nested-validation",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def outer():\n    def inner():\n        return model.model_copy(update={})\n    return inner\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA028",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 3,
+          "symbol": "outer",
+          "message": "Matching production code cannot bypass validation during model replacement"
+        },
+        {
+          "code": "MA028",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 3,
+          "symbol": "inner",
+          "message": "Matching production code cannot bypass validation during model replacement"
+        }
+      ]
+    },
+    {
       "test": "structural-matching-multiline-counter",
       "check": "matching_architecture",
       "entry": "scan_sources",
@@ -4130,6 +4389,151 @@
           "line": 3,
           "symbol": "STAGES_SQL_STAGES",
           "message": "Work limits must consume executed-stage receipts, not declared stage manifests"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-multiline-counter",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def count():\n    return MatchDatabaseRoundTripCount(\n        len(STAGES_SQL_STAGES)\n    )\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "MatchDatabaseRoundTripCount",
+          "message": "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+        },
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 3,
+          "symbol": "STAGES_SQL_STAGES",
+          "message": "Work limits must consume executed-stage receipts, not declared stage manifests"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-assignment-and-counter",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "MatchStageOperationCount(hydration_operations); planned_database_round_trips = 1\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "planned_database_round_trips",
+          "message": "Round-trip limits must use observed transport work, not a predicted future stage count"
+        },
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "MatchStageOperationCount",
+          "message": "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-assignment-and-counter",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "MatchStageOperationCount(hydration_operations); planned_database_round_trips = 1\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "planned_database_round_trips",
+          "message": "Round-trip limits must use observed transport work, not a predicted future stage count"
+        },
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "MatchStageOperationCount",
+          "message": "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-keyword-and-assignment",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "receipt(database_round_trips=len(database_receipts)); database_round_trips = len(database_receipts)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA037",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "database_round_trips",
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
+        },
+        {
+          "code": "MA037",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "database_round_trips",
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
+        }
+      ]
+    },
+    {
+      "test": "structural-tree-keyword-and-assignment",
+      "check": "matching_architecture",
+      "entry": "_scan_tree",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "receipt(database_round_trips=len(database_receipts)); database_round_trips = len(database_receipts)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA037",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "database_round_trips",
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
+        },
+        {
+          "code": "MA037",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "database_round_trips",
+          "message": "Transport and stage counts require executed receipts, not resolved dependency names"
         }
       ]
     },
@@ -4271,6 +4675,1278 @@
           "code": "HNSW007",
           "message": "HNSW must use indexed SQL rows, not JSON operations"
         }
+      ]
+    },
+    {
+      "test": "collector-graph_lazy_sql_plan-decorator-call",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "class VersionedReadTransactionLazyMixin:\n    @pure_lazy()\n    def graph_lazy(self): pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graph_lazy_sql_plan-decorator-double-call",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "class VersionedReadTransactionLazyMixin:\n    @pure_lazy()()\n    def graph_lazy(self): pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-004",
+          "file_path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line_number": 3,
+          "message": "`graph_lazy` must be decorated with @pure_lazy"
+        }
+      ]
+    },
+    {
+      "test": "collector-graph_lazy_sql_plan-last-method",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "class VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): pass\n    def graph_lazy(self): pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-004",
+          "file_path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line_number": 4,
+          "message": "`graph_lazy` must be decorated with @pure_lazy"
+        }
+      ]
+    },
+    {
+      "test": "collector-graph_lazy_sql_plan-duplicate-class",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "class VersionedReadTransactionLazyMixin:\n    @pure_lazy\n    def graph_lazy(self): pass\nclass VersionedReadTransactionLazyMixin:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graph_lazy_sql_plan-conditional-method",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "class VersionedReadTransactionLazyMixin:\n    if flag:\n        @pure_lazy\n        def graph_lazy(self): pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graph_lazy_sql_plan-nested-class",
+      "check": "graph_lazy_sql_plan",
+      "entry": "_violations_for_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "source": "def outer():\n    class VersionedReadTransactionLazyMixin:\n        @pure_lazy\n        def graph_lazy(self): pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "GLSP-002",
+          "file_path": "l7200_versioned_transactions/versioned_lazy_mixin.py",
+          "line_number": 1,
+          "message": "VersionedReadTransactionLazyMixin class not found"
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-late-class",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "class PhysicalPass:\n    phase: object = Phase.PHYSICAL\nDEFAULT_V2_PASSES = (PhysicalPass(), NormalizePass())\nclass NormalizePass:\n    phase: object = Phase.NORMALIZE\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 1,
+          "code": "PV2-040",
+          "message": "Pass class PhysicalPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 4,
+          "code": "PV2-040",
+          "message": "Pass class NormalizePass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-replacement-phase",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "class FirstPass:\n    phase: object = Phase.NORMALIZE\nclass FirstPass:\n    phase: object = Phase.PHYSICAL\nclass SecondPass:\n    phase: object = Phase.NORMALIZE\nDEFAULT_V2_PASSES = (FirstPass(), SecondPass())\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 1,
+          "code": "PV2-040",
+          "message": "Pass class FirstPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 3,
+          "code": "PV2-040",
+          "message": "Pass class FirstPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 5,
+          "code": "PV2-040",
+          "message": "Pass class SecondPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 7,
+          "code": "PV2-041",
+          "message": "DEFAULT_V2_PASSES phases are not in NORMALIZE -> ANALYZE -> PHYSICAL order. Reorder the pipeline so semantic rewrites run before ordering and ordering runs before physical grouping."
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-protocol-replacement",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "class FirstPass:\n    phase: object = Phase.PHYSICAL\nclass FirstPass(Protocol): pass\nclass SecondPass:\n    phase: object = Phase.NORMALIZE\nDEFAULT_V2_PASSES = (FirstPass(), SecondPass())\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 1,
+          "code": "PV2-040",
+          "message": "Pass class FirstPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 4,
+          "code": "PV2-040",
+          "message": "Pass class SecondPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 6,
+          "code": "PV2-041",
+          "message": "DEFAULT_V2_PASSES phases are not in NORMALIZE -> ANALYZE -> PHYSICAL order. Reorder the pipeline so semantic rewrites run before ordering and ordering runs before physical grouping."
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-first-phase",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "class FirstPass:\n    phase: object = Phase.PHYSICAL\n    phase: object = Phase.NORMALIZE\nclass SecondPass:\n    phase: object = Phase.NORMALIZE\nDEFAULT_V2_PASSES = (FirstPass(), SecondPass())\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 1,
+          "code": "PV2-040",
+          "message": "Pass class FirstPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 4,
+          "code": "PV2-040",
+          "message": "Pass class SecondPass must declare `phase: OptimizerPhase = ...`, `name: str = ...`, and a run() method returning OptimizerPassResult. Add the missing declarations so the verifier can attribute failures."
+        },
+        {
+          "file_path": "impl/common/l2065_plan_core/passes.py",
+          "line": 6,
+          "code": "PV2-041",
+          "message": "DEFAULT_V2_PASSES phases are not in NORMALIZE -> ANALYZE -> PHYSICAL order. Reorder the pipeline so semantic rewrites run before ordering and ordering runs before physical grouping."
+        }
+      ]
+    },
+    {
+      "test": "collector-plan_optimizer_v2-nested-init",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "def __init__():\n    def inner():\n        obj.value = 1\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-plan_optimizer_v2-nested-hint",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "def outer():\n    raise ValueError(\"bad\")\n    def inner():\n        return \"Fix producer\"\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-plan_optimizer_v2-relative-imports",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/passes.py",
+          "source": "from .requests import get\nfrom requests import get\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graphql_plan_ownership-aliases-fixed-point",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    second = first\n    first = scope\n    return second._private\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "graphql_plan_ownership",
+          "code": "GPO001",
+          "path": "l9750_graphql/probe.py",
+          "line": 4,
+          "message": "read reads private plan authority attribute _private; add a typed public plan-scope contract",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "collector-graphql_plan_ownership-tuple-target",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    alias, other = scope\n    return alias._private\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graphql_plan_ownership-attribute-target",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    obj.alias = scope\n    return obj.alias._private\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graphql_plan_ownership-nested-decorator",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    @scope._private\n    def inner(): pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graphql_plan_ownership-lambda",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    return lambda: scope._private\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "graphql_plan_ownership",
+          "code": "GPO001",
+          "path": "l9750_graphql/probe.py",
+          "line": 2,
+          "message": "read reads private plan authority attribute _private; add a typed public plan-scope contract",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "collector-graphql_plan_ownership-class-field",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    @reusable_template()\n    class Record:\n        field: PlanScope = scope._private\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "graphql_plan_ownership",
+          "code": "GPO004",
+          "path": "l9750_graphql/probe.py",
+          "line": 4,
+          "message": "reusable dataclass Record retains runtime authority field field",
+          "severity": "error"
+        },
+        {
+          "linter_name": "graphql_plan_ownership",
+          "code": "GPO001",
+          "path": "l9750_graphql/probe.py",
+          "line": 4,
+          "message": "read reads private plan authority attribute _private; add a typed public plan-scope contract",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "collector-graphql_plan_ownership-authority-in-string",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: \"list[PlanScope]\"):\n    return scope._private\n"
+        }
+      ],
+      "expected": [
+        {
+          "linter_name": "graphql_plan_ownership",
+          "code": "GPO001",
+          "path": "l9750_graphql/probe.py",
+          "line": 2,
+          "message": "read reads private plan authority attribute _private; add a typed public plan-scope contract",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "test": "collector-graphql_plan_ownership-authority-prefix",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: OtherPlanScopeSuffix):\n    return scope._private\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-graphql_plan_ownership-subscript-receiver",
+      "check": "graphql_plan_ownership",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l9750_graphql/probe.py",
+          "source": "def read(scope: PlanScope):\n    return scope[0]._private\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-session-chain",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "conn.session().session().read()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/b75bde4f0c0b6b90/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO001",
+          "message": "new connection-owned orchestration in embedding/vector scope is forbidden"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-unknown-session",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "other.session().read()\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-attribute-connection",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "factory()._conn.read()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/903c7682bfe978cf/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO001",
+          "message": "new connection-owned orchestration in embedding/vector scope is forbidden"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-nested-lazy",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "def outer_lazy():\n    def inner_lazy():\n        value.resolve()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/28ba0654fa4dd03d/l5200_vector_index/embedding_worker.py",
+          "line": 3,
+          "qualname": "inner_lazy",
+          "code": "EVO102",
+          "message": "*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-nested-nonlazy",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "def outer_lazy():\n    def inner():\n        value.resolve()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/cac03d86e5830eea/l5200_vector_index/embedding_worker.py",
+          "line": 3,
+          "qualname": "outer_lazy",
+          "code": "EVO102",
+          "message": "*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-nested-class",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "def outer_lazy():\n    class Inner:\n        def inner(self):\n            conn.read()\n            value.resolve()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/fdb74650fed6dc8d/l5200_vector_index/embedding_worker.py",
+          "line": 4,
+          "qualname": "Inner.inner",
+          "code": "EVO001",
+          "message": "new connection-owned orchestration in embedding/vector scope is forbidden"
+        },
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/fdb74650fed6dc8d/l5200_vector_index/embedding_worker.py",
+          "line": 5,
+          "qualname": "outer_lazy",
+          "code": "EVO102",
+          "message": "*_lazy worker body must not call .resolve() / .resolve_async(); use sync/async sibling"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-query-shadow",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "txn.query().query().resolve()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/60f70ad6cb7578d4/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO105",
+          "message": "embedding_worker must use txn.query_lazy(...), not txn.query(...)"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-query-chain",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "txn.query().filter().resolve()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/22dbe276e040b864/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO101",
+          "message": "worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition"
+        },
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/22dbe276e040b864/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO105",
+          "message": "embedding_worker must use txn.query_lazy(...), not txn.query(...)"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-attribute-txn",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "owner._txn.query().execute()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/fb4f9ff17709212a/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO101",
+          "message": "worker txn.query(...).terminal() is suspect; prefer lazy/serverplan composition"
+        },
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/fb4f9ff17709212a/l5200_vector_index/embedding_worker.py",
+          "line": 1,
+          "qualname": "<module>",
+          "code": "EVO105",
+          "message": "embedding_worker must use txn.query_lazy(...), not txn.query(...)"
+        }
+      ]
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-session-txn",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "txn.session().query().execute()\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-embedding_vector_orchestration-publish-nested",
+      "check": "embedding_vector_orchestration",
+      "entry": "scan_source",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5200_vector_index/embedding_worker.py",
+          "source": "def _publish_worker_scalar_int_ref():\n    def inner():\n        plan._add_server_step()\n"
+        }
+      ],
+      "expected": [
+        {
+          "file_path": "tmp/embedding_vector_orchestration_scan/7c0d8dd75c5bf9f5/l5200_vector_index/embedding_worker.py",
+          "line": 3,
+          "qualname": "inner",
+          "code": "EVO108",
+          "message": "embedding_worker may publish server steps only inside dedicated _publish_* helper functions"
+        }
+      ]
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-standalone-strings",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "'information_schema'\nif flag:\n    'information_schema'\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-assigned-string",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "value = 'INFORMATION_SCHEMA'\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "line": 1,
+          "call_name": "information_schema",
+          "message": "schema introspection SQL marker 'information_schema' in runtime data path"
+        }
+      ]
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-joined-string",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "value = f\"information_schema {name}\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "line": 1,
+          "call_name": "information_schema",
+          "message": "schema introspection SQL marker 'information_schema' in runtime data path"
+        }
+      ]
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-nul-before-marker",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "value = \"\\x00INFORMATION_SCHEMA\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "line": 1,
+          "call_name": "information_schema",
+          "message": "schema introspection SQL marker 'information_schema' in runtime data path"
+        }
+      ]
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-nul-after-marker",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "value = \"INFORMATION_SCHEMA\\x00\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "line": 1,
+          "call_name": "information_schema",
+          "message": "schema introspection SQL marker 'information_schema' in runtime data path"
+        }
+      ]
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-nested-authority",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "def schema_bootstrap():\n    def inner():\n        SqlTableExists()\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-unrelated-authority",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "def unrelated():\n    SqlTableExists()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "line": 2,
+          "call_name": "SqlTableExists",
+          "message": "schema introspection call SqlTableExists in runtime data path"
+        }
+      ]
+    },
+    {
+      "test": "collector-schema_introspection_data_paths-lambda-authority",
+      "check": "schema_introspection_data_paths",
+      "entry": "_collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/probe.py",
+          "source": "def schema_bootstrap():\n    return lambda: SqlTableExists()\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-conditional_architecture-nested-compile",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "source": "class ConditionalStep:\n    def outer(self):\n        def compile():\n            child.compile(ctx)\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule": "CONDA-001",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 4,
+          "message": "ConditionalStep.compile() must not compile branch children directly."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep.__init__ must validate both then and else branch contents."
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "line": 1,
+          "message": "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "line": 1,
+          "message": "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "line": 1,
+          "message": "physical typed conditional contract must override semantic rejection without backend selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic ConditionalStep must reject direct compilation with TypeError"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic typed conditional contract must unconditionally reject with TypeError"
+        }
+      ]
+    },
+    {
+      "test": "collector-conditional_architecture-duplicate-init",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "source": "class ConditionalStep:\n    def __init__(self):\n        _validate_branch_content()\n    def __init__(self):\n        _validate_branch_content()\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule": "CONDA-001",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep must define compile() as an explicit architecture boundary."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants."
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "line": 1,
+          "message": "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "line": 1,
+          "message": "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "line": 1,
+          "message": "physical typed conditional contract must override semantic rejection without backend selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic ConditionalStep must reject direct compilation with TypeError"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic typed conditional contract must unconditionally reject with TypeError"
+        }
+      ]
+    },
+    {
+      "test": "collector-conditional_architecture-duplicate-class",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "source": "class ConditionalStep:\n    def compile(self): raise TypeError\nclass ConditionalStep:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep.__init__ must validate both then and else branch contents."
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "line": 1,
+          "message": "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "line": 1,
+          "message": "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "line": 1,
+          "message": "physical typed conditional contract must override semantic rejection without backend selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 3,
+          "message": "semantic ConditionalStep must reject direct compilation with TypeError"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 3,
+          "message": "semantic typed conditional contract must unconditionally reject with TypeError"
+        }
+      ]
+    },
+    {
+      "test": "collector-conditional_architecture-nested-class",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "source": "class ConditionalStep:\n    class Other:\n        def compile(self):\n            child.compile(ctx)\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule": "CONDA-001",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep must define compile() as an explicit architecture boundary."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep.__init__ must validate both then and else branch contents."
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "line": 1,
+          "message": "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "line": 1,
+          "message": "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "line": 1,
+          "message": "physical typed conditional contract must override semantic rejection without backend selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic ConditionalStep must reject direct compilation with TypeError"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic typed conditional contract must unconditionally reject with TypeError"
+        }
+      ]
+    },
+    {
+      "test": "collector-conditional_architecture-lambda-compile",
+      "check": "conditional_architecture",
+      "entry": "collect_violations",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l2070_batching/conditional_step.py",
+          "source": "class ConditionalStep:\n    def compile(self):\n        return lambda: child.compile(ctx)\n"
+        }
+      ],
+      "expected": [
+        {
+          "rule": "CONDA-001",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 3,
+          "message": "ConditionalStep.compile() must not compile branch children directly."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep branch validation must retain DDL and not_where_gatable guard constants."
+        },
+        {
+          "rule": "CONDA-004",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "ConditionalStep.__init__ must validate both then and else branch contents."
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/sql_backend_executor.py",
+          "line": 1,
+          "message": "lowering typed conditional contract must produce SqlConditionalStep from the semantic conditional"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/_conditional_compile.py",
+          "line": 1,
+          "message": "compiler typed conditional contract must validate its SqlConditionalStep before strategy selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "impl/common/l2070_server_plan/steps/sql_conditional.py",
+          "line": 1,
+          "message": "physical typed conditional contract must override semantic rejection without backend selection"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic ConditionalStep must reject direct compilation with TypeError"
+        },
+        {
+          "rule": "CONDA-005",
+          "file": "l2070_batching/conditional_step.py",
+          "line": 1,
+          "message": "semantic typed conditional contract must unconditionally reject with TypeError"
+        }
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-source-posonly",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(source: IndexSource, /):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index must require a source: IndexSource parameter"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-source-vararg",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*source: IndexSource):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index must require a source: IndexSource parameter"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-source-kwargs",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(**source: IndexSource):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index must require a source: IndexSource parameter"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-source-keyword-gap",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*, before, source: IndexSource = IndexSource.MODEL_DECLARED):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index source must not default to MODEL_DECLARED"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-source-positional-default",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(source: IndexSource = IndexSource.MODEL_DECLARED):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "collector-generated_index_sources-source-other-annotation",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*, source: owner.IndexSource):\n    return Index(source=source)\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:1: _generated_index source parameter must be annotated as IndexSource"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-nested-function",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def _generated_index(*, source: IndexSource):\n    def inner():\n        return Index(source=source)\n    return inner\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:3: generated indexes must use _generated_index(..., source=IndexSource.*)"
+      ]
+    },
+    {
+      "test": "collector-generated_index_sources-import-in-function",
+      "check": "generated_index_sources",
+      "entry": "check_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l7245_versioned_backends/generic_sparse.py",
+          "source": "def outer():\n    from l1000_schema.schema_def import Index as Ix\nIx()\n# _generated_index\n"
+        }
+      ],
+      "expected": [
+        "impl/common/l7245_versioned_backends/generic_sparse.py:3: generated indexes must use _generated_index(..., source=IndexSource.*)"
       ]
     }
   ]
