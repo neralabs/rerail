@@ -15,7 +15,11 @@
 //!   relation; an aggregate inside a comparison gets a variable;
 //! - other disjunctions are one rule per alternative.
 //!
-//! Not lowered yet, each a named error: patterns (``n ~ `…` ``), `must`/`may`, `.violation`, `=> edits`,
+//! - `.violation V(at: node, …)` declares V as an output, and each row of V is a finding
+//!   `violation(policy, V, code, path, line)` at `at`'s line (the code is V, or the `code {c}` column);
+//! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out.
+//!
+//! Not lowered yet, each a named error: patterns (``n ~ `…` ``), `must`/`may`, a `.violation` at a span or place,
 //! `ordered by`, `sum`/`mean`/`join`, `match` captures, arithmetic, Soufflé's built-in functions (`cat`, `strlen`),
 //! negated disjunctions other than test sets, and the built-ins that take a relation besides the kind-set ones.
 
@@ -76,6 +80,8 @@ struct Lowerer {
     lattices: BTreeMap<String, (String, String)>,
     /// Relations given as a kind set.
     sets: BTreeSet<String>,
+    /// `.violation`s: (relation, columns, the column holding the code).
+    violations: Vec<(String, usize, Option<usize>)>,
     next: usize,
 }
 
@@ -107,7 +113,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             },
             Item::Policy(document) => l.prog.policies.push(document),
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
-            Item::Violation { name, .. } => return not_yet(format!(".violation {name}")).map_err(at),
+            Item::Violation { name, cols, code, tag, .. } => l.violation(name, cols, code, tag).map_err(at)?,
             Item::Clause { heads, body, edits } => {
                 if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
                     for (rel, row) in rows {
@@ -120,11 +126,16 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         }
     }
     for (heads, body, edits, line) in clauses {
-        l.clause(&heads, &body, &edits).map_err(|e| match e {
+        // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
+        if !edits.is_empty() {
+            continue;
+        }
+        l.clause(&heads, &body).map_err(|e| match e {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
             e => e,
         })?;
     }
+    l.findings();
     l.kind_sets()?;
     crate::code_rule_dsl::logic::front::finish(l.prog)
 }
@@ -187,10 +198,61 @@ impl Lowerer {
         Ok(())
     }
 
-    fn clause(&mut self, heads: &[Head], body: &[Lit], edits: &[STerm]) -> Result<(), Error> {
-        if !edits.is_empty() {
-            return not_yet("`=> edits`");
+    /// `.violation V(at, …)`: V is an output relation, and each of its rows is a finding (`findings`).
+    fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<String>, tag: Option<String>) -> Result<(), Error> {
+        let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
+        if at != "node" {
+            return not_yet(format!(".violation {name} at a {at} (only at a node)"));
         }
+        // `tag {t}` keeps findings at one place apart; the engine's findings are keyed by place and code, so
+        // it is checked and not carried.
+        for c in [&code, &tag].into_iter().flatten() {
+            if !cols.iter().any(|(n, _)| n == c) {
+                return Err(Error::Syntax(format!(".violation {name}: no column {c}")));
+            }
+        }
+        let code = code.map(|c| cols.iter().position(|(n, _)| *n == c).expect("a column"));
+        self.violations.push((name.clone(), cols.len(), code));
+        self.decl(name.clone(), cols, &[])?;
+        self.prog.outputs.push(name);
+        Ok(())
+    }
+
+    /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
+    /// column's line (the engine's findings relation, as the converter's programs give it).
+    fn findings(&mut self) {
+        if self.violations.is_empty() {
+            return;
+        }
+        let policy = self
+            .prog
+            .settings
+            .iter()
+            .find(|(k, _)| k == "policy")
+            .and_then(|(_, text)| text.split('"').nth(1))
+            .unwrap_or_default()
+            .to_owned();
+        self.prog.decls.insert("violation".to_owned(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        self.prog.outputs.retain(|o| o != "violation");
+        self.prog.outputs.push("violation".to_owned());
+        let v = |s: &str| Term::Var(s.to_owned());
+        for (name, arity, code) in std::mem::take(&mut self.violations) {
+            let cols: Vec<Term> = (0..arity).map(|i| if i == 0 || Some(i) == code { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
+            let code = code.map_or_else(|| Term::Str(name.clone()), |i| v(&format!("rr_v{i}")));
+            let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
+            self.prog.rules.push(Rule {
+                head: Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(name.clone()), code, v("rr_p"), v("rr_l")], neg: false, gated: false },
+                body: vec![
+                    atom(&name, cols),
+                    atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]),
+                    atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]),
+                    atom("line", vec![v("rr_v0"), v("rr_l")]),
+                ],
+            });
+        }
+    }
+
+    fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {
         let mut outer = Vec::new();
         heads.iter().flat_map(|h| &h.args).for_each(|a| a.vars(&mut outer));
         let bodies = self.conjunction(body, &outer.into_iter().collect())?;
@@ -236,7 +298,22 @@ impl Lowerer {
                 out
             }
             Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
-            Lit::Atom { rel, args, neg } => vec![vec![self.atom(rel, args, *neg)?]],
+            Lit::Atom { rel, args, neg } => {
+                // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
+                // variables (`front::finish`'s computed-term check).
+                let mut atom = self.atom(rel, args, *neg)?;
+                let mut out = Vec::new();
+                if let Literal::Atom(a) = &mut atom {
+                    for t in &mut a.args {
+                        if matches!(t, Term::Call(..)) {
+                            let v = self.fresh("t");
+                            out.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: std::mem::replace(t, Term::Var(v)) });
+                        }
+                    }
+                }
+                out.push(atom);
+                vec![out]
+            }
             Lit::Cmp { l, op, r } => self.comparison(l, op, r, outer)?,
         })
     }
@@ -316,6 +393,11 @@ impl Lowerer {
             ("nearest", [n, a, set]) if !neg => {
                 let kindset = self.set_name(rel, set)?;
                 return Ok(Literal::Nearest { n: var(n)?, a: var(a)?, kindset });
+            }
+            // `!nearest(n, _, set)`: n has no ancestor in the set, which is `!inside(n, _, set)`.
+            ("nearest", [n, STerm::Wild, set]) if neg => {
+                let set = self.set_name(rel, set)?;
+                return Ok(Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![self.term(n)?, Term::Wild], neg, gated: false }));
             }
             ("inside" | "has", [x, y, set]) => {
                 let set = self.set_name(rel, set)?;
@@ -454,8 +536,27 @@ impl Lowerer {
                 let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
                 Term::Call(if name == "dot" { "cat".to_owned() } else { name.clone() }, args)
             }
-            STerm::Call { name, functor: false, .. } => return not_yet(format!("the built-in function {name}")),
-            STerm::Bin { op, .. } => return not_yet(format!("arithmetic ({op})")),
+            STerm::Call { name, functor: false, args } => {
+                // Soufflé's functions: `cat` joins strings (the engine's `cat` joins with a dot, so it is `concat`).
+                let f = match (name.as_str(), args.len()) {
+                    ("cat", 2) => "concat",
+                    ("strlen" | "to_string", 1) => name.as_str(),
+                    ("substr", 3) => "substr",
+                    _ => return not_yet(format!("the built-in function {name}/{}", args.len())),
+                };
+                let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
+                Term::Call(f.to_owned(), args)
+            }
+            STerm::Bin { op, l, r } => {
+                let f = match *op {
+                    "+" => "add",
+                    "-" => "sub",
+                    "*" => "mul",
+                    "/" => "div",
+                    other => return not_yet(format!("arithmetic ({other})")),
+                };
+                Term::Call(f.to_owned(), vec![self.term(l)?, self.term(r)?])
+            }
             STerm::Agg { op, .. } => return not_yet(format!("the aggregate {op} as a term")),
             STerm::Tick(t) => return not_yet(format!("the template `{t}`")),
             STerm::Json(_) | STerm::Named(..) => return Err(Error::Syntax("a JSON term or an `ast` capture outside `ast(…)`".to_owned())),

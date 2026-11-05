@@ -214,7 +214,8 @@ pub(super) enum Item {
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
     /// `.violation V(at: node, …) "message"`, its `fix` lines' relations, and `options { … }`.
-    Violation { name: String, cols: Vec<(String, String)>, message: String, fixes: Vec<String> },
+    /// `code {c}` and `tag {t}` name the columns holding the finding's code and an extra key field.
+    Violation { name: String, cols: Vec<(String, String)>, code: Option<String>, tag: Option<String>, message: String, fixes: Vec<String> },
     /// `.policy { … }`: a policy document in JSON.
     Policy(serde_json::Value),
     /// A setting directive (`.policy "id" revision 1`, `.mode`, `.scope`, …): its name and its text.
@@ -474,10 +475,13 @@ impl<'s> Parser<'s> {
             "violation" => {
                 let name = self.id()?;
                 let cols = self.columns()?;
-                // `code {c}`: the finding's code, from a column.
-                if self.is_id("code") && self.is_p_at(1, "{") {
+                // `code {c}`: the finding's code, from a column; `tag {t}`: an extra key field.
+                let (mut code, mut tag) = (None, None);
+                while (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
+                    let which = if self.is_id("code") { &mut code } else { &mut tag };
                     self.i += 1;
-                    self.braces()?;
+                    let text = self.braces()?;
+                    *which = Some(text.trim_start_matches('{').trim_end_matches('}').trim().to_owned());
                 }
                 let message = self.string()?;
                 let mut fixes = Vec::new();
@@ -497,7 +501,7 @@ impl<'s> Parser<'s> {
                         break;
                     }
                 }
-                Item::Violation { name, cols, message, fixes }
+                Item::Violation { name, cols, code, tag, message, fixes }
             }
             "policy" if self.is_p("{") => {
                 let text = self.braces()?;

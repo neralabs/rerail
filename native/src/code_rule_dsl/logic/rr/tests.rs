@@ -177,11 +177,36 @@ fn unlowered_constructs_are_named() {
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
         (".decl a(x: number)\na(x) :- a(y), x = sum z : { a(z) }.", "sum"),
         (".decl a(x: symbol)\na(x) :- a(y), match(\"(?<x>.*)\", y).", "named groups"),
-        (".violation v(at: node) \"m\"", ".violation"),
+        (".violation v(at: span) \"m\"", "at a span"),
     ] {
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
     }
+}
+
+/// `.violation` rows become the engine's findings; fixes are left out; arithmetic and Soufflé's string
+/// functions are functors; a computed atom argument is bound first; `!nearest(n, _, set)` is `!inside`.
+#[test]
+fn directives_and_functions_lower() {
+    let p = parse(concat!(
+        ".policy \"data-layer:p\" revision 1\n",
+        ".decl child(p: node, c: node, i: number)\n.decl text(n: node, s: symbol)\n.decl e(s: symbol)\n.input child, text, e\n",
+        ".decl fdef(k: symbol)\nfdef(\"function_definition\").\n",
+        ".violation BAD(at: node, s: symbol) code {s} \"{s} at {at}\"\n",
+        "BAD(c, s) :- child(p, c, i), j = i + 1, child(p, _, j), text(c, t), s = cat(t, to_string(strlen(t))), !nearest(c, _, fdef).\n",
+        ".edit drop(n: node)\ndrop(c) :- child(_, c, 0) => delete(c).\n",
+        ".decl r(s: symbol)\nr(s) :- text(_, s), e(@dot(s, \"x\")).\n",
+    ))
+    .unwrap();
+    assert!(p.outputs.contains(&"BAD".to_owned()) && p.outputs.contains(&"violation".to_owned()));
+    let rule = |rel: &str| p.rules.iter().find(|r| r.head.rel == rel).map(ToString::to_string).unwrap_or_default();
+    assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)");
+    let bad = rule("BAD");
+    for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!inside_fdef($c, _)"] {
+        assert!(bad.contains(part), "{part} in {bad}");
+    }
+    assert!(!p.rules.iter().any(|r| r.head.rel == "drop"), "a fix is not run");
+    assert!(rule("r").contains("= @cat($s, \"x\"), e($rr_t"), "{}", rule("r"));
 }
 
 /// A program and what it was read from, compared field by field: the first difference.
@@ -325,6 +350,7 @@ fn write_rr_translations() {
 fn hand_written_rules_lowering_report() {
     let mut out = Vec::new();
     files(&rule_syntax().join("data-layer"), "rr", &mut out);
+    files(&library(), "rr", &mut out);
     for f in out {
         let result = parse_file(&f);
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));

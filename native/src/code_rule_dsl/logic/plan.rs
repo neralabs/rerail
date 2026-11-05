@@ -1320,6 +1320,14 @@ fn length(e: &Expr) -> Expr {
 fn substr(arguments: Vec<Expr>) -> Expr {
     call("substr", arguments)
 }
+/// A symbol's text: `sym_text` of it in atoms mode.
+fn text_of(atoms: Option<[i64; 3]>, e: &Expr) -> Expr {
+    if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() }
+}
+/// A text's symbol: `sym_atom` of it in atoms mode.
+fn symbol_of(atoms: Option<[i64; 3]>, e: Expr) -> Expr {
+    if atoms.is_some() { call("sym_atom", vec![e]) } else { e }
+}
 
 fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
     Ok(match t {
@@ -1350,8 +1358,16 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 }
                 // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
                 ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
-                // A sibling's position (`logic::convert`: `precedes`, `follows`).
+                // A sibling's position (`logic::convert`: `precedes`, `follows`), and `.rr`'s arithmetic.
                 ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),
+                ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
+                ("mul", [x, y]) => bin(Op::Multiply, x.clone(), y.clone()),
+                ("div", [x, y]) => bin(Op::Divide, x.clone(), y.clone()),
+                // `.rr`'s string functions (Soufflé's): `substr` counts from 0.
+                ("strlen", [x]) => length(&text_of(atoms, x)),
+                ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
+                ("to_string", [x]) => symbol_of(atoms, bin(Op::Concatenate, x.clone(), string(""))),
+                ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
                 ("flat_bin", [o, x, y]) => {

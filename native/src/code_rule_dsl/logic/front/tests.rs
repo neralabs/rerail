@@ -146,7 +146,8 @@ fn named_errors() {
     let derived = format!("{decls}.decl at(n: node, o: node)\nat(n, o) :- field(n, \"object\", o).\nq(n, s) :- nm(n, s).\nq(n, @dot(p, s)) :- at(n, o), q(o, p), nm(n, s).\n");
     assert!(parse(&derived).is_ok());
 
-    let computed = parse("a(x) :- e(@dot(x, x)).\n");
+    // The engine joins on variables: a computed atom argument is refused (`.rr` binds it first, `rr::lower`).
+    let computed = super::parse(".decl e(x: sym)\n.decl a(x: sym)\na($x) :- e(@cat($x, $x)).\n");
     assert!(matches!(computed, Err(Error::Syntax(m)) if m.contains("computed term")));
 }
 
