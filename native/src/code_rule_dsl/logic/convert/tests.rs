@@ -390,7 +390,12 @@ fn measure_converted_rules() {
         if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
             crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(id));
         }
-        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        // `RERAIL_MEASURE_BINDING=metal`: the file-local FIX on the device work queue.
+        let binding = match std::env::var("RERAIL_MEASURE_BINDING").as_deref() {
+            Ok("metal") => crate::code_rule_dsl::typing::file_local::Binding::Metal,
+            _ => crate::code_rule_dsl::typing::file_local::Binding::Cpu,
+        };
+        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", binding, 1 << 18).unwrap();
         let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
         let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
         println!(

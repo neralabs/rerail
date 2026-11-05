@@ -40,6 +40,9 @@ pub(in crate::code_rule_dsl) struct Solved {
     pub(in crate::code_rule_dsl) launches: usize,
     pub(in crate::code_rule_dsl) visits: u64,
     pub(in crate::code_rule_dsl) retries: u64,
+    /// The command buffers' GPU seconds, and the host's wall seconds waiting for them.
+    pub(in crate::code_rule_dsl) gpu: f64,
+    pub(in crate::code_rule_dsl) wall: f64,
 }
 
 /// `(start, items)` CSR of `edges` by their first element over `n` cells.
@@ -59,7 +62,7 @@ fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>) {
 pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Error> {
     let n = system.seeds.len();
     if n == 0 {
-        return Ok(Solved { values: Vec::new(), launches: 0, visits: 0, retries: 0 });
+        return Ok(Solved { values: Vec::new(), launches: 0, visits: 0, retries: 0, gpu: 0.0, wall: 0.0 });
     }
     if n > u32::MAX as usize / 4 {
         return Err(Error::BackendCapacity);
@@ -106,7 +109,7 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     let stats = MappedBuffer::zeroed::<u32>(device, 4)?;
     let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, pad: 0 };
     let pipeline = pipeline()?;
-    let launches = super::work_queue::run(device, &pipeline, &queue, groups, "Rerail lattice FIX", |encoder| {
+    let ran = super::work_queue::run(device, &pipeline, &queue, groups, "Rerail lattice FIX", |encoder| {
         for (index, buffer) in [
             &state, &values, &seeds, &copy_start, &copies, &bin_start, &bin_index, &bins, &out_start, &outs, &queued, &queue.slots, &queue.control, &stats,
         ]
@@ -126,9 +129,9 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
         _ => value,
     });
     if std::env::var_os("RERAIL_LAUNCHES").is_some() {
-        eprintln!("lattice queue: {n} cells, {} initial, {groups} groups, {launches} launches, {} visits, {} retries, {} slots used", initial.len(), stats[0], stats[1], queue.used());
+        eprintln!("lattice queue: {n} cells, {} initial, {groups} groups, {} launches, {} visits, {} retries, {} slots used", initial.len(), ran.launches, stats[0], stats[1], queue.used());
     }
-    Ok(Solved { values: values.collect(), launches, visits: u64::from(stats[0]), retries: u64::from(stats[1]) })
+    Ok(Solved { values: values.collect(), launches: ran.launches, visits: u64::from(stats[0]), retries: u64::from(stats[1]), gpu: ran.gpu, wall: ran.wall })
 }
 
 fn pipeline() -> Result<metal::ComputePipelineState, Error> {

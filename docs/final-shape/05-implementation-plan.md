@@ -479,9 +479,28 @@ What was left, and how each was closed (2026-11-03, the user's choice for the fi
   - **Native joins.** Each plan of the set engine, with rows into and out of every step, summed over chunks. A step that fans out shows as a jump, for example `6:30`.
   - **Warnings.** These flag an automatic index, a statement that is mostly full scans, many tiny statements, and a step that fans out more than 20× into over 1M rows.
   - **Notes.** Each rule's text by number, and which test each `strtest_k` relation stands for.
+  - **Plan (EXPLAIN ANALYZE), as in Postgres.** Per stratum, in run order: the engine that ran it and why. The engines are the native set engine, SQLite `INSERT … SELECT` per rule, a SQL view, the lattice fixpoint, the set fixpoint and SQLite's semi-naive fixpoint. When the native engine declines a stratum, the reason names the first step it has no native form for. Under each stratum, each rule plan shows:
+    - the planner's search: subsets kept and candidate orders priced;
+    - its estimated work and rows, its loops (chunks), replans and planning CPU;
+    - per step: the access method (scan, lookup on columns, membership, range in a document, anti-join, climb or descend the tree, filter), the source read (input, view of an input, derived, text test, this stratum, the last wave's delta), the rows the planner expected after the step, and the actual rows into and out of it, summed over loops.
+
+    A plan that differs between chunks is its own entry. The costliest plans by planning CPU and by actual rows come first.
+  - **Device (Metal).** Each work-queue kernel (nearest ancestors, `lattice_fixpoint`) per span: runs, launches, the command buffers' GPU time (`GPUStartTime` to `GPUEndTime`), the host's wall time waiting, and the cells solved. `RERAIL_MEASURE_BINDING=metal` runs the measurement on the device.
+  - **Decisions.** The run's choices, each with how often it was made:
+    - chunks and their size;
+    - the file-local split (rules per chunk and once, exports, base relations kept);
+    - each text test's relation, its patterns and how they are matched (hash set, one Aho-Corasick automaton, a glob set with literal shortcuts);
+    - the nearest-ancestor sets and where they solve;
+    - where `lattice_fixpoint` solves and why;
+    - the statistics source and sampling.
+
+    A device path that falls back to the CPU is also a warning.
   - Output: `profile.txt` (the report) and `spans.tsv`, `sql.tsv`, `native.tsv` (the tables).
   - First reading, admin-async-purity on 1 in 8 files (1,127 files, load 72). It takes 3.9 s of CPU. Parsing takes 2.0 s, and measuring the chunks' statistics 1.0 s (`node` alone 0.4 s, the program's constants 0.5 s). The rule itself takes 0.28 s, all native, and its SQL 17 ms. So this rule's cost is the shared machinery, not its joins.
   - Second reading, async-sync-boundary on 1 in 8 files (load about 110, so CPU is inflated). It takes 74.9 s of CPU, and 61 s of that is planning. Its 38 rules of 18 literals take 57 s: the planner orders a rule by dynamic programming over subsets of its atoms, and each of the 14 chunks plans every rule again, at about 0.11 s a plan. Running the joins takes under 1 s, and the SQL 0.02 s. The rules also read `doc($d, $p, …)` twice. The fix belongs to the planner (plans reused across chunks, a bound on the search for long bodies), not to the rule.
+  - Third reading, async-sync-boundary on the device (`RERAIL_MEASURE_BINDING=metal`, load about 120). The nearest-ancestor set takes 14 launches over 2.4M cells: 5.35 s of GPU time and 5.45 s waiting, against 0.31 s of host CPU. So on a shared GPU the device path is bound by wall time, not CPU. The EXPLAIN section shows two estimates to fix:
+    - `node(_, $s, 1169, _, _)` after `inside_k0` is estimated at 17,871 rows and produces 2.27M;
+    - a chunk where a text test matches nothing is estimated at 0 rows everywhere, so the planner orders unbound scans after it (harmless only while the test stays empty).
 - **List step 24 (2026-11-03): chunk k+1's preparation overlaps chunk k's run (E12).**
   - **What moved:** a worker thread reads, parses and binds `nearest` for each chunk (`syntax::with_nearest`). It hands the built chunk to the main thread over a channel bounded at one, so at most one chunk waits built and memory is two chunks'.
   - **How CPU is counted:** each thread measures its own CPU (`corpus::thread_usage`, Mach `thread_info` on macOS). The worker's is reported as `parse (worker)` and `batch (worker)`, the main thread's as the other phases, and `wait` is the main thread's time blocked on the channel.

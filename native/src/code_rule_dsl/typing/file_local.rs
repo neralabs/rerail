@@ -113,9 +113,13 @@ fn solve_device(system: &System) -> StoreResult<Option<Vec<i64>>> {
     match metal_lattice::solve(&device) {
         Ok(solved) => {
             crate::code_rule_dsl::prof::count("nearest.device_launches", solved.launches);
+            crate::code_rule_dsl::logic::profile::device("nearest ancestors (work queue, lattice FIX)", solved.launches as u64, solved.gpu, solved.wall, system.seeds.len() as u64);
             Ok(Some(solved.values))
         }
-        Err(crate::code_rule_dsl::transducer::packed::Error::UnsupportedBackend) => Ok(None),
+        Err(crate::code_rule_dsl::transducer::packed::Error::UnsupportedBackend) => {
+            crate::code_rule_dsl::logic::profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
+            Ok(None)
+        }
         Err(error) => Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
     }
 }
@@ -158,9 +162,19 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
 fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
     let n = trees.parent.len();
     let system = system(trees, sets)?;
+    crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells, {}", match binding {
+        Binding::Metal => "on the Metal work queue (one persistent dispatch per piece)",
+        Binding::Cpu => "on the CPU (binding cpu)",
+    }));
     let values = match binding {
-        Binding::Metal => solve_device(&system)?.map_or_else(|| solve_cpu(&system), |values| values),
-        Binding::Cpu => solve_cpu(&system),
+        Binding::Metal => {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "nearest on the Metal work queue".into());
+            solve_device(&system)?.map_or_else(|| solve_cpu(&system), |values| values)
+        }
+        Binding::Cpu => {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "nearest on the CPU".into());
+            solve_cpu(&system)
+        }
     };
     crate::code_rule_dsl::prof::count("nearest.cells", values.len());
     values

@@ -10,6 +10,15 @@
 //!   (`native`).
 //! - **Notes.** `note(key, text)`: one text per key (a rule's text, a statement's query plan).
 //!
+//! - **Plan (EXPLAIN ANALYZE).** Like Postgres's: per stratum, the engine that ran it and why; per rule plan, the
+//!   planner's search (subsets and candidates priced), its estimated work and rows, and per step the access method,
+//!   the source read, the estimated rows after the step and the actual rows into and out of it, summed over the loops
+//!   (chunks). A plan that differs between chunks is its own entry (`explain`).
+//! - **Device.** Each Metal kernel run: launches, the command buffers' GPU time (`GPUStartTime` to `GPUEndTime`),
+//!   the host's wall time waiting, and the cells it solved; and where a device path fell back.
+//! - **Decisions.** The run's choices and optimizations: the file-local split, chunks, text tests and their matchers,
+//!   nearest-ancestor sets and where they solve, inputs read in place.
+//!
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
@@ -76,6 +85,61 @@ struct State {
     /// By (span path, plan text): per step, rows in and out.
     native: BTreeMap<(String, String), Vec<(u64, u64)>>,
     notes: BTreeMap<String, String>,
+    /// Run-level decisions by (topic, text): how many times made.
+    decisions: BTreeMap<(String, String), u64>,
+    /// Strata in the order first run: key, engine, why, loops.
+    strata: Vec<Stratum>,
+    /// Plans by (stratum, kind, plan text).
+    plans: BTreeMap<(String, String, String), PlanTotal>,
+    /// Device kernels by (span path, kernel).
+    devices: BTreeMap<(String, String), DeviceTotal>,
+}
+
+struct Stratum {
+    key: String,
+    engine: String,
+    why: String,
+    loops: u64,
+}
+
+/// One planned step: the literal, how it is read, from what, and the rows the planner expects after it.
+#[derive(Clone, Debug)]
+pub(in crate::code_rule_dsl) struct StepPlan {
+    pub(in crate::code_rule_dsl) literal: String,
+    pub(in crate::code_rule_dsl) access: String,
+    pub(in crate::code_rule_dsl) source: String,
+    pub(in crate::code_rule_dsl) rows: f64,
+}
+
+/// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
+#[derive(Clone, Debug, Default)]
+pub(in crate::code_rule_dsl) struct RulePlan {
+    pub(in crate::code_rule_dsl) work: f64,
+    pub(in crate::code_rule_dsl) rows: f64,
+    pub(in crate::code_rule_dsl) subsets: u64,
+    pub(in crate::code_rule_dsl) candidates: u64,
+    pub(in crate::code_rule_dsl) steps: Vec<StepPlan>,
+}
+
+#[derive(Default)]
+struct PlanTotal {
+    rule: Option<usize>,
+    plan: RulePlan,
+    loops: u64,
+    planning: f64,
+    replans: u64,
+    actual: Vec<(u64, u64)>,
+    measured: bool,
+    produced: Option<u64>,
+}
+
+#[derive(Default)]
+struct DeviceTotal {
+    runs: u64,
+    launches: u64,
+    gpu: f64,
+    wall: f64,
+    cells: u64,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Default::default);
@@ -201,6 +265,94 @@ pub(in crate::code_rule_dsl) fn plan(db: &rusqlite::Connection, statement: &str)
     note(key, || text);
 }
 
+/// This thread's CPU now (to time a part a span cannot hold).
+pub(in crate::code_rule_dsl) fn now() -> f64 {
+    cpu()
+}
+
+/// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
+pub(in crate::code_rule_dsl) fn decision(topic: &str, text: impl FnOnce() -> String) {
+    if !on() {
+        return;
+    }
+    *STATE.lock().unwrap().decisions.entry((topic.to_owned(), text())).or_default() += 1;
+}
+
+/// The engine stratum `key` ran on, and why (the first reason given; one loop per call).
+pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
+    if !on() {
+        return;
+    }
+    let mut state = STATE.lock().unwrap();
+    match state.strata.iter_mut().find(|s| s.key == key) {
+        Some(s) if s.engine == engine => s.loops += 1,
+        Some(_) => {
+            // The engine changed between chunks: both are kept.
+            let (k, e, w) = (format!("{key} (chunk with {engine})"), engine.to_owned(), why());
+            match state.strata.iter_mut().find(|s| s.key == k) {
+                Some(s) => s.loops += 1,
+                None => state.strata.push(Stratum { key: k, engine: e, why: w, loops: 1 }),
+            }
+        }
+        None => state.strata.push(Stratum { key: key.to_owned(), engine: engine.to_owned(), why: why(), loops: 1 }),
+    }
+}
+
+/// A rule plan run in stratum `key`: `kind` (seed, join with its delta, SQL insert …), the rule's number, the CPU
+/// its planning took, how often it was replanned, the actual rows into and out of each step where measured, and the
+/// rows it produced where known. One loop per call; equal plans add up.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::code_rule_dsl) fn planned(
+    key: &str,
+    kind: &str,
+    rule: Option<usize>,
+    plan: &RulePlan,
+    planning: f64,
+    replans: u64,
+    actual: Option<&[(u64, u64)]>,
+    produced: Option<u64>,
+) {
+    if !on() {
+        return;
+    }
+    let text = plan.steps.iter().map(|s| s.literal.as_str()).collect::<Vec<_>>().join(" , ");
+    let mut state = STATE.lock().unwrap();
+    let t = state.plans.entry((key.to_owned(), kind.to_owned(), text)).or_default();
+    t.rule = rule;
+    t.plan = plan.clone();
+    t.loops += 1;
+    t.planning += planning;
+    t.replans += replans;
+    if let Some(actual) = actual {
+        t.measured = true;
+        if t.actual.len() < actual.len() {
+            t.actual.resize(actual.len(), (0, 0));
+        }
+        for (a, b) in t.actual.iter_mut().zip(actual) {
+            a.0 += b.0;
+            a.1 += b.1;
+        }
+    }
+    if let Some(n) = produced {
+        *t.produced.get_or_insert(0) += n;
+    }
+}
+
+/// A device kernel's run in the current span: its launches, GPU seconds, the host's wall seconds waiting, its cells.
+pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
+    if !on() {
+        return;
+    }
+    let path = current();
+    let mut state = STATE.lock().unwrap();
+    let t = state.devices.entry((path, kernel.to_owned())).or_default();
+    t.runs += 1;
+    t.launches += launches;
+    t.gpu += gpu;
+    t.wall += wall;
+    t.cells += cells;
+}
+
 /// Forgets everything recorded (a run's start).
 pub(in crate::code_rule_dsl) fn reset() {
     *STATE.lock().unwrap() = State::default();
@@ -221,6 +373,86 @@ pub(in crate::code_rule_dsl) fn spans() -> BTreeMap<String, SpanTotal> {
 
 fn short(s: &str, n: usize) -> String {
     if s.chars().count() <= n { s.to_owned() } else { format!("{}…", s.chars().take(n).collect::<String>()) }
+}
+
+/// An estimate of rows: two decimals below 10, else whole.
+fn rows(x: f64) -> String {
+    if x < 10.0 { format!("{x:.2}") } else { format!("{x:.0}") }
+}
+
+fn rule_name(rule: Option<usize>, kind: &str) -> String {
+    match rule {
+        Some(k) => format!("rule #{k:04} ({kind})"),
+        None => kind.to_owned(),
+    }
+}
+
+/// The EXPLAIN ANALYZE section: decisions, then each stratum's engine and its plans, steps with estimates and actuals.
+fn explain(r: &mut String, state: &State) {
+    let _ = writeln!(r, "\n== Decisions and optimizations (times made)");
+    if state.decisions.is_empty() {
+        r.push_str("(none recorded)\n");
+    }
+    let mut topic = "";
+    for ((t, text), n) in &state.decisions {
+        if t != topic {
+            let _ = writeln!(r, "{t}:");
+            topic = t;
+        }
+        let _ = writeln!(r, "  - {text}{}", if *n > 1 { format!("  (x{n})") } else { String::new() });
+    }
+    let _ = writeln!(
+        r,
+        "\n== Plan (EXPLAIN ANALYZE): strata in run order; per plan: est = the planner's rows after each step (per loop), actual = rows in -> out summed over loops"
+    );
+    // The costliest plans first: by planning CPU and by actual rows into their steps.
+    let rows_in = |t: &PlanTotal| t.actual.iter().map(|(a, _)| a).sum::<u64>();
+    let mut top: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().collect();
+    top.sort_by(|a, b| b.1.planning.total_cmp(&a.1.planning));
+    let _ = writeln!(r, "Costliest plans by planning CPU:");
+    for ((key, kind, _), t) in top.iter().take(8) {
+        let _ = writeln!(r, "  {:>8.3} s  {} in {key}  ({} loops, {} steps)", t.planning, rule_name(t.rule, kind), t.loops, t.plan.steps.len());
+    }
+    top.sort_by_key(|(_, t)| std::cmp::Reverse(rows_in(t)));
+    let _ = writeln!(r, "Costliest plans by actual rows into their steps:");
+    for ((key, kind, _), t) in top.iter().take(8).filter(|(_, t)| rows_in(t) > 0) {
+        let _ = writeln!(r, "  {:>12}  {} in {key}  ({} loops)", rows_in(t), rule_name(t.rule, kind), t.loops);
+    }
+    r.push('\n');
+    for s in &state.strata {
+        let plans: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().filter(|((k, _, _), _)| *k == s.key).collect();
+        let planning: f64 = plans.iter().map(|(_, t)| t.planning).sum();
+        let _ = writeln!(r, "Stratum {}  [engine: {}]  (loops={}, planning {planning:.3} s CPU)", short(&s.key, 120), s.engine, s.loops);
+        if !s.why.is_empty() {
+            let _ = writeln!(r, "  why: {}", s.why);
+        }
+        for ((_, kind, _), t) in plans {
+            let produced = t.produced.map_or(String::new(), |n| format!(" produced={n}"));
+            let _ = writeln!(
+                r,
+                "  -> {}  (est work={:.0} rows={:.1}) (loops={} replans={}{produced})  search: {} subsets, {} candidates; planning {:.3} s",
+                rule_name(t.rule, kind),
+                t.plan.work,
+                t.plan.rows,
+                t.loops,
+                t.replans,
+                t.plan.subsets,
+                t.plan.candidates,
+                t.planning
+            );
+            for (i, st) in t.plan.steps.iter().enumerate() {
+                let actual = if t.measured {
+                    t.actual.get(i).map_or("actual -".to_owned(), |(a, b)| format!("actual {a} -> {b}"))
+                } else {
+                    String::new()
+                };
+                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+            }
+        }
+    }
+    if state.strata.is_empty() {
+        r.push_str("(no strata recorded)\n");
+    }
 }
 
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
@@ -252,6 +484,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
     // The report.
     let mut r = String::new();
     r.push_str(header);
+    explain(&mut r, &state);
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
     let _ = writeln!(r, "\n== Spans: CPU (user + system), summed over calls; own = less the spans inside it ({roots:.2} s in all)");
     let _ = writeln!(r, "{:>9} {:>9} {:>6} {:>9}  span", "cpu s", "own s", "%", "calls");
@@ -304,6 +537,22 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
         let _ = writeln!(r, "{:>12}  {p}\n{:>14}steps {}\n{:>14}{}", work(steps), "", s.join(" "), "", short(plan, 600));
     }
 
+    let _ = writeln!(r, "\n== Device (Metal): per span and kernel; GPU = command buffers' GPU time, wait = host wall time");
+    if state.devices.is_empty() {
+        r.push_str("(no device work)\n");
+    }
+    for ((p, k), d) in &state.devices {
+        let _ = writeln!(
+            r,
+            "{:>9.3} ms GPU {:>9.3} ms wait {:>5} runs {:>5} launches {:>11} cells  {k}  ({p})",
+            d.gpu * 1e3,
+            d.wall * 1e3,
+            d.runs,
+            d.launches,
+            d.cells
+        );
+    }
+
     // Warnings: the shapes that usually explain a slow rule.
     let _ = writeln!(r, "\n== Warnings");
     let mut warned = 0;
@@ -328,6 +577,60 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
                 let _ = writeln!(r, "- native step {} fans out {}x ({} -> {} rows) in {p}:\n    {}", i + 1, w[1].0 / w[0].0, w[0].0, w[1].0, short(plan, 300));
                 warned += 1;
             }
+        }
+    }
+    // Planning that is a visible share of the run: one warning, its costliest plans named.
+    let mut slow: Vec<(&(String, String, String), &PlanTotal)> = state.plans.iter().filter(|(_, t)| t.planning > 0.01 * roots).collect();
+    slow.sort_by(|a, b| b.1.planning.total_cmp(&a.1.planning));
+    if !slow.is_empty() {
+        let total: f64 = slow.iter().map(|(_, t)| t.planning).sum();
+        let _ = writeln!(
+            r,
+            "- planning takes {total:.2} s CPU ({:.0}% of the run) in {} plans, each over 1% of the run; each is planned again per loop (chunk). A plan reused across chunks or a bounded search would remove it. The costliest:",
+            100.0 * total / roots.max(1e-9),
+            slow.len()
+        );
+        for ((key, kind, _), t) in slow.iter().take(5) {
+            let _ = writeln!(
+                r,
+                "    {} in {key}: {:.2} s over {} loops, {} literals, {} subsets and {} candidates a plan",
+                rule_name(t.rule, kind),
+                t.planning,
+                t.loops,
+                t.plan.steps.len(),
+                t.plan.subsets,
+                t.plan.candidates
+            );
+        }
+        warned += 1;
+    }
+    for ((key, kind, _), t) in &state.plans {
+        for (i, (st, a)) in t.plan.steps.iter().zip(&t.actual).enumerate() {
+            let est = st.rows * t.loops as f64;
+            let got = a.1 as f64;
+            if t.measured && (got > 100.0 * est.max(1.0) && got > 100_000.0) {
+                let _ = writeln!(r, "- {} in {key}: step {} ({}) estimated {est:.0} rows, produced {got:.0}: the estimate is off by over 100x.", rule_name(t.rule, kind), i + 1, st.literal);
+                warned += 1;
+            }
+        }
+    }
+    for ((p, k), d) in &state.devices {
+        // Over a second waiting on the device.
+        if d.wall > 1.0 {
+            let _ = writeln!(
+                r,
+                "- {k} in {p}: {:.2} s of GPU time for {} cells ({:.0} ns a cell); on a shared GPU the time includes other work queued ahead.",
+                d.gpu,
+                d.cells,
+                1e9 * d.gpu / (d.cells.max(1) as f64)
+            );
+            warned += 1;
+        }
+    }
+    for ((topic, text), _) in &state.decisions {
+        if topic == "fallback" {
+            let _ = writeln!(r, "- fallback: {text}");
+            warned += 1;
         }
     }
     if warned == 0 {
@@ -365,5 +668,42 @@ mod tests {
         assert!(s["a/b"].total > 0.0 && s["a"].total >= s["a/b"].total);
         assert!(s["a"].own < s["a"].total);
         assert_eq!(statements()[0].0, "a/b");
+    }
+
+    #[test]
+    fn explain_shows_engines_plans_devices_and_decisions() {
+        set(true);
+        reset();
+        decision("chunks", || "2 chunks".into());
+        stratum("violation", "native set engine", || "every rule has a native step".into());
+        stratum("violation", "native set engine", String::new);
+        let plan = RulePlan {
+            work: 10.0,
+            rows: 2.0,
+            subsets: 4,
+            candidates: 6,
+            steps: vec![
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0 },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0 },
+            ],
+        };
+        planned("violation", "seed violation", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
+        planned("violation", "seed violation", Some(3), &plan, 0.01, 1, Some(&[(1, 4), (4, 1)]), None);
+        {
+            let _s = span(|| "nearest".into());
+            device("nearest ancestors", 1, 0.002, 0.003, 100);
+        }
+        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
+        write(&dir, "header\n").unwrap();
+        let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
+        set(false);
+        assert!(report.contains("Stratum violation  [engine: native set engine]  (loops=2"), "{report}");
+        assert!(report.contains("why: every rule has a native step"));
+        assert!(report.contains("rule #0003 (seed violation)") && report.contains("loops=2 replans=1"));
+        // Actual rows add over the loops.
+        assert!(report.contains("actual 9 -> 3"), "{report}");
+        assert!(report.contains("nearest ancestors  (nearest)"));
+        assert!(report.contains("chunks:\n  - 2 chunks"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

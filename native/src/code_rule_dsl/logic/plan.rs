@@ -523,6 +523,18 @@ impl Model {
     /// step plus tape reads for `nearest` (climb: steps per row; descent: mean subtree size per row). With `first`
     /// (a body position), only orders anchored on that atom (a semi-naive delta).
     pub(in crate::code_rule_dsl) fn plan_rule(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<Plan> {
+        Ok(self.plan_rule_explained(prog, head, body, first)?.0)
+    }
+
+    /// `plan_rule`, and when profiling, the plan as EXPLAIN shows it (`profile::RulePlan`): the search's size, and per
+    /// step its access method, source and the rows expected after it.
+    pub(in crate::code_rule_dsl) fn plan_rule_explained(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        body: &[Literal],
+        first: Option<usize>,
+    ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         let stats = &self.stats;
         // var → constant kind, from kind($v, "k") atoms.
         let mut kinds: HashMap<&str, String> = HashMap::new();
@@ -708,6 +720,7 @@ impl Model {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
         type Best = (f64, f64, Vec<Step>, BTreeSet<String>, Vec<usize>);
+        let mut candidates = 0u64;
         let mut best_of: HashMap<u64, Best> = HashMap::new();
         best_of.insert(0, (0.0, 1.0, Vec::new(), BTreeSet::new(), (0..body.len()).filter(|&i| !is_join(&body[i])).collect()));
         for size in 1..=joins.len() {
@@ -724,6 +737,7 @@ impl Model {
                         continue; // semi-naive: the delta first
                     }
                     let Some((w, out, mode)) = step(l, *rows, bound) else { continue };
+                    candidates += 1;
                     let (mut order2, mut bound2, mut rest2) = (order.clone(), bound.clone(), rest.clone());
                     order2.push(Step { at: joins[i], lit: l.clone(), mode });
                     bound2.extend(l.vars());
@@ -767,6 +781,7 @@ impl Model {
                 }
             }
         }
+        let subsets = best_of.len() as u64;
         let Some((work, rows, order, _, rest)) = best_of.remove(&full) else {
             return Err(Error::Plan(format!("cannot order the body of {head}")));
         };
@@ -774,7 +789,71 @@ impl Model {
             let rest: Vec<String> = rest.iter().map(|&i| body[i].to_string()).collect();
             return Err(Error::Plan(format!("unplaced literals {rest:?} in {head}")));
         }
-        Ok((order, work, rows))
+        let explained = super::profile::on().then(|| {
+            // The chosen order step by step, priced as the search priced it.
+            let mut bound: BTreeSet<String> = BTreeSet::new();
+            let mut r = 1.0;
+            let mut steps = Vec::new();
+            for s in &order {
+                let cols = |a: &Atom, bound: &BTreeSet<String>| -> Vec<String> {
+                    (0..a.args.len())
+                        .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
+                        .map(|c| sql_col(&a.rel, c))
+                        .collect()
+                };
+                let source = |rel: &str| -> String {
+                    if rel.starts_with(super::strings::RELATION) {
+                        "text test".into()
+                    } else if prog.inputs.contains(&rel.to_owned()) {
+                        "input".into()
+                    } else if self.view_src.contains_key(rel) {
+                        "view of an input".into()
+                    } else {
+                        "derived".into()
+                    }
+                };
+                let (access, src) = match &s.lit {
+                    Literal::Atom(a) if !a.neg => {
+                        if let Some((_, out, _)) = step(&s.lit, r, &bound) {
+                            r = out;
+                        }
+                        let c = cols(a, &bound);
+                        let access = match s.mode {
+                            Some(Mode::Range) => format!("range in document on ({})", c.join(", ")),
+                            _ if c.is_empty() => "scan".to_owned(),
+                            _ if c.len() == a.args.len() => format!("membership on ({})", c.join(", ")),
+                            _ => format!("lookup on ({})", c.join(", ")),
+                        };
+                        (access, source(&a.rel))
+                    }
+                    Literal::Atom(a) => {
+                        r *= 0.5;
+                        (format!("anti-join on ({})", cols(a, &bound).join(", ")), source(&a.rel))
+                    }
+                    Literal::Nearest { .. } => {
+                        if let Some((_, out, _)) = step(&s.lit, r, &bound) {
+                            r = out;
+                        }
+                        (s.mode.map_or("nearest", Mode::name).to_owned() + " the tree", "tree".to_owned())
+                    }
+                    Literal::Cmp { op, .. } => {
+                        if *op != "=" {
+                            r *= 0.5;
+                        }
+                        (if *op == "=" { "assign or test" } else { "filter" }.to_owned(), String::new())
+                    }
+                    Literal::Agg { .. } => ("aggregate".to_owned(), String::new()),
+                    _ => {
+                        r *= 0.5;
+                        ("filter".to_owned(), String::new())
+                    }
+                };
+                bound.extend(s.lit.vars());
+                steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r });
+            }
+            super::profile::RulePlan { work, rows, subsets, candidates, steps }
+        });
+        Ok(((order, work, rows), explained))
     }
 
     /// A view over one input atom takes its statistics from the input's: a constant filters by its exact postings
@@ -1444,6 +1523,8 @@ struct Run<'a> {
     made: HashSet<(String, Vec<usize>)>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
+    why_not: Option<String>,
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
@@ -1507,15 +1588,15 @@ impl Run<'_> {
         Ok(self.db.query_row(sql, [], |r| r.get(0))?)
     }
 
-    fn insert_rows(&self, head: &Atom, select: &str) -> Result<()> {
-        if self.prog.lattice.contains_key(&head.rel) {
-            self.merge_lattice(&head.rel, select, false)?;
+    /// The rows `select` added to `head`'s relation (keys changed, for a lattice).
+    fn insert_rows(&self, head: &Atom, select: &str) -> Result<usize> {
+        Ok(if self.prog.lattice.contains_key(&head.rel) {
+            self.merge_lattice(&head.rel, select, false)?.max(0) as usize
         } else {
             let statement = format!("INSERT OR IGNORE INTO {} {select}", head.rel);
             super::profile::plan(self.db, &statement);
-            self.db.execute(&statement, [])?;
-        }
-        Ok(())
+            self.db.execute(&statement, [])?
+        })
     }
 
     /// Joins candidate values per key (flat lattice: equal stays, different becomes top) into `rel`; with `delta`,
@@ -1683,6 +1764,25 @@ fn live_stats(model: &mut Model, r: &str, live: LiveRel) {
 }
 
 /// A plan's step strings, which say whether a replan changed it.
+/// A stratum's name in the profile: its relations, cut at 80 characters.
+fn stratum_key(scc: &BTreeSet<String>) -> String {
+    let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
+    if key.len() > 80 { format!("{}…({} relations)", &key[..key.floor_char_boundary(80)], scc.len()) } else { key }
+}
+
+/// A delta probe's plan with the stratum's own relations named as read: the last wave's delta at `at`, else the
+/// rows so far.
+fn delta_sources(mut x: super::profile::RulePlan, order: &[Step], at: usize, scc: &BTreeSet<String>) -> super::profile::RulePlan {
+    for (i, st) in order.iter().enumerate() {
+        if let Literal::Atom(l) = &st.lit
+            && scc.contains(&l.rel)
+        {
+            x.steps[i].source = if i == at { "delta (last wave)".into() } else { "this stratum".into() };
+        }
+    }
+    x
+}
+
 fn shown(order: &[Step]) -> Vec<String> {
     order.iter().map(|s| s.lit.to_string()).collect()
 }
@@ -1912,7 +2012,9 @@ impl Run<'_> {
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
         let prog = self.prog;
+        self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
+            self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
             return Ok(false);
         }
         let rels: Vec<&String> = scc.iter().collect();
@@ -1938,11 +2040,27 @@ impl Run<'_> {
                 format!("{what} #{no} {}, {} literals", r.head.rel, r.body.len())
             })
         };
+        let profiling = super::profile::on();
+        let rule_no = |r: &Rule| prog.rules.iter().position(|x| std::ptr::eq(x, r));
+        // Per seed, then per probe: (kind, rule, plan as EXPLAIN shows it, planning CPU, replans).
+        let mut explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)> = Vec::new();
+        // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
+        let missing = |this: &Self, h: &Atom, order: &[Step], at: Option<usize>| -> String {
+            let k = (1..=order.len()).find(|&k| this.join_spec(h, &order[..k], at.filter(|&a| a < k), &ri, scc, &native_rels).is_none()).unwrap_or(order.len());
+            let s = &order[k.saturating_sub(1)];
+            format!("{}{} has no native step", s.lit, if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+        };
         for r in &seeds {
             let span = planning(r, "plan");
-            let (order, _, rows) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
+            let t0 = if profiling { super::profile::now() } else { 0.0 };
+            let ((order, _, rows), x) = self.model.plan_rule_explained(prog, &r.head, &r.body, None)?;
+            let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
-            let Some(spec) = self.join_spec(&r.head, &order, None, &ri, scc, &native_rels) else { return Ok(false) };
+            let Some(spec) = self.join_spec(&r.head, &order, None, &ri, scc, &native_rels) else {
+                self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, None)));
+                return Ok(false);
+            };
+            explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(format!("seed {} {}", ri[&r.head.rel], hex(&spec)));
             orders.push(order);
@@ -1954,9 +2072,16 @@ impl Run<'_> {
         for r in &rules {
             for (ai, a) in recursive(&r.body, scc) {
                 let _span = planning(r, "plan");
-                let (order, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
+                let t0 = if profiling { super::profile::now() } else { 0.0 };
+                let ((order, _, _), x) = self.model.plan_rule_explained(prog, &r.head, &r.body, Some(ai))?;
+                let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
-                let Some(spec) = self.join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else { return Ok(false) };
+                let Some(spec) = self.join_spec(&r.head, &order, Some(at), &ri, scc, &native_rels) else {
+                    self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, &order, Some(at))));
+                    return Ok(false);
+                };
+                let x = x.map(|x| delta_sources(x, &order, at, scc));
+                explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
                 let (whole, _, _) = self.model.plan_rule(prog, &r.head, &r.body, None)?;
                 let wspec = if whole[0].at != ai { self.join_spec(&r.head, &whole, None, &ri, scc, &native_rels) } else { None };
@@ -2016,11 +2141,17 @@ impl Run<'_> {
             for k in 0..probes.len() {
                 let (r, ai) = (probes[k].0, probes[k].1);
                 let span = planning(r, "replan");
-                let (new, _, _) = self.model.plan_rule(prog, &r.head, &r.body, Some(ai))?;
+                let t0 = if profiling { super::profile::now() } else { 0.0 };
+                let ((new, _, _), x) = self.model.plan_rule_explained(prog, &r.head, &r.body, Some(ai))?;
                 drop(span);
+                let e = &mut explained[seeds.len() + k];
+                e.3 += if profiling { super::profile::now() - t0 } else { 0.0 };
                 if shown(&new) == shown(&probes[k].2) {
                     continue;
                 }
+                e.4 += 1;
+                let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
+                e.2 = x.map(|x| delta_sources(x, &new, at, scc));
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = self
                     .join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
@@ -2035,6 +2166,20 @@ impl Run<'_> {
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
             for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
                 super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty));
+            }
+            let key = stratum_key(scc);
+            super::profile::stratum(&key, "native set engine", || {
+                format!(
+                    "every rule has a native step: component {name}, {} seed joins, {} delta probes, {} gates; inputs read in place, derived relations held in memory",
+                    seeds.len(),
+                    probes.len(),
+                    gates.len()
+                )
+            });
+            for (k, (kind, rule, x, took, replans)) in explained.iter().enumerate() {
+                if let Some(x) = x {
+                    super::profile::planned(&key, kind, *rule, x, *took, *replans, Some(counted.get(k).unwrap_or(&empty)), None);
+                }
             }
         }
         if let Some(file) = std::env::var_os("RDL_COMPONENTS") {
@@ -2627,7 +2772,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(planning);
     let tables = super::profile::span(|| "views and tables".into());
     let native = model.inputs.native.clone();
-    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new() };
+    let mut run = Run { prog, db, model, views: HashSet::new(), made: HashSet::new(), native_rels: BTreeSet::new(), pending: HashMap::new(), why_not: None };
     for (rel, view) in plan_views(prog, &mut run.model, &rules_by)? {
         let view = view_sql(&rel, &view);
         // SQLite keeps a temp view's statement without `TEMP`.
@@ -2705,6 +2850,8 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         let key = scc.iter().cloned().collect::<Vec<_>>().join("/");
         let _stratum = super::profile::span(|| format!("stratum {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
         let rule_no = |r: &Rule| prog.rules.iter().position(|x| std::ptr::eq(x, r)).expect("a rule of the program");
+        let skey = stratum_key(scc);
+        let mut why = if native.contains("program") { String::new() } else { format!("the native engine is off (modes: {native:?})") };
         if super::profile::on() {
             for r in &rules {
                 super::profile::note(format!("rule #{:04}", rule_no(r)), || r.to_string());
@@ -2718,6 +2865,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 outcome.native.insert(key);
                 continue;
             }
+            why = format!("the native engine declined: {}", run.why_not.take().unwrap_or_else(|| "no reason given".into()));
             if prog.gates.iter().any(|(g, _)| scc.contains(g)) {
                 return Err(Error::Plan(format!("gated negations in {scc:?} need native steps for every rule")));
             }
@@ -2744,9 +2892,12 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
             .collect();
         run.ensure(&read)?;
         let mut planned = Vec::new();
+        let mut explained = Vec::new();
         let planning = super::profile::span(|| "plan".into());
         for rule in &rules {
-            let (order, work, _) = run.model.plan_rule(prog, &rule.head, &rule.body, None)?;
+            let t0 = if super::profile::on() { super::profile::now() } else { 0.0 };
+            let ((order, work, _), x) = run.model.plan_rule_explained(prog, &rule.head, &rule.body, None)?;
+            explained.push((x, if super::profile::on() { super::profile::now() - t0 } else { 0.0 }));
             run.ensure_indexes(&order)?;
             outcome.chosen.push(Chosen {
                 rule: prog.rules.iter().position(|r| std::ptr::eq(r, *rule)).expect("a rule of the program"),
@@ -2760,21 +2911,27 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
         }
         drop(planning);
         if scc.iter().all(|r| run.views.contains(r)) {
+            super::profile::stratum(&skey, "SQL view", || "a view over the inputs: SQLite reads it in place where a rule joins it".into());
             continue;
         }
         let recursive =
             scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && scc.contains(&a.rel)));
         if !recursive {
-            for ((h, order), rule) in planned.iter().zip(&rules) {
+            super::profile::stratum(&skey, "SQLite (INSERT ... SELECT per rule)", || why.clone());
+            for (((h, order), rule), (x, took)) in planned.iter().zip(&rules).zip(&explained) {
                 let _rule = super::profile::span(|| format!("sql #{:04} {}", rule_no(rule), h.rel));
                 let sql = run.model.sql_select(prog, h, order, None, None)?;
-                run.insert_rows(h, &sql)?;
+                let n = run.insert_rows(h, &sql)?;
+                if let Some(x) = x {
+                    super::profile::planned(&skey, &format!("sql insert {} (span sql #{:04})", h.rel, rule_no(rule)), Some(rule_no(rule)), x, *took, 0, None, Some(n as u64));
+                }
             }
         } else {
             for r in scc {
                 db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {r} WHERE 0"), [])?;
             }
             if native.contains("fixpoint") && run.native_fixpoint(scc, &rules)? {
+                super::profile::stratum(&skey, "lattice fixpoint (lattice_fixpoint: CPU waves, or the Metal work queue)", || why.clone());
                 outcome.native.insert(key);
                 for r in scc {
                     run.refresh(r, false)?;
@@ -2782,6 +2939,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 continue;
             }
             if native.contains("setfix") && run.native_set_fixpoint(scc, &rules)? {
+                super::profile::stratum(&skey, "native set fixpoint (setfix)", || why.clone());
                 outcome.native.insert(key);
             } else {
                 // First round: every rule over the full (initially empty or seeded) relations.
@@ -2807,6 +2965,12 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
                 while changed != 0 {
                     changed = run.semi_naive_round(scc, &planned, false, &deltas)?;
                     n += 1;
+                }
+                super::profile::stratum(&skey, "SQLite semi-naive fixpoint", || format!("{why}; {n} rounds"));
+                for (((h, _), rule), (x, took)) in planned.iter().zip(&rules).zip(&explained) {
+                    if let Some(x) = x {
+                        super::profile::planned(&skey, &format!("sql round {}", h.rel), Some(rule_no(rule)), x, *took, 0, None, None);
+                    }
                 }
                 outcome.iterations.insert(key, n);
             }

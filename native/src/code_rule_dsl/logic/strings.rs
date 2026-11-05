@@ -149,6 +149,36 @@ impl Matcher {
         Ok(m)
     }
 
+    /// How the patterns are matched (EXPLAIN): the exact strings by hash, the literals by one Aho-Corasick automaton,
+    /// globs by a glob set (with literal shortcuts), words by hash and phrases in order.
+    pub(in crate::code_rule_dsl) fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.exact.is_empty() {
+            parts.push(format!("hash set of {} strings", self.exact.len()));
+        }
+        if let Some((_, anchors)) = &self.literals {
+            parts.push(format!("one Aho-Corasick automaton over {} literals", anchors.len()));
+        }
+        if let Some(g) = &self.globs {
+            parts.push(format!(
+                "glob set of {}{}",
+                g.len(),
+                match (self.glob_literals, self.glob_rest) {
+                    (true, true) => ", literal shortcuts for some",
+                    (true, false) => ", all literal shortcuts (glob set only for strings with '/')",
+                    _ => "",
+                }
+            ));
+        }
+        if !self.words.is_empty() {
+            parts.push(format!("hash set of {} words", self.words.len()));
+        }
+        if !self.phrases.is_empty() {
+            parts.push(format!("{} phrases in order", self.phrases.len()));
+        }
+        format!("{}{}", parts.join(" + "), if self.fold { ", case folded once per string" } else { "" })
+    }
+
     pub(in crate::code_rule_dsl) fn is_match(&self, s: &str) -> bool {
         let folded;
         let s = if self.fold {
@@ -313,10 +343,13 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
                 Some(r) => r.clone(),
                 None => {
                     let rel = format!("{RELATION}{}", ids.len());
-                    if super::profile::on() {
-                        super::profile::note(format!("test {rel}"), || format!("@{}({{{}}})", key.0, key.1.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>().join(", ")));
-                    }
-                    tests.push((rel.clone(), Arc::new(Matcher::new(&key.0, &key.1)?)));
+                    let matcher = Matcher::new(&key.0, &key.1)?;
+                    super::profile::decision("text tests (decision 0037: a relation per distinct test, each string tested once)", || {
+                        let shown: Vec<String> = key.1.iter().take(6).map(|p| format!("{p:?}")).collect();
+                        let more = if key.1.len() > 6 { format!(", … {} in all", key.1.len()) } else { String::new() };
+                        format!("{rel} = @{}({{{}{more}}}): {}", key.0, shown.join(", "), matcher.describe())
+                    });
+                    tests.push((rel.clone(), Arc::new(matcher)));
                     ids.insert(key, rel.clone());
                     rel
                 }

@@ -64,8 +64,16 @@ pub(in crate::code_rule_dsl) fn groups(items: usize) -> u64 {
     (items as u64).div_ceil(WIDTH * 4).clamp(1, GROUPS)
 }
 
+/// What a queue's run took: its launches, the command buffers' GPU seconds, and the host's wall
+/// seconds from the first commit to the last completion.
+pub(in crate::code_rule_dsl) struct Ran {
+    pub(in crate::code_rule_dsl) launches: usize,
+    pub(in crate::code_rule_dsl) gpu: f64,
+    pub(in crate::code_rule_dsl) wall: f64,
+}
+
 /// Runs `pipeline` (its buffers set by `bind`) over `queue` until no item is active: one launch,
-/// or more where every worker exited with items left. The launches it took.
+/// or more where every worker exited with items left.
 pub(in crate::code_rule_dsl) fn run(
     device: &Device,
     pipeline: &metal::ComputePipelineState,
@@ -73,9 +81,11 @@ pub(in crate::code_rule_dsl) fn run(
     groups: u64,
     label: &str,
     bind: impl Fn(&ComputeCommandEncoderRef),
-) -> Result<usize, Error> {
+) -> Result<Ran, Error> {
     let _scope = super::metal_backend::launch::LaunchScope::enter();
     let commands = device.new_command_queue();
+    let started = std::time::Instant::now();
+    let mut gpu = 0.0;
     for launch in 1..=LAUNCHES {
         let command = commands.new_command_buffer();
         command.set_label(label);
@@ -87,13 +97,14 @@ pub(in crate::code_rule_dsl) fn run(
         encoder.end_encoding();
         commit_checked(command)?;
         wait_checked(command)?;
+        gpu += super::metal_backend::launch::gpu_seconds(command);
         let [_, _, active, overflow] = queue.control();
         if overflow != 0 {
             return Err(Error::BackendCapacity);
         }
         if active == 0 {
             crate::code_rule_dsl::prof::count("queue.launches", launch);
-            return Ok(launch);
+            return Ok(Ran { launches: launch, gpu, wall: started.elapsed().as_secs_f64() });
         }
     }
     Err(Error::BackendFailure)

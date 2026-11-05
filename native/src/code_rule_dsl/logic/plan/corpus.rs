@@ -259,6 +259,19 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
+    crate::code_rule_dsl::logic::profile::decision("file-local split", || {
+        format!(
+            "{} rules run per chunk over its files (file-local); {} rules run once over all files (cross-file); {} relations exported to the cross part, {} base relations kept for it",
+            split.local.rules.len(),
+            split.cross.rules.len(),
+            split.exports.len(),
+            split.base.len()
+        )
+    });
+    crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
+        let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
+        format!("{} sets made by the transducer's file-local FIX, bound {binding:?}: {}", sets.len(), names.join(", "))
+    });
     let (local, cross) = (part(split.local), part(split.cross));
     // T's corpus statistics, read once: each chunk plans with them and its sources' own, measured in memory, and the
     // cross-file part with them and the chunks' totals. Without T, every chunk measures its own (`Own`).
@@ -276,6 +289,12 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         }
     };
     let own = t.is_none();
+    crate::code_rule_dsl::logic::profile::decision("statistics", || {
+        if own { "each chunk measures its own sources' statistics; the planner prices that chunk's plans from them".into() } else { "T's corpus statistics, read once, with each chunk's sources' own".into() }
+    });
+    if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().filter(|n| n != "1") {
+        crate::code_rule_dsl::logic::profile::decision("sampling", || format!("every {n}th file only (RERAIL_SAMPLE_EVERY): findings are a sample's"));
+    }
     let constants = Own::constants(&lowered.program);
     let mut own_totals = Own::default();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
@@ -542,6 +561,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
     let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
     drop(statements);
+    crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
     if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
