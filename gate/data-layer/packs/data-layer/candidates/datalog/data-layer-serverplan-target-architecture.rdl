@@ -1,0 +1,239 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl line(n: node, l: int)
+.decl syntax_error(d: int)
+.input doc, node, child, field, text, line, syntax_error
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.kindset k0 = "typed_default_parameter" | "typed_parameter"
+.kindset k1 = "identifier"
+.kindset k2 = "call"
+.kindset k3 = "case_clause"
+.kindset k4 = "if_clause"
+.decl in_scope(d: int)
+.decl m104(n: node)
+.decl m111(n: node)
+.decl m117(n: node)
+.decl m119(n: node)
+.decl m124(n: node)
+.decl m126(n: node)
+.decl m129(n: node)
+.decl m147(n: node)
+.decl m165(n: node)
+.decl m183(n: node)
+.decl m186(n: node)
+.decl m193(n: node)
+.decl m197(n: node)
+.decl m20(n: node)
+.decl m22(n: node)
+.decl m23(n: node)
+.decl m26(n: node)
+.decl m28(n: node)
+.decl m32(n: node)
+.decl m34(n: node)
+.decl m36(n: node)
+.decl m46(n: node)
+.decl m49(n: node)
+.decl m55(n: node)
+.decl m61(n: node)
+.decl m62(n: node)
+.decl m7(n: node)
+.decl m70(n: node)
+.decl m76(n: node)
+.decl m77(n: node)
+.decl m84(n: node)
+.decl m90(n: node)
+.decl m91(n: node)
+.decl m92(n: node)
+.decl m99(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names10(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl names6(s: sym)
+.decl names7(s: sym)
+.decl names8(s: sym)
+.decl names9(s: sym)
+.decl out_scope(d: int)
+.decl t10(s: sym)
+.decl t11(s: sym)
+.decl t121(s: sym)
+.decl t128(s: sym)
+.decl t136(s: sym)
+.decl t143(s: sym)
+.decl t146(s: sym)
+.decl t154(s: sym)
+.decl t161(s: sym)
+.decl t164(s: sym)
+.decl t172(s: sym)
+.decl t179(s: sym)
+.decl t182(s: sym)
+.decl t43(s: sym)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("BatchedStep").
+names0("BatchingStrategy").
+names0("CompoundSequenceStrategy").
+names0("DependentReadCteStrategy").
+names0("HomogeneousCteStrategy").
+names0("JsonAggregationStrategy").
+names0("SqliteReadSiblingBatchStrategy").
+names1("l2070_batching/executor.py").
+names2("ServerPlanStep").
+names3("step_tags").
+names4("getattr").
+names5("isinstance").
+names6("l2070_batching/physical_program.py").
+names7("l2070_batching/planning_contract.py").
+names8("l2070_batching/runtime_application.py").
+names9("driver_round_trips").
+names9("query_rtts").
+names9("round_trips").
+names10("execution_receipt").
+names10("receipt").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2065_plan_core/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2066_plan_optimizer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2070_server_plan/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l7300_sql_versioned_transactions/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l9700_sql_graph_query/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l2070_batching/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l9900_auto_api/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
+violation("data-layer-serverplan-target-architecture", "legacy-symbols", "SPTA004", $p, $l) :- node($v1, $n, _, _, _), doc($v1, $v2, _), node(_, $n, "class_definition", _, _), field($n, "name", $v3), node(_, $v3, "identifier", _, _), text($v3, $v4), names0($v4), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m7($n) :- node(_, $n, "class_definition", _, _).
+m7($n) :- node(_, $n, "function_definition", _, _).
+t10($s) :- doc(_, $s, _), @prefix($s, "impl/common/l2070_server_plan/").
+t10($s) :- doc(_, _, $s), @prefix($s, "impl/common/l2070_server_plan/").
+t10($s) :- doc(_, $s, _), @prefix($s, "l2070_batching/").
+t10($s) :- doc(_, _, $s), @prefix($s, "l2070_batching/").
+t11($s) :- doc(_, $s, _), @prefix($s, "impl/common/l2070_server_plan/codegen/").
+t11($s) :- doc(_, _, $s), @prefix($s, "impl/common/l2070_server_plan/codegen/").
+m20($n) :- node(_, $n, "typed_parameter", _, _).
+m20($n) :- node(_, $n, "typed_default_parameter", _, _).
+m22($n) :- node(_, $n, "list_splat_pattern", _, _).
+m22($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m23($n) :- child($n, $v21, _), m22($v21).
+m26($n) :- field($v25, "attribute", $n), node(_, $v25, "attribute", _, _).
+m28($n) :- field($v27, "name", $n), node(_, $v27, "keyword_argument", _, _).
+m32($n) :- field($v31, "attribute", $n), node(_, $v31, "attribute", _, _).
+m34($n) :- field($v33, "name", $n), node(_, $v33, "keyword_argument", _, _).
+m36($n) :- node(_, $n, "identifier", _, _), !m26($n), !m28($n), text($n, $v29), names2($v29).
+m36($n) :- inside($v30, $n, k1), node(_, $v30, "identifier", _, _), !m32($v30), !m34($v30), text($v30, $v35), names2($v35).
+violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", $p, $l) :- node($v14, $n, _, _, _), doc($v14, $v15, _), node(_, $n, "function_definition", _, _), node($v16, $n, _, _, _), doc($v16, $v17, _), names1($v17), field($n, "parameters", $v18), inside($v19, $v18, k0), m20($v19), !m23($v19), field($v19, "type", $v24), m36($v24), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t43($s) :- name(_, $s), @contains($s, ".steps.").
+t43($s) :- name(_, $s), @suffix($s, ".steps").
+m46($n) :- node(_, $n, "dotted_name", _, _).
+m46($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v45).
+m49($n) :- node(_, $n, "if_statement", _, _).
+m49($n) :- node(_, $n, "elif_clause", _, _).
+m49($n) :- node(_, $n, "conditional_expression", _, _).
+m55($n) :- node(_, $n, "identifier", _, _), text($n, $v52), names3($v52).
+m55($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v53), node(_, $v53, "identifier", _, _), text($v53, $v54), names3($v54).
+m61($n) :- node(_, $n, "identifier", _, _), text($n, $v58), names3($v58).
+m61($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v59), node(_, $v59, "identifier", _, _), text($v59, $v60), names3($v60).
+m62($n) :- node(_, $n, "call", _, _), field($n, "function", $v51), m55($v51).
+m62($n) :- inside($v56, $n, k2), node(_, $v56, "call", _, _), field($v56, "function", $v57), m61($v57).
+violation("data-layer-serverplan-target-architecture", "tag-conditions", "SPTA007", $p, $l) :- node($v47, $n, _, _, _), doc($v47, $v48, _), m49($n), field($n, "condition", $v50), m62($v50), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m70($n) :- node(_, $n, "identifier", _, _), text($n, $v67), names3($v67).
+m70($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v68), node(_, $v68, "identifier", _, _), text($v68, $v69), names3($v69).
+m76($n) :- node(_, $n, "identifier", _, _), text($n, $v73), names3($v73).
+m76($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v74), node(_, $v74, "identifier", _, _), text($v74, $v75), names3($v75).
+m77($n) :- node(_, $n, "call", _, _), field($n, "function", $v66), m70($v66).
+m77($n) :- inside($v71, $n, k2), node(_, $v71, "call", _, _), field($v71, "function", $v72), m76($v72).
+m84($n) :- node(_, $n, "identifier", _, _), text($n, $v81), names3($v81).
+m84($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v82), node(_, $v82, "identifier", _, _), text($v82, $v83), names3($v83).
+m90($n) :- node(_, $n, "identifier", _, _), text($n, $v87), names3($v87).
+m90($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v88), node(_, $v88, "identifier", _, _), text($v88, $v89), names3($v89).
+m91($n) :- node(_, $n, "call", _, _), field($n, "function", $v80), m84($v80).
+m91($n) :- inside($v85, $n, k2), node(_, $v85, "call", _, _), field($v85, "function", $v86), m90($v86).
+m92($n) :- field($n, "subject", $v65), m77($v65).
+m92($n) :- inside($v78, $n, k3), node(_, $v78, "case_clause", _, _), inside($v79, $v78, k4), node(_, $v79, "if_clause", _, _), m91($v79).
+violation("data-layer-serverplan-target-architecture", "tag-matches", "SPTA007", $p, $l) :- node($v63, $n, _, _, _), doc($v63, $v64, _), node(_, $n, "match_statement", _, _), m92($n), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m99($n) :- node(_, $n, "identifier", _, _), text($n, $v96), names4($v96).
+m99($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v97), node(_, $v97, "identifier", _, _), text($v97, $v98), names4($v98).
+m104($n) :- node(_, $n, "string", _, _).
+m104($n) :- node(_, $n, "concatenated_string", _, _).
+m111($n) :- node(_, $n, "identifier", _, _), text($n, $v108), names5($v108).
+m111($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v109), node(_, $v109, "identifier", _, _), text($v109, $v110), names5($v110).
+m117($n) :- field($v116, "attribute", $n), node(_, $v116, "attribute", _, _).
+m119($n) :- field($v118, "name", $n), node(_, $v118, "keyword_argument", _, _).
+t121($s) :- text(_, $s), @prefix($s, "Sql").
+t121($s) :- text(_, $s), @suffix($s, "Grammar").
+t121($s) :- text(_, $s), @suffix($s, "Stmt").
+m124($n) :- field($v123, "attribute", $n), node(_, $v123, "attribute", _, _).
+m126($n) :- field($v125, "name", $n), node(_, $v125, "keyword_argument", _, _).
+t128($s) :- text(_, $s), @prefix($s, "Sql").
+t128($s) :- text(_, $s), @suffix($s, "Grammar").
+t128($s) :- text(_, $s), @suffix($s, "Stmt").
+m129($n) :- node(_, $n, "identifier", _, _), !m117($n), !m119($n), text($n, $v120), t121($v120).
+m129($n) :- inside($v122, $n, k1), node(_, $v122, "identifier", _, _), !m124($v122), !m126($v122), text($v122, $v127), t128($v127).
+t136($s) :- name(_, $s), @prefix($s, "impl.sqlite").
+t136($s) :- name(_, $s), @prefix($s, "impl.postgres").
+t136($s) :- name(_, $s), @prefix($s, "impl.mariadb").
+t136($s) :- name(_, $s), @prefix($s, "l2000_connection").
+t136($s) :- name(_, $s), @prefix($s, "l2050_transaction").
+violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-physical_program.py-from", "SPTA012", $p, $l) :- node($v130, $n, _, _, _), doc($v130, $v131, _), node(_, $n, "import_from_statement", _, _), node($v132, $n, _, _, _), doc($v132, $v133, _), names6($v133), field($n, "module_name", $v134), name($v134, $v135), t136($v135), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t143($s) :- text(_, $s), @prefix($s, "impl.sqlite").
+t143($s) :- text(_, $s), @prefix($s, "impl.postgres").
+t143($s) :- text(_, $s), @prefix($s, "impl.mariadb").
+t143($s) :- text(_, $s), @prefix($s, "l2000_connection").
+t143($s) :- text(_, $s), @prefix($s, "l2050_transaction").
+t146($s) :- name(_, $s), @prefix($s, "impl.sqlite").
+t146($s) :- name(_, $s), @prefix($s, "impl.postgres").
+t146($s) :- name(_, $s), @prefix($s, "impl.mariadb").
+t146($s) :- name(_, $s), @prefix($s, "l2000_connection").
+t146($s) :- name(_, $s), @prefix($s, "l2050_transaction").
+m147($n) :- node(_, $n, "dotted_name", _, _), text($n, $v142), t143($v142).
+m147($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v144), name($v144, $v145), t146($v145).
+violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-physical_program.py-direct", "SPTA012", $p, $l) :- node($v137, $n, _, _, _), doc($v137, $v138, _), node(_, $n, "import_statement", _, _), node($v139, $n, _, _, _), doc($v139, $v140, _), names6($v140), field($n, "name", $v141), m147($v141), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t154($s) :- name(_, $s), @prefix($s, "impl.").
+t154($s) :- name(_, $s), @prefix($s, "l2000_connection").
+t154($s) :- name(_, $s), @prefix($s, "l2050_transaction").
+t154($s) :- name(_, $s), @prefix($s, "l2100_sql_grammar").
+violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-planning_contract.py-from", "SPTA012", $p, $l) :- node($v148, $n, _, _, _), doc($v148, $v149, _), node(_, $n, "import_from_statement", _, _), node($v150, $n, _, _, _), doc($v150, $v151, _), names7($v151), field($n, "module_name", $v152), name($v152, $v153), t154($v153), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t161($s) :- text(_, $s), @prefix($s, "impl.").
+t161($s) :- text(_, $s), @prefix($s, "l2000_connection").
+t161($s) :- text(_, $s), @prefix($s, "l2050_transaction").
+t161($s) :- text(_, $s), @prefix($s, "l2100_sql_grammar").
+t164($s) :- name(_, $s), @prefix($s, "impl.").
+t164($s) :- name(_, $s), @prefix($s, "l2000_connection").
+t164($s) :- name(_, $s), @prefix($s, "l2050_transaction").
+t164($s) :- name(_, $s), @prefix($s, "l2100_sql_grammar").
+m165($n) :- node(_, $n, "dotted_name", _, _), text($n, $v160), t161($v160).
+m165($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v162), name($v162, $v163), t164($v163).
+violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-planning_contract.py-direct", "SPTA012", $p, $l) :- node($v155, $n, _, _, _), doc($v155, $v156, _), node(_, $n, "import_statement", _, _), node($v157, $n, _, _, _), doc($v157, $v158, _), names7($v158), field($n, "name", $v159), m165($v159), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t172($s) :- name(_, $s), @prefix($s, "impl.sqlite").
+t172($s) :- name(_, $s), @prefix($s, "impl.postgres").
+t172($s) :- name(_, $s), @prefix($s, "impl.mariadb").
+t172($s) :- name(_, $s), @prefix($s, "l2000_connection").
+violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-runtime_application.py-from", "SPTA012", $p, $l) :- node($v166, $n, _, _, _), doc($v166, $v167, _), node(_, $n, "import_from_statement", _, _), node($v168, $n, _, _, _), doc($v168, $v169, _), names8($v169), field($n, "module_name", $v170), name($v170, $v171), t172($v171), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+t179($s) :- text(_, $s), @prefix($s, "impl.sqlite").
+t179($s) :- text(_, $s), @prefix($s, "impl.postgres").
+t179($s) :- text(_, $s), @prefix($s, "impl.mariadb").
+t179($s) :- text(_, $s), @prefix($s, "l2000_connection").
+t182($s) :- name(_, $s), @prefix($s, "impl.sqlite").
+t182($s) :- name(_, $s), @prefix($s, "impl.postgres").
+t182($s) :- name(_, $s), @prefix($s, "impl.mariadb").
+t182($s) :- name(_, $s), @prefix($s, "l2000_connection").
+m183($n) :- node(_, $n, "dotted_name", _, _), text($n, $v178), t179($v178).
+m183($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v180), name($v180, $v181), t182($v181).
+violation("data-layer-serverplan-target-architecture", "imports-l2070_batching-runtime_application.py-direct", "SPTA012", $p, $l) :- node($v173, $n, _, _, _), doc($v173, $v174, _), node(_, $n, "import_statement", _, _), node($v175, $n, _, _, _), doc($v175, $v176, _), names8($v176), field($n, "name", $v177), m183($v177), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m186($n) :- node(_, $n, "assignment", _, _).
+m186($n) :- node(_, $n, "augmented_assignment", _, _).
+m193($n) :- node(_, $n, "identifier", _, _), text($n, $v190), names9($v190).
+m193($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v191), node(_, $v191, "identifier", _, _), text($v191, $v192), names9($v192).
+m197($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v195), node(_, $v195, "identifier", _, _), text($v195, $v196), names10($v196).
+violation("data-layer-serverplan-target-architecture", "receipt-accounting", "SPTA010", $p, $l) :- node($v184, $n, _, _, _), doc($v184, $v185, _), m186($n), node($v187, $n, _, _, _), doc($v187, $v188, _), @prefix($v188, "l9900_auto_api/"), field($n, "left", $v189), m193($v189), field($n, "right", $v194), !m197($v194), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+.output violation

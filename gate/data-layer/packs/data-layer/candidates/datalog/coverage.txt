@@ -1,0 +1,138 @@
+165/562 clauses converted
+
+gaps (clauses):
+    113  a regex over file content or paths
+     52  another clause kind
+     39  semantic value
+     31  regex ^[^_].*_
+     16  semantic layout
+     14  budget
+     14  compare
+     13  nthChild other than a fixed position
+     12  regex (?i)^[rub]*f
+     10  utility call
+      7  a regex on the text of module (PlanScope|VersionedPlanScope|_callback_versioned_txn|execute_read_workflow|execute_write_workflow|imported_contract|run_read_plan_scope_workflow|run_write_plan_scope_workflow)
+      6  regex ^_*(?:Async|Lazy)
+      5  a regex on an anonymous token
+      4  a regex on the text of module (import\ |from\ )
+      4  a regex on the text of module (open_provider_read_plan|open_provider_versioned_read_plan|open_provider_versioned_write_plan|open_provider_write_plan|open_read_plan|open_write_plan)
+      4  comment nodes (not in node)
+      4  regex Callable\s*\[\s*\[
+      3  a regex on the text of module (Cache|cache|holder|lru_cache|memo|registry)
+      3  a regex on the text of module (def\ |class\ |impl\.|=|\()
+      3  a regex on the text of string ((?i)^[rub]*f)
+      3  semantic arguments
+      3  semantic binds
+      2  a regex on the text of for_statement|with_statement (^async\b)
+      2  a regex on the text of function_definition (\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|)
+      2  regex ^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$
+      1  a regex on the text of aliased_import|dotted_name (^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$)
+      1  a regex on the text of function_definition (expression\s*:\s*str\b|:\s*str\s*\|)
+      1  a regex on the text of import_from_statement (^from\s+\.*api\s+import\b)
+      1  a regex on the text of module ((?<LOCATION>execute_read_plan_workflow\(\
+\ \ \ \ \ \ \ \ conn,\
+\ \ \ \ \ \ \ \ AsyncReadPlanWorkflow))
+      1  a regex on the text of module ((?<LOCATION>execute_read_plan_workflow_async\(\
+\ \ \ \ \ \ \ \ \ \ \ \ conn,\
+\ \ \ \ \ \ \ \ \ \ \ \ SyncReadPlanWorkflow))
+      1  a regex on the text of module ((?<LOCATION>execute_write_plan_workflow\(\
+\ \ \ \ \ \ \ \ conn,\
+\ \ \ \ \ \ \ \ AsyncWritePlanWorkflow))
+      1  a regex on the text of module ((?<LOCATION>execute_write_plan_workflow_async\(\
+\ \ \ \ \ \ \ \ \ \ \ \ conn,\
+\ \ \ \ \ \ \ \ \ \ \ \ SyncWritePlanWorkflow))
+      1  a regex on the text of module ((?<LOCATION>run_read_plan_workflow_async\(\
+\ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\
+\ \ \ \ \ \ \ \ \ \ \ \ SyncReadPlanWorkflow))
+      1  a regex on the text of module ((?<LOCATION>run_write_plan_workflow_async\(\
+\ \ \ \ \ \ \ \ \ \ \ \ self\._async_conn\(\),\
+\ \ \ \ \ \ \ \ \ \ \ \ SyncWritePlanWorkflow))
+      1  a regex on the text of module (_execute_sql_or_schema_statement)
+      1  a regex on the text of module (_execute_sql_or_schema_statement_async)
+      1  a regex on the text of module (_is_schema_ddl_statement)
+      1  a regex on the text of module (arbitrary\ grammar\ router)
+      1  a regex on the text of module (compatibility\ router)
+      1  a regex on the text of module (if\ not\ txn\.is_committed\ and\ not\ txn\.is_rolled_back\ and\ not\ txn\.did_publish_branch)
+      1  a regex on the text of module (imported_contract\ =\ imported_contract_fn)
+      1  a regex on the text of module (logger\.error|logger\.warning|txn\.commit)
+      1  a regex on the text of string ((?m)(?:^[ \t]*[rRuU]*["']{1,3}|^[ \t]*)(?<IMPORT>(?:from api import [^\n]+|import api\s*(?:\n|$))))
+      1  regex (?:^|/)terminal_projection_builders\.py$
+      1  regex (?:^|\.)(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$
+      1  regex (?:^|\.)SqlFragment$
+      1  regex (?i)(?:sync|async)
+      1  regex (?i)^(?:asyncio|httpx|os|requests|shutil|socket|subprocess|time)$
+      1  regex (?i)doltdb|mariadb|mongodb|mysql|neo4j|postgres|sqlite
+      1  regex (?s).
+      1  regex ^(?:materialize|assert_result|.*_post_op)$
+      1  regex ^async\b
+      1  sibling walk with a stop rule
+
+approximations (rules):
+      3  a metavariable twice: equal names
+     23  a regex on a node of any kind as a name
+     39  neighbours among named children
+      1  nthChild among named children
+      3  patterns by named children
+      4  siblings among named children
+
+per rule:
+  data-layer-admin-async-purity: 0/3
+  data-layer-async-executor: 0/1
+  data-layer-async-patterns: 17/32
+  data-layer-async-sync-boundary: 63/63
+  data-layer-async-sync-delegation: 0/13
+  data-layer-backend-coupling: 0/2
+  data-layer-backend-type-strings: 0/13
+  data-layer-classvar-check: 0/1
+  data-layer-conn-or-txn-union: 0/2
+  data-layer-connection-caches: 0/48
+  data-layer-data-layer-compat-aliases: 0/2
+  data-layer-data-layer-facade-purity: 0/6
+  data-layer-dynamic-module-loading: 0/5
+  data-layer-error-handling: 0/2
+  data-layer-execution-authority-bypass: 0/1
+  data-layer-forwardref: 0/3
+  data-layer-grammar-allowlist-burndown: 0/5
+  data-layer-grammar-callable-constructors: 6/8
+  data-layer-grammar-fragment-usage: 2/5
+  data-layer-grammar-render-methods: 0/6
+  data-layer-grammar-str-params: 0/3
+  data-layer-hasattr-async: 0/2
+  data-layer-imperative-private-functions: 0/3
+  data-layer-impl-direct-execution: 0/1
+  data-layer-internal-dead-code: 0/1
+  data-layer-layer-violations: 0/6
+  data-layer-lazy-result-usage: 0/6
+  data-layer-legacy-execution-surfaces: 0/8
+  data-layer-missing-async-pairs: 0/3
+  data-layer-module-level-caches: 6/40
+  data-layer-no-api-root-imports: 0/2
+  data-layer-no-blanket-grammar-bypass: 1/3
+  data-layer-no-source-inspection: 0/5
+  data-layer-permission-error: 0/1
+  data-layer-plan-scope-ownership: 0/26
+  data-layer-plan-scope-side-effects: 1/6
+  data-layer-public-api-triples: 0/1
+  data-layer-raw-execute-regression: 1/7
+  data-layer-regex-sql-parsing: 0/9
+  data-layer-removed-compat-surfaces: 3/3
+  data-layer-render-fstrings: 0/1
+  data-layer-render-raw-strings: 0/4
+  data-layer-rust-sql-grammar-boundary: 0/8
+  data-layer-serverplan-bypass: 0/3
+  data-layer-serverplan-dispatch-architecture: 1/9
+  data-layer-serverplan-grammar-surface: 7/7
+  data-layer-serverplan-name-inference: 0/4
+  data-layer-serverplan-quality: 0/7
+  data-layer-serverplan-state-tripwires: 0/32
+  data-layer-serverplan-steps: 10/21
+  data-layer-serverplan-target-architecture: 11/16
+  data-layer-sql-grammar-escape-hatches: 0/11
+  data-layer-swallowed-exceptions: 0/4
+  data-layer-sync-async-signatures: 0/1
+  data-layer-transaction-callback-wrappers: 0/2
+  data-layer-transaction-closures: 0/6
+  data-layer-transaction-patterns: 35/58
+  data-layer-type-safety-patterns: 0/9
+  data-layer-unresolved-forward-refs: 0/1
+  data-layer-versioned-lifecycle-legacy-surfaces: 1/1

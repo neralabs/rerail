@@ -1,4 +1,4 @@
-# 0036: Text matching is chunk-at-a-time and per file, never per node per byte
+# 0038: Text matching is chunk-at-a-time and per file, never per node per byte
 
 Status: accepted (user, 2026-11-04); host part done, device part open (O66)
 Date: 2026-11-04

@@ -890,11 +890,11 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" => &[&["n"], &["s", "n"]],
-        "intval" | "op" | "tape" => &[&["n"]],
+        "intval" | "op" | "tape" | "line" => &[&["n"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
-        "doc" | "pkg" => &[&["d"]],
+        "doc" | "pkg" | "syntax_error" => &[&["d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
-        rel if rel.starts_with("nearest_") => &[&["n"], &["a"]],
+        rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()
@@ -942,8 +942,16 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
         Term::Call(f, args) => {
             let a = args.iter().map(|x| sql_term(x, env, atoms)).collect::<Result<Vec<_>>>()?;
             match (f.as_str(), a.as_slice()) {
+                // A literal test on a name or path (`logic::strings`): the atoms' text in atoms mode.
+                (f, [x, y]) if super::strings::is_test(f) => {
+                    let text = |e: &Expr| if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() };
+                    let op = super::strings::TESTS.iter().find(|t| **t == f).expect("a test");
+                    call("str_test", vec![string(op), text(x), text(y)])
+                }
                 // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
                 ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
+                // A sibling's position (`logic::convert`: `precedes`, `follows`).
+                ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
                 ("flat_bin", [o, x, y]) => {
@@ -2558,6 +2566,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
+    super::strings::register(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

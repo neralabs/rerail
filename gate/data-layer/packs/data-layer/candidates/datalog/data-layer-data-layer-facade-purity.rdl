@@ -1,0 +1,58 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input doc, node, child, field, text
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.decl in_scope(d: int)
+.decl m1(n: node)
+.decl m11(n: node)
+.decl m15(n: node)
+.decl m20(n: node)
+.decl m23(n: node)
+.decl m28(n: node)
+.decl m32(n: node)
+.decl m33(n: node)
+.decl m35(n: node)
+.decl m39(n: node)
+.decl m5(n: node)
+.decl out_scope(d: int)
+.decl u24(n: node)
+.decl u27(n: node)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/_file_locking.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/_mime_sniffing.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/rippling.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/versioned_merge.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/versioned_rebase.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/versioned_squash.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+m1($n) :- node(_, $n, "function_definition", _, _).
+m1($n) :- node(_, $n, "class_definition", _, _).
+m5($n) :- child($v2, $n, _), node(_, $v2, "module", _, _).
+m5($n) :- child($v3, $n, _), node(_, $v3, "decorated_definition", _, _), child($v4, $v3, _), node(_, $v4, "module", _, _).
+m11($n) :- child($v8, $n, _), node(_, $v8, "module", _, _).
+m11($n) :- child($v9, $n, _), node(_, $v9, "decorated_definition", _, _), child($v10, $v9, _), node(_, $v10, "module", _, _).
+m15($n) :- child($v12, $n, _), node(_, $v12, "module", _, _).
+m15($n) :- child($v13, $n, _), node(_, $v13, "decorated_definition", _, _), child($v14, $v13, _), node(_, $v14, "module", _, _).
+m20($n) :- node(_, $n, "dotted_name", _, _), text($n, $v17), @prefix($v17, "impl.").
+m20($n) :- node(_, $n, "aliased_import", _, _), field($n, "name", $v18), name($v18, $v19), @prefix($v19, "impl.").
+m23($n) :- node(_, $n, "assignment", _, _).
+m23($n) :- node(_, $n, "augmented_assignment", _, _).
+m28($n) :- node(_, $n, "string", _, _).
+m28($n) :- node(_, $n, "concatenated_string", _, _).
+m32($n) :- node(_, $n, "assignment", _, _).
+m32($n) :- node(_, $n, "augmented_assignment", _, _).
+m33($n) :- child($n, $v31, _), m32($v31).
+m35($n) :- node(_, $n, "string", _, _).
+m35($n) :- node(_, $n, "concatenated_string", _, _).
+m39($n) :- child($v36, $n, _), node(_, $v36, "module", _, _).
+m39($n) :- child($v37, $n, _), node(_, $v37, "decorated_definition", _, _), child($v38, $v37, _), node(_, $v38, "module", _, _).
+.output violation

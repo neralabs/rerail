@@ -13,3 +13,6 @@ pub(in crate::code_rule_dsl) mod native;
 pub(in crate::code_rule_dsl) mod plan;
 #[allow(dead_code)]
 pub(in crate::code_rule_dsl) mod sql;
+pub(in crate::code_rule_dsl) mod strings;
+#[cfg(test)]
+pub(in crate::code_rule_dsl) mod convert;

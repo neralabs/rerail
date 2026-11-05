@@ -131,7 +131,7 @@ fn searcher(source: &str) -> Option<std::sync::Arc<regex_automata::meta::Regex>>
 }
 
 /// The literals every match of `source` starts with (its prefix literals; at most 64, none empty), or
-/// `None` where there is no such finite set (`.*`, a class too wide). Decision 0036: a text test reads
+/// `None` where there is no such finite set (`.*`, a class too wide). Decision 0038: a text test reads
 /// the file once for these, not every node's text.
 fn prefixes(source: &str) -> Option<std::sync::Arc<Vec<memchr::memmem::Finder<'static>>>> {
     static PREFIXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<std::sync::Arc<Vec<memchr::memmem::Finder<'static>>>>>>> =
@@ -340,7 +340,7 @@ impl Micro {
         // The search's cache is this call's: the regex's own pool would keep one per thread for
         // the process (06 S7: ~18 MB at the labels' GPU peak).
         let mut fast = fast;
-        // Decision 0036: where every match starts with one of a few literals, the file is searched
+        // Decision 0038: where every match starts with one of a few literals, the file is searched
         // once for them (SIMD `memmem`); a node can match only if one starts inside its span, so
         // only those are confirmed. Without it every node's text is searched, and nested spans
         // read each byte once per ancestor.

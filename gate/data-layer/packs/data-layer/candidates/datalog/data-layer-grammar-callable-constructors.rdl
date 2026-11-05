@@ -1,0 +1,141 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.decl op(n: node, s: sym)
+.decl line(n: node, l: int)
+.decl syntax_error(d: int)
+.input doc, node, child, field, text, op, line, syntax_error
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.kindset k0 = "function_definition"
+.kindset k1 = "class_definition"
+.kindset k2 = "assignment"
+.kindset k3 = "call"
+.decl blocked113(low: node, high: node)
+.decl blocked143(low: node, high: node)
+.decl blocked175(low: node, high: node)
+.decl blocked27(low: node, high: node)
+.decl blocked31(low: node, high: node)
+.decl blocked43(low: node, high: node)
+.decl blocked76(low: node, high: node)
+.decl in_scope(d: int)
+.decl m104(n: node)
+.decl m121(n: node)
+.decl m13(n: node)
+.decl m131(n: node)
+.decl m136(n: node)
+.decl m137(n: node)
+.decl m151(n: node)
+.decl m16(n: node)
+.decl m161(n: node)
+.decl m166(n: node)
+.decl m167(n: node)
+.decl m17(n: node)
+.decl m173(n: node)
+.decl m183(n: node)
+.decl m203(n: node)
+.decl m23(n: node)
+.decl m25(n: node)
+.decl m39(n: node)
+.decl m5(n: node)
+.decl m51(n: node)
+.decl m54(n: node)
+.decl m57(n: node)
+.decl m58(n: node)
+.decl m64(n: node)
+.decl m66(n: node)
+.decl m84(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl out_scope(d: int)
+.decl u19(n: node)
+.decl u60(n: node)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("SimpleNamespace").
+names1("render").
+names2("Callable").
+names3("__init__").
+names4("self").
+names5("Any").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2100_sql_grammar/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/fragments.py").
+m5($n) :- node(_, $n, "identifier", _, _), text($n, $v2), names0($v2).
+m5($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v3), node(_, $v3, "identifier", _, _), text($v3, $v4), names0($v4).
+violation("data-layer-grammar-callable-constructors", "namespace-render", "SIMPLE_NAMESPACE_RENDER_HOOK", $p, $l) :- node(_, $n, "call", _, _), field($n, "function", $v1), m5($v1), field($n, "arguments", $v6), child($v6, $v7, _), node(_, $v7, "keyword_argument", _, _), field($v7, "name", $v8), node(_, $v8, "identifier", _, _), text($v8, $v9), names1($v9), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+violation("data-layer-grammar-callable-constructors", "dynamic-render", "DYNAMIC_RENDER_ASSIGNMENT", $p, $l) :- node(_, $n, "assignment", _, _), field($n, "left", $v10), node(_, $v10, "attribute", _, _), field($v10, "attribute", $v11), node(_, $v11, "identifier", _, _), text($v11, $v12), names1($v12), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+m13($n) :- node(_, $n, "typed_parameter", _, _).
+m13($n) :- node(_, $n, "typed_default_parameter", _, _).
+m13($n) :- node(_, $n, "default_parameter", _, _).
+m16($n) :- field($n, "name", $v14).
+m16($n) :- child($n, $v15, _), node(_, $v15, "identifier", _, _).
+m17($n) :- node(_, $n, "identifier", _, _).
+m17($n) :- m13($n), m16($n).
+m23($n) :- node(_, $n, "identifier", _, _), text($n, $v20), names2($v20).
+m23($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v21), node(_, $v21, "identifier", _, _), text($v21, $v22), names2($v22).
+m25($n) :- m23($n).
+m25($n) :- child($n, $v24, _), u19($v24).
+u19($n) :- m25($n).
+blocked27($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
+blocked31($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m39($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v34), node(_, $v34, "identifier", _, _), text($v34, $v35), names1($v35), !op($n, "async").
+m39($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v36), node(_, $v36, "function_definition", _, _), field($v36, "name", $v37), node(_, $v37, "identifier", _, _), text($v37, $v38), names1($v38), !op($v36, "async").
+violation("data-layer-grammar-callable-constructors", "callable-param", "CALLABLE_INIT_PARAM", $p, $l) :- m17($n), field($n, "type", $v18), u19($v18), inside($n, $v26, k0), !blocked27($n, $v26), node(_, $v26, "function_definition", _, _), field($v26, "name", $v28), node(_, $v28, "identifier", _, _), text($v28, $v29), names3($v29), !op($v26, "async"), inside($v26, $v30, k1), !blocked31($v26, $v30), node(_, $v30, "class_definition", _, _), field($v30, "body", $v32), child($v32, $v33, _), m39($v33), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+blocked43($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m51($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v46), node(_, $v46, "identifier", _, _), text($v46, $v47), names1($v47), !op($n, "async").
+m51($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v48), node(_, $v48, "function_definition", _, _), field($v48, "name", $v49), node(_, $v49, "identifier", _, _), text($v49, $v50), names1($v50), !op($v48, "async").
+m54($n) :- node(_, $n, "typed_parameter", _, _).
+m54($n) :- node(_, $n, "typed_default_parameter", _, _).
+m54($n) :- node(_, $n, "default_parameter", _, _).
+m57($n) :- field($n, "name", $v55).
+m57($n) :- child($n, $v56, _), node(_, $v56, "identifier", _, _).
+m58($n) :- node(_, $n, "identifier", _, _).
+m58($n) :- m54($n), m57($n).
+m64($n) :- node(_, $n, "identifier", _, _), text($n, $v61), names2($v61).
+m64($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v62), node(_, $v62, "identifier", _, _), text($v62, $v63), names2($v63).
+m66($n) :- m64($n).
+m66($n) :- child($n, $v65, _), u60($v65).
+u60($n) :- m66($n).
+violation("data-layer-grammar-callable-constructors", "callable-field", "CALLABLE_FIELD", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v40), node(_, $v40, "identifier", _, _), text($v40, $v41), names3($v41), !op($n, "async"), inside($n, $v42, k1), !blocked43($n, $v42), node(_, $v42, "class_definition", _, _), field($v42, "body", $v44), child($v44, $v45, _), m51($v45), field($n, "parameters", $v52), child($v52, $v53, _), m58($v53), field($v53, "type", $v59), u60($v59), inside($v67, $n, k2), node(_, $v67, "assignment", _, _), field($v67, "left", $v68), node(_, $v68, "attribute", _, _), field($v68, "object", $v69), node(_, $v69, "identifier", _, _), text($v69, $v70), names4($v70), field($v68, "attribute", $v71), node(_, $v71, "identifier", _, _), field($v67, "right", $v72), node(_, $v72, "identifier", _, _), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+blocked76($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m84($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v79), node(_, $v79, "identifier", _, _), text($v79, $v80), names1($v80), !op($n, "async").
+m84($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v81), node(_, $v81, "function_definition", _, _), field($v81, "name", $v82), node(_, $v82, "identifier", _, _), text($v82, $v83), names1($v83), !op($v81, "async").
+m104($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v87), node(_, $v87, "identifier", _, _), text($v87, $v88), names3($v88), !op($n, "async"), inside($v89, $n, k2), node(_, $v89, "assignment", _, _), field($v89, "left", $v90), node(_, $v90, "attribute", _, _), field($v90, "object", $v91), node(_, $v91, "identifier", _, _), text($v91, $v92), names4($v92), field($v90, "attribute", $v93), node(_, $v93, "identifier", _, _), field($v89, "right", $v94), node(_, $v94, "identifier", _, _).
+m104($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v95), node(_, $v95, "function_definition", _, _), field($v95, "name", $v96), node(_, $v96, "identifier", _, _), text($v96, $v97), names3($v97), !op($v95, "async"), inside($v98, $v95, k2), node(_, $v98, "assignment", _, _), field($v98, "left", $v99), node(_, $v99, "attribute", _, _), field($v99, "object", $v100), node(_, $v100, "identifier", _, _), text($v100, $v101), names4($v101), field($v99, "attribute", $v102), node(_, $v102, "identifier", _, _), field($v98, "right", $v103), node(_, $v103, "identifier", _, _).
+violation("data-layer-grammar-callable-constructors", "called-field", "CONSTRUCTOR_FIELD_CALLED_IN_RENDER", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v73), node(_, $v73, "identifier", _, _), text($v73, $v74), names1($v74), !op($n, "async"), inside($n, $v75, k1), !blocked76($n, $v75), node(_, $v75, "class_definition", _, _), field($v75, "body", $v77), child($v77, $v78, _), m84($v78), field($v75, "body", $v85), child($v85, $v86, _), m104($v86), inside($v105, $n, k3), node(_, $v105, "call", _, _), field($v105, "function", $v106), node(_, $v106, "attribute", _, _), field($v106, "object", $v107), node(_, $v107, "identifier", _, _), text($v107, $v108), names4($v108), field($v106, "attribute", $v109), node(_, $v109, "identifier", _, _), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+blocked113($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m121($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v116), node(_, $v116, "identifier", _, _), text($v116, $v117), names1($v117), !op($n, "async").
+m121($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v118), node(_, $v118, "function_definition", _, _), field($v118, "name", $v119), node(_, $v119, "identifier", _, _), text($v119, $v120), names1($v120), !op($v118, "async").
+m131($n) :- node(_, $n, "typed_parameter", _, _).
+m131($n) :- node(_, $n, "typed_default_parameter", _, _).
+m131($n) :- node(_, $n, "default_parameter", _, _).
+m136($n) :- field($n, "name", $v132), text($v127, $v133), text($v132, $v133).
+m136($n) :- child($n, $v134, _), node(_, $v134, "identifier", _, _), text($v127, $v135), text($v134, $v135).
+m137($n) :- node(_, $n, "identifier", _, _), text($v127, $v130), text($n, $v130).
+m137($n) :- m131($n), m136($n).
+blocked143($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m151($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v146), node(_, $v146, "identifier", _, _), text($v146, $v147), names1($v147), !op($n, "async").
+m151($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v148), node(_, $v148, "function_definition", _, _), field($v148, "name", $v149), node(_, $v149, "identifier", _, _), text($v149, $v150), names1($v150), !op($v148, "async").
+m161($n) :- node(_, $n, "typed_parameter", _, _).
+m161($n) :- node(_, $n, "typed_default_parameter", _, _).
+m161($n) :- node(_, $n, "default_parameter", _, _).
+m166($n) :- field($n, "name", $v162), text($v157, $v163), text($v162, $v163).
+m166($n) :- child($n, $v164, _), node(_, $v164, "identifier", _, _), text($v157, $v165), text($v164, $v165).
+m167($n) :- node(_, $n, "identifier", _, _), text($v157, $v160), text($n, $v160).
+m167($n) :- m161($n), m166($n).
+m173($n) :- node(_, $n, "identifier", _, _), text($n, $v170), names5($v170).
+m173($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v171), node(_, $v171, "identifier", _, _), text($v171, $v172), names5($v172).
+blocked175($low, $high) :- inside($low, $s, k1), node(_, $s, "class_definition", _, _), inside($s, $high, k1).
+m183($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v178), node(_, $v178, "identifier", _, _), text($v178, $v179), names1($v179), !op($n, "async").
+m183($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v180), node(_, $v180, "function_definition", _, _), field($v180, "name", $v181), node(_, $v181, "identifier", _, _), text($v181, $v182), names1($v182), !op($v180, "async").
+m203($n) :- node(_, $n, "function_definition", _, _), field($n, "name", $v186), node(_, $v186, "identifier", _, _), text($v186, $v187), names1($v187), !op($n, "async"), inside($v188, $n, k3), node(_, $v188, "call", _, _), field($v188, "function", $v189), node(_, $v189, "attribute", _, _), field($v189, "object", $v190), node(_, $v190, "identifier", _, _), text($v190, $v191), names4($v191), field($v189, "attribute", $v192), node(_, $v192, "identifier", _, _), text($v156, $v193), text($v192, $v193).
+m203($n) :- node(_, $n, "decorated_definition", _, _), field($n, "definition", $v194), node(_, $v194, "function_definition", _, _), field($v194, "name", $v195), node(_, $v195, "identifier", _, _), text($v195, $v196), names1($v196), !op($v194, "async"), inside($v197, $v194, k3), node(_, $v197, "call", _, _), field($v197, "function", $v198), node(_, $v198, "attribute", _, _), field($v198, "object", $v199), node(_, $v199, "identifier", _, _), text($v199, $v200), names4($v200), field($v198, "attribute", $v201), node(_, $v201, "identifier", _, _), text($v156, $v202), text($v201, $v202).
+violation("data-layer-grammar-callable-constructors", "any-called-field", "ANY_CALLED_CONSTRUCTOR_FIELD", $p, $l) :- node(_, $n, "function_definition", _, _), field($n, "name", $v140), node(_, $v140, "identifier", _, _), text($v140, $v141), names3($v141), !op($n, "async"), inside($n, $v142, k1), !blocked143($n, $v142), node(_, $v142, "class_definition", _, _), field($v142, "body", $v144), child($v144, $v145, _), m151($v145), inside($v152, $n, k2), node(_, $v152, "assignment", _, _), field($v152, "left", $v153), node(_, $v153, "attribute", _, _), field($v153, "object", $v154), node(_, $v154, "identifier", _, _), text($v154, $v155), names4($v155), field($v153, "attribute", $v156), node(_, $v156, "identifier", _, _), field($v152, "right", $v157), node(_, $v157, "identifier", _, _), field($n, "parameters", $v158), child($v158, $v159, _), m167($v159), field($v159, "type", $v168), node(_, $v168, "type", _, _), child($v168, $v169, _), m173($v169), inside($n, $v174, k1), !blocked175($n, $v174), node(_, $v174, "class_definition", _, _), field($v174, "body", $v176), child($v176, $v177, _), m183($v177), field($v174, "body", $v184), child($v184, $v185, _), m203($v185), node($d, $n, _, _, _), in_scope($d), !syntax_error($d), !out_scope($d), doc($d, $p, _), line($n, $l).
+.output violation

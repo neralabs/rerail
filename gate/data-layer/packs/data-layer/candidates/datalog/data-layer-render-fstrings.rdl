@@ -1,0 +1,12 @@
+.decl doc(d: int, path: sym, module: sym)
+.input doc
+.decl in_scope(d: int)
+.decl out_scope(d: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2100_sql_grammar/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+.output violation

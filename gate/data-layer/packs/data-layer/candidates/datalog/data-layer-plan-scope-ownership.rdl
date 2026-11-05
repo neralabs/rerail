@@ -1,0 +1,239 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input doc, node, child, field, text
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.kindset k0 = "function_definition"
+.kindset k1 = "class_definition"
+.kindset k2 = "class_definition" | "function_definition" | "lambda"
+.kindset k3 = "identifier"
+.kindset k4 = "concatenated_string" | "string"
+.decl blocked151(low: node, high: node)
+.decl blocked165(low: node, high: node)
+.decl blocked197(low: node, high: node)
+.decl in_scope(d: int)
+.decl m10(n: node)
+.decl m104(n: node)
+.decl m110(n: node)
+.decl m111(n: node)
+.decl m112(n: node)
+.decl m117(n: node)
+.decl m150(n: node)
+.decl m158(n: node)
+.decl m16(n: node)
+.decl m163(n: node)
+.decl m17(n: node)
+.decl m172(n: node)
+.decl m177(n: node)
+.decl m18(n: node)
+.decl m180(n: node)
+.decl m184(n: node)
+.decl m189(n: node)
+.decl m19(n: node)
+.decl m191(n: node)
+.decl m195(n: node)
+.decl m200(n: node)
+.decl m24(n: node)
+.decl m27(n: node)
+.decl m32(n: node)
+.decl m38(n: node)
+.decl m39(n: node)
+.decl m40(n: node)
+.decl m47(n: node)
+.decl m5(n: node)
+.decl m52(n: node)
+.decl m58(n: node)
+.decl m59(n: node)
+.decl m60(n: node)
+.decl m65(n: node)
+.decl m70(n: node)
+.decl m76(n: node)
+.decl m77(n: node)
+.decl m78(n: node)
+.decl m81(n: node)
+.decl m86(n: node)
+.decl m92(n: node)
+.decl m93(n: node)
+.decl m94(n: node)
+.decl m99(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl names6(s: sym)
+.decl names7(s: sym)
+.decl names8(s: sym)
+.decl names9(s: sym)
+.decl out_scope(d: int)
+.decl u178(n: node)
+.decl u182(n: node)
+.decl u187(n: node)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("run_read_plan_scope_workflow").
+names0("run_read_plan_scope_workflow_async").
+names0("run_write_plan_scope_workflow").
+names0("run_write_plan_scope_workflow_async").
+names1("callable").
+names1("getattr").
+names1("hasattr").
+names2("_execute_registered_returns").
+names2("_execute_registered_returns_async").
+names2("commit").
+names2("execute").
+names2("fetch").
+names2("rollback").
+names3("build").
+names4("execute_read_workflow").
+names4("execute_write_workflow").
+names5("AsyncVersionedPlanScope").
+names5("SyncVersionedPlanScope").
+names6("commit").
+names6("execute").
+names6("fetch").
+names6("open_read_plan").
+names6("open_write_plan").
+names6("read_transaction").
+names6("rollback").
+names6("write_transaction").
+names7("getattr").
+names7("hasattr").
+names8("_callback_versioned_txn").
+names9("__aenter__").
+names9("__aexit__").
+names9("__enter__").
+names9("__exit__").
+names9("__init__").
+names9("_bind_versioned_write_plan_owner").
+names9("_cleanup_and_restore_callback_versioned_write_plan").
+names9("_cleanup_and_restore_callback_versioned_write_plan_async").
+names9("_restore_versioned_write_plan_owner").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l[0-9][0-9][0-9][0-9]_*/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "conform/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer_testing/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.mypy_cache/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.pytest_cache/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.ruff_cache/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+m5($n) :- node(_, $n, "identifier", _, _).
+m5($n) :- node(_, $n, "default_parameter", _, _).
+m5($n) :- node(_, $n, "typed_parameter", _, _).
+m5($n) :- node(_, $n, "typed_default_parameter", _, _).
+m10($n) :- child($v7, $n, $v8), child($v7, $v6, $v9), $v8 < $v9, node(_, $v6, "positional_separator", _, _).
+m16($n) :- node(_, $n, "list_splat_pattern", _, _).
+m16($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m17($n) :- node(_, $n, "keyword_separator", _, _).
+m17($n) :- node(_, $n, "list_splat_pattern", _, _).
+m17($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m17($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v15, _), m16($v15).
+m18($n) :- child($v12, $n, $v13), child($v12, $v11, $v14), $v14 < $v13, m17($v11).
+m19($n) :- field($n, "parameters", $v3), child($v3, $v4, _), m5($v4), !m10($v4), !m18($v4).
+m24($n) :- field($n, "name", $v22), name($v22, $v23), @suffix($v23, "_async").
+m27($n) :- node(_, $n, "identifier", _, _).
+m27($n) :- node(_, $n, "default_parameter", _, _).
+m27($n) :- node(_, $n, "typed_parameter", _, _).
+m27($n) :- node(_, $n, "typed_default_parameter", _, _).
+m32($n) :- child($v29, $n, $v30), child($v29, $v28, $v31), $v30 < $v31, node(_, $v28, "positional_separator", _, _).
+m38($n) :- node(_, $n, "list_splat_pattern", _, _).
+m38($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m39($n) :- node(_, $n, "keyword_separator", _, _).
+m39($n) :- node(_, $n, "list_splat_pattern", _, _).
+m39($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m39($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v37, _), m38($v37).
+m40($n) :- child($v34, $n, $v35), child($v34, $v33, $v36), $v36 < $v35, m39($v33).
+m47($n) :- node(_, $n, "identifier", _, _).
+m47($n) :- node(_, $n, "default_parameter", _, _).
+m47($n) :- node(_, $n, "typed_parameter", _, _).
+m47($n) :- node(_, $n, "typed_default_parameter", _, _).
+m52($n) :- child($v49, $n, $v50), child($v49, $v48, $v51), $v50 < $v51, node(_, $v48, "positional_separator", _, _).
+m58($n) :- node(_, $n, "list_splat_pattern", _, _).
+m58($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m59($n) :- node(_, $n, "keyword_separator", _, _).
+m59($n) :- node(_, $n, "list_splat_pattern", _, _).
+m59($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m59($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v57, _), m58($v57).
+m60($n) :- child($v54, $n, $v55), child($v54, $v53, $v56), $v56 < $v55, m59($v53).
+m65($n) :- node(_, $n, "identifier", _, _).
+m65($n) :- node(_, $n, "default_parameter", _, _).
+m65($n) :- node(_, $n, "typed_parameter", _, _).
+m65($n) :- node(_, $n, "typed_default_parameter", _, _).
+m70($n) :- child($v67, $n, $v68), child($v67, $v66, $v69), $v68 < $v69, node(_, $v66, "positional_separator", _, _).
+m76($n) :- node(_, $n, "list_splat_pattern", _, _).
+m76($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m77($n) :- node(_, $n, "keyword_separator", _, _).
+m77($n) :- node(_, $n, "list_splat_pattern", _, _).
+m77($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m77($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v75, _), m76($v75).
+m78($n) :- child($v72, $n, $v73), child($v72, $v71, $v74), $v74 < $v73, m77($v71).
+m81($n) :- node(_, $n, "identifier", _, _).
+m81($n) :- node(_, $n, "default_parameter", _, _).
+m81($n) :- node(_, $n, "typed_parameter", _, _).
+m81($n) :- node(_, $n, "typed_default_parameter", _, _).
+m86($n) :- child($v83, $n, $v84), child($v83, $v82, $v85), $v84 < $v85, node(_, $v82, "positional_separator", _, _).
+m92($n) :- node(_, $n, "list_splat_pattern", _, _).
+m92($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m93($n) :- node(_, $n, "keyword_separator", _, _).
+m93($n) :- node(_, $n, "list_splat_pattern", _, _).
+m93($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m93($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v91, _), m92($v91).
+m94($n) :- child($v88, $n, $v89), child($v88, $v87, $v90), $v90 < $v89, m93($v87).
+m99($n) :- node(_, $n, "identifier", _, _).
+m99($n) :- node(_, $n, "default_parameter", _, _).
+m99($n) :- node(_, $n, "typed_parameter", _, _).
+m99($n) :- node(_, $n, "typed_default_parameter", _, _).
+m104($n) :- child($v101, $n, $v102), child($v101, $v100, $v103), $v102 < $v103, node(_, $v100, "positional_separator", _, _).
+m110($n) :- node(_, $n, "list_splat_pattern", _, _).
+m110($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m111($n) :- node(_, $n, "keyword_separator", _, _).
+m111($n) :- node(_, $n, "list_splat_pattern", _, _).
+m111($n) :- node(_, $n, "dictionary_splat_pattern", _, _).
+m111($n) :- node(_, $n, "typed_parameter", _, _), child($n, $v109, _), m110($v109).
+m112($n) :- child($v106, $n, $v107), child($v106, $v105, $v108), $v108 < $v107, m111($v105).
+m117($n) :- node(_, $n, "identifier", _, _), text($n, $v114), names1($v114).
+m117($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v115), node(_, $v115, "identifier", _, _), text($v115, $v116), names1($v116).
+m150($n) :- node(_, $n, "class_definition", _, _).
+m150($n) :- node(_, $n, "function_definition", _, _).
+m150($n) :- node(_, $n, "lambda", _, _).
+blocked151($low, $high) :- inside($low, $s, k2), m150($s), inside($s, $high, k1).
+m158($n) :- node(_, $n, "identifier", _, _), text($n, $v155), names0($v155).
+m158($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v156), node(_, $v156, "identifier", _, _), text($v156, $v157), names0($v157).
+m163($n) :- node(_, $n, "identifier", _, _), text($n, $v160), names6($v160).
+m163($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v161), node(_, $v161, "identifier", _, _), text($v161, $v162), names6($v162).
+blocked165($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
+m172($n) :- node(_, $n, "identifier", _, _), text($n, $v169), names7($v169).
+m172($n) :- node(_, $n, "attribute", _, _), field($n, "attribute", $v170), node(_, $v170, "identifier", _, _), text($v170, $v171), names7($v171).
+m177($n) :- node(_, $n, "string", _, _).
+m177($n) :- node(_, $n, "concatenated_string", _, _).
+m180($n) :- node(_, $n, "string", _, _).
+m180($n) :- node(_, $n, "concatenated_string", _, _).
+m184($n) :- node(_, $n, "string", _, _).
+m184($n) :- node(_, $n, "concatenated_string", _, _).
+m189($n) :- node(_, $n, "assignment", _, _).
+m189($n) :- node(_, $n, "augmented_assignment", _, _).
+m189($n) :- node(_, $n, "for_statement", _, _).
+m189($n) :- node(_, $n, "for_in_clause", _, _).
+m191($n) :- node(_, $n, "pattern_list", _, _).
+m191($n) :- node(_, $n, "tuple_pattern", _, _).
+m191($n) :- node(_, $n, "list_pattern", _, _).
+m191($n) :- node(_, $n, "tuple", _, _).
+m191($n) :- node(_, $n, "list", _, _).
+m191($n) :- node(_, $n, "list_splat_pattern", _, _).
+m191($n) :- node(_, $n, "parenthesized_expression", _, _).
+m195($n) :- field($v188, "left", $n), m189($v188).
+m195($n) :- child($v190, $n, _), m191($v190), u187($v190).
+m195($n) :- child($v192, $n, _), node(_, $v192, "as_pattern_target", _, _), field($v193, "alias", $v192), node(_, $v193, "as_pattern", _, _), child($v194, $v193, _), node(_, $v194, "with_item", _, _).
+u187($n) :- m195($n).
+blocked197($low, $high) :- inside($low, $s, k0), node(_, $s, "function_definition", _, _), inside($s, $high, k0).
+m200($n) :- inside($n, $v196, k0), !blocked197($n, $v196), node(_, $v196, "function_definition", _, _), field($v196, "name", $v198), node(_, $v198, "identifier", _, _), text($v198, $v199), names9($v199).
+.output violation

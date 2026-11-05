@@ -248,6 +248,8 @@ pub(crate) const PY_COLUMNS: [&[&str]; 5] = [
 #[derive(Clone, Copy)]
 enum View {
     Node,
+    /// `line(n, l)`: a node's first line, 1-based (rows laid out as `node`'s).
+    Line,
     Child,
     Field,
     Tape,
@@ -258,7 +260,7 @@ enum View {
 
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
-    /// Returns the batch and its small relations (`doc`, `pkg`, `text`, `intval`, `op`).
+    /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`).
     fn build(store: &ContentStore, documents: Vec<Document>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>)> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
@@ -276,6 +278,8 @@ impl Batch {
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
         let (mut doc, mut pkg, mut text, mut intval, mut op) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
+        let mut errors = Vec::new();
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
             let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
@@ -287,6 +291,9 @@ impl Batch {
             let key = i64::from(d.key);
             doc.push([key, string(&d.path) as i64, string(&module(&d.path)) as i64]);
             pkg.push([key, string(&package(&d.path)) as i64]);
+            if d.facts.syntax_errors {
+                errors.push(key);
+            }
             let f = &*d.facts;
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
@@ -344,6 +351,7 @@ impl Batch {
         let relations = vec![
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", relation(&["d", "p"], &mut pkg.iter().map(|&[d, p]| vec![d, atom(p)]))),
+            ("syntax_error", relation(&["d"], &mut errors.iter().map(|&d| vec![d]))),
             ("text", relation(&["n", "s"], &mut text.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("intval", relation(&["n", "v"], &mut intval.iter().map(|&[n, v]| vec![n, v]))),
             ("op", relation(&["n", "s"], &mut op.iter().map(|&[n, s]| vec![n, atom(s)]))),
@@ -361,7 +369,7 @@ impl Batch {
 
     fn offsets(&self, view: View) -> &[usize] {
         match view {
-            View::Node | View::Tape | View::Core => &self.nodes,
+            View::Node | View::Line | View::Tape | View::Core => &self.nodes,
             View::Child => &self.children,
             View::Field => &self.fields,
         }
@@ -387,7 +395,7 @@ impl Batch {
     fn row(&self, view: View, doc: usize, local: u32) -> Option<usize> {
         let p = &self.docs[doc];
         let within = match view {
-            View::Node | View::Tape | View::Core => Some(local as usize),
+            View::Node | View::Line | View::Tape | View::Core => Some(local as usize),
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => p.fielded.binary_search(&local).ok(),
         }?;
@@ -418,6 +426,7 @@ impl Viewed {
     fn columns(view: View) -> &'static [&'static str] {
         match view {
             View::Node => &["d", "n", "kind", "start", "end_"],
+            View::Line => &["n", "l"],
             View::Child => &["p", "c", "idx"],
             View::Field => &["p", "f", "c"],
             View::Tape => &["n", "par", "size", "depth"],
@@ -428,6 +437,7 @@ impl Viewed {
     fn own(&self) -> usize {
         match self.view {
             View::Node | View::Child => 1,
+            View::Line => 0,
             View::Field | View::Core => 2,
             View::Tape => 0,
         }
@@ -437,7 +447,7 @@ impl Viewed {
         match self.view {
             View::Child | View::Field => Some(0),
             View::Tape => Some(1),
-            View::Node | View::Core => None,
+            View::Node | View::Line | View::Core => None,
         }
     }
 }
@@ -528,7 +538,7 @@ impl Source for Viewed {
     fn value(&self, row: usize, column: usize) -> i64 {
         let (p, i) = self.batch.locate(self.view, row);
         let local = match self.view {
-            View::Node | View::Tape | View::Core => i as u32,
+            View::Node | View::Line | View::Tape | View::Core => i as u32,
             View::Child => i as u32 + 1,
             View::Field => p.fielded[i],
         };
@@ -544,6 +554,7 @@ impl Source for Viewed {
             }
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
+            (View::Line, 1) => i64::from(p.facts.start_line[id]),
             (View::Child | View::Field, 0) | (View::Tape, 1) => parent(),
             (View::Child, 2) => i64::from(p.idx[l]),
             (View::Field, 1) => i64::from(field_atom(p.tag, p.facts.field[id])),
@@ -571,7 +582,7 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
 /// The batch's views: `node`, `child`, `field`, `tape` and the `py.*` families.
 fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
-    for (name, view) in [("node", View::Node), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core)] {
+    for (name, view) in [("node", View::Node), ("line", View::Line), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core)] {
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
     }
     for (family, name) in PY.into_iter().enumerate() {
@@ -691,7 +702,7 @@ impl Batch {
 }
 
 /// `nearest_<set>(n, a)`: `a` is `n`'s nearest strict ancestor of a kind in the set, a row per node that has
-/// one, by `n` and by `a`. Made by the transducer's file-local FIX (`typing::file_local::nearest`). Rows are node rows
+/// one, by `n` and by `a`; or `inside_<set>(n, a)`, a row per such ancestor (decision 0036). Made by the transducer's file-local FIX (`typing::file_local::nearest`). Rows are node rows
 /// of the batch (`u32`), ids made on read.
 struct Nearest {
     batch: Arc<Batch>,
@@ -719,7 +730,7 @@ impl Source for Nearest {
         self.node.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let per = if column == 0 { 1 } else { 16 };
+        let per = if column == 0 { 2 } else { 16 };
         if batch { per * 8 } else { per }
     }
     fn indexed(&self, column: usize) -> bool {
@@ -730,7 +741,9 @@ impl Source for Nearest {
         for &v in values {
             let Some(at) = self.row_of(v) else { continue };
             if column == 0 {
-                out.extend(self.node.binary_search(&at).ok());
+                // One row per node for `nearest_<set>`, a run of them for `inside_<set>`.
+                let start = self.node.partition_point(|&r| r < at);
+                out.extend((start..self.node.len()).take_while(|&r| self.node[r] == at));
             } else {
                 let by_ancestor = self.by_ancestor.get_or_init(|| {
                     let mut rows: Vec<u32> = (0..self.node.len() as u32).collect();
@@ -748,8 +761,9 @@ impl Source for Nearest {
     }
 }
 
-/// T's base relations over `documents` (`sources`), and `nearest_<set>(n, a)` for each of `sets` (a name
-/// and its kind atoms), made by the transducer's file-local FIX bound as `binding`.
+/// T's base relations over `documents` (`sources`), and each of `sets` (a relation and its set's kind atoms),
+/// made by the transducer's file-local FIX bound as `binding`: `nearest_<set>(n, a)`, the nearest ancestor in the
+/// set, or `inside_<set>(n, a)`, every one (decision 0036).
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -765,11 +779,20 @@ pub(crate) fn with_nearest(
     let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;
     for ((name, _), ancestors) in sets.iter().zip(found) {
         let (mut node, mut ancestor) = (Vec::new(), Vec::new());
-        for (row, &a) in ancestors.iter().enumerate().filter(|(_, a)| **a != file_local::NONE) {
-            node.push(row as u32);
-            ancestor.push(a);
+        // `inside_<set>` (decision 0036): every ancestor in the set, the chain of nearest ones.
+        let all = name.starts_with(crate::code_rule_dsl::logic::front::AXIS);
+        for (row, &first) in ancestors.iter().enumerate() {
+            let mut a = first;
+            while a != file_local::NONE {
+                node.push(row as u32);
+                ancestor.push(a);
+                if !all {
+                    break;
+                }
+                a = ancestors[a as usize];
+            }
         }
-        out.push((format!("nearest_{name}"), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
+        out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
     Ok(out)
 }

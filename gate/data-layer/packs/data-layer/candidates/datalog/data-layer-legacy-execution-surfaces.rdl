@@ -1,0 +1,30 @@
+.decl doc(d: int, path: sym, module: sym)
+.input doc
+.decl in_scope(d: int)
+.decl out_scope(d: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+in_scope($d) :- doc($d, $p, _), @glob($p, "docs/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2070_server_plan/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l5200_sql_query/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l9700_sql_graph_query/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/mariadb/fts/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/postgres/fts/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/sqlite/fts/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l2050_transaction/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l4000_permissions/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l5200_vector_index/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l7200_versioned_transactions/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l8000_admin/tools/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l9900_auto_api/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "reqs/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.mypy_cache/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.pytest_cache/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.ruff_cache/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/conform/**").
+.output violation

@@ -1,0 +1,30 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input doc, node, field, text
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.decl in_scope(d: int)
+.decl m15(n: node)
+.decl m8(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl out_scope(d: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("Template").
+names1("SqlFragment").
+names2("static").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/l2100_sql_grammar/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+m8($n) :- node(_, $n, "identifier", _, _), text($n, $v3), names0($v3).
+m8($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v4), node(_, $v4, "identifier", _, _), text($v4, $v5), names1($v5), field($n, "attribute", $v6), node(_, $v6, "identifier", _, _), text($v6, $v7), names2($v7).
+m15($n) :- node(_, $n, "identifier", _, _), text($n, $v10), names0($v10).
+m15($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v11), node(_, $v11, "identifier", _, _), text($v11, $v12), names1($v12), field($n, "attribute", $v13), node(_, $v13, "identifier", _, _), text($v13, $v14), names2($v14).
+.output violation

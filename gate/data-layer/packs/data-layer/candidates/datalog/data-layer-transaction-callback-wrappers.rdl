@@ -1,0 +1,63 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl child(p: node, c: node, i: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input doc, node, child, field, text
+.kindset k0 = "class_definition"
+.kindset k1 = "call"
+.kindset k2 = "function_definition"
+.decl blocked19(low: node, high: node)
+.decl blocked25(low: node, high: node)
+.decl blocked4(low: node, high: node)
+.decl in_scope(d: int)
+.decl m10(n: node)
+.decl m15(n: node)
+.decl m22(n: node)
+.decl m41(n: node)
+.decl m7(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl out_scope(d: int)
+.decl u12(n: node)
+.decl u13(n: node)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("read").
+names0("read_async").
+names0("read_version").
+names0("read_version_async").
+names0("versioned_read").
+names0("versioned_read_async").
+names0("versioned_write").
+names0("versioned_write_async").
+names0("write").
+names0("write_async").
+names0("write_version").
+names0("write_version_async").
+names1("SyncDatabaseConnection").
+names1("SyncVersionedDatabaseConnection").
+names2("fn").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l[0-9][0-9][0-9][0-9]_*/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
+blocked4($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+m7($n) :- field($n, "name", $v1), node(_, $v1, "identifier", _, _), text($v1, $v2), names0($v2), inside($n, $v3, k0), !blocked4($n, $v3), node(_, $v3, "class_definition", _, _), field($v3, "name", $v5), node(_, $v5, "identifier", _, _), text($v5, $v6), names1($v6).
+m10($n) :- node(_, $n, "typed_parameter", _, _).
+m10($n) :- node(_, $n, "typed_default_parameter", _, _).
+m15($n) :- node(_, $n, "string", _, _).
+m15($n) :- node(_, $n, "concatenated_string", _, _).
+blocked19($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+m22($n) :- field($n, "name", $v16), node(_, $v16, "identifier", _, _), text($v16, $v17), names0($v17), inside($n, $v18, k0), !blocked19($n, $v18), node(_, $v18, "class_definition", _, _), field($v18, "name", $v20), node(_, $v20, "identifier", _, _), text($v20, $v21), names1($v21).
+blocked25($low, $high) :- inside($low, $high, k1), inside($low, $s, k2), node(_, $s, "function_definition", _, _), node(_, $s, _, $v26, $v27), node(_, $high, _, $v28, $v29), $v28 <= $v26, $v27 <= $v29, $s != $high.
+m41($n) :- child($n, $v38, _), node(_, $v38, "keyword_argument", _, _), field($v38, "name", $v39), node(_, $v39, "identifier", _, _), text($v39, $v40), names2($v40).
+.output violation

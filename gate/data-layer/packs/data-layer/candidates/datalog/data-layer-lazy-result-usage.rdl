@@ -1,0 +1,96 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input doc, node, field, text
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.kindset k0 = "class_definition"
+.decl blocked14(low: node, high: node)
+.decl blocked24(low: node, high: node)
+.decl blocked34(low: node, high: node)
+.decl blocked4(low: node, high: node)
+.decl blocked44(low: node, high: node)
+.decl blocked54(low: node, high: node)
+.decl in_scope(d: int)
+.decl m19(n: node)
+.decl m29(n: node)
+.decl m39(n: node)
+.decl m49(n: node)
+.decl m59(n: node)
+.decl m9(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl names6(s: sym)
+.decl out_scope(d: int)
+.decl t17(s: sym)
+.decl t27(s: sym)
+.decl t37(s: sym)
+.decl t47(s: sym)
+.decl t57(s: sym)
+.decl t7(s: sym)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("execute").
+names1("AsyncConnectionWrapper").
+names1("AsyncCursor").
+names1("BaseDeferredQuery").
+names1("Connection").
+names1("Cursor").
+names1("DeferredInsertFromQueryBuilder").
+names1("InProcessExecutor").
+names1("JobExecutor").
+names1("MigrationExecutorProtocol").
+names1("SyncExecutor").
+names2("first").
+names3("one").
+names4("one_or_none").
+names5("select_one").
+names6("select_one_or_raise").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l[0-9][0-9][0-9][0-9]_*/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
+blocked4($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+t7($s) :- name(_, $s), @contains($s, "Query").
+t7($s) :- name(_, $s), @contains($s, "Table").
+t7($s) :- name(_, $s), @contains($s, "Transaction").
+m9($n) :- node(_, $n, "identifier", _, _), text($n, $v8), names1($v8).
+blocked14($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+t17($s) :- name(_, $s), @contains($s, "Query").
+t17($s) :- name(_, $s), @contains($s, "Table").
+t17($s) :- name(_, $s), @contains($s, "Transaction").
+m19($n) :- node(_, $n, "identifier", _, _), text($n, $v18), names1($v18).
+blocked24($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+t27($s) :- name(_, $s), @contains($s, "Query").
+t27($s) :- name(_, $s), @contains($s, "Table").
+t27($s) :- name(_, $s), @contains($s, "Transaction").
+m29($n) :- node(_, $n, "identifier", _, _), text($n, $v28), names1($v28).
+blocked34($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+t37($s) :- name(_, $s), @contains($s, "Query").
+t37($s) :- name(_, $s), @contains($s, "Table").
+t37($s) :- name(_, $s), @contains($s, "Transaction").
+m39($n) :- node(_, $n, "identifier", _, _), text($n, $v38), names1($v38).
+blocked44($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+t47($s) :- name(_, $s), @contains($s, "Query").
+t47($s) :- name(_, $s), @contains($s, "Table").
+t47($s) :- name(_, $s), @contains($s, "Transaction").
+m49($n) :- node(_, $n, "identifier", _, _), text($n, $v48), names1($v48).
+blocked54($low, $high) :- inside($low, $s, k0), node(_, $s, "class_definition", _, _), inside($s, $high, k0).
+t57($s) :- name(_, $s), @contains($s, "Query").
+t57($s) :- name(_, $s), @contains($s, "Table").
+t57($s) :- name(_, $s), @contains($s, "Transaction").
+m59($n) :- node(_, $n, "identifier", _, _), text($n, $v58), names1($v58).
+.output violation

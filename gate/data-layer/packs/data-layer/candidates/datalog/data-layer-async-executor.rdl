@@ -1,0 +1,24 @@
+.decl doc(d: int, path: sym, module: sym)
+.input doc
+.decl in_scope(d: int)
+.decl out_scope(d: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/sqlite/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/postgres/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/mariadb/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/doltdb/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/mongodb/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/neo4j/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/l1595_llm_cache/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "impl/common/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "impl/read_through/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "impl/sqlite/native_async_wrapper.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "impl/sqlite/connection.py").
+.output violation

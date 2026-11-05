@@ -475,3 +475,164 @@ fn own_ingestion_derives_what_t_facts_do() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// O42: the corpus runner's typing inputs and outputs, end to end. A site package is summarized into the cache
+/// (a declaration that differs from what it derives is reported, not used); an application importing it reads the
+/// summaries and a user declaration as `declared_ret` facts, which type its calls, and each typed node gets a
+/// union term; with an empty cache the package's modules are pending, not ⊤, and the calls stay untyped.
+#[test]
+fn typed_corpus_reads_declarations_and_dependency_summaries() {
+    use super::corpus::{Typing, run_typed};
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("typed");
+    let write = |p: &str, text: &str| {
+        let p = dir.join(p);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    write("site/vendor/__init__.py", "from .core import make\n\ndef version():\n    return \"1.0\"\n");
+    write("site/vendor/core.py", "def make():\n    return 1\n");
+    write("site/vendor-1.0.dist-info/RECORD", "vendor/__init__.py,sha256=AAA,60\nvendor/core.py,sha256=BBB,30\nvendor-1.0.dist-info/RECORD,,\n");
+    write("decl/make.pyi", "# rerail.types/v1\n# module: vendor.core\ndef make() -> str: ...\n");
+    write("app/main.py", "from vendor import version\nfrom vendor.core import make\nimport other\na = version()\nb = make()\nc = other.thing()\n");
+    write("decl/other.pyi", "# rerail.types/v1\n# module: other\ndef thing() -> bytes | None: ...\n");
+    let src = std::fs::read_to_string(root().join("../typing/programs/workload.rdl")).unwrap();
+    let cache = dir.join("cache");
+
+    let summarize = Typing { summarize: Some(cache.clone()), declarations: vec![dir.join("decl/make.pyi")], ..Default::default() };
+    let r = run_typed(&src, &dir.join("site"), None, &dir.join("out-site"), "program", Binding::Cpu, 1 << 18, &summarize).unwrap();
+    assert_eq!(r.typing.summaries, 2, "{:?}", r.typing);
+    assert_eq!(r.typing.conflicts, vec![("vendor.core.make".to_owned(), "int".to_owned(), "str".to_owned())]);
+
+    let app = Typing { declarations: vec![dir.join("decl/other.pyi")], site: Some((dir.join("site"), cache.clone())), ..Default::default() };
+    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-app"), "program", Binding::Cpu, 1 << 18, &app).unwrap();
+    println!("{:?}", r.typing);
+    assert!(r.typing.pending.is_empty(), "{:?}", r.typing);
+    assert_eq!(r.typing.declared, 4, "version: str, make: int, thing: bytes | None");
+    let types: BTreeSet<String> = std::fs::read_to_string(dir.join("out-app/type_of.csv")).unwrap().lines().map(|l| l.rsplit('\t').next().unwrap().to_owned()).collect();
+    assert_eq!(types, BTreeSet::from(["str", "int", "bytes", "None"].map(String::from)));
+    // One term per typed node (the three calls and the three names they are assigned to): other.thing()'s, and
+    // `c`'s through it, are the closed union bytes | None.
+    let x = rusqlite::Connection::open(dir.join("out-app/cross.sqlite")).unwrap();
+    let nodes: i64 = x.query_row("SELECT count(*) FROM node_type", [], |r| r.get(0)).unwrap();
+    assert_eq!(nodes as usize, r.typing.typed_nodes);
+    let unions: Vec<i64> = x.prepare("SELECT t.arity FROM node_type n JOIN type_term t USING (tid) WHERE t.ctor = 1").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    assert_eq!(r.typing.typed_nodes, 6);
+    assert_eq!(unions, vec![2, 2]);
+
+    let cold = Typing { site: Some((dir.join("site"), dir.join("empty-cache"))), ..Default::default() };
+    let r = run_typed(&src, &dir.join("app"), None, &dir.join("out-cold"), "program", Binding::Cpu, 1 << 18, &cold).unwrap();
+    assert_eq!(r.typing.pending, vec!["vendor".to_owned(), "vendor.core".to_owned()]);
+    assert_eq!(std::fs::read_to_string(dir.join("out-cold/type_of.csv")).unwrap(), "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Step 30's primitives through the corpus runner: `line(n, l)`, and literal tests on names and paths (`@glob`,
+/// `@prefix`, `@suffix`) in place of regexes.
+#[test]
+fn rules_test_names_paths_and_lines_without_regexes() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("strings");
+    for (p, text) in [
+        ("impl/sqlite/fts/manager.py", "x = 1\n_hidden = 2\nfetch_async = 3\n"),
+        ("impl/base.py", "_also = 1\n"),
+        ("lib/other.py", "_outside = 1\n"),
+    ] {
+        let p = dir.join(p);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let program = r#"
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl text(n: node, s: sym)
+.decl line(n: node, l: int)
+.input doc, node, text, line
+.decl private_in_impl(p: sym, s: sym, l: int)
+private_in_impl($p, $s, $l) :- doc($d, $p, _), @glob($p, "impl/**/*.py"), node($d, $n, "identifier", _, _), text($n, $s),
+    @prefix($s, "_"), line($n, $l).
+.decl async_in_fts(s: sym)
+async_in_fts($s) :- doc($d, $p, _), @glob($p, "impl/*/fts/**"), node($d, $n, "identifier", _, _), text($n, $s), @suffix($s, "_async").
+.output private_in_impl, async_in_fts
+"#;
+    let out = dir.join("out");
+    let r = super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(r.files, 3);
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("private_in_impl"), "impl/base.py\t_also\t1\nimpl/sqlite/fts/manager.py\t_hidden\t2\n");
+    assert_eq!(read("async_in_fts"), "fetch_async\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The tree axes (decision 0036): `inside($n, $a, set)` holds every ancestor of `$n` whose kind is in the set, not
+/// only the nearest; `has($a, $n, set)` is the same pairs read from the ancestor; both negate.
+#[test]
+fn rules_read_inside_and_has_as_tape_relations() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def outer():\n    def inner():\n        g()\n    f()\nh()\n").unwrap();
+    let program = r#"
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input node, field, text
+.kindset fn = "function_definition"
+.decl callee(c: node, s: sym)
+callee($c, $s) :- node(_, $c, "call", _, _), field($c, "function", $x), text($x, $s).
+.decl fname(f: node, s: sym)
+fname($f, $s) :- node(_, $f, "function_definition", _, _), field($f, "name", $x), text($x, $s).
+// Every function a call is inside.
+.decl call_in(c: sym, f: sym)
+call_in($c, $f) :- callee($n, $c), inside($n, $a, fn), fname($a, $f).
+// Functions that have a call to g somewhere below them.
+.decl calls_g(f: sym)
+calls_g($f) :- fname($a, $f), has($a, $n, fn), callee($n, "g").
+// Calls inside no function.
+.decl top(c: sym)
+top($c) :- callee($n, $c), !inside($n, _, fn).
+.output call_in, calls_g, top
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
+    assert_eq!(read("calls_g"), "inner\nouter\n");
+    assert_eq!(read("top"), "h\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A measurement, not a check: "calls inside a function" asked three ways over a corpus (`RERAIL_MEASURE_CORPUS`),
+/// one way per run (`RERAIL_MEASURE` = `tape`, `interval` or `recursive`), each through the corpus runner. Prints the
+/// rows and each phase's CPU (user + system).
+/// - `tape`: `nearest` from the transducer's preorder pass (tape arithmetic);
+/// - `interval`: byte-span containment against function definitions (a Datalog join, no recursion);
+/// - `recursive`: an ancestor closure over `child` (Datalog recursion).
+#[test]
+#[ignore = "a measurement over a corpus on disk"]
+fn measure_inside_three_ways() {
+    let corpus = std::path::PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
+    let way = std::env::var("RERAIL_MEASURE").unwrap_or_else(|_| "tape".into());
+    let head = r#"
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.input node
+.kindset fn = "function_definition"
+.decl hit(c: node)
+.output hit
+"#;
+    let body = match way.as_str() {
+        // No inside test: the fixed cost of the run and of its `hit` rows.
+        "baseline" => "hit($c) :- node(_, $c, \"call\", _, _).\n",
+        "tape" => "hit($c) :- node(_, $c, \"call\", _, _), nearest($c, $f, fn).\n",
+        "interval" => "hit($c) :- node($d, $c, \"call\", $s, $e), node($d, $f, \"function_definition\", $fs, $fe), $fs <= $s, $e <= $fe.\n",
+        "recursive" => ".decl child(p: node, c: node, i: int)\n.input child\n.decl up(c: node, a: node)\nup($c, $p) :- node(_, $c, \"call\", _, _), child($p, $c, _).\nup($c, $a) :- up($c, $p), child($a, $p, _).\nhit($c) :- up($c, $f), node(_, $f, \"function_definition\", _, _).\n",
+        other => panic!("no way {other}"),
+    };
+    let binding = if std::env::var("RERAIL_MEASURE_METAL").is_ok() { crate::code_rule_dsl::typing::file_local::Binding::Metal } else { crate::code_rule_dsl::typing::file_local::Binding::Cpu };
+    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{way}"));
+    let r = super::corpus::run(&format!("{head}{body}"), &corpus, None, &out, "program", binding, 1 << 18).unwrap();
+    let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
+    println!("MEASURE {way}: {} files, {} nodes, {} chunks, hit rows {}, CPU {cpu:.2} s, peak RSS {:.0} MB", r.files, r.nodes, r.chunks, r.rows["hit"], r.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    for (name, user, sys, rss, statements) in &r.phases {
+        println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
+    }
+    let _ = std::fs::remove_dir_all(&out);
+}

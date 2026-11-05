@@ -1,0 +1,157 @@
+.decl doc(d: int, path: sym, module: sym)
+.decl node(d: int, n: node, kind: sym, start: int, end: int)
+.decl field(p: node, f: sym, c: node)
+.decl text(n: node, s: sym)
+.input doc, node, field, text
+.decl name(n: node, s: sym)
+name($n, $s) :- text($n, $s).
+name($n, @cat($o, $a)) :- node(_, $n, "attribute", _, _), field($n, "object", $x), name($x, $o), field($n, "attribute", $y), text($y, $a).
+.kindset k0 = "function_definition" | "lambda"
+.kindset k1 = "class_definition"
+.decl in_scope(d: int)
+.decl m103(n: node)
+.decl m107(n: node)
+.decl m11(n: node)
+.decl m111(n: node)
+.decl m115(n: node)
+.decl m119(n: node)
+.decl m123(n: node)
+.decl m126(n: node)
+.decl m127(n: node)
+.decl m130(n: node)
+.decl m140(n: node)
+.decl m142(n: node)
+.decl m144(n: node)
+.decl m145(n: node)
+.decl m148(n: node)
+.decl m15(n: node)
+.decl m158(n: node)
+.decl m160(n: node)
+.decl m164(n: node)
+.decl m168(n: node)
+.decl m169(n: node)
+.decl m171(n: node)
+.decl m172(n: node)
+.decl m175(n: node)
+.decl m185(n: node)
+.decl m187(n: node)
+.decl m19(n: node)
+.decl m191(n: node)
+.decl m192(n: node)
+.decl m23(n: node)
+.decl m27(n: node)
+.decl m3(n: node)
+.decl m31(n: node)
+.decl m35(n: node)
+.decl m39(n: node)
+.decl m43(n: node)
+.decl m47(n: node)
+.decl m51(n: node)
+.decl m55(n: node)
+.decl m59(n: node)
+.decl m63(n: node)
+.decl m67(n: node)
+.decl m7(n: node)
+.decl m71(n: node)
+.decl m75(n: node)
+.decl m79(n: node)
+.decl m83(n: node)
+.decl m87(n: node)
+.decl m91(n: node)
+.decl m95(n: node)
+.decl m99(n: node)
+.decl names0(s: sym)
+.decl names1(s: sym)
+.decl names2(s: sym)
+.decl names3(s: sym)
+.decl names4(s: sym)
+.decl names5(s: sym)
+.decl out_scope(d: int)
+.decl u134(n: node)
+.decl u152(n: node)
+.decl u179(n: node)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("__all__").
+names1("cache").
+names1("lru_cache").
+names2("functools").
+names3("_commit_branch_domain_metadata").
+names4("_commit_branch_tree_validation_type_filters").
+names5("_get_sql_branded_types").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "data_layer/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "_internal/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "l[0-9][0-9][0-9][0-9]_*/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test_*.py").
+m3($n) :- node(_, $n, "identifier", _, _), text($n, $v2), names0($v2).
+m7($n) :- node(_, $n, "identifier", _, _), text($n, $v6), names0($v6).
+m11($n) :- node(_, $n, "identifier", _, _), text($n, $v10), names0($v10).
+m15($n) :- node(_, $n, "identifier", _, _), text($n, $v14), names0($v14).
+m19($n) :- node(_, $n, "identifier", _, _), text($n, $v18), names0($v18).
+m23($n) :- node(_, $n, "identifier", _, _), text($n, $v22), names0($v22).
+m27($n) :- node(_, $n, "identifier", _, _), text($n, $v26), names0($v26).
+m31($n) :- node(_, $n, "identifier", _, _), text($n, $v30), names0($v30).
+m35($n) :- node(_, $n, "identifier", _, _), text($n, $v34), names0($v34).
+m39($n) :- node(_, $n, "identifier", _, _), text($n, $v38), names0($v38).
+m43($n) :- node(_, $n, "identifier", _, _), text($n, $v42), names0($v42).
+m47($n) :- node(_, $n, "identifier", _, _), text($n, $v46), names0($v46).
+m51($n) :- node(_, $n, "identifier", _, _), text($n, $v50), names0($v50).
+m55($n) :- node(_, $n, "identifier", _, _), text($n, $v54), names0($v54).
+m59($n) :- node(_, $n, "identifier", _, _), text($n, $v58), names0($v58).
+m63($n) :- node(_, $n, "identifier", _, _), text($n, $v62), names0($v62).
+m67($n) :- node(_, $n, "identifier", _, _), text($n, $v66), names0($v66).
+m71($n) :- node(_, $n, "identifier", _, _), text($n, $v70), names0($v70).
+m75($n) :- node(_, $n, "identifier", _, _), text($n, $v74), names0($v74).
+m79($n) :- node(_, $n, "identifier", _, _), text($n, $v78), names0($v78).
+m83($n) :- node(_, $n, "identifier", _, _), text($n, $v82), names0($v82).
+m87($n) :- node(_, $n, "identifier", _, _), text($n, $v86), names0($v86).
+m91($n) :- node(_, $n, "identifier", _, _), text($n, $v90), names0($v90).
+m95($n) :- node(_, $n, "identifier", _, _), text($n, $v94), names0($v94).
+m99($n) :- node(_, $n, "identifier", _, _), text($n, $v98), names0($v98).
+m103($n) :- node(_, $n, "identifier", _, _), text($n, $v102), names0($v102).
+m107($n) :- node(_, $n, "identifier", _, _), text($n, $v106), names0($v106).
+m111($n) :- node(_, $n, "identifier", _, _), text($n, $v110), names0($v110).
+m115($n) :- node(_, $n, "identifier", _, _), text($n, $v114), names0($v114).
+m119($n) :- node(_, $n, "identifier", _, _), text($n, $v118), names0($v118).
+m123($n) :- node(_, $n, "identifier", _, _), text($n, $v122), names0($v122).
+m126($n) :- node(_, $n, "function_definition", _, _).
+m126($n) :- node(_, $n, "lambda", _, _).
+m127($n) :- inside($n, $v125, k0), m126($v125).
+m130($n) :- inside($n, $v128, k1), node(_, $v128, "class_definition", _, _), inside($v128, $v129, k1), node(_, $v129, "class_definition", _, _).
+m140($n) :- node(_, $n, "identifier", _, _), text($n, $v135), names1($v135).
+m140($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v136), node(_, $v136, "identifier", _, _), text($v136, $v137), names2($v137), field($n, "attribute", $v138), node(_, $v138, "identifier", _, _), text($v138, $v139), names1($v139).
+m142($n) :- m140($n).
+m142($n) :- node(_, $n, "call", _, _), field($n, "function", $v141), u134($v141).
+u134($n) :- m142($n).
+m144($n) :- node(_, $n, "function_definition", _, _).
+m144($n) :- node(_, $n, "lambda", _, _).
+m145($n) :- inside($n, $v143, k0), m144($v143).
+m148($n) :- inside($n, $v146, k1), node(_, $v146, "class_definition", _, _), inside($v146, $v147, k1), node(_, $v147, "class_definition", _, _).
+m158($n) :- node(_, $n, "identifier", _, _), text($n, $v153), names1($v153).
+m158($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v154), node(_, $v154, "identifier", _, _), text($v154, $v155), names2($v155), field($n, "attribute", $v156), node(_, $v156, "identifier", _, _), text($v156, $v157), names1($v157).
+m160($n) :- m158($n).
+m160($n) :- node(_, $n, "call", _, _), field($n, "function", $v159), u152($v159).
+u152($n) :- m160($n).
+m164($n) :- inside($n, $v163, k1), node(_, $v163, "class_definition", _, _).
+m168($n) :- inside($n, $v167, k1), node(_, $v167, "class_definition", _, _).
+m169($n) :- field($n, "name", $v161), node(_, $v161, "identifier", _, _), text($v161, $v162), names3($v162), !m164($n).
+m169($n) :- field($n, "name", $v165), node(_, $v165, "identifier", _, _), text($v165, $v166), names4($v166), !m168($n).
+m171($n) :- node(_, $n, "function_definition", _, _).
+m171($n) :- node(_, $n, "lambda", _, _).
+m172($n) :- inside($n, $v170, k0), m171($v170).
+m175($n) :- inside($n, $v173, k1), node(_, $v173, "class_definition", _, _), inside($v173, $v174, k1), node(_, $v174, "class_definition", _, _).
+m185($n) :- node(_, $n, "identifier", _, _), text($n, $v180), names1($v180).
+m185($n) :- node(_, $n, "attribute", _, _), field($n, "object", $v181), node(_, $v181, "identifier", _, _), text($v181, $v182), names2($v182), field($n, "attribute", $v183), node(_, $v183, "identifier", _, _), text($v183, $v184), names1($v184).
+m187($n) :- m185($n).
+m187($n) :- node(_, $n, "call", _, _), field($n, "function", $v186), u179($v186).
+u179($n) :- m187($n).
+m191($n) :- inside($n, $v190, k1), node(_, $v190, "class_definition", _, _).
+m192($n) :- field($n, "name", $v188), node(_, $v188, "identifier", _, _), text($v188, $v189), names5($v189), !m191($n).
+.output violation

@@ -1,0 +1,25 @@
+.decl doc(d: int, path: sym, module: sym)
+.input doc
+.decl in_scope(d: int)
+.decl names0(s: sym)
+.decl out_scope(d: int)
+.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
+names0("SqlAdminQuery").
+names0("SqlBuiltQuery").
+names0("SqlDdlStatement").
+names0("SqlLegacy").
+names0("SqlRawSql").
+names0("SqlRawSqlWithParams").
+names0("SqlUnsafe").
+names0("_SqlPrebuiltCondition").
+names0("_SqlPrebuiltQuery").
+in_scope($d) :- doc($d, $p, _), @glob($p, "api/**/*.py").
+in_scope($d) :- doc($d, $p, _), @glob($p, "impl/**/*.py").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.git/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/.venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/venv/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/__pycache__/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tmp/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/tests/**").
+out_scope($d) :- doc($d, $p, _), @glob($p, "**/test/**").
+.output violation
