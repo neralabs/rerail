@@ -93,6 +93,8 @@ def record(source,output):
   cases.append(dict(test='matching-selector-python-whitespace-'+str(index),check='matching_architecture',entry='all',parameters={},production=True,files=[dict(path=relative,source=text)],expected=expected))
  from data_layer_ten.semantic_contracts import record as semantic_contracts
  cases.extend(semantic_contracts(source,seeds))
+ from data_layer_ten.structural_contracts import record as structural_contracts
+ cases.extend(structural_contracts(source))
  output.write_text(json.dumps(dict(sourcePin=PIN,cases=cases),indent=2)+'\n')
 
 if __name__=='__main__':

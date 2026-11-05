@@ -2872,6 +2872,1406 @@
         }
       ],
       "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-none",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: None\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-dispatch-none",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: None):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-none-union",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: None | str\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA009",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe.field",
+          "message": "Public matching semantic values require nominal closed types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-dispatch-none-union",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: None | str):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-none-subscript",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: list[None]\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-dispatch-none-subscript",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: list[None]):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-qualified",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: typing.Any\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-dispatch-qualified",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: typing.Any):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-call-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: factory().str\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA009",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe.field",
+          "message": "Public matching semantic values require nominal closed types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-dispatch-call-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: factory().str):\n    return value\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA017",
+          "path": "l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "dispatch",
+          "message": "Matching dispatch requires a closed nominal variant, not a string"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-annotation-constant-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: \"value\".str\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA009",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe.field",
+          "message": "Public matching semantic values require nominal closed types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-dispatch-constant-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: \"value\".str):\n    return value\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA017",
+          "path": "l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "dispatch",
+          "message": "Matching dispatch requires a closed nominal variant, not a string"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-annotation-subscript-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: items[0].str\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-dispatch-subscript-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: items[0].str):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-qualified-subscript",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: typing.List[str]\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-dispatch-qualified-subscript",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: typing.List[str]):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-union-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: (str | int).str\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-dispatch-union-attribute",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: (str | int).str):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-subscript-union",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: list[str] | int\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA009",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe.field",
+          "message": "Public matching semantic values require nominal closed types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-dispatch-subscript-union",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: list[str] | int):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-annotation-nested-union",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe:\n    field: int | (bytes | str)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA009",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe.field",
+          "message": "Public matching semantic values require nominal closed types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-dispatch-nested-union",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l5250_matching/probe.py",
+          "source": "def dispatch(value: int | (bytes | str)):\n    return value\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-decorator-bare",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "@dataclass\nclass MatchProbe:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA013",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe",
+          "message": "Public matching data contracts require frozen Pydantic models"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-decorator-qualified",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "@dataclasses.dataclass\nclass MatchProbe:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA013",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe",
+          "message": "Public matching data contracts require frozen Pydantic models"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-decorator-called",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "@dataclass(frozen=True)\nclass MatchProbe:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA013",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe",
+          "message": "Public matching data contracts require frozen Pydantic models"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-decorator-double-call",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "@dataclass()()\nclass MatchProbe:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-decorator-attribute-after-call",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "@factory().dataclass\nclass MatchProbe:\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA013",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 2,
+          "symbol": "MatchProbe",
+          "message": "Public matching data contracts require frozen Pydantic models"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-decorator-attribute-after-subscript",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "@items[0].dataclass\nclass MatchProbe:\n    pass\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-base-protocol-missing",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol):\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-protocol-frozen",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol):\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-protocol-numeric",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol):\n    model_config = ConfigDict(frozen=1)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-protocol-call-prefix",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol):\n    model_config = factory().ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-called-protocol-missing",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().Protocol):\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-called-protocol-frozen",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().Protocol):\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-called-protocol-numeric",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().Protocol):\n    model_config = ConfigDict(frozen=1)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-called-protocol-call-prefix",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().Protocol):\n    model_config = factory().ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-subscript-protocol-missing",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol[T]):\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-subscript-protocol-frozen",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol[T]):\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-subscript-protocol-numeric",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol[T]):\n    model_config = ConfigDict(frozen=1)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-subscript-protocol-call-prefix",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(Protocol[T]):\n    model_config = factory().ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA012",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching contracts cannot use structural Protocol types"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-model-missing",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA014",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching Pydantic contracts must declare frozen=True"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-model-frozen",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-base-model-numeric",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = ConfigDict(frozen=1)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA014",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching Pydantic contracts must declare frozen=True"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-model-call-prefix",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(BaseModel):\n    model_config = factory().ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-base-called-model-missing",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().BaseModel):\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA014",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching Pydantic contracts must declare frozen=True"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-called-model-frozen",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().BaseModel):\n    model_config = ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-base-called-model-numeric",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().BaseModel):\n    model_config = ConfigDict(frozen=1)\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA014",
+          "path": "l1470_matching_contracts/probe.py",
+          "line": 1,
+          "symbol": "MatchProbe",
+          "message": "Public matching Pydantic contracts must declare frozen=True"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-base-called-model-call-prefix",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "l1470_matching_contracts/probe.py",
+          "source": "class MatchProbe(factory().BaseModel):\n    model_config = factory().ConfigDict(frozen=True)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-conformance-import-ascii-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import l1700_other\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l1700_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-ascii-from",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from l1700_other import Thing\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l1700_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-arabic-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import l\u0661\u0667\u0660\u0660_other\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l\u0661\u0667\u0660\u0660_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-arabic-from",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from l\u0661\u0667\u0660\u0660_other import Thing\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l\u0661\u0667\u0660\u0660_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-fullwidth-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import l\uff11\uff17\uff10\uff10_other\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l1700_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-fullwidth-from",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from l\uff11\uff17\uff10\uff10_other import Thing\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l1700_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-mixed-import",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "import l1\u0667\uff100_other\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l1\u066700_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-conformance-import-mixed-from",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "conform/l5250_matching/probe.py",
+          "source": "from l1\u0667\uff100_other import Thing\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA015",
+          "path": "conform/l5250_matching/probe.py",
+          "line": 1,
+          "symbol": "l1\u066700_other",
+          "message": "Matching conformance tests must import project APIs from data_layer"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-none-handler",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def run():\n    try:\n        work()\n    except:\n        return fallback()\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA004",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "runtime_fallback",
+          "message": "Matching physical failure cannot continue through a runtime fallback"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-different-handlers",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def run():\n    try:\n        work()\n    except Exception:\n        pass\n    except ValueError:\n        return fallback()\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA004",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "runtime_fallback",
+          "message": "Matching physical failure cannot continue through a runtime fallback"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-call-handler",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def run():\n    try:\n        work()\n    except factory().MatchError:\n        return fallback()\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA004",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "runtime_fallback",
+          "message": "Matching physical failure cannot continue through a runtime fallback"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-tuple-handler",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def run():\n    try:\n        work()\n    except (Exception, ValueError):\n        return fallback()\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-nested-helper",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "application/probe.py",
+          "source": "def helper(spec):\n    def inner():\n        return match(txn, spec)\n    return inner\nhelper(\"lookup\")\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA011",
+          "path": "application/probe.py",
+          "line": 5,
+          "symbol": "helper",
+          "message": "Matching specifications cannot use string lookup"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-duplicate-helper",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "application/probe.py",
+          "source": "def helper(spec):\n    return match(txn, spec)\ndef helper(other):\n    return other\nhelper(\"lookup\")\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA011",
+          "path": "application/probe.py",
+          "line": 5,
+          "symbol": "helper",
+          "message": "Matching specifications cannot use string lookup"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-last-delegate-argument",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "application/probe.py",
+          "source": "def helper(first, second):\n    match(txn, first)\n    match(txn, second)\nhelper(\"lookup\", value)\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-matching-nested-validation",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def outer():\n    def inner():\n        return model.model_copy(update={})\n    return inner\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA028",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 3,
+          "symbol": "outer",
+          "message": "Matching production code cannot bypass validation during model replacement"
+        },
+        {
+          "code": "MA028",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 3,
+          "symbol": "inner",
+          "message": "Matching production code cannot bypass validation during model replacement"
+        }
+      ]
+    },
+    {
+      "test": "structural-matching-multiline-counter",
+      "check": "matching_architecture",
+      "entry": "scan_sources",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l5250_matching/probe.py",
+          "source": "def count():\n    return MatchDatabaseRoundTripCount(\n        len(STAGES_SQL_STAGES)\n    )\n"
+        }
+      ],
+      "expected": [
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 2,
+          "symbol": "MatchDatabaseRoundTripCount",
+          "message": "Runtime counters must consume executed-stage receipts, not declared stages or predicted work"
+        },
+        {
+          "code": "MA031",
+          "path": "impl/common/l5250_matching/probe.py",
+          "line": 3,
+          "symbol": "STAGES_SQL_STAGES",
+          "message": "Work limits must consume executed-stage receipts, not declared stage manifests"
+        }
+      ]
+    },
+    {
+      "test": "structural-hnsw-render-no-trigger",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "def render():\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "line": 1,
+          "code": "HNSW004",
+          "message": "algorithm defines a custom render method"
+        }
+      ]
+    },
+    {
+      "test": "structural-hnsw-render-trigger",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "# hnsw\ndef render():\n    pass\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "line": 2,
+          "code": "HNSW004",
+          "message": "algorithm defines a custom render method"
+        }
+      ]
+    },
+    {
+      "test": "structural-hnsw-import-no-trigger",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "import sql_dialect\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "line": 1,
+          "code": "HNSW003",
+          "message": "algorithm imports backend implementation: sql_dialect"
+        }
+      ]
+    },
+    {
+      "test": "structural-hnsw-name-no-trigger",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "scored_pairs_query()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "line": 1,
+          "code": "HNSW001",
+          "message": "forbidden pseudo-HNSW symbol: scored_pairs_query"
+        }
+      ]
+    },
+    {
+      "test": "structural-hnsw-json-case",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "state = \"jSoN\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "line": 1,
+          "code": "HNSW007",
+          "message": "HNSW must use indexed SQL rows, not JSON operations"
+        }
+      ]
+    },
+    {
+      "test": "structural-hnsw-module-docstring",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "\"json\"\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "structural-hnsw-nested-string",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "source": "def f():\n    if flag:\n        \"json\"\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/algorithm.py",
+          "line": 3,
+          "code": "HNSW007",
+          "message": "HNSW must use indexed SQL rows, not JSON operations"
+        }
+      ]
     }
   ]
 }

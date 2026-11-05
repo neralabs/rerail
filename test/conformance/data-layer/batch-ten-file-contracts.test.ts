@@ -5,7 +5,8 @@ const cases=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-file
 it.each(cases)("preserves raw files and complete original results: $test",async record=>{
  const replay=new TenReplay();try{for(const mode of["snapshot","workspace"]as const){
   const expected=record.production||record.check==="graph_lazy_sql_plan"?canonical(record.expected):record.expected;
-  expect(await replay.run({cases:{},sources:{},records:[]},record,mode,record.production),mode).toEqual(expected);
+  const actual=await replay.run({cases:{},sources:{},records:[]},record,mode,record.production);
+  expect(actual,`${mode}: ${record.test}\nexpected ${JSON.stringify(expected)}\nreceived ${JSON.stringify(actual)}`).toEqual(expected);
  }}finally{replay.close();}
 });
 it("retains canonical source proofs when SQL reuses prepared rows",async()=>{
