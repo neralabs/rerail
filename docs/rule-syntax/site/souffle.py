@@ -391,7 +391,9 @@ if __name__ == "__main__":
 
 BUILTIN_FN = {"cat", "strlen", "to_number", "to_string", "contains", "substr", "ord", "min", "max", "sum",
               "count", "mean", "join"}
-RELATION_ARG = {"within_stop": 2, "nearest": 2, "precedes_stop": 2, "inside": 2, "has": 2}
+# Built-ins that take relation names as arguments, and at which argument positions.
+RELATION_ARG = {"within_stop": (2,), "nearest": (2,), "precedes_stop": (2,), "inside": (2,), "has": (2,),
+                "dfs_first": (3, 4), "dfs_first_memo": (3, 4, 5)}
 # The text tests (ALIGNMENT.md): built-in constraints like Soufflé's match and contains, pattern first.
 TEXT_TESTS = {"glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword"}
 STMT_TOK = re.compile(r'"(?:[^"\\]|\\.)*"|`+|//[^\n]*|:-|=>|!=|<=|>=|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|[A-Za-z_][A-Za-z0-9_]*|@[A-Za-z_]\w*|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|\S', re.S)
@@ -667,9 +669,8 @@ def _inner_needs(inner, bound):
 def _strip_relation_args(l):
     if len(l) >= 3 and l[0] in RELATION_ARG and l[1] == "(":
         name, args = _atom_args(l)
-        k = RELATION_ARG[name]
-        if len(args) > k and len(args[k]) == 1:
-            args = args[:k] + args[k + 1:]
+        drop = {k for k in RELATION_ARG[name] if k < len(args) and len(args[k]) == 1}
+        args = [a for j, a in enumerate(args) if j not in drop]
         out = [name, "("]
         for j, a in enumerate(args):
             if j:
@@ -760,6 +761,13 @@ def rule_deps(stmt):
                 continue
             if len(l) > 1 and l[1] == "(" and _is_var(l[0]):
                 deps.append((l[0], neg, _first_arg(l), scope))
+                if l[0] in RELATION_ARG:
+                    # A relation passed to a built-in is read whole, like a negation: adding a stop node or
+                    # an edge can remove answers. It must be complete first, so it is a negative dependency.
+                    _, args = _atom_args(l)
+                    for k in RELATION_ARG[l[0]]:
+                        if k < len(args) and len(args[k]) == 1 and _is_var(args[k][0]):
+                            deps.append((args[k][0], True, None, scope))
 
     walk([x for x in _split_top(rest, ",") if x], False, rest)
     return head[0], _first_arg(head), deps

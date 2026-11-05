@@ -113,9 +113,9 @@ not make it.
   `python/ast.rr` does not have that defect: `sig_param` takes a function's parameters from its own `parameters`
   field, and `py_frame` treats a lambda as its own frame.
 - **Ordered first-match reachability.** It reproduces the scripts' depth-first search, in edge order, with a
-  visiting set, because one finding (LA-011) depended on visitation order. Under the findings contract, which
-  alternative a search reaches first is operational semantics. This branch's ports compute reachability as a set
-  and record the difference (data-layer/checks/COVERAGE.md, the three approximate checks).
+  visiting set and a memo shared across roots (ordered_first.rs). This branch now has the same semantics as two
+  built-ins, `dfs_first` and `dfs_first_memo` (data-layer/DESIGN.md, addition 7), computed set-based except
+  inside cycles. LA-011's "first in visitation order" needs no search: it is `min` over the visit index.
 - **Runtime observations as JSON parameters** become run artifacts (data-layer/RUN-FACTS.md). One difference: it
   says recorded observations never replace fresh ones; here an artifact may be reused when the digest of its
   inputs is unchanged.

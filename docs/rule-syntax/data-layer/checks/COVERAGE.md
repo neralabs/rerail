@@ -5,7 +5,7 @@ check's non-EXISTS needs, using the IDs below; "—" means every need was EXISTS
 needs are left out: the suite plugin is the path followed. The design read is lib/core.rr, lib/python/ast.rr,
 names/imports/calls/flow, lib/data-layer/signing.rr and the worked ports in data-layer/.
 
-IDs: L5 `join`, L6 `ordered by earlier`; N-src (source, src_line, line_count, end_line, col), N-op (op_at), N-parse
+IDs: L5 `join`, L6 `ordered by earlier`, L7 `dfs_first` / `dfs_first_memo`; N-src (source, src_line, line_count, end_line, col), N-op (op_at), N-parse
 (syntax_error), N-order (earlier, visit_index, ast_depth), N-str (str_part), N-fn:@name, N-git, N-read (`.input IO=…`,
 input_error), N-artifact (a CI-written JSON artifact); P-ast:rel, P-lib:rel, P-sign (signing.rr); LOCAL (a helper in
 the check's own file); D-place (`@place` findings), D-code, D-sev, D-gate, D-on, D-budget, D-group, D-scope, D-mode;
@@ -54,7 +54,7 @@ Conventions:
 | versioned_table_name_manipulation | 2 | hard-fail | N-order, N-str, P-ast:ast_name, P-ast:assign_target, P-ast:assign_value, P-ast:sig_param, P-ast:str_const, P-ast:fstring, P-ast:call_dotted | expressible |
 | history_serverplan_projection | 2 | hard-fail | N-str | expressible |
 | revision_ancestry_invariants | 2 | hard-fail | — | expressible |
-| serverplan_state_tripwires | 2 | hard-fail | LOCAL, P-ast:py_frame, P-ast:chain_step, P-ast:call_name, P-ast:sig_param, N-order, N-fn:@unparse, N-read, P-sign, N-fn:@ed25519_ok, D-gate, D-place | approximate: memoised DFS drops cycle paths; Datalog closure reports more |
+| serverplan_state_tripwires | 2 | hard-fail | LOCAL, P-ast:py_frame, P-ast:chain_step, P-ast:call_name, P-ast:sig_param, N-order, N-fn:@unparse, N-read, P-sign, N-fn:@ed25519_ok, D-gate, D-place, L7 | expressible: `dfs_first_memo` reproduces the memoised DFS, cycles included |
 | hot_path_reflection | 3 | hard-fail | P-ast:dotted_expr, LOCAL, P-ast:str_const, D-scope | expressible |
 | graph_lazy_sql_plan | 3 | hard-fail | P-ast:ast_name | expressible |
 | bounded_composed_graph_paths | 3 | hard-fail | N-src, D-scope, D-place, CONTRACT | expressible |
@@ -66,7 +66,7 @@ Conventions:
 | bootstrap_eager_resolve | 3 | info | LOCAL, D-scope | expressible |
 | graphql_plan_ownership | 3 | hard-fail | P-ast:sig_param, P-ast:chain_step, P-ast:chain_root, P-ast:py_frame, N-parse, D-on, D-scope | expressible |
 | lazy_adapter_ownership | 3 | hard-fail | P-ast:py_frame, P-ast:str_const, P-ast:sig_param, N-parse, D-on, N-src, D-scope | expressible |
-| legacy_execution_surfaces | 3 | hard-fail | P-sign, D-gate, D-place, P-ast:from_module_raw, P-ast:chain_step, P-ast:class_path, P-ast:py_frame, LOCAL, N-order, N-src, D-scope | approximate: memoised DFS drops cycle paths; Datalog fixpoint reports more |
+| legacy_execution_surfaces | 3 | hard-fail | P-sign, D-gate, D-place, P-ast:from_module_raw, P-ast:chain_step, P-ast:class_path, P-ast:py_frame, LOCAL, N-order, N-src, D-scope, L7 | expressible: `dfs_first_memo` reproduces the memoised DFS (data-layer/sketches/transitive-eager.rr) |
 | removed_compat_surfaces | 3 | hard-fail | P-ast:ast_name, D-scope | expressible |
 | legacy_callback_quarantine | 3 | hard-fail | P-ast:chain_step, LOCAL, P-ast:sig_param, D-scope | expressible |
 | pending_pipeline_effect_kinds | 3 | hard-fail | P-ast:ast_name, D-scope | expressible |
@@ -140,7 +140,7 @@ Conventions:
 | file_length | 7 | hard-fail | N-src, N-read, P-sign, D-gate, D-place, D-sev | expressible |
 | markdown_docs | 7 | ratchet | N-git, D-scope, N-src, LOCAL, D-place, D-budget | expressible |
 | eager_resolve | 7 | hard-fail | N-src, P-ast:path_module, LOCAL, D-code, N-read, P-sign, N-fn:@ed25519_ok, L5, D-place, CONTRACT | expressible |
-| lazy_architecture | 7 | hard-fail | LOCAL, N-order, P-ast:path_module, N-read, P-sign, D-gate, D-budget, D-place | expressible |
+| lazy_architecture | 7 | hard-fail | LOCAL, N-order, P-ast:path_module, N-read, P-sign, D-gate, D-budget, D-place, L7 | expressible: its transitive searches use `dfs_first_memo` |
 | readthrough_authority_architecture | 8 | hard-fail | N-parse, D-on | expressible |
 | authentication_plan_purity | 8 | hard-fail | P-ast:sig_param, N-parse, D-on | expressible |
 | pure_lazy_runtime_purity | 8 | hard-fail | P-ast:expr_ctx, P-ast:sig_param, LOCAL, N-read, P-sign, D-place | expressible |
@@ -256,7 +256,7 @@ gap. Every D-place row uses `@place`, which is why N-fn:@place is not counted on
 | D (directives) | 70 |
 | LOCAL | 60 |
 | CONTRACT | 20 |
-| L (language additions) | 18 |
+| L (language additions) | 21 |
 
 | prefix | checks |
 |---|---|
@@ -280,6 +280,7 @@ gap. Every D-place row uses `@place`, which is why N-fn:@place is not counted on
 | D-code | 4 |
 | D-group | 3 |
 | D-sev | 3 |
+| L7 | 3 |
 | N-git | 3 |
 | P-lib | 3 |
 | D-mode | 2 |
@@ -328,6 +329,7 @@ gap. Every D-place row uses `@place`, which is why N-fn:@place is not counted on
 | P-ast:from_module_raw | 4 |
 | D-group | 3 |
 | D-sev | 3 |
+| L7 | 3 |
 | N-git | 3 |
 | P-ast:ast_constant | 3 |
 | P-ast:ast_parent | 3 |
@@ -357,7 +359,7 @@ gap. Every D-place row uses `@place`, which is why N-fn:@place is not counted on
 
 | status | checks |
 |---|---|
-| expressible | 120 |
+| expressible | 122 |
 | gap | 7 |
 | expressible + artifact | 5 |
-| approximate | 3 |
+| approximate | 1 |

@@ -1,0 +1,50 @@
+// Sketch, not a policy: LEG-083's search, the shape behind the three checks COVERAGE.md marks
+// "memoised DFS" (legacy_execution_surfaces LEG-083, serverplan_state_tripwires
+// _transitive_sink, lazy_architecture's transitive helpers). Addition 7, dfs_first.
+// Python linter: scripts/lint_legacy_execution_surfaces.py, :1043-1081 (the search) and
+// :1236 (roots in sorted(symbol) order).
+//
+// What the script does. For each function, in symbol order, it searches the same-file
+// call graph depth first, calls in visit order, for an eager `.resolve()`, and stops at
+// legacy surfaces. It reports the function at its first call whose target reaches one.
+// One memo is shared by all functions, and a function met again while its own search is
+// still open counts as reaching nothing, so on call cycles the answer depends on order.
+
+#include "python/ast.rr"
+//   py_frame, visit_index
+
+// From the rest of the LEG port (data-layer/checks/group-3.md, legacy_execution_surfaces):
+.decl name_call_target(c: node, g: node)  // call c resolves, by name, to def g in the file
+.decl eager_resolve(c: node)              // c is a `.resolve()` call LEG-083 counts as eager
+.decl legacy_surface(f: node)             // the search does not enter these
+.decl leg_symbol(f: node, s: symbol)      // "Class.method", the script's symbol for def f
+.input name_call_target, eager_resolve, legacy_surface, leg_symbol
+
+// The graph. A function's out-edges are its calls, in visit order: to the eager call
+// itself (a target) or to the def it resolves to.
+.decl leg_edge(f: node, n: node, i: number)
+leg_edge(f, c, i) :- eager_resolve(c), py_frame(c, f), visit_index(c, i).
+leg_edge(f, g, i) :- name_call_target(c, g), py_frame(c, f), !legacy_surface(g),
+    visit_index(c, i).
+.decl eager_call(c: node)
+eager_call(c) :- eager_resolve(c).
+
+// Roots: every function that is not itself a legacy surface, ordered by symbol.
+.decl leg_root(f: node, s: symbol)
+leg_root(f, s) :- leg_symbol(f, s), !legacy_surface(f).
+
+// The finding, at the root's first call on the path: `first` is that call's visit index.
+// dfs_first_memo matches the script exactly, cycles included.
+.violation LEG_083(at: node)
+    "This function reaches an eager resolve() through calls in this file."
+LEG_083(c) :- leg_root(f, _),
+    dfs_first_memo(f, _, i, leg_edge, eager_call, leg_root),
+    py_frame(c, f), visit_index(c, i).
+
+// The same check without the script's memo: every function that can reach an eager call
+// is reported, cycles included, at the call that starts the first path. On graphs without
+// cycles the two agree row for row.
+.violation LEG_083_SOUND(at: node)
+    "This function reaches an eager resolve() through calls in this file."
+LEG_083_SOUND(c) :- leg_root(f, _), dfs_first(f, _, i, leg_edge, eager_call),
+    py_frame(c, f), visit_index(c, i).

@@ -167,8 +167,21 @@
 .decl earlier(m: node, n: node)
 .decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
+// ---- ordered first match (data-layer/DESIGN.md, addition 7) ----
+// dfs_first(r, hit, first, edge, target): hit is the first node of `target` that a depth-first search from r
+// reaches. edge(src, dst, ord) is any relation of three columns; a node's edges are tried in increasing ord
+// (then dst), each node is entered once, and a node on the current path is skipped. A target is a hit when an
+// edge reaches it; r itself is never its own hit (write `target(r)` beside it for that). first is the ord of
+// r's edge that starts the path, so `visit_index(c, first)` gives the call to report. No row: no target is
+// reachable. The engine computes it set-based (addition 7); only cycles need a search.
+.decl dfs_first(r: node, hit: node, first: number, edge: relation, target: relation)
+// dfs_first_memo(…, roots): the scripts' variant. Roots are searched in increasing order of roots' second
+// column (a number, or a symbol compared as text, for `sorted(symbol)`),
+// sharing one memo, and a node finished while a cycle was open is remembered as reaching nothing. Use it
+// only where a finding must match a script that does this; it reports fewer findings on cycles.
+.decl dfs_first_memo(r: node, hit: node, first: number, edge: relation, target: relation, roots: relation)
 .input within, inside, has, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
-.input earlier, visit_index, ast_depth
+.input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo
 
 // ---- matcher atoms ---------------------------------------------------------------------------------------------
 // Body forms that hand a node to the pattern matcher. Not Soufflé: addition 1.

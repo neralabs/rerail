@@ -10,10 +10,12 @@ language, its native core or its libraries lack? It then records what was added.
 The answer is mostly facts, not syntax. The scripts read things Python gives them for free: CPython's `ast` (where
 a decorator belongs, which names are `Name` nodes, the order a visitor walks), its string decoder, the raw lines
 of a file, the repository's own files (allowlists, signed baselines, Markdown), and git. Each of those became a
-native fact or functor in `lib/core.rr`, or a Datalog relation in a library. Two needs became language:
+native fact or functor in `lib/core.rr`, or a Datalog relation in a library. Three needs became language:
 
 - `join`, an ordered string aggregate, because nothing else can build the exact text a signature covers;
-- `ordered by earlier`, for state where only some writes count.
+- `ordered by earlier`, for state where only some writes count;
+- `dfs_first`, the first target a depth-first search reaches, for checks whose answer is "the first call that
+  leads to X". It is computed set-based; only cycles need a search.
 
 A few directives were added for how findings are reported: findings at a file with no node, a code taken from a
 column, gates, and budgets read from files.
@@ -50,7 +52,7 @@ How this was done:
 5. `site/check_rr.py` checks every `.rr` file for grounded rules, duplicate declarations and, new here,
    stratification. All files pass.
 
-## The two language additions
+## The three language additions
 
 ### 5. `join`: an ordered string aggregate
 
@@ -120,6 +122,94 @@ plain positive recursion, which Soufflé already accepts:
 The rule of thumb, in core.rr: use `ordered by earlier` only when *which* write counts depends on the recursion.
 The coverage pass ([checks/COVERAGE.md](checks/COVERAGE.md), "Ordered recursion verdicts") applies it to every
 check that claimed the need.
+
+### 7. `dfs_first`: the first target a depth-first search reaches
+
+Three checks search the call graph depth first and report the first path they find: LEG-083 in
+legacy_execution_surfaces, `_transitive_sink` in serverplan_state_tripwires, and the transitive helpers in
+lazy_architecture. The finding sits at the root's first call on that path. Plain reachability says whether some
+path exists, not which one a search finds first, so these three were recorded as approximate. The Data-layer
+branch reproduces them with a native producer (ordered_first.rs). This addition gives the same meaning as two
+built-ins, in the shape of `nearest`, which already takes relations as arguments.
+
+```
+// hit: the first eager call a depth-first search from f reaches. leg_edge(f, n, i)
+// lists f's calls in visit order i; first is the i of the call that starts the path.
+LEG_083(c) :- leg_root(f, _),
+    dfs_first_memo(f, _, i, leg_edge, eager_call, leg_root),
+    py_frame(c, f), visit_index(c, i).
+```
+
+**Meaning.** `dfs_first(r, hit, first, edge, target)`: search from r, trying each node's edges in increasing
+order (`edge(src, dst, ord)`), entering each node once and skipping nodes on the current path. hit is the first
+`target` an edge reaches, and first is the ord of r's edge that starts the path. r is never its own hit; a rule
+that wants it writes `target(r)` beside the call, which is exactly the producer's `match: "node"` mode (the spike
+checks this). `dfs_first_memo(…, roots)` is the scripts' variant: roots are searched in the order of `roots`'
+second column with one shared memo, and a node finished while a cycle was open is remembered as reaching
+nothing. That memo is why the scripts miss some paths through cycles. Use `dfs_first_memo` only for parity.
+
+**Stratification.** A relation passed as an argument is read whole: one more edge can change which target is
+first. `site/check_rr.py` now treats every relation argument (of `dfs_first`, `nearest`, `within_stop`, …) as a
+negative dependency, so `edge` and `target` must be complete before the search runs.
+
+**How the engine computes it.** The answer is set-based everywhere except inside cycles, because a depth-first
+search never has to back out of a node that can reach a target:
+
+1. `live(v)`: v can reach a target. One backward closure.
+2. `next(u)`: u's first edge, in order, into a live node (a call to itself is skipped, as the search skips it).
+   One `min` per node.
+3. `first_of(v)`: follow `next` to a target. `next` is a function, so this is a walk up a forest: one wave per
+   level, or about log(depth) waves by pointer doubling.
+4. `knot`: live nodes on a cycle (strongly connected components of two or more nodes, a linear native pass).
+   Only these can be cut by the current path or poisoned in the memo.
+5. A root whose `next` chain never meets the knot is answered by `first_of`, whatever the order of roots. A root
+   whose chain meets the knot at u is answered by a search from u, which steps into a node only if its own chain
+   meets the knot. Without the shared memo, u's answer is the same for every root and is computed once.
+
+Why step 5 is exact: every edge before `next(u)` leads to a node that cannot reach a target, so the search finds
+nothing there; and a node outside the knot cannot be on the current path or poisoned, because either would put it
+on a cycle with the path. So the search follows the `next` chain until it enters the knot.
+
+The order of roots matters only to `dfs_first_memo`, and only where chains enter the knot. Which target is first
+matters only for rows that become findings, so with the magic-set pragma the search runs for those rows alone.
+
+**Measured** (spikes/dfs-first: SQLite for steps 1–3 and 5's lookups, Python for Tarjan and the searches; checked
+against a port of ordered_first.rs on 25,000 random graphs, both modes, both variants, no disagreement):
+
+| Graph | Fresh-memo oracle | Shared-memo oracle (scripts) | Set-based |
+|---|---|---|---|
+| 5,000 functions, 25,000 calls, recursion inside modules | 3.4 M steps, 0.60 s | 12 k steps, 0.01 s | 0.09 s SQL; 73 search steps (fresh), 295 (shared); knot 30 nodes |
+| 100,000 functions, 500,000 calls, same shape | not run (quadratic) | 203 k steps, 0.25 s | 2.2 s SQL; 15 k / 36 k search steps; knot 739 nodes |
+| 5,000 functions, one cycle through almost all of them | 2.5 M steps, 0.45 s | 11 k steps, 0.01 s | 0.09 s SQL; 1.7 M search steps (fresh), 10 k (shared); knot 4,791 nodes |
+
+CPU time, user+sys, on a loaded machine (load average 20–60). Two readings. For the semantics this design
+recommends, `dfs_first` without the shared memo, the set-based plan replaces a search per root, quadratic, with
+a few set passes and a search confined to cycles. For the scripts' variant, their single linear search is
+already cheap on one core; the set-based plan pays SQLite's constant factors, and its gain is that it runs in
+waves with the other facts (and on the GPU path), not that it does less work. A cycle through most of the graph
+is the case no plan avoids: depth-first order on general graphs is P-complete (Reif 1985).
+
+**Prior art.**
+
+- Reif, "Depth-first search is inherently sequential", IPL 20(5), 1985: deciding depth-first visit order with
+  fixed edge order is P-complete. Why step 5 keeps a search for cycles.
+- de la Torre and Kruskal, "Fast parallel algorithms for all-sources lexicographic search and path-algebra
+  problems", J. Algorithms 19(1), 1995; and Theory Comput. Syst. 34(4), 2001: lexicographic depth-first search
+  on DAGs is in NC, through a correspondence between greedy search and lexicographic path problems. Steps 1–3
+  are that correspondence made concrete.
+- Naumov, Vrielink and Garland, "Parallel Depth-First Search for Directed Acyclic Graphs", NVIDIA NVR-2017-001:
+  depth-first parents of a DAG by path comparison or shortest paths, in a few BFS-like GPU passes. The closest
+  system to this plan; it does not handle cycles.
+- Wyllie, "The complexity of parallel computations", Cornell TR79-387, 1979 (pointer jumping); JáJá, *An
+  Introduction to Parallel Algorithms*, 1992: following `next` to its end in log(depth) waves.
+- Greco and Zaniolo, "Greedy algorithms in Datalog", TPLP 1(4), 2001: `choice-least`, the deterministic form of
+  step 2. Soufflé's own `choice-domain` is documented as non-deterministic, so it cannot express `next`.
+- Fleischer and Shallit, "The state complexity of lexicographically smallest words…", DLT 2020: the smallest
+  word of an automaton, found by first pruning to states that can reach acceptance (step 1's `live`).
+- Chen and Warren, "Tabled evaluation with delaying for general logic programs", JACM 43(1), 1996: SLG tabling,
+  the standard repair for memoised top-down search inside cycles, which is what the scripts' memo lacks.
+- Zhao, Subotić and Scholz, "Debugging large-scale Datalog", TOPLAS 42(2), 2020: Soufflé builds a witness after
+  the fixpoint, on demand. The same split as here: sets first, the chosen path last.
 
 ## Native facts and functors (lib/core.rr)
 
@@ -238,9 +328,9 @@ plugin.
 
 | Status | Checks |
 |---|---|
-| expressible with the design | 120 |
+| expressible with the design | 122 |
 | expressible, with facts from a CI-written artifact | 5 (linter_enforcement, explicit_semantic_ids, plan_composition_architecture, serverplan_target_architecture, test_budget) |
-| approximate | 3 |
+| approximate | 1 (execution_authority_bypass: a registry read statically) |
 | gap found by the mapping | 7, all now designed in (below) |
 
 What the checks use most:
@@ -313,4 +403,5 @@ Nothing here has been compiled or run against an engine. `site/check_rr.py` chec
 declarations and stratification statically; it passes on every file. The signing layouts were checked against the
 real signatures with PyNaCl. The rules that build those messages were not run. The findings layer and the run
 artifacts are designed (FINDINGS-LAYER.md, RUN-FACTS.md), not built; the producers are sketches over the data
-layer's existing functions.
+layer's existing functions. `dfs_first` exists as a spike (spikes/dfs-first), differential-tested against the
+Data-layer branch's ordered_first.rs semantics; no engine has it.

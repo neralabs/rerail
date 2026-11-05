@@ -103,5 +103,9 @@ confirm once a parser and engine exist. None is fixed yet.
    Top, Lub, Glb, Leq). How the `Lub` functor's arguments are written is still to check against Soufflé's tests.
 4. `word(w, s)` is specified (0037: whole words, any separators), but the converter emits none: regexes with `\b`
    stay `match`. Teaching it `\bWORD\b` (and `(?i)\bA\s+B\b` as `iword("a b", s)`) is the next exact case.
-5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is recorded as an accepted
-   difference under the findings contract, not reproduced.
+5. Ordered first-match reachability (the Data-layer branch's `reachability` stage) is now addition 7,
+   `dfs_first` / `dfs_first_memo` (data-layer/DESIGN.md). Open: the spike's search inside cycles is
+   Python, and the knot pass materialises the live edge table (0.4 s of 2.2 s at 500,000 edges); a native
+   engine would run Tarjan over the tape's edges directly. The producer's supplied `memo`/`visiting` inputs
+   (a supplied-fact API feature) are not modelled. `roots` ordered by a symbol column compares symbols as
+   text, which Soufflé does not (it orders symbols by table index).
