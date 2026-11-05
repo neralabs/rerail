@@ -1,0 +1,1 @@
+Edits a session makes in a Git worktree of a started repository are audited and appear in the dashboard, whichever folder the session started in. They used to go unaudited unless a session had started in that worktree. A worktree with its own stopped value stays stopped.

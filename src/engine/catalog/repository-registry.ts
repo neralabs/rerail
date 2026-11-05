@@ -15,6 +15,7 @@ import {
   normalizeRemoteAddress,
   readCloneIdAt,
   readRemoteAddress,
+  registeredWorktrees,
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
@@ -126,6 +127,31 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
   adoptRemote(db, context.repositoryKey, target, now);
   const adopted = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
   return { ...context, repositoryKey: adopted?.key ?? context.repositoryKey };
+}
+
+/**
+ * Record the checkout at `root` (a physical top level, located at `location`, with no record yet) when it is a worktree
+ * of a clone Rerail knows and Rerail runs there, so an edit a session makes in it is audited though no session started
+ * there. Called from a path a tool call named, so only Git's own registry grants this: the clone's recorded checkout must
+ * list `root`, as `git worktree add` registers it in the common directory. A `.git` file anyone can write names the same
+ * common directory and clone id, and stays unrecorded. Another clone of the same remote shares neither. Git runs in the
+ * recorded checkout, and only for a clone that is known and started; false when nothing was recorded.
+ */
+export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
+  const cloneId = readCloneIdAt(location.identityPath);
+  if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
+  const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
+  const peer = recorded[0];
+  if (peer === undefined || !checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started) return false;
+  // Every checkout of a clone reads one registry, so the first that answers decides; a recorded folder may be gone.
+  for (const { path } of recorded) {
+    const worktrees = registeredWorktrees(path);
+    if (worktrees === undefined) continue;
+    if (!worktrees.some(worktree => physicalPath(worktree) === root)) return false;
+    recordCheckout(db, root);
+    return true;
+  }
+  return false;
 }
 
 /**

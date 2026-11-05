@@ -1,7 +1,8 @@
 /**
  * A session's code-rule audit across checkouts: each file goes to the lane of the checkout that owns it,
  * one native enforcer per checkout, judged by that checkout's rules. Only checkouts that are recorded, started and
- * set up get a lane; files of any other checkout are not audited.
+ * set up get a lane; files of any other checkout are not audited. A worktree Git registered for a started clone Rerail
+ * knows is recorded when a path in it is first looked up (`recordStartedWorktree`), wherever it sits.
  *
  * A nested checkout owns its files only when it is a submodule the checkout around it declares (a gitlink), or a
  * recorded checkout that may run rules. Any other nested repository, such as an untracked `git init` or a stray
@@ -260,9 +261,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * A checkout inside another owns its files when Rerail recorded it or the outer one declares it as a submodule; a
-   * stopped or not set up one then runs nothing. Only a Git folder Rerail never recorded (a stray `.git`, a `git init`
-   * nobody started) is judged by the checkout around it.
+   * A checkout inside another owns its files when Rerail recorded it, or would on this lookup (a worktree Git registered
+   * for a started clone), or the outer one declares it as a submodule; a stopped or not set up one then runs nothing.
+   * Only a Git folder Rerail never recorded (a stray `.git`, a `git init` nobody started) is judged by the checkout
+   * around it.
    */
   #ownsItsFiles(root: string): boolean {
     return this.#eligibilityOf(root) !== "unrecorded" || this.#options.owners.isDeclaredSubmodule(root);

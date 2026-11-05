@@ -766,7 +766,11 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - The enforcer's spool in `tmpdir()` survives a crash.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
-  `rerail-repository-id`, rules and start state.
+  `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no
+  such thing: a checkout is recorded from one only when `git worktree list`, run in a recorded checkout of that clone,
+  names it (`recordStartedWorktree`), and only in a started repository. Registering a worktree takes a write under
+  `.git/worktrees/`, as `git worktree add` makes. The recorded worktree runs the repository's rules, its own
+  `.rerail/rules` in Log until approved.
 
 </details>
 

@@ -241,12 +241,14 @@ Each file is judged by the checkout that owns it, with that checkout's configura
 
 The owner is the nearest folder above the file holding a `.git` entry that Git confirms as a checkout's top level. Only checkouts that are recorded, started and set up evaluate files.
 
+A worktree of a repository where Rerail runs is recorded the first time a session's path falls in it, wherever it sits and whichever folder the session started in, and judges its files itself. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
+
 <details>
 <summary>Nested checkouts and symlinks</summary>
 
 The owner is found from both the file's lexical and real paths; a symlink into another checkout or out of its owner is not evaluated.
 
-A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout). While it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded (an untracked `git init`, a stray `.git`) is judged with the checkout around it.
+A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout). While it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded and Git does not list as a worktree (an untracked `git init`, a stray `.git`, even one naming this repository's Git folder) is judged with the checkout around it.
 
 A session that starts in a stopped or unrecorded checkout judges nothing.
 

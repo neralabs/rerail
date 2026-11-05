@@ -51,6 +51,18 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
   return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
 }
 
+/**
+ * The checkouts Git registered in `checkout`'s common directory, as it reports them: the main checkout and each linked
+ * worktree `git worktree add` made. Undefined when Git cannot answer in `checkout` (it is gone, say). A `.git` file
+ * naming that directory is not among them, nor is a worktree moved without `git worktree move` or `repair`. Line output
+ * because `-z` needs Git 2.36, which distributions Rerail runs on do not have yet.
+ */
+export function registeredWorktrees(checkout: string): readonly string[] | undefined {
+  const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
+  if (result.status !== 0) return undefined;
+  return result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+}
+
 /** The repository's own folder name: the main checkout's folder for a linked worktree, else the checkout's folder. */
 export function repositoryFolderName(location: RepositoryIdentityLocation): string {
   const commonDirectory = dirname(location.identityPath);
