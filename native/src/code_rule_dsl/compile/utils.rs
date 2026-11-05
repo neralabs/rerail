@@ -1,7 +1,9 @@
 use super::documents::{DocumentScopes, Side};
 use super::order::AllOrderConflict;
 use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
-use crate::code_rule_dsl::matcher::{CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilTable};
+use crate::code_rule_dsl::matcher::{
+    CallArgs, CaptureAnalysis, MAX_UTIL_INSTANCES, Transform, UtilTable,
+};
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use napi::Result;
 use serde_json::Value;
@@ -42,6 +44,9 @@ pub(super) struct UtilDef<'a> {
 
 /// The utilities a rule may name, by id, with their parameters.
 pub(crate) type UtilIds<'a> = BTreeMap<&'a str, &'a [String]>;
+
+/// Distinct parameterized calls: each utility and the mapping of its parameters.
+pub(crate) type Instances = RefCell<BTreeSet<(usize, CallArgs)>>;
 
 /// Whether a name is a metavariable's (without `$`), as a pattern spells it.
 pub(super) fn is_metavariable_name(name: &str) -> bool {
@@ -229,11 +234,23 @@ impl<'a> UtilScope<'a> {
         args: &[(String, String)],
         path: &str,
     ) -> Result<()> {
-        match self.table.upgrade() {
-            Some(table) if !table.record_instance(index, args) => Err(invalid(format!(
+        let within = match self.instances {
+            Some(instances) => {
+                let mut instances = instances.borrow_mut();
+                instances.insert((index, args.to_vec()));
+                instances.len() <= MAX_UTIL_INSTANCES
+            }
+            None => self
+                .table
+                .upgrade()
+                .is_none_or(|table| table.record_instance(index, args)),
+        };
+        if within {
+            Ok(())
+        } else {
+            Err(invalid(format!(
                 "{path}: more than {MAX_UTIL_INSTANCES} distinct parameterized utility calls in one query"
-            ))),
-            _ => Ok(()),
+            )))
         }
     }
 
@@ -250,6 +267,7 @@ impl<'a> UtilScope<'a> {
             captures: RefCell::default(),
             calls: self.calls,
             documents: self.documents,
+            instances: None,
             side,
         }
     }
@@ -276,6 +294,10 @@ pub(crate) struct UtilScope<'a> {
     /// The documents of the file a query of an embedding language reads (`embed`), with the
     /// tables its `embedded` and `host` rules compile with; `None` for another language's.
     pub(crate) documents: Option<&'a DocumentScopes>,
+    /// Where the query records its parameterized calls when its table is not its own (a
+    /// document's shared table, which every query reaching it records in); `None` records them in
+    /// the table.
+    pub(crate) instances: Option<&'a Instances>,
     /// The document the rule being compiled reads.
     pub(crate) side: Side,
 }
