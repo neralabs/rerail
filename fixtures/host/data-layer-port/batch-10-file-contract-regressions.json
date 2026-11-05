@@ -1061,6 +1061,27 @@
       "expected": []
     },
     {
+      "test": "hnsw-python-word-6",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "source": "state = 'json\\u1c89'\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/l2100_sql_grammar/domain/sql_table_hnsw/state.py",
+          "line": 1,
+          "code": "HNSW007",
+          "message": "HNSW must use indexed SQL rows, not JSON operations"
+        }
+      ]
+    },
+    {
       "test": "optimizer-python-word-0",
       "check": "plan_optimizer_v2",
       "entry": "scan_file",
@@ -1119,6 +1140,20 @@
         {
           "path": "impl/common/l2065_plan_core/node.py",
           "source": "def bad():\n    raise ValueError('Fix producer')\n"
+        }
+      ],
+      "expected": []
+    },
+    {
+      "test": "optimizer-python-word-4",
+      "check": "plan_optimizer_v2",
+      "entry": "scan_file",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "impl/common/l2065_plan_core/node.py",
+          "source": "def bad():\n    raise ValueError('Fix\\u1c89 producer')\n"
         }
       ],
       "expected": []
@@ -1217,6 +1252,48 @@
           "line": 7,
           "code": "BCGP014",
           "message": "legacy sparse binding grammar must not bypass the relation-algebra path"
+        }
+      ]
+    },
+    {
+      "test": "matching-selector-python-whitespace-0",
+      "check": "matching_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "l1700_other/helper.py",
+          "source": "# \u0301def match(self):\nclass Helper:\n    def \\\n        match(self):\n        return self.conn.query()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l1700_other/helper.py",
+          "line": 3,
+          "code": "MA003",
+          "message": "Lower transaction classes cannot define a matching method"
+        }
+      ]
+    },
+    {
+      "test": "matching-selector-python-whitespace-1",
+      "check": "matching_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "l1700_other/helper.py",
+          "source": "# def\u001cmatch(self):\nclass Helper:\n    def \\\n        match(self):\n        return self.conn.query()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l1700_other/helper.py",
+          "line": 3,
+          "code": "MA003",
+          "message": "Lower transaction classes cannot define a matching method"
         }
       ]
     }
