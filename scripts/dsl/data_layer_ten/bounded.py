@@ -8,13 +8,14 @@ def candidate(root):
  def src(key):return 'replace(replace(source_text('+q(paths[key])+'),char(13)||char(10),char(10)),char(13),char(10))'
  def rx(text,pattern,group=0):return f'rx_extract({text},{q(pattern.replace(r'\s',PY_SPACE))},{group})'
  def matches(text,pattern):return f'coalesce(rx_matches({text},{q(pattern.replace(r'\s',PY_SPACE))}),0)'
- def line(prefix):return f"1+length({prefix})-length(replace({prefix},char(10),''))"
+ # SQLite length(TEXT) stops at NUL. Count only the retained newline characters.
+ def line(prefix):return '1+length('+f"rx_replace({prefix},'[^'||char(10)||']','')"+')'
  def prefix(text,pattern):return rx(text,r'(?ms)\A(.*?)'+pattern,1)
  def block(key,name,method=False):
   header=(r'^    (?:async )?def '+re.escape(name)+r'(?:\[[^\n]*\])?\s*\(') if method else (r'^class '+re.escape(name)+r'(?:\[[^\n]*\])?(?:\([^\n]*\))?:')
   tail=rx(src(key),r'(?ms)('+header+r'.*)',1)
   headertext=rx(tail,r'(?s)\A('+header.removeprefix('^')+')',1)
-  rest=f'substr({tail},length({headertext})+1)'
+  rest=rx(tail,r'(?s)\A'+header.removeprefix('^')+'(.*)',1)
   stop=r'^    (?:@|(?:async )?def )' if method else r'^(?:class |def |async def )'
   return f'({headertext}||{rx(rest,r"(?ms)\A(.*?)(?:"+stop+r"|\z)",1)})',line(prefix(src(key),header))
  def emit(code,key,message,condition='1',ln='1'):
