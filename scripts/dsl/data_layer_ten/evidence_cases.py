@@ -79,3 +79,28 @@ def test_mutant_pack_actually_replaces_every_detector_and_preserves_options(tmp_
   assert mutant['clauses'][0]==original['clauses'][0]
   assert len(mutant['clauses'])==2
   assert mutant['clauses'][1]['forbid']=={'regex':{'source':'file.content','pattern':r'\b\B'}}
+
+def test_original_recordings_cannot_overlap_content_addressed_source_writes(tmp_path):
+ import subprocess,time
+ from data_layer_ten.source_lock import recording_lock
+ code="""import sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[2])
+from data_layer_ten.source_lock import recording_lock
+root=Path(sys.argv[1])
+print('attempting',flush=True)
+with recording_lock(root):
+ (root/'entered').write_text('entered')
+"""
+ with recording_lock(tmp_path):
+  process=subprocess.Popen([sys.executable,'-c',code,str(tmp_path),str(Path(__file__).resolve().parents[1])],stdout=subprocess.PIPE,text=True)
+  try:
+   assert process.stdout.readline().strip()=='attempting'
+   time.sleep(0.1)
+   assert process.poll() is None
+   assert not (tmp_path/'entered').exists()
+  except BaseException:
+   process.kill();process.wait();raise
+ process.communicate(timeout=10)
+ assert process.returncode==0
+ assert (tmp_path/'entered').read_text()=='entered'
