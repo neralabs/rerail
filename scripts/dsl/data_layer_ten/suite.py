@@ -8,10 +8,11 @@ DSL=Path(__file__).resolve().parents[1];sys.path[:0]=[str(DSL),str(DSL/'data_lay
 from data_layer_nine.suite import Suite as NineSuite,normalize
 from data_layer_nine.evidence import compact,expand
 from data_layer_batch_eight import tree_source
+from native_guard import codes
 from data_layer_probe_record import verify_sources
 from data_layer_ten.common import CHECKS,PIN
 import pytest
-ENTRIES={'generated_index_sources':['check_source','check_file'],'hnsw_architecture':['find_hnsw_architecture_findings'],'graphql_plan_ownership':['scan_source'],'schema_introspection_data_paths':['_collect_violations'],'embedding_vector_orchestration':['scan_source','scan_file','_violations_for_files'],'graph_lazy_sql_plan':['run_checks','_scan_versioned_lazy_mixin','_scan_versioned_transactions','_scan_graph_lazy_sql','_scan_intent_graph','_violations_for_sources','_violations_for_files'],'bounded_composed_graph_paths':['collect_violations'],'conditional_architecture':['collect_violations'],'matching_architecture':['scan_sources','lint'],'plan_optimizer_v2':['scan_file','find_violations']}
+ENTRIES={'generated_index_sources':['check_source','check_file'],'hnsw_architecture':['find_hnsw_architecture_findings'],'graphql_plan_ownership':['scan_source'],'schema_introspection_data_paths':['_collect_violations'],'embedding_vector_orchestration':['scan_source','scan_file','_violations_for_files'],'graph_lazy_sql_plan':['run_checks','_scan_versioned_lazy_mixin','_scan_versioned_transactions','_scan_graph_lazy_sql','_scan_intent_graph','_violations_for_sources','_violations_for_files'],'bounded_composed_graph_paths':['collect_violations'],'conditional_architecture':['collect_violations'],'matching_architecture':['scan_sources','lint','_scan_tree'],'plan_optimizer_v2':['scan_file','find_violations']}
 GRAPH={'versioned_lazy_mixin':'l7200_versioned_transactions/versioned_lazy_mixin.py','versioned_transactions':'l7200_versioned_transactions/versioned_transactions.py','graph_lazy_sql':'l7200_versioned_transactions/graph_lazy_sql.py','intent_graph':'impl/common/l2070_server_plan/steps/intent_graph.py'}
 class Suite(NineSuite):
  def pytest_configure(self):
@@ -24,6 +25,7 @@ class Suite(NineSuite):
    return tree
   self.replace(ast,'parse',capture)
   self.modules={check:importlib.import_module('scripts.lint_'+check) for check in self.checks}
+  original_codes=codes(self.modules)
   self.detector_codes={}
   for check,module in self.modules.items():
    for entry in ENTRIES[check]:
@@ -32,8 +34,15 @@ class Suite(NineSuite):
     self.replace(module,entry,self.wrap(check,entry,module,original))
   if not self.oracle:
    def guard(frame,event,arg):
-    if event=='call' and frame.f_code in self.detector_codes:
-     name=self.detector_codes[frame.f_code];self.semantic_fallbacks.append(name);raise AssertionError('Original detector executed: '+name)
+    if event!='call':return
+    detail=original_codes.get(frame.f_code)
+    if detail is not None:
+     check,name,passive=detail;key=check+':'+name
+     self.original_calls[key]=self.original_calls.get(key,0)+1
+     semantic=not passive and ('Collector.' in name or name in {'_extract_hnsw_architecture_facts','_source_facts','_scan_inventory','_scan_inventory_facts','_summary_from_tree','_run_graph_collector_on_tree'})
+    else:semantic=False
+    if frame.f_code in self.detector_codes or semantic:
+     name=self.detector_codes.get(frame.f_code,check+':'+name);self.semantic_fallbacks.append(name);raise AssertionError('Original detector executed: '+name)
    sys.setprofile(guard)
  def inputs(self,check,entry,module,arguments):
   root=Path(arguments.get('root') or getattr(module,'ROOT',getattr(module,'REPO_ROOT',self.root)))
@@ -56,7 +65,12 @@ class Suite(NineSuite):
     for path in arguments['files']:add(path)
   elif check=='matching_architecture':
    parameters['applicationPaths']=[str(p) for p in sorted(arguments.get('application_paths',()))]
-   if entry=='scan_sources':
+   if entry=='_scan_tree':
+    text=tree_source(arguments['tree'],self.trees)
+    if text is None:raise AssertionError('Missing original tree source')
+    add(arguments['path'],text)
+    if arguments.get('application_path_override'):parameters['applicationPaths']=[files[0]['path']]
+   elif entry=='scan_sources':
     for path,source in arguments['sources'].items():add(path,source)
    else:
     paths=module._production_paths(root)
@@ -122,24 +136,24 @@ class Suite(NineSuite):
    elif check=='plan_optimizer_v2':value=module.Finding(path,line,code,message)
    else:value=module.Violation(code,path,line,message)
    result.append(value)
-  return tuple(result) if check in {'hnsw_architecture','matching_architecture'} else result
+  return tuple(result) if check=='hnsw_architecture' or check=='matching_architecture' and entry!='_scan_tree' else result
  def pytest_collection_modifyitems(self,items):
   items[:]=items[getattr(self,'part',0)::getattr(self,'parts',1)]
 def main():
- p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--repo',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--policies',type=Path,required=True);p.add_argument('--oracle',action='store_true');p.add_argument('--baseline',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot');p.add_argument('--checks',default=','.join(CHECKS));p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);p.add_argument('tests',nargs='*');args=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--repo',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--policies',type=Path,required=True);p.add_argument('--oracle',action='store_true');p.add_argument('--baseline',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot');p.add_argument('--checks',default=','.join(CHECKS));p.add_argument('--mutant',action='store_true');p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);p.add_argument('tests',nargs='*');args=p.parse_args()
  workspace=Path.cwd();root=args.source.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True);os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
  baseline=expand(json.loads(args.baseline.read_text())) if args.baseline else None
  if not args.oracle and baseline is None:p.error('A recorded original baseline is required')
  checks=tuple(args.checks.split(','));from data_layer_nine.discovery import upstream_tests,independent_collections
- tests=args.tests or upstream_tests(root,checks);os.chdir(root);backends=[];exitcodes=[]
+ tests=args.tests or [*upstream_tests(root,checks),str(Path(__file__).with_name('optimizer_cases.py')),str(Path(__file__).with_name('audit_cases.py'))];os.chdir(root);backends=[];exitcodes=[]
  for index,collection in enumerate(independent_collections(tests)):
-  backend=Suite(root,workspace,args.mode,output.with_name(output.stem+f'-{index}.json'),args.oracle,baseline['records'] if baseline else None);backend.checks=checks;backend.part=args.part;backend.parts=args.parts
+  backend=Suite(root,workspace,args.mode,output.with_name(output.stem+f'-{index}.json'),args.oracle,baseline['records'] if baseline else None);backend.checks=checks;backend.part=args.part;backend.parts=args.parts;backend.mutant=args.mutant
   exitcodes.append(int(pytest.main(['--rootdir',str(root),'-c',str(root/'pyproject.toml'),'-q',*collection],plugins=[backend])));backends.append(backend)
  records=[r for b in backends for r in b.records];cases={k:v for b in backends for k,v in b.outcomes.items()};calls=[r for b in backends for r in b.calls];fallbacks=[r for b in backends for r in b.semantic_fallbacks]
  code=max(exitcodes);wanted=[r for r in baseline['records'] if r['test'] in cases] if baseline else records
  from collections import Counter
  missing=Counter((r['test'],r['check'],r['entry']) for r in wanted)-Counter((r['test'],r['check'],r['entry']) for r in records)
  if missing or fallbacks:code=1
- report=dict(format='rerail.data-layer-batch-ten/v1',oracle=args.oracle,mode=args.mode,exitCode=code,sourceFilesChecked=verify_sources(root,args.repo.resolve(),PIN),records=records,calls=calls,cases=cases,semanticFallbacks=fallbacks,missingResults=list(missing.elements()),engineSha256=hashlib.sha256(backends[0].engine_path.read_bytes()).hexdigest())
+ report=dict(format='rerail.data-layer-batch-ten/v1',oracle=args.oracle,mode=args.mode,exitCode=code,sourceFilesChecked=verify_sources(root,args.repo.resolve(),PIN),records=records,calls=calls,cases=cases,semanticFallbacks=fallbacks,originalCalls={k:sum(b.original_calls.get(k,0) for b in backends) for k in set().union(*(b.original_calls.keys() for b in backends))},retainedCaseIds=sorted(set(cases)-{r['test'] for r in records}),missingResults=list(missing.elements()),engineSha256=hashlib.sha256(backends[0].engine_path.read_bytes()).hexdigest())
  output.write_text(json.dumps(compact(report),indent=2)+'\n');raise SystemExit(code)
 if __name__=='__main__':main()

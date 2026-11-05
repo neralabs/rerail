@@ -528,6 +528,31 @@ jobs:
           python scripts/dsl/data_layer_nine/evidence.py \
             --oracle fixtures/host/data-layer-port/batch-09-complete-api.json --controls \
             --reports "$reports/controls-0.json" "$reports/controls-1.json" "$reports/controls-2.json" "$reports/controls-3.json" --output "$reports/controls-summary.json"
+      - name: Compare batch-ten positives, negatives and complete results
+        env:
+          PYTHONHASHSEED: "0"
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
+          reports="$RUNNER_TEMP/batch-ten-reports"
+          mkdir -p "$reports"
+          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
+            --source .rerail/data-layer-upstream --repo .rerail/data-layer-upstream \
+            --baseline fixtures/host/data-layer-port/batch-10-complete-api.json \
+            --policies packs/data-layer/rules --mode "$MODE" --output "$reports/api-$MODE.json"
+      - name: Verify batch-ten replay, defaults and disabled detectors
+        if: matrix.mode == 'snapshot'
+        run: |
+          timeout 115s npx vitest run test/conformance/data-layer/batch-ten.test.ts
+          timeout 115s npx vitest run test/conformance/data-layer/batch-ten-defaults.test.ts test/engine/native/data-layer-ten/
+      - name: Upload batch-ten assertion receipts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: batch-ten-${{ matrix.mode }}
+          path: ${{ runner.temp }}/batch-ten-reports/
+          if-no-files-found: error
       - name: Upload batch-nine assertion receipts
         if: always()
         uses: actions/upload-artifact@v7

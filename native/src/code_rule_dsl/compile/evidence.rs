@@ -41,8 +41,17 @@ pub(super) fn compile_relation(
         defines,
         required_ast,
     )?;
-    if !matches!(query, Query::Ast { .. } | Query::Regex { source: crate::code_rule_dsl::model::RegexSource::Content, .. }) {
-        return Err(invalid(format!("{path}/query must be an ast or file.content regex query")));
+    if !matches!(
+        query,
+        Query::Ast { .. }
+            | Query::Regex {
+                source: crate::code_rule_dsl::model::RegexSource::Content,
+                ..
+            }
+    ) {
+        return Err(invalid(format!(
+            "{path}/query must be an ast or file.content regex query"
+        )));
     }
     if !query.calls().is_empty() {
         return Err(invalid(format!(

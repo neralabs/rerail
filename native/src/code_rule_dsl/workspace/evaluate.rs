@@ -546,7 +546,10 @@ pub(super) fn evaluate_file(
             if !clause.violation.project.is_empty() {
                 let witness = witnesses.last_mut().expect("regex witness");
                 let projection = crate::code_rule_dsl::eval::evidence::project_text(
-                    &clause.violation.project, &file.input, witness);
+                    &clause.violation.project,
+                    &file.input,
+                    witness,
+                );
                 witness.captures.set_typed_projection(projection);
             }
             // A decision is answered by its first witness.

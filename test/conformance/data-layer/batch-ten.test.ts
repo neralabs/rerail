@@ -7,8 +7,8 @@ const oracle=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-com
 const checks=["graph_lazy_sql_plan","bounded_composed_graph_paths","graphql_plan_ownership","plan_optimizer_v2","conditional_architecture","schema_introspection_data_paths","matching_architecture","hnsw_architecture","embedding_vector_orchestration","generated_index_sources"];
 const unique=[...new Map(oracle.records.map(r=>[JSON.stringify({...r,test:undefined}),r])).values()];
 it("retains unchanged upstream assertions, complete observations and source digests",()=>{
- expect(Object.keys(oracle.cases)).toHaveLength(320);
- expect(oracle.records).toHaveLength(196);
+ expect(Object.keys(oracle.cases)).toHaveLength(326);
+ expect(oracle.records).toHaveLength(203);
  for(const [digest,source]of Object.entries(oracle.sources))expect(createHash("sha256").update(source).digest("hex")).toBe(digest);
  for(const check of checks){const records=oracle.records.filter(r=>r.check===check);expect(records.some(r=>Array.isArray(r.expected)&&r.expected.length>0)).toBe(true);expect(records.some(r=>Array.isArray(r.expected)&&r.expected.length===0)).toBe(true);}
  expect(oracle.records.some(r=>r.test.includes("current_matching_architecture_is_clean")&&r.files.length===140)).toBe(true);
@@ -22,4 +22,11 @@ it.each(checks)("rejects a disabled %s detector on a recorded positive",async ch
 });
 it("ships the ten documents once in the private pack",()=>{
  const pack=readBundledCatalog(["packs/data-layer"]);expect(pack.documents.size).toBe(30);for(const check of checks)expect(pack.documents.has(`data-layer-${check.replaceAll("_","-")}`)).toBe(true);
+});
+
+it("binds complete runs and positive controls to the batch implementation",()=>{
+ const receipt=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-native-assertions.json","utf8"));
+ for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:326,completeResults:203,positiveResults:169,detectorCases:202,retainedUtilityAndCliCases:124,semanticFallbacks:[]});expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);}
+ expect(receipt.positiveControls.rejected).toEqual([...checks].sort());
+ for(const[path,digest]of Object.entries(receipt.fileSha256))expect(createHash("sha256").update(readFileSync(path)).digest("hex"),path).toBe(digest);
 });

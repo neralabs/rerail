@@ -1,0 +1,392 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "data-layer-matching-architecture",
+  "revision": 1,
+  "mode": "block",
+  "description": "Port of nera-data-layer matching_architecture at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "scope": {
+    "include": [
+      "data_layer/**/*.py",
+      "impl/common/**/*.py",
+      "conform/l5250_matching/**/*.py",
+      "l[0-9][0-9][0-9][0-9]_*/**/*.py",
+      "data_layer_testing/matching_operator.py"
+    ],
+    "exclude": [
+      "**/tests/**"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "configuration",
+      "define": {
+        "options": {
+          "entryPoint": {
+            "type": "string",
+            "default": "all"
+          },
+          "parameters": {
+            "type": "string",
+            "default": "{}"
+          }
+        }
+      }
+    },
+    {
+      "id": "matching-file-checks",
+      "relational": {
+        "inputs": {
+          "gate": {
+            "evidence": {
+              "as": "row",
+              "query": {
+                "ast": {
+                  "language": "python",
+                  "syntax": "valid",
+                  "rule": {
+                    "kind": "module"
+                  }
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "syntax": {
+          "name": "cst",
+          "gate": "gate",
+          "columns": [
+            "__path",
+            "id",
+            "kind",
+            "__start",
+            "__end"
+          ],
+          "excludeKinds": []
+        },
+        "stages": [
+          {
+            "name": "canonical",
+            "pythonAst": {
+              "syntax": "cst",
+              "roots": "SELECT __path,id FROM cst WHERE kind='module'",
+              "fields": [
+                "ast_kind",
+                "ast_name",
+                "ast_module",
+                "ast_value",
+                "ast_value_kind",
+                "ast_preorder",
+                "ast_parent",
+                "ast_field",
+                "ast_index",
+                "ast_end",
+                "ast_function",
+                "ast_op",
+                "ast_start",
+                "ast_stop",
+                "ast_line",
+                "ast_class"
+              ],
+              "expand": "nodes"
+            }
+          },
+          {
+            "name": "a",
+            "query": "SELECT __path,ast_kind AS kind,ast_name AS name,NULL AS alias,ast_module AS module,ast_value AS value,ast_value_kind AS value_kind,CAST(NULLIF(ast_preorder,'') AS INTEGER) AS id,CAST(NULLIF(NULL,'') AS INTEGER) AS bfs,CAST(NULLIF(ast_parent,'') AS INTEGER) AS parent,ast_field AS field,CAST(NULLIF(ast_index,'') AS INTEGER) AS position,CAST(NULLIF(ast_end,'') AS INTEGER) AS last,CAST(NULLIF(ast_function,'') AS INTEGER) AS fn,ast_op AS op,CAST(NULLIF(ast_start,'') AS INTEGER) AS __start,CAST(NULLIF(ast_stop,'') AS INTEGER) AS __end,CAST(NULLIF(ast_line,'') AS INTEGER) AS line,NULL AS context,NULL AS name_repr,NULL AS value_repr,NULL AS annotation,NULL AS annotation_repr,CAST(NULLIF(ast_class,'') AS INTEGER) AS cls FROM canonical",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "parent",
+                "field"
+              ],
+              [
+                "__path",
+                "kind",
+                "name"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "calls",
+            "query": "SELECT c.*,f.kind AS callee_kind,f.name AS callee,f.id AS callee_id,r.id AS receiver,r.kind AS receiver_kind,r.name AS receiver_name\n      FROM a c JOIN a f ON f.__path=c.__path AND f.parent=c.id AND f.field='func'\n      LEFT JOIN a r ON r.__path=f.__path AND r.parent=f.id AND r.field='value'\n      WHERE c.kind='Call'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "callee"
+              ],
+              [
+                "__path",
+                "fn"
+              ]
+            ]
+          },
+          {
+            "name": "functions",
+            "query": "SELECT * FROM a WHERE kind IN ('FunctionDef','AsyncFunctionDef')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ],
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "parameters",
+            "query": "SELECT p.* FROM a p JOIN a arguments ON arguments.__path=p.__path AND arguments.id=p.parent AND arguments.kind='arguments' JOIN functions f ON f.__path=arguments.__path AND f.id=arguments.parent WHERE p.kind='arg'",
+            "indexes": [
+              [
+                "__path",
+                "fn"
+              ],
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "qualified",
+            "query": "WITH RECURSIVE q(__path,id,name) AS (\n      SELECT __path,id,name FROM a WHERE kind='Name'\n      UNION ALL SELECT p.__path,p.id,CASE WHEN p.kind='Attribute' THEN q.name||'.'||p.name ELSE q.name END\n      FROM q JOIN a child ON child.__path=q.__path AND child.id=q.id\n      JOIN a p ON p.__path=child.__path AND p.id=child.parent\n      WHERE p.kind='Attribute' AND child.field='value' OR p.kind='Call' AND child.field='func') SELECT * FROM q",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "classes",
+            "query": "SELECT * FROM a WHERE kind='ClassDef'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "single_decorators",
+            "query": "SELECT d.__path,d.parent fn,d.id root,coalesce(c.kind,d.kind) kind,coalesce(c.name,d.name) name FROM a d LEFT JOIN a c ON c.__path=d.__path AND c.parent=d.id AND c.field='func' AND d.kind='Call' WHERE d.field='decorator_list'",
+            "indexes": [
+              [
+                "__path",
+                "fn",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "matching_parameters",
+            "query": {
+              "$option": "parameters",
+              "escape": "sql",
+              "template": "SELECT {} data"
+            }
+          },
+          {
+            "name": "matching_imports",
+            "query": "SELECT n.__path,n.id,n.__start,n.__end,n.line,CASE WHEN n.kind='ImportFrom' THEN n.module ELSE alias.name END module,coalesce(alias.position,0) ordinal FROM a n LEFT JOIN a alias ON alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' AND n.kind='Import' WHERE n.kind IN ('Import','ImportFrom')",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "matching_context",
+            "query": "SELECT n.*,rx_matches(n.__path,'(?:^|/)(?:applications|application|app)/') OR EXISTS(SELECT 1 FROM matching_parameters,json_each(data,'$.applicationPaths') WHERE value=n.__path) application,rx_matches(n.__path,'^(?:data_layer/matching\\.py$|l1470_matching_contracts/)|(?:^|/)l5250_matching/') production,n.__path IN ('data_layer/matching.py','l5250_matching/api.py','l5250_matching/__init__.py') facade,substr(n.__path,1,23)='conform/l5250_matching/' conformance,CAST(rx_extract(n.__path,'(?:^|/)l([0-9]{4})_',1) AS INTEGER) layer,EXISTS(SELECT 1 FROM matching_imports i WHERE i.__path=n.__path AND (i.module='data_layer.matching' OR rx_matches(i.module,'^l(?:1470_matching_contracts|5250_matching)(?:\\.|$)'))) OR EXISTS(SELECT 1 FROM a name WHERE name.__path=n.__path AND name.kind IN ('Name','Attribute') AND name.name IN ('MatchSpec','MatchResult','MatchPhysicalPlanError','MatchAccessMethodKind')) uses_contracts FROM a n WHERE n.kind='Module'",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "matching_scope",
+            "query": "SELECT *,production OR uses_contracts matching,substr(__path,1,12)='impl/common/' AND (rx_matches(__path,'(?:^|/)l5250_matching/') OR uses_contracts) implementation FROM matching_context",
+            "indexes": [
+              [
+                "__path"
+              ]
+            ]
+          },
+          {
+            "name": "static_parts",
+            "query": "WITH RECURSIVE parts(__path,root,id,kind,value,value_kind,op) AS (SELECT __path,id,id,kind,value,value_kind,op FROM a WHERE kind IN ('Constant','BinOp','JoinedStr') UNION ALL SELECT p.__path,p.root,n.id,n.kind,n.value,n.value_kind,n.op FROM parts p JOIN a parent ON parent.__path=p.__path AND parent.id=p.id JOIN a n ON n.__path=parent.__path AND n.parent=parent.id WHERE parent.kind='BinOp' AND parent.op='Add' AND n.field IN ('left','right') OR parent.kind='JoinedStr' AND n.field='values') SELECT * FROM parts",
+            "indexes": [
+              [
+                "__path",
+                "root",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "static_strings",
+            "query": "SELECT __path,root,coalesce(group_concat(CASE WHEN kind='Constant' THEN value ELSE '' END,''),'') text FROM (SELECT * FROM static_parts ORDER BY __path,root,id) GROUP BY __path,root HAVING sum(NOT (kind='Constant' AND value_kind='str' OR kind='BinOp' AND op='Add' OR kind='JoinedStr'))=0",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "type_parts",
+            "query": "WITH RECURSIVE parts(__path,root,id) AS (SELECT __path,id,id FROM a WHERE field IN ('annotation','bases','type') UNION ALL SELECT p.__path,p.root,n.id FROM parts p JOIN a parent ON parent.__path=p.__path AND parent.id=p.id JOIN a n ON n.__path=parent.__path AND n.parent=parent.id WHERE parent.kind='Subscript' AND n.field='value' OR parent.kind='BinOp' AND parent.op='BitOr' AND n.field IN ('left','right')) SELECT p.__path,p.root,p.id,coalesce(q.name,'') label FROM parts p JOIN a n ON n.__path=p.__path AND n.id=p.id LEFT JOIN qualified q ON q.__path=n.__path AND q.id=n.id AND n.kind IN ('Name','Attribute') WHERE n.kind!='Subscript' AND NOT (n.kind='BinOp' AND n.op='BitOr')",
+            "indexes": [
+              [
+                "__path",
+                "root",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "type_labels",
+            "query": "SELECT __path,root,group_concat(label,'|') label FROM (SELECT * FROM type_parts ORDER BY __path,root,id) GROUP BY __path,root",
+            "indexes": [
+              [
+                "__path",
+                "root"
+              ]
+            ]
+          },
+          {
+            "name": "matching_fields",
+            "query": "SELECT n.*,t.name field_name,v.id annotation_id,v.kind annotation_kind,v.name annotation_name,labels.label annotation_text,cls.name class_name FROM a n JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field='target' AND t.kind='Name' JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='annotation' LEFT JOIN type_labels labels ON labels.__path=v.__path AND labels.root=v.id JOIN classes cls ON cls.__path=n.__path AND cls.id=n.parent WHERE n.kind='AnnAssign' AND n.field='body'",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "unsafe_annotations",
+            "query": "WITH RECURSIVE unsafe(__path,id) AS (SELECT n.__path,n.id FROM a n LEFT JOIN qualified q ON q.__path=n.__path AND q.id=n.id WHERE n.kind IN ('Name','Attribute') AND q.name IN ('Any','Mapping','bool','bytes','dict','float','int','list','object','set','str','tuple') OR n.kind='Constant' AND n.value_kind='none' UNION SELECT p.__path,p.id FROM unsafe u JOIN a child ON child.__path=u.__path AND child.id=u.id JOIN a p ON p.__path=child.__path AND p.id=child.parent AND p.kind='BinOp' AND p.op='BitOr') SELECT * FROM unsafe",
+            "indexes": [
+              [
+                "__path",
+                "id"
+              ]
+            ]
+          },
+          {
+            "name": "indirect_match_parameters",
+            "query": "SELECT fn.__path,fn.name,fn.id,call.id call_id,p.id parameter_id,(SELECT count(*) FROM parameters before WHERE before.__path=p.__path AND before.fn=p.fn AND before.field IN ('args','posonlyargs') AND before.id<p.id) argument_index FROM functions fn JOIN calls call ON call.__path=fn.__path AND call.id BETWEEN fn.id AND fn.last JOIN a arg ON arg.__path=call.__path AND arg.parent=call.id AND arg.field='args' AND arg.position=1 AND arg.kind='Name' JOIN parameters p ON p.__path=fn.__path AND p.fn=fn.id AND p.name=arg.name AND p.field IN ('args','posonlyargs') WHERE call.callee IN ('match','match_async','match_lazy')",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "predicted_counters",
+            "query": "SELECT n.__path,t.name FROM a n JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('target','targets') AND t.kind='Name' JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='value' WHERE n.kind IN ('Assign','AnnAssign') AND EXISTS(SELECT 1 FROM a binary WHERE binary.__path=v.__path AND binary.id BETWEEN v.id AND v.last AND (binary.kind='BinOp')) AND EXISTS(SELECT 1 FROM a name WHERE name.__path=v.__path AND name.id BETWEEN v.id AND v.last AND (name.kind='Name' AND name.name IN ('pair_evaluations','expression_node_count')))",
+            "indexes": [
+              [
+                "__path",
+                "name"
+              ]
+            ]
+          },
+          {
+            "name": "matching_findings_0",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA001' AS issue,'Application matching behavior cannot switch on backend identity' AS message,n.id||':MA001:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'BackendType' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.application AND n.kind IN ('Name','Attribute') AND n.name='BackendType' AND n.id=(SELECT candidate.id FROM a candidate WHERE candidate.__path=n.__path AND candidate.kind IN ('Name','Attribute') AND candidate.name='BackendType' ORDER BY candidate.line,candidate.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA002' AS issue,'Application matching declarations cannot name a physical access method' AS message,n.id||':MA002:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'physical_access_method' AS symbol,'' AS sort_name FROM a n JOIN static_strings s ON s.__path=n.__path AND s.root=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.application AND lower(s.text) IN ('bit_hamming_ops','halfvec','hnsw','ivfflat','pgvector','sql_table_hnsw','usearch','vector_cosine_ops') AND n.line=(SELECT min(p.line) FROM a p JOIN static_strings text ON text.__path=p.__path AND text.root=p.id WHERE p.__path=n.__path AND lower(text.text) IN ('bit_hamming_ops','halfvec','hnsw','ivfflat','pgvector','sql_table_hnsw','usearch','vector_cosine_ops')) AND n.id=(SELECT min(p.id) FROM a p JOIN static_strings text ON text.__path=p.__path AND text.root=p.id WHERE p.__path=n.__path AND p.line=n.line AND lower(text.text) IN ('bit_hamming_ops','halfvec','hnsw','ivfflat','pgvector','sql_table_hnsw','usearch','vector_cosine_ops')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA015' AS issue,'Matching conformance tests must import project APIs from data_layer' AS message,n.id||':MA015:'||(n.id+i.ordinal*0.001) AS identity,0 AS phase,n.id+i.ordinal*0.001 AS ordering,i.module AS symbol,'' AS sort_name FROM a n JOIN matching_imports i ON i.__path=n.__path AND i.id=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.conformance AND (i.module='impl' OR substr(i.module,1,5)='impl.' OR rx_matches(i.module,'^l[0-9]{4}_')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA036' AS issue,'Matching conformance must use public artifact operations from data_layer.matching' AS message,n.id||':MA036:'||(n.id+i.ordinal*0.001) AS identity,0 AS phase,n.id+i.ordinal*0.001 AS ordering,'data_layer_testing.matching_operator' AS symbol,'' AS sort_name FROM a n JOIN matching_imports i ON i.__path=n.__path AND i.id=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.conformance AND (i.module='data_layer_testing.matching_operator' OR i.module='data_layer_testing' AND EXISTS(SELECT 1 FROM a alias WHERE alias.__path=n.__path AND alias.parent=n.id AND alias.kind='alias' AND alias.name='matching_operator')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA010' AS issue,'Application matching code cannot import implementation modules' AS message,n.id||':MA010:'||(n.id+i.ordinal*0.001) AS identity,0 AS phase,n.id+i.ordinal*0.001 AS ordering,(SELECT first.module FROM matching_imports first WHERE first.__path=n.__path AND first.id=n.id ORDER BY first.ordinal LIMIT 1) AS symbol,'' AS sort_name FROM a n JOIN matching_imports i ON i.__path=n.__path AND i.id=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.application AND (i.module='impl' OR substr(i.module,1,5)='impl.') AND i.ordinal=(SELECT min(prior.ordinal) FROM matching_imports prior WHERE prior.__path=i.__path AND prior.id=i.id AND ((prior.module='impl' OR substr(prior.module,1,5)='impl.'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA041' AS issue,'Production matching modules cannot import the testing package' AS message,n.id||':MA041:'||(n.id+i.ordinal*0.001) AS identity,0 AS phase,n.id+i.ordinal*0.001 AS ordering,i.module AS symbol,'' AS sort_name FROM a n JOIN matching_imports i ON i.__path=n.__path AND i.id=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.facade AND (i.module='data_layer_testing' OR substr(i.module,1,19)='data_layer_testing.') AND i.ordinal=(SELECT min(prior.ordinal) FROM matching_imports prior WHERE prior.__path=i.__path AND prior.id=i.id AND ((prior.module='data_layer_testing' OR substr(prior.module,1,19)='data_layer_testing.'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA019' AS issue,'The public matching facade cannot select or import a physical implementation' AS message,n.id||':MA019:'||(n.id+i.ordinal*0.001) AS identity,0 AS phase,n.id+i.ordinal*0.001 AS ordering,(SELECT first.module FROM matching_imports first WHERE first.__path=n.__path AND first.id=n.id ORDER BY first.ordinal LIMIT 1) AS symbol,'' AS sort_name FROM a n JOIN matching_imports i ON i.__path=n.__path AND i.id=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.facade AND (i.module='impl' OR substr(i.module,1,5)='impl.') AND i.ordinal=(SELECT min(prior.ordinal) FROM matching_imports prior WHERE prior.__path=i.__path AND prior.id=i.id AND ((prior.module='impl' OR substr(prior.module,1,5)='impl.'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA008' AS issue,'Lower layers cannot import the matching execution layer' AS message,n.id||':MA008:'||(n.id+i.ordinal*0.001) AS identity,0 AS phase,n.id+i.ordinal*0.001 AS ordering,(SELECT first.module FROM matching_imports first WHERE first.__path=n.__path AND first.id=n.id ORDER BY first.ordinal LIMIT 1) AS symbol,'' AS sort_name FROM a n JOIN matching_imports i ON i.__path=n.__path AND i.id=n.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.layer<5250 AND (i.module='l5250_matching' OR substr(i.module,1,15)='l5250_matching.') AND i.ordinal=(SELECT min(prior.ordinal) FROM matching_imports prior WHERE prior.__path=i.__path AND prior.id=i.id AND ((prior.module='l5250_matching' OR substr(prior.module,1,15)='l5250_matching.'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA016' AS issue,'Matching conformance tests cannot execute SQL directly' AS message,n.id||':MA016:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.conformance AND n.callee='nonportably_execute_sql' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA006' AS issue,'Matching production code must use static imports' AS message,n.id||':MA006:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND (n.callee_kind='Attribute' AND n.callee='import_module' OR n.callee_kind='Name' AND n.callee IN ('__import__','import_module')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA031' AS issue,'Runtime counters must consume executed-stage receipts, not declared stages or predicted work' AS message,n.id||':MA031:'||(n.id) AS identity,0 AS phase,n.id AS ordering,(SELECT arg.name FROM a arg WHERE arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND arg.position=0) AS symbol,'' AS sort_name FROM calls n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.callee='len' AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND (arg.position=0 AND arg.kind='Name' AND substr(arg.name,-11)='_SQL_STAGES')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA011' AS issue,'Matching specifications cannot use string lookup' AS message,n.id||':MA011:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN a arg ON arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' JOIN static_strings value ON value.__path=arg.__path AND value.root=arg.id JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.application AND arg.position=CASE WHEN n.callee IN ('match','match_async','match_lazy') THEN 1 ELSE (SELECT p.argument_index FROM indirect_match_parameters p WHERE p.__path=n.__path AND p.name=n.callee ORDER BY p.id DESC,p.call_id DESC LIMIT 1) END UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA031' AS issue,'Runtime counters must consume executed-stage receipts, not declared stages or predicted work' AS message,n.id||':MA031:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.callee AS symbol,'' AS sort_name FROM calls n JOIN a value ON value.__path=n.__path AND value.parent=n.id AND value.field='args' AND value.position=0 JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND (n.callee='MatchDatabaseRoundTripCount' AND value.kind='Call' AND EXISTS(SELECT 1 FROM calls inner_call JOIN a arg ON arg.__path=inner_call.__path AND arg.parent=inner_call.id AND arg.field='args' AND arg.position=0 AND arg.kind='Name' WHERE inner_call.__path=value.__path AND inner_call.id=value.id AND inner_call.callee='len' AND upper(arg.name)=arg.name) OR n.callee='MatchExpressionEvaluationCount' AND (EXISTS(SELECT 1 FROM a child WHERE child.__path=value.__path AND child.id BETWEEN value.id AND value.last AND (child.kind='Name' AND child.name='pair_evaluations')) OR value.kind='Name' AND EXISTS(SELECT 1 FROM predicted_counters p WHERE p.__path=value.__path AND p.name=value.name)) OR n.callee='MatchStageOperationCount' AND value.kind='Name' AND value.name='hydration_operations') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA007' AS issue,'Matching SQL must use typed grammar classes' AS message,n.id||':MA007:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'raw_sql' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND n.kind='JoinedStr' AND rx_matches(upper(ltrim((SELECT group_concat(value,'') FROM (SELECT value FROM a part WHERE part.__path=n.__path AND part.parent=n.id AND part.field='values' AND part.kind='Constant' AND part.value_kind='str' ORDER BY part.position)))),'^(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER)') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA004' AS issue,'Matching physical failure cannot continue through a runtime fallback' AS message,n.id||':MA004:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'runtime_fallback' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND n.kind='Try' AND EXISTS(SELECT 1 FROM a handler LEFT JOIN a typ ON typ.__path=handler.__path AND typ.parent=handler.id AND typ.field='type' LEFT JOIN type_labels qualified_name ON qualified_name.__path=typ.__path AND qualified_name.root=typ.id WHERE handler.__path=n.__path AND handler.parent=n.id AND handler.kind='ExceptHandler' AND (typ.id IS NULL OR qualified_name.label IN ('Exception','BaseException') OR substr(qualified_name.label,1,5)='Match')) AND EXISTS(SELECT 1 FROM a handler JOIN a r ON r.__path=handler.__path AND r.id BETWEEN handler.id AND handler.last JOIN a v ON v.__path=r.__path AND v.parent=r.id AND v.field='value' AND v.kind='Call' WHERE handler.__path=n.__path AND handler.parent=n.id AND handler.kind='ExceptHandler' AND r.kind='Return')"
+          },
+          {
+            "name": "matching_findings_1",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA026' AS issue,'Shared matching code cannot switch on backend identity' AS message,n.id||':MA026:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'BackendType' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.kind IN ('Name','Attribute') AND n.name='BackendType' AND n.id=(SELECT candidate.id FROM a candidate WHERE candidate.__path=n.__path AND candidate.kind IN ('Name','Attribute') AND candidate.name='BackendType' ORDER BY candidate.line,candidate.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA027' AS issue,'Matching implementation code must use typed SQL grammar' AS message,n.id||':MA027:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'raw_sql_boundary' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND (call.callee IN ('nonportably_execute_sql','SqlRaw','SqlFragment') OR call.callee IN ('execute','executemany') AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=call.__path AND arg.parent=call.id AND arg.field='args' AND (arg.position=0 AND arg.kind IN ('Constant','JoinedStr'))))) AND n.id=(SELECT candidate.id FROM a candidate WHERE candidate.__path=n.__path AND candidate.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=candidate.__path AND call.id=candidate.id AND (call.callee IN ('nonportably_execute_sql','SqlRaw','SqlFragment') OR call.callee IN ('execute','executemany') AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=call.__path AND arg.parent=call.id AND arg.field='args' AND (arg.position=0 AND arg.kind IN ('Constant','JoinedStr'))))) ORDER BY candidate.line,candidate.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA021' AS issue,'The public facade cannot resolve a physical matching method' AS message,n.id||':MA021:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'physical_resolution' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.facade AND (n.kind='Attribute' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=n.__path AND v.parent=n.id AND v.field='value' AND (EXISTS(SELECT 1 FROM qualified q WHERE q.__path=v.__path AND q.id=v.id AND q.name IN ('MatchAccessMethodKind','MatchPhysicalStageKind')))) OR n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND substr(call.callee,1,6)='build_' AND instr(call.callee,'match')>0)) AND n.id=(SELECT candidate.id FROM a candidate WHERE candidate.__path=n.__path AND (candidate.kind='Attribute' AND EXISTS(SELECT 1 FROM a v WHERE v.__path=candidate.__path AND v.parent=candidate.id AND v.field='value' AND (EXISTS(SELECT 1 FROM qualified q WHERE q.__path=v.__path AND q.id=v.id AND q.name IN ('MatchAccessMethodKind','MatchPhysicalStageKind')))) OR candidate.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=candidate.__path AND call.id=candidate.id AND substr(call.callee,1,6)='build_' AND instr(call.callee,'match')>0)) ORDER BY candidate.line,candidate.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA020' AS issue,'Application matching specifications cannot contain physical execution state' AS message,n.id||':MA020:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.class_name||'.'||n.field_name AS symbol,'' AS sort_name FROM matching_fields n JOIN matching_scope scope ON scope.__path=n.__path WHERE substr(n.__path,1,25)='l1470_matching_contracts/' AND n.class_name='MatchSpec' AND rx_matches(lower(n.field_name),'artifact|access_method|physical|index_generation|watermark') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA030' AS issue,'Recursive matching fields require a closed discriminated union' AS message,n.id||':MA030:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.class_name||'.'||n.field_name AS symbol,'' AS sort_name FROM matching_fields n JOIN matching_scope scope ON scope.__path=n.__path WHERE substr(n.__path,1,25)='l1470_matching_contracts/' AND substr(n.class_name,1,5)='Match' AND n.annotation_text IN ('MatchArtifactState','MatchComplexityBound','MatchDuplicatePairPolicySpec','MatchExplanationPolicy','MatchFilterSpec','MatchFreshnessDiagnostics','MatchFreshnessPolicySpec','MatchIdentitySpec','MatchMissingRepresentationPolicySpec','MatchPageState','MatchPaginationSpec','MatchPruningBound','MatchRepresentationAvailabilitySpec','MatchRepresentationSpec','MatchResultShapeSpec','MatchScoreExpression') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA009' AS issue,'Public matching semantic values require nominal closed types' AS message,n.id||':MA009:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.class_name||'.'||n.field_name AS symbol,'' AS sort_name FROM matching_fields n JOIN matching_scope scope ON scope.__path=n.__path WHERE substr(n.__path,1,25)='l1470_matching_contracts/' AND substr(n.class_name,1,5)='Match' AND EXISTS(SELECT 1 FROM unsafe_annotations u WHERE u.__path=n.__path AND u.id=n.annotation_id) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA012' AS issue,'Public matching contracts cannot use structural Protocol types' AS message,n.id||':MA012:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.name AS symbol,'' AS sort_name FROM classes n JOIN matching_scope scope ON scope.__path=n.__path WHERE substr(n.__path,1,25)='l1470_matching_contracts/' AND substr(n.name,1,5)='Match' AND EXISTS(SELECT 1 FROM a base LEFT JOIN type_labels qualified_name ON qualified_name.__path=base.__path AND qualified_name.root=base.id WHERE base.__path=n.__path AND base.parent=n.id AND base.field='bases' AND substr(qualified_name.label,-8)='Protocol') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA013' AS issue,'Public matching data contracts require frozen Pydantic models' AS message,n.id||':MA013:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.name AS symbol,'' AS sort_name FROM classes n JOIN matching_scope scope ON scope.__path=n.__path WHERE substr(n.__path,1,25)='l1470_matching_contracts/' AND substr(n.name,1,5)='Match' AND EXISTS(SELECT 1 FROM single_decorators d JOIN qualified qualified_name ON qualified_name.__path=d.__path AND qualified_name.id=CASE WHEN d.kind='Call' THEN NULL ELSE d.root END WHERE d.__path=n.__path AND d.fn=n.id AND qualified_name.name IN ('dataclass','dataclasses.dataclass')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA014' AS issue,'Public matching Pydantic contracts must declare frozen=True' AS message,n.id||':MA014:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.name AS symbol,'' AS sort_name FROM classes n JOIN matching_scope scope ON scope.__path=n.__path WHERE substr(n.__path,1,25)='l1470_matching_contracts/' AND substr(n.name,1,5)='Match' AND EXISTS(SELECT 1 FROM a base LEFT JOIN type_labels qualified_name ON qualified_name.__path=base.__path AND qualified_name.root=base.id WHERE base.__path=n.__path AND base.parent=n.id AND base.field='bases' AND substr(qualified_name.label,-9)='BaseModel') AND NOT EXISTS(SELECT 1 FROM a assignment JOIN a target ON target.__path=assignment.__path AND target.parent=assignment.id AND target.field='targets' AND target.kind='Name' AND target.name='model_config' JOIN calls value ON value.__path=assignment.__path AND value.parent=assignment.id AND value.field='value' JOIN qualified q ON q.__path=value.__path AND q.id=value.callee_id WHERE assignment.__path=n.__path AND assignment.parent=n.id AND assignment.kind='Assign' AND (SELECT count(*) FROM a t WHERE t.__path=assignment.__path AND t.parent=assignment.id AND t.field='targets')=1 AND q.name='ConfigDict' AND EXISTS(SELECT 1 FROM a kw JOIN a v ON v.__path=kw.__path AND v.parent=kw.id AND v.field='value' AND v.kind='Constant' AND v.value_kind='bool' AND v.value='True' WHERE kw.__path=value.__path AND kw.parent=value.id AND kw.kind='keyword' AND kw.name='frozen')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA028' AS issue,'Matching production code cannot bypass validation during model replacement' AS message,n.id||':MA028:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,CASE WHEN cls.id IS NULL THEN f.name ELSE cls.name||'.'||f.name END AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND NOT scope.conformance AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee_kind='Attribute' AND call.callee='model_copy') AND EXISTS(SELECT 1 FROM a kw WHERE kw.__path=n.__path AND kw.parent=n.id AND kw.field='keywords' AND (kw.name='update')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA025' AS issue,'Matching conformance tests cannot bypass Pydantic validation' AS message,n.id||':MA025:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,CASE WHEN cls.id IS NULL THEN f.name ELSE cls.name||'.'||f.name END AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.conformance AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee_kind='Attribute' AND call.callee IN ('model_construct','model_copy')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA039' AS issue,'Expression receipts must evaluate expression nodes instead of endpoint identities' AS message,n.id||':MA039:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,f.name AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND instr(f.name,'expression_operation_receipt')>0 AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee='_sql_canonical_identity') AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.implementation AND instr(f.name,'expression_operation_receipt')>0 AND first.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=first.__path AND call.id=first.id AND call.callee='_sql_canonical_identity')) ORDER BY first.line,first.id LIMIT 1)"
+          },
+          {
+            "name": "matching_findings_2",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA040' AS issue,'Candidate scoring requires a distinct ServerPlan stage, not a predicate' AS message,n.id||':MA040:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,'candidate_kernel' AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND instr(f.name,'candidate')>0 AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee='SqlIsNull') AND EXISTS(SELECT 1 FROM a child WHERE child.__path=n.__path AND child.id BETWEEN n.id AND n.last AND (child.kind='Attribute' AND child.name='candidate_kernel')) AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.implementation AND instr(f.name,'candidate')>0 AND first.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=first.__path AND call.id=first.id AND call.callee='SqlIsNull') AND EXISTS(SELECT 1 FROM a child WHERE child.__path=first.__path AND child.id BETWEEN first.id AND first.last AND (child.kind='Attribute' AND child.name='candidate_kernel'))) ORDER BY first.line,first.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA029' AS issue,'Candidate deduplication and ranking must execute before result hydration' AS message,n.id||':MA029:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,CASE WHEN cls.id IS NULL THEN f.name ELSE cls.name||'.'||f.name END AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND rx_matches(lower(f.name),'deduplicat|rank') AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee IN ('sorted','setdefault')) AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.implementation AND rx_matches(lower(f.name),'deduplicat|rank') AND first.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=first.__path AND call.id=first.id AND call.callee IN ('sorted','setdefault'))) ORDER BY first.line,first.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA022' AS issue,'Matching pagination must lower a cursor predicate before result hydration' AS message,n.id||':MA022:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,CASE WHEN cls.id IS NULL THEN f.name ELSE cls.name||'.'||f.name END AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND instr(lower(f.name),'paginat')>0 AND n.kind='Subscript' AND EXISTS(SELECT 1 FROM a slice WHERE slice.__path=n.__path AND slice.parent=n.id AND slice.field='slice' AND (slice.kind='Slice')) AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.implementation AND instr(lower(f.name),'paginat')>0 AND first.kind='Subscript' AND EXISTS(SELECT 1 FROM a slice WHERE slice.__path=first.__path AND slice.parent=first.id AND slice.field='slice' AND (slice.kind='Slice'))) ORDER BY first.line,first.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA023' AS issue,'Runtime operation counters cannot use constants or size guesses' AS message,n.id||':MA023:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,CASE WHEN cls.id IS NULL THEN f.name ELSE cls.name||'.'||f.name END AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND substr(call.callee,1,5)='Match' AND rx_matches(call.callee,'(?:Count|ByteCount)$')) AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND (arg.kind='Constant' OR arg.kind='BinOp' AND EXISTS(SELECT 1 FROM a child WHERE child.__path=arg.__path AND child.id BETWEEN arg.id AND arg.last AND (child.kind='Constant')))) AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.implementation AND first.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=first.__path AND call.id=first.id AND substr(call.callee,1,5)='Match' AND rx_matches(call.callee,'(?:Count|ByteCount)$')) AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=first.__path AND arg.parent=first.id AND arg.field='args' AND (arg.kind='Constant' OR arg.kind='BinOp' AND EXISTS(SELECT 1 FROM a child WHERE child.__path=arg.__path AND child.id BETWEEN arg.id AND arg.last AND (child.kind='Constant'))))) ORDER BY first.line,first.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA003' AS issue,'Lower transaction classes cannot define a matching method' AS message,n.id||':MA003:'||(n.id) AS identity,1 AS phase,n.id AS ordering,cls.name||'.'||n.name AS symbol,'' AS sort_name FROM functions n LEFT JOIN classes cls ON cls.__path=n.__path AND cls.id=n.cls JOIN matching_scope scope ON scope.__path=n.__path WHERE cls.id IS NOT NULL AND scope.layer<5250 AND n.name IN ('match','match_async','match_lazy') UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA005' AS issue,'Matching data functions require transactions, not connections' AS message,n.id||':MA005:'||(n.id) AS identity,1 AS phase,n.id AS ordering,f.name AS symbol,'' AS sort_name FROM parameters n JOIN functions f ON f.__path=n.__path AND f.id=n.fn JOIN a annotation ON annotation.__path=n.__path AND annotation.parent=n.id AND annotation.field='annotation' JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND f.name IN ('match','match_async','match_lazy') AND n.field IN ('posonlyargs','args','kwonlyargs') AND EXISTS(SELECT 1 FROM type_labels label WHERE label.__path=annotation.__path AND label.root=annotation.id AND instr(label.label,'Connection')>0) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA024' AS issue,'Matrix completion evidence must execute the public matching API' AS message,n.id||':MA024:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,CASE WHEN cls.id IS NULL THEN f.name ELSE cls.name||'.'||f.name END AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.conformance AND substr(rx_replace(f.__path,'^.*/',''),1,5)='test_' AND n.id=f.id AND EXISTS(SELECT 1 FROM a child WHERE child.__path=f.__path AND child.id BETWEEN f.id AND f.last AND (child.kind='Attribute' AND child.name IN ('execution_classes','proof_test_ids'))) AND NOT EXISTS(SELECT 1 FROM calls child WHERE child.__path=f.__path AND child.id BETWEEN f.id AND f.last AND (child.callee IN ('match','match_async','match_lazy'))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA017' AS issue,'Matching dispatch requires a closed nominal variant, not a string' AS message,n.id||':MA017:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,f.name AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND instr(f.name,'dispatch')>0 AND n.kind='arg' AND n.fn=f.id AND n.field IN ('posonlyargs','args','kwonlyargs') AND EXISTS(SELECT 1 FROM a ann WHERE ann.__path=n.__path AND ann.parent=n.id AND ann.field='annotation' AND EXISTS(SELECT 1 FROM type_labels label WHERE label.__path=ann.__path AND label.root=ann.id AND label.label='str')) AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.matching AND instr(f.name,'dispatch')>0 AND first.kind='arg' AND first.fn=f.id AND first.field IN ('posonlyargs','args','kwonlyargs') AND EXISTS(SELECT 1 FROM a ann WHERE ann.__path=first.__path AND ann.parent=first.id AND ann.field='annotation' AND EXISTS(SELECT 1 FROM type_labels label WHERE label.__path=ann.__path AND label.root=ann.id AND label.label='str'))) ORDER BY first.line,first.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA018' AS issue,'Matching dispatch cannot select a default implementation' AS message,n.id||':MA018:'||(f.id*1000000+n.id) AS identity,1 AS phase,f.id*1000000+n.id AS ordering,f.name AS symbol,'' AS sort_name FROM functions f LEFT JOIN classes cls ON cls.__path=f.__path AND cls.id=f.cls JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.matching AND instr(f.name,'dispatch')>0 AND n.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=n.__path AND call.id=n.id AND call.callee_kind='Attribute' AND call.callee='get') AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=n.__path AND arg.parent=n.id AND arg.field='args' AND (arg.position=1)) AND n.id=(SELECT first.id FROM a first WHERE first.__path=f.__path AND first.id BETWEEN f.id AND f.last AND (scope.matching AND instr(f.name,'dispatch')>0 AND first.kind='Call' AND EXISTS(SELECT 1 FROM calls call WHERE call.__path=first.__path AND call.id=first.id AND call.callee_kind='Attribute' AND call.callee='get') AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=first.__path AND arg.parent=first.id AND arg.field='args' AND (arg.position=1))) ORDER BY first.line,first.id LIMIT 1) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA037' AS issue,'Transport and stage counts require executed receipts, not resolved dependency names' AS message,n.id||':MA037:'||(n.id+target.position*0.001) AS identity,0 AS phase,n.id+target.position*0.001 AS ordering,target.name AS symbol,'' AS sort_name FROM a n JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field IN ('target','targets') AND target.kind='Name' JOIN a value ON value.__path=n.__path AND value.parent=n.id AND value.field='value' JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.kind IN ('Assign','AnnAssign') AND target.name IN ('completed_database_round_trips','database_execution_operations','database_round_trips','dependency_traversal_operations') AND EXISTS(SELECT 1 FROM calls child WHERE child.__path=value.__path AND child.id BETWEEN value.id AND value.last AND (child.callee='len' AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=child.__path AND arg.parent=child.id AND arg.field='args' AND arg.kind IN ('Name','Attribute') AND arg.name IN ('completed_preflight_receipts','database_receipts','dependency_receipts','executed_dependencies'))))"
+          },
+          {
+            "name": "matching_findings_3",
+            "query": "SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA037' AS issue,'Transport and stage counts require executed receipts, not resolved dependency names' AS message,n.id||':MA037:'||(n.id) AS identity,0 AS phase,n.id AS ordering,kw.name AS symbol,'' AS sort_name FROM a kw JOIN a n ON n.__path=kw.__path AND n.parent=kw.id AND n.field='value' JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND kw.kind='keyword' AND kw.name IN ('completed_database_round_trips','database_execution_operations','database_round_trips','dependency_traversal_operations') AND EXISTS(SELECT 1 FROM calls child WHERE child.__path=n.__path AND child.id BETWEEN n.id AND n.last AND (child.callee='len' AND EXISTS(SELECT 1 FROM a arg WHERE arg.__path=child.__path AND arg.parent=child.id AND arg.field='args' AND arg.kind IN ('Name','Attribute') AND arg.name IN ('completed_preflight_receipts','database_receipts','dependency_receipts','executed_dependencies')))) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA031' AS issue,'Runtime counters must consume executed-stage receipts, not declared stages or predicted work' AS message,n.id||':MA031:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'planned_database_round_trips' AS symbol,'' AS sort_name FROM a n JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field IN ('target','targets') AND target.kind='Name' JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.kind IN ('Assign','AnnAssign') AND target.name='planned_database_round_trips' UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA035' AS issue,'Expression counters must use executed expression-node receipts, not SQL pair-count arithmetic' AS message,n.id||':MA035:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'expression_operations' AS symbol,'' AS sort_name FROM calls n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.callee='SqlBinaryOp' AND EXISTS(SELECT 1 FROM a child WHERE child.__path=n.__path AND child.id BETWEEN n.id AND n.last AND (child.kind='Name' AND child.name='pair_count')) AND EXISTS(SELECT 1 FROM a child WHERE child.__path=n.__path AND child.id BETWEEN n.id AND n.last AND (child.kind='Attribute' AND child.name='expression_node_count')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA038' AS issue,'Bounded freshness must inspect transaction-local state without polling' AS message,n.id||':MA038:'||(n.id) AS identity,0 AS phase,n.id AS ordering,n.name AS symbol,'' AS sort_name FROM functions n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND instr(n.name,'bounded_watermark')>0 AND EXISTS(SELECT 1 FROM a child WHERE child.__path=n.__path AND child.id BETWEEN n.id AND n.last AND (child.kind IN ('For','AsyncFor','While') OR child.kind='Attribute' AND child.name='wait_limit')) UNION ALL SELECT n.__path AS path,n.__start AS start_byte,n.__end AS end_byte,n.line,'MA032' AS issue,'A native database working-memory hard limit cannot use serialized source payload bytes as physical memory evidence' AS message,n.id||':MA032:'||(n.id) AS identity,0 AS phase,n.id AS ordering,'working_memory_bytes' AS symbol,'' AS sort_name FROM a n JOIN matching_scope scope ON scope.__path=n.__path WHERE scope.implementation AND n.kind='Tuple' AND EXISTS(SELECT 1 FROM a item WHERE item.__path=n.__path AND item.parent=n.id AND item.field='elts' AND (item.kind='Constant' AND item.value='working_memory_bytes')) AND EXISTS(SELECT 1 FROM a item WHERE item.__path=n.__path AND item.parent=n.id AND item.field='elts' AND (item.kind='Name' AND item.name='payload_bytes'))"
+          }
+        ],
+        "query": "SELECT * FROM matching_findings_0 UNION ALL SELECT * FROM matching_findings_1 UNION ALL SELECT * FROM matching_findings_2 UNION ALL SELECT * FROM matching_findings_3",
+        "key": [
+          "issue",
+          "identity"
+        ],
+        "code": "issue",
+        "message": "message",
+        "requireNonemptyInput": "gate",
+        "partitionBy": "file"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    },
+    {
+      "id": "matching-project-ownership",
+      "relational": {
+        "inputs": {
+          "files": {
+            "evidence": {
+              "as": "file",
+              "query": {
+                "regex": {
+                  "source": "file.content",
+                  "pattern": "(?s)\\A(?P<TEXT>.*)\\z"
+                }
+              },
+              "project": {
+                "path": "file.path"
+              }
+            }
+          }
+        },
+        "query": {
+          "$option": "entryPoint",
+          "cases": {
+            "scan_sources": "SELECT * FROM (SELECT 'l5250_matching/maintenance.py' path,0 start_byte,0 end_byte,1 line,'MA033' issue,'Authoritative matching maintenance must use the shared branch-aware index policy in production ownership' message,'MA033' identity,0 phase,0 ordering,'BranchAwareIndexPolicy' symbol,'' sort_name WHERE EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0) UNION ALL SELECT 'data_layer_testing/matching_operator.py' path,0 start_byte,0 end_byte,1 line,'MA034' issue,'Testing support cannot own the authoritative process-local matching maintenance mechanism' message,'MA034' identity,0 phase,0 ordering,'register_table_hook' symbol,'' sort_name WHERE instr(source_text('data_layer_testing/matching_operator.py'),'register_table_hook')>0) WHERE 0"
+          },
+          "default": "SELECT 'l5250_matching/maintenance.py' path,0 start_byte,0 end_byte,1 line,'MA033' issue,'Authoritative matching maintenance must use the shared branch-aware index policy in production ownership' message,'MA033' identity,0 phase,0 ordering,'BranchAwareIndexPolicy' symbol,'' sort_name WHERE EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/') AND NOT EXISTS(SELECT 1 FROM files WHERE rx_matches(__path,'(?:^|/)l5250_matching/') AND substr(__path,1,8)!='conform/' AND instr(source_text(__path),'BranchAwareIndexPolicy')>0) UNION ALL SELECT 'data_layer_testing/matching_operator.py' path,0 start_byte,0 end_byte,1 line,'MA034' issue,'Testing support cannot own the authoritative process-local matching maintenance mechanism' message,'MA034' identity,0 phase,0 ordering,'register_table_hook' symbol,'' sort_name WHERE instr(source_text('data_layer_testing/matching_operator.py'),'register_table_hook')>0"
+        },
+        "locations": [
+          "l5250_matching/maintenance.py",
+          "data_layer_testing/matching_operator.py"
+        ],
+        "key": [
+          "identity"
+        ],
+        "code": "issue",
+        "line": "line",
+        "message": "message"
+      },
+      "violation": {
+        "code": "architecture",
+        "message": "Architecture contract violation",
+        "anchor": "witness.span"
+      }
+    }
+  ]
+}

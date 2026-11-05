@@ -1275,29 +1275,47 @@ impl<'a> Session<'a> {
                 continue;
             }
             let span = if let Some(field) = &plan.line {
-                let line = values.get(field).and_then(Value::as_u64)
+                let line = values
+                    .get(field)
+                    .and_then(Value::as_u64)
                     .and_then(|line| usize::try_from(line).ok())
                     .and_then(|line| line.checked_sub(1))
-                    .ok_or_else(|| invalid("relational diagnostic line must be a positive integer"))?;
-                syntax_files.iter().find(|(p, _)| p == path)
+                    .ok_or_else(|| {
+                        invalid("relational diagnostic line must be a positive integer")
+                    })?;
+                syntax_files
+                    .iter()
+                    .find(|(p, _)| p == path)
                     .and_then(|(_, facts)| facts.diagnostic_line(span, line))
                     .or_else(|| {
-                        if line == 0 && span.start_byte == 0 && span.end_byte == 0
+                        if line == 0
+                            && span.start_byte == 0
+                            && span.end_byte == 0
                             && self.plan.locations.iter().any(|location| location == path)
-                        { return Some(span.clone()); }
-                        if line < span.start_line || line > span.end_line { return None; }
+                        {
+                            return Some(span.clone());
+                        }
+                        if line < span.start_line || line > span.end_line {
+                            return None;
+                        }
                         let file = self.visible.files.iter().find(|file| file.path == path)?;
                         let lines = text_lines.entry(path.to_owned()).or_insert_with(|| {
-                            crate::code_rule_dsl::lines::LineTable::new(&file.source,
+                            crate::code_rule_dsl::lines::LineTable::new(
+                                &file.source,
                                 crate::code_rule_dsl::language::dialect_by_label(&file.language)
                                     .map(crate::code_rule_dsl::lines::Terminators::of)
-                                    .unwrap_or(crate::code_rule_dsl::lines::Terminators::Eslint))
+                                    .unwrap_or(crate::code_rule_dsl::lines::Terminators::Eslint),
+                            )
                         });
                         let start = lines.start(line).max(span.start_byte);
-                        (start <= span.end_byte).then(|| lines.span(start,start))
+                        (start <= span.end_byte).then(|| lines.span(start, start))
                     })
-                    .ok_or_else(|| invalid("relational diagnostic line must lie within its input witness span"))?
-            } else { span };
+                    .ok_or_else(|| {
+                        invalid("relational diagnostic line must lie within its input witness span")
+                    })?
+            } else {
+                span
+            };
             let mut output_clause = (*clause).clone();
             if let Some(field) = &plan.code {
                 output_clause.violation.code = values

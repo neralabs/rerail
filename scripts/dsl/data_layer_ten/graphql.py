@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+from .common import *
+AUTHORITY=r'\b(?:ServerPlan|BaseServerPlan|_GraphQLServerPlan|LazyResult|(?:[A-Za-z_]\w*)?(?:Transaction|PlanScope))\b'
+
+
+def candidate(root):
+    stages=[S('authority_seeds',"SELECT p.__path,p.fn,p.name FROM parameters p JOIN a ann ON ann.__path=p.__path AND ann.parent=p.id AND ann.field='annotation' WHERE p.field IN ('posonlyargs','args','kwonlyargs') AND rx_matches(ann.annotation,"+q(AUTHORITY)+')',('__path','fn','name')),
+      S('authority_edges',"SELECT n.__path,n.fn,r.name source,t.name target FROM a n JOIN a v ON v.__path=n.__path AND v.parent=n.id AND v.field='value' JOIN expression_roots r ON r.__path=v.__path AND r.id=v.id JOIN a t ON t.__path=n.__path AND t.parent=n.id AND t.field IN ('target','targets') AND t.kind='Name' WHERE n.kind IN ('Assign','AnnAssign')",('__path','fn','source')),
+      S('authority',"WITH RECURSIVE names(__path,fn,name) AS (SELECT * FROM authority_seeds UNION SELECT e.__path,e.fn,e.target FROM names n JOIN authority_edges e ON e.__path=n.__path AND e.fn=n.fn AND e.source=n.name) SELECT * FROM names",('__path','fn','name')),
+      S('authority_accesses',"SELECT n.*,f.name function_name,f.last function_end FROM a n JOIN functions f ON f.__path=n.__path AND f.id=n.fn WHERE n.kind IN ('Call','Attribute')",('__path','id'))]
+    order="printf('%020d/%020d/%020d',n.function_end,1000000000-n.fn,n.id)"
+    uses=lambda alias: f"EXISTS(SELECT 1 FROM expression_roots r JOIN authority auth ON auth.__path=r.__path AND auth.fn=n.fn AND auth.name=r.name WHERE r.__path={alias}.__path AND r.id={alias}.id)"
+    rows=[row('GPO001',"n.function_name||' reads private plan authority attribute '||n.name||'; add a typed public plan-scope contract'",'authority_accesses n JOIN a receiver ON receiver.__path=n.__path AND receiver.parent=n.id AND receiver.field=\'value\'',"n.kind='Attribute' AND substr(n.name,1,1)='_' AND "+uses('receiver'),order=order),
+      row('GPO002',"n.function_name||' reflectively dispatches on typed plan authority'",'authority_accesses n JOIN calls call ON call.__path=n.__path AND call.id=n.id JOIN a arg ON arg.__path=n.__path AND arg.parent=n.id AND arg.field=\'args\' AND arg.position=0',"call.callee_kind='Name' AND call.callee='getattr' AND "+uses('arg'),order=order),
+      row('GPO003',"n.function_name||' bypasses typed plan authority with object.__getattribute__'",'authority_accesses n JOIN calls call ON call.__path=n.__path AND call.id=n.id JOIN a arg ON arg.__path=n.__path AND arg.parent=n.id AND arg.field=\'args\' AND arg.position=0',"call.callee_kind='Attribute' AND call.callee='__getattribute__' AND call.receiver_kind='Name' AND call.receiver_name='object' AND "+uses('arg'),order=order),
+      row('GPO004',"'reusable dataclass '||cls.name||' retains runtime authority field '||CASE WHEN target.kind='Name' THEN target.name ELSE '<field>' END",'a n JOIN classes cls ON cls.__path=n.__path AND cls.id=n.parent JOIN a ann ON ann.__path=n.__path AND ann.parent=n.id AND ann.field=\'annotation\' JOIN a target ON target.__path=n.__path AND target.parent=n.id AND target.field=\'target\'',"n.kind='AnnAssign' AND rx_matches(ann.annotation,"+q(AUTHORITY)+") AND EXISTS(SELECT 1 FROM single_decorators d WHERE d.__path=cls.__path AND d.fn=cls.id AND d.name='reusable_template')",order="printf('%020d/%020d/%020d',n.id,0,0)")]
+    item=make_clause('graphql-authority',stages,' UNION ALL '.join(rows))
+    original=item['relational']['inputs']['gate']['evidence']['query']['ast']['rule']
+    triggered(item,['ServerPlan','PlanScope','Transaction','LazyResult'])
+    item['relational']['inputs']['gate']['evidence']['query']['ast']['rule']=select_entry(item['relational']['inputs']['gate']['evidence']['query']['ast']['rule'],{'scan_source':original})
+    from data_layer_nine.parser_errors import clause_
+    parser=clause_('GPO000','SyntaxError: ',select_entry(A(K('module'),RX('ServerPlan|PlanScope|Transaction|LazyResult')),{'scan_source':K('module')}))
+    parser['relational']['inputs']['invalid']={'evidence':{'as':'file','query':{'regex':{'source':'file.content','pattern':r'(?s)\A(?P<TEXT>.*)\z'}},'project':{'path':'file.path'}}}
+    roots='SELECT __path,source_text(__path) source FROM invalid'
+    parser['relational']['stages'][0]['pythonAst']['roots']=select_entry(roots+" WHERE rx_matches(source_text(__path),'ServerPlan|PlanScope|Transaction|LazyResult')",{'scan_source':roots})
+    query=parser['relational']['query'];parser['relational']['query']=select_entry(query.replace(q('SyntaxError: '),q('cannot inspect GraphQL plan ownership: SyntaxError: ')),{'scan_source':query})
+    return make_document('graphql_plan_ownership',[item,parser],['l9750_graphql/**/*.py','l9900_auto_api/**/*.py'])

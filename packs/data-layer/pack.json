@@ -3,7 +3,7 @@
   "id": "data-layer",
   "name": "Data-layer architecture rules",
   "category": "repository",
-  "covers": "20 shipped data-layer architecture rules. Seventy earlier ports remain candidates.",
+  "covers": "30 shipped data-layer architecture rules. Seventy earlier ports remain candidates.",
   "reason": "Repository-specific rules for explicit installation in nera-data-layer.",
   "rules": [
     {
@@ -124,6 +124,66 @@
       "id": "data-layer-bootstrap-engine-invariants",
       "document": "rules/data-layer-bootstrap-engine-invariants.json",
       "title": "Bootstrap engine invariants",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-graph-lazy-sql-plan",
+      "document": "rules/data-layer-graph-lazy-sql-plan.json",
+      "title": "Graph lazy sql plan",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-bounded-composed-graph-paths",
+      "document": "rules/data-layer-bounded-composed-graph-paths.json",
+      "title": "Bounded composed graph paths",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-graphql-plan-ownership",
+      "document": "rules/data-layer-graphql-plan-ownership.json",
+      "title": "Graphql plan ownership",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-plan-optimizer-v2",
+      "document": "rules/data-layer-plan-optimizer-v2.json",
+      "title": "Plan optimizer v2",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-conditional-architecture",
+      "document": "rules/data-layer-conditional-architecture.json",
+      "title": "Conditional architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-schema-introspection-data-paths",
+      "document": "rules/data-layer-schema-introspection-data-paths.json",
+      "title": "Schema introspection data paths",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-matching-architecture",
+      "document": "rules/data-layer-matching-architecture.json",
+      "title": "Matching architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-hnsw-architecture",
+      "document": "rules/data-layer-hnsw-architecture.json",
+      "title": "Hnsw architecture",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-embedding-vector-orchestration",
+      "document": "rules/data-layer-embedding-vector-orchestration.json",
+      "title": "Embedding vector orchestration",
+      "group": "Data-layer architecture"
+    },
+    {
+      "id": "data-layer-generated-index-sources",
+      "document": "rules/data-layer-generated-index-sources.json",
+      "title": "Generated index sources",
       "group": "Data-layer architecture"
     }
   ]

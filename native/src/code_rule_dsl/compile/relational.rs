@@ -734,7 +734,12 @@ pub(super) fn compile(
         .get("line")
         .map(|value| non_empty_str(Some(value), &format!("{path}/line")).map(str::to_owned))
         .transpose()?;
-    for field in key.iter().chain(code.iter()).chain(message.iter()).chain(line.iter()) {
+    for field in key
+        .iter()
+        .chain(code.iter())
+        .chain(message.iter())
+        .chain(line.iter())
+    {
         if !columns.contains(field) {
             return Err(invalid(format!("{path}: unknown output column {field}")));
         }

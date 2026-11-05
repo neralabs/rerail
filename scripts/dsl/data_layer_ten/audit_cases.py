@@ -62,3 +62,22 @@ def test_embedding_nested_receivers(source):
 ])
 def test_matching_public_annotation_forms(source):
  assert isinstance(matching.scan_sources({Path('l1470_matching_contracts/model.py'):source}),tuple)
+
+def test_hnsw_forbidden_artifact_is_reported_before_parsing(tmp_path,monkeypatch):
+ monkeypatch.chdir(tmp_path)
+ path=Path('impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py');path.parent.mkdir(parents=True);path.write_text('invalid=(\n')
+ assert [f.code for f in hnsw.find_hnsw_architecture_findings((path,))]==['HNSW006']
+
+@pytest.mark.parametrize('source',[
+'def match(txn: "Connection", spec: MatchSpec):\n    pass\n',
+'def match(txn: Connection[T], spec: MatchSpec):\n    pass\n',
+'class MatchProtocol(Protocol[T]):\n    pass\n',
+'class MatchModel(BaseModel[T]):\n    value: MatchScoreExpression[T]\n',
+])
+def test_matching_generic_and_quoted_annotations(source):
+ assert isinstance(matching.scan_sources({Path('l1470_matching_contracts/model.py'):source}),tuple)
+
+def test_introspection_source_api_does_not_apply_plugin_trigger_filter():
+ from scripts import lint_schema_introspection_data_paths as lint
+ findings=lint._collect_violations(lint.ROOT/'impl/common/l2070_server_plan/steps/probe.py',ast.parse('query="SELECT * FROM INFORMATION_SCHEMA.columns"\n'))
+ assert len(findings)==1

@@ -271,6 +271,8 @@ def main():
  baseline=expand(json.loads(args.baseline.read_text())) if args.baseline else None
  if not 0<=args.part<args.parts:p.error('Invalid shard')
  from data_layer_nine.discovery import upstream_tests,independent_collections
+ # Discovery assertions inspect the cached source inventory; prepare it before tracing analyzer calls.
+ upstream_tests(root,('plan_composition_architecture',))
  defaults=[*upstream_tests(root,CHECKS),str(root/'scripts/tests/test_codemod_bootstrap_cache_health.py'),str(Path(__file__).with_name('probe_cases.py')),str(Path(__file__).with_name('audit_cases.py'))]
  tests=[str(Path(t).resolve()) if Path(t).exists() else str(root/t) for t in args.tests] or defaults
  os.chdir(root)

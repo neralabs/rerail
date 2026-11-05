@@ -383,8 +383,19 @@ pub(super) fn evaluate_query_to(
     util_limit: &mut Option<(String, UtilLimit)>,
     output: Option<&Output<'_>>,
 ) -> Result<std::result::Result<Vec<Witness>, Incomplete>> {
-    if output.is_some() && !matches!(query, Query::Ast { .. } | Query::Regex { source: RegexSource::Content, .. }) {
-        return Err(invalid("streamed relational inputs require AST or file.content regex queries"));
+    if output.is_some()
+        && !matches!(
+            query,
+            Query::Ast { .. }
+                | Query::Regex {
+                    source: RegexSource::Content,
+                    ..
+                }
+        )
+    {
+        return Err(invalid(
+            "streamed relational inputs require AST or file.content regex queries",
+        ));
     }
     let _projections = crate::code_rule_dsl::violations::projection::Scope::enter();
     let leaf = Leaf {
@@ -546,7 +557,8 @@ impl<'a> Leaf<'a> {
                     }
                     if let Some(violation) = violation.filter(|v| !v.project.is_empty()) {
                         let witness = witnesses.last_mut().expect("regex witness");
-                        let projection = super::evidence::project_text(&violation.project, file, witness);
+                        let projection =
+                            super::evidence::project_text(&violation.project, file, witness);
                         witness.captures.set_typed_projection(projection);
                     }
                     if let Some(output) = output {

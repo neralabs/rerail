@@ -6614,3 +6614,58 @@ Retained API and capability checks pass 44 tests.
 The structure check reports only its three pre-existing directory-size findings.
 
 The final combined TypeScript acceptance run passes 130 tests across seven files in 35.53 seconds.
+
+## 2026-11-05: Batch ten ports and complete-result validation
+
+The inventory advances to 100 authored checks out of 142.
+The private pack ships 30 documents. Seventy earlier ports remain candidates.
+The [batch report](data-layer-batch-ten.md) lists all ten rules and reproduction commands.
+
+The original suite contributes 265 cases. Another 61 cases run first against the original linters.
+All 326 cases pass through snapshot execution and resident workspace execution.
+The corpus preserves 203 complete detector results, including 169 positives.
+These calls occur in 202 tests. The remaining 124 tests retain upstream utility, DTO, discovery, and CLI assertions.
+Original detector functions and collector methods are forbidden during native detector replay.
+
+The optimizer has no dedicated upstream suite. Its 32 added cases exercise every diagnostic family and include clean controls.
+The other 29 added cases test aliases, annotation forms, parser errors, source readers, and forbidden artifact presence.
+Disabled detectors cause 145 original assertions to fail. Every one of the ten detectors is rejected by positive controls.
+Both APIs also match 61 configured-default observations from actual upstream reporters and file discovery.
+
+The [assertion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds the complete runs and controls to their engine and implementation files.
+The unchanged pytest runs each finish in about 70 seconds under concurrent verification load.
+These times describe assertion execution. They are not cold performance baselines.
+
+The porting process exposed and repaired these defects:
+
+| Defect | Resolution |
+| --- | --- |
+| SQL cannot read complete documentation or distinguish empty files from absent files | Add the bounded `source_text(path)` overload |
+| Relational evidence only accepts AST queries | Add typed `file.content` regex evidence |
+| Text-only diagnostics cannot narrow source lines | Narrow proven text spans; retain declared missing-file anchors at line one |
+| Workspace regex evidence loses projected columns | Publish the same typed projections as snapshot execution |
+| An unrelated AST error makes workspace text evidence incomplete | Keep regex completeness independent from AST syntax status |
+| Matching repeats canonical preparation across detector clauses | Share one canonical producer per candidate file |
+| Matching static strings repeatedly scan a recursive CTE | Store indexed expression parts and aggregate them once |
+| Direct scanner triggers differ from configured plugin triggers | Keep their observed entry contracts separate |
+| Bare authority types and generic annotation bases are missed | Preserve the original annotation predicates and recursive alias rules |
+| Optimizer documentation checks run without verifier facts | Apply the configured reporter's actual activation condition |
+
+The bounded-path rule keeps the original text semantics across Python, RST, and Markdown.
+It preserves duplicate missing-file findings and required-file checks.
+The conditional rule reuses the existing shared producer rather than creating another inference implementation.
+The matching repository assertion retains all 140 files selected from its complete upstream repository snapshot.
+
+The native DSL suite passes 1,576 tests, with 23 existing ignored tests and 114 tests outside its selected namespace.
+Typechecking, boundary checks, DSL reference validation, and byte-for-byte regeneration of all ten documents pass.
+The adjacent catalog, pack, and new native regression tests pass 403 assertions.
+Batch nine also passes its 228 unchanged cases through both APIs after the engine changes.
+Its disabled-detector controls remain effective, and its receipt is refreshed from those runs.
+
+The structure checker still reports three existing flat-directory limits: 26, 31, and 26 files where the limit is 25.
+Those counts predate this batch. New port code and tests use subdirectories.
+An initial adjacent-test command also selected an archived checkout under `.rerail`.
+Restricting discovery to `--dir test` gives the 403 passing current-checkout assertions reported above.
+
+No cumulative cold benchmark was run. The previous complete repository measurement still covers 80 rules.
+No Linear issues were created.

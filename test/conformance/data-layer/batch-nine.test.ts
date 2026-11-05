@@ -41,9 +41,9 @@ it.each(checks)("rejects a disabled %s detector on a recorded positive", async c
   finally { replay.close(); }
 });
 
-it("ships all twenty documents once, with explicit ownership of the live probe contract", () => {
+it("ships prior documents once within the expanded pack, with explicit ownership of the live probe contract", () => {
   const pack = readBundledCatalog(["packs/data-layer"]);
-  expect(pack.documents.size).toBe(20);
+  expect(pack.documents.size).toBe(30);
   for (const check of checks) expect(pack.documents.has(`data-layer-${check.replaceAll("_", "-")}`)).toBe(true);
   const authored = JSON.parse(readFileSync("packs/data-layer/rules/data-layer-plan-composition-architecture.json", "utf8"));
   authored.scope = { include: ["**/*"], exclude: [] };

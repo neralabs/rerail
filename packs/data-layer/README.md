@@ -1,6 +1,6 @@
 # Data-layer rules
 
-This private pack contains the twenty batch-eight and batch-nine architecture rules for nera-data-layer.
+This private pack contains the thirty batch-eight, batch-nine, and batch-ten architecture rules for nera-data-layer.
 A second audit exposed public-contract gaps after the earlier batch-nine repair claim.
 The current report records the repairs, measured coverage and remaining certification limits.
 The [audit](../../docs/data-layer-batch-nine-audit.md) retains the original failures and their resolutions.
@@ -8,13 +8,16 @@ Load it explicitly with `readBundledCatalog([packDirectory])` for repository int
 It is not part of the default core catalog.
 The other seventy ports remain in `candidates/rules/`.
 
+The [batch-ten report](../../docs/data-layer-batch-ten.md) records ten more ports, complete positive results, and configured reporter contracts.
+Generate batch ten with `scripts/generate/packs/data_layer_batch_ten.py`.
+
 The [batch-nine report](../../docs/data-layer-batch-nine.md) records the next ten ports and their complete API evidence.
 The production CLI and `runDataLayerAudit()` API collect fresh plan-composition observations from the application.
 The report defines the low-level observation contract.
 Generate batch nine with `scripts/generate/packs/data_layer_batch_nine.py`.
 
 The [batch-eight report](../../docs/data-layer-batch-eight.md) records the upstream tests, positive controls and runtime requirements.
-The [restart plan](../../docs/data-layer-port-restart.md) identifies the remaining 52 checks.
+The [restart plan](../../docs/data-layer-port-restart.md) identifies the remaining 42 checks.
 The source pin and attribution are in [UPSTREAM.md](UPSTREAM.md).
 
 Generate the batch-eight documents with `scripts/dsl/data_layer_generate_batch_eight.py`.
