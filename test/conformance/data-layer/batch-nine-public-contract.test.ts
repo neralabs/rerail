@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { codeRuleSchema, loadNativeBinding } from "../../../src/engine/index.js";
+import { capabilitiesJson } from "../../../conformance/engine.js";
 import { runDataLayerAudit, runDataLayerCommand } from "../../../src/cli/index.js";
 
 // Original pinned _collect_file_violations reports BEI035 at line 3 for each source.
@@ -40,4 +42,12 @@ for (const check of ["bootstrap-lazy-sql", "bootstrap-eager-resolve"]) it(`${che
     expect(JSON.parse(output).violations).toMatchObject([{ code: "BLB-004", mode: "log" }]);
     expect(exit).toBe(0);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+const scopes = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-09-public-scope-oracle.json", "utf8"));
+// The original FactEngine.plan(), with the actual configured plugins, selected these paths.
+it.each(scopes.rules as { ruleId: string; paths: { path: string; inScope: boolean }[] }[])("preserves original discovery scope for $ruleId", spec => {
+  const raw = JSON.parse(readFileSync(`packs/data-layer/rules/${spec.ruleId}.json`, "utf8"));
+  const rule = loadNativeBinding().CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(raw)), "json", capabilitiesJson());
+  for (const path of spec.paths) expect(rule.inScope(path.path), path.path).toBe(path.inScope);
 });
