@@ -5,7 +5,7 @@
 import { h, setContent, icon } from "../dom.js";
 import { data } from "../state.js";
 import { invalidate } from "../shell.js";
-import { loadRepoRuleCounts } from "../repo-rules.js";
+import { loadRepoRuleCounts } from "../repo-rule-counts.js";
 import { repoHint, repoMeta, repoOption } from "../render/repos.js";
 
 export const needs = [];
