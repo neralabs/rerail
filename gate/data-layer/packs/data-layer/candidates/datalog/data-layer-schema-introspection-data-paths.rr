@@ -1,0 +1,29 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("l2050_transaction/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2055_lazy_result/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l4000_permissions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7000_versioned_schema/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l4100_queue/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l5150_fts_polyfill/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l5200_sql_query/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l5350_hybrid_search/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7300_sql_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7350_sparse_versioned_transactions/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+.output violation

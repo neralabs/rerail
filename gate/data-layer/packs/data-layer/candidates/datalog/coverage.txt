@@ -1,21 +1,21 @@
-315/650 clauses converted
+341/908 clauses converted
 
 gaps (clauses):
-     47  semantic value
-     27  nthChild other than a fixed position
-     26  another clause kind
+    174  relational (SQL stages)
+     74  a regex over file content or paths
+     53  semantic value
+     28  nthChild other than a fixed position
      26  semantic layout
      19  a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def\ compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result)
-     14  budget
+     16  budget
      14  compare
+     13  a regex on an anonymous token
      13  a stop rule
-     12  comment nodes (not in node)
-     11  a regex on an anonymous token
+     13  comment nodes (not in node)
      10  utility call
       8  no Python matcher
       6  a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
       6  regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      5  a regex over file content or paths
       4  a regex on the text of call (grammar_)
       4  a regex on the text of concatenated_string|string (Any)
       4  a regex on the text of module (import\ |from\ )
@@ -95,21 +95,24 @@ gaps (clauses):
       1  a regex on the text of string (^[rRuUfF]*(?:'''|\"\"\"|'|")[\p{L}\p{N}_]+\(.*\)(?:'''|\"\"\"|'|")$)
       1  a regex on the text of string (^f['"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count))
       1  an anchor on a capture the rule does not bind
+      1  constraint on $ENUM, not captured
+      1  count
       1  regex \b\B|^(?:impl/common/l2100_sql_grammar/fast_params\.py|impl/common/l2070_server_plan/steps/intent_transaction\.py)$
+      1  require each (define)
       1  semantic parse
       1  sibling walk with a stop rule
 
 approximations (rules):
       1  \w in a string's content read as any character
       4  a metavariable twice: equal names
-      7  a module's text read as its file's names
-     33  a regex on a node of any kind as a name
+      8  a module's text read as its file's names
+     35  a regex on a node of any kind as a name
       2  a run of one character read as at most three
       1  an interpolated string has no content
-     48  neighbours among named children
-      4  nthChild among named children
-      4  patterns by named children
-      6  siblings among named children
+     55  neighbours among named children
+      7  nthChild among named children
+      5  patterns by named children
+      7  siblings among named children
 
 per rule:
   data-layer-admin-async-purity: 3/3
@@ -146,6 +149,8 @@ per rule:
       legacy_module_sync-missing-pair: compare
       legacy_module_async-missing-lazy: compare
       legacy_module_async-missing-pair: compare
+  data-layer-authentication-plan-purity: 0/1
+      authentication-contracts: relational (SQL stages)
   data-layer-backend-coupling: 0/2
       backend-import: nthChild other than a fixed position
       sql-in-nonsql: nthChild other than a fixed position
@@ -163,8 +168,123 @@ per rule:
       comparison-6-BT004: a regex on the text of comparison_operator ((?P<AT>["\'])(?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"\']\s* in \s*type\()
       comparison-6-BT000: a regex on the text of comparison_operator ((?P<AT>["\'])(postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)["\']\s+in\s+type\()
       comparison-7-BT005: a regex on the text of call ((?P<AT>__class__)\.__name__\.lower\(\))
+  data-layer-bootstrap-cache-health: 0/2
+      bootstrap-cache: relational (SQL stages)
+      reported-parser-error: relational (SQL stages)
+  data-layer-bootstrap-eager-resolve: 1/2
+      bootstrap-sql: relational (SQL stages)
+  data-layer-bootstrap-engine-invariants: 0/3
+      bootstrap-invariants: relational (SQL stages)
+      primitive-install-coverage: relational (SQL stages)
+      bootstrap-source-syntax: relational (SQL stages)
+  data-layer-bootstrap-lazy-sql: 1/2
+      bootstrap-sql: relational (SQL stages)
+  data-layer-bounded-composed-graph-paths: 0/93
+      text-contract-0: relational (SQL stages)
+      text-contract-1: relational (SQL stages)
+      text-contract-2: relational (SQL stages)
+      text-contract-3: relational (SQL stages)
+      text-contract-4: relational (SQL stages)
+      text-contract-5: relational (SQL stages)
+      text-contract-6: relational (SQL stages)
+      text-contract-7: relational (SQL stages)
+      text-contract-8: relational (SQL stages)
+      text-contract-9: relational (SQL stages)
+      text-contract-10: relational (SQL stages)
+      text-contract-11: relational (SQL stages)
+      text-contract-12: relational (SQL stages)
+      text-contract-13: relational (SQL stages)
+      text-contract-14: relational (SQL stages)
+      text-contract-15: relational (SQL stages)
+      text-contract-16: relational (SQL stages)
+      text-contract-17: relational (SQL stages)
+      text-contract-18: relational (SQL stages)
+      text-contract-19: relational (SQL stages)
+      text-contract-20: relational (SQL stages)
+      text-contract-21: relational (SQL stages)
+      text-contract-22: relational (SQL stages)
+      text-contract-23: relational (SQL stages)
+      text-contract-24: relational (SQL stages)
+      text-contract-25: relational (SQL stages)
+      text-contract-26: relational (SQL stages)
+      text-contract-27: relational (SQL stages)
+      text-contract-28: relational (SQL stages)
+      text-contract-29: relational (SQL stages)
+      text-contract-30: relational (SQL stages)
+      text-contract-31: relational (SQL stages)
+      text-contract-32: relational (SQL stages)
+      text-contract-33: relational (SQL stages)
+      text-contract-34: relational (SQL stages)
+      text-contract-35: relational (SQL stages)
+      text-contract-36: relational (SQL stages)
+      text-contract-37: relational (SQL stages)
+      text-contract-38: relational (SQL stages)
+      text-contract-39: relational (SQL stages)
+      text-contract-40: relational (SQL stages)
+      text-contract-41: relational (SQL stages)
+      text-contract-42: relational (SQL stages)
+      text-contract-43: relational (SQL stages)
+      text-contract-44: relational (SQL stages)
+      text-contract-45: relational (SQL stages)
+      text-contract-46: relational (SQL stages)
+      text-contract-47: relational (SQL stages)
+      text-contract-48: relational (SQL stages)
+      text-contract-49: relational (SQL stages)
+      text-contract-50: relational (SQL stages)
+      text-contract-51: relational (SQL stages)
+      text-contract-52: relational (SQL stages)
+      text-contract-53: relational (SQL stages)
+      text-contract-54: relational (SQL stages)
+      text-contract-55: relational (SQL stages)
+      text-contract-56: relational (SQL stages)
+      text-contract-57: relational (SQL stages)
+      text-contract-58: relational (SQL stages)
+      text-contract-59: relational (SQL stages)
+      text-contract-60: relational (SQL stages)
+      text-contract-61: relational (SQL stages)
+      text-contract-62: relational (SQL stages)
+      text-contract-63: relational (SQL stages)
+      text-contract-64: relational (SQL stages)
+      text-contract-65: relational (SQL stages)
+      text-contract-66: relational (SQL stages)
+      text-contract-67: relational (SQL stages)
+      text-contract-68: relational (SQL stages)
+      text-contract-69: relational (SQL stages)
+      text-contract-70: relational (SQL stages)
+      text-contract-71: relational (SQL stages)
+      text-contract-72: relational (SQL stages)
+      text-contract-73: relational (SQL stages)
+      text-contract-74: relational (SQL stages)
+      text-contract-75: relational (SQL stages)
+      text-contract-76: relational (SQL stages)
+      text-contract-77: relational (SQL stages)
+      text-contract-78: relational (SQL stages)
+      text-contract-79: relational (SQL stages)
+      text-contract-80: relational (SQL stages)
+      text-contract-81: relational (SQL stages)
+      text-contract-82: relational (SQL stages)
+      text-contract-83: relational (SQL stages)
+      text-contract-84: relational (SQL stages)
+      text-contract-85: relational (SQL stages)
+      text-contract-86: relational (SQL stages)
+      text-contract-87: relational (SQL stages)
+      text-contract-88: relational (SQL stages)
+      text-contract-89: relational (SQL stages)
+      text-contract-90: relational (SQL stages)
+      text-contract-91: relational (SQL stages)
+      text-contract-92: relational (SQL stages)
+  data-layer-cached-pure-lazy-allowlist: 0/3
+      cached-policy: relational (SQL stages)
+      memoized-policy: relational (SQL stages)
+      cached-runtime-contract: relational (SQL stages)
   data-layer-classvar-check: 0/1
       comparison: a regex on an anonymous token
+  data-layer-conditional-architecture: 0/5
+      conditional-local-0: relational (SQL stages)
+      conditional-local-1: relational (SQL stages)
+      conditional-local-2: relational (SQL stages)
+      conditional-local-3: relational (SQL stages)
+      conditional-structural-contracts: relational (SQL stages)
   data-layer-conn-or-txn-union: 0/2
       union: a regex on the text of function_definition (Connection)
       separate: a regex on the text of function_definition (Connection)
@@ -173,6 +293,13 @@ per rule:
       pattern-1: semantic layout
       pattern-2: semantic layout
       pattern-3: semantic layout
+  data-layer-connection-mode-split: 0/1
+      mode-split: relational (SQL stages)
+  data-layer-connection-service-architecture: 1/3
+      connection-services: relational (SQL stages)
+      schema-transaction-facades: relational (SQL stages)
+  data-layer-connection-structural-boundaries: 0/1
+      connection-structure: relational (SQL stages)
   data-layer-data-layer-compat-aliases: 0/2
       import-alias: compare
       assignment-alias: compare
@@ -183,18 +310,32 @@ per rule:
       assignment: comment nodes (not in node)
       expression: semantic value
       statement: comment nodes (not in node)
+  data-layer-declared-fact-interrogation: 0/2
+      contract-attribute: semantic value
+      override-identity: a regex on an anonymous token
   data-layer-dynamic-module-loading: 2/5
       pattern-0: a regex on an anonymous token
       pattern-3: semantic layout
       pattern-4: semantic layout
+  data-layer-eager-resolve: 0/1
+      eager-resolution: relational (SQL stages)
+  data-layer-embedding-vector-orchestration: 0/1
+      embedding-orchestration: relational (SQL stages)
   data-layer-error-handling: 1/2
       log-reraise: sibling walk with a stop rule
   data-layer-execution-authority-bypass: 0/1
-      authority-sites: another clause kind
+      authority-sites: relational (SQL stages)
+  data-layer-executor-publication-repairs: 0/4
+      cte_output_columns: a regex over file content or paths
+      cte_column_type_hints: a regex over file content or paths
+      publication_contract_cache: a regex over file content or paths
+      cte_publication_contract_cache: a regex over file content or paths
   data-layer-forwardref: 0/3
       fwdref001: semantic layout
       fwdref002: semantic layout
       fwdref003: semantic layout
+  data-layer-generated-index-sources: 0/1
+      generated-index-source: relational (SQL stages)
   data-layer-grammar-allowlist-burndown: 0/5
       allowlist-allowlisted_static_classes: budget
       allowlist-legacy_allowlisted_classes: budget
@@ -207,6 +348,8 @@ per rule:
       constructor-fragment: utility call
       attribute-fragment: semantic value
       captured-return: budget
+  data-layer-grammar-mutation-invalidation: 0/1
+      mutation: require each (define)
   data-layer-grammar-render-methods: 0/6
       fstring: semantic layout
       join: semantic value
@@ -218,17 +361,36 @@ per rule:
       parameter: a regex on an anonymous token
       str-call: a regex on an anonymous token
       str-concat: a regex on an anonymous token
+  data-layer-graph-lazy-sql-plan: 0/9
+      graph-plan-contracts-0: relational (SQL stages)
+      graph-plan-contracts-1: relational (SQL stages)
+      graph-plan-contracts-2: relational (SQL stages)
+      graph-plan-contracts-3: relational (SQL stages)
+      graph-plan-contracts-4: relational (SQL stages)
+      graph-plan-contracts-5: relational (SQL stages)
+      graph-plan-contracts-6: relational (SQL stages)
+      graph-plan-contracts-7: relational (SQL stages)
+      graph-plan-contracts-8: relational (SQL stages)
+  data-layer-graphql-plan-ownership: 0/2
+      graphql-authority: relational (SQL stages)
+      reported-parser-error: relational (SQL stages)
   data-layer-hasattr-async: 0/2
       hasattr: semantic layout
       getattr: nthChild other than a fixed position
+  data-layer-history-serverplan-projection: 3/5
+      history-runtime: semantic value
+      sentinel: semantic value
+  data-layer-hnsw-architecture: 0/2
+      hnsw-architecture: relational (SQL stages)
+      hnsw-forbidden-files: relational (SQL stages)
   data-layer-imperative-private-functions: 0/3
       direct-execution: semantic binds
       eager-signature: semantic binds
       caller: semantic binds
   data-layer-impl-direct-execution: 0/1
-      direct-execution-lines: another clause kind
+      direct-execution-lines: relational (SQL stages)
   data-layer-internal-dead-code: 0/1
-      unreachable-internal-symbols: another clause kind
+      unreachable-internal-symbols: relational (SQL stages)
   data-layer-layer-violations: 0/6
       layer-0: budget
       layer-1: budget
@@ -236,6 +398,65 @@ per rule:
       conform_impl-0: a regex on the text of module (import\ |from\ )
       api_impl-1: a regex on the text of module (import\ |from\ )
       conform_impl-1: a regex on the text of module (import\ |from\ )
+  data-layer-lazy-adapter-ownership: 1/2
+      adapter-ownership: relational (SQL stages)
+  data-layer-lazy-architecture: 0/56
+      lazy-architecture: relational (SQL stages)
+      deleted-cold-0: a regex over file content or paths
+      deleted-cold-1: a regex over file content or paths
+      deleted-cold-2: a regex over file content or paths
+      deleted-cold-3: a regex over file content or paths
+      deleted-cold-4: a regex over file content or paths
+      deleted-cold-5: a regex over file content or paths
+      deleted-cold-6: a regex over file content or paths
+      deleted-cold-7: a regex over file content or paths
+      deleted-cold-8: a regex over file content or paths
+      deleted-cold-9: a regex over file content or paths
+      deleted-cold-10: a regex over file content or paths
+      deleted-cold-11: a regex over file content or paths
+      deleted-cold-12: a regex over file content or paths
+      deleted-cold-13: a regex over file content or paths
+      deleted-cold-14: a regex over file content or paths
+      deleted-cold-15: a regex over file content or paths
+      deleted-cold-16: a regex over file content or paths
+      deleted-cold-17: a regex over file content or paths
+      deleted-cold-18: a regex over file content or paths
+      deleted-cold-19: a regex over file content or paths
+      deleted-cold-20: a regex over file content or paths
+      deleted-cold-21: a regex over file content or paths
+      deleted-cold-22: a regex over file content or paths
+      deleted-cold-23: a regex over file content or paths
+      deleted-sidecar-0: a regex over file content or paths
+      deleted-sidecar-1: a regex over file content or paths
+      deleted-sidecar-2: a regex over file content or paths
+      deleted-sidecar-3: a regex over file content or paths
+      deleted-sidecar-4: a regex over file content or paths
+      deleted-sidecar-5: a regex over file content or paths
+      deleted-sidecar-6: a regex over file content or paths
+      deleted-sidecar-7: a regex over file content or paths
+      deleted-sidecar-8: a regex over file content or paths
+      deleted-sidecar-9: a regex over file content or paths
+      deleted-sidecar-10: a regex over file content or paths
+      deleted-sidecar-11: a regex over file content or paths
+      deleted-sidecar-12: a regex over file content or paths
+      deleted-sidecar-13: a regex over file content or paths
+      deleted-sidecar-14: a regex over file content or paths
+      deleted-sidecar-15: a regex over file content or paths
+      deleted-sidecar-16: a regex over file content or paths
+      deleted-sidecar-17: a regex over file content or paths
+      deleted-sidecar-18: a regex over file content or paths
+      deleted-sidecar-19: a regex over file content or paths
+      deleted-sidecar-20: a regex over file content or paths
+      deleted-sidecar-21: a regex over file content or paths
+      deleted-sidecar-22: a regex over file content or paths
+      deleted-sidecar-23: a regex over file content or paths
+      deleted-sidecar-24: a regex over file content or paths
+      deleted-sidecar-25: a regex over file content or paths
+      deleted-sidecar-26: a regex over file content or paths
+      deleted-sidecar-27: a regex over file content or paths
+      deleted-sidecar-28: a regex over file content or paths
+      deleted-sidecar-29: a regex over file content or paths
+      deleted-sidecar-30: a regex over file content or paths
   data-layer-lazy-result-usage: 0/6
       execute: comment nodes (not in node)
       first: comment nodes (not in node)
@@ -243,6 +464,10 @@ per rule:
       one_or_none: comment nodes (not in node)
       select_one: comment nodes (not in node)
       select_one_or_raise: comment nodes (not in node)
+  data-layer-lazy-sql-surface: 0/1
+      sql-surface: relational (SQL stages)
+  data-layer-legacy-callback-quarantine: 3/4
+      callback-call: comment nodes (not in node)
   data-layer-legacy-execution-surfaces: 11/25
       raw-cursor-impl/mariadb/fts: a stop rule of any kind
       raw-cursor-impl/postgres/fts: a stop rule of any kind
@@ -253,11 +478,14 @@ per rule:
       eager-plan: a stop rule of any kind
       eager-txn: a stop rule of any kind
       graph-fallback-none: a regex on the text of comparison_operator (\bis\s+None$)
-      legacy-execution-graphs: another clause kind
+      legacy-execution-graphs: relational (SQL stages)
       inventory-export_cursor.py: a regex over file content or paths
       inventory-fts_searcher.py: a regex over file content or paths
       inventory-legacy_wrappers.py: a regex over file content or paths
       removed-read-leaves: a regex over file content or paths
+  data-layer-matching-architecture: 0/2
+      matching-file-checks: relational (SQL stages)
+      matching-project-ownership: relational (SQL stages)
   data-layer-missing-async-pairs: 0/3
       missing-async: utility call
       missing-sync: utility call
@@ -286,6 +514,14 @@ per rule:
       inspection-4: a regex on the text of aliased_import (\bgetsourcelines\b)
   data-layer-permission-error: 0/1
       raise: semantic layout
+  data-layer-plan-composition-architecture: 1/3
+      plan-composition: relational (SQL stages)
+      composition-runtime-observations: relational (SQL stages)
+  data-layer-plan-helpers-allowlist: 0/1
+      plan-helper-aliases: relational (SQL stages)
+  data-layer-plan-optimizer-v2: 0/2
+      optimizer-file-checks: relational (SQL stages)
+      optimizer-invariant-registry: relational (SQL stages)
   data-layer-plan-scope-ownership: 7/26
       runner-nominal-false: nthChild other than a fixed position
       runner-nominal-true: nthChild other than a fixed position
@@ -307,12 +543,27 @@ per rule:
       mode-pair-4: a regex on the text of module ((?<LOCATION>execute_read_plan_workflow\(\ \ \ \ \ \ \ \ \ conn,\ \ \ \ \ \ \ \ \ AsyncReadPlanWorkflow))
       mode-pair-5: a regex on the text of module ((?<LOCATION>execute_write_plan_workflow\(\ \ \ \ \ \ \ \ \ conn,\ \ \ \ \ \ \ \ \ AsyncWritePlanWorkflow))
   data-layer-plan-scope-side-effects: 6/6
+  data-layer-post-op-no-internal-dispatch: 3/9
+      duplicate-enum: budget
+      builder-name: constraint on $ENUM, not captured
+      literal-kwargs: semantic value
+      multi-enum-builder: budget
+      removed-surface: nthChild other than a fixed position
+      payload-aliases: relational (SQL stages)
+  data-layer-post-op-side-effects: 0/1
+      signed-surface: relational (SQL stages)
   data-layer-public-api-triples: 0/1
-      exported-families: another clause kind
+      exported-families: relational (SQL stages)
+  data-layer-publication-registry-writes: 1/1
+  data-layer-pure-lazy-runtime-purity: 0/1
+      pure-runtime-state: relational (SQL stages)
   data-layer-raw-execute-regression: 4/7
       removed-definitions: compare
       mixed-marker-3: a regex on the text of module (arbitrary\ grammar\ router)
       mixed-marker-4: a regex on the text of module (compatibility\ router)
+  data-layer-readthrough-authority-architecture: 8/10
+      runtime-seed: semantic value
+      complete-identity: semantic value
   data-layer-regex-sql-parsing: 0/9
       category-0: semantic value
       category-1: semantic value
@@ -331,6 +582,17 @@ per rule:
       fstring-literal: semantic parse
       template: semantic arguments
       static: semantic arguments
+  data-layer-revision-ancestry-invariants: 0/10
+      descriptor-SqlAncestryChainCte: a regex over file content or paths
+      descriptor-SqlNativeRevisionValue: a regex over file content or paths
+      descriptor-SqlRevisionAncestryDefinition: a regex over file content or paths
+      descriptor-SqlRevisionInAncestryCondition: a regex over file content or paths
+      descriptor-SparseRowVisibleAtRevisionCondition: a regex over file content or paths
+      descriptor-SqlCopyVisibleSparseAncestors: a regex over file content or paths
+      descriptor-SqlVisibleAncestorsDefinition: a regex over file content or paths
+      removed-surface: a regex over file content or paths
+      stored-text-cast-0: a regex over file content or paths
+      stored-text-cast-1: a regex over file content or paths
   data-layer-rust-sql-grammar-boundary: 0/8
       pattern-0: no Python matcher
       pattern-1: no Python matcher
@@ -340,12 +602,20 @@ per rule:
       pattern-5: no Python matcher
       pattern-6: no Python matcher
       pattern-7: no Python matcher
+  data-layer-schema-architecture: 1/4
+      schema-planning: relational (SQL stages)
+      schema-lifecycle: relational (SQL stages)
+      reported-parser-error: relational (SQL stages)
+  data-layer-schema-bootstrap-contracts: 1/2
+      bootstrap-contracts: relational (SQL stages)
+  data-layer-schema-introspection-data-paths: 0/1
+      schema-introspection: relational (SQL stages)
   data-layer-serverplan-bypass: 0/3
       bypass-_execute_raw_sql: budget
       bypass-_execute_raw_sql_async: budget
       bypass-_query_raw_sql_async: budget
   data-layer-serverplan-dispatch-architecture: 2/9
-      executor-provenance: another clause kind
+      executor-provenance: relational (SQL stages)
       backend-identity: semantic value
       step-isinstance: a regex on the text of binary_operator (\|)
       step-type-compare: a regex on the text of binary_operator (\|)
@@ -359,8 +629,8 @@ per rule:
       reference-synthesis: a regex on the text of string (^f['"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_cou
       column-type: semantic layout
   data-layer-serverplan-quality: 87/123
-      spq-ordered-semantic-inventory: another clause kind
-      spq-sync-async-duplication: another clause kind
+      spq-ordered-semantic-inventory: relational (SQL stages)
+      spq-sync-async-duplication: relational (SQL stages)
       spq-intent-boilerplate: a regex on the text of integer (^4$)
       spq-executor-helper-isinstance: nthChild other than a fixed position
       spq-executor-method-isinstance: nthChild other than a fixed position
@@ -369,7 +639,7 @@ per rule:
       spq-strategy-sequential-probe: a regex on the text of string (^[rRuU]*(?:'''(?:requires_runtime_sequential_batch)'''|"""(?:requires_runtime_sequential_batch)"""|'(?:requires_runtime_sequentia
       spq-sequential-optins: nthChild other than a fixed position
       spq-lazy-resolution: nthChild other than a fixed position
-      spq-preop-functions: another clause kind
+      spq-preop-functions: relational (SQL stages)
       spq-control-flow-child-compile: a regex on the text of integer (^4$)
       spq-order-by-strings: a regex on the text of string ((?:^[rRuUfF]*(?:'''|\"\"\"|'|")|[\s}])(?:JSON_EXISTS|JSON_GET|JSON_GET_BOOL|JSON_GET_FLOAT|JSON_GET_INT|JSON_GET_TEXT|JSON_KEYS|J
       spq-can-batch-lock: a regex on the text of attribute|concatenated_string|identifier|string ((?i)for_update|lock|locked|snapshot|use_for_update)
@@ -384,17 +654,17 @@ per rule:
       spq-include-through-elif_clause: a regex on the text of comparison_operator (==|!=)
       spq-fk-planning-isinstance: nthChild other than a fixed position
       spq-vector-filter-literals: nthChild other than a fixed position
-      spq-vector-filter-constants: another clause kind
-      spq-projection-repairs: another clause kind
+      spq-vector-filter-constants: relational (SQL stages)
+      spq-projection-repairs: relational (SQL stages)
       spq-statement-batch-rowcounts: nthChild other than a fixed position
       spq-replay-outer-cte-strings: a regex on the text of string (^[rRuUfF]*(?:'''|\"\"\"|'|")[\p{L}\p{N}_]+\(.*\)(?:'''|\"\"\"|'|")$)
       spq-replay-relation-columns: a regex on the text of string (^[rRuU]*(?:'''(?:relation_output_columns)'''|"""(?:relation_output_columns)"""|'(?:relation_output_columns)'|"(?:relation_output_
       spq-replay-step-tags: a regex on the text of binary_operator (&)
-      spq-runtime-state-annotations: another clause kind
+      spq-runtime-state-annotations: relational (SQL stages)
       strategy-file-size: a regex over file content or paths
-      quality-local-taxonomy: another clause kind
-      quality-project-taxonomy: another clause kind
-      conditional-architecture: another clause kind
+      quality-local-taxonomy: relational (SQL stages)
+      quality-project-taxonomy: relational (SQL stages)
+      conditional-architecture: relational (SQL stages)
   data-layer-serverplan-state-tripwires: 0/31
       queue-auth-definitions: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
       queue-auth-calls: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
@@ -424,24 +694,24 @@ per rule:
       private-lazy-ref: nthChild other than a fixed position
       graph-terminal-chain: a regex on the text of module (CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|
       lazy-callback-terminal: nthChild other than a fixed position
-      state-signatures: another clause kind
-      state-flow-narrow: another clause kind
-      state-projection-recovery: another clause kind
+      state-signatures: relational (SQL stages)
+      state-flow-narrow: relational (SQL stages)
+      state-projection-recovery: relational (SQL stages)
   data-layer-serverplan-steps: 12/21
       side-effect-tags: semantic value
       runtime-builder-string-name: nthChild other than a fixed position
-      step-contracts-1: another clause kind
-      step-contracts-2: another clause kind
-      step-contracts-3: another clause kind
-      step-contracts-4: another clause kind
-      step-contracts-5: another clause kind
-      step-contracts-6: another clause kind
-      runtime-reference-summaries: another clause kind
+      step-contracts-1: relational (SQL stages)
+      step-contracts-2: relational (SQL stages)
+      step-contracts-3: relational (SQL stages)
+      step-contracts-4: relational (SQL stages)
+      step-contracts-5: relational (SQL stages)
+      step-contracts-6: relational (SQL stages)
+      runtime-reference-summaries: relational (SQL stages)
   data-layer-serverplan-target-architecture: 12/16
       executor-imports: a regex on the text of aliased_import|dotted_name (^(?:[A-Za-z_]\w*)?(?:Step|Intent|Strategy)(?:\s+as\s+\w+)?$)
       strategy-getattr: semantic value
       strategy-isinstance: nthChild other than a fixed position
-      required-contracts: another clause kind
+      required-contracts: relational (SQL stages)
   data-layer-sql-grammar-escape-hatches: 0/11
       forbidden-class: semantic layout
       unsafe-parameter: budget
@@ -504,6 +774,11 @@ per rule:
       signature-where: a regex on the text of function_definition (expression\s*:\s*str\b|:\s*str\s*\|)
       signature-select: a regex on the text of function_definition (\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|)
       signature-group_by: a regex on the text of function_definition (\*columns\s*:\s*str\b|columns\s*:\s*str\b|:\s*str\s*\|)
+  data-layer-unknown-contract-defaults: 1/3
+      or-empty: a regex on an anonymous token
+      bool: count
   data-layer-unresolved-forward-refs: 0/1
       inspection: semantic arguments
   data-layer-versioned-lifecycle-legacy-surfaces: 1/1
+  data-layer-versioned-merged-identity: 0/1
+      constructors: relational (SQL stages)

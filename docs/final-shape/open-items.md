@@ -1304,12 +1304,19 @@ the end (decision 0043). The output is `.rr`, but the emitter's own strings are 
 **Closure:** the emitter builds `.rr` (or the `Program`) directly; `rr::translate` then serves only
 the copies, and goes with them at step 31.
 
-## O72. The newer data-layer rules and recordings are not converted yet
+## O72. The newer data-layer rules: converted where they can be, SQL stages by hand
 
-Ten rules copied from Data-layer-rule-expressivity (`require_each` and other new forms) and the
-batch 7–8 recordings and probes are outside the converter, the census and the replay, which still
-cover the 60 rules and batches 1–6. **Closure:** the converter reads the new forms; the census
-counts 70 rules; the replay reads batches 7–8 and the probes.
+The converter reads 100 rules: the 60 of the earlier rewrite (`candidates/rules-ast`) first, then the 40
+newer ones from Data-layer-rule-expressivity (10 candidates, 30 certified). It converts 341 of 908 clauses.
+Its largest gap is relational clauses: 174 clauses of SQL stages in 41 rules (93 of them in
+bounded-composed-graph-paths). These are not converted; they are written by hand in `.rr` (list step 30).
+The newer branch's revisions of 24 of the first 60 convert worse (admin-async-purity: 0 of 40 events, from
+40), so the earlier versions are kept; four of batch 7's probes miss on them (quotes in comments, allowed
+sources). The replay reads every batch: recordings 1-6 give `2350 155 153 0` as before; batches 7-8 and
+the probes give `1638 20 16 0`. Of their events, 645 have configured oracles and 235 compare the message
+or oracle metadata, which the replay does not read yet. The census still counts the first 60.
+**Closure:** step 30's hand-written `.rr` for the SQL stages and the other gaps; the replay reads configured
+oracles and messages; the census counts 100.
 
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
