@@ -885,13 +885,21 @@ pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64
         }
         (ndv, sq)
     };
+    // Each row's document (the first column's high half), read once for every column.
+    let docs: Vec<i64> = (0..rows).map(|row| source.value(row, 0) >> 32).collect();
     source
         .columns()
         .into_iter()
         .enumerate()
         .map(|(c, name)| {
-            let (ndv, sq) = moments((0..rows).map(|row| (0, source.value(row, c))).collect());
-            let (_, sqd) = moments((0..rows).map(|row| (source.value(row, 0) >> 32, source.value(row, c))).collect());
+            let values: Vec<i64> = (0..rows).map(|row| source.value(row, c)).collect();
+            // A key column (strictly increasing, as a node column of a relation in node order): every value once,
+            // and so every (document, value) once. No sort.
+            if values.windows(2).all(|pair| pair[0] < pair[1]) {
+                return (name, rows as i64, rows as i64, rows as i64, rows as i64);
+            }
+            let (ndv, sq) = moments(values.iter().map(|&v| (0, v)).collect());
+            let (_, sqd) = moments(docs.iter().zip(&values).map(|(&d, &v)| (d, v)).collect());
             (name, rows as i64, ndv, sq, sqd)
         })
         .collect()

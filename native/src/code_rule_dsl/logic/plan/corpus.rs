@@ -942,19 +942,24 @@ impl Own {
     }
 
     fn measure(sources: &[(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)], constants: &BTreeMap<(String, String), BTreeSet<i64>>) -> Self {
+        use rustc_hash::{FxHashMap, FxHashSet};
         let mut own = Own::default();
         let of = |rel: &str| sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref());
         let column = |source: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| source.columns().iter().position(|c| c == name);
-        // Kinds by node id, then the tape's sizes and parents against them.
-        let mut kind_of = HashMap::new();
+        // Kinds by node id, then the tape's sizes and parents against them. Counted in hash maps (a chunk is a
+        // quarter million nodes: an ordered map per node was most of this measure's time) and ordered once.
+        let mut kind_of = FxHashMap::default();
+        let mut kinds: FxHashMap<i64, (i64, i64)> = FxHashMap::default();
+        let mut edges: FxHashMap<(i64, i64), i64> = FxHashMap::default();
         if let Some(node) = of("node")
             && let (Some(n), Some(k), Some(d)) = (column(node, "n"), column(node, "kind"), column(node, "d"))
         {
-            let mut docs = BTreeSet::new();
+            kind_of.reserve(node.len());
+            let mut docs = FxHashSet::default();
             for r in 0..node.len() {
                 let kind = node.value(r, k);
                 kind_of.insert(node.value(r, n), kind);
-                own.kinds.entry(kind).or_default().0 += 1;
+                kinds.entry(kind).or_default().0 += 1;
                 docs.insert(node.value(r, d));
             }
             own.docs = docs.len() as i64;
@@ -964,21 +969,26 @@ impl Own {
         {
             for r in 0..tape.len() {
                 let Some(&kind) = kind_of.get(&tape.value(r, n)) else { continue };
-                own.kinds.entry(kind).or_default().1 += tape.value(r, size);
+                kinds.entry(kind).or_default().1 += tape.value(r, size);
                 if let Some(&parent) = kind_of.get(&tape.value(r, par)) {
-                    *own.edges.entry((parent, kind)).or_default() += 1;
+                    *edges.entry((parent, kind)).or_default() += 1;
                 }
             }
         }
+        own.kinds = kinds.into_iter().collect();
+        own.edges = edges.into_iter().collect();
         for ((rel, col), values) in constants {
             let Some(source) = of(rel) else { continue };
             let Some(c) = column(source, col) else { continue };
+            let wanted: FxHashSet<i64> = values.iter().copied().collect();
+            let mut counts: FxHashMap<i64, i64> = FxHashMap::default();
             for r in 0..source.len() {
                 let v = source.value(r, c);
-                if values.contains(&v) {
-                    *own.postings.entry((rel.clone(), col.clone(), v)).or_default() += 1;
+                if wanted.contains(&v) {
+                    *counts.entry(v).or_default() += 1;
                 }
             }
+            own.postings.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), n)));
         }
         own
     }
