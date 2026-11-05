@@ -103,7 +103,7 @@ for document in request["documents"]:
             if item['fields']==['ast_nodes']:
                 # Operators and contexts are shared singleton objects. They are
                 # not located syntax nodes; each located node keeps its own edge.
-                selected=[node for node in all_nodes if isinstance(node,(ast.Module,ast.arguments)) or hasattr(node,'lineno')]
+                selected=[node for node in all_nodes if hasattr(node,'lineno') or bool(node._fields)]
                 fields=list(dict.fromkeys([*item.get('columns',STRUCTURE_FIELDS),'ast_start','ast_stop']))
                 if any(field not in STRUCTURE_FIELDS for field in fields):raise ValueError('Unknown canonical expansion column')
                 expanded={field:[details[id(node)][field] for node in selected] for field in fields}

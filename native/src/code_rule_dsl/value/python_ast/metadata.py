@@ -3,7 +3,7 @@
 import ast
 
 STRUCTURE_FIELDS = (
-    'ast_kind','ast_name','ast_alias','ast_module','ast_value','ast_value_kind',
+    'ast_kind','ast_name','ast_alias','ast_module','ast_level','ast_value','ast_value_kind',
     'ast_preorder','ast_breadth_order','ast_depth','ast_parent','ast_parent_kind',
     'ast_field','ast_index','ast_end','ast_function','ast_class','ast_op','ast_op_count',
     'ast_start','ast_stop','ast_line','ast_context','ast_name_repr','ast_value_repr','ast_annotation','ast_annotation_repr',
@@ -18,7 +18,7 @@ def structure_index(tree, offsets, source_size, breadth=True, annotations=True):
         start=offsets[node.lineno-1]+node.col_offset if hasattr(node,'lineno') else 0
         stop=offsets[node.end_lineno-1]+node.end_col_offset if getattr(node,'end_lineno',None) else source_size if isinstance(node,ast.Module) else 0
         row=dict(ast_kind=type(node).__name__,ast_name=next((getattr(node,key) for key in ('name','id','arg','attr') if isinstance(getattr(node,key,None),str)),''),
-          ast_alias=getattr(node,'asname',None) or '',ast_module=getattr(node,'module',None) or '',
+          ast_alias=getattr(node,'asname',None) or '',ast_module=getattr(node,'module',None) or '',ast_level=str(node.level) if isinstance(node,ast.ImportFrom) else '',
           ast_preorder=str(ordinal),ast_depth=str(depth),ast_parent='' if parent is None else str(parent),ast_parent_kind='' if parent is None else type(nodes[parent]).__name__,
           ast_field=field,ast_index=str(index),ast_function='' if fn is None else str(fn),ast_class='' if cls is None else str(cls),
           ast_start=str(start),ast_stop=str(stop),ast_line=str(getattr(node,'lineno',1)),ast_context=type(node.ctx).__name__ if hasattr(node,'ctx') else '')

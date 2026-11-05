@@ -36,6 +36,7 @@ pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
     "ast_name",
     "ast_alias",
     "ast_module",
+    "ast_level",
     "ast_value",
     "ast_value_kind",
     "ast_preorder",
