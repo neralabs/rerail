@@ -161,45 +161,21 @@ three nodes at one byte: `pair`, `string` and `"`.
 - a bad escape.
 
 A set bit routes the file to tree-sitter. So does a comment, at first: where tree-sitter attaches
-a comment depends on its LR states (`00-problem.md` §4.3). The routing rule is measured as the
+a comment depends on its LR states (`00-problem.md` §5.3). The routing rule is measured as the
 share of files the fast path takes.
 
 **Unknowns the differential test settles:** where tree-sitter's `document` node starts and ends
 around leading and trailing whitespace, and the exact cursor memberships.
 
-## 6. Python, sketched
+## 6. Python
 
-The same shape, with three more layers of facts.
+Python is worked through in `02-python.md`. It needs the same five-stage shape, plus:
 
-1. **Lexing** is a `scan(compose)` over a DFA. Its states are code, the four string forms
-   (`'`, `"`, `'''`, `"""`), comment, and escape, crossed with the f-string interpolation depth up
-   to a fixed bound. A file deeper than the bound goes to tree-sitter. The output is per-byte
-   token-start and token-class bits. Soft keywords stay undecided at this point.
-2. **Logical lines and blocks.**
-   - Bracket depth is a prefix sum.
-   - A logical line ends at a newline outside brackets and strings. This is a lexical equivalent
-     of the scanner's `valid_symbols` test, which the differential test must confirm.
-   - The indentation width of each logical line is the distance from its line start to its first
-     token.
-   - Block extents are nearest smaller values over those widths (§3). INDENT and DEDENT are never
-     materialised, since they are not tape nodes.
-3. **Statements** are recognised from bounded facts of each logical line:
-   - its first token or two (`def`, `if`, `match` followed by an expression and `:`, and so on);
-   - segmented OR-scans for whether a top-level `=`, augmented assignment, `:` or `,` occurs.
-
-   This is also where soft keywords and `print`/`exec` are decided, as tree-sitter's conflicts
-   decide them.
-4. **Expressions** within each bracket segment take their extents from §3's precedence row:
-   - postfix forms (call, subscript, attribute) bind most tightly, by adjacency;
-   - prefix forms (`not`, unary minus, `await`, `*`) have their own levels;
-   - `lambda`, `a if b else c`, comprehensions and keyword arguments are levels or delimiters;
-   - `parenthesized_expression`, `tuple` and `generator_expression` are told apart by a top-level
-     `,` or `for` inside the brackets.
-5. **Hidden rules, aliases, fields and memberships** become the code rules of each node, written
-   as facts about its context, as in the JSON table.
-
-Every construct the rules do not yet cover sets an error bit, and those files go to tree-sitter.
-Coverage is the share of files the fast path takes with an identical image.
+- a lexer automaton over a bounded stack of modes, for f-strings;
+- blocks and clause chains as nearest smaller values over indentation;
+- context facts that give the same tokens different nodes;
+- expressions as Pratt binding powers resolved by nearest smaller values;
+- a comment rule that reduces to block extents.
 
 ## 7. The grammar format
 

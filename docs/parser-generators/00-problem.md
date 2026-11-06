@@ -49,10 +49,7 @@ own tape. Times are user+sys CPU on one thread, with machine load about 8.
 - **Against the cold-audit target of 1–2 s:** parsing the repository's Python alone takes 8 s of
   CPU, about 1 s on eight cores, before encoding.
 
-simdjson's tape and Rerail's are not the same size. simdjson writes about one 8-byte word per
-JSON value. Rerail's JSON tape has a node for every token, including each `"`, `,` and `:`, which
-makes 0.30 nodes per source byte. At about 8.5 bytes per node, that is roughly 2.5 bytes of tape
-per byte of source. The output is larger than the input, so the per-node cost decides the speed.
+The two parsers do not write the same output. Section 3 compares their sizes.
 
 ## 2. What the tape holds
 
@@ -79,7 +76,74 @@ Decision 0026 makes this image the only per-node structure Rerail stores. Decisi
 resident in 64 MiB slabs that the device reads in place. A parser on the device could write a
 tape's columns straight into a slab.
 
-## 3. How simdjson does it
+## 3. Why Rerail's tape is larger than simdjson's
+
+Measured over the same 14,669 JSON files (567.7 MB). Rerail's image sizes follow
+`TapeImage::finish`'s rules applied to the tree-sitter trees: column widths, 16-byte padding, the
+header and the code table. simdjson's sizes are its tape's words plus its string buffer, which
+holds 4 bytes of length, the unescaped bytes and a NUL per string.
+
+| | records | bytes | per source byte |
+|---|---:|---:|---:|
+| simdjson tape | 46.2 M words | 369 MB | 0.65 |
+| simdjson string buffer | 23.6 M strings | 560 MB | 0.99 |
+| **simdjson total** | | 930 MB | **1.64** |
+| **Rerail v9np image** | 169.2 M nodes | 1,594 MB | **2.81** |
+| Rerail, Python, for comparison | 33.5 M nodes | 292 MB | 1.75 |
+
+Counting only structure, Rerail's image is 4.3 times simdjson's tape. Counting everything each
+parser writes, it is 1.7 times. The gap comes from three places.
+
+**1. 4.7 times as many records: Rerail keeps the concrete syntax tree.** The corpus has 36.1 M
+JSON values. simdjson writes one word for each string, true, false and null, and two for each
+number and container. Rerail writes a node for every node tree-sitter emits:
+
+| Rerail nodes with no simdjson record | nodes | share |
+|---|---:|---:|
+| `"` tokens, two per string | 47.2 M | 27.9% |
+| `,` | 16.4 M | 9.7% |
+| `:` | 15.3 M | 9.0% |
+| `{ } [ ]` | 14.1 M | 8.3% |
+| `string_content`, inside each non-empty string | 24.1 M | 14.2% |
+| `pair`, wrapping each key and value | 15.3 M | 9.0% |
+| **total** | **132.4 M** | **78.3%** |
+
+A non-empty string is four nodes (`string`, `"`, `string_content`, `"`) against simdjson's one
+word. A key–value pair is seven nodes (`pair`, the key's four, `:` and the value) against two
+words. The anonymous tokens are kept because rules and tree-sitter queries match them, and because
+findings report their spans.
+
+**2. Every node stores its position; simdjson stores none.** Per node, the image holds:
+
+| column | bytes per node |
+|---|---:|
+| `code` | 2.00 |
+| `size` | 3.15 |
+| `off` | 2.00 |
+| `tail` | 2.00 |
+| `base` | 0.25 |
+| code table and header | 0.02 |
+| **total** | **9.42** |
+
+- **`off` and `tail` are 4 of those bytes.** They locate the node in the source. simdjson's tape
+  has no source positions at all.
+- **`size` averages 3.15 bytes, not 2.** A document with more than 65,535 nodes stores 4-byte
+  sizes, and 57.5% of the JSON nodes are in such documents.
+- **Much of this is implied by the kind.** 72.8% of nodes are leaves, whose `size` is always 1.
+  Every anonymous token has a fixed width.
+- **The format is fixed.** Decision 0025 locks it, and the parser must write it as it is.
+
+**3. simdjson stores decoded values; Rerail reads them from the source.** simdjson's string buffer
+is 60% of its output: every string copied, unescaped, with its length. Numbers are converted to
+binary. Rerail stores no values, since a node's text is `source[start..end]`. If simdjson did not
+copy its strings, the gap would be the 4.3 times above.
+
+**What this means for the parser.** At 0.30 nodes per JSON byte and 0.20 per Python byte, the cost
+of producing one node decides the speed, not the cost of reading one byte. At simdjson's input
+rate (2.6 GB/s), the JSON image would be written at about 7 GB/s. That is within one core's store
+bandwidth, but only if each node takes a handful of instructions and no branches.
+
+## 4. How simdjson does it
 
 simdjson (Langdale and Lemire, "Parsing Gigabytes of JSON per Second", 2019) reads 64 bytes at a
 time and computes one 64-bit mask per fact:
@@ -101,10 +165,10 @@ structural  1...1.....1....1.1.1.11   {}[]:, and not in_string
 
 simdjson's second stage, which writes its tape, still branches per token. It is a state machine
 over the offsets. Its open-bracket words hold the position of the matching close, which carries
-the same information as Rerail's `size`. Section 2 of the design shows that Rerail's tape can be
+the same information as Rerail's `size`. Section 2 of `01-branch-free-design.md` shows that Rerail's tape can be
 written without that state machine.
 
-## 4. Where tree-sitter fidelity is hard
+## 5. Where tree-sitter fidelity is hard
 
 A tape written without tree-sitter must equal the one written from tree-sitter's tree, byte for
 byte. These are the places where that is hard:
@@ -127,7 +191,7 @@ byte. These are the places where that is hard:
 6. **Error recovery is out of scope.** Files with syntax errors go to tree-sitter. The new parser
    must detect them exactly: never accept a file tree-sitter rejects, nor the reverse.
 
-## 5. Testing fidelity
+## 6. Testing fidelity
 
 The test compares, for every corpus file, the new parser's image bytes with
 `TapeImage::encode(tree-sitter's tree).to_bytes()`. On a mismatch, it decodes both images and
