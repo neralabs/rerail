@@ -155,12 +155,13 @@ best(n, @dot("a", x)) :- name(n, x).
     let owner: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "owner").collect();
     assert_eq!(owner[0].body, [Literal::Nearest { n: "n".to_owned(), a: "a".to_owned(), kindset: "scope".to_owned() }]);
     assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "inside_rr_kind_module"));
-    // A count over two literals reads a helper of every variable; a min over two, the ones shared and its own.
+    // A count over two literals reads a helper of every variable, grouped by the ones shared (`_` for the body's
+    // own); a min over two, the ones shared and its own.
     let helper = |head: &str| -> Vec<String> {
         let r = p.rules.iter().find(|r| r.head.rel == head).unwrap();
         r.body.iter().filter_map(|l| if let Literal::Agg { atom, .. } = l { Some(format!("{atom}")) } else { None }).collect()
     };
-    assert_eq!(helper("kinds"), vec!["rr_agg1($c, $n)".to_owned()]);
+    assert_eq!(helper("kinds"), vec!["rr_agg1(_, $n)".to_owned()]);
     let first = helper("first");
     assert_eq!(first.len(), 2);
     assert!(first[0].contains("$j") && first[0].contains("$n") && !first[0].contains("$x"), "{first:?}");

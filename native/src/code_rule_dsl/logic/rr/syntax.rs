@@ -774,6 +774,32 @@ impl Term {
 }
 
 impl Lit {
+    /// The variables of this literal's own scope: not those only inside an aggregate's body, which are that
+    /// body's own unless they appear outside it too (Soufflé's scoping).
+    pub(super) fn scope_vars(&self, out: &mut Vec<String>) {
+        fn term(t: &Term, out: &mut Vec<String>) {
+            match t {
+                Term::Agg { .. } => {}
+                Term::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+                Term::Bin { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                Term::Named(_, t) => term(t, out),
+                t => t.vars(out),
+            }
+        }
+        match self {
+            Lit::Atom { args, .. } => args.iter().for_each(|a| term(a, out)),
+            Lit::Cmp { l, r, .. } => {
+                term(l, out);
+                term(r, out);
+            }
+            Lit::Group { alts, .. } => alts.iter().flatten().for_each(|l| l.scope_vars(out)),
+            l @ Lit::Pattern { .. } => l.vars(out),
+        }
+    }
+
     pub(super) fn vars(&self, out: &mut Vec<String>) {
         match self {
             Lit::Atom { args, .. } => args.iter().for_each(|a| a.vars(out)),

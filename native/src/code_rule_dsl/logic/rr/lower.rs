@@ -322,7 +322,7 @@ impl Lowerer {
         for (k, lit) in lits.iter().enumerate() {
             // The variables used outside this literal, which an aggregate inside it is correlated on.
             let mut outer: Vec<String> = context.iter().cloned().collect();
-            lits.iter().enumerate().filter(|(j, _)| *j != k).for_each(|(_, l)| l.vars(&mut outer));
+            lits.iter().enumerate().filter(|(j, _)| *j != k).for_each(|(_, l)| l.scope_vars(&mut outer));
             let enclosing = self.siblings.clone();
             self.siblings = lits.iter().enumerate().filter(|(j, _)| *j != k).map(|(_, l)| l.clone()).chain(enclosing.iter().cloned()).collect();
             let alts = self.literal(lit, &outer.into_iter().collect());
@@ -665,6 +665,8 @@ impl Lowerer {
         for b in bodies {
             self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: args.clone(), neg: false, gated: false }, body: b });
         }
+        // The helper keeps every column (`count` counts distinct rows), but only the rule's variables group it.
+        let args = cols.iter().map(|c| if outer.contains(c) || over.as_ref() == Some(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
         Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args, neg: false, gated: false } }])
     }
 
@@ -842,7 +844,7 @@ fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
             Lit::Group { alts, .. } => alts.iter().for_each(|a| out.extend(body_vars(a))),
             other => {
                 let mut vs = Vec::new();
-                other.vars(&mut vs);
+                other.scope_vars(&mut vs);
                 out.extend(vs);
             }
         }
