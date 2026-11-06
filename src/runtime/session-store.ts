@@ -63,7 +63,7 @@ export interface SessionGaps {
   codeRulesPendingBoundaries: number;
   /** Tool edits of files no rule checked because Git ignores them (`ignored-edit`). */
   ignoredEdits: number;
-  /** Changes to Git's ignore rules, which decide what the session's later edits and later sessions check (`ignore-rules-changed`). */
+  /** Changes seen during the session that make Git's ignore rules ignore more (`ignore-rules-changed`). */
   ignoreRuleChanges: number;
 }
 
@@ -295,7 +295,7 @@ export class SqliteSessionStore {
     }, session, attribution);
   }
 
-  /** Marks a change to Git's ignore rules in the session: a file its tool edit named, or one found changed after a command or turn. */
+  /** Marks a change seen in the session that makes Git's ignore rules ignore more, with the file and the patterns. */
   recordIgnoreRulesChanged(session: AdapterSession, change: IgnoreRulesChange, attribution?: SessionAttribution): void {
     this.append({
       sessionId: session.sessionId,

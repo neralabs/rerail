@@ -243,7 +243,7 @@ function coverageGaps(sess) {
     ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
     ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
     ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
-    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}, so files they newly ignore go unchecked`]),
+    ...(ruleChanges === 0 ? [] : [`Git's ignore rules gained patterns ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
   ].join("; ");
 }
 

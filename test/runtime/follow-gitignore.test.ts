@@ -44,6 +44,10 @@ async function withSession(
   run: (session: GitignoreSession) => Promise<void>,
 ): Promise<void> {
   const root = await realpath(await temporaryDirectory({ started: false }));
+  // Git reads the test's home, so the developer's own global excludes file plays no part.
+  vi.stubEnv("HOME", join(root, "home"));
+  vi.stubEnv("XDG_CONFIG_HOME", "");
+  vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "home", "gitconfig"));
   const databasePath = join(root, "rerail.sqlite");
   await writeFile(join(root, ".gitignore"), "gen/\nsessions/\nhome/\nrerail.sqlite*\n");
   execFileSync("git", ["init", "--quiet"], { cwd: root });
@@ -80,6 +84,7 @@ async function withSession(
     await runtime.dispose();
     audits.close();
     reader.close();
+    vi.unstubAllEnvs();
   }
 }
 
@@ -136,19 +141,39 @@ describe("following .gitignore", () => {
     });
   }, 30_000);
 
-  it("records changes to Git's ignore rules: an exclude file a command wrote, and a .gitignore a tool edit wrote", async () => {
-    await withSession({ followGitignore: true }, async session => {
+  it("records what makes Git's ignore rules ignore more: an exclude file a command wrote, a .gitignore a tool edit wrote", async () => {
+    await withSession({ followGitignore: true, exclude: "node_modules\n" }, async session => {
       await toolCall(session, "shell-1", "Bash", { command: "echo 'scratch/' >> .git/info/exclude" }, async () => {
         await appendFile(join(session.root, ".git", "info", "exclude"), "scratch/\n");
       });
-      await toolCall(session, "shell-2", "Bash", { command: "git status" }, async () => undefined);
+      // A line the file already holds, as a tool outside the repository appends it again: nothing more is ignored.
+      await toolCall(session, "shell-2", "Bash", { command: "echo node_modules >> .git/info/exclude" }, async () => {
+        await appendFile(join(session.root, ".git", "info", "exclude"), "node_modules\n");
+      });
       await toolCall(session, "edit-1", "Edit", { file_path: join(session.root, ".gitignore") }, async () => {
         await appendFile(join(session.root, ".gitignore"), "out/\n");
       });
+      const patch = "*** Begin Patch\n*** Update File: .gitignore\n@@\n+dist/\n*** End Patch\n";
+      await toolCall(session, "patch-1", "apply_patch", { input: patch }, async () => {
+        await appendFile(join(session.root, ".gitignore"), "dist/\n");
+      });
       expect(session.events("ignore-rules-changed")).toEqual([
-        { path: ".git/info/exclude", via: "observed" },
-        { path: ".gitignore", via: "tool" },
+        { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] },
+        { path: ".gitignore", via: "tool", ignoresMore: ["out/"] },
+        { path: ".gitignore", via: "tool", ignoresMore: ["dist/"] },
       ]);
+    });
+  }, 30_000);
+
+  it("records a .gitignore a command wrote, though it ignores itself and no diff shows it", async () => {
+    await withSession({ followGitignore: true }, async session => {
+      await toolCall(session, "shell-1", "Bash", { command: "mkdir hidden && printf '*\\n' > hidden/.gitignore && cp a.py hidden/" }, async () => {
+        await mkdir(join(session.root, "hidden"));
+        await writeFile(join(session.root, "hidden", ".gitignore"), "*\n");
+        await writeFile(join(session.root, "hidden", "evil.py"), "NEEDLE\n");
+      });
+      expect(session.events("ignore-rules-changed")).toEqual([{ path: "hidden/.gitignore", via: "observed", ignoresMore: ["*"] }]);
+      expect(session.findings()).toEqual([]);
     });
   }, 30_000);
 

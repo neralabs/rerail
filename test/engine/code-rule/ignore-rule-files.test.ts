@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { appendFile, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,21 +25,47 @@ async function checkout(path: string): Promise<string> {
   return path;
 }
 
+const look = { named: [], observed: [] };
+
 describe("IgnoreRuleFiles", () => {
-  it("reports a changed exclude file once, a nested checkout's too, and each .gitignore a tool edit names", async () => {
+  it("reports what makes an exclude file ignore more, a nested checkout's too, once, and nothing for a comment or a duplicate", async () => {
     const root = await checkout(join(home, "repo"));
     const nested = await checkout(join(root, "vendor", "lib"));
+    await appendFile(join(root, ".git", "info", "exclude"), "node_modules\n");
     const files = await IgnoreRuleFiles.open(root, [root, nested]);
 
     await appendFile(join(nested, ".git", "info", "exclude"), "scratch/\n");
-    expect(await files.changes([], [root, nested])).toEqual([{ path: "vendor/lib/.git/info/exclude", via: "observed" }]);
-    expect(await files.changes([], [root, nested])).toEqual([]);
+    expect(await files.changes(look, [root, nested])).toEqual([{ path: "vendor/lib/.git/info/exclude", via: "observed", ignoresMore: ["scratch/"] }]);
+    expect(await files.changes(look, [root, nested])).toEqual([]);
 
-    await appendFile(join(root, ".git", "info", "exclude"), "out/\n");
-    expect(await files.changes([join(root, ".git", "info", "exclude"), "api/.gitignore", "src/a.ts"], [root, nested])).toEqual([
-      { path: ".git/info/exclude", via: "tool" },
-      { path: "api/.gitignore", via: "tool" },
-    ]);
+    // What something outside the repository appends again and again, a comment, a blank line: nothing more is ignored.
+    await appendFile(join(root, ".git", "info", "exclude"), "node_modules\n# a note\n\nnode_modules  \n");
+    expect(await files.changes(look, [root, nested])).toEqual([]);
+  });
+
+  it("reports a negation an exclude file lost, and nothing for a pattern it lost", async () => {
+    const root = await checkout(join(home, "repo"));
+    await writeFile(join(root, ".git", "info", "exclude"), "*.log\n!keep.log\nout/\n");
+    const files = await IgnoreRuleFiles.open(root, [root]);
+    await writeFile(join(root, ".git", "info", "exclude"), "*.log\n");
+    expect(await files.changes(look, [root])).toEqual([{ path: ".git/info/exclude", via: "observed", ignoresMore: ["!keep.log"] }]);
+  });
+
+  it("compares a .gitignore a tool edit names with what it held before the edit, and one a walk found with what it first held", async () => {
+    const root = await checkout(join(home, "repo"));
+    const files = await IgnoreRuleFiles.open(root, [root]);
+    await writeFile(join(root, ".gitignore"), "dist/\n");
+    await files.remember([join(root, ".gitignore")]);
+
+    await appendFile(join(root, ".gitignore"), "# why\ndist/\n");
+    expect(await files.changes({ named: [join(root, ".gitignore"), "src/a.ts"], observed: [] }, [root])).toEqual([]);
+    await appendFile(join(root, ".gitignore"), "scratch/\n");
+    expect(await files.changes({ named: [".gitignore"], observed: [] }, [root])).toEqual([{ path: ".gitignore", via: "tool", ignoresMore: ["scratch/"] }]);
+
+    // A .gitignore no walk saw before, that ignores itself and all beside it.
+    await mkdir(join(root, "hidden"));
+    await writeFile(join(root, "hidden", ".gitignore"), "*\n");
+    expect(await files.changes({ named: [], observed: ["hidden/.gitignore"] }, [root])).toEqual([{ path: "hidden/.gitignore", via: "observed", ignoresMore: ["*"] }]);
   });
 
   it("watches a checkout that appears later from what its exclude file holds then", async () => {
@@ -47,9 +73,9 @@ describe("IgnoreRuleFiles", () => {
     const files = await IgnoreRuleFiles.open(root, [root]);
     const later = await checkout(join(root, "later"));
     await appendFile(join(later, ".git", "info", "exclude"), "before-watched/\n");
-    expect(await files.changes([], [root, later])).toEqual([]);
+    expect(await files.changes(look, [root, later])).toEqual([]);
     await appendFile(join(later, ".git", "info", "exclude"), "after-watched/\n");
-    expect(await files.changes([], [root, later])).toEqual([{ path: "later/.git/info/exclude", via: "observed" }]);
+    expect(await files.changes(look, [root, later])).toEqual([{ path: "later/.git/info/exclude", via: "observed", ignoresMore: ["after-watched/"] }]);
   });
 
   it("reports Git's default excludes file, outside the session folder, by its absolute path", async () => {
@@ -57,6 +83,6 @@ describe("IgnoreRuleFiles", () => {
     const files = await IgnoreRuleFiles.open(root, [root]);
     await mkdir(join(home, ".config", "git"), { recursive: true });
     await appendFile(join(home, ".config", "git", "ignore"), "*.local\n");
-    expect(await files.changes([], [root])).toEqual([{ path: join(home, ".config", "git", "ignore"), via: "observed" }]);
+    expect(await files.changes(look, [root])).toEqual([{ path: join(home, ".config", "git", "ignore"), via: "observed", ignoresMore: ["*.local"] }]);
   });
 });

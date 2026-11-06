@@ -237,8 +237,8 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordCodeRulesPending(SESSION, "call");
     sessionStore.recordCodeRulesPending(SESSION, "result");
     sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
-    sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed" });
-    sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool" });
+    sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
+    sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
     for (let index = 0; index < 600; index += 1) {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });

@@ -1310,7 +1310,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           session.sessionId,
           (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
         ),
-        // What Git's ignore rules leave unchecked, and changes to them, are on the session's record: no skip is silent.
+        // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
         onIgnoredEdit: edit => this.#recordSessionFact(
           session.sessionId,
           (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
