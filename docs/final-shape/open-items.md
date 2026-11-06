@@ -1320,17 +1320,27 @@ oracles and messages; the census counts 100.
 
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
-Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
-parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Still refused by name:
-`.violation` at a span or a source location (file-length, test-budget, noqa-sec-ratchet), `~` patterns,
-`must`/`may`, `=> edits`, `ordered by`, `dfs_first`, `sum`/`mean`/`join`, an aggregate over a join, kind
-sets of functions (tsx) and negated disjunctions. **Closure:** list step 30.
+Lowered now (decision 0046, reader section): `.violation` at a node, a span or a `@place`; `code "X"`,
+`code {c} in "re"`, `tag` and `suppress` lines; `match` captures, arithmetic, the string functions, Soufflé's
+`cat`/`max`/`min`/`to_number`/`to_float`/`%`, floats; `sum` and `join` (and aggregates over terms, inside
+terms, and compared with each other); `.input` with parameters; `within`, `within_stop`, `nearest` (a named
+ancestor negated too), `inside` and `has` over kind sets and over node-valued sets; `precedes_stop`; negated
+conjunctions (a helper relation); `must, may`; `unset`; recursion that makes values bounded by the tree, a
+count, a shrinking text or a function between rows (`front::cycles`). Still refused by name (census of
+2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var, the owner-code sketch), `@place` as a
+value outside a `.violation`'s head (3 clauses, 12 files), `dfs_first`/`dfs_first_memo` (2), `~` patterns
+(1), `mean`, `=> edits`. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is not
+one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`).
+**Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
 
 Each translated program declares the engine's base relations (`node`, `text`, `child` …) instead of
-`#include "core.rr"`. **Closure:** the engine's base relations and `core.rr` agree, and the programs
-include it.
+`#include "core.rr"`. Decision 0046 made `core.rr`'s base relations for a program that includes it; the
+translated programs are T's, and their recorded outputs are T's projection (comments not counted among
+children, `text` of identifiers, T's `op`), so including `core.rr` would change what they compute. They stay
+as they are until T's parity tests read T's view by its own names (as `op_t`). **Closure:** the programs
+include `core.rr` and their tests read T's view by name.
 
 ## O75. The `.rdl` copies and T's tools
 
@@ -1349,13 +1359,15 @@ since reading it is not written. **Closure:** these relations are built natively
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
-  text test.
-- `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
+  text test; captures on a node or a span are symbols, not spans; `match_all` is not made (O80).
+- `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
+  `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
   path has no range read yet.
-- The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
-  no new values; this extends O11's bound.
+- `earlier` and `visit_index` are preorder, not CPython's ast order.
+- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists; a bound it does not know is
+  refused, never run.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
 ## O78. Where the `.rr` library and rules differ from the recorded findings
@@ -1403,7 +1415,7 @@ tokens have no field.
 - `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
   into the batch's node space, on demand (rrlab answers requests in rounds); not built.
 - `match_all`, and `match` with captures on a node or span, need the lowering to call the text layer on the
-  bytes (0042 §3). `docof` of a span needs the lowering to read `docof` as an input; the view exists.
+  bytes (0042 §3). (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
 - `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
 - `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict.
 - `static_value` is `value`: file-local constants are not followed.

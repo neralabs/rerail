@@ -158,3 +158,132 @@ projection, as before.
 ### Open
 
 O80 in `open-items.md`.
+
+## Reader and lowering (items 1, 2, 3, 6, 7 and 8)
+
+### What a rule can now write
+
+A short example: three of the forms that were refused before, as a rule writes them.
+
+```text
+// A finding with a constant code, silenced by `# noqa: PSE050` (item 1).
+.violation pse050(at: node, name: symbol) code "PSE-050" "{name}() is a side effect."
+    suppress ruff "PSE050"
+
+// Three-valued: fx's must side is proven, its may side proven or unknown (item 6).
+.decl fx(c: node, x: symbol)  must, may
+must fx(c, x) :- callee(c, n), sym_of(n, x), fx_name(x).
+may  fx(c, x) :- method_call(c), cname(c, x), fx_name(x).
+
+// Recursion that makes values, bounded by a count at the same node (item 6, UnboundedValueCycle).
+tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "string_fragment"), text(c, w).
+```
+
+### Decision
+
+1. **Reader syntax.** `.violation` takes `code "X"`, `code {c} [in "re"]`, `tag {t}`, `fix` and
+   `suppress TOOL "rule", … [over {c}]` lines. A violation's `at` is a node, a span or a loc, or the head
+   writes `V(@place(path, line), …)`, which is a row of `rr_place_V`. Codes, `code in` and suppressions are
+   settings the findings layer reads. An aggregate takes a term (`sum strlen(v) * 2 : { … }`), and an
+   aggregate inside a term, a head argument or a comparison gets a variable bound beside it.
+2. **`has(a, n, set)` tests the set on the descendant `n`.** The transducer's descendant rows are read off
+   the parents: each node of a kind in the set, with each of its strict ancestors. The planner test that
+   relied on the old meaning was rewritten.
+3. **Soufflé's built-ins.** `cat` of any arity, `max/2`, `min/2`, `to_number`, `to_float`, `%`, and
+   decimals. A float column holds an order-preserving integer key (`float_key`), so comparisons and joins
+   stay integer; float arithmetic and `to_string` of a float are functions over the keys. `sum` and `join`
+   are aggregates of the plan (`join` is a native aggregate, `rr_join`, ordered by its `by` keys).
+4. **Lowering (O73).**
+   - Node-valued sets in `inside`, `nearest`, `has` and `within_stop` lower to a climb up the tape's parent
+     column from the nodes the rule gives, not a transducer set.
+   - A negated conjunction is a helper relation `rr_notK` over the variables it shares, negated.
+   - `!nearest(n, s, set)` with `s` named is a helper relation of the positive nearest, negated.
+   - `precedes_stop(a, b, S)` is `rr_prec_S(a, b)`: the first later sibling in S (`min` over the later
+     siblings in S), and b at or before it. The rows are as many as `precedes`'s.
+   - `must, may`: the may side keeps the name and has every rule; the must side `rr_must_r` has the rules
+     with no prefix or `must`. A relation that reads a three-valued one is three-valued too. A must side's
+     rule reads a positive atom's must side and a negated atom's may side, and a may side's rule the other
+     way. A finding is the may side. Definite and possible findings have the same key; the `possible` tag
+     and the `.possible` mode are not made yet.
+   - **The value-cycle bound (`front::cycles`, O11).** A node is its preorder index, so a move along the
+     tree, `next_sibling`, `precedes`, and `$a < $b` between keys are moves in one order. A derived relation's
+     guarantees may be weak (down or the same node, `unparen`). A recursive relation's guarantees are the
+     greatest its rules keep. A variable a lower stratum binds takes finitely many values. `@add($m, k)`
+     under `$m < C` counts up to a bound. `@rx_group` is strictly shorter than its argument when the regex
+     matches something outside the group in every match (checked on the regex's syntax tree). The other
+     shrinking built-ins give a part. A key is a node, count or text column, with a count that may rise at
+     the same node. A keyless relation of the component may be a function between keyed rows (`negate`
+     between `number`'s rows). A creating rule may keep the key when no cycle of rules that keep it comes
+     back.
+5. **Hygiene.** The relations the engine names itself start with `rr_` (`rr_inside_`, `rr_has_`,
+   `rr_nearest_`, `rr_not`, `rr_must_`, `rr_prec_`), and `parse_file` refuses a rule relation named `rr_…`.
+   `core.rr`'s `docof(x: loc, d)` is an input bound to the batch's view, so spans have a document; T's
+   `docof` over nodes stays `node`'s projection. In `core.rr`'s shape, `doc`'s module is `""` for a file with
+   no dotted module (only Python and Rust have one), and `pkg` has rows for Python files only.
+6. **`unset`** (O77). Its text is "": `text(x, t)` of it lowers to `t = ""`. `!unset(x)` lowers to `x != -1`.
+
+### Evidence
+
+- Census (`parse_file` over the library, the packs and the data-layer rules, each clause also lowered alone):
+
+  | | before | after |
+  |---|---|---|
+  | lib files parsing whole | 51 of 106 | 98 of 106 |
+  | packs files parsing whole | 19 (930 syntax errors first) | 871 of 949 |
+  | data-layer files parsing whole | 8 of 12 | 9 of 12 |
+  | lib clauses lowered alone | 3832 of 3906 | 3890 of 3906 |
+  | packs clauses lowered alone | — | 5220 of 5264 |
+  | data-layer clauses lowered alone | 293 of 372 | 359 of 372 |
+
+- Tests in `logic::rr::tests`: `violation_codes_suppressions_and_places_lower`, `souffle_builtins_run` (with
+  `sum` and `join`), `node_sets_and_negated_conjunctions_run`, `must_may_relations_run`,
+  `precedes_stop_runs`, and `negated_nearest_and_compared_aggregates_run` (with `unset`). Also
+  `logic::front::tests` (the value cycles of T's programs stay bounded), `logic::plan::tests::has`, and
+  `facts::vtab::syntax`.
+- Replay, one full run with both sections' work (`converted_rules_give_the_recorded_findings`; 344.9 s user
+  + 9.4 s sys CPU including the build, 288 MB peak RSS, machine load about 15):
+  - Recordings 1-6: `2350 178 171 0`, against `2350 178 176 0` before. The drop is all
+    plan_scope_side_effects, whose hand-written rule now lowers (it needed `must, may`). It replaces the
+    converted JSON, 6 of 7 exact, with 1 of 7. Every miss is the code's spelling: `core.rr` says a
+    violation's code is its name, `PSE_050`, but the recorded findings say `PSE-050`. With `code "PSE-050"`
+    on each `.violation` of the rule, 7 of 7 match.
+  - Batches 7-8 and probes: `1638 117 100 0`, against `1638 95 90 0`. plan_scope_side_effects adds 22
+    events, 9 exact. With the codes spelled as recorded, 20 are exact. The two left are rule-side: a
+    parenthesized test (`if (q.count()):`) that the rule does not see through, and the plugin entry, which
+    does not report the log-mode audit code. public_api_triples gains one.
+  - The hand-written rules' errors from the earlier run are gone: `docof` is an input, and no check errs.
+
+### Prior work consulted
+
+- **Lessons ledger, row 19** (lower patterns to embeddable fragments, don't build an interpreter). *Agrees.*
+  Every new form lowers to relations and rules the planner already runs: helper relations for negated
+  conjunctions and `!nearest`, a `min` aggregate for `precedes_stop`, two copies of a rule for `must, may`.
+  There is no evaluator of its own.
+- **Lessons ledger, rows 21 and 22** (expose extents and ordinals and let the caller join; ordered siblings
+  need more than independent `cpos <` joins). *Agrees.* `precedes_stop` reads `child`'s ordinals and joins
+  on them. It does not compare every sibling pair: it takes the first stop after each node, once.
+- **Spike design index, "Sibling dots as arithmetic"** (`NOT EXISTS` over a recursive relation rescans per
+  row; compute ordinals only for the parents that need them). *Agrees.* The stop test is a `min` per node
+  over its later siblings in S, not a `NOT EXISTS` over the siblings between two nodes.
+- **Spike history index, items 4 and 59** (a planner cannot estimate recursive relations; plan a structural
+  guard). *Agrees.* Recursion that makes values is accepted only on a structural bound that the cycle check
+  proves, and refused otherwise. It never runs to a budget.
+- **0026 (nodes live in tapes).** *Agrees.* Node-set climbs read the tape's parent column, and the
+  preorder order of node ids is what the value-cycle bound uses.
+- **0041 and 0042 (text layer); memory "string matching is chunked".** *Not met yet for captures.* A capture
+  is still `rx_group` per row on a symbol, and `match_all` is not made (O77, O80).
+- **Memory "rules are Soufflé `.rr` only".** *Followed.* Every form is read from `.rr`. The census reads the
+  same files the engine reads.
+
+### Open
+
+- O73, rewritten: `ordered by` (37 clauses), `@place` as a value outside a violation's head (3 clauses,
+  12 files), `dfs_first`/`dfs_first_memo` (2), `~` patterns (1), `mean`, and the value cycles whose bound is
+  none of the above (15 library clauses, 73 files; for example `hex_place`, `norm`/`sci`, `unescape`, and
+  `slot_walk` over tokens).
+- O74, updated: the translated programs are T's, so including `core.rr` waits for their tests to read T's
+  view by name.
+- O77, updated: captures as text-layer passes, `match_all`, `within` as a range read, and `earlier` in
+  CPython's order.
+- O80 (the other section): `parsed` and `string_annotation` are not taken here.
+- plan_scope_side_effects.rr (More-ergonomic-rule-syntax) needs `code "PSE-0x0"` on its violations.
