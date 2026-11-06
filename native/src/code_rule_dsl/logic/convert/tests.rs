@@ -13,10 +13,15 @@ fn pack() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates")
 }
 
-/// What one rule's conversion gave: its program, and per clause whether it converted and why not.
+/// The authored overlay's files (`convert` module doc): `<rule-id>.rr`.
+fn authored() -> PathBuf {
+    pack().join("datalog").join("authored")
+}
+
+/// What one rule's conversion gave: its program, and per clause whether it converted or is authored, and why not.
 struct Converted {
     program: String,
-    clauses: Vec<(String, Result<(), Gap>)>,
+    clauses: Vec<(String, Result<Origin, Gap>)>,
     approx: BTreeSet<String>,
 }
 
@@ -32,8 +37,14 @@ struct Adjust {
 }
 
 /// One rule file as a program: its scope as path globs and each forbid clause's matcher as rules deriving
-/// `violation(rule, clause, code, path, line)`.
-fn convert(path: &Path, adjust: &Adjust) -> Converted {
+/// `violation(rule, clause, code, path, line)`, under the rule's authored file (`authored()`) where it has one. An
+/// error is the authored file's.
+fn convert(path: &Path, adjust: &Adjust) -> Result<Converted, String> {
+    convert_over(path, adjust, Some(&authored()))
+}
+
+/// `convert` with the authored files in `authored`, or none.
+fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result<Converted, String> {
     let text = std::fs::read_to_string(path).unwrap();
     let mut document: serde_json::Value = serde_json::from_str(&text).unwrap();
     let id = document["id"].as_str().unwrap().to_owned();
@@ -69,7 +80,7 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
     }
     let excludes = !exclude.is_empty();
     e.decls.insert("violation".into(), "rule: sym, clause: sym, code: sym, path: sym, line: int".into());
-    let mut clauses: Vec<(String, Result<(), Gap>)> = relational
+    let mut clauses: Vec<(String, Result<Origin, Gap>)> = relational
         .into_iter()
         .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
         .map(|c| (c, Err(Gap("relational (SQL stages)".into()))))
@@ -136,15 +147,28 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
             e.rules.push(format!("violation({}, {}, {}, $p, {line}) :- {}.", quote(&id), quote(&clause.id), quote(&clause.violation.code), body.join(", ")));
             Ok(())
         });
-        clauses.push((clause.id.clone(), result));
+        clauses.push((clause.id.clone(), result.map(|()| Origin::Converted)));
     }
     clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
-    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043), with only
-    // what `violation` reaches.
+    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
-    let program = crate::code_rule_dsl::logic::rr::print(&reachable(prog)).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
-    Converted { program, clauses, approx: e.approx.clone() }
+    // The authored file's clauses over the converter's, with only what `violation` reaches.
+    let file = authored.map(|dir| dir.join(format!("{id}.rr"))).filter(|f| f.exists());
+    let prog = if let Some(file) = file {
+        let authored = crate::code_rule_dsl::logic::rr::parse_file(&file).map_err(|e| format!("{}: {e:?}", file.display()))?;
+        let (prog, given) = overlay(prog, authored, &id, &order, &|c| adjust.keep.as_ref().is_none_or(|keep| keep(c))).map_err(|e| format!("{}: {e}", file.display()))?;
+        for (clause, result) in &mut clauses {
+            if given.contains(clause) {
+                *result = Ok(Origin::Authored);
+            }
+        }
+        prog
+    } else {
+        reachable(prog)
+    };
+    let program = crate::code_rule_dsl::logic::rr::print(&prog).map_err(|e| format!("{id}: the merged program does not print: {e:?}"))?;
+    Ok(Converted { program, clauses, approx: e.approx.clone() })
 }
 
 /// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
@@ -182,7 +206,7 @@ fn convert_the_data_layer_pack() {
     let mut per_rule = Vec::new();
     for path in rule_files() {
         let id = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let c = convert(&path, &Adjust::default());
+        let c = convert(&path, &Adjust::default()).unwrap_or_else(|e| panic!("{e}"));
         crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
         std::fs::write(out.join(format!("{id}.rr")), &c.program).unwrap();
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
@@ -224,31 +248,33 @@ fn convert_the_data_layer_pack() {
     println!("{report}");
 }
 
-/// One policy file's conversion (`RERAIL_CONVERT_POLICY`): the clauses converted and the gaps, printed; the
-/// program is written to `RERAIL_CONVERT_OUT` where given.
+/// One policy's conversion (`RERAIL_CONVERT_POLICY`: its file, or its rule id), under its authored file: each
+/// clause converted, authored or a gap, printed, and the program, printed or written to `RERAIL_CONVERT_OUT`.
 #[test]
-#[ignore = "converts one policy file; RERAIL_CONVERT_POLICY, --ignored --nocapture"]
+#[ignore = "converts one policy; RERAIL_CONVERT_POLICY, --ignored --nocapture"]
 fn convert_one_policy() {
-    let path = PathBuf::from(std::env::var("RERAIL_CONVERT_POLICY").expect("RERAIL_CONVERT_POLICY"));
-    let c = convert(&path, &Adjust::default());
+    let policy = std::env::var("RERAIL_CONVERT_POLICY").expect("RERAIL_CONVERT_POLICY");
+    let path = Some(PathBuf::from(&policy))
+        .filter(|p| p.exists())
+        .or_else(|| rule_files().into_iter().find(|p| p.file_stem().is_some_and(|s| s.to_string_lossy() == policy)))
+        .unwrap_or_else(|| panic!("{policy}: no policy file or rule id"));
+    let c = convert(&path, &Adjust::default()).unwrap_or_else(|e| panic!("{e}"));
     let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
-    println!("{ok}/{} clauses converted", c.clauses.len());
-    let mut gaps = BTreeMap::<String, usize>::new();
-    for (_, r) in &c.clauses {
-        if let Err(Gap(g)) = r {
-            *gaps.entry(g.chars().take(100).collect()).or_default() += 1;
+    let authored = c.clauses.iter().filter(|(_, r)| *r == Ok(Origin::Authored)).count();
+    println!("{ok}/{} clauses converted or authored (authored {authored})", c.clauses.len());
+    for (clause, r) in &c.clauses {
+        match r {
+            Ok(Origin::Converted) => println!("  {clause}: converted"),
+            Ok(Origin::Authored) => println!("  {clause}: authored"),
+            Err(Gap(g)) => println!("  {clause}: gap: {}", g.chars().take(160).collect::<String>()),
         }
-    }
-    let mut by_count: Vec<_> = gaps.into_iter().collect();
-    by_count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    for (g, n) in by_count {
-        println!("  gap {n:4}  {g}");
     }
     for a in &c.approx {
         println!("  approx  {a}");
     }
-    if let Ok(out) = std::env::var("RERAIL_CONVERT_OUT") {
-        std::fs::write(out, &c.program).unwrap();
+    match std::env::var("RERAIL_CONVERT_OUT") {
+        Ok(out) => std::fs::write(out, &c.program).unwrap(),
+        Err(_) => println!("{}", c.program),
     }
 }
 
@@ -403,7 +429,14 @@ fn converted_rules_give_the_recorded_findings() {
             misses.push(format!("{check}: no rule file"));
             continue;
         };
-        let c = convert(&rule, &adjust);
+        let c = match convert(&rule, &adjust) {
+            Ok(c) => c,
+            Err(e) => {
+                row[3] += 1;
+                misses.push(format!("{check} {}: error {e}", event["test"]));
+                continue;
+            }
+        };
         if c.clauses.iter().any(|(_, r)| r.is_err()) {
             continue;
         }
@@ -480,7 +513,7 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     let path = "l2070_batching/executor.py";
     let source = "def run(step: ServerPlanStep, other: int):\n    if step_tags(step):\n        pass\n    if \"x\" in step_tags(step):\n        pass\n";
     let rule = rule_file("serverplan_target_architecture").unwrap();
-    let c = convert(&rule, &Adjust::default());
+    let c = convert_over(&rule, &Adjust::default(), None).unwrap();
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("has-ancestor");
     let _ = std::fs::remove_dir_all(&dir);
     write_files(&dir, [(path, source)]);
@@ -531,7 +564,7 @@ fn a_failed_clause_leaves_nothing() {
 fn converted_programs_hold_only_what_violation_reaches() {
     let mut failed = 0;
     for path in rule_files() {
-        let c = convert(&path, &Adjust::default());
+        let c = convert(&path, &Adjust::default()).unwrap();
         failed += c.clauses.iter().filter(|(_, r)| r.is_err()).count();
         let prog = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
         let (mut reached, mut todo) = (BTreeSet::new(), vec!["violation".to_owned()]);
@@ -556,6 +589,89 @@ fn converted_programs_hold_only_what_violation_reaches() {
         }
     }
     assert!(failed > 0, "some clause failed");
+}
+
+/// The target architecture rule, its executor fixture, and an authored file for it: `executor-parameters` (which
+/// converts) written again as an `if` in a function named `run`, and `required-contracts` (SQL stages) as the
+/// module's first line.
+const TARGET: &str = "serverplan_target_architecture";
+const TARGET_ID: &str = "data-layer-serverplan-target-architecture";
+const EXECUTOR: (&str, &str) = ("l2070_batching/executor.py", "def run(step: ServerPlanStep, other: int):\n    if step_tags(step):\n        pass\n    if \"x\" in step_tags(step):\n        pass\n");
+const TARGET_AUTHORED: &str = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl in_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+.decl executor_parameters_def(kind: symbol)
+executor_parameters_def("function_definition").
+.decl executor_parameters_run(f: node)
+executor_parameters_run(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, "run").
+violation("data-layer-serverplan-target-architecture", "executor-parameters", "SPTA006", p, l) :-
+    node(d, s, "if_statement", _, _), inside(s, f, executor_parameters_def), executor_parameters_run(f), in_scope(d), doc(d, p, _), line(s, l).
+.decl required_contracts_module(d: number)
+required_contracts_module(d) :- node(d, _, "module", _, _).
+violation("data-layer-serverplan-target-architecture", "required-contracts", "SPTA001", p, 1) :- required_contracts_module(d), in_scope(d), doc(d, p, _).
+"#;
+
+/// An authored clause replaces the converter's, a relational one is given, and a clause the run leaves out is
+/// dropped with its helpers.
+#[test]
+fn authored_clauses_replace_the_converters() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("authored");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{TARGET_ID}.rr")), TARGET_AUTHORED).unwrap();
+    let rule = rule_file(TARGET).unwrap();
+    let c = convert_over(&rule, &Adjust::default(), Some(&dir)).unwrap();
+    let origin = |c: &Converted, id: &str| c.clauses.iter().find(|(c, _)| c == id).map(|(_, r)| r.clone());
+    assert_eq!(origin(&c, "executor-parameters"), Some(Ok(Origin::Authored)));
+    assert_eq!(origin(&c, "required-contracts"), Some(Ok(Origin::Authored)));
+    assert_eq!(origin(&c, "tag-conditions"), Some(Ok(Origin::Converted)));
+    assert_eq!(c.program.lines().filter(|l| l.contains("\"executor-parameters\"")).count(), 1, "{}", c.program);
+    let run = dir.join("run");
+    write_files(&run, [EXECUTOR]);
+    let mut got = findings(&c.program, &run).unwrap();
+    got.sort();
+    let at = |l: usize, code: &str| format!("{}:{l}:{code}", EXECUTOR.0);
+    assert_eq!(got, [at(1, "SPTA001"), at(2, "SPTA006"), at(2, "SPTA007"), at(4, "SPTA006"), at(4, "SPTA007")]);
+    let without = Adjust { scope: None, keep: Some(Box::new(|c: &str| c != "executor-parameters")) };
+    let c = convert_over(&rule, &without, Some(&dir)).unwrap();
+    assert_eq!(origin(&c, "executor-parameters"), None);
+    assert!(!c.program.contains("executor-parameters") && !c.program.contains("executor_parameters_"), "{}", c.program);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What an authored file may not do is a named error.
+#[test]
+fn overlay_errors_are_named() {
+    let rule = rule_file(TARGET).unwrap();
+    let c = convert_over(&rule, &Adjust::default(), None).unwrap();
+    let converted = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
+    let clauses: Vec<String> = c.clauses.iter().map(|(c, _)| c.clone()).collect();
+    let head = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl doc(d: number, path: symbol, module: symbol)\n.decl in_scope(d: number)\n.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)\n";
+    let violation = |rule: &str, clause: &str, body: &str| format!("violation({}, {}, \"X\", p, 1) :- {body}, node(d, n, _, _, _), doc(d, p, _).\n", quote(rule), quote(clause));
+    let ok = |body: &str| violation(TARGET_ID, "executor-parameters", body);
+    let cases = [
+        (format!("{head}.decl m5(n: node)\nm5(n) :- node(_, n, \"call\", _, _).\n{}", ok("m5(n)")), "a name the converter makes"),
+        (format!("{head}.decl k1(kind: symbol)\nk1(\"call\").\n{}", ok("node(_, n, \"call\", _, _), inside(n, a, k1)")), "kind set k1 has a name the converter makes"),
+        (format!("{head}{}", violation("data-layer-other", "executor-parameters", "in_scope(d)")), "a violation of rule"),
+        (format!("{head}{}", violation(TARGET_ID, "no-such-clause", "in_scope(d)")), "which the policy has not"),
+        (format!("{}.decl text(n: node)\n{}", head, ok("text(n)")), "other columns than the converter's"),
+        (format!("{head}in_scope(d) :- doc(d, _, _).\n{}", ok("in_scope(d)")), "read it only"),
+        (format!("{head}{}", ok("executor_parameters_undeclared(n)")), "is read and not declared"),
+        (format!("{head}.decl executor_parameters_empty(n: node)\n{}", ok("executor_parameters_empty(n)")), "nothing derives or inputs it"),
+    ];
+    for (text, error) in cases {
+        let authored = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+        match overlay(converted.clone(), authored, TARGET_ID, &clauses, &|_| true) {
+            Ok(_) => panic!("no error, wanted {error:?}:\n{text}"),
+            Err(e) => assert!(e.contains(error), "{e}, wanted {error:?}:\n{text}"),
+        }
+    }
 }
 
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus
