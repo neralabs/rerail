@@ -8,7 +8,7 @@ import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPe
 const EF = () => (ui.showAll ? "all" : "corrections");
 /** A violation's card shows unless the timeline is filtered to another rule (`ui.sessRule`). */
 const cardShown = c => ui.sessRule === null || c.finding.ruleId === ui.sessRule;
-const hasShownCard = ev => ev.correction !== null && cardShown(ev.correction);
+const hasShownCard = ev => ev.corrections.some(cardShown);
 /** Folded away as noise, unless a shown correction hangs off it: that one must show, whatever its level. */
 const QUIET = ev => (ev.level === "observe" || ev.level === "coordinate") && !hasShownCard(ev);
 
@@ -202,13 +202,14 @@ function updateTurn(node, turn, sessionId) {
   if (showFold) setText(fold.lastChild, foldSummary(quiet));
   setAttr(foldBody, "hidden", !(showFold && fopen));
   syncChildren(foldBody, showFold && fopen ? quiet : [], e => e.key, createEvent, updateEvent);
-  const items = [];
+  const card = c => ({ key: `c:${c.key}`, c });
+  // Orphans are older than every loaded call, so they lead the turn.
+  const items = turn.orphans.filter(cardShown).map(card);
   for (const ev of loud) {
     if (!evMatches(ev)) continue;
     items.push({ key: `e:${ev.key}`, ev });
-    if (hasShownCard(ev)) items.push({ key: `c:${ev.correction.key}`, c: ev.correction });
+    items.push(...ev.corrections.filter(cardShown).map(card));
   }
-  for (const c of turn.orphans) if (cardShown(c)) items.push({ key: `c:${c.key}`, c });
   syncChildren(body, items, i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
 }
 
