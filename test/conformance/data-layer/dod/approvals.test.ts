@@ -25,6 +25,15 @@ for (const record of oracle.approvalCases as Case[]) for (const mode of ["snapsh
       const result = await runDataLayerAudit(options);
       expect(result.failures).toEqual([]);
       expect(canonical(result.violations.map(row => ({ code: row.code, path: row.path, line: row.span!.startLine + 1, message: row.message })))).toEqual(canonical(record.expected));
+      if (record.id === "approved-one") {
+        expect(oracle.approvalEncodingCases).toHaveLength(8);
+        for (const encoded of oracle.approvalEncodingCases as Case[]) {
+          const checked = await runDataLayerAudit({ ...options, schemaApprovals: { entries: encoded.entries, signature: encoded.signature } });
+          expect(checked.failures).toEqual([]);
+          expect(canonical(checked.violations.map(row => ({ code: row.code, path: row.path,
+            line: row.span!.startLine + 1, message: row.message }))), encoded.id).toEqual(canonical(encoded.expected));
+        }
+      }
       if (record.id === "invalid-internal") {
         const empty = await runDataLayerAudit({ ...options, snapshot: { ...options.snapshot, files: [] } });
         expect(empty.failures).toEqual([]);

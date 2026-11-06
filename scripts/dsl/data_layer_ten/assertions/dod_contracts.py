@@ -46,6 +46,18 @@ def record(source, output):
     import base64
     def sign(entries):
         return base64.b64encode(fixture_key.sign(signing.compute_allowlist_message(schema.LINTER_NAME, sorted(entries))).signature).decode()
+    encoded = sign([first])
+    assert encoded.replace('+', '-').replace('/', '_') != encoded
+    rows.extend((label, [first], signature) for label, signature in [
+        ('encoding-ascii-junk', encoded[:12] + '! \n' + encoded[12:]),
+        ('encoding-non-ascii', encoded + 'é'),
+        ('encoding-url-alphabet', encoded.replace('+', '-').replace('/', '_')),
+        ('encoding-missing-padding', encoded.rstrip('=')),
+        ('encoding-leading-padding', '=' + encoded),
+        ('encoding-interrupted-data', encoded[:1] + '=' + encoded[1:]),
+        ('encoding-trailing-data', encoded + 'AAAA'),
+        ('encoding-discontinuous-padding', encoded[:-1] + '!' + encoded[-1:]),
+    ])
     cases = []
     old_root, old_entries, old_signature, old_key = schema.ROOT, schema.APPROVED_USER_SCHEMA_CHECK_CALLSITES, schema.APPROVED_USER_SCHEMA_CHECK_CALLSITES_SIGNATURE, signing.PUBLIC_KEY_HEX
     try:
@@ -85,7 +97,9 @@ def record(source, output):
             matching_sources.append(dict(id=label, path='consumers/probe.py', source=text, expected=expected))
     output.write_text(json.dumps(dict(format='rerail.data-layer-dod-contracts/v1', sourcePin=PIN, sourceFilesChecked=verify_sources(source, source, PIN),
                                      deployedPublicKey=old_key, fixturePublicKey=public, fixtureKeyNotice='Public deterministic test vector only; never trusted by the shipped pack.',
-                                     originalSignerFunctions=signer, originalSignerSha256=hashlib.sha256(signer.encode()).hexdigest(), approvalCases=cases,
+                                     originalSignerFunctions=signer, originalSignerSha256=hashlib.sha256(signer.encode()).hexdigest(),
+                                     approvalCases=[row for row in cases if not row['id'].startswith('encoding-')],
+                                     approvalEncodingCases=[row for row in cases if row['id'].startswith('encoding-')],
                                      matchingRootSources=matching_sources), indent=2) + '\n')
 
 

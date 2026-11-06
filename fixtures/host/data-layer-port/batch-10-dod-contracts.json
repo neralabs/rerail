@@ -367,6 +367,200 @@
       ]
     }
   ],
+  "approvalEncodingCases": [
+    {
+      "id": "encoding-ascii-junk",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH! \n6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "encoding-non-ascii",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==\u00e9",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-url-alphabet",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK_dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT-G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-missing-padding",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-leading-padding",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "=mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "encoding-interrupted-data",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "m=NfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    },
+    {
+      "id": "encoding-trailing-data",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg==AAAA",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP000",
+          "path": "scripts/lint_schema_introspection_data_paths.py",
+          "line": 1,
+          "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    },
+    {
+      "id": "encoding-discontinuous-padding",
+      "entries": [
+        "l2050_transaction/consumer.py:2:table_exists"
+      ],
+      "signature": "mNfZ8jjFOlpH6LTzQpDfmSK/dUAtdB1FhTDJ17Wsm8cV8mVaFDBeFDT+G4Oq4zifqcCTk49wP5qHdUDEqrsUBg=!=",
+      "trustedPublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "canonicalMessage": "{\"allowlist\":[\"l2050_transaction/consumer.py:2:table_exists\"],\"linter\":\"schema_introspection_data_paths\",\"version\":1}",
+      "files": [
+        {
+          "path": "l2050_transaction/consumer.py",
+          "source": "def f():\n    table_exists()\n    table_exists_async()\n",
+          "language": "python"
+        }
+      ],
+      "expected": [
+        {
+          "code": "SIDP001",
+          "path": "l2050_transaction/consumer.py",
+          "line": 3,
+          "message": "schema introspection call table_exists_async in runtime data path"
+        }
+      ]
+    }
+  ],
   "matchingRootSources": [
     {
       "id": "utf8-bom",
