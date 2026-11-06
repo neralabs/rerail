@@ -124,6 +124,41 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
     Ok(f)
 }
 
+/// The tape tag of a text-only document's facts (`text`): no dialect has it.
+pub(crate) const TEXT: u8 = u8::MAX;
+
+/// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
+/// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
+pub(crate) fn text(source: Arc<String>) -> Facts {
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
+    let mut f = Facts {
+        tag: TEXT,
+        source,
+        lines,
+        kind: Vec::new(),
+        parent: Vec::new(),
+        start: Vec::new(),
+        end: Vec::new(),
+        start_line: Vec::new(),
+        end_line: Vec::new(),
+        subtree_end: Vec::new(),
+        flags: Vec::new(),
+        field: Vec::new(),
+        child_offsets: Vec::new(),
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: Vec::new(),
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: Vec::new(),
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+    };
+    index(&mut f);
+    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
+    f
+}
+
 /// The derived columns: the children CSR (preorder lists a parent's children in order) and the
 /// kind postings.
 fn index(f: &mut Facts) {

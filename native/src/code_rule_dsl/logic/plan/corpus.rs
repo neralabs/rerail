@@ -224,9 +224,12 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             (docs, first, rust)
         }
         None => {
-            let (python, rs) = corpus_files(root)?;
+            let (python, rs, text) = corpus_files(root)?;
             let rust = rs.len() > python.len();
-            let files = if rust { rs } else { python };
+            // The run's grammar files and the text-only documents, in path order.
+            let mut files = if rust { rs } else { python };
+            files.extend(text);
+            files.sort();
             (files.into_iter().enumerate().map(|(i, path)| (i as i64 + 1, path)).collect(), HashMap::new(), rust)
         }
     };
@@ -235,7 +238,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
     if prog.decls.contains_key("declared_ret") {
-        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
+        let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
             prog = crate::code_rule_dsl::logic::rr::parse(&format!("{program}\n{facts}"))?;
@@ -380,26 +383,37 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let mut pending_nodes = 0;
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
-        let build = |d: &i64, path: &String| -> Result<syntax::Document> {
+        // A document's facts: a grammar file's tree, or a text file's text (`core::text`). A text file that is not
+        // UTF-8 (an image, an archive) is no document.
+        let build = |d: &i64, path: &String| -> Result<Option<syntax::Document>> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
-            let source = std::fs::read_to_string(root.join(path)).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
-            drop(read);
-            let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
-            let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-            let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-                Built::Facts(f) => Arc::new(f),
-                Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+            let source = match std::fs::read_to_string(root.join(path)) {
+                Ok(source) => source,
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData && text_document(path) => return Ok(None),
+                Err(e) => return Err(Error::Plan(format!("{path}: {e}"))),
             };
-            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
+            drop(read);
+            let facts = if text_document(path) {
+                Arc::new(core::text(Arc::new(source)))
+            } else {
+                let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
+                let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+                match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
+                    Built::Facts(f) => Arc::new(f),
+                    Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+                }
+            };
+            Ok(Some(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts }))
         };
         let mut sent = false;
         while let Some((d, path)) = at.next() {
             match build(d, path) {
-                Ok(doc) => {
+                Ok(Some(doc)) => {
                     pending_nodes += doc.facts.len();
                     pending.push(doc);
                 }
+                Ok(None) => {}
                 Err(e) => {
                     let _ = send.send(Err(e));
                     sent = true;
@@ -902,10 +916,17 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 }
 
 
-/// The corpus's files under `root`, relative and in path order: Python's (`.py`) and Rust's (`.rs`), skipping
-/// hidden directories and `target`.
-fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
-    let (mut python, mut rust) = (Vec::new(), Vec::new());
+/// Whether the corpus runner reads the file at `path` as text only (core.rr's `.scope text`): no dialect has its
+/// suffix (`.md`, `.rst`, `.txt`, `.toml`, …), so it has `doc` and the source text's relations and no tree.
+fn text_document(path: &str) -> bool {
+    crate::code_rule_dsl::language::label_of_path(path).is_none()
+}
+
+/// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and the text-only
+/// documents (`text_document`, hidden files left out), skipping hidden directories and `target`. A file of another
+/// grammar is none of them.
+fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+    let (mut python, mut rust, mut text) = (Vec::new(), Vec::new(), Vec::new());
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         for entry in std::fs::read_dir(&dir).map_err(|e| Error::Plan(format!("{}: {e}", dir.display())))? {
@@ -917,23 +938,28 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
                 }
                 continue;
             }
+            if !path.is_file() {
+                continue;
+            }
             let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
             match path.extension().and_then(|e| e.to_str()) {
                 Some("py") => python.push(relative),
                 Some("rs") => rust.push(relative),
+                _ if !name.starts_with('.') && text_document(&relative) => text.push(relative),
                 _ => {}
             }
         }
     }
     python.sort();
     rust.sort();
+    text.sort();
     // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
-        for files in [&mut python, &mut rust] {
+        for files in [&mut python, &mut rust, &mut text] {
             *files = files.iter().step_by(n).cloned().collect();
         }
     }
-    Ok((python, rust))
+    Ok((python, rust, text))
 }
 
 /// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).

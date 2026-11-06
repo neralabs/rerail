@@ -22,7 +22,7 @@
 
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom, kind_code};
+use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, TEXT, kind_atom, kind_code};
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
@@ -191,11 +191,12 @@ struct Projected {
     fielded: Vec<u32>,
 }
 impl Projected {
-    fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect) -> Self {
+    /// Document `key`'s projection; `dialect` is its facts' (`None` for a text-only document, which has no node).
+    fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>) -> Self {
         let f = &*facts;
         let mut p = Projected {
             key,
-            tag: dialect.tag,
+            tag: f.tag,
             core: Vec::new(),
             local: vec![NONE; f.len()],
             parent: Vec::new(),
@@ -207,7 +208,7 @@ impl Projected {
         };
         let mut next_idx: Vec<u32> = Vec::new();
         for id in 0..f.len() as u32 {
-            if !f.named(id) || dialect.class(f, id) == Class::Comment {
+            if !f.named(id) || dialect.is_none_or(|dialect| dialect.class(f, id) == Class::Comment) {
                 continue;
             }
             // T walks named children from the root: a node under one left out is not reached.
@@ -568,7 +569,7 @@ impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
     /// of core.rr's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
-    /// apart.
+    /// apart. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node.
     /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
     /// (`logic::strings::Vocabulary`, decision 0037).
     #[allow(clippy::type_complexity)]
@@ -605,10 +606,14 @@ impl Batch {
         for d in &documents {
             // The document's own dialect: its first node's kind may be ERROR's, past the stride (`kind_atom`).
             let tag = d.facts.tag;
-            if !dialects.contains_key(&tag) {
-                dialects.insert(tag, Dialect::new(tag)?);
-            }
-            let dialect = &dialects[&tag];
+            let dialect = if tag == TEXT {
+                None
+            } else {
+                if !dialects.contains_key(&tag) {
+                    dialects.insert(tag, Dialect::new(tag)?);
+                }
+                Some(&dialects[&tag])
+            };
             let p = Projected::new(d.key, Arc::clone(&d.facts), dialect);
             let key = i64::from(d.key);
             doc.push([key, string(&d.path) as i64, string(&module(&d.path)) as i64]);
@@ -619,6 +624,8 @@ impl Batch {
             let f = &*d.facts;
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
+                // A text document has no node.
+                let Some(dialect) = dialect else { break };
                 match dialect.class(f, id) {
                     Class::Text => {
                         let t = f.text(id);
@@ -665,7 +672,8 @@ impl Batch {
                     _ => {}
                 }
             }
-            extra.document(&p, python == Some(tag), &mut text, &mut string)?;
+            // A text document's lines split as W's `lines` regexes split any file's.
+            extra.document(&p, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {

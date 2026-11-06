@@ -390,3 +390,63 @@ none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
     assert_eq!(got[4], "b.py\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A file with no grammar (`.md`, `.rst`, `.txt`, …) is a text-only document: `doc`, `source`, `src_line`,
+/// `tape_line`, `line_count` and `match_all`, each as W reads a file of no language (its lines `\r\n`, `\r`, `\n`,
+/// U+2028 and U+2029), and no node. A file that is not UTF-8 is no document; a hidden one neither.
+#[test]
+fn text_files_are_text_only_documents() {
+    let rst = "Graph query\r\n===========\n\nUse graph_query_builder( no more.\u{2028}needle here\nlast needle";
+    let md = "# Title\n\nneedle\n";
+    let files = [("docs/l9700_graph_query.rst", rst), ("docs/design/a.md", md), ("notes.txt", ""), ("pkg/m.py", "f(needle)\n"), (".hidden.md", "needle\n")];
+    let dir = corpus("text-docs", &files);
+    std::fs::write(dir.join("docs/logo.png"), [0x89, b'P', b'N', b'G', 0xff, 0xfe, 0x00]).unwrap();
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl tape_line(d: number, l: number, sp: span)
+.decl line_count(d: number, k: number)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl docs(p: symbol)
+docs(p) :- doc(_, p, _).
+.decl treed(p: symbol)
+treed(p) :- doc(d, p, _), node(d, _, _, _, _).
+.decl advertised(p: symbol)
+advertised(p) :- doc(d, p, _), source(d, sp), text(sp, s), contains("graph_query_builder(", s).
+.decl lines(p: symbol, l: number, s: symbol)
+lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s).
+.decl tape(p: symbol, l: number, s: symbol)
+tape(p, l, s) :- doc(d, p, _), tape_line(d, l, sp), text(sp, s).
+.decl counts(p: symbol, k: number)
+counts(p, k) :- doc(d, p, _), line_count(d, k).
+.decl hits(p: symbol, l: number, e: number, c: number, s: symbol)
+hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+.output docs, treed, advertised, lines, tape, counts, hits
+"#;
+    let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "tape", "counts", "hits"]);
+    let texts = [("docs/design/a.md", md), ("docs/l9700_graph_query.rst", rst), ("notes.txt", "")];
+    assert_eq!(got[0], csv(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(str::to_owned)));
+    assert_eq!(got[1], "pkg/m.py\n");
+    assert_eq!(got[2], "docs/l9700_graph_query.rst\n");
+    let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| format!("{path}\t{l}")).collect::<Vec<_>>();
+    assert_eq!(got[3], csv(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
+    let table = |path: &str, source: &str| {
+        let t = LineTable::new(source, Terminators::Eslint);
+        (0..t.starts().len()).map(|i| format!("{path}\t{}\t{}", i + 1, &source[t.start(i)..t.end(i)])).collect::<Vec<_>>()
+    };
+    let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
+    let python = (0..python.starts().len()).map(|i| format!("pkg/m.py\t{}\t{}", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]));
+    assert_eq!(got[4], csv(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
+    assert!(got[4].contains("docs/l9700_graph_query.rst\t5\tneedle here\n"), "U+2028 ends a line: {}", got[4]);
+    assert_eq!(got[5], csv(texts.iter().map(|(p, s)| format!("{p}\t{}", w_lines(s, false).len())).chain(["pkg/m.py\t1".to_owned()])));
+    let hits = texts.iter().flat_map(|(p, s)| w_regex("needle", false, "text", p, s, true)).chain(w_regex("needle", false, "python", "pkg/m.py", "f(needle)\n", true));
+    let hits = csv(hits);
+    assert_eq!(hits.lines().count(), 4, "{hits}");
+    assert_eq!(got[6], hits);
+    let _ = std::fs::remove_dir_all(&dir);
+}
