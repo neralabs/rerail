@@ -80,11 +80,13 @@ retval(f, r) :- kind(rs, "return_statement"), nearest(rs, f, fscope), kind(f, "f
 // This is what lets a decorator `def deco(fn): ...; return fn` be followed: `@deco def g` still points at g.
 .decl retparam(f: node, i: number, r: node)
 retparam(f, i, r) :- retval(f, r), look(r, x, f), param(f, x, i).
-// posarg(c, i, a): a is the argument at child index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
-// The index counts all argument children, so it matches param's index only while no keyword or splat comes first.
+// posarg(c, i, a): a is the argument at index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
+// The index counts all argument children but comments, so it matches param's index only while no keyword or splat
+// comes first. `f(  # why\n x, y)` gives (c, 0, x) and (c, 1, y). security.rr's pos_arg is CPython's call.args.
 .decl posarg(c: node, i: number, a: node)
-posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, i), !kind(a, "keyword_argument"),
-    !kind(a, "list_splat"), !kind(a, "dictionary_splat").
+posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, k), !kind(a, "keyword_argument"),
+    !kind(a, "list_splat"), !kind(a, "dictionary_splat"), !kind(a, "comment"),
+    i = count : { child(al, b, j), j < k, !kind(b, "comment") }.
 // method_of(f, c): f is defined directly in the body of class c.
 .decl method_of(f: node, c: node)
 method_of(f, c) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition").

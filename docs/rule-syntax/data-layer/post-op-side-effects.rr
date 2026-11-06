@@ -21,7 +21,10 @@
 //   POSTOP001  a signed fate override names an enum member that no longer exists
 //   POSTOP002  a PostOpKind / PostOpBehavior member whose fate is debt: not overridden, or the fate record does not
 //              verify (then no override is trusted)
-//   POSTOP000  the fate record does not verify and nothing else is wrong
+//   POSTOP000  the fate record does not verify and none of the codes above fired
+//   FACT-EXTRACTION-FAILED  the allowlist file cannot be read: its first SIGNED_POST_OP_SYMBOLS is not a set, list or
+//              tuple of strings, or it has no annotated ALLOWLIST_SIGNATURE. The registry is then empty and unsigned,
+//              and the file's POSTOP203 checks do not run.
 // Not ported: the _RuntimeOpBehaviorVisitor taint analysis (POSTOP103 … POSTOP113). The linter defines it but
 // never runs it on the repository; only its unit tests call it, on snippets.
 //
@@ -84,7 +87,12 @@ POSTOP200(@place("l2070_batching/post_op.py", 1), w, x) :- pos_ref_at(w, x).
 pos_allow_read(d) :- pos_file(d, "allowlist"), source(d, sp), text(sp, s),
     match("(?s).*(SIGNED_POST_OP_SYMBOLS|ALLOWLIST_SIGNATURE).*", s).
 .decl pos_verifier(f: node)
-pos_verifier(f) :- pos_top("allowlist", f), kind(f, "function_definition"), def_name(f, "assert_post_op_symbol_signed").
+pos_verifier(f) :- pos_verifier_def(f), !pos_later_verifier(f).
+// The linter takes the first module-level def of that name.
+.decl pos_verifier_def(f: node)
+pos_verifier_def(f) :- pos_top("allowlist", f), kind(f, "function_definition"), def_name(f, "assert_post_op_symbol_signed").
+.decl pos_later_verifier(f: node)
+pos_later_verifier(f) :- pos_verifier_def(f), pos_verifier_def(g), earlier(g, f).
 // pos_verify_line(f, l): a call of _post_op_allowlist_signature_valid or verify_allowlist at line l inside f.
 .decl pos_verify_line(f: node, l: number)
 pos_verify_line(f, l) :- pos_verifier(f), within(c, f), call_name(c, x),
@@ -96,7 +104,7 @@ pos_bypass("no signature verification") :- pos_verifier(f), !pos_verify_line(f, 
 pos_bypass("early return") :- pos_verifier(f), pos_verify_line(f, _), v = min l : { pos_verify_line(f, l) },
     within(r, f), kind(r, "return_statement"), line(r, k), k < v.
 .violation POSTOP203(at: loc, why: symbol) "assert_post_op_symbol_signed: runtime post-op signature enforcement: {why}"
-POSTOP203(@place("l2070_batching/post_op.py", 1), w) :- pos_bypass(w), pos_allow_read(_).
+POSTOP203(@place("l2070_batching/post_op.py", 1), w) :- pos_bypass(w), pos_allow_read(_), !pos_allow_broken().
 
 // ---- the signed runtime registry ------------------------------------------------------------------------------------
 // pos_signed(e): an entry of the first module-level SIGNED_POST_OP_SYMBOLS assignment: a set, list or tuple of
@@ -105,14 +113,28 @@ POSTOP203(@place("l2070_batching/post_op.py", 1), w) :- pos_bypass(w), pos_allow
 pos_signed_value(v) :- pos_signed_assign(v1), !kind(v1, "call"), v = v1.
 pos_signed_value(v) :- pos_signed_assign(c), kind(c, "call"), field(c, "arguments", al), child(al, w, i),
     !kind(w, "comment"), count : { child(al, z, j), j < i, !kind(z, "comment") } = 0, unparen(w, v).
+.decl pos_signed_first(a: node)
+pos_signed_first(a) :- pos_top_assign("allowlist", a, "SIGNED_POST_OP_SYMBOLS"),
+    !pos_earlier_assign(a, "SIGNED_POST_OP_SYMBOLS").
 .decl pos_signed_assign(v: node)
-pos_signed_assign(v) :- pos_top_assign("allowlist", a, "SIGNED_POST_OP_SYMBOLS"),
-    !pos_earlier_assign(a, "SIGNED_POST_OP_SYMBOLS"), assign_value(a, v0), unparen(v0, v).
+pos_signed_assign(v) :- pos_signed_first(a), assign_value(a, v0), unparen(v0, v).
+// pos_signed_display(v): the value is a set, list or tuple display.
+.decl pos_signed_display(v: node)
+pos_signed_display(v) :- pos_signed_value(v), (kind(v, "set") ; kind(v, "list") ; kind(v, "tuple")).
+// pos_allow_broken(): the plugin's reader of the allowlist file raises, so the file gives no facts at all.
+.decl pos_allow_broken()
+pos_allow_broken() :- pos_allow_read(_), !pos_signed_first(_).
+pos_allow_broken() :- pos_allow_read(_), !pos_signed_display(_).
+pos_allow_broken() :- pos_allow_read(_), pos_signed_display(v), child(v, c, _),
+    !kind(c, "comment"), !str_const(c, _).
+pos_allow_broken() :- pos_allow_read(_), !pos_runtime_sig(_, _).
+.violation FACT_EXTRACTION_FAILED(at: loc) code "FACT-EXTRACTION-FAILED"
+    "post_op_side_effects could not extract the runtime allowlist from l2070_batching/post_op_allowlist.py"
+FACT_EXTRACTION_FAILED(@place("l2070_batching/post_op_allowlist.py", 1)) :- pos_allow_broken().
 .decl pos_earlier_assign(a: node, x: symbol)
 pos_earlier_assign(a, x) :- pos_top_assign(r, a, x), pos_top_assign(r, b, x), earlier(b, a).
 .decl pos_signed(e: symbol)
-pos_signed(e) :- pos_signed_value(v), (kind(v, "set") ; kind(v, "list") ; kind(v, "tuple")), child(v, c, _),
-    str_const(c, e), pos_allow_read(_).
+pos_signed(e) :- pos_signed_display(v), child(v, c, _), str_const(c, e), pos_allow_read(_), !pos_allow_broken().
 
 // POSTOP204: broad authority.
 .decl pos_broad(e: symbol)
@@ -141,13 +163,12 @@ POSTOP206(@place("l2070_batching/post_op.py", 1), e) :- pos_signed(e), !pos_reac
 allow_entry("pos_runtime", e) :- pos_signed(e).
 .decl pos_runtime_sig(s: symbol, i: number)
 pos_runtime_sig(s, i) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
-    assign_value(a, v), str_const(v, s), visit_index(a, i), pos_allow_read(_).
-pos_runtime_sig(x, i) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
-    assign_value(a, v), kind(v, "identifier"), text(v, x), (x = "NEEDS_SIGNING" ; x = "UNSIGNED"), visit_index(a, i),
+    assign_value(a, v), (str_const(v, s) ; kind(v, "identifier"), text(v, s), unsigned_sig(s)), visit_index(a, i),
     pos_allow_read(_).
-allow_sig("pos_runtime", "post_op_runtime_allowlist", @replace_all(s, "[^A-Za-z0-9+/=]", "")) :- pos_runtime_sig(s, i),
-    i = min j : { pos_runtime_sig(_, j) }.
-allow_sig("pos_runtime", "post_op_runtime_allowlist", "NEEDS_SIGNING") :- !pos_runtime_sig(_, _).
+.decl pos_runtime_sig_ok(s: symbol)
+pos_runtime_sig_ok(s) :- pos_runtime_sig(s, i), i = min j : { pos_runtime_sig(_, j) }, !pos_allow_broken().
+allow_sig("pos_runtime", "post_op_runtime_allowlist", @replace_all(s, "[^A-Za-z0-9+/=]", "")) :- pos_runtime_sig_ok(s).
+allow_sig("pos_runtime", "post_op_runtime_allowlist", "NEEDS_SIGNING") :- !pos_runtime_sig_ok(_).
 .violation POSTOP202(at: loc) "runtime post-op allowlist signature is invalid; exact executable post-op symbols require the maintainer signing key"
 POSTOP202(@place("l2070_batching/post_op.py", 1)) :- !allow_status("pos_runtime", "valid").
 
@@ -160,9 +181,7 @@ pos_surface(cat("post_op_factory.", x)) :- pos_top("post_op", f), kind(f, "funct
 pos_surface(cat("post_op_spec.", x)) :- pos_class("specs", c, x), suffix("Spec", x), pos_dataclass(c).
 // pos_dataclass(c): decorated `@dataclass` or `@dataclass(…)`, by bare name.
 .decl pos_dataclass(c: node)
-pos_dataclass(c) :- field(w, "definition", c), child(w, dc, _), kind(dc, "decorator"), child(dc, e, 0),
-    ( kind(e, "identifier"), text(e, "dataclass") ;
-      kind(e, "call"), field(e, "function", f), kind(f, "identifier"), text(f, "dataclass") ).
+pos_dataclass(c) :- decorator(c, e), (g = e ; field(e, "function", g)), kind(g, "identifier"), text(g, "dataclass").
 allow_entry("pos_surface", e) :- pos_surface(e).
 allow_sig("pos_surface", "post_op_surface", s) :- option("surfaceSignature", s).
 allow_sig("pos_surface", "post_op_surface",
@@ -206,9 +225,11 @@ POSTOP001(@place("l2070_batching/post_op.py", 1), m) :- pos_trusted(m, _), !pos_
 POSTOP002(@place("l2070_batching/post_op.py", 1), m, f) :- pos_enum_member(m), pos_trusted(m, f), pos_debt(f).
 POSTOP002(@place("l2070_batching/post_op.py", 1), m, "audit_required") :- pos_enum_member(m), !pos_trusted(m, _).
 
-// POSTOP000: the record does not verify, and nothing above fired. Untrusted overrides make every member debt, so
-// this is the case of no members at all.
+// POSTOP000: the fate record does not verify and the plugin's list of findings is otherwise empty (FACT-EXTRACTION-FAILED
+// is the fact engine's, not the plugin's, so it does not count). pos_any collects the other codes.
+.decl pos_any()
+pos_any() :- POSTOP200(_, _, _). pos_any() :- POSTOP203(_, _). pos_any() :- POSTOP204(_, _).
+pos_any() :- POSTOP205(_, _). pos_any() :- POSTOP206(_, _). pos_any() :- POSTOP202(_).
+pos_any() :- POSTOP201(_). pos_any() :- POSTOP001(_, _). pos_any() :- POSTOP002(_, _, _).
 .violation POSTOP000(at: loc) "allowlist signature is invalid; rerun the signing command before treating this as clean"
-POSTOP000(@place("l2070_batching/post_op.py", 1)) :- !allow_status("pos_fates", "valid"), !pos_enum_member(_),
-    !pos_ref_at(_, _), !pos_bypass(_), !pos_signed(_), !pos_reachable(_), allow_status("pos_runtime", "valid"),
-    allow_status("pos_surface", "valid").
+POSTOP000(@place("l2070_batching/post_op.py", 1)) :- !allow_status("pos_fates", "valid"), !pos_any().

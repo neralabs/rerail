@@ -13,8 +13,8 @@ engine's reader (`rr-census` prints nothing for any of them).
 | declared_fact_interrogation | 321 | 64 | 42 / 42 | lowers |
 | history_serverplan_projection | 380 | 59 | 12 / 12 | lowers |
 | versioned_merged_identity | 383 | 100 | 10 / 13 | lowers |
-| post_op_side_effects | 1,329 | 214 | 7 / 22 as rrlab runs it; 21 / 22 with real signature checks | lowers |
-| **total** | **3,632** | **687 + 34** | **180 / 199** (194 / 199 with real signature checks) | |
+| post_op_side_effects | 1,329 | 236 | 18 / 22 | lowers |
+| **total** | **3,632** | **713 + 34** | **194 / 199** | |
 
 The tables (forbidden names, reviewed callers, fate overrides) are short, 4 to 16 entries, so they are inline facts
 and not generated `.part.rr` files.
@@ -38,19 +38,31 @@ same file with no findings, and the rule matches it.
   VMI001 is a repository-level finding ("a reviewed caller has no constructor"). On any file the rule reports it, at
   the recorded key (`impl/common/l2070_server_plan/steps`, line 1).
 
-**post_op_side_effects: 15 misses come from rrlab's `@ed25519_ok`, which is a stub that always returns 0.** Every
-signature fails, so POSTOP201, POSTOP202 and POSTOP002 (every member, because no override is trusted) are reported
-everywhere. To check the rule itself, three scratch tools were used:
-- a debug copy printed the three signed messages that the rule rebuilds for each event;
-- `openssl pkeyutl -verify` checked them against the data layer's public key;
-- a variant replaced `@ed25519_ok` with those verdicts.
-
-Every message the repository signed verifies. The variant scores 21 / 22, including the permissive-base64,
-stale-override and new-factory probes. One miss remains: `test_runtime_allowlist_governance_rejects_boolean_opt_out`
-calls `_collect_runtime_allowlist_bypass_violations_from_tree` on `input.py`. The rule reads the bypass only in
+**post_op_side_effects: 1 miss.** `test_runtime_allowlist_governance_rejects_boolean_opt_out` calls
+`_collect_runtime_allowlist_bypass_violations_from_tree` on `input.py`. The rule reads the bypass only in
 `l2070_batching/post_op_allowlist.py`, and reports it at line 1 of post_op.py, as the plugin does. This is an
-entry-emulation miss. The scratch tools are in the group's scratch directory, `pos/tool/verify.py` and
-`pos/tool/mkvariant.py`.
+entry-emulation miss. (rrlab now verifies Ed25519 with libsodium; before that the stub failed every signature. An
+openssl check of the messages the rule rebuilds had already given the same 21 / 22.)
+
+**post_op_side_effects, fixed after review:**
+- POSTOP000 is now gated on "no other plugin code fired" (`pos_any`). The earlier gate also asked for an empty
+  registry and no reachable symbols, so renaming PostOpKind and PostOpBehavior in post_op_specs.py gave nothing
+  instead of POSTOP000.
+- Extraction failures are modelled (`pos_allow_broken`). The plugin's allowlist reader raises when the first
+  SIGNED_POST_OP_SYMBOLS is not a set, list or tuple of string literals, or when there is no annotated
+  `ALLOWLIST_SIGNATURE: str = …`. The fact engine then reports FACT-EXTRACTION-FAILED at line 1 of the allowlist,
+  the registry reads as empty and unsigned, and the file's POSTOP203 checks are dropped.
+  - `ENFORCE_… = True` with `frozenset({OTHER} | {…})` now gives 202, 205 and FACT-EXTRACTION-FAILED, and no 203.
+  - An unannotated `ALLOWLIST_SIGNATURE = "…"` now gives 202, 205 and FACT-EXTRACTION-FAILED. The review listed only
+    {202, 205}, but the signature reader raises there too, and `_fact_extraction_failures` reports that.
+- The tests call the registry checks with bare entry lists. The recording writes those as a SIGNED_POST_OP_SYMBOLS
+  file with no signature, which reads as broken: FACT-EXTRACTION-FAILED, and no POSTOP204/205/206 from the entries.
+  Three events (`_collect_broad_runtime_authority_violations`, `_collect_exact_runtime_symbol_coverage_violations`
+  ×2) miss for that reason. They are entry emulations: a rule must not change what it reports by a test option, so
+  the coordinator removed a `pos_entries_only` fact keyed on `entryPoint` that kept them exact.
+- Only the first module-level `def assert_post_op_symbol_signed` is the verifier, as in the linter.
+- Idiom: the two ALLOWLIST_SIGNATURE readings are one clause over signing.rr's `unsigned_sig`, and `pos_dataclass`
+  uses python/names' `decorator`.
 
 ## Deliberate choices
 
@@ -101,8 +113,33 @@ also splits at `\v`, `\f`, `\x1c`–`\x1e`, `\x85`, U+2028 and U+2029. A test on
 3. **rrlab (no edit made): `min` over `match_all` captures.** `l = min k : { match_all("(?<m>x)", sp), line(m, k) }`
    gives 1 whatever the line. The same capture outside an aggregate gives the right line. revision_ancestry_invariants
    puts the matches in a relation first (`rai_chain_at`), which is also clearer.
-4. **rrlab (no edit made): `@ed25519_ok` is a stub.** `openssl pkeyutl -verify -rawin` with the key wrapped as DER
-   (`302a300506032b6570032100` + key) checks real signatures, and would make the signed checks score as they run.
-5. **check_rr (no edit made): undefined relations.** A rule that used `call_arg` without including python/calls
+4. **rrlab: `@ed25519_ok`.** Done: rrlab now verifies with libsodium.
+5. **python/ast.rr, `ast_name` (changes POSTOP200).** It counts names that are strings in `ast`, and misses one Name.
+   - It counts `case` captures (`case x`, `P(a=px)`, `… as q`, `*rest`, `**more`), the later parts of a
+     dotted value pattern (`RED` in `Color.RED`), and PEP 695 type parameters (`T`, `*Ts`, `**P`).
+   - It misses the walrus target (`w` in `(w := 1)`), which nameref leaves out as a `name` field.
+
+   Proposed text, to add after `not_name`. It was checked on a probe: only `v`, `Point`, `Color` and `w` remain
+   Names, as in `ast`.
+   ```
+   // `case` captures are strings in ast (MatchAs, MatchStar, MatchMapping.rest), not Names: `case x`,
+   // `case P(a=px)`, `case [*rest] as q`, `{**more}`. A one-part dotted name is a capture unless it is a class
+   // pattern's class.
+   .decl py_capture(n: node)
+   .decl py_pattern_class(d: node)
+   py_pattern_class(d) :- kind(c, "class_pattern"), child(c, d, 0).
+   py_capture(n) :- kind(d, "dotted_name"), child(d, n, 0), !child(d, _, 1), inside(d, _, "case_pattern"),
+       !py_pattern_class(d).
+   py_capture(n) :- (kind(p, "as_pattern") ; kind(p, "splat_pattern")), inside(p, _, "case_pattern"), child(p, n, _),
+       kind(n, "identifier").
+   not_name(n) :- py_capture(n).
+   // In a dotted value pattern `Color.RED` only the first part is a Name; the rest are attributes.
+   not_name(n) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), child(d, n, i), i > 0.
+   // PEP 695 type parameters hold their name as a string (TypeVar(name='T')).
+   not_name(n) :- type_param(_, _, n, _, _, _, _).
+   // A walrus target is a Name (ctx Store); nameref skips it as a `name` field.
+   ast_name(n, x) :- kind(w, "named_expression"), field(w, "name", n), text(n, x).
+   ```
+6. **check_rr (no edit made): undefined relations.** A rule that used `call_arg` without including python/calls
    passed check_rr, and Soufflé then refused it ("Undefined relation"). A check that every body atom is declared
    somewhere would catch this before rrlab.
