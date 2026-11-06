@@ -221,6 +221,8 @@ fn value_cycles_bounded_by_the_data() {
     refused(".decl r(s: symbol)\nr(s) :- text(_, s).\nr(@substr(@cat(x, \"ab\"), 0, 100)) :- r(x).\n");
     refused(".decl q(n: node, s: symbol)\nq(n, s) :- text(n, s).\nq(n, z) :- q(n, s), y = @cat(s, \"x\"), z = y.\n");
     refused(".decl r(s: symbol)\nr(s) :- text(_, s).\nr(y) :- r(m), m = @cat(q, x), y = @cat(@cat(q, x), x).\n");
+    // A split of a made value at one key: a part may be all of it (`"" . m2`), so each round makes a longer one.
+    refused(".decl q(n: node, s: symbol)\nq(n, s) :- text(n, s).\nq(n, x) :- q(n, m), m2 = @cat(m, \"a\"), m2 = @cat(p, x).\n");
     // The graph relation and the tree's two ways still bound nothing.
     refused(".decl q(n: node, s: symbol)\nq(n, s) :- text(n, s).\nq(n, @cat(p, s)) :- e(n, o), q(o, p), text(n, s).\n");
     // A rule may make a value where the key stays when the cycle through it moves strictly elsewhere (`pct_rest`

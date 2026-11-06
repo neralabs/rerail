@@ -301,7 +301,10 @@ impl<'a> Bounds<'a> {
                 _ => return false,
             },
             Term::Call(f, args) if f == "sub" => match args.as_slice() {
-                [Term::Var(x), Term::Int(c)] => (x, -*c),
+                [Term::Var(x), Term::Int(c)] => match c.checked_neg() {
+                    Some(by) => (x, by),
+                    None => return false,
+                },
                 _ => return false,
             },
             _ => return false,
@@ -346,6 +349,10 @@ fn creates(rule: &Rule, component: &BTreeSet<String>) -> bool {
         for (v, t) in b.assignments() {
             if !bound.contains(v) && (b.makes(t, Some(v)) || reads_made(t, &made)) {
                 made.insert(v);
+            }
+            // A split of a made value (`m2 = @cat(p, x)`, m2 made): a part may be all of it (`"" . m2`).
+            if made.contains(v) && t.is_cat() && let Term::Call(_, parts) = t {
+                made.extend(parts.iter().filter_map(|p| if let Term::Var(p) = p { Some(p.as_str()) } else { None }).filter(|p| !bound.contains(*p)));
             }
         }
         if made.len() == before {
