@@ -234,7 +234,8 @@ While the repository follows `.gitignore` (the default), files Git ignores are n
 <summary>What is recorded</summary>
 
 - A tool edit (Write, Edit, `apply_patch`) of a file a rule would read, which Git ignores: the file, and the ignore file, line and pattern that ignore it, as `git check-ignore -v` names them (`ignored-edit`).
-- A change to Git's ignore rules (`ignore-rules-changed`): a `.gitignore` a tool edit wrote (`via: "tool"`), or `.git/info/exclude` or `core.excludesFile` found changed after a command or at a turn end, whatever wrote it (`via: "observed"`). Those two files never show in a diff.
+- A change to Git's ignore rules (`ignore-rules-changed`): a `.gitignore` a tool edit wrote (`via: "tool"`), or `.git/info/exclude` or `core.excludesFile` found changed after a command or at a turn end, whatever wrote it (`via: "observed"`). Those two files never show in a diff. They are watched for the session's checkout and for each checkout nested in it that runs rules of its own (a submodule, a recorded repository), from the session's first tool call on.
+- Nothing tells which session changed an exclude file, so every session open in the repository records an observed change at its next command or turn end.
 - A shell write inside an ignored folder is not recorded file by file: the walk never enters such a folder, which is what keeps it fast. A change to the ignore rules that put the folder out of reach is.
 - `sessions_get` counts both in `gaps` (`ignoredEdits`, `ignoreRuleChanges`); `session_events` has each one, withheld from coding agents since they quote hidden ignore files.
 

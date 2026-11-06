@@ -12,6 +12,7 @@ import type {
   CodeRuleCheckpoint,
   AuditSettings,
   CodeRuleSourceLanguage,
+  IgnoredEditMatch,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
 import { gitBranchTips, gitCommitsBetween, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
@@ -22,7 +23,7 @@ import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
 import { binaryPrefix } from "./binary-prefix.js";
 import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
-import { IgnoreRuleFiles, shownIgnoreFile } from "./ignore-rule-files.js";
+import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 
 
 const MAX_SOURCE_BYTES = 1_000_000;
@@ -502,6 +503,14 @@ function withinFolder(folder: string, path: string): boolean {
 function withoutUncaptured({ previousReadError: _uncaptured, ...rest }: CodeRuleEdit): CodeRuleEdit {
   return rest;
 }
+/** Recording what a boundary found is best-effort: a record that throws is logged, and the boundary goes on. */
+function reportBestEffort(report: () => void): void {
+  try {
+    report();
+  } catch (error) {
+    process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
+  }
+}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -598,22 +607,7 @@ export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
  * A finished tool edit of a file no rule checked because Git ignores it (`CodeRuleAuditor.ignoredEdit`): the file as
  * the session folder names it, and the pattern that ignores it, with its file (as `shownIgnoreFile` names one) and line.
  */
-export interface IgnoredEdit {
-  path: string;
-  source?: string;
-  line: number;
-  pattern: string;
-}
-
-/**
- * A change to Git's ignore rules in a session (`IgnoreRuleFiles`): `tool` when a finished tool edit of the session named
- * the ignore file, `observed` when the exclude file's contents were found changed after a command or at a turn end,
- * whoever changed them.
- */
-export interface IgnoreRulesChange {
-  path: string;
-  via: "tool" | "observed";
-}
+export type IgnoredEdit = Omit<IgnoredEditMatch, "source"> & { path: string; source?: string };
 
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
 export class CodeRuleBridge {
@@ -644,8 +638,8 @@ export class CodeRuleBridge {
   readonly #onIgnoredEdit: ((edit: IgnoredEdit) => void) | undefined;
   readonly #onIgnoreRulesChanged: ((change: IgnoreRulesChange) => void) | undefined;
   /**
-   * The session's ignore rule files, read as it opens, while `onIgnoreRulesChanged` is told of their changes; never
-   * awaited by the open, so reading them never delays the evaluator.
+   * The session's ignore rule files, read as it opens while `onIgnoreRulesChanged` is told of their changes. The open
+   * never waits for them; the session's first tool call does, so what they hold before it runs is the baseline.
    */
   #ignoreRules: Promise<IgnoreRuleFiles | undefined> = Promise.resolve(undefined);
   readonly #worktreeWalkGapMs: number;
@@ -696,8 +690,9 @@ export class CodeRuleBridge {
       this.#textBytes = 0;
       this.#discovery = undefined;
       const root = await realpath(this.#cwd);
-      this.#ignoreRules = this.#openIgnoreRules(root);
       await this.#auditor.openWorkspace(sessionId);
+      // After the auditor opens, so it can name the checkouts whose ignore rules apply.
+      this.#ignoreRules = this.#openIgnoreRules(root);
       this.#sessionId = sessionId;
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
@@ -720,6 +715,7 @@ export class CodeRuleBridge {
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
     this.refreshCodeRules();
+    await this.#ignoreRules;
     const paths = generatedEditPaths(toolName, input);
     if (paths.length === 0) {
       if (isCommandTool(toolName)) this.#commands.add(toolCallId);
@@ -752,7 +748,7 @@ export class CodeRuleBridge {
       this.#pending.delete(toolCallId);
       if (pending === undefined || failed) return [];
       this.refreshCodeRules();
-      this.#reportIgnoredEdits(await realpath(this.#cwd), pending.paths);
+      this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
       const { edits, uncaptured } = await this.#readEdits(discovery, pending.paths, pending.preimages);
       if (edits.length === 0) return [];
@@ -1115,18 +1111,14 @@ export class CodeRuleBridge {
 
   /** Recording a boundary that answered before its shell-write check is best-effort: it never fails the boundary. */
   #reportDiscoveryPending(boundary: DiscoveryPendingBoundary): void {
-    try {
-      this.#onDiscoveryPending?.(boundary);
-    } catch (error) {
-      process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
-    }
+    reportBestEffort(() => this.#onDiscoveryPending?.(boundary));
   }
 
-  /** The session folder's ignore rule files as they are when it opens, while their changes are reported; best-effort. */
+  /** The session folder's ignore rule files and its checkouts' as they are when it opens, while their changes are reported. */
   async #openIgnoreRules(root: string): Promise<IgnoreRuleFiles | undefined> {
     if (this.#onIgnoreRulesChanged === undefined) return undefined;
     try {
-      return await IgnoreRuleFiles.open(root);
+      return await IgnoreRuleFiles.open(root, this.#auditor.ignoreRuleRoots?.() ?? []);
     } catch (error) {
       process.stderr.write(`rerail: cannot read Git's ignore rule files for ${root}: ${errorMessage(error)}\n`);
       return undefined;
@@ -1139,34 +1131,37 @@ export class CodeRuleBridge {
    */
   async #noteIgnoreRules(paths: readonly string[]): Promise<void> {
     const files = await this.#ignoreRules;
-    if (files === undefined) return;
+    const report = this.#onIgnoreRulesChanged;
+    if (files === undefined || report === undefined) return;
+    let changes: IgnoreRulesChange[];
     try {
-      const named = files.named(paths);
-      const changed = await files.changed();
-      for (const path of named) this.#onIgnoreRulesChanged?.({ path, via: "tool" });
-      for (const path of changed) if (!named.includes(path)) this.#onIgnoreRulesChanged?.({ path, via: "observed" });
+      changes = await files.changes(paths, this.#auditor.ignoreRuleRoots?.() ?? []);
     } catch (error) {
-      process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
+      process.stderr.write(`rerail: cannot read Git's ignore rule files: ${errorMessage(error)}\n`);
+      return;
+    }
+    for (const change of changes) reportBestEffort(() => report(change));
+  }
+
+  /** Reports each file of a finished tool edit that no rule checked because Git ignores it; best-effort, file by file. */
+  #reportIgnoredEdits(root: string, paths: readonly string[]): void {
+    const report = this.#onIgnoredEdit;
+    if (report === undefined) return;
+    for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
+      reportBestEffort(() => {
+        const edit = this.#ignoredEditOf(root, configuredPath);
+        if (edit !== undefined) report(edit);
+      });
     }
   }
 
-  /** Reports each file of a finished tool edit that no rule checked because Git ignores it; best-effort. */
-  #reportIgnoredEdits(root: string, paths: readonly string[]): void {
-    if (this.#onIgnoredEdit === undefined || this.#auditor.ignoredEdit === undefined) return;
-    try {
-      for (const configuredPath of [...paths].sort(compareDeterministicStrings)) {
-        const path = sessionRelativePath(root, configuredPath);
-        const match = path === undefined ? undefined : this.#auditor.ignoredEdit(path);
-        if (path === undefined || match === undefined) continue;
-        const source = match.source ?? undefined;
-        this.#onIgnoredEdit({
-          path, line: match.line, pattern: match.pattern,
-          ...(source === undefined ? {} : { source: shownIgnoreFile(root, source) }),
-        });
-      }
-    } catch (error) {
-      process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
-    }
+  /** A tool edit's `configuredPath` when no rule checked it because Git ignores it; undefined when it was checked, or no rule reads it. */
+  #ignoredEditOf(root: string, configuredPath: string): IgnoredEdit | undefined {
+    const path = sessionRelativePath(root, configuredPath);
+    const match = path === undefined ? undefined : this.#auditor.ignoredEdit?.(path);
+    if (path === undefined || match === undefined) return undefined;
+    const source = match.source ?? undefined;
+    return { path, line: match.line, pattern: match.pattern, ...(source === undefined ? {} : { source: shownIgnoreFile(root, source) }) };
   }
 
   async #runDiscovery(discovery: SourceDiscovery): Promise<void> {

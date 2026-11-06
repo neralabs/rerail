@@ -18,8 +18,9 @@ import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState }
 import { autostartDaemon } from "./daemon-control.js";
 import { SteerRuleSchema } from "./event-protocol.js";
 import {
-  CodeRuleBridge, generatedEditPaths, type IgnoreRulesChange, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
+import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,

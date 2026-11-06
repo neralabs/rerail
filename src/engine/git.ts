@@ -267,11 +267,13 @@ export async function gitExcludeFiles(cwd: string): Promise<string[]> {
   const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"]);
   if (exclude === undefined || exclude === "") return [];
   const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"]);
+  return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
+}
+
+/** The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `~/.config`. */
+function defaultExcludesFile(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
-  const excludesFile = configured === undefined || configured === ""
-    ? join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore")
-    : configured;
-  return [resolve(cwd, exclude), resolve(cwd, excludesFile)];
+  return join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore");
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */

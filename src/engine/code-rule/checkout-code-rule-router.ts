@@ -152,6 +152,22 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
   }
 
+  /**
+   * The checkouts whose ignore rules the session's checks follow: the session's checkout and, each level down, the
+   * checkouts nested in it that own their files, while they may run rules. The other worktrees share the session
+   * checkout's `info/exclude` and configuration, so they add none.
+   */
+  ignoreRuleRoots(): string[] {
+    const roots: string[] = [];
+    const pending = [this.#options.startingCheckout];
+    for (let root = pending.pop(); root !== undefined; root = pending.pop()) {
+      if (roots.includes(root) || !this.#mayRun(root)) continue;
+      roots.push(root);
+      pending.push(...this.#nestedCheckoutsOf(root).map(nested => join(root, nested)));
+    }
+    return roots;
+  }
+
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {
     this.#assertSession(sessionId);
     const partitioned = new Map<Lane, CodeRuleEdit[]>();

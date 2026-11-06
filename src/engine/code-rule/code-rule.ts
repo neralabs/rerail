@@ -1528,6 +1528,11 @@ export interface CodeRuleAuditor {
   sourceRoot?(path: string): string | undefined;
   /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
   worktreeRoots?(): readonly string[];
+  /**
+   * The checkouts (physical) whose Git ignore rules the session's checks follow, beside the session folder's own: a
+   * change to their exclude files changes what is checked. None beyond the session folder's when absent.
+   */
+  ignoreRuleRoots?(): readonly string[];
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
