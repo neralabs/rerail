@@ -24,7 +24,11 @@ export function matchingApplications(root: string, input: readonly SourceFile[],
       if (entry.isDirectory()) { walk(absolute); continue; }
       if (!path.endsWith(".py") || files.has(path)) continue;
       if (entry.isSymbolicLink() && !statSync(absolute).isFile()) continue;
-      files.set(path, { path, language: "python", source: new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(absolute)) });
+      // Python's read_text(encoding="utf-8") preserves a BOM and translates
+      // universal newlines. TextDecoder strips the BOM unless told otherwise.
+      const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })
+        .decode(readFileSync(absolute)).replace(/\r\n?/g, "\n");
+      files.set(path, { path, language: "python", source });
     }
   }
   for (const path of roots) walk(resolve(root, path));
