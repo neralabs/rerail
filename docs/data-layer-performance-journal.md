@@ -7056,3 +7056,82 @@ Their exact union has 54 assertion identities, with no failures, duplicates, or 
 Partitioning changes test grouping, not corpus size or expected results.
 The final helper replay has 24 passing tests, and the evidence verifier has 19 passing tests.
 Final typecheck, CI YAML and shell syntax, and both batch-nine and batch-ten file bindings pass.
+
+## 2026-11-06 — Complete transferable assertions from the 57 retained host cases
+
+The earlier host-only classification combined Python details with portable requirements.
+In particular, the banned-symbol constants define detector behavior.
+The existing recorded corpus had positive diagnostics for six of the thirteen banned symbols.
+The other seven were `_PlanBackedGraphTraversal`, `_TxnBoundGraphQueryBuilder`, `_get_or_create_plan_flush_context`,
+`_lazy_result_for_plan_ref`, `_make_graph_query_builder`, `GraphQueryTerminalStep`, and `_GraphQueryTerminalMode`.
+
+The new recorder executes all 57 original cases without changing their assertions.
+It retains their source, source hashes, assertion expressions, outcomes, and original CLI observations.
+It verifies imported upstream files against the source pin.
+Generation reproduces the committed transfer record byte for byte.
+
+The audit finds 75 transferable assertion sites across 47 cases:
+
+| Contract | Assertion sites | Rerail evidence |
+| --- | ---: | --- |
+| Banned constants | 15 | Exact vocabularies in the shipped SQL; all 13 positives, 13 allowed lookalikes, and 13 other-family controls |
+| Result values | 15 | Fields, types, equality, and field-specific inequality through both native APIs |
+| Command | 30 | Arguments, help, failures, text formatting, clean output, JSON output, and exit behavior |
+| Target scope | 15 | Relative target identity, Python suffixes, native admission, rejected lookalikes, and independent command working directories |
+
+The remaining 16 sites concern Python container types, hashing, mutation exceptions, checkout layout, or module documentation.
+Ten cases contain only those sites. Three cases contain both portable and Python-specific sites.
+The ledger identifies each assertion separately, rather than excluding an entire mixed case.
+The original source harness still executes those 57 cases in Python.
+The additional Rerail counterparts have separate evidence and do not inflate native source-case counts.
+
+The recorder constructs a small, genuinely clean four-file graph baseline from upstream examples.
+It removes deleted shortcuts and supplies required methods and classes.
+The original detector evaluates every mutation and validates the clean controls.
+The new corpus has 39 complete observations, including all thirteen positives.
+Both native APIs compare every result: 78 comparisons.
+Thirteen controls remove one banned SQL literal and reject the resulting missing finding.
+The shipped rule documents and native engine require no changes for these cases.
+
+The upstream CLI tests mock detectors to return synthetic `Violation` values.
+Their counterparts author small native regex rules that emit those values at actual source locations.
+The real command receives the native results. No original detector runs in those native checks.
+Result-value tests use the same transport through snapshot and workspace execution.
+These tests validate output transport and do not count as production detector positives.
+The fields-only upstream test uses an original constructor example to inspect the native result schema.
+Native spans map to the original one-based line numbers.
+
+The command now supports `--help`, `--check`, and `--json`.
+It defaults to text output and report-only exit behavior, as the original graph command does.
+`--check` returns 1 for blocking findings. Report-only rules retain exit status 0.
+Engine failures retain exit status 2. `--json` provides the prior structured output.
+Existing JSON consumers must add `--json`.
+Enforcement callers must add `--check`.
+The compatibility tests now supply those flags explicitly.
+
+TDD commit `30cfe2b4b` records failures for missing command help and missing transfer evidence.
+Commit `407e2e269` records the classification boundary between field-name sets and Python hashability.
+Development also exposed three adapter defects.
+SQL inspection crossed UNION arms and alias boundaries. Production observations used Python DTO keys.
+A fields-only assertion had no constructor input.
+The adapters now preserve the intended arm, public DTO names, and schema example.
+Those failures were harness defects, not missing engine capabilities.
+
+The v6 receipt requires the exact union of 102 transferred tests and controls.
+A separate completion assertion requires that receipt evidence.
+The verifier rejects missing tests, duplicates, changed source, omitted observations, and erased assertion decisions.
+CI regenerates the original record and runs six bounded native test groups.
+Each command retains the 115-second cap.
+
+The existing detector, helper, configured-default, focused-contract, and repository reports are reused for unchanged execution contracts.
+This delivery does not repeat a cold run across the batch or the repository.
+The native addon remains unchanged; no Rust build or engine profiling run occurs here.
+
+Final validation passes all 102 transferred tests and the separate completion gate: 103 passing tests.
+All 25 verifier tests and 32 production CLI compatibility tests pass.
+The fourteen core completion/control tests pass with the v6 receipt.
+Both batch receipts bind their current implementation files. The v6 receipt binds 147 files.
+Typecheck, boundaries, CI YAML, and CI shell syntax pass.
+Both the transfer fixture and existing helper observations reproduce byte for byte.
+The structure check has 24 passing metrics and the same three directory-size findings.
+A temporary duplicate fixture-root resolver was removed in favor of the shared Python resolver.

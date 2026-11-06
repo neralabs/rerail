@@ -78,18 +78,46 @@ The [case ledger](../fixtures/host/data-layer-port/batch-10-assertion-ledger.jso
 | 2 | Introspection path classification | Native contracts use the same SQL predicate as the shipped rule. Supplemental original-evaluated cases include positive paths. |
 | 1 | Approval configuration | SQL validates prefixes and test paths, preserving messages and error order. Additional cases exercise clean entries, multiple errors, and NUL. |
 | 1 | Traversal instrumentation | The original input and Boolean assertion remain. Its Python mock-count assertion becomes actual native parse and module-walk assertions. The receipt binds both source hashes and counters. |
-| 15 | Python CLI | Retained host tests for argument parsing, mocked findings, formatting, and exit status. |
-| 14 | Python dataclass | Retained host tests for Python equality, hashing, types, and immutability. |
-| 28 | Constants and module paths | Retained host tests for the pinned Python module layout and definitions. |
+| 15 | Python CLI | Rerail counterparts exercise arguments, native findings, text and JSON output, and exit status. |
+| 14 | Python dataclass | Native result contracts cover fields, types, equality, and inequality. Python hashing and mutation exceptions remain source-language assertions. |
+| 28 | Constants and module paths | Native checks cover exact banned vocabularies and target scope. Python container types, checkout layout, and module documentation remain source-language assertions. |
 
 The 67 native helper cases produce 104 complete observations per API.
 They remain separate from the 975 detector observations.
 Host adapters map native node IDs to the original AST objects; they do not call the original selection helpers.
 The source runner rejects execution of the original helper bodies during native runs.
 
-The remaining 57 tests still assert Python-specific host behavior.
-Their exact identities and reasons appear under `hostAssertionLedger` in the v5 receipt.
-They continue to run, and they do not count as native detector or helper coverage.
+The later audit found transferable requirements in 47 of those 57 cases.
+Their 75 transferable assertion sites now have Rerail counterparts.
+The [transfer record](../fixtures/host/data-layer-port/batch-10-transferable-assertions.json) contains every original function, source hash, assertion decision, and original CLI observation.
+The v6 receipt requires all 102 transferred tests and controls before it records completion.
+
+Fifteen assertion sites cover exact banned vocabularies and their value constraints.
+The shipped program contains all nine versioned-lazy names and four intent-graph names.
+Native execution covers every symbol, its allowed lookalike, and its use in the other file family.
+These are 39 original-evaluated detector observations and 78 comparisons across both APIs.
+Thirteen removal controls reject programs that omit one banned symbol.
+The earlier corpus had positive diagnostics for only six of the thirteen symbols.
+
+Fifteen sites cover diagnostic fields, types, equality, and field-specific inequality.
+Thirty cover command behavior, and fifteen cover target identity and native file scope.
+Native result checks map `path` and the zero-based source span to the original `file_path` and one-based `line_number`.
+Scope checks use repository-relative paths, exact target admission, suffix checks, outside-scope controls, and independent working directories.
+The source CLI tests construct synthetic violations through mocked detectors.
+Their counterparts use small native regex rules to emit those same values at actual source locations.
+The result-contract tests use the same native transport through both APIs.
+These transport tests do not count as additional production detector observations.
+
+The command now provides text output and report-only exit behavior by default.
+`--check` returns a failure status for blocking findings. `--json` selects structured output.
+Existing callers that consume JSON and require enforcement must now supply both flags.
+Help and invalid arguments run through the real command boundary.
+Two subprocess invocations verify absolute command paths from different working directories.
+
+Sixteen assertion sites remain specific to Python containers, hashing, mutation exceptions, checkout layout, or module documentation.
+Ten source cases contain only such assertions. Three other cases mix transferable and Python-specific sites.
+The original 57 cases still run in the source harness.
+Their original execution remains distinct from the additional Rerail counterparts in the v6 receipt.
 
 ## Acceptance evidence
 
@@ -103,7 +131,7 @@ The configured corpus has 1,392 original reporter observations, including 978 po
 Both APIs compare all 1,392 results and 439 matching file-selection observations.
 The resulting gate has 3,662 configured assertions.
 
-The v5 receipt verifies the full identity sets for focused and helper assertions.
+The v6 receipt verifies the full identity sets for focused, helper, and transferred assertions.
 It rejects failed, empty, partial, skipped, duplicated, or unexpectedly selected coverage.
 CI runs focused tests in three bounded groups and verifies their union.
 Diagnostic-removal controls still cover all 106 observed diagnostic families.

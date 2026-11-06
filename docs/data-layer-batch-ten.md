@@ -80,8 +80,10 @@ The other 124 cases were previously left on Python implementations.
 Of these, 67 rule/helper cases now execute native contracts.
 The assertions remain unchanged in 66 cases; one traversal assertion uses actual native counters.
 They produce 104 complete helper observations per API, separately from detector results.
-The remaining 57 cases test the Python CLI, dataclass behavior, constants, and module paths.
-The v5 receipt lists those host targets individually under `hostAssertionLedger`.
+The other 57 cases contain 75 transferable assertion sites across 47 cases.
+Rerail counterparts now cover those sites, with 102 passing contract tests and controls.
+Sixteen Python-specific assertion sites remain in the original tests.
+The v6 receipt lists every assertion decision and keeps source execution separate from its Rerail counterpart.
 The structural audit maps all 124 cases to their execution targets.
 The conditional observations include 47 calls to the shared analyzer.
 Replay compares diagnostic multiplicity, path, code, message, line, and rule-specific DTO fields through both native APIs.
@@ -101,7 +103,7 @@ A further 878 comparisons check the exact matching file selection, including its
 There are also 106 diagnostic-family removal controls, each checked through both APIs.
 These controls remove one diagnostic code at a time and require all other original findings to remain.
 
-The [v5 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, and implementation hashes.
+The [v6 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, transferred assertions, and implementation hashes.
 It also requires the complete union of focused assertions: 276 inputs, including 194 positives, through both APIs.
 All 67 rule-relevant helper cases require native traces and complete original results.
 Helper replay includes 15 original-evaluated controls, including positive path classification and clean matching modules.
@@ -179,6 +181,25 @@ do
     test/conformance/data-layer/batch-ten-file-contracts.test.ts -t "$pattern"
 done
 ```
+
+Run the transferred assertions in the same bounded groups as CI:
+
+```sh
+for pattern in \
+  '^transfers upstream assertions' \
+  '^executes transferred vocabulary .*positive ' \
+  '^executes transferred vocabulary .*lookalike ' \
+  '^executes transferred vocabulary .*other-family ' \
+  '^rejects removal of transferred symbol ' \
+  '^(preserves native command paths|rejects disabled native transport|transfers command help)'
+do
+  timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-transfer.test.ts -t "$pattern"
+done
+timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-transfer.test.ts -t '^requires native evidence'
+```
+
+The data-layer command now defaults to text output and report-only exit behavior.
+Use `--check` for enforcement and `--json` for structured output.
 
 Run configured observations in bounded groups, as CI does:
 

@@ -94,7 +94,7 @@ def verify(oracle,reports,controls=False,mode=None,policies=None):
  unique={json.dumps({k:v for k,v in normalized(r).items() if k!='test'},sort_keys=True):r for r in wanted}
  return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),nativeHelperCases=len(helper_cases),retainedPythonCases=len(seen-{r['test'] for r in records}-helper_cases),retainedPythonCaseIds=sorted(seen-{r['test'] for r in records}-helper_cases),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
 
-def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_replay):
+def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_replay,transferred):
  policies={c:hashlib.sha256((Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json')).read_bytes()).hexdigest() for c in CHECKS}
  oracle=read_report(oracle_path);paths={mode:verify(oracle,[read_report(path) for path in reports],mode=mode,policies=policies) for mode,reports in [('snapshot',snapshot),('workspace',workspace)]};negative=verify(oracle,[read_report(path) for path in controls],True,mode='snapshot')
  assert paths['snapshot']['engineSha256']==paths['workspace']['engineSha256']==negative['engineSha256']
@@ -105,11 +105,17 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_
  helper_hash=hashlib.sha256(Path('fixtures/host/data-layer-port/batch-10-helper-contracts.json').read_bytes()).hexdigest()
  helper_summary={mode:verify_helpers(ledger,helper_oracle,[read_report(path) for path in reports],mode,helper_hash) for mode,reports in [('snapshot',snapshot),('workspace',workspace)]}
  helper_replay_summary=verify_replay(helper_oracle,[read_report(path) for path in helper_replay])
+ from data_layer_ten.assertions.transferred import verify_transfer
+ transfer_path=Path('fixtures/host/data-layer-port/batch-10-transferable-assertions.json')
+ transfer_summary=verify_transfer(ledger,read_report(transfer_path),[read_report(path) for path in transferred])
  files=set(Path('scripts/dsl/data_layer_ten').rglob('*.py'))|{Path('scripts/generate/packs/data_layer_batch_ten.py'),oracle_path,configured_path,Path('conformance/data-layer/batch-ten.ts'),Path('conformance/data-layer/native-worker.ts'),Path('conformance/data-layer/execution.ts'),Path('conformance/data-layer/policies.ts'),Path('test/conformance/data-layer/batch-ten.test.ts'),Path('test/conformance/data-layer/batch-ten-defaults.test.ts')}
  files|={Path('test/conformance/data-layer')/name for name in ['batch-ten-file-contracts.test.ts','batch-ten-families.test.ts','batch-ten-configured-repository.test.ts']}
  files|={Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json')}
  files|={Path('fixtures/host/data-layer-port')/name for name in ['batch-10-assertion-ledger.json','batch-10-helper-assertions.json','batch-10-helper-contracts.json']}
  files|={Path('conformance/data-layer/helper-assertions.ts'),Path('test/conformance/data-layer/batch-ten-helpers.test.ts')}
+ files|={transfer_path,Path('conformance/data-layer/transfer.ts'),Path('test/conformance/data-layer/batch-ten-transfer.test.ts')}
+ files|={Path('src/cli/data-layer-audit.ts'),Path('src/cli/cli.ts'),Path('test/conformance/data-layer/production-runtime.test.ts'),Path('test/conformance/data-layer/batch-nine-public-contract.test.ts')}
+ files|={Path('scripts/dsl/data_layer_rule_audit.py')}
  files|={Path('scripts/dsl/data_layer_audit')/name for name in ['native_suite.py','native_guard.py','native_scanners.py']}
  files|=set(Path('test/engine/native/data-layer-ten').glob('*.ts'))|{Path('.github/workflows/ci.yml')}
  files|=set(Path('fixtures/host/data-layer-port').glob('batch-10-*seeds.json'))|{Path('fixtures/host/data-layer-port/batch-10-repair-regressions.json'),Path('test/conformance/data-layer/batch-ten-repair.test.ts')}
@@ -118,7 +124,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_
  files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
- return dict(format='rerail.data-layer-batch-ten-assertions/v5',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,focusedContracts=contract_summary,helperAssertions=helper_summary,helperReplay=helper_replay_summary,hostAssertionLedger={case:row for case,row in ledger.items() if row['kind']=='host'},positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
+ return dict(format='rerail.data-layer-batch-ten-assertions/v6',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,focusedContracts=contract_summary,helperAssertions=helper_summary,helperReplay=helper_replay_summary,transferableAssertions=transfer_summary,hostAssertionLedger={case:row for case,row in ledger.items() if row['kind']=='host'},positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
 def main():
- p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--contracts',type=Path,nargs='+',required=True);p.add_argument('--helper-replay',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured,a.contracts,a.helper_replay),indent=2)+'\n')
+ p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--contracts',type=Path,nargs='+',required=True);p.add_argument('--helper-replay',type=Path,nargs='+',required=True);p.add_argument('--transferred',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured,a.contracts,a.helper_replay,a.transferred),indent=2)+'\n')
 if __name__=='__main__':main()

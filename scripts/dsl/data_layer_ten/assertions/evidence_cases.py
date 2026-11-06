@@ -82,3 +82,38 @@ def test_field_name_sets_transfer_but_python_hashability_does_not():
     from data_layer_ten.assertions.transfer import classify
     assert classify('test_violation_has_four_fields', ast.parse("names == {'code', 'file_path', 'line_number', 'message'}", mode='eval').body)[0] == 'values'
     assert classify('test_violation_is_hashable', ast.parse('v in s', mode='eval').body)[0] is None
+
+
+def transfer_example():
+    import json
+    from data_layer_rule_audit import fixtures_path
+    root = fixtures_path('host', 'data-layer-port')
+    ledger = json.loads((root / 'batch-10-assertion-ledger.json').read_text())['cases']
+    oracle = json.loads((root / 'batch-10-transferable-assertions.json').read_text())
+    names = ['transfers upstream assertions: ' + name for name, case in oracle['cases'].items() if any(a['contract'] for a in case['assertions'])]
+    names += ['executes transferred vocabulary ' + case['test'] + ' through both native APIs' for case in oracle['detectorCases']]
+    names += ['rejects removal of transferred symbol ' + symbol for group in oracle['bannedGroups'] for symbol in group['symbols']]
+    names += ['preserves native command paths across working directories', 'rejects disabled native transport of the original CLI positives', 'transfers command help without loading a repository']
+    report = dict(numFailedTests=0, testResults=[dict(assertionResults=[dict(fullName=name, status='passed') for name in names])])
+    return ledger, oracle, report
+
+
+@pytest.mark.parametrize('defect', ['missing-test', 'duplicate-test', 'untranslated-assertion', 'missing-control', 'changed-source'])
+def test_transfer_proof_rejects_incomplete_or_changed_coverage(defect):
+    from data_layer_ten.assertions.transferred import verify_transfer
+    ledger, oracle, report = transfer_example()
+    assert verify_transfer(ledger, oracle, [report])['missing'] == []
+    assertions = report['testResults'][0]['assertionResults']
+    if defect == 'missing-test':
+        assertions.pop(0)
+    elif defect == 'duplicate-test':
+        assertions.append(assertions[0])
+    elif defect == 'untranslated-assertion':
+        case = next(case for case in oracle['cases'].values() if any(a['contract'] for a in case['assertions']))
+        next(a for a in case['assertions'] if a['contract'])['contract'] = None
+    elif defect == 'missing-control':
+        oracle['detectorCases'].pop()
+    elif defect == 'changed-source':
+        next(iter(oracle['cases'].values()))['source'] += '\n# changed\n'
+    with pytest.raises(ValueError):
+        verify_transfer(ledger, oracle, [report])

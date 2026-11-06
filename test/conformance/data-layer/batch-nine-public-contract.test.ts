@@ -37,7 +37,7 @@ for (const check of ["bootstrap-lazy-sql", "bootstrap-eager-resolve"]) it(`${che
     await writeFile(snapshot, JSON.stringify({ format: "rerail.repository-snapshot/v1", revision: 0,
       files: [{ path: "l3200_metadata/bootstrap_state.py", source: "table_exists_many()\n", language: "python" }] }));
     let output = "";
-    const exit = await runDataLayerCommand(["--repo", root, "--pack", resolve("packs/data-layer"), "--snapshot", snapshot, "--rules", `data-layer-${check}`],
+    const exit = await runDataLayerCommand(["--repo", root, "--pack", resolve("packs/data-layer"), "--snapshot", snapshot, "--rules", `data-layer-${check}`, "--json", "--check"],
       { write(chunk: string) { output += chunk; return true; } });
     expect(JSON.parse(output).violations).toMatchObject([{ code: "BLB-004", mode: "log" }]);
     expect(exit).toBe(0);

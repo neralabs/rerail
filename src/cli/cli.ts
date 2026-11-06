@@ -119,7 +119,7 @@ function usage(): string {
     "  rerail stop [<host> [<session-id>]] [--repo <dir>] [--repository] [--database <file>]",
     "  rerail state [--set-up] [--repo <dir>] [--database <file>]",
     "  rerail status",
-    "  rerail data-layer --repo <root> --pack <pack> --snapshot <json> [--rules <ids>] [--python <executable>]",
+    "  rerail data-layer --repo <root> --pack <pack> --snapshot <json> [--rules <ids>] [--python <executable>] [--check] [--json]",
     "  rerail daemon start [--dev] [--port <port>] [--host <host>] [--allow-remote] [--public-host <name,...>] [--open]",
     "  rerail daemon stop",
     "  rerail session [<host> [<session-id>]] [--open]",

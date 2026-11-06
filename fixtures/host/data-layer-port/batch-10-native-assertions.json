@@ -1,5 +1,5 @@
 {
-  "format": "rerail.data-layer-batch-ten-assertions/v5",
+  "format": "rerail.data-layer-batch-ten-assertions/v6",
   "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "engineSha256": "464f424955f220cdf8ed74937c93d97cc461e9ba5b19e515f11cc68e86920ba8",
   "executionPaths": {
@@ -31190,234 +31190,873 @@
     "disabledHelpers": 12,
     "assertions": 24
   },
+  "transferableAssertions": {
+    "sourceCases": 57,
+    "transferredCaseIds": [
+      "scripts/tests/test_lint_conditional_architecture.py::test_paths_are_under_repo_root",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_all_identifiers",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_nonempty",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_all_identifiers",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_complete_set",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_is_frozenset",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_size_exactly_four",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_disjoint",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_all_identifiers",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_nonempty",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_all_identifiers",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_complete_set",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_is_frozenset",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_size_exactly_nine",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_graph_lazy_sql_is_py_file",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_is_py_file",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_path_is_inside_root",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_exits_zero",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_flag_returns_zero",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_is_callable_returns_int",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_output_format_has_code_path_line_and_message",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_prints_violation_details",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_reports_plural_violation_count",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_int_when_clean",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_one_on_violations_with_check",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_exits_nonzero",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_raises_systemexit",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_print_trailing_blank_line",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_without_check_returns_zero",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_and_check_returns_one",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_without_check_returns_zero",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_without_violations_no_violation_count_printed",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_paths_exist",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_are_absolute",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_end_with_py",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_is_py_file",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_path_is_inside_root",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_paths_are_inside_root",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_transactions_is_py_file",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_and_fields",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_by_value",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_fields_have_types",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_has_four_fields",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_code",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_file_path",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_line_number",
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_message"
+    ],
+    "transferredCases": 47,
+    "assertionSites": {
+      "scope": 15,
+      "constants": 15,
+      "pythonOnly": 16,
+      "command": 30,
+      "values": 15
+    },
+    "pythonOnlyAssertions": {
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_is_frozenset": [
+        {
+          "source": "isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_are_frozensets": [
+        {
+          "source": "isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        },
+        {
+          "source": "isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_is_frozenset": [
+        {
+          "source": "isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)",
+          "contract": null,
+          "reason": "Python container type; native SQL represents membership without Python containers"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_docstring_present": [
+        {
+          "source": "linter.__doc__ is not None",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        },
+        {
+          "source": "'graph' in linter.__doc__.lower()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_paths_exist": [
+        {
+          "source": "ROOT.is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_is_directory": [
+        {
+          "source": "ROOT.is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_resolves_to_repo_root": [
+        {
+          "source": "(ROOT / 'scripts').is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        },
+        {
+          "source": "(ROOT / 'data_layer').is_dir()",
+          "contract": null,
+          "reason": "The pinned Python checkout or its module documentation"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_frozen_rejects_setattr_runtime": [
+        {
+          "source": "pytest.raises(FrozenInstanceError)",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_hashable": [
+        {
+          "source": "hash(v) == hash(Violation(code='X', file_path='a', line_number=1, message='m'))",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_in_set_with_duplicates_dedups": [
+        {
+          "source": "len({a, b}) == 1",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen": [
+        {
+          "source": "pytest.raises(FrozenInstanceError)",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen_raises": [
+        {
+          "source": "pytest.raises(dataclasses.FrozenInstanceError)",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ],
+      "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_hashable": [
+        {
+          "source": "v in s",
+          "contract": null,
+          "reason": "Python object mutation exceptions, hashing, or set behavior"
+        }
+      ]
+    },
+    "bannedSymbols": 13,
+    "detectorObservations": 39,
+    "detectorApiComparisons": 78,
+    "symbolRemovalControls": 13,
+    "nativeTests": 102,
+    "missing": []
+  },
   "hostAssertionLedger": {
     "scripts/tests/test_lint_conditional_architecture.py::test_paths_are_under_repo_root": {
       "kind": "host",
-      "reason": "Pinned Python module paths and repository-root constants"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_all_identifiers": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_nonempty": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_all_identifiers": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_complete_set": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_is_frozenset": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": [
+        "isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_intent_graph_symbols_size_exactly_four": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_are_frozensets": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 0 native counterparts and 2 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)",
+        "isinstance(BANNED_INTENT_GRAPH_SYMBOLS, frozenset)"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_symbols_disjoint": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_all_identifiers": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_nonempty": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_all_identifiers": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_complete_set": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_is_frozenset": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": [
+        "isinstance(BANNED_VERSIONED_LAZY_SYMBOLS, frozenset)"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_banned_versioned_lazy_symbols_size_exactly_nine": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "constants"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_graph_lazy_sql_is_py_file": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_is_py_file": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_intent_graph_path_is_inside_root": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_exits_zero": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_help_flag_returns_zero": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 3 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 3
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_is_callable_returns_int": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_output_format_has_code_path_line_and_message": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_prints_violation_details": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 4 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 4
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_reports_plural_violation_count": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_int_when_clean": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_returns_one_on_violations_with_check": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_exits_nonzero": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_unknown_flag_raises_systemexit": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_print_trailing_blank_line": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_violations_without_check_returns_zero": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_and_check_returns_one": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 4 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 4
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_with_violations_without_check_returns_zero": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_main_without_violations_no_violation_count_printed": {
       "kind": "host",
-      "reason": "Python CLI argument handling, mocked findings, formatting, or exit status"
+      "reason": "Original Python assertions have 2 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "command"
+        ],
+        "assertionSites": 2
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_docstring_present": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 0 native counterparts and 2 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "linter.__doc__ is not None",
+        "'graph' in linter.__doc__.lower()"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_module_paths_exist": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 4 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 4
+      },
+      "pythonOnlyAssertions": [
+        "ROOT.is_dir()"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_are_absolute": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_path_constants_end_with_py": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_is_directory": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "ROOT.is_dir()"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_root_resolves_to_repo_root": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 0 native counterparts and 2 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "(ROOT / 'scripts').is_dir()",
+        "(ROOT / 'data_layer').is_dir()"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_is_py_file": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_lazy_mixin_path_is_inside_root": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_paths_are_inside_root": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_versioned_transactions_is_py_file": {
       "kind": "host",
-      "reason": "Pinned Python module paths, documentation, and constant definitions"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "scope"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_and_fields": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 5 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 5
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_equality_by_value": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_fields_have_types": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 4 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 4
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_frozen_rejects_setattr_runtime": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "pytest.raises(FrozenInstanceError)"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_has_four_fields": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_hashable": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "hash(v) == hash(Violation(code='X', file_path='a', line_number=1, message='m'))"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_in_set_with_duplicates_dedups": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "len({a, b}) == 1"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_code": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_file_path": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_line_number": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_inequality_on_message": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 1 native counterparts and 0 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [
+          "values"
+        ],
+        "assertionSites": 1
+      },
+      "pythonOnlyAssertions": []
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "pytest.raises(FrozenInstanceError)"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_frozen_raises": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "pytest.raises(dataclasses.FrozenInstanceError)"
+      ]
     },
     "scripts/tests/test_lint_graph_lazy_sql_plan.py::test_violation_is_hashable": {
       "kind": "host",
-      "reason": "Python dataclass identity, field types, hashing, equality, or immutability"
+      "reason": "Original Python assertions have 0 native counterparts and 1 Python-specific assertion sites.",
+      "nativeTransfer": {
+        "artifact": "batch-10-transferable-assertions.json",
+        "contracts": [],
+        "assertionSites": 0
+      },
+      "pythonOnlyAssertions": [
+        "v in s"
+      ]
     }
   },
   "positiveControls": {
@@ -46981,13 +47620,14 @@
   },
   "fileSha256": {
     ".gitattributes": "3a94dea80784d86d3161b3df2ced5ea828708ec03c3d266f83dc9e59b198a811",
-    ".github/workflows/ci.yml": "a59b3bd50f47a3d47c2884ba8257faad8ffffaf33d03646c81af000d314d0c8a",
+    ".github/workflows/ci.yml": "a03ded8a4ce9d83556f90ddd7ec79ee8713088c1107e17d9b965da6be3724a63",
     "conformance/data-layer/batch-ten.ts": "2963b2688afcd72c5938d4d78f59b89ee83a8bb2e6386169d16a021a80c12c35",
     "conformance/data-layer/execution.ts": "77f8aa8b4d4926e67951482cd349d24f582bbe3d36fe3938678722c35ccb312a",
     "conformance/data-layer/helper-assertions.ts": "c1ff1d64794a763ae497e6af0816363f20f4241f5f679ff8e62b040a564d6aad",
     "conformance/data-layer/native-worker.ts": "f8bfc6042be9ec3eef1aeeb1ac11dd2f516cab14149003247746926ad1677f76",
     "conformance/data-layer/policies.ts": "9fd8c2fd208e3bcd1fb1cc4af4ad4718e16be9f55d6310c3d311760ddab8d6e1",
-    "fixtures/host/data-layer-port/batch-10-assertion-ledger.json": "8ba92150699a8970c32f677027d3482a1705371e8e74d5051d4e1f3e6fb5d11c",
+    "conformance/data-layer/transfer.ts": "43795f7b23d58c1eb9b35036d860ae18ab3c95301290165603be9c2728cec5d7",
+    "fixtures/host/data-layer-port/batch-10-assertion-ledger.json": "573d90480716ed97a3830057a72bff547eceb40e8b67d7d9b432cdbdbfe2db0d",
     "fixtures/host/data-layer-port/batch-10-complete-api.json.gz": "f143ce0c5f6b596444c8763d12943f9b9c4dc7e075fcc32be9778376c5b02e9d",
     "fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz": "2f5e1899659fbcc7d052f4d2adcedc0352838ed98b05a3b1621e01043ff52366",
     "fixtures/host/data-layer-port/batch-10-file-contract-regressions.json": "8d486639ebce2d3b18d41801e5adf4e0b57c2fa695e2faa01ceebf61baa4cbae",
@@ -46995,6 +47635,7 @@
     "fixtures/host/data-layer-port/batch-10-helper-contracts.json": "6c16a9e7f11883463107f5fad1aadb019ee1a2817b82036cdc11d4aa591812ea",
     "fixtures/host/data-layer-port/batch-10-repair-regressions.json": "0efbb8da103038692ab563cc2ac943b65a3adfaa9402f2d69df0ba47a3483b8f",
     "fixtures/host/data-layer-port/batch-10-shape-seeds.json": "979e4a9a002c597bd3d288996c94b485d8dddb57bd95572f2a939d9d23dc7973",
+    "fixtures/host/data-layer-port/batch-10-transferable-assertions.json": "905ba430e0f3d0528460112bfedfdce2655cd3817723e5274bfa4c670e6966e7",
     "native/src/code_rule_dsl/capabilities.json": "be95b9318bdbdc202d2bf4936fc1dc6118a0bd5d5e48c526e2bd4024ed933e01",
     "native/src/code_rule_dsl/compile/evidence.rs": "ecfbf5edce0a7681b0f73f7d9c0c9240ff5e3bbf75909b24d1db5822ecf3e3c5",
     "native/src/code_rule_dsl/compile/relational.rs": "36fb2a7773d59689a36a2efcb206f5f7718b4a6dcac1dfd4ee8d418f090fd3d3",
@@ -47048,6 +47689,7 @@
     "scripts/dsl/data_layer_nine/source_contracts.py": "352f0a0892ac5a4b3f9680d64eea03c2b29e3224c8c4df1def544f4faeffa3d7",
     "scripts/dsl/data_layer_nine/structural.py": "745bc4c27d3962785d68421c6eadea8e3f67e4eff85cccf63c3a26f8919554c9",
     "scripts/dsl/data_layer_nine/suite.py": "d3a121e7521ea3cb94f25c6e9b240b7c227fc13cb717ac01db463e7c267d22b2",
+    "scripts/dsl/data_layer_rule_audit.py": "e3db2286ea175a467c5a663516ffcb2db3bebca1595f2c2435fc584835145fa2",
     "scripts/dsl/data_layer_six/__init__.py": "226930b2177f96ccd9899f2bbe766eff4a8fda221f78c998e9299bb4575a126d",
     "scripts/dsl/data_layer_six/ast_relations.py": "439f111079a584bf99a7e2d3500da3c340dc23ae90fc4f061770610ebfc3952c",
     "scripts/dsl/data_layer_six/authority.py": "c744c3595c29465d2df93127d259f76cda5307932d01ba147d31d582cb4babe0",
@@ -47073,9 +47715,11 @@
     "scripts/dsl/data_layer_ten/assertions/__init__.py": "18dd3e540c6601b9c8aa40f99339214eb814c12eed52d6617e71abadd2499525",
     "scripts/dsl/data_layer_ten/assertions/adapter.py": "017497b1f320ea5ab47f6d2a211f888556daff97e7a2a7f3a4b46ad2de2ddb3a",
     "scripts/dsl/data_layer_ten/assertions/evidence.py": "e258e0c729477ab139c36ab7e7c147bcc8d66b54528f9df4ceb96d4cae6ad384",
-    "scripts/dsl/data_layer_ten/assertions/evidence_cases.py": "1b9afb75d3cde6b640c0ef11ee0004d8d1bf2a163e5e109ced9ed3315b024947",
+    "scripts/dsl/data_layer_ten/assertions/evidence_cases.py": "f5c276e697738414d870071529dcd46c94b5bcf4776180ebcc6ecf486a157d99",
     "scripts/dsl/data_layer_ten/assertions/programs.py": "29a7f42b1712efcfc3a25d9190620f75fafa0c847fc3377e17208ef9e4acb579",
-    "scripts/dsl/data_layer_ten/assertions/record.py": "73e11ba89541ba3544f812c6333bf757f8603c0eede9e24bb2a4de959aa9d6c9",
+    "scripts/dsl/data_layer_ten/assertions/record.py": "d0f10e84521c8b0a69474283bde0f01a998112419fa13bf8d27c4e0cb63c446c",
+    "scripts/dsl/data_layer_ten/assertions/transfer.py": "f85fe787b6ba6f74d6e9b37fa92e3eb054ab6e4368d491a6c3239d1570b04d74",
+    "scripts/dsl/data_layer_ten/assertions/transferred.py": "7768a3315e3abe6b5fbd99b798cf0e98ab2d24147b475aa1f56cbd6ff4a70329",
     "scripts/dsl/data_layer_ten/audit_cases.py": "88a8d4d590de3d1c00cbe4aeb02da71465e1e47810e9d7a0c16ce32b0c5efa2c",
     "scripts/dsl/data_layer_ten/bounded.py": "e18a235e612b38f88de89173f4d33a58e4dd2694ce92c1ed101f7bfc02fda2af",
     "scripts/dsl/data_layer_ten/common.py": "107f7b6555f9c691b82eebdc178de0cdacb0920f921df417c471a19cf0b949d1",
@@ -47086,7 +47730,7 @@
     "scripts/dsl/data_layer_ten/contracts/strings.py": "78b4ddff58f6e3efcd91ca992339197bf7c67b98ec219a9208186289677cff4d",
     "scripts/dsl/data_layer_ten/contracts/structures.py": "c9d4241eb34151f5ffe416149d3ecfcc399578c66d56c3f3c22eec5a6c06fae1",
     "scripts/dsl/data_layer_ten/embedding.py": "e3f40bee3a9067956e4c91cbdbff34fcff13e80f571ea1b87fe6226925d3905b",
-    "scripts/dsl/data_layer_ten/evidence.py": "49f0a45826ae39650e284db89f735639caa8bbabed11f761763916f5123e0c2b",
+    "scripts/dsl/data_layer_ten/evidence.py": "e592892bec32858f7acc8dc625b98e0bde3c9ef7282fba12ce754403e5a3016b",
     "scripts/dsl/data_layer_ten/evidence_cases.py": "ac05d5ebf9d2bf5495a353126a246cc149ea4f0dc212d5b40ef50057bae1ec9a",
     "scripts/dsl/data_layer_ten/file_contracts.py": "d07c746a4da1452878b9b9adbd3923eea4cdfc124786d1bfe518bcf14d68f17b",
     "scripts/dsl/data_layer_ten/generated.py": "696017ae0760c47b0af84a10d155f523205c723e408ce95c965ac2f7b192ddb3",
@@ -47103,15 +47747,20 @@
     "scripts/dsl/data_layer_ten/source_lock.py": "97423bd5400106ce4bd82cec0c4165937a884cef7ee44825dab886ed07076f17",
     "scripts/dsl/data_layer_ten/suite.py": "17a5886ca04f114e7e269a320de48695bfe306fbfd54eff179f942e1c37d2a40",
     "scripts/generate/packs/data_layer_batch_ten.py": "80a3d99a22bd3275441d370f037e4e9ffa360a6c0e4de9ca059e73ff62cd6137",
+    "src/cli/cli.ts": "022eec3401f22015451d30a440e20f3d5b236dfedc68c809d9ba2f1f3f2a04d8",
+    "src/cli/data-layer-audit.ts": "1f7b37837f2e11b4881b38b820928be17650d0e7c10d97a2e362695ae0bc985f",
     "src/engine/code-rule/code-rule-schema.ts": "152cc409c73ada67e2fd22b3417034308f7d93146393fb1458e02c66ada3475c",
     "src/engine/code-rule/code-rule.ts": "dbc011b52543ddf8fc0b991c635745f31e9d74b9ae573c3ee7e76c5a5bf8d08e",
+    "test/conformance/data-layer/batch-nine-public-contract.test.ts": "811a1dc336f711f5b1a8215f1ea538010f8a5bb696ca22e49509f91aa11a137a",
     "test/conformance/data-layer/batch-ten-configured-repository.test.ts": "ed36c8488a22fda8552558e3ea6fe75191e87cda9523ddd56071ce70e58db717",
     "test/conformance/data-layer/batch-ten-defaults.test.ts": "53e228ef550092de43551dc531b36e03d9c9093b52acf6def5d3a23dd802fb8f",
     "test/conformance/data-layer/batch-ten-families.test.ts": "68b84282e89f6be0151714e9ef6ab6daefdbb6ac46ed02b29d77051bfa93666c",
     "test/conformance/data-layer/batch-ten-file-contracts.test.ts": "2c2bec168a6bc9c1e737727ec9f422c47f08fd4026ea9de195386da37c7de491",
     "test/conformance/data-layer/batch-ten-helpers.test.ts": "aaa4b0b548664000a262fb3a3cf803220279829ca52e1b52039d93a7413dec36",
     "test/conformance/data-layer/batch-ten-repair.test.ts": "556a0b343b8898f51fe322de7048989181772b239d3e5602e188ab8eb78f7b3d",
-    "test/conformance/data-layer/batch-ten.test.ts": "3c5d878e9f09eb72a7179411b51ac161c620a50ddca30b68d10125ccb56b4f38",
+    "test/conformance/data-layer/batch-ten-transfer.test.ts": "59559d4c3c6c160eccc66ba6ac87bdc0b761ae6c9b1ef76bc48c4c296cf307fa",
+    "test/conformance/data-layer/batch-ten.test.ts": "9f1d6741daf795dc468b612c625f59077c106f4d334a7034c12d72c3a53d1c92",
+    "test/conformance/data-layer/production-runtime.test.ts": "bdb093d34feba879c88be9fdacf3c34b8eb876743a22263fe8522c26edf11411",
     "test/engine/native/data-layer-ten/import-level.test.ts": "6f1d40b1176e17351808812180aa5f5d0e9d831d5d0adcd03de8841b49561c12",
     "test/engine/native/data-layer-ten/invalid-expansion.test.ts": "a8d4db4c14230a5891298752261a025c64cb5465113f54df98988ee7d7edc4a5",
     "test/engine/native/data-layer-ten/source-expansion.test.ts": "fec19955a46c845f321d15339d5c3b2745d3c259de7cb9dc44b694673fcd9d2f",

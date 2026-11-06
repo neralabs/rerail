@@ -83,16 +83,32 @@ export async function runDataLayerAudit(options: DataLayerAuditOptions): Promise
 }
 
 export async function runDataLayerCommand(args: readonly string[], stdout: Pick<NodeJS.WriteStream, "write"> = process.stdout): Promise<number> {
+  const usage = "Usage: rerail data-layer --repo <root> --pack <pack> --snapshot <json> [--rules <ids>] [--python <executable>] [--check] [--json]\n";
+  if (args.includes("--help") || args.includes("-h")) { stdout.write(usage); return 0; }
   const values = new Map<string, string>();
-  for (let i = 0; i < args.length; i += 2) {
-    const key = args[i]!, value = args[i + 1];
+  const flags = new Set<string>();
+  for (let i = 0; i < args.length; i++) {
+    const key = args[i]!;
+    if (["--check", "--json"].includes(key)) {
+      flags.add(key); continue;
+    }
+    const value = args[++i];
     if (!["--repo", "--pack", "--snapshot", "--rules", "--python"].includes(key) || !value || value.startsWith("--") || values.has(key))
-      throw new Error("Use data-layer --repo <root> --pack <pack> --snapshot <json> [--rules <ids>] [--python <executable>]");
+      throw new Error(`Invalid data-layer option: ${key}\n${usage}`);
     values.set(key, value);
   }
   if (!["--repo", "--pack", "--snapshot"].every(key => values.has(key))) throw new Error("data-layer requires --repo, --pack and --snapshot");
   const result = await runDataLayerAudit({ repositoryRoot: values.get("--repo")!, packDirectory: values.get("--pack")!,
     snapshot: JSON.parse(readFileSync(values.get("--snapshot")!, "utf8")), ...(values.has("--rules") ? { ruleIds: values.get("--rules")!.split(",") } : {}), ...(values.has("--python") ? { python: values.get("--python")! } : {}) });
-  stdout.write(JSON.stringify(result) + "\n");
-  return result.failures.length ? 2 : result.violations.some(row => row.mode !== "log") ? 1 : 0;
+  if (flags.has("--json")) stdout.write(JSON.stringify(result) + "\n");
+  else {
+    for (const row of result.violations) {
+      if (!row.span) throw new Error("Data-layer diagnostic has no source span");
+      stdout.write(`${row.code} ${row.path}:${row.span.startLine + 1}: ${row.message}\n`);
+    }
+    if (result.violations.length) stdout.write(`\nFound ${result.violations.length} data-layer violation(s).\n`);
+    else if (!result.failures.length) stdout.write("Data-layer linter: clean.\n");
+    for (const failure of result.failures) stdout.write(`ERROR ${failure.code}: ${failure.message}\n`);
+  }
+  return result.failures.length ? 2 : flags.has("--check") && result.violations.some(row => row.mode !== "log") ? 1 : 0;
 }

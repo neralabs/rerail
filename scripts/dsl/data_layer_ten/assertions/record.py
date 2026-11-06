@@ -12,7 +12,8 @@ def record(source, report, output):
     sys.path[:0] = [str(source), str(source / 'scripts')]
     original = json.loads(report.read_text())
     assert original['oracle'] and original['exitCode'] == 0
-    ledger = json.loads((Path(__file__).resolve().parents[4] / 'fixtures/host/data-layer-port/batch-10-assertion-ledger.json').read_text())['cases']
+    from data_layer_rule_audit import fixtures_path
+    ledger = json.loads(fixtures_path('host', 'data-layer-port', 'batch-10-assertion-ledger.json').read_text())['cases']
     wanted = {name for name, case in ledger.items() if case['kind'] == 'native-helper'}
     assert set(original['cases']) == wanted
     assert {row['test'] for row in original['helperRecords']} == wanted

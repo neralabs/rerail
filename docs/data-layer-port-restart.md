@@ -7,7 +7,8 @@ Batch ten repairs the disproved completion claim with 1,098 original and origina
 Both native APIs receive the full matching inventory; source selection no longer runs in Python.
 Its semantic audit adds 276 original-evaluated inputs, including 194 positives.
 All 67 rule-relevant retained helper cases now execute native contracts, with 104 complete helper observations per API.
-The remaining 57 cases test Python-specific CLI, dataclass, constant, and module-layout behavior; the receipt lists each host target explicitly.
+The other 57 cases contain 75 transferable assertion sites across 47 cases, now covered by Rerail counterparts.
+The receipt identifies the 16 remaining Python-specific sites individually.
 The current batch-ten environment uses CPython 3.13.18 with Unicode 15.1.
 See [its report](data-layer-batch-ten.md). The cumulative repository result still covers 80 rules.
 

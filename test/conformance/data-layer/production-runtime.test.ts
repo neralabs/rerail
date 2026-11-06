@@ -51,10 +51,10 @@ for (const mode of ["snapshot", "workspace"] as const) it(`collects fresh applic
     await writeFile(module, model); await utimes(module, 1_700_000_000, 1_700_000_000);
     const snapshot = join(root, "snapshot.json"); await writeFile(snapshot, JSON.stringify(options.snapshot));
     let output = "";
-    const command = await runDataLayerCommand(["--repo", root, "--pack", options.packDirectory, "--snapshot", snapshot, "--rules", options.ruleIds[0]!], { write(chunk: string) { output += chunk; return true; } });
+    const command = await runDataLayerCommand(["--repo", root, "--pack", options.packDirectory, "--snapshot", snapshot, "--rules", options.ruleIds[0]!, "--json", "--check"], { write(chunk: string) { output += chunk; return true; } });
     expect(command).toBe(0); expect(JSON.parse(output)).toMatchObject({ violations: [], failures: [] });
     await writeFile(join(root, "mode.txt"), "collision"); output = "";
-    expect(await runDataLayerCommand(["--repo", root, "--pack", options.packDirectory, "--snapshot", snapshot, "--rules", options.ruleIds[0]!], { write(chunk: string) { output += chunk; return true; } })).toBe(1);
+    expect(await runDataLayerCommand(["--repo", root, "--pack", options.packDirectory, "--snapshot", snapshot, "--rules", options.ruleIds[0]!, "--json", "--check"], { write(chunk: string) { output += chunk; return true; } })).toBe(1);
     expect(JSON.parse(output).violations.map((r: { code: string }) => r.code)).toEqual(["SPC-005"]);
     await writeFile(join(root, "mode.txt"), "error");
     await expect(runDataLayerAudit(options)).rejects.toThrow("application probe failed");
