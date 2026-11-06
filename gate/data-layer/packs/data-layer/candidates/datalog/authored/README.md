@@ -6,7 +6,8 @@ by hand, in `.rr` (decision 0043), one file per rule: `<rule-id>.rr`, the id as 
 rebuild. The converter merges it over its own program for that rule (`convert::overlay`); the module doc of
 `convert.rs` is the contract, summarized here.
 
-- Declare every relation the file reads or defines. The base relations use the converter's signatures:
+- Declare every relation the file reads or defines (core.rr's need not be: its declarations are the prelude, below,
+  "Base relations beyond the converter's"). The base relations use the converter's signatures:
 
   ```
   .decl doc(d: number, path: symbol, module: symbol)
@@ -92,3 +93,57 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   the regex matches no line terminator (no `\n`, `\s`, `[^…]` or `(?s).` that could reach one) and has no `^`, `$`,
   `\A` or `\z`. Otherwise read `source(d, sp), text(sp, s)` and test the whole text (`match("(?s).*re.*", s)`), and
   count lines with `line_count` (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`). There is no `match_all`.
+
+The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` with `Extra`):
+
+```
+.decl pkg(d: number, p: symbol)                   // the dotted package holding d ("app" for src/app/main.py)
+.decl docof(n: loc, d: number)                    // n's document: every node and every span
+.decl op_at(n: node, i: number, s: symbol)        // n's operator tokens in order, from 0 (fields operator/operators):
+                                                  // a < b <= c gives (0, "<"), (1, "<="); "not in", "is not" one each
+.decl prev_token(n: node, s: symbol)              // the text of the token right before n among its parent's children,
+                                                  // anonymous ones and comments included (W's `follows` at a neighbour)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+                                                  // p's children in order, anonymous ones and comments included: each
+                                                  // one's text and byte range (W's `precedes`/`follows` at a neighbour)
+.decl visit_index(n: node, i: number)             // CPython's `ast` visit order, from 0 per document (Python only)
+.decl path_part(d: number, s: symbol)             // each directory of d's path, and its file name
+.decl file_name(d: number, s: symbol)             // the last component of d's path
+```
+
+- `op` has no row for a comparison (its tokens are in the field `operators`, and W's `has` there sees only the
+  first); `op_at(n, 0, s)` is that first one, `op_at(n, i, s)` the rest. `not x` has no `op_at` row (its token is
+  in no field).
+- W's `precedes` at a neighbour is `child(p, n, _), node(_, n, _, s, e), token(p, i, _, s, e), j = i + 1,
+  token(p, j, t, _, _)`; its `follows` is `prev_token(n, t)`. A `regex` there tests `t`.
+- `visit_index` orders nodes as `ast.NodeVisitor` does: a def's decorators and return annotation after its body, a
+  parameter list's defaults after every parameter (keyword-only defaults before `**kwargs`), an argument list's
+  keywords after its positional arguments, a dict's keys before its values, `a if t else b`'s `t` first.
+
+core.rr is every program's prelude (`rr::lower::core`): a relation the file reads and does not declare, which core.rr
+declares, has core.rr's declaration and is an input, so the python library's relations need no declarations of the
+core relations they read. A declaration of the file's own replaces core.rr's: `syntax_error(d: number)` (the tape has
+an error node, the converter's, what the corpus binds) stands where core.rr's `syntax_error(d, l, msg)` (CPython's
+verdict) would; read undeclared with one column it is an error naming this. `#include "core.rr"` adds nothing. These
+core relations are tree arithmetic and lower to the base relations wherever the file does not derive them:
+
+```
+kind(n, k)            node(_, n, k, _, _)
+within(n, a)          inside(n, a, {K}) where the rule tests a's kind K; else over every kind, whose rows are every
+                      (node, ancestor) pair: bind both ends, or test a's kind in the same rule
+next_sibling(a, b)    child(p, a, i), child(p, b, i + 1)
+precedes(a, b)        child(p, a, i), child(p, b, j), i < j
+earlier(m, n)         m before n in visit_index, in one document
+unset(x)              x is -1, which no node, span or document is
+```
+
+`child` has no comments, so `next_sibling` and `precedes` step over them, where W's `follows` and `precedes` see
+them (`prev_token`, `token` do). A relation nothing derives and the runner does not bind fails the run naming it;
+`str_part`, `parsed`, `@unparse` and `@ast_dump` need CPython (core.rr's isolated `ast.parse` worker), which the
+corpus runner does not run, `list_len` a pattern's list variable, `string_annotation` Ruff's table.
+
+`#include "python/ast.rr"` (with names, imports and flow; `#include "python/calls.rr"` beside it) works in a file
+here: the libraries' `.output`s are theirs, not the file's, and their fixes (`=> …`) are not run. What reads
+`str_part` (`str_const`, `docstring`, `ast_constant`), `parsed` (`ann_node`, `ann_name`), `string_annotation`
+(`annotation`) or `value` (`sym_of`, `resolve_export`, `exports`, `class_base`, `subclass`, `catches`, …) fails
+until those are bound.
