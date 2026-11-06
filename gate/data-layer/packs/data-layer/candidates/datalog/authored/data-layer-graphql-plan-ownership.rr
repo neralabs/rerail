@@ -3,9 +3,11 @@
 // Options: entryPoint from option_value (the policy's `scan_source` case, else its `default`); parameters is not
 // read by either clause.
 //
-// graphql-authority. Gate: python, syntax valid, and (entryPoint not "scan_source") the module node's text matches
-// `LazyResult|PlanScope|ServerPlan|Transaction` (W's `regex` on the module node: node_text). The stage relations, as
-// CPython's `ast` columns read them:
+// graphql-authority. Gate: python, syntax valid (W's AST `syntax: valid`, W's own verdict: the tape's syntax_error(d),
+// an ERROR or MISSING node), and (entryPoint not "scan_source") the module node's text matches
+// `LazyResult|PlanScope|ServerPlan|Transaction` (W's `regex` on the module node: node_text). The pythonAst stage fails
+// a file CPython's ast.parse rejects (cpython_syntax_error(d, _, _)), so those give no rows either. The stage
+// relations, as CPython's `ast` columns read them:
 //   - fn: the nearest enclosing FunctionDef/AsyncFunctionDef, lambdas transparent; a def's decorators, parameter
 //     defaults and annotations are in that def; a class's decorators are in the class's fn (graphql_authority_fn).
 //   - authority_words: the words of ast.unparse(annotation), scanned by `\A[^A-Za-z_]*([A-Za-z_][\p{L}\p{N}_]*)`.
@@ -30,13 +32,9 @@
 // annotation word. Code: the `issue` column; line: the node's line (ast's lineno is the expression's start).
 //
 // reported-parser-error. Input: every file in scope; parsed: for entryPoint "scan_source" every one, else those whose
-// source matches `ServerPlan|PlanScope|Transaction|LazyResult`; a row (GPO000, line 1) where CPython's parse fails.
-// The message differs by branch; the (path, line, code) key does not.
-// GAP (blocked: CPython's syntax verdict, core.rr's syntax_error(d, l, msg), needs core.rr's isolated ast.parse
-// worker, which the corpus runner does not run): the verdict here (reported_parser_error_invalid, also
-// graphql-authority's syntax gate) is the tape's `syntax_error(d)` (an ERROR node) or a block with no statement,
-// not ast.parse's; an ast.parse rejection that leaves the tape with no ERROR node and every block a statement is
-// not seen.
+// source matches `ServerPlan|PlanScope|Transaction|LazyResult`; a row (GPO000, line 1) where CPython's ast.parse fails
+// (cpython_syntax_error(d, l, msg), CPython 3.13's verdict; l and msg are only the message's, which the
+// (path, line, code) key does not carry). The message differs by branch; the key does not.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -50,6 +48,7 @@
 .decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl source(d: number, sp: span)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl option_value(name: symbol, v: symbol)
@@ -60,8 +59,8 @@
 
 // ---- graphql-authority -----------------------------------------------------------------------------------------
 .decl graphql_authority_file(d: number, p: symbol)
-graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !reported_parser_error_invalid(d), !out_scope(d),
-    graphql_authority_gate(d), doc(d, p, _).
+graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+    !out_scope(d), graphql_authority_gate(d), doc(d, p, _).
 .decl graphql_authority_gate(d: number)
 graphql_authority_gate(d) :- option_value("entryPoint", "scan_source"), node(d, _, "module", _, _).
 graphql_authority_gate(d) :- !option_value("entryPoint", "scan_source"), node(d, m, "module", _, _), node_text(m, s),
@@ -181,13 +180,9 @@ violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO004", p,
     field(a, "type", ty), graphql_authority_word(ty), graphql_authority_file(d, p), line(a, l).
 
 // ---- reported-parser-error -------------------------------------------------------------------------------------
-// The parse fails: the tape's syntax_error(d) (an ERROR node), or (GAP, see the header) a block with no statement,
-// which tree-sitter accepts for `if True:` or `def f():` with no body and CPython rejects (comments are not in node).
-.decl reported_parser_error_stmt(b: node)
-reported_parser_error_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
+// The parse fails: CPython's ast.parse rejects the file.
 .decl reported_parser_error_invalid(d: number)
-reported_parser_error_invalid(d) :- syntax_error(d).
-reported_parser_error_invalid(d) :- node(d, b, "block", _, _), !reported_parser_error_stmt(b).
+reported_parser_error_invalid(d) :- cpython_syntax_error(d, _, _).
 violation("data-layer-graphql-plan-ownership", "reported-parser-error", "GPO000", p, 1) :-
     option_value("entryPoint", "scan_source"), reported_parser_error_invalid(d), in_scope(d), !out_scope(d), doc(d, p, _).
 // W's rx_matches(source_text, 'ServerPlan|PlanScope|Transaction|LazyResult') searches the file's text.
