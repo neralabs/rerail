@@ -80,8 +80,8 @@ with typed carries. Its operations are `01` §4's, restricted by §2:
 | `scan_planes(group)`: prefix sums over bit-planes mod `n`, or of clamp maps | the group element: a few bits | the group operation |
 | segmented forms of the scans | as the scan | reset at a flag |
 | `reduce_or` per file | 1 bit | OR |
-| `ucode` | the 3-byte halo | — (Q2) |
-| output: prefix count and scatter to the tape | a count | add |
+| `ucode` | the 3-byte halo | — (§4, Q1) |
+| per-chunk popcounts of the output planes, for the extract pass (§4.1) | a count | add |
 
 There is no operation that loops over bytes, events or tokens, and none that branches on data.
 The verifier refuses anything else when a program is made.
@@ -115,14 +115,33 @@ Blocks from different chunks of the stream run side by side, so no carry crosses
 
 This is the role of simdjson's step size per architecture (`09` §1).
 
-## 4. Open questions
+## 4. Decided (2026-11-06)
 
-| | question | options |
+| | question | decision |
 |---|---|---|
-| Q1 | per-character work in `ucode` for non-ASCII code (`04` §3.3: gather leads, decode, two table loads) | keep as `04` designed it: it is per character, zero per MB on data-layer Python; or find a bit-plane form |
-| Q2 | `until settled`: an early exit per chunk is a branch, taken once per chunk per round | allow it per chunk; or always run all rounds |
-| Q3 | rounds over every block, against `08` §7's gather of the 2.7% of lines and 1.2% of bytes that need them | fixed work on every block; or allow that one gather |
-| Q4 | the output: prefix count and scatter of token starts into the tape (`01` §2) | as designed; it is the one place output size depends on data |
+| Q1 | `ucode`'s per-character work for non-ASCII code | **keep** `04` §3.3's design: leads gathered, decoded without a branch, two table loads per character |
+| Q2 | `until settled` | **yes**: an early exit once per chunk per round, never per byte |
+| Q3 | rounds over every block, or a gather of the lines and bodies that need them | **every block**, with Q2's exit per chunk. Most chunks settle in one or two rounds (`03` §5), so no event list is needed. The cost table (§5 step 3) shows whether rounds dominate; the gather is reconsidered only if they do |
+| Q4 | the output | a final **extract pass**, shaped differently from the mask passes (below) |
+
+### 4.1 The extract pass
+
+The mask passes end with planes: token starts and continuations per kind, node starts and ends,
+errors. The tape needs positions and columns. The extract pass turns one into the other.
+
+- **Its sizes come from the passes before it.** Each mask pass also yields, per chunk, the
+  popcounts of the planes the tape reads: tokens, nodes, codes used. A scan over those gives every
+  chunk's output offset and the file's totals before extraction starts. The tape is allocated once,
+  at its final size, and nothing grows.
+- **Its shape is per output element, not per block.** Each chunk writes its elements from its known
+  offset:
+  - on the CPU, simdjson's flattening (`bit_indexer::write`: trailing zeros, clear the lowest bit,
+    a fixed unroll per block);
+  - on Metal, a prefix count within the threadgroup and a scatter.
+- **What it writes** is `01` §2's columns: `ord` from the prefix count, `size` and `tail` by
+  gathers at `end`, `base` and `off` per 16 ords, and codes numbered by first use (`06` §4.4).
+- **It is the only pass whose work depends on the data,** in proportion to the elements it writes.
+  It runs once, at the end.
 
 ## 5. Outline of the work
 
@@ -141,4 +160,5 @@ Each step closes only when its check passes, and with a table of what is done, c
    with compile time reported apart.
 6. **Metal:** the interpreter kernel, then MSL from the native IR. *Check:* equal to the
    interpreter; the launch budget; the corpus as one stream.
-7. **The tape** (`01` §2), once Q4 is settled. *Check:* tapes equal to today's.
+7. **The extract pass** (§4.1): sizes from the mask passes, then the tape. *Check:* tapes equal to
+   today's, byte for byte; no reallocation.
