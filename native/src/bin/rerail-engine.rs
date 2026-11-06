@@ -2,11 +2,11 @@
 //!
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
-//!   rerail-engine logic <program.rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
+//!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,7 +53,22 @@ fn logic(args: &[String]) -> Result<String, String> {
         [program, root, facts, out] => (program, root, Some(Path::new(facts.as_str())), out),
         _ => return Err(USAGE.into()),
     };
-    rerail_engine::tools::logic(&read(program)?, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
+    // A directory: every `.rr` in it, run as one program (each file parsed once for all of them).
+    let programs = if Path::new(program.as_str()).is_dir() {
+        let mut files: Vec<_> = std::fs::read_dir(program)
+            .map_err(|e| format!("{program}: {e}"))?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|path| path.extension().is_some_and(|x| x == "rr"))
+            .collect();
+        files.sort();
+        files.iter().map(|path| read(&path.to_string_lossy())).collect::<Result<Vec<_>, _>>()?
+    } else {
+        vec![read(program)?]
+    };
+    if programs.is_empty() {
+        return Err(format!("{program} has no .rr programs"));
+    }
+    rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
 }
 
 fn dump(args: &[String]) -> Result<String, String> {

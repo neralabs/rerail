@@ -248,6 +248,9 @@ impl Source for Within {
     fn indexed(&self, column: usize) -> bool {
         column < 2
     }
+    fn made_on_lookup(&self) -> bool {
+        true
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();
         for &v in values {

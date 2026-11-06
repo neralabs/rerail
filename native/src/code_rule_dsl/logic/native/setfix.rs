@@ -1026,7 +1026,8 @@ impl InRel {
                 let source = !sorted_source && v.ids.is_none() && v.src.indexed(sc);
                 (sorted || source).then(|| (v.src.estimated_matches(sc, false), j, sorted))
             })
-            .filter(|&(m, _, _)| m <= LEAD_MATCHES)
+            // A source made on lookup leads with its index whatever the estimate: a hash table of every row would make them all.
+            .filter(|&(m, _, _)| m <= LEAD_MATCHES || v.src.made_on_lookup())
             .min()
             .map(|(_, j, sorted)| (j, sorted))
     }
