@@ -67,6 +67,7 @@ impl From<super::front::Error> for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 pub(in crate::code_rule_dsl) mod corpus;
+mod demand;
 pub(in crate::code_rule_dsl) mod lower;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
@@ -3088,6 +3089,20 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     drop(setup);
     let planning = super::profile::span(|| "statistics and plan".into());
     let model = make_plan(prog, db, inputs)?;
+    // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
+    // 0043); in a corpus run only (kept plans), so T's golden plans are unchanged.
+    let split;
+    let corpus = PLANS.with(|p| p.borrow().is_some());
+    let prog: &Program = match if corpus { demand::split_negations(prog) } else { None } {
+        Some((p, demanded)) => {
+            super::profile::decision("demand (decision 0043)", || {
+                format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
+            });
+            split = p;
+            &split
+        }
+        None => prog,
+    };
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
