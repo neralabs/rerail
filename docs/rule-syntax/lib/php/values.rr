@@ -1,0 +1,180 @@
+// php/values: the constant value of a PHP expression, where the code alone fixes it, for PHPStan's constant-condition
+// and comparison rules (if.alwaysTrue, if.alwaysFalse, identical.alwaysTrue, argument.type of random_int).
+//
+// No types are read. A value is known for:
+//   literals          0  -3  1.5  'a'  "a\n"  <<<EOT … EOT  true  NULL  \false  []  [1, 2]  (a string with
+//                     $x or {$x} in it has none)
+//   parentheses       (0)
+//   class constants   self::FOO, and static::FOO in a final class, from `const FOO = …;` in the enclosing class
+//   variables         $a after `$a = 0;`, when that is the only write to $a in its function (or file, at the top
+//                     level) and it runs first: its statement comes before the use in an enclosing block
+// A write is anything that may change the variable: an assignment or `++` on it or on its elements, a parameter,
+// foreach, list(), global, static, catch, unset, a `&` reference, closure `use (&$a)`, and passing it as a call
+// or `new` argument (the callee's parameter may be a reference: preg_match($p, $s, $m)), unless the callee is a
+// builtin that takes every argument by value (php_byval_fn: sprintf, count, in_array, …). `$$x`, extract(),
+// parse_str(), eval, include and require may write any variable, so a scope with one follows none.
+//
+//   $zero = 0; if ($zero) {}               php_truthy(cond, "false")
+//   $a = []; if (f()) { $a += [1]; } if ($a) {}     no value: two writes
+//   $s = 'x'; g($s); if ($s) {}           no value: g may take $s by reference
+//
+// What a rule gets from this library:
+//   php_value(n, t, v)     n's value has type t ("int", "float", "string", "bool", "null", "array") and canonical
+//                          text v: "42", "1.5", the string's contents, "true"/"false", "null", "[]" or "[…]"
+//   php_truthy(n, b)       n's value converts to bool b ("true" or "false"), as `if (n)` reads it
+//   php_int(n, i)          n's value is the integer i
+//   php_identical(e, r)    `a === b` expression e is r ("true" or "false") from the values: same type and value
+//   php_if_const(i, c, b)  `if (c)` statement i's condition is always b, in the cases PHPStan's if.always* reports
+//
+// Builds on core, php/names.rr (php_call_written) and php/phpdoc.rr (doc_comment, doc_type).
+// Gaps: an octal literal written 017 reads as 17 (core's value), and a float's canonical text is its source text.
+
+#include "php/names.rr"
+#include "php/phpdoc.rr"
+
+.decl php_value(n: node, t: symbol, v: symbol)
+php_value(n, "int", v) :- kind(n, "integer"), value(n, v).
+php_value(n, "int", cat("-", v)) :- kind(n, "unary_op_expression"), op(n, "-"), field(n, "argument", a),
+    kind(a, "integer"), value(a, v), v != "0".
+php_value(n, "int", "0") :- kind(n, "unary_op_expression"), op(n, "-"), field(n, "argument", a), value(a, "0").
+php_value(n, "float", t) :- kind(n, "float"), text(n, t).
+php_value(n, "float", cat("-", t)) :- kind(n, "unary_op_expression"), op(n, "-"), field(n, "argument", a),
+    kind(a, "float"), text(a, t).
+php_value(n, "string", v) :- php_string_kind(k), kind(n, k), str(n, v), !php_interpolated(n).
+// 'it\'s \n': single quotes unescape only \\ and \' (core's str reads every escape, as double quotes do).
+php_value(n, "string", @replace_all(w, "\\\\([\\\\'])", "${1}")) :- kind(n, "string"), text(n, t),
+    match("[bB]?'(?<w>[\\s\\S]*)'", t).
+php_value(n, "bool", @lower(t)) :- kind(n, "boolean"), text(n, t).
+php_value(n, "null", "null") :- kind(n, "null").
+php_value(n, t, @lower(w)) :- kind(n, "qualified_name"), text(n, q), match("\\\\(?<w>[A-Za-z]+)", q),
+    php_word_const(@lower(w), t).
+php_value(n, "array", "[]") :- kind(n, "array_creation_expression"), !child(n, _, _).
+php_value(n, "array", "[…]") :- kind(n, "array_creation_expression"), child(n, _, _), !php_array_spread(n).
+php_value(n, t, v) :- kind(n, "parenthesized_expression"), child(n, e, 0), php_value(e, t, v).
+php_value(n, t, v) :- php_class_const(n, e), php_value(e, t, v).
+php_value(n, t, v) :- php_follow(n, e), php_value(e, t, v).
+.decl php_string_kind(k: symbol)
+php_string_kind("encapsed_string"). php_string_kind("heredoc"). php_string_kind("nowdoc").
+.decl php_interpolated(n: node)  // "x $y", "{$o->p}", a heredoc with $name: a part other than text or an escape
+php_interpolated(n) :- kind(n, "encapsed_string"), child(n, c, _), !php_plain_part(c).
+php_interpolated(n) :- kind(n, "heredoc"), field(n, "value", b), child(b, c, _), !php_plain_part(c).
+.decl php_plain_part(c: node)
+php_plain_part(c) :- kind(c, "string_content"). php_plain_part(c) :- kind(c, "escape_sequence").
+.decl php_word_const(w: symbol, t: symbol)
+php_word_const("true", "bool"). php_word_const("false", "bool"). php_word_const("null", "null").
+.decl php_array_spread(n: node)  // [...$xs]: the array may be empty
+php_array_spread(n) :- child(n, e, _), child(e, u, _), kind(u, "variadic_unpacking").
+
+.decl php_truthy(n: node, b: symbol)
+php_truthy(n, b) :- php_value(n, t, v), php_falsy(t, v), b = "false".
+php_truthy(n, "true") :- php_value(n, t, v), !php_falsy(t, v).
+// false, null, 0, -0, 0.0, "", "0" and [] are falsy; every other value is truthy.
+.decl php_falsy(t: symbol, v: symbol)
+php_falsy("bool", "false"). php_falsy("null", "null"). php_falsy("int", "0"). php_falsy("string", "").
+php_falsy("string", "0"). php_falsy("array", "[]").
+php_falsy("float", v) :- php_value(_, "float", v), match("-?[0_]*(\\.[0_]*)?([eE][-+]?[0-9_]+)?", v).
+
+.decl php_int(n: node, i: number)
+php_int(n, to_number(v)) :- php_value(n, "int", v).
+
+.decl php_identical(e: node, r: symbol)
+php_identical(e, "true") :- kind(e, "binary_expression"), op(e, "==="), field(e, "left", a), field(e, "right", b),
+    php_value(a, t, v), php_value(b, t, v), t != "array", t != "float".
+php_identical(e, "false") :- kind(e, "binary_expression"), op(e, "==="), field(e, "left", a),
+    field(e, "right", b), php_value(a, t, _), php_value(b, u, _), t != u.
+
+// self::FOO and, in a final class, static::FOO: the value of `const FOO = …;` in the enclosing class.
+.decl php_class_const(n: node, e: node)
+php_class_const(n, e) :- kind(n, "class_constant_access_expression"), child(n, s, 0), kind(s, "relative_scope"),
+    child(n, c, 1), text(c, x), nearest(n, k, "class_declaration"), (op(s, "self") ; op(s, "static"),
+    child(k, fm, _), kind(fm, "final_modifier")), has(k, ce, "const_element"), child(ce, cn, 0), text(cn, x), child(ce, e, 1).
+
+// ---- following a variable to its one write ----------------------------------------------------------------------
+// php_scope(n, s): the function or program whose variables n's occurrences are. An arrow function shares its
+// parent's (it captures by value), so it is no scope here.
+.decl php_scope_kind(k: symbol)
+php_scope_kind("function_definition"). php_scope_kind("method_declaration"). php_scope_kind("anonymous_function").
+php_scope_kind("program").
+.decl php_occ(s: node, x: symbol, o: node)  // o is an occurrence of variable x in scope s
+php_occ(s, x, o) :- kind(o, "variable_name"), text(o, x), x != "$this", nearest(o, s, php_scope_kind),
+    !php_in_use_clause(o).
+php_occ(s, x, o) :- php_in_use_clause(o), text(o, x), inside(o, f, "anonymous_function"), nearest(f, s, php_scope_kind).
+php_occ(s, x, o) :- php_in_use_clause(o), text(o, x), nearest(o, s, "anonymous_function").
+.decl php_in_use_clause(o: node)
+php_in_use_clause(o) :- kind(o, "variable_name"), inside(o, _, "anonymous_function_use_clause").
+
+// php_write(o): occurrence o may change its variable.
+.decl php_write(o: node)
+php_write(o) :- php_occ(_, _, o), php_assign_kind(k), kind(w, k), field(w, "left", l), (o = l ; within(o, l)).
+php_write(o) :- php_occ(_, _, o), inside(o, _, "update_expression").
+php_write(o) :- php_occ(_, _, o), token_before(o, t), text(t, "&").
+php_write(o) :- php_occ(_, _, o), child(a, o, _), kind(a, "argument"), child(l, a, _), kind(l, "arguments"),
+    child(c, l, _), !php_byval_call(c).  // a call, a method call, or `new Foo($x)` (a constructor's & parameter)
+.decl php_byval_call(c: node)  // a call of a builtin that takes every argument by value
+php_byval_call(c) :- php_call_written(c, x), php_byval_fn(x).
+.decl php_byval_fn(x: symbol)
+php_byval_fn("sprintf"). php_byval_fn("printf"). php_byval_fn("vsprintf"). php_byval_fn("vprintf").
+php_byval_fn("count"). php_byval_fn("sizeof"). php_byval_fn("strlen"). php_byval_fn("mb_strlen").
+php_byval_fn("implode"). php_byval_fn("explode"). php_byval_fn("in_array"). php_byval_fn("array_key_exists").
+php_byval_fn("is_array"). php_byval_fn("is_string"). php_byval_fn("is_int"). php_byval_fn("is_null").
+php_byval_fn("is_bool"). php_byval_fn("is_object"). php_byval_fn("is_numeric"). php_byval_fn("is_callable").
+php_byval_fn("trim"). php_byval_fn("strtolower"). php_byval_fn("strtoupper"). php_byval_fn("substr").
+php_byval_fn("strpos"). php_byval_fn("str_contains"). php_byval_fn("str_starts_with"). php_byval_fn("str_ends_with").
+php_byval_fn("json_encode"). php_byval_fn("var_dump"). php_byval_fn("print_r"). php_byval_fn("var_export").
+php_byval_fn("intval"). php_byval_fn("strval"). php_byval_fn("floatval"). php_byval_fn("boolval").
+php_byval_fn("array_keys"). php_byval_fn("array_values"). php_byval_fn("array_merge"). php_byval_fn("array_map").
+php_byval_fn("array_filter"). php_byval_fn("max"). php_byval_fn("min"). php_byval_fn("abs"). php_byval_fn("round").
+php_byval_fn("gettype"). php_byval_fn("get_class"). php_byval_fn("method_exists"). php_byval_fn("property_exists").
+php_byval_fn("function_exists"). php_byval_fn("class_exists"). php_byval_fn("htmlspecialchars").
+php_byval_fn("urlencode"). php_byval_fn("rawurlencode"). php_byval_fn("base64_encode"). php_byval_fn("md5").
+php_byval_fn("sha1"). php_byval_fn("hash"). php_byval_fn("random_int"). php_byval_fn("str_repeat").
+php_write(o) :- php_occ(_, _, o), child(p, o, _), php_binder_kind(k), kind(p, k).
+php_write(o) :- php_occ(_, _, o), child(f, o, i), kind(f, "foreach_statement"), i > 0.
+php_write(o) :- php_occ(_, _, o), child(f, p, _), kind(f, "foreach_statement"), kind(p, "pair"), within(o, p).
+php_write(o) :- php_occ(_, _, o), inside(o, _, "unset_statement").
+php_write(o) :- php_occ(_, _, o), inside(o, _, "list_literal").
+.decl php_assign_kind(k: symbol)
+php_assign_kind("assignment_expression"). php_assign_kind("augmented_assignment_expression").
+php_assign_kind("reference_assignment_expression").
+.decl php_binder_kind(k: symbol)  // nodes whose direct variable child they bind
+php_binder_kind("simple_parameter"). php_binder_kind("variadic_parameter"). php_binder_kind("property_promotion_parameter").
+php_binder_kind("global_declaration"). php_binder_kind("static_variable_declaration"). php_binder_kind("catch_clause").
+php_binder_kind("by_ref").
+
+// php_dynamic(s): s may write any of its variables.
+.decl php_dynamic(s: node)
+php_dynamic(s) :- kind(d, "dynamic_variable_name"), nearest(d, s, php_scope_kind).
+php_dynamic(s) :- php_call_written(c, x), (x = "extract" ; x = "parse_str" ; x = "eval"), nearest(c, s, php_scope_kind).
+php_dynamic(s) :- (kind(i, "include_expression") ; kind(i, "include_once_expression") ; kind(i, "require_expression") ;
+    kind(i, "require_once_expression")), nearest(i, s, php_scope_kind).
+
+// php_follow(u, e): u reads a variable whose only write is `u's variable = e;`, run before u.
+.decl php_follow(u: node, e: node)
+php_follow(u, e) :- php_occ(s, x, u), !php_write(u), !php_dynamic(s), php_occ(s, x, o), php_write(o),
+    php_writes(s, x, 1), field(w, "left", o), kind(w, "assignment_expression"), field(w, "right", e),
+    child(st, w, 0), kind(st, "expression_statement"), precedes(st, a), (a = u ; within(u, a)).
+.decl php_writes(s: node, x: symbol, k: number)
+php_writes(s, x, k) :- php_occ(s, x, _), k = count : { php_occ(s, x, o), php_write(o) }.
+
+// ---- constant if conditions (PHPStan's IfConstantConditionRule) --------------------------------------------------
+// php_if_const(i, c, b): `if (c)` statement i has a condition whose value converts to b. PHPStan leaves to other
+// rules the conditions that are comparisons (==, ===, <, instanceof, …), `&&`/`||`, `!`, `?:` and
+// isset()/empty(), and it reads a `/** @var T $x */` right above the if as overriding $x's type, so those give no
+// row. Only `if`: an elseif is elseif.alwaysTrue/False, another rule.
+//   if (true) {}   $zero = 0; if ($zero) {}         rows
+//   if (!false) {}   if ($a === 1) {}                no rows (booleanNot.*, identical.*)
+.decl php_if_const(i: node, c: node, b: symbol)
+php_if_const(i, c, b) :- kind(i, "if_statement"), field(i, "condition", p), child(p, c, 0), php_truthy(c, b),
+    !php_if_other_rule(c), !php_var_doc_above(i).
+.decl php_if_other_rule(c: node)
+php_if_other_rule(c) :- kind(c, "binary_expression"), op(c, o), php_compare_op(o).
+php_if_other_rule(c) :- kind(c, "unary_op_expression"), op(c, "!").
+php_if_other_rule(c) :- kind(c, "conditional_expression").
+php_if_other_rule(c) :- kind(c, "function_call_expression"), field(c, "function", f), text(f, x),
+    (iglob("isset", x) ; iglob("empty", x)).
+.decl php_compare_op(o: symbol)
+php_compare_op("=="). php_compare_op("!="). php_compare_op("<>"). php_compare_op("==="). php_compare_op("!==").
+php_compare_op("&&"). php_compare_op("||"). php_compare_op("<"). php_compare_op(">"). php_compare_op("<=").
+php_compare_op(">="). php_compare_op("instanceof").
+.decl php_var_doc_above(i: node)
+php_var_doc_above(i) :- doc_comment(i, c), doc_type(c, "var", _).

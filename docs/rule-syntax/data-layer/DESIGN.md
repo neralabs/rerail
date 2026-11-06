@@ -315,13 +315,13 @@ says why Datalog cannot derive it.
 | `source(d, sp)`, `src_line(d, l, sp)`, `line_count(d, k)`, `end_line(n, l)`, `col(n, c)` | the raw text, physical lines (Python's `str.splitlines()` terminators), extents | Comments and blank lines are not in the tree; splitlines has eight terminators |
 | `.scope text "**/*.md"` | Markdown, Rust or SQL files read as text, with no tree | No grammar for them |
 | `op_at(n, i, s)` | operator tokens in order; `not in`, `is not` as one token | `op` is unordered; chained comparisons need the order |
-| `syntax_error(d, l, msg)` | CPython rejects the file | Tree-sitter recovers from errors, so the tree cannot show it |
+| `syntax_error(d, l, msg)` | the file does not parse, by CPython's grammar (a native parser: Ruff's) | Tree-sitter recovers from errors, so the tree cannot show it |
 | `earlier(m, n)`, `visit_index(n, i)`, `ast_depth(n, k)` | CPython's `ast` visit order and depth | Decorators and return annotations come after a def's body, defaults after all parameters; rebuilding that from fields needs ancestor pairs |
-| `str_part(lit, i, v, at, spec)` | str constants as CPython builds them: escapes decoded, adjacent literals merged, f-string pieces | CPython's decoder |
+| `str_part(lit, i, v, at, spec)` | str constants as CPython builds them: escapes decoded, adjacent literals merged, f-string pieces | Literal decoding, native (checked once against CPython offline) |
 | `@place(path, line)` | a location with no node: a file, a line of it, a missing file | A finding needs a location |
 | `@json_str`, `@sha256`, `@nfkc`, `@count_matches` | JSON escaping as `json.dumps`, digests, identifier normalisation, match counts | Byte-level text functions |
 | `@ed25519_ok(key, message, sig)` | signature check | Cryptography |
-| `@tree_digest(n)`, `@unparse(n)` | `ast.dump` comparison, `ast.unparse` text | CPython's printer and dumper |
+| `@tree_digest(n)`, `@unparse(n)` | `ast.dump`-style comparison; canonical text for messages | Hashing and printing a subtree, native |
 | `git_tracked`, `git_rev`, `git_has` | the git index, the revision under check and its base | Git |
 | `.input … IO=json \| yaml \| lines (dir=) \| file`, `path=`, `at="base"`, `input_error` | repository files as rows; a file at the base revision; a row per missing or malformed file | Format parsing and IO |
 
@@ -457,7 +457,7 @@ The mapping's gaps, and how each was closed in core.rr:
 
 | Check | Need | Resolution |
 |---|---|---|
-| cached_pure_lazy_allowlist | stored hashes are SHA-256 of `ast.dump` text (verify_cached_pure_lazy_allowlist.py:160-170, :470) | `@ast_dump(n)`: CPython's exact text; `@sha256(@ast_dump(n))`, composite payloads with `cat` and `join` |
+| cached_pure_lazy_allowlist | stored hashes are SHA-256 of `ast.dump` text (verify_cached_pure_lazy_allowlist.py:160-170, :470) | Re-sign the allowlist once with `@tree_digest(n)` (no CPython, so no exact `ast.dump` text) |
 | permission_test_classification | JSON Lines files; arrays nested in arrays (`groups[].operations[]`, :552-597) | `IO=jsonl`; a `*` step in `path=`, each `*` a leading column |
 | matching_architecture | scope from `--application-root` (:1162-1172) | `.scope dirs option("application_root")` |
 | architecture_rule_docs | a cited commit exists; files at that commit (:219-247) | `git_commit(sha)`; `git_has` for any commit reachable from head |

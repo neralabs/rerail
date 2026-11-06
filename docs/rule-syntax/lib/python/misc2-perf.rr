@@ -1,0 +1,123 @@
+// python/misc2-perf: for loops as Ruff's perflint rules (PERF101-PERF403) read them: the loop's lone statement,
+// the one binding a name resolves to, and the type that binding gives it.
+//
+// Interface
+//   perf_for(f, t, it)         f is a for statement with target t and iterable it (both without parentheses)
+//   perf_body(f, st, test)     f's body is the lone statement st, or a lone `if test:` (no elif, no else) whose
+//                              body is the lone statement st; test is unset in the first form
+//   perf_call_stmt(st, c)      statement st is a call c and nothing else
+//   perf_method_call(c, o, m, a)  c is `o.m(a)`: one positional argument a, no keywords; o without parentheses
+//   perf_mentions(e, x)        the name x occurs in expression e (e itself, or a Name inside it)
+//   perf_only_binding(n, site) name n resolves to site, the first binding of its name in that scope (Ruff's
+//                              only_binding: the binding is not a rebinding)
+//   perf_latest_site(n, site)  the binding of name n's name in force at n: the last one before it in the scope
+//                              n resolves to (Ruff's resolve_name during its walk)
+//   perf_site_value(site, v)   the value a binding site stores: `x = v`, `x: T = v`, `(x := v)`, the matching
+//                              element of `a, x = 1, v`, and v for every target of a chain `a = x = v`
+//   perf_list_site(site)       the binding gives a list (Ruff's is_list): a list display or comprehension, a call
+//                              of `list`, or an annotation `list[…]` / `List[…]` on the assignment or parameter
+//   perf_dict_site(site)       the same for dict (is_dict), and `**kwargs`
+//   perf_used_after(f, t)      a name the loop target t binds is read (or deleted) after loop f ends, before it
+//                              is rebound
+//   perf_unused(t)             target name t is never read from its binding on (Ruff's is_unused)
+//
+// Python and Ruff background
+//   Ruff checks these loops after the whole file is read, with the bindings in force where the loop starts. A
+//   name with two bindings before the loop (`x = []`, then `x = []` again) has no only_binding, so the rules stay
+//   silent: they cannot tell which value the loop sees.
+//
+//   result = []                  perf_only_binding(<result in the loop>, <the assignment>), perf_list_site(…)
+//   for i in items:              perf_for(<for>, <i>, <items>)
+//       if i % 2:                perf_body(<for>, <the append statement>, <i % 2>)
+//           result.append(i)     perf_method_call(<call>, <result>, "append", <i>)
+#include "python/ruff.rr"
+//   unparen(e, m), ruff_qual(e, q), call_nargs(c, n), call_nkwargs(c, n), ruff_arg(c, i, a)
+
+// ---- loop shapes --------------------------------------------------------------------------------------------
+.decl perf_for(f: node, t: node, it: node)
+perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), unparen(l, t), !perf_paren_target(l, _),
+    field(f, "right", r), unparen(r, it).
+// `for (i) in …`: tree-sitter reads the parenthesised target as a one-element tuple_pattern (no comma); Ruff's
+// tree has the Name.
+perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), perf_paren_target(l, t), field(f, "right", r),
+    unparen(r, it).
+.decl perf_paren_target(l: node, t: node)
+perf_paren_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","), child(l, t, _), !kind(t, "comment"),
+    count : { child(l, c, _), !kind(c, "comment") } = 1.
+.decl perf_body(f: node, st: node, test: loc)
+perf_body(f, st, t) :- kind(f, "for_statement"), field(f, "body", b), body_len(b, 1), body_stmt(b, st, 0),
+    !kind(st, "if_statement"), unset(t).
+perf_body(f, st, t) :- kind(f, "for_statement"), field(f, "body", b), body_len(b, 1), body_stmt(b, i, 0),
+    py_if(i, t0, ib), !py_orelse(i, _), body_len(ib, 1), body_stmt(ib, st, 0), unparen(t0, t).
+.decl perf_call_stmt(st: node, c: node)
+perf_call_stmt(st, c) :- kind(st, "expression_statement"), child(st, e, 0), !child(st, _, 1), unparen(e, c),
+    kind(c, "call").
+.decl perf_method_call(c: node, o: node, m: symbol, a: node)
+// `L.append(x for x in xs)`: tree-sitter makes the bare generator the call's arguments.
+perf_method_call(c, o, m, a) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, o0, m),
+    unparen(o0, o), field(c, "arguments", a), kind(a, "generator_expression").
+perf_method_call(c, o, m, a) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, o0, m),
+    unparen(o0, o), field(c, "arguments", al), kind(al, "argument_list"), count : { child(al, x, _), !kind(x, "comment") } = 1,
+    child(al, a0, _), !kind(a0, "comment"), !kind(a0, "keyword_argument"), !kind(a0, "dictionary_splat"),
+    unparen(a0, a).
+.decl perf_mentions(e: node, x: symbol)
+perf_mentions(e, x) :- kind(e, "identifier"), nameref(e, x).
+perf_mentions(e, x) :- node(_, e, _, _, _), has(e, n, "identifier"), nameref(n, x).
+
+// ---- bindings ---------------------------------------------------------------------------------------------
+.decl perf_only_binding(n: node, site: node)
+perf_only_binding(n, site) :- kind(n, "identifier"), look(n, x, s), scope_node(n, s), binding(s, x, site, _),
+    site < n, count : { binding(s, x, b, _), b < n } = 1.
+// A name read in a nested function is resolved after the enclosing scope is complete: every binding counts.
+perf_only_binding(n, site) :- kind(n, "identifier"), look(n, x, s), !scope_node(n, s), binding(s, x, site, _),
+    count : { binding(s, x, _, _) } = 1.
+.decl perf_latest_site(n: node, site: node)
+perf_latest_site(n, site) :- kind(n, "identifier"), look(n, x, s), binding(s, x, site, _), site < n,
+    count : { binding(s, x, b, _), b < n, site < b } = 0.
+.decl perf_site_value(site: node, v: node)
+perf_site_value(site, v) :- binding_value(site, v0), !kind(v0, "assignment"), unparen(v0, v).
+perf_site_value(a, v) :- kind(a, "assignment"), perf_chain_right(a, v0), unparen(v0, v).
+perf_site_value(t, v) :- binding(_, _, t, "assign"), kind(t, "identifier"), child(l, t, i), field(a, "left", l),
+    kind(a, "assignment"), perf_chain_right(a, r0), unparen(r0, r),
+    (kind(r, "tuple") ; kind(r, "expression_list") ; kind(r, "list")), child(r, v0, i), unparen(v0, v).
+// perf_chain_right(a, v): the value at the end of a chained assignment `a = b = v` (tree-sitter nests the
+// second assignment as the first one's right side); for a plain `a = v`, v itself.
+.decl perf_chain_right(a: node, v: node)
+perf_chain_right(a, v) :- kind(a, "assignment"), field(a, "right", v), !kind(v, "assignment").
+perf_chain_right(a, v) :- kind(a, "assignment"), field(a, "right", b), kind(b, "assignment"), perf_chain_right(b, v).
+//   (perf_site_ann(site, h): h is the head of the site's annotation, `list` in `x: list[int] = …`)
+.decl perf_site_ann(site: node, h: node)  // the annotation's head: `list` in `x: list[int] = …`
+perf_site_ann(a, h) :- kind(a, "assignment"), field(a, "type", t), perf_ann_head(t, h).
+perf_site_ann(p, h) :- binding(_, _, p, "param"), field(p, "type", t), perf_ann_head(t, h).
+.decl perf_ann_head(t: node, h: node)
+perf_ann_head(t, h) :- kind(t, "type"), child(t, e, 0), perf_ann_head(e, h).
+perf_ann_head(t, h) :- unparen(t, h), (kind(h, "identifier") ; kind(h, "attribute")).
+perf_ann_head(t, h) :- unparen(t, s), (kind(s, "subscript"), field(s, "value", h) ; kind(s, "generic_type"), child(s, h, 0)).
+.decl perf_typed_site(site: node, ty: symbol)  // "list" or "dict"
+perf_typed_site(site, "list") :- perf_site_value(site, v), (kind(v, "list") ; kind(v, "list_comprehension")).
+perf_typed_site(site, "dict") :- perf_site_value(site, v), (kind(v, "dictionary") ; kind(v, "dictionary_comprehension")).
+perf_typed_site(site, ty) :- perf_site_value(site, v), kind(v, "call"), field(v, "function", f), ruff_qual(f, q),
+    split_dot(q, "builtins", ty), (ty = "list" ; ty = "dict"), !perf_site_ann(site, _).
+perf_typed_site(site, "list") :- perf_site_ann(site, h), (ruff_qual(h, "builtins.list") ; perf_typing_name(h, "List")).
+perf_typed_site(site, "dict") :- perf_site_ann(site, h), (ruff_qual(h, "builtins.dict") ; perf_typing_name(h, "Dict")).
+perf_typed_site(p, "dict") :- binding(_, _, p, "param"), (kind(p, "dictionary_splat_pattern") ;
+    kind(p, "typed_parameter"), child(p, s, 0), kind(s, "dictionary_splat_pattern")).
+.decl perf_typing_name(h: node, x: symbol)
+perf_typing_name(h, x) :- ruff_qual(h, q), (q = cat("typing.", x) ; q = cat("typing_extensions.", x)), (x = "List" ; x = "Dict").
+.decl perf_list_site(site: node)
+perf_list_site(site) :- perf_typed_site(site, "list").
+.decl perf_dict_site(site: node)
+perf_dict_site(site) :- perf_typed_site(site, "dict").
+
+// ---- reads of the loop target --------------------------------------------------------------------------------
+.decl perf_target_name(t: node, n: node, x: symbol)  // n is a name the target t binds
+perf_target_name(t, t, x) :- kind(t, "identifier"), text(t, x).
+perf_target_name(t, n, x) :- (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "tuple") ;
+    kind(t, "list_pattern") ; kind(t, "list")), has(t, n, "identifier"), tgt(n), text(n, x).
+.decl perf_used_after(f: node, t: node)
+perf_used_after(f, t) :- perf_for(f, t, _), perf_target_name(t, n, x), scope_node(n, s), node(_, f, _, _, e),
+    look(r, x, s), expr_ctx(r, c), c != "store", node(_, r, _, rs, _), rs >= e,
+    count : { binding(s, x, b, _), node(_, b, _, bs, _), bs >= e, bs < rs } = 0.
+.decl perf_unused(t: node)
+perf_unused(t) :- kind(t, "identifier"), tgt(t), text(t, x), tscope(t, s), node(_, t, _, ts, _),
+    count : { look(r, x, s), expr_ctx(r, "load"), node(_, r, _, rs, _), rs > ts } = 0.

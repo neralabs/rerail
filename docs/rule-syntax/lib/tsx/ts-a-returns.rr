@@ -1,0 +1,136 @@
+// tsx/ts-a-returns.rr: typescript-eslint's explicitReturnTypeUtils, for the rules that want return types written:
+// explicit-function-return-type and explicit-module-boundary-types. Both skip a function whose type comes from
+// where it stands, a function that only returns another function, and constructors and setters.
+//   const f: Handler = () => 1;     typed_fn: the declarator's type says what f returns
+//   const g = () => () => 1;        immediate_fn: g only returns a function (the inner one is checked)
+//   function h(): T { return () => 1; }   ancestor_return: the returned arrow has h's type
+// The options these read have the same names and defaults in both rules: allowTypedFunctionExpressions,
+// allowHigherOrderFunctions and allowDirectConstAssertionInArrowFunctions (true), allowExpressions (false).
+//
+// tree-sitter's method_definition is both ESTree's MethodDefinition (or Property) and the FunctionExpression in
+// it, so "the function's parent is a method definition" reads as "the function is a method" here.
+
+#include "tsx/ts-a.rr"
+
+// ---- functions and their parents -----------------------------------------------------------------------------------
+// fn_value(f): ESTree's FunctionExpression and ArrowFunctionExpression, methods included. fn_decl(f): a
+// FunctionDeclaration (with a body; an overload signature is a function_signature).
+//   const a = function () {};   const b = () => 1;   class C { m() {} }        fn_value
+//   function d() {}                                                           fn_decl
+.decl fn_value(f: node)
+fn_value(f) :- kind(f, k), (k = "function_expression" ; k = "generator_function" ; k = "arrow_function" ;
+    k = "method_definition").
+.decl fn_decl(f: node)
+fn_decl(f) :- kind(f, k), (k = "function_declaration" ; k = "generator_function_declaration").
+// call_arg_of(f, c): f is an argument of call or `new` c (`f(() => 1)`), not its callee.
+.decl call_arg_of(f: node, c: node)
+call_arg_of(f, c) :- estree_parent(f, a), kind(a, "arguments"), child(c, a, _).
+// held_name(f, x): an unnamed function's declarator names it: `const x = () => 1`.
+.decl held_name(f: node, x: symbol)
+held_name(f, x) :- fn_value(f), !field(f, "name", _), estree_parent(f, d), kind(d, "variable_declarator"),
+    field(d, "name", n), kind(n, "identifier"), text(n, x).
+// ctor_or_setter(f): `constructor() {}` in a class, or `set a(v) {}` in a class or object.
+.decl ctor_or_setter(f: node)
+ctor_or_setter(f) :- class_method(f), field(f, "name", n), text(n, "constructor").
+ctor_or_setter(f) :- kind(f, "method_definition"), op(f, "set").
+
+// ---- typed by their place --------------------------------------------------------------------------------------------
+// typed_fn(f): isTypedFunctionExpression. The type of f's place says what it returns:
+//   x as T, <T>x     const a: T = f   g(a: T = f)   class { a: T = f }   g(f)   new G(f)   <X p={f} />   <X {...f} />
+// An `accessor a: T = f` is no PropertyDefinition, so its type does not count.
+// and a property (or method) of an object literal in such a place: `const o: T = { m() {} }`, nested too.
+.decl typed_fn(f: node)
+typed_fn(f) :- fn_value(f), !option("allowTypedFunctionExpressions", "false"), typed_place(f).
+typed_fn(f) :- fn_value(f), !option("allowTypedFunctionExpressions", "false"),
+    (call_arg_of(f, c) ; estree_parent(f, c)), kind(c, "new_expression").  // `new (function () {})()` too
+typed_fn(f) :- object_method(f), !option("allowTypedFunctionExpressions", "false"), child(o, f, _), typed_object(o).
+typed_fn(f) :- fn_value(f), !option("allowTypedFunctionExpressions", "false"), estree_parent(f, p), kind(p, "pair"),
+    field(p, "value", _), child(o, p, _), typed_object(o).
+.decl typed_object(o: node)
+typed_object(o) :- kind(o, "object"), typed_place(o).
+typed_object(o) :- kind(o, "object"), estree_parent(o, p), kind(p, "pair"), child(q, p, _), typed_object(q).
+// typed_place(e): isTypedParent of e's parent.
+.decl typed_place(e: node)
+typed_place(e) :- (fn_value(e) ; kind(e, "object")), estree_parent(e, p),
+    (kind(p, "as_expression") ; kind(p, "type_assertion") ; kind(p, "jsx_expression")).
+typed_place(e) :- (fn_value(e) ; kind(e, "object")), estree_parent(e, s), kind(s, "spread_element"), child(j, s, _),
+    kind(j, "jsx_expression"), field(_, "attribute", j).
+typed_place(e) :- (fn_value(e) ; kind(e, "object")), estree_parent(e, p), field(p, "value", v), deparen(v, e),
+    field(p, "type", _), (kind(p, "variable_declarator") ; property_def(p) ;
+    kind(p, "required_parameter") ; kind(p, "optional_parameter")).
+typed_place(e) :- (fn_value(e) ; kind(e, "object")), call_arg_of(e, c), kind(c, "call_expression").
+
+// valid_expr_return(f): isValidFunctionExpressionReturnType. Typed by its place; with allowExpressions, any
+// function that no declarator, class member or `export default` holds; or an arrow returning `x as const`
+// (through `satisfies`).
+.decl valid_expr_return(f: node)
+valid_expr_return(f) :- typed_fn(f).
+valid_expr_return(f) :- fn_value(f), option("allowExpressions", "true"), !class_method(f), !held(f).
+valid_expr_return(f) :- kind(f, "arrow_function"), !option("allowDirectConstAssertionInArrowFunctions", "false"),
+    field(f, "body", b), deparen(b, x), const_body(x).
+.decl held(f: node)
+held(f) :- fn_value(f), estree_parent(f, p),
+    (kind(p, "variable_declarator") ; kind(p, "export_statement") ; property_def(p)).
+.decl const_body(x: node)
+const_body(x) :- const_cast(x).
+const_body(x) :- kind(x, "satisfies_expression"), child(x, e, 0), deparen(e, y), const_body(y).
+
+// ---- returning functions -------------------------------------------------------------------------------------------
+// immediate_fn(f): doesImmediatelyReturnFunctionExpression. `() => () => 1`, or every `return` of f's own
+// (at least one) returns a function.
+.decl immediate_fn(f: node)
+immediate_fn(f) :- kind(f, "arrow_function"), field(f, "body", b), deparen(b, x), function_node(x).
+immediate_fn(f) :- function_node(f), own_return(f, _), !plain_return(f).
+.decl own_return(f: node, r: node)
+own_return(f, r) :- kind(r, "return_statement"), nearest(r, f, function_kind).
+.decl plain_return(f: node)
+plain_return(f) :- own_return(f, r), !returns_fn(r).
+.decl returns_fn(r: node)
+returns_fn(r) :- kind(r, "return_statement"), child(r, e, _), !kind(e, "comment"), deparen(e, x), function_node(x).
+
+// valid_return(f): isValidFunctionReturnType. A return type, a constructor or setter, or (allowHigherOrderFunctions)
+// a function that only returns functions.
+.decl valid_return(f: node)
+valid_return(f) :- function_node(f), field(f, "return_type", _).
+valid_return(f) :- ctor_or_setter(f).
+valid_return(f) :- immediate_fn(f), !option("allowHigherOrderFunctions", "false").
+
+// ancestor_return(f): ancestorHasReturnType. f is returned (`return () => 1`, or an arrow's body) and the
+// nearest typed thing above says its type: a function with a return type, or a typed declarator or class field.
+// An expression statement ends the search. As upstream, a property value starts the climb at f itself, so an
+// arrow there with an expression body climbs from itself.
+//   function f(): T { return () => 1; }      const g: T = () => () => 1;     the inner arrows are typed
+.decl ancestor_return(f: node)
+ancestor_return(f) :- climb_from(f, a), typed_above(a).
+.decl climb_from(f: node, a: node)
+climb_from(f, r) :- fn_value(f), estree_parent(f, r), kind(r, "return_statement").
+climb_from(f, a) :- fn_value(f), estree_parent(f, a), kind(a, "arrow_function"), field(a, "body", b),
+    !kind(b, "statement_block").
+climb_from(f, f) :- fn_value(f), (object_method(f) ; estree_parent(f, p), kind(p, "pair")),
+    kind(f, "arrow_function"), field(f, "body", b), !kind(b, "statement_block").
+.decl typed_above(a: node)
+typed_above(a) :- climb_from(_, a), function_node(a), field(a, "return_type", _).
+typed_above(a) :- climb_from(_, a), function_node(g), field(g, "return_type", _), within(a, g), !stop_between(a, g).
+typed_above(a) :- climb_from(_, a), nearest(a, s, climb_stop), field(s, "type", _),
+    (kind(s, "variable_declarator") ; property_def(s)), !typed_below(a, s).
+.decl stop_between(a: node, g: node)
+stop_between(a, g) :- climb_from(_, a), function_node(g), within(a, g), nearest(a, s, climb_stop), within(s, g).
+.decl typed_below(a: node, s: node)
+typed_below(a, s) :- climb_from(_, a), nearest(a, s, climb_stop), function_node(g), field(g, "return_type", _),
+    within(a, g), within(g, s).
+.decl climb_stop(n: node)  // an `accessor` field is not a stop: the climb goes on past it
+climb_stop(n) :- kind(n, "variable_declarator") ; property_def(n) ; kind(n, "expression_statement").
+
+// ---- where to report -----------------------------------------------------------------------------------------------
+// return_head(f, at): getFunctionHeadLoc's start. A method or a class field's function from the member's start
+// (after its decorators); an object property's function from the property; another arrow at its `=>`; anything
+// else at its start.
+//   class A { @d async m() {} }   at `async`        { a: () => 1 }   at `a`        g(x => 1)   at `=>`
+.decl return_head(f: node, at: loc)
+return_head(f, f) :- kind(f, "method_definition").
+return_head(f, p) :- fn_value(f), estree_parent(f, p), kind(p, "pair").
+return_head(f, t) :- fn_value(f), estree_parent(f, p), property_def(p), member_head(p, t).
+return_head(f, t) :- kind(f, "arrow_function"), !member_value(f), field(f, "body", b), token_before(b, t).
+return_head(f, f) :- function_node(f), !kind(f, "method_definition"), !kind(f, "arrow_function"), !member_value(f).
+.decl member_value(f: node)
+member_value(f) :- fn_value(f), estree_parent(f, p), (kind(p, "pair") ; property_def(p)).

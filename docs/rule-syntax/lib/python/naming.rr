@@ -1,0 +1,180 @@
+// python/naming: the vocabulary of Ruff's pep8-naming rules (N8xx): how a name is cased, which names the
+// configuration exempts, and the definitions, parameters, stores and import aliases the rules name.
+//
+// Interface
+//   1. Case:     lower_name(x)            no uppercase letter (Ruff's str::is_lowercase): "x1", "_", "snake_case"
+//                upper_name(x)            no lowercase letter (str::is_uppercase)
+//                cased_lower(x)           lower_name and at least one lowercase letter (str::is_cased_lowercase)
+//                cased_upper(x)           upper_name and at least one uppercase letter (str::is_cased_uppercase)
+//                camel_name(x)            neither cased form, and no `_`: "CamelCase", "Camel" (helpers::is_camelcase)
+//                mixed_name(x)            not cased_lower, starts (after one `_`) lowercase: "mixedCase", "_mixed_Case"
+//                acronym_of(x, a)         a is x's capitals in order: ("AbcDef", "AD") (helpers::is_acronym)
+//                dunder(x)                starts with `__` and ends with `__`, overlapping: "__x__", "___", "__"
+//                                         (visibility::is_magic)
+//   2. Options:  naming_ignored(x)        x matches `pep8-naming.ignore-names` (globs; Ruff's list of unittest names
+//                                         when unset) or `pep8-naming.extend-ignore-names`
+//   3. Decorators: dec_target(f, e)       e is a decorator of f with any call taken off (`@d(1)` gives `d`)
+//                typing_dec(f, x)         def f is decorated with typing.x / typing_extensions.x (`@overload`)
+//                naming_classmethod(f)    f is a class method: @classmethod, @abc.abstractclassmethod, a configured
+//                                         `pep8-naming.classmethod-decorators` entry, or an implicit one
+//                naming_staticmethod(f)   the same for static methods (`pep8-naming.staticmethod-decorators`)
+//                naming_method_kind(f, k)        def f directly in a class is a "method", "classmethod", "staticmethod" or
+//                                         "new" (`__new__`), as Ruff's function_type::classify and is_metaclass say;
+//                                         no row when the class may or may not be a metaclass
+//                naming_first_param(f, nm, x)    f's first positional parameter (posonly or plain) is nm, named x
+//   4. Sites:    store_name(n, x, s)      identifier n stores x in scope s: assignment, for, with, walrus,
+//                                         augmented and annotated assignment targets, and match captures
+//                store_stmt(n, a)         the assignment (plain or annotated) whose targets hold store n
+//                makes_type(a, t)         assignment a builds a type by a call: t is "namedtuple" (collections or
+//                                         typing.NamedTuple), "typeddict", "typevar" (TypeVar, NewType); or is a
+//                                         type alias, t "alias" (`X: TypeAlias = …`)
+//                store_makes(n, t)        store n is a target of an assignment a with makes_type(a, t)
+//                alias_import(a, name, asname)  `import m.name as asname` / `from m import name as asname`, at alias node a
+//                in_class(n, c)           n's own scope is the body of class c
+//
+// Case is tested on ASCII letters: a regex class [A-Z] stands for Unicode's uppercase. Names with non-ASCII
+// letters (`Ñame`) are read as uncased there; Ruff reads them with char::is_uppercase.
+//
+//   class bad_class: ...                     N801: does not start with a capital, or has `_`
+//   def doThing(): ...                       N802: not lower_name
+//   import os.path as P                      N812: name `path` is cased_lower, alias `P` is not lower_name
+#include "python/ast.rr"
+
+// ---- 1. case -----------------------------------------------------------------------------------------------------
+// naming_word(x): every identifier's text, the vocabulary the case tests run over (once per distinct string).
+.decl naming_word(x: symbol)
+naming_word(x) :- kind(n, "identifier"), text(n, x).
+.decl lower_name(x: symbol)
+lower_name(x) :- naming_word(x), match("[^A-Z]*", x).
+.decl upper_name(x: symbol)
+upper_name(x) :- naming_word(x), match("[^a-z]*", x).
+.decl cased_lower(x: symbol)
+cased_lower(x) :- naming_word(x), match("[^A-Z]*[a-z][^A-Z]*", x).
+.decl cased_upper(x: symbol)
+cased_upper(x) :- naming_word(x), match("[^a-z]*[A-Z][^a-z]*", x).
+.decl camel_name(x: symbol)
+camel_name(x) :- naming_word(x), !cased_lower(x), !cased_upper(x), !contains("_", x).
+.decl mixed_name(x: symbol)
+mixed_name(x) :- naming_word(x), !cased_lower(x), match("_?[a-z].*", x).
+.decl acronym_of(x: symbol, a: symbol)
+acronym_of(x, a) :- alias_import(_, x, a), a = @replace_all(x, "[^A-Z]", "").
+.decl dunder(x: symbol)
+dunder(x) :- naming_word(x), prefix("__", x), suffix("__", x).
+
+// ---- 2. options --------------------------------------------------------------------------------------------------
+// Ruff's ignore-names are globs over the whole name. Without the option the default list applies (literally);
+// extend-ignore-names adds to whichever list is in force.
+//   [tool.ruff.lint.pep8-naming] ignore-names = ["*allowed*"]     def badAllowed(): …   not N802
+.decl naming_ignored(x: symbol)
+naming_ignored(x) :- naming_word(x), option_item("pep8-naming.ignore-names", _, g), glob(g, x).
+naming_ignored(x) :- naming_word(x), !option_item("pep8-naming.ignore-names", _, _), naming_default_ignore(x).
+naming_ignored(x) :- naming_word(x), option_item("pep8-naming.extend-ignore-names", _, g), glob(g, x).
+.decl naming_default_ignore(x: symbol)
+naming_default_ignore("setUp"). naming_default_ignore("tearDown"). naming_default_ignore("setUpClass").
+naming_default_ignore("tearDownClass"). naming_default_ignore("setUpModule"). naming_default_ignore("tearDownModule").
+naming_default_ignore("asyncSetUp"). naming_default_ignore("asyncTearDown"). naming_default_ignore("setUpTestData").
+naming_default_ignore("failureException"). naming_default_ignore("longMessage"). naming_default_ignore("maxDiff").
+
+// ---- 3. decorators -----------------------------------------------------------------------------------------------
+// typing_dec(f, x): `@overload` / `@typing.override` / `@typing_extensions.overload` on f.
+.decl typing_dec(f: node, x: symbol)
+typing_dec(f, x) :- decorator(f, e), sym_of(e, q), split_dot(q, m, x), (m = "typing" ; m = "typing_extensions").
+// dec_target(f, e): the decorator e with a call taken off: `@validator("f")` gives `validator`.
+.decl dec_target(f: node, e: node)
+dec_target(f, e) :- decorator(f, e), !kind(e, "call").
+dec_target(f, g) :- decorator(f, e), kind(e, "call"), field(e, "function", g).
+// A method kind decorator is matched by qualified name, or, for a configured name, by its last segment when the
+// decorator does not resolve (`@prop.expression` with "expression" configured).
+//   @abc.abstractclassmethod def m(cls): …     naming_classmethod
+.decl naming_classmethod(f: node)
+naming_classmethod(f) :- dec_target(f, e), sym_of(e, q), (q = "builtins.classmethod" ; q = "abc.abstractclassmethod").
+naming_classmethod(f) :- dec_target(f, e), method_dec_named(e, "pep8-naming.classmethod-decorators").
+naming_classmethod(f) :- in_class(f, _), def_name(f, x), (x = "__init_subclass__" ; x = "__class_getitem__").
+.decl naming_staticmethod(f: node)
+naming_staticmethod(f) :- dec_target(f, e), sym_of(e, q), (q = "builtins.staticmethod" ; q = "abc.abstractstaticmethod").
+naming_staticmethod(f) :- dec_target(f, e), method_dec_named(e, "pep8-naming.staticmethod-decorators").
+// method_dec_named(e, opt): decorator expression e is named by an entry of list option opt: its qualified name
+// equals the entry, or its dotted text's last segment does.
+.decl method_dec_named(e: node, opt: symbol)
+method_dec_named(e, o) :- dec_target(_, e), option_item(o, _, q), sym_of(e, q).
+method_dec_named(e, o) :- dec_target(_, e), option_item(o, _, x), leaf_name(e, x).
+
+// naming_method_kind(f, k): what kind of method f is. Explicit decorators first; then `__new__` (implicitly static)
+// and the implicit class methods; otherwise an instance method, which in a metaclass receives the class.
+//   class Meta(abc.ABCMeta):
+//       def m(cls): ...         naming_method_kind "classmethod"
+.decl naming_method_kind(f: node, k: symbol)
+naming_method_kind(f, "staticmethod") :- in_class(f, _), kind(f, "function_definition"), naming_staticmethod(f).
+naming_method_kind(f, "classmethod") :- in_class(f, _), kind(f, "function_definition"), naming_classmethod(f),
+    !naming_staticmethod(f).
+naming_method_kind(f, "new") :- naming_plain_method(f, _, "__new__").
+naming_method_kind(f, "classmethod") :- naming_plain_method(f, c, x), x != "__new__", naming_metaclass(c).
+naming_method_kind(f, "method") :- naming_plain_method(f, c, x), x != "__new__", !naming_metaclass(c), !naming_maybe_metaclass(c).
+.decl naming_plain_method(f: node, c: node, x: symbol)  // no static/class decorator, not an implicit class method
+naming_plain_method(f, c, x) :- in_class(f, c), kind(f, "function_definition"), def_name(f, x), !naming_staticmethod(f),
+    !naming_classmethod(f).
+// naming_metaclass(c): Ruff's IsMetaclass::Yes. A base, through classes of this file, is type, type[…], `type(x)`,
+// abc.ABCMeta or enum.EnumMeta/EnumType, and no base is a call (a call base makes it only "maybe").
+.decl naming_metaclass(c: node)
+naming_metaclass(c) :- naming_meta_any(c), !naming_call_base(c).
+.decl naming_meta_any(c: node)
+naming_meta_any(c) :- class_def(c, q), subclass(q, b), naming_meta_base(b).
+naming_meta_any(c) :- naming_base(c, s), kind(s, "subscript"), field(s, "value", v), sym_of(v, "builtins.type").
+naming_meta_any(c) :- naming_base(c, e), kind(e, "call"), field(e, "function", g), sym_of(g, "builtins.type"),
+    field(e, "arguments", al), count : { child(al, a, _), !kind(a, "comment") } = 1.
+.decl naming_base(c: node, e: node)  // e is a positional base of class c
+naming_base(c, e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _),
+    !kind(e, "keyword_argument"), !kind(e, "comment").
+.decl naming_call_base(c: node)
+naming_call_base(c) :- naming_base(c, e), kind(e, "call").
+.decl naming_meta_base(q: symbol)
+naming_meta_base("builtins.type"). naming_meta_base("abc.ABCMeta"). naming_meta_base("enum.EnumMeta"). naming_meta_base("enum.EnumType").
+// naming_maybe_metaclass(c): Ruff cannot tell. A metaclass base beside a call base (`type(Protocol)`,
+// `six.with_metaclass(…)`), or no metaclass base but bases and a `__new__(cls, name, bases, ns, **kw)` with no
+// *args, as a metaclass's.
+.decl naming_maybe_metaclass(c: node)
+naming_maybe_metaclass(c) :- naming_meta_any(c), naming_call_base(c).
+naming_maybe_metaclass(c) :- naming_base(c, _), !naming_meta_any(c), in_class(f, c), def_name(f, "__new__"),
+    count : { sig_param(f, _, _, _, _, _, _) } = 5, param_named(f, _, "kwarg"), !param_named(f, _, "vararg").
+.decl naming_first_param(f: node, nm: node, x: symbol)
+naming_first_param(f, nm, x) :- naming_positional(f, nm, i), text(nm, x), count : { naming_positional(f, _, j), j < i } = 0.
+.decl naming_positional(f: node, nm: node, i: number)  // a posonly or plain parameter at position i
+naming_positional(f, nm, i) :- sig_param(f, _, nm, i, k, _, _), (k = "posonly" ; k = "pos").
+
+// ---- 4. sites ----------------------------------------------------------------------------------------------------
+// in_class(n, c): n's nearest scope is class c (a method, a class attribute).
+.decl in_class(n: node, c: node)
+in_class(n, c) :- nearest(n, c, scope), kind(c, "class_definition").
+// store_name(n, x, s): the identifier n is a Name in store context, binding x, visited in scope s (a comprehension
+// for its targets and walruses, as Ruff's current scope is). Ruff's ExprContext::Store sites: assignment targets
+// (`x = …`, `x: int`, `x += 1`), loop targets, `with … as x`, walrus, `type X = …` and match captures; not
+// parameters, imports, defs, `except … as x` or `global x`.
+.decl store_name(n: node, x: symbol, s: node)
+store_name(n, x, s) :- expr_ctx(n, "store"), kind(n, "identifier"), text(n, x), nearest(n, s, lscope).
+store_name(n, x, s) :- kind(w, "named_expression"), field(w, "name", n), text(n, x), nearest(n, s, lscope).  // no expr_ctx row
+// store_stmt(n, a): the assignment statement around store n (for `a = B = f()`, the outer one).
+.decl store_stmt(n: node, a: node)
+store_stmt(n, a) :- store_name(n, _, _), inside(n, a, "assignment"), !inside(a, _, "assignment").
+// makes_type(a, t): the value of assignment a is a call that makes a type, or a is annotated TypeAlias.
+//   MyObj = collections.namedtuple("MyObj", ["a"])      makes_type "namedtuple"
+.decl makes_type(a: node, t: symbol)
+makes_type(a, t) :- store_stmt(_, a), assign_value(a, v), kind(v, "call"), field(v, "function", g), sym_of(g, q),
+    type_maker(q, t).
+makes_type(a, "alias") :- store_stmt(_, a), field(a, "type", ty), child(ty, e, 0), sym_of(e, q),
+    (q = "typing.TypeAlias" ; q = "typing_extensions.TypeAlias").
+.decl store_makes(n: node, t: symbol)  // store n is a target of an assignment that makes_type t
+store_makes(n, t) :- store_stmt(n, a), makes_type(a, t).
+.decl type_maker(q: symbol, t: symbol)
+type_maker("collections.namedtuple", "namedtuple"). type_maker("typing.NamedTuple", "namedtuple").
+type_maker("typing_extensions.NamedTuple", "namedtuple"). type_maker("typing.TypedDict", "typeddict").
+type_maker("typing_extensions.TypedDict", "typeddict"). type_maker("typing.TypeVar", "typevar").
+type_maker("typing_extensions.TypeVar", "typevar"). type_maker("typing.NewType", "typevar").
+type_maker("typing_extensions.NewType", "typevar").
+// alias_import(a, name, asname): an aliased import; name is the imported name's last segment, as Ruff reads it.
+//   import os.path as P      alias_import(<os.path as P>, "path", "P")
+//   from a import B as c     alias_import(<B as c>, "B", "c")
+.decl alias_import(a: node, name: symbol, asname: symbol)
+alias_import(a, x, l) :- import_alias(i, a, m, "", l), kind(a, "aliased_import"), kind(i, "import_statement"),
+    x = @replace_all(m, "^.*\\.", "").
+alias_import(a, x, l) :- kind(i, "import_from_statement"), field(i, "name", a), kind(a, "aliased_import"),
+    field(a, "name", d), text(d, x), field(a, "alias", al), text(al, l).   // read as written: relative ones too

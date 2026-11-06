@@ -1,0 +1,215 @@
+// tsx/react: React as eslint-plugin-react and eslint-plugin-react-hooks see it: which files render with React, JSX
+// open tags and their props, React.createElement calls, and class components. Builds on tsx/jsx (elements,
+// tags, function components), tsx/names (sym_of, ref_site) and tsx/eslint-a-common (call_arg, deparen,
+// function_kind, function_node).
+//
+// What a rule gets from this library:
+//   files
+//     react_doc(d)            document d's JSX is React's, or of no known library (the JSON's file.jsxRuntime gate)
+//     pragma(d, p)            the name React is read under in d: "React", or the first `@jsx X.y` comment's X
+//   JSX
+//     jsx_open(e, o)          o holds element e's name and props: the open tag, or e itself when self-closing
+//     react_open(e, o)        the same, in a react_doc file: where the React ports look
+//     open_name(o, x)         the tag's text: "div", "Foo.Bar", "svg:path"; fragments have none
+//     dom_open(o)             the tag is a DOM element: its text starts with a lower-case letter (isDOMComponent)
+//     plain_tag(o, x)         the tag is a bare name x: <button>, <Foo>; not <a.b>, <svg:path>
+//     jsx_prop(o, x, a)       a is the prop of o named x, as written: <a href="…">, <use xlink:href=…>
+//     last_prop(o, x, a)      a is the last prop of o named x: the one React keeps
+//     jsx_spread(o, s)        s is a `{...props}` of o
+//     prop_value(a, v)        v is prop a's value: the string, or what {…} holds; a bare `disabled` has none
+//     prop_str(a, s)          prop a's static string: href="x", href={"x"}, href={`x`}
+//     jsx_string(v, s)        s is JSX attribute string v as written between its quotes: JSX has no escapes
+//     jsx_children(e)         element e has a child: an element, an expression or non-blank text
+//   createElement
+//     create_element(c)       c calls React.createElement (or a createElement taken from React)
+//                             (its arguments are eslint-a-common's call_arg(c, a, i), from 0)
+//     create_prop(c, x, p)    p is the property of c's props object literal keyed x: { href: "…" }, { href }
+//     create_key(c, x, p)     the same where the key is a name, as the rules' `prop.key.name` reads it: `x:`,
+//                             `{ x }`, `x() {}` and `[x]`, but not "x"
+//     key_ident(p, x)         property p of any object literal has such a key x
+//     create_tag(c, x)        c's type argument is the string x: createElement("button")
+//     create_dom(c)           c's type argument is a string starting with a lower-case letter: createElement("div")
+//   class components (eslint-plugin-react's isES5Component, isES6Component)
+//     class_component(k)      class k extends Component, PureComponent, React.Component or React.PureComponent
+//     create_class(k)         object k is the spec of createReactClass({…}) or React.createReactClass({…})
+//     react_component(k)      either: the node a component's members are read from
+//     comp_member(k, m, x)    m is a member of component k named x: a method, a field, a spec property
+//
+// The pragma: eslint-plugin-react reads React's name from the first comment with `@jsx X`, else settings
+// (react.pragma), else "React". Settings are not modelled; the comment is.
+//   /** @jsx Preact.h */   → pragma "Preact"
+#include "tsx/jsx.rr"
+#include "tsx/eslint-a-common.rr"
+
+// ---- files ----------------------------------------------------------------------------------------------------
+// The React ports run only on files whose JSX runtime is React's or unknown. A file names another JSX library
+// (Rerail's FileGates, native/src/code_rule_dsl/language.rs) by
+//   a `@jsxImportSource preact` comment naming another library (React, Emotion and Theme UI are React's),
+//   a top-level `import { h } from "preact"` (or createElement) from another JSX library,
+//   or, failing both, a package.json that depends on another JSX library and not on React, react-dom,
+//   react-native or next.
+.decl react_doc(d: number)
+react_doc(d) :- doc(d, _, _), !other_jsx(d).
+.decl other_jsx(d: number)
+other_jsx(d) :- import_source_names(d, "other").
+other_jsx(d) :- !import_source_names(d, _), factory_import(d).
+other_jsx(d) :- !import_source_names(d, _), !factory_import(d), !jsx_pragma_react(d), doc(d, p, _),
+    package_for(p, dir), deps_on(dir, "other"), !deps_on(dir, "react").
+// import_source_names(d, r): d's first @jsxImportSource comment names a library of runtime r.
+.decl import_source_names(d: number, r: symbol)
+import_source_names(d, r) :- jsx_source(d, src), jsx_source_runtime(src, r).
+.decl jsx_source(d: number, src: symbol)  // the first comment's @jsxImportSource
+jsx_source(d, src) :- first_source_comment(d, c), comment(c, t), match(".*@jsxImportSource\\s+(?<x>\\S+).*", t),
+    src = x.
+.decl first_source_comment(d: number, c: node)
+first_source_comment(d, c) :- docof(c, d), i = min j : { kind(n, "comment"), docof(n, d), comment(n, t),
+    contains("@jsxImportSource", t), visit_index(n, j) }, kind(c, "comment"), visit_index(c, i), docof(c, d).
+.decl jsx_source_runtime(src: symbol, r: symbol)
+jsx_source_runtime(src, r) :- jsx_library(p, r), (src = p ; prefix(cat(p, "/"), src)), jsx_source(_, src).
+.decl jsx_library(p: symbol, r: symbol)  // @jsxImportSource packages, by runtime
+jsx_library("react", "react"). jsx_library("@emotion/react", "react"). jsx_library("theme-ui", "react").
+jsx_library("@theme-ui/core", "react").
+jsx_library("preact", "other"). jsx_library("solid-js", "other"). jsx_library("vue", "other").
+jsx_library("@stencil/core", "other"). jsx_library("hono", "other"). jsx_library("@builder.io/qwik", "other").
+jsx_library("inferno", "other"). jsx_library("mithril", "other"). jsx_library("hyperapp", "other").
+// jsx_pragma_react(d): a `@jsx React.createElement` comment says React.
+.decl jsx_pragma_react(d: number)
+jsx_pragma_react(d) :- pragma_comment(d, f), (f = "React" ; prefix("React.", f)).
+// factory_import(d): import { h } from "@stencil/core", at the top level.
+.decl factory_import(d: number)
+factory_import(d) :- kind(p, "program"), docof(p, d), child(p, i, _), kind(i, "import_statement"), field(i, "source", s), str(s, m),
+    factory_source(m), has(i, sp, "import_specifier"), field(sp, "name", n), (text(n, "h") ; text(n, "createElement")).
+.decl factory_source(m: symbol)
+factory_source("@stencil/core"). factory_source("preact"). factory_source("vue"). factory_source("solid-js").
+factory_source("solid-js/h"). factory_source("hyperapp"). factory_source("mithril").
+// deps_on(dir, r): the package.json in dir lists a package of runtime r among any kind of dependency.
+.decl deps_on(dir: symbol, r: symbol)
+deps_on(dir, r) :- package_dep(dir, _, m), dep_package(m, r).
+.decl package_dep(dir: symbol, l: symbol, m: symbol)  // "dependencies/react": a key of the list l
+package_dep(dir, l, m) :- dep_list(l), dep_package(m, _), package_field(dir, cat(l, "/", @replace_all(m, "/", "~1")), _).
+.decl dep_list(l: symbol)
+dep_list("dependencies"). dep_list("devDependencies"). dep_list("peerDependencies"). dep_list("optionalDependencies").
+.decl dep_package(m: symbol, r: symbol)
+dep_package("react", "react"). dep_package("react-dom", "react"). dep_package("react-native", "react").
+dep_package("next", "react").
+dep_package("vue", "other"). dep_package("@stencil/core", "other"). dep_package("preact", "other").
+dep_package("solid-js", "other"). dep_package("@builder.io/qwik", "other"). dep_package("inferno", "other").
+dep_package("mithril", "other").
+
+// pragma(d, p): eslint-plugin-react's getFromContext. The first comment with `@jsx X.y` gives X.
+.decl pragma(d: number, p: symbol)
+pragma(d, p) :- pragma_comment(d, f), match("(?<x>[_$a-zA-Z][_$a-zA-Z0-9]*)(\\..*)?", f), p = x.
+pragma(d, "React") :- doc(d, _, _), !pragma_comment(d, _).
+pragma(d, "React") :- pragma_comment(d, f), !match("[_$a-zA-Z][_$a-zA-Z0-9]*(\\..*)?", f).
+.decl pragma_comment(d: number, f: symbol)  // the first comment with @jsx (not @jsxImportSource, @jsxFrag…)
+pragma_comment(d, f) :- i = min j : { kind(n, "comment"), docof(n, d), comment(n, t),
+    match(".*@jsx\\s+\\S+.*", t), visit_index(n, j) }, kind(c, "comment"), visit_index(c, i), docof(c, d),
+    comment(c, t), match(".*@jsx\\s+(?<x>\\S+).*", t), f = x.
+
+// ---- JSX ------------------------------------------------------------------------------------------------------
+// Props live on the open tag: <a href="x">…</a> is a jsx_element whose open_tag is a jsx_opening_element, and <a/>
+// is a jsx_self_closing_element that holds them itself.
+.decl jsx_open(e: node, o: node)
+jsx_open(e, o) :- kind(e, "jsx_element"), field(e, "open_tag", o).
+jsx_open(e, e) :- kind(e, "jsx_self_closing_element").
+.decl react_open(e: node, o: node)
+react_open(e, o) :- jsx_open(e, o), docof(o, d), react_doc(d).
+.decl open_name(o: node, x: symbol)
+open_name(o, x) :- jsx_open(_, o), field(o, "name", n), text(n, x).
+// plain_tag(o, x): the tag is the bare name x: <button>, <Foo>, but not <a.b>, <svg:path> or a fragment.
+.decl plain_tag(o: node, x: symbol)
+plain_tag(o, x) :- jsx_open(_, o), field(o, "name", n), kind(n, "identifier"), text(n, x).
+// isDOMComponent: /^[a-z]/ on the element type, so <div>, <svg:path> and <a.b> are DOM elements, <Foo> is not.
+.decl dom_open(o: node)
+dom_open(o) :- open_name(o, x), glob("[a-z]**", x).
+// A prop is a jsx_attribute: its name is child 0 (`href`, or a jsx_namespace_name `xlink:href`), its value child 1.
+// A spread `{...rest}` is a jsx_expression in the attribute field.
+.decl jsx_prop(o: node, x: symbol, a: node)
+jsx_prop(o, x, a) :- jsx_open(_, o), field(o, "attribute", a), kind(a, "jsx_attribute"), child(a, n, 0), text(n, x).
+.decl last_prop(o: node, x: symbol, a: node)
+last_prop(o, x, a) :- jsx_prop(o, x, a), count : { jsx_prop(o, x, b), precedes(a, b) } = 0.
+.decl jsx_spread(o: node, s: node)
+jsx_spread(o, s) :- jsx_open(_, o), field(o, "attribute", s), kind(s, "jsx_expression").
+// prop_value(a, v): type="button" gives the string; type={kind} gives `kind`; an empty {} or {/* c */} gives none.
+.decl prop_value(a: node, v: node)
+prop_value(a, v) :- kind(a, "jsx_attribute"), child(a, v, 1), !kind(v, "jsx_expression").
+prop_value(a, v) :- kind(a, "jsx_attribute"), child(a, j, 1), kind(j, "jsx_expression"), child(j, v, _),
+    !kind(v, "comment").
+// A JSX attribute string is not a JavaScript string: <a title="\n"> is a backslash and an n. (HTML entities such
+// as &amp; are decoded by JSX; that is not modelled.)
+.decl jsx_string(v: node, s: symbol)
+jsx_string(v, s) :- kind(v, "string"), child(a, v, 1), kind(a, "jsx_attribute"), text(v, t),
+    s = substr(t, 1, strlen(t) - 2).
+.decl prop_str(a: node, s: symbol)
+prop_str(a, s) :- child(a, v, 1), jsx_string(v, s).
+prop_str(a, s) :- kind(a, "jsx_attribute"), child(a, j, 1), kind(j, "jsx_expression"), prop_value(a, v),
+    (kind(v, "string") ; kind(v, "template_string")), value(v, s).
+// jsx_children(e): what React passes as props.children: a child element or expression, or text other than blanks.
+// That is jsx.rr's content(e, c), for some c.
+.decl jsx_children(e: node)
+jsx_children(e) :- content(e, _).
+
+// ---- createElement --------------------------------------------------------------------------------------------
+// isCreateElement: `React.createElement(…)` with React the pragma, or a bare `createElement(…)` whose binding is
+// taken from React: import { createElement } from "react", const { createElement } = React, or = require("react").
+.decl create_element(c: node)
+create_element(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), field(f, "property", p), text(p, "createElement"), docof(c, d), pragma(d, x), text(o, x).
+create_element(c) :- kind(c, "call_expression"), field(c, "function", f), text(f, "createElement"),
+    kind(f, "identifier"), sym_of(f, "react#createElement").
+create_element(c) :- kind(c, "call_expression"), field(c, "function", f), text(f, "createElement"),
+    kind(f, "identifier"), ref_site(f, site), within(site, v), kind(v, "variable_declarator"), field(v, "value", i),
+    docof(c, d), pragma(d, x), (text(i, x) ; field(i, "object", o), text(o, x)).
+// create_prop: { href: "x" }, { "href": x }, { href }. Computed keys and spreads are left out.
+.decl create_prop(c: node, x: symbol, p: node)
+create_prop(c, x, p) :- create_element(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _), kind(p, "pair"),
+    field(p, "key", k), (kind(k, "property_identifier"), text(k, x) ; kind(k, "string"), str(k, x)).
+create_prop(c, x, p) :- create_element(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _),
+    kind(p, "shorthand_property_identifier"), text(p, x).
+.decl create_key(c: node, x: symbol, p: node)
+create_key(c, x, p) :- create_element(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _), key_ident(p, x).
+.decl key_ident(p: node, x: symbol)  // property p of an object literal has a name as its key
+key_ident(p, x) :- (kind(p, "pair") ; kind(p, "method_definition")), (field(p, "key", k) ; field(p, "name", k)),
+    kind(k, "property_identifier"), text(k, x).
+key_ident(p, x) :- (kind(p, "pair") ; kind(p, "method_definition")), (field(p, "key", k) ; field(p, "name", k)),
+    kind(k, "computed_property_name"), child(k, i, 0), kind(i, "identifier"), text(i, x).
+key_ident(p, x) :- kind(p, "shorthand_property_identifier"), text(p, x).
+// create_tag(c, x): c's type argument is the string x: createElement("button") gives "button".
+.decl create_tag(c: node, x: symbol)
+create_tag(c, x) :- create_element(c), call_arg(c, t, 0), kind(t, "string"), str(t, x).
+.decl create_dom(c: node)
+create_dom(c) :- create_tag(c, x), glob("[a-z]**", x).
+
+// ---- class components -----------------------------------------------------------------------------------------
+// isES6Component: `extends Component`, `extends PureComponent`, or the pragma's: `extends React.Component`.
+//   class Hello extends React.Component { render() { … } }
+.decl class_component(k: node)
+class_component(k) :- (kind(k, "class_declaration") ; kind(k, "class")), child(k, h, _), kind(h, "class_heritage"),
+    child(h, s, 0), component_base(s).
+// TypeScript wraps the superclass in an extends_clause: class A extends React.Component<P> { … }.
+class_component(k) :- (kind(k, "class_declaration") ; kind(k, "class") ; kind(k, "abstract_class_declaration")),
+    child(k, h, _), kind(h, "class_heritage"), child(h, e, _), kind(e, "extends_clause"), field(e, "value", s),
+    component_base(s).
+.decl component_base(s: node)
+component_base(s) :- kind(s, "identifier"), (text(s, "Component") ; text(s, "PureComponent")).
+component_base(s) :- kind(s, "member_expression"), field(s, "object", o), field(s, "property", p),
+    (text(p, "Component") ; text(p, "PureComponent")), docof(s, d), pragma(d, x), text(o, x).
+// isES5Component: the object passed to createReactClass, bare or off the pragma.
+//   const Hello = createReactClass({ render() { … } });
+.decl create_class(k: node)
+create_class(k) :- kind(k, "object"), child(l, k, _), kind(l, "arguments"), field(c, "arguments", l),
+    field(c, "function", f), (text(f, "createReactClass") ;
+    kind(f, "member_expression"), field(f, "property", p), text(p, "createReactClass"), field(f, "object", o),
+    docof(c, d), pragma(d, x), text(o, x)).
+.decl react_component(k: node)
+react_component(k) :- class_component(k) ; create_class(k).
+// comp_member(k, m, x): `render() {}`, `state = {}`, `static defaultProps = …` in a class body; `render() {}` or
+// `getInitialState: function () {}` in a createReactClass spec.
+.decl comp_member(k: node, m: node, x: symbol)
+comp_member(k, m, x) :- class_component(k), field(k, "body", b), child(b, m, _),
+    (field(m, "name", n) ; field(m, "property", n)), (kind(n, "property_identifier") ; kind(n, "private_property_identifier")),
+    text(n, x).
+comp_member(k, m, x) :- class_component(k), field(k, "body", b), child(b, m, _), (field(m, "name", n) ; field(m, "property", n)),
+    kind(n, "string"), str(n, x).
+comp_member(k, m, x) :- create_class(k), child(k, m, _), (kind(m, "pair"), field(m, "key", n) ;
+    kind(m, "method_definition"), field(m, "name", n)), (kind(n, "property_identifier"), text(n, x) ; kind(n, "string"), str(n, x)).

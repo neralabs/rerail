@@ -1,0 +1,64 @@
+// python/upgrade-typing: when Ruff's pyupgrade rules may rewrite a typing construct to newer syntax (UP006
+// `List[int]` to `list[int]`, UP007 `Union[a, b]` to `a | b`, UP043's shorter Generator arguments).
+//
+// Interface
+//   rewritable(n, m)        newer syntax that needs Python 3.m is fine at node n: in a stub; when the target is
+//                           3.m or later; or, from 3.7, in an annotation of a file with
+//                           `from __future__ import annotations` (it is never evaluated)
+//   pep585(x, b)            typing.x has the builtin (or collections) generic b since Python 3.9 (UP006)
+//   sub_of(s, q)            s is a subscript `X[…]` whose X denotes q (sym_at): "collections.abc.Generator"
+//   up_typing_sub(s, x)     the same for typing.x or typing_extensions.x: `Union[int, str]`, `typing.Union[a, b]`
+//   type_arg(s, i, a)       a is the i-th argument of subscript s, as Ruff's slice: `X[a, b]` and `X[(a, b)]` both
+//                           give a and b; a sits without the `type` wrapper tree-sitter puts around annotations
+//   up_type_nargs(s, k)     s has k arguments
+//   runtime_annotation(n)   n is in an annotation Python evaluates when the code runs: a parameter's, a return's,
+//                           or a module or class variable's, outside stubs and `from __future__ import annotations`,
+//                           below Python 3.14 (PEP 649 defers them all; a local variable's is never evaluated)
+//
+//   # pythonVersion "3.8", with `from __future__ import annotations`
+//   def f(x: List[int]): ...     rewritable(<List>, 9): only an annotation
+//   y = List[int]                no row: evaluated at runtime, and list[int] needs 3.9
+//
+// tree-sitter writes a subscript in an annotation as a generic_type: `x: Union[a, b]` is generic_type(identifier,
+// type_parameter(type(a), type(b))); elsewhere, and after an attribute (`typing.Union[a, b]`), it is a subscript.
+// Ruff's AST has one Subscript for both, and no parentheses: `Union[(a, b)]` is `Union[a, b]`.
+#include "python/upgrade.rr"
+//   targets(m), stub_file(d), future_annotations(d), typing_only(n), typing_ref(e, x)
+
+.decl rewritable(n: node, m: number)
+rewritable(n, m) :- (typing_ref(n, _) ; up_typing_sub(n, _)), want(m), docof(n, d),
+    (stub_file(d) ; targets(m) ; targets(7), typing_only(n), future_annotations(d)).
+.decl want(m: number)  // the versions the rules ask about
+want(9). want(10). want(13).
+
+.decl pep585(x: symbol, b: symbol)
+pep585("List", "list"). pep585("Dict", "dict"). pep585("Set", "set"). pep585("FrozenSet", "frozenset").
+pep585("Tuple", "tuple"). pep585("Type", "type"). pep585("Deque", "collections.deque").
+pep585("DefaultDict", "collections.defaultdict").
+
+// ---- subscripts --------------------------------------------------------------------------------------------------
+.decl sub_of(s: node, q: symbol)
+sub_of(s, q) :- kind(s, "subscript"), field(s, "value", v), sym_at(v, q).
+sub_of(s, q) :- kind(s, "generic_type"), child(s, v, 0), sym_at(v, q).
+.decl up_typing_sub(s: node, x: symbol)
+up_typing_sub(s, x) :- sub_of(s, q), split_dot(q, m, x), typing_mod(m).
+// sub_item(s, i, e): the i-th item between the brackets, as written; comments are not counted.
+.decl sub_item(s: node, i: number, e: node)
+sub_item(s, i, e) :- sub_of(s, _), kind(s, "subscript"), field(s, "subscript", e), child(s, e, j),
+    i = count : { field(s, "subscript", e2), child(s, e2, j2), j2 < j }.
+sub_item(s, i, e) :- sub_of(s, _), kind(s, "generic_type"), child(s, p, 1), kind(p, "type_parameter"),
+    child(p, t, j), kind(t, "type"), child(t, e, 0), i = count : { child(p, t2, j2), kind(t2, "type"), j2 < j }.
+.decl type_arg(s: node, i: number, a: node)
+type_arg(s, i, a) :- sub_item(s, i, e), !lone_tuple(s), unparen(e, a).
+type_arg(s, i, a) :- lone_tuple(s), sub_item(s, 0, e), unparen(e, t), child(t, c, i), unparen(c, a).
+.decl lone_tuple(s: node)  // `X[(a, b)]`, or `X[()]`: the tuple is the slice
+lone_tuple(s) :- sub_item(s, 0, e), !sub_item(s, 1, _), unparen(e, t), kind(t, "tuple").
+.decl up_type_nargs(s: node, k: number)
+up_type_nargs(s, k) :- sub_of(s, _), k = count : { type_arg(s, _, _) }.
+
+// ---- evaluated annotations -----------------------------------------------------------------------------------
+.decl runtime_annotation(n: node)
+runtime_annotation(n) :- ann_root(r), (n = r ; within(n, r)), !local_ann(r), !targets(14), docof(n, d),
+    !stub_file(d), !future_annotations(d).
+.decl local_ann(r: node)  // `x: T` inside a def: Python never evaluates it
+local_ann(r) :- kind(a, "assignment"), field(a, "type", r), py_frame(a, _).

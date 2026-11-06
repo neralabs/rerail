@@ -1,0 +1,19 @@
+// python/misc-comments: what Ruff reads in comments: task tags (flake8-fixme FIX, and the task tags
+// flake8-todos and eradicate skip).
+//
+// Interface
+//   fixme_tag(c, t, d)    comment c holds the task tag t ("todo", "fixme", "xxx" or "hack"), written d in any
+//                        case, as a word right after a `#` and any spaces: `# TODO: x`, `# fixme`, `# a # TODO`;
+//                        the first one when there are several
+//
+// Ruff background
+//   Ruff's TodoDirective strips the leading `#`s and spaces, then takes the first word (a run of letters and
+//   digits): a directive when it is one of the tags, case ignored. Otherwise it tries again after the next
+//   `#`. So the tag must start the comment or follow a `#`, and be a whole word.
+//     # TODO: todo            fixme_tag(c, "todo", "TODO")
+//     # test # TODO: todo     fixme_tag(c, "todo", "TODO"): after the second `#`
+//     # TODOS                 no row: not the whole word
+//     # see todo              no row: not after a `#`
+.decl fixme_tag(c: node, t: symbol, d: symbol)
+fixme_tag(c, @lower(d), d) :- comment(c, _), text(c, s),
+    match("[\\s\\S]*?#\\s*(?<d>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])([^A-Za-z0-9][\\s\\S]*)?", s).

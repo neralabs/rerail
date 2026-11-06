@@ -1,0 +1,501 @@
+// python/typing: type annotations, typing names and stub-file shapes, as Ruff's flake8-pyi rules (PYI) read them.
+//
+// Interface
+//   1. Stubs:       in_stub(n)              node n is in a `.pyi` file (python/ast's stub_file(d) for a document)
+//                   if_test(i, t)           t is the test of `if` statement i, unparenthesised (not its elifs)
+//                   branch_test(i, t, e)    t is the test of if or elif clause i; e "else" when the chain ends in
+//                                           an `else`, "" when not
+//                   test_part(t, v)         v is t, or one operand of t when t is an `and`/`or` (one level)
+//                   stub_test(c)            c is an `if` test, or one operand of it (test_part), in a stub
+//   2. sys checks:  sys_attr(e, x)          e is `sys.x`, however imported
+//                   version_cmp(c, form, op, r)  c is `sys.version_info… op r`; form "whole", "major" `[0]`,
+//                                           "slice1" `[:1]`, "slice2" `[:2]`, "other"
+//                   pyi_int(e)              e is an int literal (`3`, `0x8`; not `True`, not `-1`)
+//                   int_tuple(e, k)         e is a tuple of k int literals;  tuple_len(e, k): of k elements
+//   3. Names:       typing_sym(e, x)        e resolves to `typing.x` or `typing_extensions.x`
+//                   typevar_call(c, k)      c calls TypeVar, ParamSpec or TypeVarTuple (k)
+//                   simple_assign(a, t, v)  a is `t = v` with one target: no chain, no annotation
+//                   plain_target(t, x)       target t is the plain name x (`x`, or `(x)`)
+//   4. Bodies:      ellipsis_stmt(s), pass_stmt(s), class_body(c, b), def_body(f, b), body_one(b, s)
+//                   (docstrings: python/ast's doc_stmt(s, e) and docstring(o, e))
+//                   pyi_method(c, f, x)     def f, named x, has class c as its nearest scope
+//                   class_member(c, f, x)   … and is a statement of c's body itself, not under an `if`
+//                   abstract(f), returns(f, t), pos_kind(k)
+//   5. Type exprs:  type_bare(n, m)         n without `type` wrappers and parentheses
+//                   tsub(s, h, i, a)        s is `h[...]`, a its i-th argument, bare (subscript or generic_type)
+//                   tsub_n(s, k), typing_subscript(s, x), builtin_sub(s, x)
+//                   type_ctx(n)             n is in a type expression (Ruff's in_type_definition)
+//                   union(u), union_part(u, m), union_top(u), union_leaf(u, m)
+//                   literal_top(l), literal_leaf(l, m), lit_key(m, k)
+//   6. Stub values: simple_value(e, lvl)    a default or value a stub may keep ("top", or "item": no containers)
+//                   alias_value(e), pep604(e), special_name(t), stub_stmt(a), typevar_like(v)
+//   7. Private:     unused_private(s, x, site)   private name x, last bound at site in scope s, never read
+//                   class_base_sym(c, q), unread_comp_var(a, v, x), in_dunder_all(n)
+//   8. Methods:     method_kind(f, k)       "static", "class", "new" or "instance" (Ruff's function_type)
+//                   decorated(f, x), metaclass(c) (Yes or Maybe), metaclass_yes(c), in_enum(a)
+//                   first_param(f, p, ann), typevar_name(e, x)
+//                   alias_name(n, x), iter_head(t, x), abc_head(t, x), abc_base(c, x), class_ancestor(c, q)
+//
+// Python background
+//   - A stub (`.pyi`) is read by type checkers only. They evaluate few tests: `sys.version_info` against a
+//     tuple of ints, `sys.version_info[0]` against an int, `sys.platform` against a string with `==`/`!=`.
+//   - tree-sitter parses an annotation as a `type`, and an annotation's `X[a, b]` with a plain name X as a
+//     `generic_type` whose arguments are `type` nodes; outside annotations, or with a dotted head, it is a
+//     `subscript`. tsub reads both.
+//   - An annotation's `A[x] | B` is a `union_type` of `type` nodes; other `|` unions are binary_operators.
+//   - `Union[A, Union[B, C]]` and `A | (B | C)` are one union of A, B and C to Ruff, in that order.
+#include "python/pyflakes.rr"   // plain_str, py_literal, unparen, py_if, cmp
+
+// ---- 1. stubs ----------------------------------------------------------------------------------------------------
+// in_stub(n): n is in a stub file.
+//   x: int            in a.pyi: stub
+.decl in_stub(n: node)
+in_stub(n) :- docof(n, d), stub_file(d).
+// if_test(i, t): `if t:`. Ruff's stub checks on tests (PYI002, PYI003-005, PYI007-008) read only the `if`
+// clause, not its elifs.
+.decl if_test(i: node, t: node)
+if_test(i, t) :- kind(i, "if_statement"), field(i, "condition", c), unparen(c, t).
+// branch_test(i, t, e): every test of an if chain, with whether the chain has an else (PYI006, PYI066).
+//   if v < (3, 8): …       branch_test(<if>, <v < (3, 8)>, "else")
+//   else: …
+.decl branch_test(i: node, t: node, e: symbol)
+branch_test(i, t, e) :- py_if(i, c, _), unparen(c, t), chain_of(i, s), chain_else(s, e).
+.decl chain_of(i: node, s: node)
+chain_of(s, s) :- kind(s, "if_statement").
+chain_of(e, s) :- kind(e, "elif_clause"), child(s, e, _), kind(s, "if_statement").
+.decl chain_else(s: node, e: symbol)
+chain_else(s, "else") :- kind(s, "if_statement"), child(s, x, _), kind(x, "else_clause").
+chain_else(s, "") :- kind(s, "if_statement"), !has_else(s).
+.decl has_else(s: node)
+has_else(s) :- kind(s, "if_statement"), child(s, x, _), kind(x, "else_clause").
+// test_part(t, v): Ruff checks each value of a top-level `and`/`or`, not deeper.
+//   if a and (b or c):     test_part: a, and the `b or c` (unparenthesised)
+.decl test_part(t: node, v: node)
+test_part(t, t) :- (if_test(_, t) ; branch_test(_, t, _)), !kind(t, "boolean_operator").
+test_part(t, m) :- (if_test(_, t) ; branch_test(_, t, _)), bool_operand(t, _, v), unparen(v, m).
+// stub_test(c): c is the `if` test, or one operand of its top-level `and`/`or`, in a stub: what PYI003-005 and
+// PYI007-008 read as one comparison.
+//   if sys.version_info[1:] == (8,) and sys.platform == "linux": …     stub_test: each comparison
+.decl stub_test(c: node)
+stub_test(c) :- if_test(_, t), in_stub(t), test_part(t, c).
+
+// ---- 2. sys checks -----------------------------------------------------------------------------------------------
+// sys_attr(e, x): e is `sys.version_info` or `sys.platform`, however imported (`from sys import platform`).
+.decl sys_attr(e: node, x: symbol)
+sys_attr(e, x) :- sym_of(e, q), split_dot(q, "sys", x).
+// version_cmp(c, form, op, r): one comparison whose left side is sys.version_info, or one subscript of it:
+//   sys.version_info >= (3, 8)        "whole"
+//   sys.version_info[0] == 3          "major"
+//   sys.version_info[:2] >= (3, 8)    "slice2"     ([:1] is "slice1")
+//   sys.version_info[1:] == (8,)      "other": a start, a step, or another index
+.decl version_cmp(c: node, form: symbol, op: symbol, r: node)
+version_cmp(c, "whole", o, r) :- cmp(c, o, l0, r0), unparen(l0, l), sys_attr(l, "version_info"), unparen(r0, r).
+version_cmp(c, f, o, r) :- cmp(c, o, l0, r0), unparen(l0, l), kind(l, "subscript"), field(l, "value", v0),
+    unparen(v0, v), sys_attr(v, "version_info"), field(l, "subscript", s), version_index(s, f), unparen(r0, r).
+.decl version_index(s: node, f: symbol)
+version_index(s, "major") :- pyi_int(s), value(s, "0").
+version_index(s, "slice1") :- stop_slice(s, "1").
+version_index(s, "slice2") :- stop_slice(s, "2").
+version_index(s, "other") :- field(l, "subscript", s), kind(l, "subscript"), !version_index_known(s).
+.decl version_index_known(s: node)
+version_index_known(s) :- pyi_int(s), value(s, "0").
+version_index_known(s) :- stop_slice(s, "1").
+version_index_known(s) :- stop_slice(s, "2").
+// stop_slice(s, v): `[:v]`, an int literal stop and no start or step (`[:2j]` is not one).
+.decl stop_slice(s: node, v: symbol)
+stop_slice(s, v) :- kind(s, "slice"), match(":[^:]*:?", s), child(s, u, 0), !child(s, _, 1), pyi_int(u),
+    value(u, v).
+// pyi_int(e): an int literal. `True` and `-1` are not (Ruff's is_int_constant).
+.decl pyi_int(e: node)
+pyi_int(e) :- kind(e, "integer"), !match(".*[jJ]", e).
+// int_tuple(e, k): a tuple of k ints, each maybe parenthesised: `(3, 8)` and `(3, (8))` give 2, `()` 0. A list is
+// not a tuple.
+.decl int_tuple(e: node, k: number)
+int_tuple(e, k) :- tuple_len(e, k), count : { child(e, x, _), !kind(x, "comment"), unparen(x, m), !pyi_int(m) } = 0.
+// tuple_len(e, k): e is a tuple of k elements, of any kind: `(3, "8", 1)` gives 3.
+.decl tuple_len(e: node, k: number)
+tuple_len(e, k) :- kind(e, "tuple"), k = count : { child(e, x, _), !kind(x, "comment") }.
+
+// ---- 3. names ----------------------------------------------------------------------------------------------------
+// typing_sym(e, x): e names typing.x or typing_extensions.x (Ruff's match_typing_expr).
+//   from typing import Literal; Literal       typing_sym(<Literal>, "Literal")
+//   import typing_extensions as te; te.Self   typing_sym(<te.Self>, "Self")
+.decl typing_sym(e: node, x: symbol)
+typing_sym(e, x) :- sym_of(e, q), split_dot(q, m, x), typing_mod(m).
+// typevar_call(c, k): `TypeVar("T")`, `ParamSpec("P")`, `TypeVarTuple("Ts")`. _typeshed re-exports them.
+.decl typevar_call(c: node, k: symbol)
+typevar_call(c, k) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), sym_of(f, q), split_dot(q, m, k),
+    typevar_kind(k), (typing_mod(m) ; m = "_typeshed").
+.decl typevar_kind(k: symbol)
+typevar_kind("TypeVar"). typevar_kind("ParamSpec"). typevar_kind("TypeVarTuple").
+// simple_assign(a, t, v): Ruff's `Stmt::Assign` with exactly one target, v without parentheses.
+//   T = TypeVar("T")        simple_assign: t `T`
+//   T = U = TypeVar("T")    no row: two targets.   T: Any = …   no row: an AnnAssign
+.decl simple_assign(a: node, t: node, v: node)
+simple_assign(a, t, v) :- asgstmt(a, _), !field(a, "type", _), field(a, "left", t), field(a, "right", v0),
+    !kind(v0, "assignment"), unparen(v0, v).
+// plain_target(t, x): t is the name x. `(x) = …` is a one-element tuple_pattern to tree-sitter, a Name to Python.
+.decl plain_target(t: node, x: symbol)
+plain_target(t, x) :- kind(t, "identifier"), text(t, x).
+plain_target(t, x) :- kind(t, "tuple_pattern"), child(t, n, 0), !child(t, _, 1), !match(".*,\\s*\\)", t),
+    plain_target(n, x).
+
+// ---- 4. bodies ---------------------------------------------------------------------------------------------------
+// ellipsis_stmt(s) / pass_stmt(s): the statements `...` and `pass`.
+.decl ellipsis_stmt(s: node)
+ellipsis_stmt(s) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), kind(e, "ellipsis").
+.decl pass_stmt(s: node)
+pass_stmt(s) :- kind(s, "pass_statement").
+// class_body(c, b) / def_body(f, b): the block of a class or a def.
+.decl class_body(c: node, b: node)
+class_body(c, b) :- kind(c, "class_definition"), field(c, "body", b).
+.decl def_body(f: node, b: node)
+def_body(f, b) :- kind(f, "function_definition"), field(f, "body", b).
+// body_one(b, s): s is the only statement of block b (comments not counted).
+.decl body_one(b: node, s: node)
+body_one(b, s) :- body_len(b, 1), body_stmt(b, s, 0).
+// pyi_method(c, f, x): def f, named x, has class c as its nearest scope: directly in the body, or under an `if`
+// or `try` there (decorated or not). Ruff's checks that ask for the current scope read this.
+//   class C:
+//       def __str__(self) -> str: ...     pyi_method(<C>, <def>, "__str__")
+.decl pyi_method(c: node, f: node, x: symbol)
+pyi_method(c, f, x) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition"),
+    def_name(f, x).
+// class_member(c, f, x): def f, named x, is a statement of class c's body itself (decorated or not), not under
+// an `if`: Ruff's checks that ask for the parent statement read this.
+.decl class_member(c: node, f: node, x: symbol)
+class_member(c, f, x) :- pyi_method(c, f, x), class_body(c, b), (child(b, f, _) ;
+    child(b, d, _), kind(d, "decorated_definition"), field(d, "definition", f)).
+// abstract(f): f is decorated `@abstractmethod` (or abc's abstractproperty, abstractclassmethod,
+// abstractstaticmethod): Ruff's is_abstract.
+.decl abstract(f: node)
+abstract(f) :- decorator(f, e), sym_of(e, q), split_dot(q, "abc", x),
+    match("abstract(method|property|classmethod|staticmethod)", x).
+// returns(f, t): t is f's return annotation, bare.
+.decl returns(f: node, t: node)
+returns(f, t) :- kind(f, "function_definition"), field(f, "return_type", r), type_bare(r, t).
+
+// ---- 5. type expressions -----------------------------------------------------------------------------------------
+// type_bare(n, m): m is n without its `type` wrapper and parentheses. `x: (int)` gives the identifier.
+.decl type_bare(n: node, m: node)
+type_bare(n, n) :- kind(n, k), k != "type", k != "parenthesized_expression".
+type_bare(n, m) :- kind(n, "type"), child(n, c, 0), type_bare(c, m).
+type_bare(n, m) :- kind(n, "parenthesized_expression"), child(n, c, 0), type_bare(c, m).
+// pos_kind(k): the sig_param kinds that take positional arguments.
+.decl pos_kind(k: symbol)
+pos_kind("posonly"). pos_kind("pos").
+
+// ---- 6. stub values ----------------------------------------------------------------------------------------------
+// What a stub may keep as a default or an assigned value (PYI011, PYI014, PYI015, PYI052): Ruff's
+// is_valid_default_value_with_annotation. Everything is looked at without parentheses.
+//   simple_value(e, "top"): a literal (str, bytes, number, bool, None, `...`; not an f-string); `-1`, `-1.5`, `-1j`,
+//     `-math.inf` (and -e, -pi, -tau);
+//     `1 + 2j` or `-1 - 2j` with a real part of at most 10 characters; math.pi, math.e, math.tau, math.inf,
+//     math.nan and the plain sys constants (sys.maxsize, sys.platform, …); a list, tuple or set of at most 10,
+//     or a dict of at most 10 pairs, whose items are simple values themselves but not containers.
+//   simple_value(e, "item"): the same without containers.
+//     def f(a=[1, 2], b=[[1]], c=os.sep): ...    a simple; b and c not
+.decl simple_value(e: node, lvl: symbol)
+simple_value(e, "item") :- simple_item(e).
+simple_value(e, "top") :- simple_item(e).
+simple_value(e, "top") :- unparen(e, m), (kind(m, "list") ; kind(m, "tuple") ; kind(m, "set")),
+    count : { child(m, x, _), !kind(x, "comment") } <= 10, count : { child(m, x, _), !kind(x, "comment"),
+    !simple_item(x) } = 0.
+simple_value(e, "top") :- unparen(e, m), kind(m, "dictionary"), count : { child(m, x, _), !kind(x, "comment") } <= 10,
+    count : { child(m, x, _), !kind(x, "comment"), !simple_pair(x) } = 0.
+.decl simple_item(e: node)
+simple_item(e) :- unparen(e, m), simple_scalar(m).
+.decl simple_pair(p: node)
+simple_pair(p) :- kind(p, "pair"), field(p, "key", k), field(p, "value", v), simple_item(k), simple_item(v).
+.decl simple_scalar(m: node)
+simple_scalar(m) :- py_literal(m).
+simple_scalar(m) :- kind(m, "unary_operator"), op(m, "-"), field(m, "argument", a0), unparen(a0, a), number_lit(a).
+simple_scalar(m) :- kind(m, "binary_operator"), (op(m, "+") ; op(m, "-")), field(m, "right", r0), unparen(r0, r),
+    complex_lit(r), field(m, "left", l0), unparen(l0, l), real_part(l, t), strlen(t) <= 10.
+simple_scalar(m) :- kind(m, "attribute"), sym_of(m, q), allowed_constant(q).
+simple_scalar(m) :- kind(m, "unary_operator"), op(m, "-"), field(m, "argument", a0), unparen(a0, a),
+    kind(a, "attribute"), sym_of(a, q), split_dot(q, "math", x), (x = "inf" ; x = "e" ; x = "pi" ; x = "tau").
+// real_part(l, t): l is an int or float literal, or one negated; t is the literal's text.
+.decl real_part(l: node, t: symbol)
+real_part(l, t) :- number_lit(l), !complex_lit(l), text(l, t).
+real_part(l, t) :- kind(l, "unary_operator"), op(l, "-"), field(l, "argument", a0), unparen(a0, a), number_lit(a),
+    !complex_lit(a), text(a, t).
+.decl number_lit(e: node)  // an int, float or imaginary literal
+number_lit(e) :- kind(e, "integer").
+number_lit(e) :- kind(e, "float").
+.decl complex_lit(e: node)  // `2j`
+complex_lit(e) :- number_lit(e), match(".*[jJ]", e).
+.decl allowed_constant(q: symbol)
+allowed_constant(@dot("math", x)) :- (x = "inf" ; x = "nan" ; x = "e" ; x = "pi" ; x = "tau").
+allowed_constant(@dot("sys", x)) :- sys_constant(x).
+.decl sys_constant(x: symbol)
+sys_constant("base_prefix"). sys_constant("byteorder"). sys_constant("exec_prefix"). sys_constant("executable").
+sys_constant("hexversion"). sys_constant("maxsize"). sys_constant("platform"). sys_constant("prefix").
+sys_constant("stdin"). sys_constant("stdout"). sys_constant("stderr"). sys_constant("version").
+sys_constant("version_info"). sys_constant("winver").
+// alias_value(e): what an unannotated stub assignment may hold without being a literal: a call, a name, an
+// attribute, a subscript, `...`, None, or a PEP 604 union of names (Ruff's
+// is_valid_default_value_without_annotation).
+//   X = foo.Bar        X = list[int]        X = int | None
+.decl alias_value(e: node)
+alias_value(e) :- unparen(e, m), kind(m, k), alias_kind(k).
+alias_value(e) :- pep604(e).
+.decl alias_kind(k: symbol)
+alias_kind("call"). alias_kind("identifier"). alias_kind("attribute"). alias_kind("subscript"). alias_kind("ellipsis").
+alias_kind("none").
+// pep604(e): e is `A | B | …` whose members are names, attributes, subscripts or None.
+.decl pep604(e: node)
+pep604(e) :- unparen(e, m), kind(m, "binary_operator"), op(m, "|"), field(m, "left", l), field(m, "right", r),
+    pep604_member(l), pep604_member(r).
+.decl pep604_member(e: node)
+pep604_member(e) :- pep604(e).
+pep604_member(e) :- unparen(e, m), kind(m, k), (k = "identifier" ; k = "attribute" ; k = "subscript" ; k = "none").
+// special_name(t): target t is `__all__` at module level, or `__match_args__` / `__slots__` in a class body.
+// Their values have runtime meaning, so the stub rules leave them alone (PYI015, PYI035, PYI052).
+.decl special_name(t: node)
+special_name(t) :- plain_target(t, "__all__"), nearest(t, s, scope), kind(s, "module").
+special_name(t) :- plain_target(t, x), (x = "__match_args__" ; x = "__slots__"), nearest(t, s, scope),
+    kind(s, "class_definition").
+// stub_stmt(a): assignment a is in a stub, outside any function (Ruff skips function bodies).
+.decl stub_stmt(a: node)
+stub_stmt(a) :- kind(a, "assignment"), in_stub(a), !inside(a, _, "function_definition").
+// typevar_like(v): `TypeVar(…)`, `ParamSpec(…)`, `TypeVarTuple(…)` or `NewType(…)`.
+.decl typevar_like(v: node)
+typevar_like(v) :- typevar_call(v, _).
+typevar_like(v) :- kind(v, "call"), field(v, "function", f), typing_sym(f, "NewType").
+
+// ---- 5b. subscripts, unions, literals, type contexts -------------------------------------------------------------
+// tsub(s, h, i, a): s is `h[a0, a1, …]` and a is its i-th argument, bare. tree-sitter writes an annotation's
+// `Name[…]` as a generic_type (arguments are `type` nodes in a type_parameter) and everything else as a subscript.
+// Comments between the arguments are not counted.
+//   x: Literal[1, 2]          generic_type: tsub(s, <Literal>, 0, <1>), tsub(s, <Literal>, 1, <2>)
+//   x: typing.Union[int, str] subscript
+.decl tsub(s: node, h: node, i: number, a: node)
+tsub(s, h, i, a) :- kind(s, "subscript"), field(s, "value", h0), unparen(h0, h), field(s, "subscript", a0),
+    child(s, a0, j), type_bare(a0, a), i = count : { field(s, "subscript", b), child(s, b, k), k < j }.
+tsub(s, h, i, a) :- kind(s, "generic_type"), child(s, h, 0), child(s, tp, 1), kind(tp, "type_parameter"),
+    child(tp, a0, j), !kind(a0, "comment"), type_bare(a0, a),
+    i = count : { child(tp, b, k), k < j, !kind(b, "comment") }.
+// tsub_n(s, k): s has k arguments.
+.decl tsub_n(s: node, k: number)
+tsub_n(s, k) :- tsub(s, _, 0, _), k = count : { tsub(s, _, i, _) }.
+// typing_subscript(s, x): tsub whose head is typing.x (or typing_extensions.x): `Literal[…]`, `Union[…]`.
+.decl typing_subscript(s: node, x: symbol)
+typing_subscript(s, x) :- tsub(s, h, 0, _), typing_sym(h, x).
+// builtin_sub(s, x): tsub whose head is the builtin x: `type[int]`, `list[str]`.
+.decl builtin_sub(s: node, x: symbol)
+builtin_sub(s, x) :- tsub(s, h, 0, _), sym_of(h, q), split_dot(q, "builtins", x).
+
+// type_ctx(n): n is read as a type, Ruff's in_type_definition. The roots are annotations (python/ast's ann_root),
+// the value of `X: TypeAlias = …` and of `type X = …`, `cast(T, …)`'s T, TypeVar's bound and constraints and
+// NewType's base. Below a root every node is a type except inside `Literal[…]` and `Annotated[T, …]`'s
+// metadata. Anywhere, the arguments of a generic subscript (`list[…]`, `type[…]`, a typing name) are types.
+//   class C(list["int"]): ...        "int" is in a type context; C's other bases are not
+//   x: Literal["a"]                  "a" is not: a literal value
+.decl type_root(t: node)
+type_root(t) :- ann_root(t).
+type_root(v) :- kind(a, "assignment"), field(a, "type", t0), type_bare(t0, t), typing_sym(t, "TypeAlias"),
+    field(a, "right", v).
+type_root(v) :- kind(s, "type_alias_statement"), field(s, "right", v).
+type_root(a) :- kind(c, "call"), field(c, "function", f), typing_sym(f, "cast"), field(c, "arguments", al),
+    child(al, a, 0), !kind(a, "keyword_argument").
+type_root(a) :- typevar_call(c, "TypeVar"), field(c, "arguments", al), child(al, a, i), i > 0,
+    !kind(a, "keyword_argument").
+type_root(v) :- typevar_call(c, "TypeVar"), field(c, "arguments", al), child(al, k, _), kind(k, "keyword_argument"),
+    field(k, "name", n), text(n, "bound"), field(k, "value", v).
+type_root(a) :- kind(c, "call"), field(c, "function", f), typing_sym(f, "NewType"), field(c, "arguments", al),
+    child(al, a, 1).
+type_root(a) :- tsub(s, h, _, a), generic_head(h), !typing_sym(h, "Literal"), !annotated_meta(s, a).
+.decl generic_head(h: node)  // a typing name, or a builtin or collections.abc class that takes parameters
+generic_head(h) :- typing_sym(h, _).
+generic_head(h) :- sym_of(h, q), split_dot(q, m, x), (m = "builtins", generic_builtin(x) ; m = "collections.abc").
+.decl generic_builtin(x: symbol)
+generic_builtin("list"). generic_builtin("dict"). generic_builtin("set"). generic_builtin("frozenset").
+generic_builtin("tuple"). generic_builtin("type").
+.decl annotated_meta(s: node, a: node)  // `Annotated[T, meta…]`: everything after T
+annotated_meta(s, a) :- typing_subscript(s, "Annotated"), tsub(s, _, i, a), i > 0.
+.decl type_ctx(n: node)
+type_ctx(t) :- type_root(t).
+// A string in a type context is a forward reference; its parsed tree is a type too (`x: "list[int]"`).
+type_ctx(r) :- type_ctx(s), parsed(s, "annotation", r).
+type_ctx(c) :- type_ctx(p), child(p, c, _), !type_stop(p, c).
+// type_stop(p, c): below p, child c leaves the type context: Literal's arguments, Annotated's metadata.
+.decl type_stop(p: node, c: node)
+type_stop(s, c) :- typing_subscript(s, "Literal"), child(s, c, i), i > 0.
+type_stop(s, c) :- annotated_meta(s, a), within_arg(s, c, a).
+.decl within_arg(s: node, c: node, a: node)  // c is the child of s that holds argument a
+within_arg(s, c, a) :- tsub(s, _, _, a), child(s, c, _), (c = a ; within(a, c)).
+
+// union(u): `A | B` or `Union[…]`, anywhere: rules that want an annotation add type_ctx. union_part(u, m): its
+// members, bare.
+//   x: int | (str | None)           one top union of int, str and None
+.decl union(u: node)
+union(u) :- kind(u, "binary_operator"), op(u, "|").
+union(u) :- kind(u, "union_type").
+union(u) :- typing_subscript(u, "Union").
+.decl union_part(u: node, m: node)
+union_part(u, m) :- union(u), kind(u, "binary_operator"), (field(u, "left", x) ; field(u, "right", x)), type_bare(x, m).
+union_part(u, m) :- kind(u, "union_type"), child(u, x, _), type_bare(x, m).
+union_part(u, m) :- union(u), typing_subscript(u, "Union"), tsub(u, _, _, m).
+// union_top(u): a union that is no other union's member (Ruff skips nested ones: in_nested_union).
+.decl union_top(u: node)
+union_top(u) :- union(u), !nested_union(u).
+.decl nested_union(u: node)
+nested_union(u) :- union_part(p, u), union(u).
+// union_leaf(u, m): m is a member of top union u that is not itself a union. Node ids give source order.
+.decl union_leaf(u: node, m: node)
+union_leaf(u, m) :- union_top(u), union_part(u, x), union_down(x, m).
+.decl union_down(x: node, m: node)
+union_down(x, x) :- union_part(_, x), !union(x).
+union_down(x, m) :- union_part(_, x), union(x), union_part(x, y), union_down(y, m).
+
+// literal_top(l): `Literal[…]` not directly inside another Literal. literal_leaf(l, m): its members, nested
+// Literals flattened: `Literal[1, Literal[2, 3]]` has 1, 2 and 3.
+.decl literal_top(l: node)
+literal_top(l) :- typing_subscript(l, "Literal"), !literal_nested(l).
+.decl literal_nested(l: node)
+literal_nested(l) :- typing_subscript(p, "Literal"), tsub(p, _, _, l), typing_subscript(l, "Literal").
+.decl literal_leaf(l: node, m: node)
+literal_leaf(l, m) :- literal_top(l), literal_down(l, m).
+.decl literal_down(l: node, m: node)
+literal_down(l, m) :- typing_subscript(l, "Literal"), tsub(l, _, _, x),
+    (typing_subscript(x, "Literal"), literal_down(x, m) ; !typing_subscript(x, "Literal"), m = x).
+
+// ---- 7. unused private declarations (PYI018, PYI046, PYI047, PYI049) ---------------------------------------------
+// Ruff looks at the last binding of each name in a scope, and reports it when it is private (`_`-prefixed) and
+// nothing reads it. Module and function scopes are checked in every file; class bodies, and comprehensions
+// inside the declaring statement, only in stubs.
+//   _T = TypeVar("_T")        unused_private(<module>, "_T", <assignment>): no annotation mentions _T
+// private_last(s, x, site): site is the last binding of private name x in checked scope s.
+.decl private_last(s: node, x: symbol, site: node)
+private_last(s, x, site) :- binding(s, x, site, _), prefix("_", x), checked_scope(s),
+    count : { binding(s, x, o, f), o > site } = 0.
+.decl checked_scope(s: node)
+checked_scope(s) :- kind(s, "module").
+checked_scope(s) :- kind(s, "function_definition").
+checked_scope(s) :- kind(s, "class_definition"), in_stub(s).
+// unused_private(s, x, site): and no load of x looks it up in s, and s's `__all__` does not list it.
+.decl unused_private(s: node, x: symbol, site: node)
+unused_private(s, x, site) :- private_last(s, x, site), !read_in(s, x).
+.decl read_in(s: node, x: symbol)
+read_in(s, x) :- look(r, x, s), expr_ctx(r, "load").
+read_in(s, x) :- in_dunder_all(e), plain_str(e, x), nearest(e, s, scope).   // `__all__ = ["_T"]` exports it
+// in_dunder_all(n): n is in a module-level `__all__ = …`, `__all__ += …` or `__all__: … = …`
+// (Ruff's in_dunder_all_assignment).
+.decl in_dunder_all(n: node)
+in_dunder_all(n) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")), field(st, "left", l),
+    text(l, "__all__"), nearest(st, m, scope), kind(m, "module"), within(n, st).
+// class_base_sym(c, q): a positional base of class c names q, subscripted or not: `Protocol[T]` gives
+// typing.Protocol.
+.decl class_base_sym(c: node, q: symbol)
+class_base_sym(c, q) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, b0, _),
+    !kind(b0, "keyword_argument"), unparen(b0, b),
+    (sym_of(b, q) ; kind(b, "subscript"), field(b, "value", v), sym_of(v, q)).
+// unread_comp_var(a, v, x): in a stub, statement a holds a comprehension whose private loop variable v (named
+// x) is not read inside it: Ruff checks that scope too, and reports v with a's declaration.
+//   _A: TypeAlias = list[[0 for _y in range(3)]]      unread_comp_var: _y
+.decl unread_comp_var(a: node, v: node, x: symbol)
+unread_comp_var(a, v, x) :- in_stub(a), within(c, a), comp_kind(ck, _), kind(c, ck), child(c, fc, _),
+    kind(fc, "for_in_clause"), field(fc, "left", t), (v = t ; within(v, t)), kind(v, "identifier"), text(v, x),
+    prefix("_", x), count : { within(r, c), kind(r, "identifier"), text(r, x), r != v, !in_target(r, c) } = 0.
+.decl in_target(r: node, c: node)  // r is in a loop target of comprehension c
+in_target(r, c) :- child(c, fc, _), kind(fc, "for_in_clause"), field(fc, "left", t), (r = t ; within(r, t)).
+
+// ---- 8. methods --------------------------------------------------------------------------------------------------
+// method_kind(f, k): what a def in a class body is to Ruff's function_type::classify: "static" (@staticmethod),
+// "class" (@classmethod, `__init_subclass__`, `__class_getitem__`), "new" (`__new__`), else "instance".
+//   class C:
+//       @classmethod
+//       def make(cls) -> C: ...      method_kind(<make>, "class")
+.decl method_kind(f: node, k: symbol)
+method_kind(f, "static") :- pyi_method(_, f, _), decorated(f, "staticmethod").
+method_kind(f, "class") :- pyi_method(_, f, x), !decorated(f, "staticmethod"),
+    (decorated(f, "classmethod") ; x = "__init_subclass__" ; x = "__class_getitem__").
+method_kind(f, "new") :- pyi_method(_, f, "__new__"), !decorated(f, "staticmethod"), !decorated(f, "classmethod").
+method_kind(f, "instance") :- pyi_method(_, f, x), !decorated(f, "staticmethod"), !decorated(f, "classmethod"),
+    x != "__init_subclass__", x != "__class_getitem__", x != "__new__".
+// decorated(f, x): a decorator of f is builtin x (abc's abstract forms count as theirs), or typing's overload.
+.decl decorated(f: node, x: symbol)
+decorated(f, x) :- decorator(f, e), sym_of(e, q), split_dot(q, "builtins", x).
+decorated(f, "staticmethod") :- decorator(f, e), sym_of(e, "abc.abstractstaticmethod").
+decorated(f, "classmethod") :- decorator(f, e), sym_of(e, "abc.abstractclassmethod").
+decorated(f, "overload") :- decorator(f, e), typing_sym(e, "overload").
+// metaclass(c): class c is, or may be, a metaclass (Ruff's is_metaclass is not No): it derives from `type`,
+// `type(X)`, `type[X]`, ABCMeta, EnumMeta or EnumType, directly or through classes of the file; or it has bases and
+// a `__new__(cls, name: str, bases: tuple, attrs: dict, **kw)`, five parameters and no `*args`.
+//   class Meta(ModelBase):
+//       def __new__(cls, name: str, bases: tuple, attrs: dict, **kw) -> Meta: ...     metaclass: maybe
+.decl metaclass(c: node)
+metaclass(c) :- class_ancestor(c, q), metaclass_q(q).
+// metaclass_yes(c): Ruff's IsMetaclass::Yes: a metaclass base is found and no base is a call.
+.decl metaclass_yes(c: node)
+metaclass_yes(c) :- class_ancestor(c, q), metaclass_q(q), !call_base(c).
+.decl call_base(c: node)
+call_base(c) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, b0, _), unparen(b0, b),
+    kind(b, "call").
+metaclass(c) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, b0, _), unparen(b0, b),
+    kind(b, "call"), field(b, "function", f), sym_of(f, "builtins.type"), field(b, "arguments", ba),
+    count : { child(ba, x, i), !kind(x, "comment") } = 1.
+metaclass(c) :- field(c, "superclasses", al), child(al, b, _), !kind(b, "comment"), pyi_method(c, f, "__new__"),
+    count : { sig_param(f, p, n, i, k, a, d) } = 5, !sig_param(f, _, _, _, "vararg", _, _),
+    sig_param(f, _, _, _, "kwarg", _, _), meta_param(f, 1, "str"), meta_param(f, 2, "tuple"), meta_param(f, 3, "dict").
+.decl meta_param(f: node, r: number, x: symbol)  // f's r-th parameter (0-based) is annotated builtin x, or x[…]
+meta_param(f, r, x) :- pyi_method(_, f, "__new__"), sig_param(f, _, _, i, _, a, _), !unset(a), type_bare(a, t),
+    (sym_of(t, q) ; tsub(t, h, 0, _), sym_of(h, q)), split_dot(q, "builtins", x),
+    r = count : { sig_param(f, p2, n2, j, k2, a2, d2), j < i }.
+.decl metaclass_q(q: symbol)
+metaclass_q("builtins.type"). metaclass_q("abc.ABCMeta"). metaclass_q("enum.EnumMeta"). metaclass_q("enum.EnumType").
+// in_enum(a): a sits directly in the body of an enum class: one deriving, directly or through classes of the file,
+// from enum's Enum, Flag, IntEnum, IntFlag, StrEnum, ReprEnum or CheckEnum (Ruff's is_enumeration).
+//   class Color(Enum):
+//       RED = None            in_enum: a member, not a type alias
+.decl in_enum(a: node)
+in_enum(a) :- nearest(a, c, scope), class_ancestor(c, q), split_dot(q, "enum", x), enum_class(x).
+.decl enum_class(x: symbol)
+enum_class("Enum"). enum_class("Flag"). enum_class("IntEnum"). enum_class("IntFlag"). enum_class("StrEnum").
+enum_class("ReprEnum"). enum_class("CheckEnum").
+// first_param(f, p, ann): p is f's first positional parameter (`self`, `cls`), with its annotation or unset.
+.decl first_param(f: node, p: node, ann: loc)
+first_param(f, p, a) :- kind(f, "function_definition"), i = min j : { sig_param(f, q, n, j, k, b, d), pos_kind(k) },
+    sig_param(f, p, _, i, _, a, _).
+// typevar_name(e, x): e is the name x of a type variable: a TypeVar assigned in the file, or a PEP 695 type
+// parameter of the def whose signature or body holds e (Ruff reads the def's own type parameters, not its
+// class's: in `class Foo[S]: def m(self: S) -> S` S is not one).
+//   _S = TypeVar("_S")
+//   def m[T](self: T) -> T: ...      typevar_name(<T>, "T"), and <_S> anywhere it reads that assignment
+.decl typevar_name(e: node, x: symbol)
+typevar_name(e, x) :- kind(e, "identifier"), text(e, x), ref_site(e, site), binding_value(site, v0), unparen(v0, v),
+    typevar_call(v, "TypeVar").
+typevar_name(e, x) :- kind(e, "identifier"), text(e, x), within(e, o), kind(o, "function_definition"),
+    tparam_named(o, x, "typevar"), count : { within(e, g), within(g, o), kind(g, "function_definition") } = 0.
+// lit_key(m, k): a Literal member compared as Ruff's ComparableExpr does: by kind and value, so "a" and 'a' are
+// one member, and True and 1 are two. Other members compare by tree, so `{1, 3}` and `{1,3}` are one.
+.decl lit_key(m: node, k: symbol)
+lit_key(m, cat(t, ":", v)) :- literal_leaf(_, m), kind(m, t), value(m, v).
+lit_key(m, @tree_digest(m)) :- literal_leaf(_, m), !value(m, _).
+// alias_name(n, x): n declares the type alias x: the statement `x: TypeAlias = …` (n is the assignment), or
+// `type x = …` (n is the name).
+.decl alias_name(n: node, x: symbol)
+alias_name(a, x) :- kind(a, "assignment"), field(a, "type", t0), type_bare(t0, t), typing_sym(t, "TypeAlias"),
+    field(a, "left", l), plain_target(l, x).
+alias_name(n, x) :- kind(st, "type_alias_statement"), field(st, "left", n0), type_bare(n0, n0b),
+    (kind(n0b, "identifier"), n = n0b ; kind(n0b, "generic_type"), child(n0b, n, 0)), text(n, x).
+// iter_head(t, x): annotation t, or its subscript's head, is typing.x, typing_extensions.x or collections.abc.x:
+// `Iterator[int]` gives "Iterator" (Ruff's map_subscript, then the qualified name). abc_head(t, x): the same
+// without typing_extensions, as PYI034 and PYI045 match.
+.decl iter_head(t: node, x: symbol)
+iter_head(t, x) :- sub_head_q(t, q), split_dot(q, m, x), (typing_mod(m) ; m = "collections.abc").
+.decl abc_head(t: node, x: symbol)
+abc_head(t, x) :- sub_head_q(t, q), split_dot(q, m, x), (m = "typing" ; m = "collections.abc").
+.decl sub_head_q(t: node, q: symbol)  // t, or the head of subscript t, names q
+sub_head_q(t, q) :- sym_of(t, q).
+sub_head_q(t, q) :- tsub(t, h, 0, _), sym_of(h, q).
+// abc_base(c, x): class c derives from typing.x or collections.abc.x (not typing_extensions.x), subscripted or
+// not, directly or through classes of the same file (Ruff's any_qualified_base_class).
+.decl abc_base(c: node, x: symbol)
+abc_base(c, x) :- class_ancestor(c, q), split_dot(q, m, x), (m = "typing" ; m = "collections.abc").
+// class_ancestor(c, q): q is a base of class c, or a base of a class of the same file that is one, subscripts read
+// through: `class A(Iterator[int])`, `class B(A)` gives B the ancestors A and typing.Iterator.
+.decl class_ancestor(c: node, q: symbol)
+class_ancestor(c, q) :- class_base_sym(c, q).
+class_ancestor(c, q) :- class_base_sym(c, b), class_def(c2, b), docof(c, d), docof(c2, d), class_ancestor(c2, q).

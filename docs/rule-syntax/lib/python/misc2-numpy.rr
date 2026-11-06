@@ -1,0 +1,51 @@
+// python/misc2-numpy: references to NumPy members, as Ruff's NumPy rules (NPY001, NPY002, NPY003, NPY201) find
+// them: by qualified name, wherever a name or attribute is read.
+//
+// Interface
+//   npy_ref(e, q)            e reads q: a Name or Attribute in load context that resolves to q through imports
+//                            ("numpy.float" for `np.float` after `import numpy as np`, or for `float` after
+//                            `from numpy import float`), or a dotted value pattern `case np.nan:`
+//   npy_callee(c, e, q)      e is call c's callee (parentheses off) and reads q
+//   npy_replacement(q, new)  a rule's table: q's replacement is the member `new` (rows from NPY201's table)
+//   npy_guarded(e, new)      the reference e sits in a compatibility fallback for its replacement `new`, as NPY201
+//                            exempts it (Ruff's is_guarded_by_try_except):
+//                              try: np.all(x)                  an attribute in an `except AttributeError` handler
+//                              except AttributeError: np.alltrue(x)    whose try body reads `new` as an attribute
+//                              try: from numpy.exceptions import ComplexWarning
+//                              except ImportError: from numpy import ComplexWarning   a name whose import sits in
+//                                                              such an `except ImportError` handler
+//
+// Ruff background
+//   Ruff checks every Name and Attribute it visits in load context: `np.random.seed` is one reference (its
+//   `np.random` part resolves to "numpy.random", which no rule names). Imported names are not expressions, so
+//   `from numpy import float` itself is not reported; each read of `float` after it is. Only references that
+//   resolve count: `import numpy as np` must be in the file.
+#include "python/ruff.rr"
+//   unparen(e, m), ruff_qual(e, q)
+#include "python/misc2-case.rr"
+//   case_value_name(e, q)
+#include "python/exceptions.rr"
+//   exc_handler(t, x), exc_type(x, e)
+
+.decl npy_ref(e: node, q: symbol)
+npy_ref(e, q) :- ast_name(e, _), expr_ctx(e, "load"), ruff_qual(e, q), (q = "numpy" ; prefix("numpy.", q)).
+npy_ref(e, q) :- kind(e, "attribute"), expr_ctx(e, "load"), ruff_qual(e, q), (q = "numpy" ; prefix("numpy.", q)).
+npy_ref(e, q) :- case_value_name(e, q), prefix("numpy.", q).
+.decl npy_callee(c: node, e: node, q: symbol)
+npy_callee(c, e, q) :- kind(c, "call"), field(c, "function", f), unparen(f, e), npy_ref(e, q).
+
+// ---- fallbacks (NPY201) -------------------------------------------------------------------------------------
+.decl npy_guarded(e: node, new: symbol)
+.decl npy_replacement(q: symbol, new: symbol)
+npy_guarded(e, new) :- npy_ref(e, q), npy_replacement(q, new), kind(e, "attribute"), npy_in_handler(e, t),
+    npy_catches(t, "AttributeError"), field(t, "body", b), within(a, b), kind(a, "attribute"), ruff_qual(a, new).
+npy_guarded(e, new) :- npy_ref(e, q), npy_replacement(q, new), ast_name(e, x), look(e, x, s), binding(s, x, site, "import"),
+    import_alias(i, site, _, _, _), npy_in_handler(i, t),
+    (npy_catches(t, "ImportError") ; npy_catches(t, "ModuleNotFoundError")),
+    field(t, "body", b), within(i2, b), split_dot(new, m, y), import_alias(i2, _, m, y, _),
+    kind(i2, "import_from_statement").
+// npy_in_handler(n, t): t is the innermost try statement around n, and n is in one of its except clauses.
+.decl npy_in_handler(n: node, t: node)
+npy_in_handler(n, t) :- nearest(n, t, "try_statement"), exc_handler(t, x), within(n, x).
+.decl npy_catches(t: node, x: symbol)  // some handler of try t names the builtin exception x
+npy_catches(t, x) :- exc_handler(t, h), exc_type(h, e), ruff_qual(e, q), split_dot(q, "builtins", x).
