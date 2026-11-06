@@ -247,44 +247,19 @@ violation("data-layer-conditional-architecture", "conditional-local-3", "CONDA-0
     conditional_l3_line(d, l).
 
 // ---- conditional-structural-contracts (CONDA-005), over every file ---------------------------------------------------
-// Module names: `replace(coalesce(rx_extract(path, '(?:^|/)((?:impl|l2070_batching|scripts)/.*)\.py$', 1),
-// rx_extract(path, '(?:^|/)([^/]+)\.py$', 1)), '/', '.')`: from the leftmost path segment that is impl/,
-// l2070_batching/ or scripts/, else the file name; without `.py`, slashes as dots. Positions come from a table of
-// numbers below 1000 (no arithmetic in recursion); the dotted text is the document's `module` column, which is the
-// path less `.py` with slashes as dots, character for character, except that it drops a final `.__init__`.
-// Approximation: paths of 1000 characters or more, and paths ending in `.py.py` (whose `module` drops both), are
-// not handled. What blocks it: `match_all`/`match_group` run over source spans, not over a path; there is no string
-// search or replace function (`@rx_replace` is not bound) and position or string-building recursion is refused
-// (UnboundedValueCycle), so positions come from the finite table.
-.decl conditional_digit(i: number)
-conditional_digit(0). conditional_digit(1). conditional_digit(2). conditional_digit(3). conditional_digit(4).
-conditional_digit(5). conditional_digit(6). conditional_digit(7). conditional_digit(8). conditional_digit(9).
-.decl conditional_plen(p: symbol, n: number)
-conditional_plen(p, n) :- conditional_doc(_, p), n = strlen(p).
-.decl conditional_pos(p: symbol, i: number)
-conditional_pos(p, i) :- conditional_plen(p, n), conditional_digit(a), conditional_digit(b), conditional_digit(c), i = a * 100 + b * 10 + c, i < n.
-.decl conditional_segstart(p: symbol, k: number)
-conditional_segstart(p, 0) :- conditional_plen(p, _).
-conditional_segstart(p, j) :- conditional_pos(p, i), substr(p, i, 1) = "/", j = i + 1.
-.decl conditional_rx_roots(r: symbol)
-conditional_rx_roots("impl/"). conditional_rx_roots("l2070_batching/"). conditional_rx_roots("scripts/").
-.decl conditional_py(p: symbol)
-conditional_py(p) :- conditional_plen(p, n), n >= 3, substr(p, n - 3, 3) = ".py".
-.decl conditional_rx_hit(p: symbol, k: number)
-conditional_rx_hit(p, k) :- conditional_segstart(p, k), conditional_py(p), conditional_plen(p, n), conditional_rx_roots(r), m = strlen(r),
-    n - k >= m + 3, substr(p, k, m) = r.
-.decl conditional_rx_first(p: symbol, k: number)
-conditional_rx_first(p, k) :- conditional_rx_hit(p, _), k = min x : { conditional_rx_hit(p, x) }.
-.decl conditional_lastseg(p: symbol, k: number)
-conditional_lastseg(p, k) :- conditional_segstart(p, _), k = max x : { conditional_segstart(p, x) }.
-// The path less `.py`, slashes as dots.
-.decl conditional_dotted(p: symbol, s: symbol)
-conditional_dotted(p, m) :- conditional_py(p), doc(_, p, m), conditional_plen(p, n), strlen(m) = n - 3.
-conditional_dotted(p, cat(m, ".__init__")) :- conditional_py(p), doc(_, p, m), conditional_plen(p, n), n >= 12, substr(p, n - 12, 12) = "/__init__.py".
+// Module names, exactly: `replace(coalesce(rx_extract(path, '(?:^|/)((?:impl|l2070_batching|scripts)/.*)\.py$', 1),
+// rx_extract(path, '(?:^|/)([^/]+)\.py$', 1)), '/', '.')`. rx_extract's group 1 is that of the leftmost-first match
+// (`Regex::captures`), which is the whole path's `^(?s:.*?)`-prefixed match (the lazy prefix takes the shortest
+// prefix, the leftmost start): `@rx_replace` of it by `$1`, where the regex matches (`match`, a search); no row where
+// neither matches (coalesce gives NULL).
 .decl conditional_module(p: symbol, m: symbol)
-conditional_module(p, g) :- conditional_rx_first(p, k), conditional_plen(p, n), conditional_dotted(p, s), g = substr(s, k, n - k - 3).
-conditional_module(p, g) :- conditional_plen(p, n), conditional_py(p), !conditional_rx_hit(p, _), conditional_lastseg(p, k), n - k > 3,
-    conditional_dotted(p, s), g = substr(s, k, n - k - 3).
+conditional_module(p, g) :- conditional_doc(_, p),
+    match("(?s:.*)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)", p),
+    x = @rx_replace(p, "^(?s:.*?)(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$", "$1"), g = @rx_replace(x, "/", ".").
+conditional_module(p, g) :- conditional_doc(_, p),
+    !match("(?s:.*)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)", p),
+    match("(?s:.*)(?:(?:^|/)([^/]+)\\.py$)(?s:.*)", p),
+    x = @rx_replace(p, "^(?s:.*?)(?:^|/)([^/]+)\\.py$", "$1"), g = @rx_replace(x, "/", ".").
 
 // shared_classes: per file and name, the last ClassDef (in visit order); its qualified name.
 .decl conditional_last_class(d: number, nm: symbol, s: number)
