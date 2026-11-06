@@ -114,7 +114,8 @@ export function callNamesSecretPath(input: unknown, root?: string): boolean {
  * `turn-end`) and Rerail's own bookkeeping (what `SessionStore` records: HUD tracking, steering deliveries, dropped
  * events, pending checks, rule coverage) pass `whole`; a `result` passes without its `output`; a `call` passes without
  * its `input` when that names a path outside the boundary. A kind not listed here is withheld whole, so a kind added
- * later reaches an agent only once it is listed. A map, not a record, so a stored kind such as `constructor` finds no
+ * later reaches an agent only once it is listed; what Git's ignore rules left unchecked, and changes to them, are
+ * withheld, since they quote hidden ignore files. A map, not a record, so a stored kind such as `constructor` finds no
  * prototype member.
  */
 const AGENT_EVENT_VIEW: ReadonlyMap<string, "whole" | "without output" | "without denied input"> = new Map([

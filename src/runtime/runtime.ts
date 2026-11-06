@@ -20,6 +20,7 @@ import { SteerRuleSchema } from "./event-protocol.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
+import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -1291,6 +1292,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let bridge: CodeRuleBridge | undefined;
     this.#sessions.set(session.sessionId, opened);
     try {
+      const followsGitignore = this.#catalogs.followsGitignore(checkout.root);
       auditor = this.#createAuditor({
         workspaceRoot: checkout.cwd,
         steerDelivery,
@@ -1298,7 +1300,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         ...(this.#timingLog === undefined ? {} : { timingLog: this.#timingLog }),
         ...this.#auditSettings,
         ...auditSettings,
-        followGitignore: this.#catalogs.followsGitignore(checkout.root),
+        followGitignore: followsGitignore,
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
@@ -1308,6 +1310,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           session.sessionId,
           (store, descriptor, attribution) => store.recordDiscoveryPending(descriptor, boundary, attribution),
         ),
+        // A tool edit Git's ignore rules leave unchecked, and a change that makes them ignore more, go on the session's record.
+        onIgnoredEdit: edit => this.#recordSessionFact(
+          session.sessionId,
+          (store, descriptor, attribution) => store.recordIgnoredEdit(descriptor, edit, attribution),
+        ),
+        ...(followsGitignore ? {
+          onIgnoreRulesChanged: (change: IgnoreRulesChange) => this.#recordSessionFact(
+            session.sessionId,
+            (store, descriptor, attribution) => store.recordIgnoreRulesChanged(descriptor, change, attribution),
+          ),
+        } : {}),
         onRevision: (sessionId, revision, paths) => {
           const current = this.#sessions.get(sessionId);
           if (current !== opened || current.closed || paths.length === 0) return;

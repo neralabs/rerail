@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, runGit,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
@@ -143,6 +144,55 @@ describe("gitHead and headMovedOnlyByCommits", () => {
     git(root, "switch", "--quiet", "-c", "other");
     expect(await headMovedOnlyByCommits(root, undefined)).toBe(false);
     expect(await headMovedOnlyByCommits(root, "0".repeat(40))).toBe(false);
+  });
+});
+
+describe("gitExcludeFiles", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  /** A repository in a fresh home whose Git reads no global or system configuration. */
+  async function isolatedRepository(): Promise<{ root: string; home: string }> {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "rerail-git-exclude-")));
+    roots.push(home);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("XDG_CONFIG_HOME", "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "no-gitconfig"));
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    const root = join(home, "repo");
+    await mkdir(root);
+    git(root, "init", "--quiet");
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "seed");
+    return { root, home };
+  }
+
+  it("names the checkout's info/exclude and Git's default excludes file while core.excludesFile is unset", async () => {
+    const { root, home } = await isolatedRepository();
+    expect(await gitExcludeFiles(root)).toEqual([join(root, ".git", "info", "exclude"), join(home, ".config", "git", "ignore")]);
+    vi.stubEnv("XDG_CONFIG_HOME", join(home, "xdg"));
+    expect((await gitExcludeFiles(root))[1]).toBe(join(home, "xdg", "git", "ignore"));
+  });
+
+  it("follows core.excludesFile, with `~` read as the home, and gives a linked worktree the common info/exclude", async () => {
+    const { root, home } = await isolatedRepository();
+    git(root, "config", "core.excludesFile", "~/ignores");
+    git(root, "worktree", "add", "--quiet", join(home, "linked"));
+    expect(await gitExcludeFiles(join(home, "linked"))).toEqual([join(root, ".git", "info", "exclude"), join(home, "ignores")]);
+  });
+
+  it("names none outside a Git checkout", async () => {
+    const { home } = await isolatedRepository();
+    expect(await gitExcludeFiles(home)).toEqual([]);
+  });
+
+  it("names the configuration files that can set core.excludesFile: the repository's, the worktree's and the global ones", async () => {
+    const { root, home } = await isolatedRepository();
+    vi.stubEnv("GIT_CONFIG_GLOBAL", "");
+    expect(await gitConfigFiles(root)).toEqual([
+      join(root, ".git", "config"), join(root, ".git", "config.worktree"), join(home, ".gitconfig"), join(home, ".config", "git", "config"),
+    ]);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
+    expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
+    expect(await gitConfigFiles(home)).toEqual([]);
   });
 });
 

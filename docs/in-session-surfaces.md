@@ -226,6 +226,33 @@ In a large repository, Rerail indexes at session start before code rules can run
 
 </details>
 
+### Files Git ignores
+
+While the repository follows `.gitignore` (the default), files Git ignores are not checked. The session's record keeps a tool edit Git's rules left unchecked, and a change that can make those rules ignore more; the dashboard timeline counts both. Some skips are not recorded (below).
+
+<details>
+<summary>What is recorded, and what is not</summary>
+
+Recorded:
+
+- A tool edit (Write, Edit, `apply_patch`) of a file a rule would read, which Git ignores: the file, and the ignore file, line and pattern that ignore it, as `git check-ignore -v` names them (`ignored-edit`).
+- A change that can make Git's ignore rules ignore more (`ignore-rules-changed`), with the patterns it added and the negations (`!pattern`) it removed (`ignoresMore`). In a file without a negation, comments, blank lines, order and a pattern the file already held are no change, nor is a pattern removed. In a file with a negation, Git's last matching pattern wins, so any other change to its patterns, a reorder or a pattern repeated after a negation, is recorded too (`reordered: true`).
+  - `via: "tool"`: a `.gitignore`, `.git/info/exclude` or `core.excludesFile` that a finished tool edit wrote, compared with what it held before the edit.
+  - `via: "observed"`: a `.gitignore` the session's walk finds new or changed after a command or at a turn end, even one Git ignores (a `*` in it ignores the file itself, so no diff shows it); and `.git/info/exclude` or `core.excludesFile`, compared at each command and turn end. The exclude files are those of the session's checkout and of each checkout nested in it that runs rules of its own (a submodule, a recorded repository).
+  - `git config core.excludesFile <file>` is followed: the repository's `config` and `config.worktree` and the global gitconfig are watched, and once one changes, an excludes file it newly names is compared from empty.
+  - A `.gitignore` the session's first walk finds already written after the session started is compared from empty, not taken as the baseline.
+  - It is what a look saw, whoever made it: every session open in the repository records a change to `.git/info/exclude` at its next look, and so does a `.gitignore` that `git pull` or `git checkout` brought; a change made while no session is open is on no record ([#484](https://github.com/neralabs/rerail/issues/484)).
+- `sessions_get` counts both in `gaps` (`ignoredEdits`, `ignoreRuleChanges`); `session_events` has each one, withheld from coding agents since they quote hidden ignore files.
+
+Not recorded:
+
+- A shell write inside an ignored folder, file by file: the walk never enters such a folder, which is what keeps it fast. The change to the ignore rules that put the folder out of reach is recorded, if a session saw it.
+- Anything under the built-in folders Rerail never reads (`.git`, `node_modules`, `dist`, `build`, `vendor` and the rest of `IGNORED_DIRECTORIES`), whatever the setting.
+- A `.gitignore` above the session's folder, when the session starts below its checkout's root: the walk starts at the session's folder.
+- An excludes file named by the system gitconfig, which only an administrator writes, or by a file an `include.path` pulls in.
+
+</details>
+
 ### When the daemon is down
 
 A hook never fails a tool call; the footer says `not running`.

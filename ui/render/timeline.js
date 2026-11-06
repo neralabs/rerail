@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -236,10 +236,14 @@ function coverageGaps(sess) {
   const dropped = droppedEvents(sess);
   const unchecked = uncheckedBoundaries(sess);
   const rulesPending = codeRulesPendingBoundaries(sess);
+  const ignored = ignoredEdits(sess);
+  const ruleChanges = ignoreRuleChanges(sess);
   return [
     ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
     ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
     ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
+    ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
+    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
   ].join("; ");
 }
 

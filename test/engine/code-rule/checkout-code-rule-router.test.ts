@@ -781,4 +781,25 @@ describe("CheckoutCodeRuleRouter lanes after review", () => {
       { checkout: session, path: "packages/outer.py", code: "SESSION", mode: "block" },
     ]);
   });
+
+  it("names the checkouts whose ignore rules the session follows: its own and, each level down, the nested ones that run rules", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    const service = await repository(join(session, "packages", "service"));
+    const inner = await repository(join(service, "vendor", "inner"));
+    // Recorded inside the checkout, started but never set up: it runs no rules, so its ignore rules decide nothing.
+    const vendored = await repository(join(session, "vendored"));
+    for (const checkout of [session, service, inner]) setUpTestRepository(checkout, { library: [file(needle("test:x", "X"))] }, databasePath);
+    const database = openRerailDatabase(databasePath);
+    try {
+      recordCheckout(database, vendored);
+    } finally {
+      database.$client.close();
+    }
+    const auditor = router(session, databasePath, recordingAudits().recorder);
+
+    await auditor.openWorkspace("ignore-roots");
+    expect(auditor.ignoreRuleRoots()).toEqual([session, service, inner]);
+  });
 });

@@ -24,6 +24,7 @@ import type {
   AuditSettings,
   RuleSteerDelivery,
   RepositoryAuditHooks,
+  IgnoredEditMatch,
 } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
@@ -129,6 +130,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return routed !== undefined && routed.lane.enforcer.ignoresPath(routed.path, directory);
   }
 
+  /** Why the checkout that owns the file `path` leaves an edit of it unchecked for Git's rules (`ignoredEdit` of its enforcer). */
+  ignoredEdit(path: string): IgnoredEditMatch | undefined {
+    const routed = this.#route(path);
+    return routed?.lane.enforcer.ignoredEdit(routed.path);
+  }
+
   sourceRoot(path: string): string | undefined {
     return this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot;
   }
@@ -143,6 +150,22 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return (worktreeRegistry(starting)?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * The checkouts whose ignore rules the session's checks follow: the session's checkout and, each level down, the
+   * checkouts nested in it that own their files, while they may run rules. The other worktrees share the session
+   * checkout's `info/exclude` and configuration, so they add none.
+   */
+  ignoreRuleRoots(): string[] {
+    const roots: string[] = [];
+    const pending = [this.#options.startingCheckout];
+    for (let root = pending.pop(); root !== undefined; root = pending.pop()) {
+      if (roots.includes(root) || !this.#mayRun(root)) continue;
+      roots.push(root);
+      pending.push(...this.#nestedCheckoutsOf(root).map(nested => join(root, nested)));
+    }
+    return roots;
   }
 
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {

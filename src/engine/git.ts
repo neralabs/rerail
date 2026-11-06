@@ -1,7 +1,7 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { dirname, join, posix, resolve, win32 } from "node:path";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -255,6 +255,41 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
 export async function gitHead(cwd: string): Promise<string | undefined> {
   return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+}
+
+/**
+ * The exclude files of the Git checkout at `cwd` that no diff shows, absolute: its `info/exclude` (the common Git
+ * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
+ * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
+ */
+export async function gitExcludeFiles(cwd: string): Promise<string[]> {
+  // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
+  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"]);
+  if (exclude === undefined || exclude === "") return [];
+  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"]);
+  return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
+}
+
+/** The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `~/.config`. */
+function defaultExcludesFile(): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore");
+}
+
+/**
+ * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
+ * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig`
+ * and `git/config` in `XDG_CONFIG_HOME` or `~/.config`. The system file, which only an administrator writes, and files
+ * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ */
+export async function gitConfigFiles(cwd: string): Promise<string[]> {
+  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
+  if (local === undefined || local === "") return [];
+  const global = process.env.GIT_CONFIG_GLOBAL;
+  const globals = global === undefined || global === ""
+    ? [join(process.env.HOME ?? homedir(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
+    : [global];
+  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
