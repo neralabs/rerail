@@ -110,6 +110,13 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],
+        // core.rr's tree and document relations (`facts::vtab::syntax::tree`; `docof`, lowered to `rr_docof`, `Extra`'s).
+        "rr_docof" => &["n", "d"],
+        "op_at" => &["n", "i", "s"],
+        "prev_token" => &["n", "s"],
+        "token" => &["p", "i", "s", "start", "end_"],
+        "visit_index" => &["n", "i"],
+        "path_part" | "file_name" => &["d", "s"],
         // W's Python reference graph (`logic::plan::corpus::references`).
         "reference_edge" => &["src", "dst", "via"],
         "reference_open" => &["n"],

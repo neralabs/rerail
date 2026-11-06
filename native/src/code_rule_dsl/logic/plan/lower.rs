@@ -30,7 +30,9 @@ impl Domain {
 
 /// The domains of a functor's arguments and of its value, where it fixes them: `@cat`'s parts and whole are names,
 /// `flat_bin`'s operator is one; arithmetic is over integers; `concat`, `substr` and `to_string` make names,
-/// `strlen` an integer (`.rr`'s `+ - * /`, `cat`, `substr`, `to_string`, `strlen`).
+/// `strlen` an integer (`.rr`'s `+ - * /`, `cat`, `substr`, `to_string`, `strlen`). A text test's string is a name,
+/// but for `equals`, a membership (`(k = "a" ; k = "b")`), whose string may be a kind or a field
+/// (`expand_memberships`).
 pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<Option<Domain>>, Option<Domain>) {
     use Domain::{Int, Name};
     match f {
@@ -40,9 +42,56 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "strlen" => (vec![Some(Name)], Some(Int)),
         "to_string" => (vec![Some(Int)], Some(Name)),
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
+        "pkg_up" => (vec![Some(Name), Some(Int)], Some(Name)),
+        "head" => (vec![Some(Name)], Some(Name)),
+        "replace_all" => (vec![Some(Name); 3], Some(Name)),
+        "equals" => (vec![None; arity], None),
         f if crate::code_rule_dsl::logic::strings::is_test(f) => (vec![Some(Name); arity], None),
         _ => (vec![None; arity], None),
     }
+}
+
+/// `prog` with each membership of a kind or field variable (`equals($k, {"a", "b"})`, from `(k = "a" ; k = "b")`)
+/// as comparisons, which take the variable's domain: one rule per member, or (negated) a comparison with each.
+/// `None` where `prog` has no membership.
+fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
+    let membership = |l: &Literal| match l {
+        Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(b @ (0 | 1)) } if f == "equals" => match args.as_slice() {
+            [Term::Var(x), Term::Call(set, items)] if set == crate::code_rule_dsl::logic::strings::SET => Some((x.clone(), items.clone(), *b == 1)),
+            _ => None,
+        },
+        _ => None,
+    };
+    if !prog.rules.iter().flat_map(|r| &r.body).any(|l| membership(l).is_some()) {
+        return Ok(None);
+    }
+    let domains = domains(prog)?;
+    let cols = domains.iter().map(|(r, ds)| (r.clone(), ds.iter().copied().map(Some).collect())).collect();
+    let mut out = prog.clone();
+    out.rules.clear();
+    for (i, rule) in prog.rules.iter().enumerate() {
+        if !rule.body.iter().any(|l| membership(l).is_some()) {
+            out.rules.push(rule.clone());
+            continue;
+        }
+        let vars = rule_vars(prog, &cols, i)?;
+        let mut bodies = vec![Vec::new()];
+        for l in &rule.body {
+            match membership(l) {
+                Some((x, items, holds)) if matches!(vars.get(&x), Some(Domain::Kind | Domain::Field)) => {
+                    let cmp = |item: &Term, op| Literal::Cmp { l: Term::Var(x.clone()), op, r: item.clone() };
+                    if holds {
+                        bodies = bodies.iter().flat_map(|b| items.iter().map(move |item| b.iter().cloned().chain([cmp(item, "=")]).collect())).collect();
+                    } else {
+                        bodies.iter_mut().for_each(|b| b.extend(items.iter().map(|item| cmp(item, "!="))));
+                    }
+                }
+                _ => bodies.iter_mut().for_each(|b| b.push(l.clone())),
+            }
+        }
+        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body }));
+    }
+    Ok(Some(out))
 }
 
 /// Each relation's column domains.
@@ -244,6 +293,8 @@ pub(in crate::code_rule_dsl) fn lower(
     dialect: GrammarDialect,
     intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>,
 ) -> Result<Lowered> {
+    let expanded = expand_memberships(prog)?;
+    let prog = expanded.as_ref().unwrap_or(prog);
     let domains = domains(prog)?;
     let tag = tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     // Every string a name could be, interned in one call: interning a kind's name too costs one atom.
@@ -310,6 +361,11 @@ pub(in crate::code_rule_dsl) fn lower(
         }
     }
     for members in out.kindsets.values_mut() {
+        // `EVERY_KIND`: the set of every kind (core.rr's `within`).
+        if members.iter().any(|m| m == super::super::front::EVERY_KIND) {
+            *members = (1..k.kinds.kind_count() as u16).map(|code| i64::from(kind_atom(tag, code)).to_string()).collect();
+            continue;
+        }
         for m in members.iter_mut() {
             *m = k.of(m, Domain::Kind)?.to_string();
         }

@@ -8,6 +8,8 @@
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
 //! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
+//! An included file's `.output`s are its own, not the program's: they are left out (`python/calls.rr`'s). core.rr is
+//! every program's prelude (`lower`'s module doc), so `#include "core.rr"` reads nothing more.
 
 mod check;
 mod lower;
@@ -22,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
+pub(in crate::code_rule_dsl) use lower::is_core;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
 #[cfg(test)]
@@ -49,29 +52,36 @@ fn read(path: &Path) -> Result<Vec<syntax::Statement>, Error> {
     syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))
 }
 
-/// A file and everything it includes, each once, includes first: (path, statements without the includes).
+/// A file and everything it includes, each once, includes first: (path, statements without the includes), the
+/// included files' `.output`s left out.
 fn program(path: &Path) -> Result<Vec<(PathBuf, Vec<syntax::Statement>)>, Error> {
-    fn visit(path: &Path, out: &mut Vec<(PathBuf, Vec<syntax::Statement>)>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
+    fn visit(path: &Path, out: &mut Vec<(PathBuf, Vec<syntax::Statement>)>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
         let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
         if seen.contains(&path) {
             return Ok(());
         }
         seen.push(path.clone());
-        let (includes, rest): (Vec<_>, Vec<_>) = read(&path)?.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+        let (includes, mut rest): (Vec<_>, Vec<_>) = read(&path)?.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+        if included {
+            rest.retain(|(item, _)| !matches!(item, syntax::Item::Io { output: true, .. }));
+        }
         for (item, line) in includes {
             let syntax::Item::Include(name) = item else { unreachable!("an include") };
+            if name == "core.rr" {
+                continue;
+            }
             let in_library = library().join(&name);
             let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
             let found = if in_library.exists() { in_library } else { beside };
             if !found.exists() {
                 return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
             }
-            visit(&found, out, seen)?;
+            visit(&found, out, seen, true)?;
         }
         out.push((path, rest));
         Ok(())
     }
     let mut out = Vec::new();
-    visit(path, &mut out, &mut Vec::new())?;
+    visit(path, &mut out, &mut Vec::new(), false)?;
     Ok(out)
 }

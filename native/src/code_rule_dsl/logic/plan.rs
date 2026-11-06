@@ -1284,6 +1284,11 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "core_node" => &[&["n"], &["t"], &["d"]],
         "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
         "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
+        "rr_docof" => &[&["n"], &["d"]],
+        "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
+        "token" => &[&["p", "i"], &["start"]],
+        "visit_index" => &[&["n"]],
+        "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
@@ -1379,6 +1384,10 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
+                // core.rr's name functors (`register_functors`).
+                ("pkg_up", [q, k]) => symbol_of(atoms, call("rr_pkg_up", vec![text_of(atoms, q), k.clone()])),
+                ("head", [q]) => symbol_of(atoms, call("rr_head", vec![text_of(atoms, q)])),
+                ("replace_all", [s, re, by]) => symbol_of(atoms, call("rr_replace_all", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 ("flat_bin", [o, x, y]) => {
                     let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
@@ -3089,10 +3098,35 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
+/// core.rr's functors on names that SQL has not: `@pkg_up(q, k)`, `q` less its last `k` dotted segments (`""` past the
+/// root); `@head(q)`, its first segment; `@replace_all(s, re, by)`, each match of `re` in `s` replaced by `by`, `$1`
+/// and `${name}` its groups, as W's `replace` transform does (`matcher::transform::replace`). NULL gives NULL.
+fn register_functors(db: &Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    db.create_scalar_function(c"rr_pkg_up", 2, flags, |ctx| {
+        let (Some(q), Some(k)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<i64>>(1)?) else { return Ok(None) };
+        let segments: Vec<&str> = if q.is_empty() { Vec::new() } else { q.split('.').collect() };
+        let keep = segments.len().saturating_sub(usize::try_from(k).unwrap_or(0));
+        Ok(Some(segments[..keep].join(".")))
+    })?;
+    db.create_scalar_function(c"rr_head", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|q| q.split('.').next().unwrap_or_default().to_owned())))?;
+    db.create_scalar_function(c"rr_replace_all", 3, flags, |ctx| {
+        let (Some(s), Some(re), Some(by)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) else {
+            return Ok(None);
+        };
+        static REGEXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<regex::Regex>>>> = std::sync::LazyLock::new(Default::default);
+        let regex = REGEXES.lock().expect("the regex cache").entry(re.clone()).or_insert_with(|| regex::Regex::new(&re).ok()).clone();
+        let Some(regex) = regex else { return Err(rusqlite::Error::UserFunctionError(format!("@replace_all: bad regex {re:?}").into())) };
+        Ok(Some(crate::code_rule_dsl::matcher::transform::replace(&s, &regex, &by)))
+    })
+}
+
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;
+    register_functors(db)?;
     // The previous run's tables are dropped; its views are kept where this run plans the same (`plan_views`), and the
     // positions table (`rdl_int`) is the same for every run.
     let temp: Vec<(String, String, String)> = db

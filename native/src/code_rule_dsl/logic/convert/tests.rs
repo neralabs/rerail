@@ -1372,3 +1372,124 @@ fn measure_converted_rules() {
         let _ = std::fs::remove_dir_all(&out);
     }
 }
+
+/// A Python module that exercises the python library (`docs/rule-syntax/lib/python/*.rr`): definitions of every
+/// parameter kind, decorators, a class, imports, chained comparisons and assignments, `if`/`elif`/`else`.
+const LIBRARY_FIXTURE: (&str, &str) = (
+    "pkg/sub/mod.py",
+    "\"\"\"Module doc.\"\"\"\nimport os\nfrom . import sibling\nfrom ..pkg.mod import thing as alias\n\nX = 1\n\n\n@decorator(arg)\ndef f(a, /, b: int = 0, *c: str, d, **e) -> None:\n    \"\"\"Doc.\"\"\"\n    global X\n    x = a\n    x = x + 1\n    if a < b <= c:\n        return x\n    elif a or b or d:\n        pass\n    else:\n        g()\n    return os.path.join(x)\n\n\nclass C(Base, metaclass=M):\n    def m(self, y):\n        def inner():\n            return self.m(y)\n        return inner()\n\n\ndef g():\n    f(1, d=2)\n\n\nlam = lambda q, r=1: q\ns = f\"x{X}\"\nt = u = 3\ndel X\n",
+);
+
+/// The python library's relations through an overlay that includes them (`#include "python/ast.rr"`,
+/// `"python/calls.rr"`): for each relation the closure declares, an overlay whose one clause reads it, converted,
+/// merged and run by the corpus runner over `LIBRARY_FIXTURE`. Prints, per relation, its rows' count or the error.
+#[test]
+#[ignore = "a report: which library relations lower and run through an overlay"]
+fn library_relations_through_an_overlay_report() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("library-report");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // One corpus directory per run: a run's store is its own.
+    let run = |i: usize| {
+        let run = dir.join(format!("run-{i}"));
+        write_files(&run, [LIBRARY_FIXTURE]);
+        run
+    };
+    let includes = "#include \"python/ast.rr\"\n#include \"python/calls.rr\"\n";
+    std::fs::write(dir.join("closure.rr"), includes).unwrap();
+    let closure = crate::code_rule_dsl::logic::rr::parse_file(&dir.join("closure.rr"));
+    let closure = match closure {
+        Ok(p) => p,
+        Err(e) => panic!("the closure does not lower: {e}"),
+    };
+    let rule = rule_file(TARGET).unwrap();
+    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) && !closure.inputs.contains(rel)).enumerate() {
+        let args = vec!["_"; cols.len()].join(", ");
+        let authored = format!(
+            "{includes}.decl doc(d: number, path: symbol, module: symbol)\n.decl in_scope(d: number)\n\
+             .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)\n\
+             violation(\"{TARGET_ID}\", \"executor-parameters\", \"{rel}\", p, 1) :- {rel}({args}), in_scope(d), doc(d, p, _).\n"
+        );
+        std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
+        let only = Adjust { keep: Some(Box::new(|c: &str| c == "executor-parameters")), scope: Some((vec!["**/*".to_owned()], Vec::new())), ..Adjust::default() };
+        let result = convert_over(&rule, &only, Some(&dir)).map_err(|e| e.to_string()).and_then(|c| findings(&c.program, &run(i)));
+        let _ = std::fs::remove_dir_all(dir.join(format!("run-{i}")));
+        match result {
+            Ok(rows) => println!("REL {rel}: {}", if rows.iter().any(|r| r.ends_with(&format!(":{rel}"))) { "rows" } else { "no rows" }),
+            Err(e) => println!("REL {rel}: ERROR {}", e.lines().next().unwrap_or_default()),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An overlay that includes the python library (`#include "python/ast.rr"`: names, imports, flow, and calls
+/// beside it) lowers, merges and runs through the corpus runner: its relations read core.rr's (`kind`, `within`,
+/// `docof`, `unset`, `next_sibling`, `op_at`, `earlier`, `visit_index`, …) with no declaration of them, and give
+/// on `LIBRARY_FIXTURE` what the library says: a chained comparison's links, each parameter's kind, the last
+/// assignment before a read in CPython's order, owners' dotted paths, calls' names.
+#[test]
+fn an_overlay_includes_the_python_library() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("library-overlay");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let authored = format!(
+        r#"
+#include "python/ast.rr"
+#include "python/calls.rr"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl line(n: node, l: number)
+.decl in_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl library_at(n: node, p: symbol, l: number)
+library_at(n, p, l) :- docof(n, d), in_scope(d), doc(d, p, _), line(n, l).
+violation("{TARGET_ID}", "executor-parameters", cat("cmp ", o), p, l) :- cmp_pair(c, _, o, _, _), library_at(c, p, l).
+violation("{TARGET_ID}", "executor-parameters", cat("param ", cat(x, cat(" ", k))), p, l) :- sig_param(_, _, nm, _, k, _, _), text(nm, x),
+    library_at(nm, p, l).
+violation("{TARGET_ID}", "executor-parameters", cat("latest ", cat(x, cat(" ", to_string(la)))), p, l) :- latest_assign(n, x, a),
+    line(a, la), library_at(n, p, l).
+violation("{TARGET_ID}", "executor-parameters", cat("owner ", s), p, l) :- owner_path(f, s), library_at(f, p, l).
+violation("{TARGET_ID}", "executor-parameters", cat("call ", x), p, l) :- call_name(c, x), library_at(c, p, l).
+"#
+    );
+    std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
+    let run = dir.join("run");
+    write_files(&run, [LIBRARY_FIXTURE]);
+    let only = Adjust { keep: Some(Box::new(|c: &str| c == "executor-parameters")), scope: Some((vec!["**/*".to_owned()], Vec::new())), ..Adjust::default() };
+    let c = convert_over(&rule_file(TARGET).unwrap(), &only, Some(&dir)).unwrap_or_else(|e| panic!("{e}"));
+    let mut got = findings(&c.program, &run).unwrap_or_else(|e| panic!("{e}\n{}", c.program));
+    got.sort();
+    let path = LIBRARY_FIXTURE.0;
+    let mut want: Vec<String> = [
+        (15, "cmp <"),
+        (15, "cmp <="),
+        (10, "param a posonly"),
+        (10, "param b pos"),
+        (10, "param c vararg"),
+        (10, "param d kwonly"),
+        (10, "param e kwarg"),
+        (25, "param self pos"),
+        (25, "param y pos"),
+        (35, "param q pos"),
+        (35, "param r pos"),
+        (14, "latest x 13"),
+        (16, "latest x 14"),
+        (21, "latest x 14"),
+        (36, "latest X 6"),
+        (10, "owner f"),
+        (25, "owner C.m"),
+        (26, "owner C.m.inner"),
+        (31, "owner g"),
+        (9, "call decorator"),
+        (20, "call g"),
+        (21, "call join"),
+        (27, "call m"),
+        (28, "call inner"),
+        (32, "call f"),
+    ]
+    .iter()
+    .map(|(l, code)| format!("{path}:{l}:{code}"))
+    .collect();
+    want.sort();
+    assert_eq!(got, want);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -826,3 +826,356 @@ comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), line(n, l), end_l
     assert_eq!(got[0], want);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// W's findings of a Python `ast` rule over `files`, each `path\tline\tcol` (1-based line, byte column).
+fn w_at(rule: Value, files: &[(&str, &str)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, source) in files {
+        for v in w(json!({ "ast": { "language": "python", "rule": rule.clone() } }), path, source) {
+            out.push(format!("{path}\t{}\t{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["span"]["startColumn"].as_u64().unwrap()));
+        }
+    }
+    out
+}
+
+/// A module with nested definitions, statements side by side, and a class.
+const TREE: (&str, &str) = (
+    "t.py",
+    "def f(a):\n    x = g(a)\n    y = h(x)\n    print(y)\n    return y\n\n\nclass C:\n    def m(self):\n        z = k(1)\n        z.w()\n        return z\n",
+);
+
+/// core.rr's tree arithmetic, which lowering rewrites to the base relations (`rr::lower::core`), as W's matcher
+/// sees it: `kind` is a node's kind; `within` W's `inside` to the end, its ancestor's kind tested (a kind set of
+/// one) or read from a relation (the set of every kind); `next_sibling` W's `follows` at a neighbour (statements of a
+/// block, which no token separates), negated W's `nthChild: 1`; `precedes` W's `precedes` to the end. No program
+/// declares them: core.rr's declarations are the prelude.
+#[test]
+fn tree_arithmetic_is_ws_relations() {
+    let files = [TREE];
+    let dir = corpus("tree-arithmetic", &files);
+    let program = r#"
+.decl at(n: node, p: symbol, l: number, c: number)
+at(n, p, l, c) :- docof(n, d), doc(d, p, _), line(n, l), col(n, c).
+.decl kinds(p: symbol, l: number, c: number)
+kinds(p, l, c) :- kind(n, "call"), at(n, p, l, c).
+.decl within_def(p: symbol, l: number, c: number)
+within_def(p, l, c) :- kind(n, "identifier"), within(n, a), kind(a, "function_definition"), at(n, p, l, c).
+.decl defs(a: node)
+defs(a) :- kind(a, "function_definition").
+.decl within_any(p: symbol, l: number, c: number)
+within_any(p, l, c) :- kind(n, "identifier"), within(n, a), defs(a), at(n, p, l, c).
+.decl follows_stmt(p: symbol, l: number, c: number)
+follows_stmt(p, l, c) :- kind(b, "expression_statement"), next_sibling(a, b), kind(a, "expression_statement"), at(b, p, l, c).
+.decl first_stmt(p: symbol, l: number, c: number)
+first_stmt(p, l, c) :- kind(b, "expression_statement"), !next_sibling(_, b), at(b, p, l, c).
+.decl before_return(p: symbol, l: number, c: number)
+before_return(p, l, c) :- kind(a, "expression_statement"), precedes(a, b), kind(b, "return_statement"), at(a, p, l, c).
+.output kinds, within_def, within_any, follows_stmt, first_stmt, before_return
+"#;
+    let parsed = crate::code_rule_dsl::logic::rr::parse(program).unwrap();
+    assert!(parsed.kindsets.contains_key("rr_kind_function_definition") && parsed.kindsets.contains_key("rr_kind_any"), "{:?}", parsed.kindsets);
+    let got = run(&dir, program, &["kinds", "within_def", "within_any", "follows_stmt", "first_stmt", "before_return"]);
+    let inside = json!({ "kind": "identifier", "inside": { "kind": "function_definition", "stopBy": "end" } });
+    let want = [
+        w_at(json!({ "kind": "call" }), &files),
+        w_at(inside.clone(), &files),
+        w_at(inside, &files),
+        w_at(json!({ "kind": "expression_statement", "follows": { "kind": "expression_statement" } }), &files),
+        w_at(json!({ "kind": "expression_statement", "nthChild": 1 }), &files),
+        w_at(json!({ "kind": "expression_statement", "precedes": { "kind": "return_statement", "stopBy": "end" } }), &files),
+    ];
+    for (got, want) in got.iter().zip(want) {
+        assert!(!want.is_empty());
+        assert_eq!(*got, csv(want));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `unset(x)` has one row, no node; `docof` gives every node and span its document (each node's `node(d, …)`, each
+/// line's `src_line(d, …)`), and W reports each call in the file `docof` names.
+#[test]
+fn docof_and_unset() {
+    let files = [TREE, ("pkg/b.py", "k(1)\n")];
+    let dir = corpus("docof", &files);
+    let program = r#"
+.decl empty(x: node)
+empty(x) :- unset(x).
+.decl nodes_unset(n: node)
+nodes_unset(n) :- node(_, n, _, _, _), unset(n).
+.decl wrong(n: node)
+wrong(n) :- node(d, n, _, _, _), docof(n, e), d != e.
+wrong(sp) :- src_line(d, _, sp), docof(sp, e), d != e.
+.decl undocumented(n: node)
+undocumented(n) :- node(_, n, _, _, _), !docof(n, _).
+undocumented(sp) :- src_line(_, _, sp), !docof(sp, _).
+.decl calls(p: symbol, l: number, c: number)
+calls(p, l, c) :- kind(n, "call"), docof(n, d), doc(d, p, _), line(n, l), col(n, c).
+.output empty, nodes_unset, wrong, undocumented, calls
+"#;
+    let got = run(&dir, program, &["empty", "nodes_unset", "wrong", "undocumented", "calls"]);
+    assert_eq!(got[0], "-1\n");
+    assert_eq!(got[1..4], ["", "", ""]);
+    assert_eq!(got[4], csv(w_at(json!({ "kind": "call" }), &files)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `op_at`: a comparison's operators in order, two-word ones one token, as CPython's `Compare.ops` has them
+/// (`a < b <= c`: Lt, LtE; `not in`: NotIn; `is not`: IsNot), and every other operator node's one. W's `has` on the
+/// `operators` field sees a comparison's first operator only (so `op` has none): it finds the comparisons whose
+/// `op_at(n, 0, s)` is its operator, and none for the second, `<=`.
+#[test]
+fn op_at_is_the_operators_in_order() {
+    let files = [("o.py", "if a < b <= c:\n    pass\nz = p not in q\nw = r is not s\nv = 1 + 2 * 3\nu = not x or y\n")];
+    let dir = corpus("op-at", &files);
+    let program = r#"
+.decl ops(k: symbol, l: number, i: number, s: symbol)
+ops(k, l, i, s) :- op_at(n, i, s), kind(n, k), line(n, l).
+.output ops
+"#;
+    let got = run(&dir, program, &["ops"]);
+    // `not x` (a `not_operator`, CPython's `UnaryOp(Not)`) has its token in no field: no row.
+    let want = [
+        "binary_operator\t5\t0\t*",
+        "binary_operator\t5\t0\t+",
+        "boolean_operator\t6\t0\tor",
+        "comparison_operator\t1\t0\t<",
+        "comparison_operator\t1\t1\t<=",
+        "comparison_operator\t3\t0\tnot in",
+        "comparison_operator\t4\t0\tis not",
+    ];
+    assert_eq!(got[0], csv(want.map(str::to_owned)));
+    for op in ["<", "<=", "not in", "is not"] {
+        let escaped = regex::escape(op);
+        let at = w_at(json!({ "kind": "comparison_operator", "has": { "field": "operators", "regex": format!("^{escaped}$") } }), &files);
+        let first: Vec<String> = want.iter().filter_map(|r| r.strip_prefix("comparison_operator\t")?.strip_suffix(&format!("\t0\t{op}"))).map(|l| format!("o.py\t{l}\t{}", if l == "1" { 3 } else { 4 })).collect();
+        assert_eq!(at, first, "{op}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `prev_token(n, s)` is W's `follows` at a neighbour, anonymous tokens included (`,` and `import` in
+/// sql-grammar-escape-hatches' usage clauses); `token(p, i, s, start, end)` read at the next position is W's
+/// `precedes` at a neighbour.
+#[test]
+fn tokens_are_ws_neighbours() {
+    let files = [("i.py", "from m import a, b\nimport x, y.z\nf(a, b, c=1)  # done\n")];
+    let dir = corpus("tokens", &files);
+    let kinds = ["identifier", "dotted_name", "keyword_argument"];
+    let tokens = [",", "import", "(", ")", "from"];
+    let facts = |rel: &str, items: &[&str]| items.iter().map(|k| format!("{rel}({k:?}).")).collect::<Vec<_>>().join("\n");
+    let program = format!(
+        r#"
+.decl kinds(k: symbol)
+{}
+.decl tokens(t: symbol)
+{}
+.decl after(k: symbol, t: symbol, l: number, c: number)
+after(k, t, l, c) :- kinds(k), kind(n, k), prev_token(n, t), tokens(t), line(n, l), col(n, c).
+.decl before(k: symbol, t: symbol, l: number, c: number)
+before(k, t, l, c) :- kinds(k), node(_, n, k, s, e), child(p, n, _), token(p, i, _, s, e), j = i + 1, token(p, j, t, _, _), tokens(t),
+    line(n, l), col(n, c).
+.output after, before
+"#,
+        facts("kinds", &kinds),
+        facts("tokens", &tokens)
+    );
+    let got = run(&dir, &program, &["after", "before"]);
+    let (mut after, mut before) = (Vec::new(), Vec::new());
+    for k in kinds {
+        for t in tokens {
+            let regex = format!("^{}$", regex::escape(t));
+            let at = |rule: Value| w_at(rule, &files).into_iter().map(|r| format!("{k}\t{t}\t{}", r.split_once('\t').unwrap().1)).collect::<Vec<_>>();
+            after.extend(at(json!({ "kind": k, "follows": { "stopBy": "neighbor", "regex": regex } })));
+            before.extend(at(json!({ "kind": k, "precedes": { "stopBy": "neighbor", "regex": regex } })));
+        }
+    }
+    assert!(after.iter().any(|r| r.starts_with("dotted_name\t,\t")) && after.iter().any(|r| r.starts_with("dotted_name\timport\t")), "{after:?}");
+    assert_eq!(got, [csv(after), csv(before)]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `path_part(d, s)`: each directory of the path and the file name; `file_name(d, s)` the last. W's scope globs agree:
+/// a file is in `**/<dir>/**` for each directory part, and in `**/<name>` for its name.
+#[test]
+fn path_parts_are_ws_scope() {
+    let files = [("pkg/tests/test_a.py", "x = 1\n"), ("pkg/a.py", "x = 1\n"), ("b.py", "x = 1\n")];
+    let dir = corpus("path-parts", &files);
+    let program = r#"
+.decl parts(p: symbol, s: symbol)
+parts(p, s) :- doc(d, p, _), path_part(d, s).
+.decl names(p: symbol, s: symbol)
+names(p, s) :- doc(d, p, _), file_name(d, s).
+.output parts, names
+"#;
+    let got = run(&dir, program, &["parts", "names"]);
+    let in_scope = |glob: &str, path: &str, source: &str| {
+        let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+        let mut document = clause_document(json!({ "id": "c", "forbid": { "ast": { "language": "python", "rule": { "kind": "module" } } }, "violation": violation() }));
+        document["scope"] = json!({ "include": [glob], "exclude": [] });
+        let compiled = compile_document_with(document, &capabilities).unwrap_or_else(|e| panic!("{}", e.reason));
+        !evaluate_file(&compiled, "python", path, source)["violations"].as_array().unwrap().is_empty()
+    };
+    let (mut parts, mut names) = (Vec::new(), Vec::new());
+    let candidates = ["pkg", "tests", "test_a.py", "a.py", "b.py"];
+    for (path, source) in files {
+        for c in candidates {
+            if in_scope(&format!("**/{c}/**"), path, source) || in_scope(&format!("**/{c}"), path, source) {
+                parts.push(format!("{path}\t{c}"));
+            }
+            if in_scope(&format!("**/{c}"), path, source) {
+                names.push(format!("{path}\t{c}"));
+            }
+        }
+    }
+    assert_eq!(got, [csv(parts), csv(names)]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The CPython visit order's fixture: decorators, return annotation, positional and keyword-only defaults, a dict
+/// with `**`, `a if t else b`, a call's keywords, a lambda's default, a class's bases and keywords.
+const VISIT: &str = "@dec(a, k=1)\n@other\ndef f(p, q: int = 1, /, r=2, *args: str, s, t=3, **kw) -> R:\n    x = {k1: v1, **rest, k2: v2}\n    y = a if t else b\n    z = g(1, *xs, key=2, **more)\n    return lambda u, w=4: u\n\n\nclass C(B1, B2, metaclass=M, **opts):\n    attr: int = 5\n";
+
+/// CPython 3.9's `ast.NodeVisitor` order of `VISIT`: each located node's byte range, first occurrences, from
+/// `python3 -c` (`ast.parse`, `lineno`/`col_offset` made byte offsets).
+const CPYTHON_VISIT: [(i64, i64); 62] = [
+    (20, 196), (26, 27), (29, 35), (32, 35), (44, 45), (50, 59), (56, 59), (61, 62), (64, 65), (66, 67), (71, 73), (38, 39), (46, 47),
+    (85, 113), (85, 86), (89, 113), (90, 92), (106, 108), (94, 96), (100, 104), (110, 112), (118, 135), (118, 119), (122, 135), (127, 128),
+    (122, 123), (134, 135), (140, 168), (140, 141), (144, 168), (144, 145), (146, 147), (149, 152), (150, 152), (154, 159), (158, 159),
+    (161, 167), (163, 167), (173, 196), (180, 196), (187, 188), (190, 191), (192, 193), (195, 196), (1, 12), (1, 4), (5, 6), (8, 11),
+    (10, 11), (14, 19), (78, 79), (199, 254), (207, 209), (211, 213), (215, 226), (225, 226), (228, 234), (230, 234), (241, 254),
+    (241, 245), (247, 250), (253, 254),
+];
+
+/// `visit_index(n, i)` orders the nodes as CPython's `ast` visits them: every node whose byte range is a located
+/// `ast` node's comes in CPython's order (wrappers of the same range first), and `earlier` follows it (a decorator's
+/// call after the body's return).
+#[test]
+fn visit_index_is_cpythons_order() {
+    let dir = corpus("visit", &[("v.py", VISIT)]);
+    let program = r#"
+.decl visits(s: number, e: number, i: number)
+visits(s, e, i) :- visit_index(n, i), node(_, n, _, s, e).
+.decl later(r: number, c: number)
+later(r, c) :- kind(ret, "return_statement"), kind(call, "call"), earlier(ret, call), node(_, ret, _, r, _), node(_, call, _, c, _).
+.output visits, later
+"#;
+    let got = run(&dir, program, &["visits", "later"]);
+    let mut first: std::collections::BTreeMap<(i64, i64), i64> = std::collections::BTreeMap::new();
+    let mut indexes = BTreeSet::new();
+    for row in got[0].lines() {
+        let f: Vec<i64> = row.split('\t').map(|x| x.parse().unwrap()).collect();
+        assert!(indexes.insert(f[2]), "index {} twice", f[2]);
+        let at = first.entry((f[0], f[1])).or_insert(f[2]);
+        *at = (*at).min(f[2]);
+    }
+    let cpython: Vec<(i64, i64)> = CPYTHON_VISIT.iter().copied().filter(|span| first.contains_key(span)).collect();
+    assert!(cpython.len() > 50, "{} of CPython's ranges are nodes", cpython.len());
+    let mut ours = cpython.clone();
+    ours.sort_by_key(|span| first[span]);
+    assert_eq!(ours, cpython);
+    // The return statement (byte 173) comes before both decorators' calls (`dec(a, k=1)` at byte 1).
+    assert!(got[1].lines().any(|l| l == "173\t1"), "{}", got[1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A disjunction over a kind variable, `(k = "call" ; k = "attribute")`, compares kinds (it was a membership test of
+/// names: "$k is a Kind and a Name"), negated too: the calls and attributes W finds, and the other identifiers' parents.
+#[test]
+fn a_kind_disjunction_compares_kinds() {
+    let files = [TREE];
+    let dir = corpus("kind-disjunction", &files);
+    let program = r#"
+.decl either(p: symbol, l: number, c: number)
+either(p, l, c) :- node(d, n, k, _, _), (k = "call" ; k = "attribute"), doc(d, p, _), line(n, l), col(n, c).
+.decl neither(p: symbol, l: number, c: number)
+neither(p, l, c) :- node(d, n, "identifier", _, _), child(q, n, _), node(_, q, k, _, _), !(k = "call" ; k = "attribute"),
+    doc(d, p, _), line(n, l), col(n, c).
+.output either, neither
+"#;
+    let got = run(&dir, program, &["either", "neither"]);
+    let mut want = w_at(json!({ "kind": "call" }), &files);
+    want.extend(w_at(json!({ "kind": "attribute" }), &files));
+    assert_eq!(got[0], csv(want));
+    let others = json!({ "kind": "identifier", "inside": { "not": { "any": [{ "kind": "call" }, { "kind": "attribute" }] } } });
+    assert_eq!(got[1], csv(w_at(others, &files)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A comparison in an aggregate's body with the rule's variable, `k = min b : { …, b > o }`, reads `o` from the rule
+/// (Soufflé's meaning; it was `unplaced literals`), and `count` counts the body's own variables (`_` where the
+/// aggregate reads its helper): a call's first child start after its own start is its argument list's.
+#[test]
+fn an_aggregate_reads_the_rules_variables() {
+    let dir = corpus("aggregate-outer", &[TREE]);
+    let program = r#"
+.decl starts(n: node, b: number)
+starts(n, b) :- kind(n, "call"), child(n, c, _), node(_, c, _, b, _).
+.decl after(n: node, k: number)
+after(n, k) :- node(_, n, "call", o, _), k = min b : { starts(n, b), b > o }.
+.decl arguments(n: node, k: number)
+arguments(n, k) :- field(n, "arguments", a), node(_, a, _, k, _).
+.decl later(n: node, k: number)
+later(n, k) :- node(_, n, "call", o, _), k = count : { starts(n, b), b > o }.
+.decl mismatch(n: node)
+mismatch(n) :- after(n, k), !arguments(n, k).
+mismatch(n) :- arguments(n, k), !after(n, k).
+mismatch(n) :- later(n, k), k != 1.
+.decl calls(n: node)
+calls(n) :- later(n, _).
+.output mismatch, calls
+"#;
+    let got = run(&dir, program, &["mismatch", "calls"]);
+    assert_eq!(got[0], "");
+    assert_eq!(got[1].lines().count(), 5, "{}", got[1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A core relation nothing derives and the runner does not bind is a named error, not the planner's missing
+/// statistics; those that need CPython say so. A program's own input is its business: no such error.
+#[test]
+fn an_unbound_relation_is_named() {
+    let dir = corpus("unbound", &[TREE]);
+    // Each run its own output directory: a run that fails after opening its store leaves it half made.
+    let fails = |out: &str, program: &str| {
+        super::run(program, &dir, None, &dir.join(out), "program", Binding::Cpu, 1 << 18).err().map(|e| e.to_string()).unwrap_or_default()
+    };
+    let e = fails(".out-git", ".decl v(p: symbol)\nv(p) :- git_tracked(p).\n.output v\n");
+    assert!(e.contains("git_tracked is read, and nothing derives it or binds it"), "{e}");
+    let e = fails(".out-str", ".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n");
+    assert!(e.contains("str_part is read") && e.contains("CPython"), "{e}");
+    let e = fails(".out-unparse", ".decl v(s: symbol)\nv(@unparse(n)) :- kind(n, \"call\").\n.output v\n");
+    assert!(e.contains("@unparse is called, and it needs CPython"), "{e}");
+    let e = fails(".out-mine", ".decl mine(n: node)\n.input mine\n.decl v(n: node)\nv(n) :- mine(n).\n.output v\n");
+    assert!(!e.contains("nothing derives it or binds it"), "{e}");
+    eprintln!("UNBOUND mine: {e:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The run that failed before (`an_unbound_relation_is_named`'s fourth case in the first three's directory): a
+/// failed run's store reopened.
+#[test]
+#[ignore = "a report: a run reusing a failed run's output directory"]
+fn a_failed_runs_store_reopened_report() {
+    let dir = corpus("unbound-shared", &[TREE]);
+    let out = dir.join(".out");
+    for program in [".decl v(n: node)\nv(n) :- str_part(n, 0, _, _, _).\n.output v\n", ".decl mine(n: node)\n.input mine\n.decl v(n: node)\nv(n) :- mine(n).\n.output v\n"] {
+        let e = super::run(program, &dir, None, &out, "program", Binding::Cpu, 1 << 18).err().map(|e| e.to_string());
+        eprintln!("SHARED {e:?}; left in .out: {:?}", std::fs::read_dir(&out).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name()).collect::<Vec<_>>()));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `as` names a variable (python/calls.rr's `field(c, "arguments", as)`), as the engine always read it. Soufflé
+/// reserves it (its `as(x, T)` cast), so a program for Soufflé renames it.
+#[test]
+fn as_is_a_variable() {
+    let files = [TREE];
+    let dir = corpus("as-variable", &files);
+    let program = r#"
+.decl args(p: symbol, l: number, c: number)
+args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "argument_list"), docof(as, d), doc(d, p, _), line(as, l), col(as, c).
+.output args
+"#;
+    assert_eq!(run(&dir, program, &["args"])[0], csv(w_at(json!({ "kind": "argument_list", "inside": { "kind": "call" } }), &files)));
+    let _ = std::fs::remove_dir_all(&dir);
+}

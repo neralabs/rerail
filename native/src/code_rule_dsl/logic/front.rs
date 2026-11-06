@@ -729,6 +729,10 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
 /// The prefix of a tree axis's relation: `inside_<set>(n, a)` (decision 0036).
 pub(in crate::code_rule_dsl) const AXIS: &str = "inside_";
 
+/// A kind set's one member meaning every kind of the dialect: core.rr's `within(n, a)` is the tree axis over it
+/// (`rr::lower::core`); lowering for a dialect makes it the dialect's kinds (`plan::lower`).
+pub(in crate::code_rule_dsl) const EVERY_KIND: &str = "*";
+
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
 pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;
 

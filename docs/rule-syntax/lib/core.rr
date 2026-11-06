@@ -131,6 +131,13 @@
 // A two-word operator is one token: "not in", "is not". `op` (above) is the unordered view; chained comparisons
 // need the order.
 .decl op_at(n: node, i: number, s: symbol)
+// prev_token(b, ","): in `import a, b`, the token right before b among its parent's children, anonymous tokens and
+// comments included: its text (an anonymous token's is its kind). What a JSON `follows` reads at a neighbour.
+.decl prev_token(n: node, s: symbol)
+// token(p, i, s, start, end): p's children in order, from 0, anonymous tokens and comments included, each its text
+// and byte range. In `f(a, b)` the argument list's are "(", "a", ",", "b", ")". What a JSON `precedes` or
+// `follows` reads at a neighbour, from either side.
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 // syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
 // For Python the verdict, line and message are CPython's: `ast.parse` in an isolated worker (`python -I -S`),
 // which never imports or runs the file. That worker also gives @unparse, @ast_dump and str_part; without it those
@@ -138,7 +145,8 @@
 // nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.input source, src_line, src_line_lf, tape_line, line_count, end_line, col, node_text, op_at, syntax_error
+.input source, src_line, src_line_lf, tape_line, line_count, end_line, col, node_text, op_at, prev_token, token
+.input syntax_error
 
 // ---- the Python reference graph (across files) --------------------------------------------------------------
 // Which definition refers to which, over the policy's files, as the linker resolves names: through imports,

@@ -23,13 +23,16 @@
 //! converted program (`overlay`):
 //! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
 //!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
-//! - it declares every relation it reads or defines. The base relations the corpus runner binds, with the
-//!   converter's signatures (`BASE`): `doc(d: number, path: symbol, module: symbol)`,
+//! - it declares every relation it reads or defines but core.rr's, whose declarations are every program's prelude
+//!   (`rr::lower`; its own declaration replaces core.rr's, as `syntax_error(d: number)` does). The base relations the
+//!   corpus runner binds, with the converter's signatures (`BASE`): `doc(d: number, path: symbol, module: symbol)`,
 //!   `node(d: number, n: node, kind: symbol, start: number, end: number)`, `child(p: node, c: node, i: number)`
 //!   (named children), `field(p: node, f: symbol, c: node)`, `text(n: node, s: symbol)`, `name(n: node, s: symbol)`,
 //!   `str(n: node, s: symbol)`, `strprefix(n: node, s: symbol)`, `intval(n: node, v: number)`,
-//!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`; those it reads are inputs,
-//!   `.input` or not. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
+//!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`, and core.rr's the README lists
+//!   (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`); those
+//!   it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`): their `.output`s are
+//!   theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
 //!   or the replay's per event): read, never derived. So is the report gate, `report_when_gt(k: number)`: one row
 //!   `k` where the policy (as the run configures it) has `report_when: {count: {gt: k}}`, the only form the compiler
 //!   accepts (once per policy, on a define clause): the rule reports nothing unless its findings, all files and
@@ -805,6 +808,14 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl end_line(n: node, l: int)
 .decl col(n: node, c: int)
 .decl node_text(n: node, s: sym)
+.decl pkg(d: int, p: sym)
+.decl docof(n: node, d: int)
+.decl op_at(n: node, i: int, s: sym)
+.decl prev_token(n: node, s: sym)
+.decl token(p: node, i: int, s: sym, start: int, end: int)
+.decl visit_index(n: node, i: int)
+.decl path_part(d: int, s: sym)
+.decl file_name(d: int, s: sym)
 .decl value(n: node, v: sym)
 .decl static_value(n: node, v: sym)
 .decl value_type_of(n: node, t: sym)

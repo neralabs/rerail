@@ -370,6 +370,7 @@ enum View {
 /// ```text
 /// source(d, sp)          src_line(d, l, sp)     src_line_lf(d, l, sp)  tape_line(d, l, sp)
 /// line_count(d, k)       node_text(n, s)        end_line(n, l)         col(n, c)
+/// docof(n, d)
 /// ```
 ///
 /// with `sp` a span (`SPAN`); `src_line` split as `physical_lines` does (Python's `str.splitlines()`; other
@@ -388,7 +389,8 @@ enum View {
 /// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
 /// (the str `"12"` and the int `12` both give `12`). `comment(c, s)` is each comment's text without its marker
 /// (`comment_body`); a comment no node is (`COMMENT`) has rows in `text` and `node_text` (its text, marker included),
-/// `line`, `end_line` and `col` as a node's. Rows hold string indexes, as `Batch::build`'s do.
+/// `line`, `end_line` and `col` as a node's. `docof` has every node and every span (comments and matches included),
+/// each with its document (a span's `sp >> 32`, as a node's). Rows hold string indexes, as `Batch::build`'s do.
 ///
 ///
 /// And each `matchall_<k>(sp, m)` read (`logic::strings::as_relations`, core.rr's `match_all`): `m` each match of
@@ -408,6 +410,7 @@ struct Extra {
     end_line: bool,
     col: bool,
     node_text: bool,
+    docof: bool,
     value: bool,
     static_value: bool,
     value_type_of: bool,
@@ -422,6 +425,7 @@ struct Extra {
     end_lines: Vec<[i64; 2]>,
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
+    docofs: Vec<[i64; 2]>,
     values: Vec<[i64; 2]>,
     static_values: Vec<[i64; 2]>,
     value_types_of: Vec<[i64; 2]>,
@@ -459,6 +463,7 @@ impl Extra {
             end_line: read("end_line"),
             col: read("col"),
             node_text: read("node_text"),
+            docof: read("rr_docof"),
             value: read("value"),
             static_value: read("static_value"),
             value_type_of: read("value_type_of"),
@@ -493,6 +498,9 @@ impl Extra {
     /// A span's rows in `text` (into `text`), `line`, `end_line` and `col` (its start's byte column).
     #[allow(clippy::too_many_arguments)]
     fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+        if self.docof {
+            self.docofs.push([sp, sp >> 32]);
+        }
         if self.text {
             text.push([sp, string(body) as i64]);
         }
@@ -566,6 +574,10 @@ impl Extra {
                     self.node_texts.push([n, string(f.text(id)) as i64]);
                 }
             }
+        }
+        if self.docof {
+            let key = i64::from(p.key);
+            self.docofs.extend((0..p.len()).map(|local| [p.global(local), key]));
         }
         let key = i64::from(p.key);
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
@@ -717,6 +729,9 @@ impl Extra {
         if self.node_text {
             out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)]))));
         }
+        if self.docof {
+            out.push(("rr_docof", relation(&["n", "d"], &mut self.docofs.iter().map(|r| r.to_vec()))));
+        }
         if self.value {
             out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)]))));
         }
@@ -782,6 +797,7 @@ impl Batch {
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
         let mut extra = Extra::new(reads, matches);
+        let mut tree = tree::Tree::new(reads);
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
@@ -855,6 +871,7 @@ impl Batch {
             }
             // A text document's lines split as W's `lines` regexes split any file's.
             extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
+            tree.document(&p, dialect, &d.path, python == Some(tag), &mut string);
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -887,6 +904,7 @@ impl Batch {
         let line_rows = extra.line_rows();
         let (read, matched) = extra.relations(&atom);
         relations.extend(read);
+        relations.extend(tree.relations(&atom));
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
             docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
@@ -1415,3 +1433,4 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+mod tree;
