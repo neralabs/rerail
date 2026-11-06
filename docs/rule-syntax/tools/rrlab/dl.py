@@ -19,7 +19,8 @@ the set of (path, line, code) keys.
   ports. They are passed to the rule as `option` rows; a rule may ignore them.
 - **Scope.** A direct call takes the files it is given, so `.scope` is ignored, except on production (plugin)
   events, which also drop the rule's `.mode log` codes.
-- A record with no code (an internal entry's plain dict) gets the check's name, or `--codeless CODE`. A record whose
+- A record with no code (an internal entry's plain dict) gets `--codeless CODE`, or the rule's code when it has one
+  only, or the check's name. A record whose
   call raised is left out.
 - A file with a syntax error is withheld, as core.rr says: only `.on syntax_error`'s finding is kept for it.
 - Events with more than `--max-files` files (500) are not run: rrlab's facts grow with the whole tree.
@@ -75,7 +76,7 @@ def wanted(findings, paths, check):
     finding with no code gets the check's name (see --codeless). A recorded path that ends with one of the event's
     file paths is that file (some entries report absolute paths)."""
     def norm(fp):
-        return next((f for f in paths if fp == f or fp.endswith("/" + f)), fp)
+        return next((f.lstrip("/") for f in paths if fp == f or fp.endswith("/" + f.lstrip("/"))), fp.lstrip("/"))
     out = set()
     for x in findings:
         if isinstance(x, str):
@@ -104,6 +105,11 @@ def score(args, Run, here):
     fixtures = args.fixtures or os.path.join(here, "..", "..", "..", "..", "..", "Data-layer-rule-expressivity",
                                              "fixtures", "host", "data-layer-port")
     evs = events(fixtures, check)
+    text = open(rule).read()
+    codes_of = dict(re.findall(r'^\.violation\s+(\w+)\([^)]*\)\s*code\s+"([^"]+)"', text, re.M))
+    names = re.findall(r'^\.violation\s+(\w+)\(', text, re.M)
+    if not args.codeless and len({codes_of.get(n, n) for n in names}) == 1:
+        args.codeless = codes_of.get(names[0], names[0])   # a rule with one code: a codeless record has that code
     if args.codeless:   # a record that carries no code: the code the linter's plugin gives every finding
         for e in evs:
             e["want"] = {(p, l, args.codeless if c == check else c) for p, l, c in e["want"]}
@@ -118,8 +124,6 @@ def score(args, Run, here):
         evs = [e for e in evs if args.test in e["test"]]
     if not evs:
         raise SystemExit(f"rrlab dl: no events for {check} under {fixtures}")
-    text = open(rule).read()
-    codes_of = dict(re.findall(r'^\.violation\s+(\w+)\([^)]*\)\s*code\s+"([^"]+)"', text, re.M))
     log = log_codes(text, codes_of)
     base = os.path.join(here, "target", "dl", f"{check}-{os.getpid()}")
     shutil.rmtree(base, ignore_errors=True)
@@ -127,12 +131,12 @@ def score(args, Run, here):
     def one(k, e):
         root = os.path.join(base, f"e{k}")
         for path, source in e["files"]:
-            p = os.path.join(root, path)
+            p = os.path.join(root, path.lstrip("/"))   # an absolute recorded path stays inside the event's directory
             os.makedirs(os.path.dirname(p), exist_ok=True)
             open(p, "w", encoding="utf-8", errors="surrogateescape").write(source)
         if not e["files"]:
             os.makedirs(root, exist_ok=True)
-        rels = [p for p, _ in e["files"]]
+        rels = [p.lstrip("/") for p, _ in e["files"]]
         if not rels:
             return k, set(), None
         try:
