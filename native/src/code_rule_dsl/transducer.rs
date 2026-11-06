@@ -17,10 +17,6 @@ pub(super) mod packed;
 // N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) mod semantic_facts;
-// Stream transducers (docs/parser-generators/10-bit-programs.md), step 1: the program, its
-// verifier, its text form and its word kernels. Nothing outside its tests calls it yet.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) mod stream;
 
 #[cfg(test)]
 const STOP: u8 = 0x00;
