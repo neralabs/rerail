@@ -1321,7 +1321,7 @@ export class CodeRuleBridge {
     return { own, gitWritten };
   }
 
-  /** A Git write is audited only for a source this session had changed; text no blob holds is kept for its next edit. */
+  /** A Git write is audited only for a source this session had changed; text neither the index nor `HEAD` holds is kept for its next edit. */
   #sortGitWrite(edit: CodeRuleEdit, verdict: GitVerdict, gitWritten: CodeRuleEdit[]): void {
     if (this.#texts.has(edit.path))
       gitWritten.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
