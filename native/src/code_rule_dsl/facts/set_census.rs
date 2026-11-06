@@ -511,3 +511,170 @@ fn posting_forms() {
     let ts = (thread_cpu() - t) / f64::from(rounds) * 1e3;
     println!("  reading every kind's set: delta-varint {tv:.1} ms, segments {ts:.1} ms (thread CPU, mean of {rounds})");
 }
+
+/// The process's retired instructions and cycles (macOS `proc_pid_rusage`); 0s elsewhere.
+fn counters() -> (u64, u64) {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
+        // SAFETY: a valid out-pointer of the requested flavour.
+        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
+            return (info.ri_instructions, info.ri_cycles);
+        }
+    }
+    (0, 0)
+}
+
+/// Decision 0045: where the containers' time goes against dense, per operation. For each operation,
+/// hot (the same operands each round: they stay in cache) and cold (rotating through 64 copies of
+/// the operands, about 300 MB, past every cache): thread CPU, instructions, cycles, IPC, and the
+/// bytes read and written with the bandwidth they imply.
+///
+/// `RERAIL_SET_SPIN=<label>:<dense|containers>:<seconds>` instead repeats one operation for a
+/// profiler (`xctrace record --template 'Time Profiler' --attach <pid>`).
+#[test]
+#[ignore = "a measurement over a repository on disk (RERAIL_SET_CENSUS_ROOT)"]
+fn set_profile() {
+    use crate::code_rule_dsl::space::{DenseSet, NodeSet, NodeSpace};
+    let root = PathBuf::from(std::env::var("RERAIL_SET_CENSUS_ROOT").expect("RERAIL_SET_CENSUS_ROOT"));
+    let mut files = Vec::new();
+    python_files(&root, &mut files);
+    files.sort();
+    let python = dialect_by_label("python").unwrap();
+    let (tag, catalog) = (tape_tag(python).unwrap(), python.kinds());
+    let mut names = HashMap::new();
+    for code in 0..catalog.kind_count() as u16 {
+        if let Some(name) = catalog.kind_name(code) {
+            names.insert(kind_atom(tag, code), name.to_owned());
+        }
+    }
+    let scopes: Vec<(String, u32)> =
+        ["function_definition", "class_definition", "except_clause"].iter().map(|s| ((*s).to_owned(), kind_atom(tag, catalog.kind_id(s)))).collect();
+    let docs: Vec<DocSets> = files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names)).collect();
+    let space = NodeSpace::new(docs.iter().map(|d| d.nodes).collect());
+    let build = |name: &str| -> (DenseSet, NodeSet) {
+        let (mut dense, mut chunked) = (DenseSet::empty(&space), NodeSet::empty(&space));
+        for (f, d) in docs.iter().enumerate() {
+            if let Some(scope) = name.strip_prefix("inside:") {
+                let runs = &d.inside[scope];
+                runs.iter().for_each(|&(a, b)| dense.fill(space.base(f) + a..space.base(f) + b));
+                chunked.insert_runs(f, runs.iter().map(|&(a, b)| a..b));
+            } else if let Some(ps) = d.kinds.get(name) {
+                ps.iter().for_each(|&p| dense.insert(space.base(f) + p));
+                chunked.insert_file(f, ps.iter().copied());
+            }
+        }
+        (dense, chunked)
+    };
+    let cases: Vec<(String, (DenseSet, NodeSet), (DenseSet, NodeSet))> = [
+        ("call ∩ inside function (runs)", "call", "inside:function_definition", false),
+        ("call ∩ inside function (bitmaps)", "call", "inside:function_definition", true),
+        ("identifier ∩ inside class (runs)", "identifier", "inside:class_definition", false),
+        ("raise ∩ inside except (sparse)", "raise_statement", "inside:except_clause", false),
+        ("await ∩ call (sparse ∩ dense-ish)", "await", "call", false),
+    ]
+    .iter()
+    .map(|&(label, a, b, bitmaps)| {
+        let (a, mut b) = (build(a), build(b));
+        if bitmaps {
+            b.1 = b.1.as_bitmaps();
+        }
+        (label.to_owned(), a, b)
+    })
+    .collect();
+    // The same members chunked Roaring's way: 2^16 nodes of the whole space per chunk, so a
+    // chunk spans many files (about 32 here), against one chunk per file.
+    let wide_space = {
+        let (full, rest) = (space.len() / 65536, space.len() % 65536);
+        NodeSpace::new(std::iter::repeat_n(65536, full as usize).chain((rest > 0).then_some(rest)).collect())
+    };
+    let wide: Vec<(NodeSet, NodeSet)> = cases
+        .iter()
+        .map(|(label, (da, _), (db, _))| {
+            let (a, b) = (NodeSet::from_words(&wide_space, da.words()), NodeSet::from_words(&wide_space, db.words()));
+            (a, if label.contains("(bitmaps)") { b.as_bitmaps() } else { b })
+        })
+        .collect();
+    println!("space: {} files, {} nodes; dense set {} B", docs.len(), space.len(), space.words() * 8);
+
+    if let Ok(spin) = std::env::var("RERAIL_SET_SPIN") {
+        let mut parts = spin.split(':');
+        let (label, side, seconds) = (parts.next().unwrap(), parts.next().unwrap_or("containers"), parts.next().and_then(|s| s.parse::<f64>().ok()).unwrap_or(20.0));
+        let (_, (da, ca), (db, cb)) = cases.iter().find(|(l, _, _)| l.contains(label)).expect("a case");
+        println!("spinning {label} on {side} for {seconds} s, pid {}", std::process::id());
+        let start = std::time::Instant::now();
+        let mut n = 0u64;
+        while start.elapsed().as_secs_f64() < seconds {
+            if side == "dense" {
+                let mut x = da.clone();
+                x.intersect_with(db);
+                std::hint::black_box(x);
+            } else {
+                std::hint::black_box(ca.intersection(cb));
+            }
+            n += 1;
+        }
+        println!("{n} operations");
+        return;
+    }
+
+    const COPIES: usize = 64;
+    println!("\ncase\tform\tregime\tµs/op\tinstr/op (M)\tcycles/op (M)\tIPC\tbytes in+out (MB)\tGB/s\tinstr/byte");
+    for ((label, (da, ca), (db, cb)), (wa, wb)) in cases.iter().zip(&wide) {
+        let dense_bytes = 3 * space.words() * 8;
+        let chunk_bytes = ca.bytes() + cb.bytes() + ca.intersection(cb).bytes();
+        let wide_bytes = wa.bytes() + wb.bytes() + wa.intersection(wb).bytes();
+        assert_eq!(wa.intersection(wb).len(), ca.intersection(cb).len(), "{label}: the two chunkings agree");
+        for (side, set) in [("a", ca), ("b", cb), ("a∩b", &ca.intersection(cb)), ("64K a", wa), ("64K b", wb)] {
+            let [arrays, bitmaps, runs] = set.census();
+            println!("# {label} {side}: arrays {arrays:?} bitmaps {bitmaps:?} runs {runs:?} (chunks, elements)");
+        }
+        // Each form, hot then cold. Dense copies its first operand (that copy is its result's
+        // buffer); containers write a new set without copying it.
+        for form in ["dense", "containers", "containers 64K"] {
+            let (ca, cb) = if form == "containers 64K" { (wa, wb) } else { (ca, cb) };
+            for cold in [false, true] {
+                let copies = if cold { COPIES } else { 1 };
+                let rounds = if cold { COPIES * 2 } else { 200 };
+                let (dense_a, dense_b): (Vec<DenseSet>, Vec<DenseSet>) =
+                    if form == "dense" { ((0..copies).map(|_| da.clone()).collect(), (0..copies).map(|_| db.clone()).collect()) } else { (Vec::new(), Vec::new()) };
+                let (chunk_a, chunk_b): (Vec<NodeSet>, Vec<NodeSet>) =
+                    if form == "dense" { (Vec::new(), Vec::new()) } else { ((0..copies).map(|_| ca.clone()).collect(), (0..copies).map(|_| cb.clone()).collect()) };
+                // Evict: touch 256 MB before a cold measurement.
+                if cold {
+                    let evict = vec![1u8; 256 << 20];
+                    std::hint::black_box(evict.iter().map(|&b| u64::from(b)).sum::<u64>());
+                }
+                let (t, (i0, c0)) = (thread_cpu(), counters());
+                for r in 0..rounds {
+                    let k = r % copies;
+                    if form == "dense" {
+                        let mut x = dense_a[k].clone();
+                        x.intersect_with(&dense_b[k]);
+                        std::hint::black_box(x);
+                    } else {
+                        std::hint::black_box(chunk_a[k].intersection(&chunk_b[k]));
+                    }
+                }
+                let (spent, (i1, c1)) = (thread_cpu() - t, counters());
+                let per = |x: f64| x / rounds as f64;
+                let (us, instr, cycles) = (per(spent) * 1e6, per((i1 - i0) as f64), per((c1 - c0) as f64));
+                let bytes = match form {
+                    "dense" => dense_bytes,
+                    "containers" => chunk_bytes,
+                    _ => wide_bytes,
+                } as f64;
+                println!(
+                    "{label}\t{form}\t{}\t{us:.0}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.1}\t{:.2}",
+                    if cold { "cold" } else { "hot" },
+                    instr / 1e6,
+                    cycles / 1e6,
+                    instr / cycles.max(1.0),
+                    bytes / 1e6,
+                    bytes / (us * 1e3),
+                    instr / bytes
+                );
+            }
+        }
+    }
+}

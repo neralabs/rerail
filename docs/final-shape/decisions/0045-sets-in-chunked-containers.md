@@ -180,6 +180,64 @@ What this shows:
   (at 8 KB, `identifier` was 10.9 MB); a bitmap once a chunk has more members than words; runs
   when they are smallest.
 
+## Evidence: where containers lose time (profile)
+
+The expectation was that set operations are bound by memory bandwidth, so containers, which move
+fewer bytes, would win even with more instructions. `facts::set_census::set_profile` tests that.
+It counts instructions and cycles (`proc_pid_rusage`), and runs each operation hot (in cache) and
+cold (after touching 256 MB). Xcode's Time Profiler attributed the cost to source lines.
+
+**How to tell which bound applies.** If an operation is bandwidth-bound, cold runs are much
+slower than hot ones. If it is compute-bound, cold and hot cost the same and the time follows
+the instruction count.
+
+Load 50-80, so read the times as ratios:
+
+| call ∩ inside function | µs hot | µs cold | instructions | instr/byte | bytes touched |
+|---|---|---|---|---|---|
+| dense | 126 | 217-361 | 0.88 M | 0.13 | 6.9 MB |
+| containers, runs: first version | 1,518 | 1,511 | 9.2 M | 1.6 | 5.7 MB |
+| containers, runs: now | 837 | 942 | 9.8 M | 1.7 | 5.7 MB |
+| containers, the inside-set as bitmaps | 433 | 511 | 3.9 M | 0.5 | 7.4 MB |
+| the same, 2^16-node chunks across files | 232 | 298 | 1.9 M | 0.3 | 6.9 MB |
+| raise ∩ inside except (sparse), containers | 81 | 83 | 0.5 M | 2.4 | 0.2 MB |
+| the same, 2^16-node chunks across files | 30 | 32 | 0.4 M | 4.2 | 0.1 MB |
+
+What it shows:
+
+- **Dense is bandwidth-bound.** Cold runs are 1.7-2.9 times hot ones, at 0.13 instructions per
+  byte (NEON, two words per instruction, no count).
+- **Containers are compute-bound, not bandwidth-bound.** Cold and hot runs cost the same. They
+  spend 1.7 instructions per byte, about 13 times dense. At about 3 instructions per cycle,
+  anything over about 0.3 instructions per byte cannot reach memory speed.
+- **Dense-ish sets save no bytes.** `call` has about 3.5 members per 64-bit word, so nearly every
+  word is non-zero, and its container is a bitmap anyway. The intersection touches 5.7 MB against
+  dense's 6.9 MB, only 18% less. There is no bandwidth to save, so the extra instructions are
+  pure loss. Containers win only where they shrink the bytes: sparse sets, 0.2 MB against 6.9 MB,
+  which runs 1.5 times faster than dense (4 times with 2^16-node chunks).
+- **The runs are short.** "Inside a function" is 135 K runs over about 250 K words: 1.85 words
+  per run. The first version did a `memcpy` and an edge test per run, and the system `memmove`
+  alone was 38% of the samples. Doing the work per word instead removed the calls, but the
+  `ws == wl` branch mispredicts about half the time. The current version is branch-free: each run
+  toggles two bits, and one pass turns the toggles into the mask with a prefix xor (a carry-less
+  multiply, PMULL), ands it with the bitmap and counts. That pass runs at IPC 3.9 and halves the
+  cycles, but it is still about 15 instructions per word plus about 8 per run.
+- **Per-chunk overhead.** A chunk is one file's 2^16-node slice, and a file averages 2,045 nodes
+  (32 words). About 300 instructions per chunk (directory merge, dispatch, sealing) are spent over
+  32 words of payload. Chunking the space Roaring's way, 2^16 nodes across files, means 282
+  chunks instead of 8,129. That halves the bitmap cases (433 → 232 µs) and makes sparse ones 2.5
+  times faster. The result must be the same set: the profile checks both chunkings agree.
+
+Possible next levers, measured but not taken:
+
+1. **Chunk the space, not the file (2^16 nodes across files).** This removes most of the
+   per-chunk cost. It changes §1's key and the store's per-file segments, which are then cut from
+   space chunks. It needs its own decision.
+2. **Pick containers for speed where an operation is hot.** As bitmaps, "inside a function"
+   intersects twice as fast but is three times larger.
+3. **Count lazily.** Today every result counts its members to choose its container. A pass with
+   no count could run at dense's instruction rate.
+
 ## Steps
 
 1. **Measure first** (done, Evidence) (the 9,010-file repository, core facts only, no rule run). For every kind
