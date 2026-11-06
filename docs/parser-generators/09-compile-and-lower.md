@@ -1,6 +1,7 @@
 # Parser generators: compiling, lowering and interpreting Bitlex
 
-Status: survey and proposed shape, 2026-11-06. Steps 1 and 3 of §11 are built in the engine:
+Status: survey and proposed shape, 2026-11-06. Step 1 of §11 and a first interpreter (step 3, without
+its chunk-edge tests) are built in the engine:
 the stream program and its CPU interpreter, equal to the reference evaluator on every file of
 three corpora (§12). It follows
 `01-branch-free-design.md` §4 (the stream transducer) and `06-block-parallel.md` (carries and
