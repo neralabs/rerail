@@ -52,11 +52,25 @@ pub(super) struct Program {
     pub(super) outputs: Vec<usize>,
     ids: HashMap<Op, usize>,
     utilities: HashMap<(usize, usize), Lowered>,
+    /// Per operation, what is known of its members (shape-fixes §16).
+    known: Vec<Known>,
+}
+
+/// What lowering knows of a set's members, for containment (`lower.rs`'s `within`, `factors`
+/// and `kinds`).
+#[derive(Clone, Default)]
+struct Known {
+    /// Sets known to contain it, itself included.
+    containing: BTreeSet<usize>,
+    /// The sets it is the intersection of: itself, unless an intersection.
+    factors: BTreeSet<usize>,
+    /// The kinds its members can have, when known.
+    kinds: Option<BTreeSet<u16>>,
 }
 
 impl Program {
     pub(super) fn lower(plans: &[&AnchorPlan]) -> Self {
-        let mut program = Self { ops: Vec::new(), outputs: Vec::new(), ids: HashMap::new(), utilities: HashMap::new() };
+        let mut program = Self { ops: Vec::new(), outputs: Vec::new(), ids: HashMap::new(), utilities: HashMap::new(), known: Vec::new() };
         let all = program.all();
         program.outputs = plans.iter().map(|plan| program.plan(plan, all).id).collect();
         program
@@ -67,9 +81,81 @@ impl Program {
             return id;
         }
         let id = self.ops.len();
+        let known = self.known_of(id, &op);
+        self.known.push(known);
         self.ops.push(op.clone());
         self.ids.insert(op, id);
         id
+    }
+
+    /// What follows of operation `id`'s members from its operands'.
+    fn known_of(&self, id: usize, op: &Op) -> Known {
+        let of = |at: &usize| &self.known[*at];
+        let (mut containing, factors, kinds) = match op {
+            Op::Kinds(kinds) => (BTreeSet::new(), BTreeSet::new(), Some(kinds.iter().copied().collect())),
+            Op::Intersect(a, b) => (
+                &of(a).containing | &of(b).containing,
+                &of(a).factors | &of(b).factors,
+                match (&of(a).kinds, &of(b).kinds) {
+                    (Some(x), Some(y)) => Some(x & y),
+                    (Some(x), None) | (None, Some(x)) => Some(x.clone()),
+                    (None, None) => None,
+                },
+            ),
+            Op::Union(ids) => {
+                let containing = ids.iter().map(|at| of(at).containing.clone()).reduce(|x, y| &x & &y).unwrap_or_default();
+                let kinds = ids.iter().map(|at| of(at).kinds.clone()).reduce(|x, y| Some(&x? | &y?)).flatten();
+                (containing, BTreeSet::new(), kinds)
+            }
+            Op::Except(scope, _) | Op::Within(scope, _) => (of(scope).containing.clone(), BTreeSet::new(), of(scope).kinds.clone()),
+            Op::Empty => (BTreeSet::new(), BTreeSet::new(), Some(BTreeSet::new())),
+            Op::All | Op::Terms { .. } | Op::Uncovered => (BTreeSet::new(), BTreeSet::new(), None),
+        };
+        containing.insert(id);
+        let factors = if factors.is_empty() { BTreeSet::from([id]) } else { factors };
+        Known { containing, factors, kinds }
+    }
+
+    /// The kinds of a kind posting set, unless it holds the error-node convention of kind MAX
+    /// (kind 0 labels no node and is never a posting).
+    fn root_kinds(&self, id: usize) -> Option<&[u16]> {
+        match &self.ops[id] {
+            Op::Kinds(kinds) if !kinds.contains(&u16::MAX) => Some(kinds),
+            _ => None,
+        }
+    }
+
+    /// Whether `set` is known to be a subset of `outer`: `outer` contains it, `outer` is a kind
+    /// posting holding every kind `set` can have, or this holds of each of `outer`'s factors.
+    fn inside(&self, set: usize, outer: usize) -> bool {
+        let known = &self.known[set];
+        let within = |outer: usize| {
+            known.containing.contains(&outer)
+                || self.root_kinds(outer).is_some_and(|kinds| known.kinds.as_ref().is_some_and(|own| own.iter().all(|kind| kinds.contains(kind))))
+        };
+        within(outer) || self.known[outer].factors.iter().all(|&factor| within(factor))
+    }
+
+    /// A union of restrictions of one set to kinds is that set restricted to all their kinds:
+    /// `(r ∩ kinds{1}) ∪ (r ∩ kinds{5,6})` is `r ∩ kinds{1,5,6}`.
+    fn factored(&mut self, ids: &[usize]) -> Option<usize> {
+        let mut common: Option<BTreeSet<usize>> = None;
+        let mut kinds = BTreeSet::new();
+        for &id in ids {
+            let (roots, rest): (BTreeSet<usize>, BTreeSet<usize>) = self.known[id].factors.iter().partition(|&&factor| self.root_kinds(factor).is_some());
+            let restricted = roots
+                .iter()
+                .map(|&root| self.root_kinds(root).expect("a kind posting").iter().copied().collect::<BTreeSet<_>>())
+                .reduce(|x, y| &x & &y)?;
+            if rest.is_empty() || common.as_ref().is_some_and(|common| *common != rest) {
+                return None;
+            }
+            kinds.extend(restricted);
+            common = Some(rest);
+        }
+        let base = common?.into_iter().reduce(|x, y| self.intersect(x, y))?;
+        let kinds = self.kinds(&kinds);
+        Some(self.intersect(base, kinds.id))
     }
 
     fn all(&mut self) -> Lowered {
@@ -91,6 +177,9 @@ impl Program {
         match (a, b) {
             _ if a == b || b == all => a,
             _ if a == all => b,
+            // An intersection with a known superset is the subset.
+            _ if self.inside(a, b) => a,
+            _ if self.inside(b, a) => b,
             _ => self.push(Op::Intersect(a.min(b), a.max(b))),
         }
     }
@@ -104,7 +193,14 @@ impl Program {
         let id = match ids.as_slice() {
             [] => empty,
             [id] => *id,
-            _ => self.push(Op::Union(ids)),
+            _ => match self.factored(&ids) {
+                Some(id) => id,
+                // A branch that contains every other branch is the union.
+                None => match ids.iter().find(|&&outer| ids.iter().all(|&id| self.inside(id, outer))) {
+                    Some(&outer) => outer,
+                    None => self.push(Op::Union(ids)),
+                },
+            },
         };
         Lowered { id, exact }
     }
@@ -472,16 +568,9 @@ fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, Nod
                 ids[1..].iter().for_each(|&id| set.union_with(&values[id]));
                 set
             }
-            Op::Intersect(a, b) => {
-                let mut set = first(&mut values, *a, &[*b]);
-                set.intersect_with(&values[*b]);
-                set
-            }
-            Op::Except(a, b) => {
-                let mut set = first(&mut values, *a, &[*b]);
-                set.difference_with(&values[*b]);
-                set
-            }
+            // An intersection or difference writes a new set: its first operand is read, not copied.
+            Op::Intersect(a, b) => values[*a].intersection(&values[*b]),
+            Op::Except(a, b) => values[*a].difference(&values[*b]),
             Op::Within(scope, tests) => {
                 let mut set = first(&mut values, *scope, tests);
                 set.within_files(space, &tests.iter().map(|&id| &values[id]).collect::<Vec<_>>());
