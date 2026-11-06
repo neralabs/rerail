@@ -1,0 +1,25 @@
+.policy "ruff-c400-unnecessary-generator-list" revision 2
+.description "Use a list comprehension instead of passing a generator expression to list, or pass the iterable itself when the generator yields its items unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C400 (flake8-comprehensions): `list(…)` of the builtin list, whose one argument is a generator
+// expression. When the generator is `x for x in y`, one plain `for` and no `if`, that yields its target
+// unchanged, `list(y)` says it; otherwise a list comprehension does. Ruff's fixes are unsafe; none here.
+//   list(f(x) for x in y)      ← C400: [f(x) for x in y]
+//   list(x for x in y)         ← C400: list(y)
+//   list(x for x in y if x)    ← C400: [x for x in y if x]
+#include "python/comprehensions.rr"
+//   c4_call(c, x), c4_only(c, a), c4_comp(e, k), c4_passthrough(e)
+
+.violation C400(at: node, id: symbol, msg: symbol) code "C400" "{msg}"
+    suppress ruff "C400"
+C400(c, "generator-list-identity",
+    "Replace with `list(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior.") :-
+    gen_list(c, g), c4_passthrough(g).
+C400(c, "generator-list",
+    "Rewrite `list(<generator>)` as a list comprehension: `[expr for ...]` instead of `list(expr for ...)`.") :-
+    gen_list(c, g), !c4_passthrough(g).
+.decl gen_list(c: node, g: node)
+gen_list(c, g) :- c4_call(c, "list"), c4_only(c, g), c4_comp(g, "generator").

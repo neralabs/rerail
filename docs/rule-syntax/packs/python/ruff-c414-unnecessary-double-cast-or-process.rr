@@ -1,0 +1,37 @@
+.policy "ruff-c414-unnecessary-double-cast-or-process" revision 2
+.description "Remove a list, tuple, set, sorted or reversed call nested directly inside a list, tuple, set or sorted call; the outer call already accepts any iterable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C414 (flake8-comprehensions): an outer builtin call whose first argument is an inner builtin call
+// that changes nothing the outer one keeps (both by name or as `builtins.x`):
+//   set(…)  or sorted(…)   of list, tuple, reversed or sorted     set(sorted(x))     ← C414
+//   set(set(…))                                                   set(set(x))        ← C414
+//   list(…) or tuple(…)    of list or tuple                       list(tuple(x))     ← C414
+// `sorted(sorted(x, key=k))` only when both calls pass the same keywords: the inner sort is then redone.
+// `reversed(…)` outside is not reported, nor `sorted(sorted(x), reverse=True)`. Ruff's fix is unsafe;
+// none here.
+#include "python/comprehensions.rr"
+//   c4_builtin(c, x), c4_first(c, a), cmp_same(a, b) (python/compare), call_kwarg(c, x, v), call_nkwargs(c, n)
+
+.violation C414(at: node, inner: symbol, outer: symbol, id: symbol) code "C414"
+    "Remove the inner `{inner}()` call and pass its argument straight to `{outer}()`, which accepts any iterable and gives the same result. For `sorted(reversed(…))`, keep it only if items that sort equal must stay in reversed input order."
+    suppress ruff "C414"
+C414(c, i, o, id) :- double(c, s, o, i), redundant(o, i, id), (o != "sorted" ; i != "sorted" ; same_keywords(c, s)).
+.decl double(c: node, s: node, outer: symbol, inner: symbol)
+double(c, s, o, i) :- c4_builtin(c, o), c4_first(c, s), c4_builtin(s, i).
+.decl redundant(outer: symbol, inner: symbol, id: symbol)
+redundant("set", "list", "inside-set"). redundant("set", "tuple", "inside-set"). redundant("set", "set", "inside-set").
+redundant("set", "reversed", "inside-set"). redundant("set", "sorted", "inside-set").
+redundant("list", "list", "list-or-tuple-inside"). redundant("list", "tuple", "list-or-tuple-inside").
+redundant("tuple", "list", "list-or-tuple-inside"). redundant("tuple", "tuple", "list-or-tuple-inside").
+redundant("sorted", "list", "list-or-tuple-inside"). redundant("sorted", "tuple", "list-or-tuple-inside").
+redundant("sorted", "sorted", "sorted-inside-sorted"). redundant("sorted", "reversed", "reversed-inside-sorted").
+// same_keywords(c, s): as many keywords on each, and each of the inner's is one of the outer's, by name and value.
+.decl same_keywords(c: node, s: node)
+same_keywords(c, s) :- double(c, s, "sorted", "sorted"), call_nkwargs(c, n), call_nkwargs(s, n),
+    count : { call_kwarg(s, x, v), !kw_match(c, s, x, v) } = 0, count : { call_item(s, a, _), kind(a, "dictionary_splat") } = 0.
+.decl kw_match(c: node, s: node, x: symbol, v: node)
+kw_match(c, s, x, v) :- double(c, s, "sorted", "sorted"), call_kwarg(s, x, v), call_kwarg(c, x, w), cmp_same(v, w).
+cmp_same_ask(v, w) :- double(c, s, "sorted", "sorted"), call_kwarg(s, x, v), call_kwarg(c, x, w).

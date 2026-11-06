@@ -1,0 +1,18 @@
+.policy "ruff-c402-unnecessary-generator-dict" revision 2
+.description "Use a dict comprehension instead of passing a generator of key-value pairs to dict; it reads more directly and skips building a tuple per item."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C402 (flake8-comprehensions): `dict(…)` whose one argument is a generator expression of pairs: its
+// element is a tuple of two items, neither of them `*x`. Ruff checks the name `dict` only, not that it is the
+// builtin. Its fix is unsafe; none here.
+//   dict((k, v) for k, v in pairs)      ← C402: {k: v for k, v in pairs}
+//   dict((k, *v) for k, v in pairs)     not reported
+#include "python/comprehensions.rr"
+//   c4_named(c, x), c4_only(c, a), c4_comp(e, k), c4_elt(e, x), c4_pair(e)
+
+.violation C402(at: node) code "C402"
+    "Rewrite `dict((k, v) for ...)` as a dict comprehension `{k: v for ...}`; leave it if `dict` here is not the builtin."
+    suppress ruff "C402"
+C402(c) :- c4_named(c, "dict"), c4_only(c, g), c4_comp(g, "generator"), c4_elt(g, x), c4_pair(x).

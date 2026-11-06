@@ -1,0 +1,132 @@
+// python/simplify: the vocabulary of Ruff's flake8-simplify (SIM) rules: the operands of `and`/`or` in order,
+// what Ruff knows of an expression's truth and side effects, boolean-test positions, and the if statements
+// Ruff leaves alone.
+//
+// Interface
+//   1. Operands:  sim_operand(t, o, i, v)   v is the i-th operand (from 0) of the BoolOp t, o "and" or "or";
+//                                           `a or b or c` is one BoolOp of three, `(a or b) or c` of two
+//                 sim_nops(t, n)            t has n operands
+//   2. Values:    sim_truth(e, b)           Ruff's Truthiness: e, parentheses off, is always true (b "true") or
+//                                           always false ("false"). No row: unknown.
+//                 sim_effect(e)             Ruff's contains_effect: e, or something in it, may have a side effect
+//                 sim_bool_test(e)          e, parentheses off, is read only for its truth (Ruff's
+//                                           in_boolean_test): python/ruff's bool_test, and a `case` guard
+//   3. Statements: sim_exempt_if(i)         if statement i tests `sys.version_info` or `sys.platform` somewhere
+//                                           in its condition, or is `if TYPE_CHECKING:` (SIM102, SIM103)
+//                 sim_bool_return(s, b)     s is `return True` (b "true") or `return False` ("false")
+//   4. Modules:   sim_os_seen(d)            document d imports os, or a module under it (Ruff's seen_module)
+//
+// Python and Ruff background
+//   - Truthiness: `""`, `0`, `0.0`, `None`, `False`, `[]`, `()`, `{}` and `list()`, `set()`, … (the builtins,
+//     no arguments) are false; a non-empty literal, a lambda, a generator, `...` and a t-string are true;
+//     `list([1])` is what its argument is. `[*x]` and `{**x}` are unknown, as is any name or call.
+//   - Ruff's contains_effect counts every call with arguments, every call of anything but list, tuple, set,
+//     dict or frozenset, a subscript, `await`, `yield`, a walrus, a comprehension or generator, and an operator
+//     `a + b` unless both sides are literals or displays. Names and attributes have none.
+//
+//   x or True                sim_operand(<or>, "or", 0, <x>), sim_truth(<True>, "true")
+//   if a and (b or ""): …    sim_bool_test(<a and (b or "")>), sim_bool_test(<b or "">)
+#include "python/comprehensions.rr"   // c4_call, dict_ref; python/compare; python/ruff, python/upgrade
+
+// ---- 1. operands -------------------------------------------------------------------------------------------------
+.decl sim_operand(t: node, o: symbol, i: number, v: node)
+sim_operand(t, o, i, v) :- bool_operand(t, o, v), i = count : { bool_operand(t, o, w), w < v }.
+.decl sim_nops(t: node, n: number)
+sim_nops(t, n) :- bool_top(t, o), n = count : { bool_operand(t, o, _) }.
+
+// ---- 2. values ---------------------------------------------------------------------------------------------------
+.decl sim_truth(e: node, b: symbol)
+sim_truth(e, b) :- ruff_bare(e, m), bare_truth(m, b).
+.decl bare_truth(m: node, b: symbol)
+bare_truth(m, "true") :- kind(m, k), (k = "lambda" ; k = "generator_expression" ; k = "ellipsis" ; k = "true").
+bare_truth(m, "false") :- kind(m, k), (k = "false" ; k = "none").
+bare_truth(m, "false") :- empty_string(m), !sim_tstring(m).
+bare_truth(m, "true") :- sim_tstring(m).
+bare_truth(m, "true") :- (kind(m, "string") ; kind(m, "concatenated_string")), !fstring(m), !sim_tstring(m), !empty_string(m).
+bare_truth(m, "true") :- fstring(m), !sim_tstring(m), (has(m, c, "string_content") ; has(m, c, "escape_sequence")),
+    !in_interpolation(c, m).
+bare_truth(m, "true") :- fstring(m), !sim_tstring(m), has(m, i, "interpolation"), !inside_interp(i, m), op(i, "=").
+bare_truth(m, "true") :- fstring(m), !sim_tstring(m), has(m, i, "interpolation"), !inside_interp(i, m),
+    !field(i, "format_specifier", _), field(i, "expression", x), ruff_bare(x, y), shows_something(y).
+bare_truth(m, b) :- (kind(m, "integer") ; kind(m, "float")), text(m, t), (zero_number(t), b = "false" ; !zero_number(t), b = "true").
+bare_truth(m, "false") :- (kind(m, "list") ; kind(m, "tuple") ; kind(m, "set") ; kind(m, "dictionary")),
+    count : { child(m, c, _), !kind(c, "comment") } = 0.
+bare_truth(m, "true") :- (kind(m, "list") ; kind(m, "tuple") ; kind(m, "set")), child(m, c, _), !kind(c, "comment"),
+    !kind(c, "list_splat").
+bare_truth(m, "true") :- kind(m, "dictionary"), child(m, c, _), kind(c, "pair").
+// `list()`, `dict()`: false. `list([1])`, `set("")`: what the one argument is; `list(0)` raises, so unknown.
+bare_truth(m, "false") :- iterable_init(m), no_args(m).
+bare_truth(m, b) :- iterable_init(m), call_only(m, a), ruff_bare(a, x), kind(x, k), !no_recurse(k), bare_truth(x, b), !sim_tstring(x).
+.decl iterable_init(m: node)
+iterable_init(m) :- c4_call(m, x), (x = "list" ; x = "tuple" ; x = "set" ; x = "dict" ; x = "frozenset").
+.decl no_recurse(k: symbol)
+no_recurse("integer"). no_recurse("float"). no_recurse("true"). no_recurse("false"). no_recurse("none").
+no_recurse("ellipsis"). no_recurse("lambda"). no_recurse("generator_expression").
+// shows_something(y): y is never printed as "": `f"{[]}"` is "[]", `f"{b''}"` is "b''" (Ruff's
+// is_non_empty_f_string). `f"{x=}"` always shows "x=".
+.decl shows_something(y: node)
+shows_something(y) :- kind(y, k), shown_kind(k).
+shows_something(y) :- string_form(y, "bytes").
+shows_something(y) :- (kind(y, "string") ; kind(y, "concatenated_string")), !fstring(y), !empty_string(y).
+.decl shown_kind(k: symbol)
+shown_kind("lambda"). shown_kind("dictionary"). shown_kind("set"). shown_kind("list"). shown_kind("tuple").
+shown_kind("list_comprehension"). shown_kind("set_comprehension"). shown_kind("dictionary_comprehension").
+shown_kind("integer"). shown_kind("float"). shown_kind("true"). shown_kind("false"). shown_kind("none").
+shown_kind("ellipsis").
+.decl inside_interp(i: node, m: node)  // interpolation i is nested in another interpolation of m
+inside_interp(i, m) :- has(m, i, "interpolation"), inside(i, j, "interpolation"), within(j, m).
+.decl in_interpolation(c: node, m: node)  // c is text inside an interpolation of m, not m's own text
+in_interpolation(c, m) :- has(m, c, "string_content"), inside(c, i, "interpolation"), within(i, m).
+in_interpolation(c, m) :- has(m, c, "escape_sequence"), inside(c, i, "interpolation"), within(i, m).
+.decl zero_number(t: symbol)  // 0, 0x0, 0_0, 0.0, .0, 0e5, 0j
+zero_number(t) :- (kind(n, "integer") ; kind(n, "float")), text(n, t),
+    (match("0[xXoObB][0_]+", t) ; match("[0_.]*([eE][-+]?[0-9_]+)?[jJ]?", t), contains("0", t)).
+.decl sim_tstring(m: node)
+sim_tstring(m) :- string_form(m, "tstr").
+sim_tstring(m) :- kind(m, "concatenated_string"), child(m, s, _), string_form(s, "tstr").
+
+.decl sim_effect(e: node)
+sim_effect(e) :- effect_node(e).
+sim_effect(e) :- has(e, _, effect_node).
+.decl effect_node(n: node)
+effect_node(n) :- kind(n, "call"), !no_args(n).
+effect_node(n) :- no_args(n), !iterable_init(n).
+.decl no_args(c: node)
+no_args(c) :- call_nargs(c, 0), call_nkwargs(c, 0).
+effect_node(n) :- kind(n, k), effect_kind_sim(k).
+effect_node(n) :- kind(n, "binary_operator"), field(n, "left", l), !safe_operand(l).
+effect_node(n) :- kind(n, "binary_operator"), field(n, "right", r), !safe_operand(r).
+.decl effect_kind_sim(k: symbol)
+effect_kind_sim("named_expression"). effect_kind_sim("await"). effect_kind_sim("yield").
+effect_kind_sim("list_comprehension"). effect_kind_sim("set_comprehension").
+effect_kind_sim("dictionary_comprehension"). effect_kind_sim("generator_expression"). effect_kind_sim("subscript").
+.decl safe_operand(e: node)  // Ruff's is_known_safe_binop_operand: a literal or a display
+safe_operand(e) :- ruff_bare(e, m), kind(m, k), safe_kind(k), !sim_tstring(m).
+.decl safe_kind(k: symbol)
+safe_kind("string"). safe_kind("concatenated_string"). safe_kind("integer"). safe_kind("float"). safe_kind("true").
+safe_kind("false"). safe_kind("none"). safe_kind("ellipsis"). safe_kind("list"). safe_kind("tuple").
+safe_kind("set"). safe_kind("dictionary"). safe_kind("list_comprehension"). safe_kind("set_comprehension").
+safe_kind("dictionary_comprehension").
+
+.decl sim_bool_test(e: node)
+sim_bool_test(m) :- bool_test(m).
+sim_bool_test(m) :- kind(c, "case_clause"), field(c, "guard", g), child(g, x, 0), ruff_bare(x, m).
+sim_bool_test(m) :- sim_bool_test(t), (kind(t, "boolean_operator") ; kind(t, "not_operator")), child(t, c, _),
+    ruff_bare(c, m).
+
+// ---- 3. statements -----------------------------------------------------------------------------------------------
+.decl sim_exempt_if(i: node)
+sim_exempt_if(i) :- kind(i, "if_statement"), field(i, "condition", c), (n = c ; within(n, c)),
+    (ruff_qual(n, "sys.version_info") ; ruff_qual(n, "sys.platform")).
+sim_exempt_if(i) :- kind(i, "if_statement"), field(i, "condition", c), ruff_bare(c, m),
+    (kind(m, "identifier"), text(m, "TYPE_CHECKING") ; attr_of(m, _, "TYPE_CHECKING") ; typing_ref(m, "TYPE_CHECKING")).
+.decl sim_bool_return(s: node, b: symbol)
+sim_bool_return(s, b) :- kind(s, "return_statement"), child(s, v, 0), ruff_bare(v, m),
+    (kind(m, "true"), b = "true" ; kind(m, "false"), b = "false").
+
+// ---- 4. modules --------------------------------------------------------------------------------------------------
+.decl sim_os_seen(d: number)
+sim_os_seen(d) :- kind(i, "import_statement"), has(i, n, "dotted_name"), text(n, t), (t = "os" ; prefix("os.", t)),
+    docof(i, d).
+sim_os_seen(d) :- kind(i, "import_from_statement"), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m),
+    (m = "os" ; prefix("os.", m)), docof(i, d).

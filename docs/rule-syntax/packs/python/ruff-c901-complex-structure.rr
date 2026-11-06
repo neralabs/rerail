@@ -1,0 +1,48 @@
+.policy "ruff-c901-complex-structure" revision 2
+.description "Split Python functions with many branches, loops, exception handlers and nested functions into smaller ones; heavily branching code is hard to read, test and change."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff C901 (mccabe): a def whose McCabe complexity is above option `mccabe.max-complexity` (default 10).
+// The complexity is 1, plus 1 for each decision in the def's statements, nested defs and classes included:
+// each `if` and `elif`, `for` and `while`, `except` clause, a `try`'s `else`, each `case` (less one when the
+// last is a catch-all without a guard, as `case _:`), and each nested def. `else`, `with`, `and`/`or`,
+// comprehensions and lambdas add nothing. The finding is at the def's name.
+//   def f(x):              complexity 3: 1, the if, the elif
+//       if x: ...
+//       elif y: ...
+//       else: ...
+#include "python/ast.rr"
+
+.violation C901(at: node, name: symbol, n: number, limit: number) code "C901"
+    "`{name}` is too complex ({n} > {limit}). Extract parts of it into functions defined outside it (nested ones still count), or turn an if/elif chain that maps values into a lookup table; leave it if the branching is inherent."
+    suppress ruff "C901"
+C901(nm, x, n, m) :- complexity(f, n), max_complexity(m), n > m, field(f, "name", nm), text(nm, x).
+
+.decl max_complexity(m: number)
+max_complexity(to_number(v)) :- option("mccabe.max-complexity", v).
+max_complexity(10) :- !option("mccabe.max-complexity", _).
+.decl complexity(f: node, n: number)
+complexity(f, n) :- kind(f, "function_definition"), field(f, "body", b),
+    k = count : { has(b, d, decision) }, k2 = count : { has(b, e, "else_clause"), try_else(e) },
+    k3 = count : { has(b, c, "case_clause"), catch_all_last(c) }, n = 1 + k + k2 - k3.
+.decl decision(k: symbol)
+decision("if_statement"). decision("elif_clause"). decision("for_statement"). decision("while_statement").
+decision("except_clause"). decision("case_clause"). decision("function_definition").
+.decl try_else(e: node)  // a try's else: a decision; an if's or a loop's is not
+try_else(e) :- kind(e, "else_clause"), child(t, e, _), kind(t, "try_statement").
+// catch_all_last(c): c is a match's last case, without a guard, and its one pattern always matches.
+.decl catch_all_last(c: node)
+catch_all_last(c) :- kind(c, "case_clause"), !next_case(c), !field(c, "guard", _),
+    count : { child(c, o, _), kind(o, "case_pattern") } = 1, child(c, p, _), kind(p, "case_pattern"), catch_all(p).
+.decl next_case(c: node)
+next_case(c) :- kind(c, "case_clause"), next_sibling(c, d), kind(d, "case_clause").
+// catch_all(p): Ruff's is_irrefutable: `_`, a capture `x`, `(x)`, `_ as y`, `a | _`.
+.decl catch_all(p: node)
+catch_all(p) :- kind(p, "case_pattern"), op(p, "_"), !child(p, _, _).
+catch_all(p) :- kind(p, "case_pattern"), child(p, c, 0), !child(p, _, 1), catch_all(c).
+catch_all(p) :- kind(p, "dotted_name"), !child(p, _, 1).
+catch_all(p) :- kind(p, "as_pattern"), child(p, c, 0), catch_all(c).
+catch_all(p) :- kind(p, "union_pattern"), (op(p, "_") ; child(p, c, _), catch_all(c)).
+catch_all(p) :- kind(p, "tuple_pattern"), !op(p, ","), child(p, c, 0), !child(p, _, 1), catch_all(c).
