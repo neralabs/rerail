@@ -41,7 +41,7 @@ pub(crate) fn batch(documents: &[Document]) -> Result<Vec<Vec<Row>>, Error> {
 }
 pub(crate) fn batch_with_metrics(documents: &[Document]) -> Result<Response, Error> {
     // Capacity partitions are transport batches, not independent rule scopes.
-    // Keep documents intact so every module is parsed once and retain demand order.
+    // Keep each document intact so partitioning never reparses it, and retain demand order.
     let mut response = Response {
         version: [3, 13],
         documents: Vec::new(),

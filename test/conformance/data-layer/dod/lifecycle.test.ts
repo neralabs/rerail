@@ -10,7 +10,7 @@ type File = { path: string; source: string };
 type Row = { path: string; line: number; code: string; message: string };
 type State = { name: string; files: File[]; expected: Row[] };
 const canonical = (rows: Row[]) => rows.map(row => JSON.stringify([row.path, row.line, row.code, row.message])).sort();
-for (const record of oracle.cases as { check: string; states: State[] }[]) it(`preserves ${record.check} across clean, positive, restored, removed and readded revisions`, async () => {
+for (const record of [...oracle.cases, ...oracle.dependencyCases] as { check: string; id?: string; states: State[] }[]) it(`preserves ${record.id ?? record.check} across clean, positive, restored, removed and readded revisions`, async () => {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
   try {

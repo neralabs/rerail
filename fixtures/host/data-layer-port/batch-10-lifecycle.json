@@ -1410,5 +1410,120 @@
         }
       ]
     }
+  ],
+  "dependencyCases": [
+    {
+      "check": "plan_optimizer_v2",
+      "id": "optimizer-document-dependency",
+      "states": [
+        {
+          "name": "clean",
+          "files": [
+            {
+              "path": "impl/common/l2065_plan_core/verifier.py",
+              "source": "pass\n"
+            },
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "source": ""
+            }
+          ],
+          "expected": []
+        },
+        {
+          "name": "positive",
+          "files": [
+            {
+              "path": "impl/common/l2065_plan_core/verifier.py",
+              "source": "if True:\n"
+            }
+          ],
+          "expected": [
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "line": 1,
+              "code": "PV2-050",
+              "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+            }
+          ]
+        },
+        {
+          "name": "restored",
+          "files": [
+            {
+              "path": "impl/common/l2065_plan_core/verifier.py",
+              "source": "if True:\n"
+            },
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "source": ""
+            }
+          ],
+          "expected": []
+        },
+        {
+          "name": "removed",
+          "files": [
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "source": ""
+            }
+          ],
+          "expected": []
+        },
+        {
+          "name": "readded",
+          "files": [
+            {
+              "path": "impl/common/l2065_plan_core/verifier.py",
+              "source": "if True:\n"
+            }
+          ],
+          "expected": [
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "line": 1,
+              "code": "PV2-050",
+              "message": "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+            }
+          ]
+        },
+        {
+          "name": "stale-document",
+          "files": [
+            {
+              "path": "impl/common/l2065_plan_core/verifier.py",
+              "source": "if True:\n"
+            },
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "source": "`scope.stale`\n"
+            }
+          ],
+          "expected": [
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "line": 1,
+              "code": "PV2-051",
+              "message": "Doc lists invariant code 'scope.stale' that is not registered in OPTIMIZER_INVARIANTS. Remove the stale doc row or register the invariant in impl/common/l2065_plan_core/verifier.py."
+            }
+          ]
+        },
+        {
+          "name": "fixed-document",
+          "files": [
+            {
+              "path": "impl/common/l2065_plan_core/verifier.py",
+              "source": "if True:\n"
+            },
+            {
+              "path": "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md",
+              "source": ""
+            }
+          ],
+          "expected": []
+        }
+      ]
+    }
   ]
 }

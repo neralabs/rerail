@@ -571,6 +571,26 @@ jobs:
           helper=verify_helpers(read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'],read_report(Path('fixtures/host/data-layer-port/batch-10-helper-assertions.json')),[read_report(p) for p in paths],mode,hashlib.sha256(Path('fixtures/host/data-layer-port/batch-10-helper-contracts.json').read_bytes()).hexdigest())
           (reports/f'helper-summary-{mode}.json').write_text(json.dumps(helper,indent=2)+'\n')
           PY
+      - name: Verify batch-ten production configuration and persistent revisions
+        if: matrix.mode == 'snapshot'
+        run: |
+          set -euo pipefail
+          reports="$RUNNER_TEMP/batch-ten-reports"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.dod_contracts \
+            --source .rerail/data-layer-upstream --output "$reports/dod-contracts-original.json"
+          cmp fixtures/host/data-layer-port/batch-10-dod-contracts.json "$reports/dod-contracts-original.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.lifecycle \
+            --source .rerail/data-layer-upstream --output "$reports/lifecycle-original.json"
+          cmp fixtures/host/data-layer-port/batch-10-lifecycle.json "$reports/lifecycle-original.json"
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/dod/ \
+            --reporter=json --outputFile="$reports/dod.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
+          import json,os
+          from pathlib import Path
+          from data_layer_ten.completion import verify_contracts
+          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
+          (reports/'dod-summary.json').write_text(json.dumps(verify_contracts([json.loads((reports/'dod.json').read_text())]),indent=2)+'\n')
+          PY
       - name: Verify batch-ten replay, defaults and disabled detectors
         if: matrix.mode == 'snapshot'
         run: |
@@ -607,6 +627,8 @@ jobs:
           done
           timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/evidence_cases.py
           timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/assertions/evidence_cases.py
+          timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/completion_cases.py
+          timeout 115s python test/scripts/data_layer/test_complete_measurement.py
           for mode in snapshot workspace; do
             timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten-configured-repository.test.ts \
               -t "configured repository $mode" --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/configured-repository-$mode.json"

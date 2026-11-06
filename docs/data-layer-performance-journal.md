@@ -7137,27 +7137,50 @@ The structure check has 24 passing metrics and the same three directory-size fin
 A temporary duplicate fixture-root resolver was removed in favor of the shared Python resolver.
 
 ## 2026-11-06 — Recheck batch ten against the completion criteria
-+
-+The review targets `9ceb4c8ef` and the pinned source.
-+It uses the restart plan's per-batch and migration criteria.
-+The [review](data-layer-batch-ten-dod-audit.md) and [record](../fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json) retain the findings.
-+
-+Six original scenarios run through both public native APIs in bounded commands.
-+Two default scenarios expose missing optimizer findings: malformed verifier syntax suppresses document checks.
-+The original reporter emits PV2-050 for a missing document and PV2-051 for a stale document code.
-+Both native modes return no finding and no engine failure.
-+A valid verifier and an absent verifier provide passing controls.
-+
-+Two further scenarios identify unsupported production configuration.
-+Explicit matching consumer roots produce MA010 in the original but cannot enter the current public Rerail scope.
-+Invalid schema-approval entries produce SIDP000 in the original but have no production Rerail input or reporter branch.
-+These cases compare explicitly configured original contracts with missing Rerail configuration support.
-+They do not establish a default-discovery mismatch or an active approval failure with the pin's empty approval list.
-+
-+The review also identifies missing persistent-workspace rule transitions and the cumulative 100-rule repository gate.
-+The existing 75 transferred assertion sites remain covered; that coverage does not complete every rule interface.
-+No production code, engine capacity, or Linear issue changed during this review.
-+No full repository cold execution occurred.
-+The original modules were checked against Git source blobs. The native addon hash remains unchanged.
-+All four default-control evaluations match. Eight evaluations expose the stated defect or configuration gaps.
-+EOF
+
+The review targets `9ceb4c8ef` and the pinned source.
+It uses the restart plan's per-batch and migration criteria.
+The [review](data-layer-batch-ten-dod-audit.md) and [record](../fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json) retain the findings.
+
+Six original scenarios run through both public native APIs in bounded commands.
+Two default scenarios expose missing optimizer findings: malformed verifier syntax suppresses document checks.
+The original reporter emits PV2-050 for a missing document and PV2-051 for a stale document code.
+Both native modes return no finding and no engine failure.
+A valid verifier and an absent verifier provide passing controls.
+
+Two further scenarios identify unsupported production configuration.
+Explicit matching consumer roots produce MA010 in the original but cannot enter the current public Rerail scope.
+Invalid schema-approval entries produce SIDP000 in the original but have no production Rerail input or reporter branch.
+These cases compare explicitly configured original contracts with missing Rerail configuration support.
+They do not establish a default-discovery mismatch or an active approval failure with the pin's empty approval list.
+
+The review also identifies missing persistent-workspace rule transitions and the cumulative 100-rule repository gate.
+The existing 75 transferred assertion sites remain covered; that coverage does not complete every rule interface.
+No production code, engine capacity, or Linear issue changed during this review.
+No full repository cold execution occurred.
+The original modules were checked against Git source blobs. The native addon hash remains unchanged.
+All four default-control evaluations match. Eight evaluations expose the stated defect or configuration gaps.
+
+## 2026-11-06 — Complete the batch-ten repair
+
+The optimizer file-presence regression first passed four controls and failed four positive evaluations.
+The fixed SQL guard passes all eight evaluations.
+Production matching roots now drive filesystem discovery, scope, SQL classification, and repeated CLI options.
+Fourteen original approval scenarios pass through both APIs: 28 exact reporter comparisons.
+These include entry errors, signature errors, duplicates, Unicode canonicalization, and verified suppression.
+The shipped verifier uses the original public key. Signing delegates to the original source command only on explicit invocation.
+Tests use isolated fixture keys. No deployed signing credential was read or used.
+
+The new persistent matrix compares five revisions per rule with original configured reporter results.
+It sends changed files only and preserves unedited dependencies.
+All 52 focused DoD tests pass on the pre-rebuild addon.
+
+The twenty-rule cumulative preflight exposed an engine capacity defect.
+Several coalesced canonical producers exceed the 8 MiB transport limit and fail the entire wave.
+That run records 3,122 engine failures and cannot establish parity or performance.
+The repair partitions transport by complete source document, while preserving the full rule scope and row order.
+A new Rust regression covers multiple documents above the aggregate capacity.
+The first Rust test command reached its 115-second compilation bound before executing the test.
+Its log is not a failing assertion result.
+A production rebuild and the complete 100-check oracle are in progress.
+No completion claim or refreshed receipt is issued at this point.

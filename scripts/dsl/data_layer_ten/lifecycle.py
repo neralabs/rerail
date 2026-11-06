@@ -62,7 +62,14 @@ def record(source, output):
             states.append(dict(name=name, files=files, expected=observe(check, files)))
         assert not states[0]['expected'] and states[1]['expected'], check
         cases.append(dict(check=check, states=states))
-    output.write_text(json.dumps(dict(format='rerail.data-layer-lifecycle/v1', sourcePin=PIN, sourceFilesChecked=verify_sources(source, source, PIN), cases=cases), indent=2) + '\n')
+    verifier = dict(path='impl/common/l2065_plan_core/verifier.py', source='if True:\n')
+    document = dict(path='docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md', source='')
+    dependency = dict(check='plan_optimizer_v2', id='optimizer-document-dependency', states=[])
+    for name, files in [('clean', [dict(verifier, source='pass\n'), document]), ('positive', [verifier]),
+                        ('restored', [verifier, document]), ('removed', [document]), ('readded', [verifier]),
+                        ('stale-document', [verifier, dict(document, source='`scope.stale`\n')]), ('fixed-document', [verifier, document])]:
+        dependency['states'].append(dict(name=name, files=files, expected=observe('plan_optimizer_v2', files)))
+    output.write_text(json.dumps(dict(format='rerail.data-layer-lifecycle/v1', sourcePin=PIN, sourceFilesChecked=verify_sources(source, source, PIN), cases=cases, dependencyCases=[dependency]), indent=2) + '\n')
 
 
 if __name__ == '__main__':
