@@ -51,6 +51,20 @@ def main():
             if len(v) > 1:
                 bad += 1
                 print(f"{f}: {k} declared {len(v)} times: {', '.join(sorted(v))}")
+    # Libraries of one language must combine: a rule may include any of them, so a relation name is declared in at
+    # most one of lib/<lang>/*.rr and lib/core.rr (otherwise Soufflé reports an arity clash or merges two bodies).
+    core = set(re.findall(r"^\.(?:decl|edit)\s+(\w+)\(", open("lib/core.rr").read(), re.M))
+    for lang in sorted(d for d in glob.glob("lib/*/") if os.path.isdir(d)):
+        owner = collections.defaultdict(list)
+        for g in sorted(glob.glob(lang + "*.rr")):
+            if g.endswith(".facts.rr"):
+                continue
+            for k in set(re.findall(r"^\.(?:decl|edit)\s+(\w+)\(", open(g).read(), re.M)):
+                owner[k].append(g)
+        for k, v in sorted(owner.items()):
+            if len(v) > 1 or k in core:
+                bad += 1
+                print(f"{lang}: {k} declared in {', '.join(v + (['lib/core.rr'] if k in core else []))}")
     print("ok" if not bad else f"{bad} problems")
     return 1 if bad else 0
 
