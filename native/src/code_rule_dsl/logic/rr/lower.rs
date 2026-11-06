@@ -351,7 +351,7 @@ impl Lowerer {
                     return Ok(vec![vec![Literal::Cmp { l, op, r: Term::Int(if *neg { 0 } else { 1 }) }]]);
                 }
                 if *neg {
-                    return not_yet("a negated disjunction");
+                    return self.negated(alts, outer);
                 }
                 let mut out = Vec::new();
                 for alt in alts {
@@ -603,6 +603,46 @@ impl Lowerer {
             }
             _ => Ok(vec![vec![Literal::Cmp { l: self.term(l)?, op, r: self.term(r)? }]]),
         }
+    }
+
+    /// `!(a, b)` and `!(a ; b)`. `!(a ; b)` is `!(a), !(b)`, and each negated conjunction is a helper relation of
+    /// the variables it shares with the rule (`outer`), negated: `!(option("x", "true"), afterthought(u))` is
+    /// `!rr_not1(u)` with `rr_not1(u) :- option("x", "true"), afterthought(u)`. A variable only the conjunction
+    /// has is its own (Soufflé's scoping: there is no such row). A shared variable it only tests is bound inside
+    /// the helper by the rule's other literals (`context`), as an aggregate's is. With no variable shared, the
+    /// helper has one constant column (a relation has columns).
+    fn negated(&mut self, alts: &[Vec<Lit>], outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
+        let siblings = self.siblings.clone();
+        let mut out = Vec::new();
+        for alt in alts {
+            self.siblings = siblings.clone();
+            let cols: Vec<String> = body_vars(alt).into_iter().filter(|v| outer.contains(v)).collect();
+            let mut bodies = self.conjunction(alt, outer)?;
+            let bound: BTreeSet<String> = body_vars(
+                &alt.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "within" | "within_stop" | "earlier"))).cloned().collect::<Vec<_>>(),
+            );
+            let needed: Vec<String> = cols.iter().filter(|v| !bound.contains(*v)).cloned().collect();
+            if !needed.is_empty() {
+                let ctx = self.context(&needed)?;
+                for b in &mut bodies {
+                    b.insert(0, Literal::Atom(ctx.clone()));
+                }
+            }
+            let name = self.fresh("not");
+            let (decl, args): (Vec<(String, String)>, Vec<Term>) = if cols.is_empty() {
+                (vec![("c".to_owned(), "int".to_owned())], vec![Term::Int(0)])
+            } else {
+                (cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), cols.iter().map(|c| Term::Var(c.clone())).collect())
+            };
+            self.prog.decls.insert(name.clone(), decl);
+            let head = Atom { rel: name, args, neg: false, gated: false };
+            for b in bodies {
+                self.prog.rules.push(Rule { head: head.clone(), body: b });
+            }
+            out.push(Literal::Atom(Atom { neg: true, ..head }));
+        }
+        self.siblings = siblings;
+        Ok(vec![out])
     }
 
     /// A relation of `vars`' values in the rule: the literals beside the one being lowered (`siblings`; their

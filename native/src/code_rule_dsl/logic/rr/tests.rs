@@ -362,3 +362,44 @@ fn hand_written_rules_lowering_report() {
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
 }
+
+// ---- recursion ----
+
+/// A negated conjunction is a helper relation of the variables it shares with the rule, negated; `!(a ; b)` is one
+/// such helper per alternative; a shared variable the conjunction only tests is bound in the helper by the rule's
+/// other literals; a conjunction sharing none has one constant column. Printed, the program reads back as itself.
+#[test]
+fn negated_conjunctions_lower_to_helpers() {
+    let p = parse(concat!(
+        ".decl e(x: number)\n.decl f(x: number, y: number)\n.decl g(y: number)\n.decl o(k: symbol, v: symbol)\n.input e, f, g, o\n",
+        ".decl a(x: number)\na(x) :- e(x), !(f(x, y), g(y)).\n",
+        ".decl b(x: number)\nb(x) :- e(x), !(f(x, _) ; g(x)).\n",
+        ".decl c(x: number)\nc(x) :- e(x), !(x > 2, o(\"k\", \"on\")).\n",
+        ".decl d(x: number)\nd(x) :- e(x), !(o(\"k\", \"on\"), g(_)).\n",
+    ))
+    .unwrap();
+    let rules = |rel: &str| -> Vec<&front::Rule> { p.rules.iter().filter(|r| r.head.rel == rel).collect() };
+    // The rule's negated helpers, and each helper's rules as text with its name as `H`.
+    let helpers = |rel: &str| -> Vec<(String, Vec<String>)> {
+        let [rule] = rules(rel)[..] else { panic!("{rel}: one rule") };
+        rule.body
+            .iter()
+            .filter_map(|l| match l {
+                Literal::Atom(a) if a.neg => Some((
+                    a.to_string().replace(&a.rel, "H"),
+                    rules(&a.rel).iter().map(|r| r.to_string().replace(&a.rel, "H")).collect(),
+                )),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(helpers("a"), [("!H($x)".to_owned(), vec!["H($x) :- f($x, $y), g($y)".to_owned()])]);
+    assert_eq!(helpers("b"), [("!H($x)".to_owned(), vec!["H($x) :- f($x, _)".to_owned()]), ("!H($x)".to_owned(), vec!["H($x) :- g($x)".to_owned()])]);
+    let c = helpers("c");
+    assert_eq!(c.len(), 1);
+    let [body] = &c[0].1[..] else { panic!("{c:?}") };
+    assert!(body.starts_with("H($x) :- rr_ctx") && body.ends_with("($x), $x > 2, o(\"k\", \"on\")"), "{body}");
+    assert_eq!(helpers("d"), [("!H(0)".to_owned(), vec!["H(0) :- o(\"k\", \"on\"), g(_)".to_owned()])]);
+    let printed = print(&p).and_then(|text| parse(&text)).unwrap();
+    assert_eq!(difference(&p, &printed), None);
+}
