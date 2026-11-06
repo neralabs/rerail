@@ -23,6 +23,8 @@ from data_layer_batch_five import BATCH_FIVE, MODULES as BATCH_FIVE_MODULES
 from data_layer_batch_six import BATCH_SIX
 from data_layer_batch_seven import BATCH_SEVEN, MODULES as BATCH_SEVEN_MODULES
 from data_layer_batch_eight import BATCH_EIGHT, MODULES as BATCH_EIGHT_MODULES
+from data_layer_nine.evidence import CHECKS as BATCH_NINE
+from data_layer_ten.common import CHECKS as BATCH_TEN
 
 
 def main() -> None:
@@ -32,7 +34,7 @@ def main() -> None:
     parser.add_argument("--revision", default="2b1504adc4291daaf080b2e932962b134da1a69a")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, currently 1 through 8.")
+    parser.add_argument("--batches", default="1", help="Comma-separated batch numbers, 1 through 10.")
     parser.add_argument("--checks", help="Optional comma-separated subset of the selected batches")
     parser.add_argument("--selection", type=Path, help="Pinned profiling file/check selection; preserve project-fact metadata sentinels")
     parser.add_argument("--cpu-profile", type=Path, help="Optional cProfile output for oracle execution; adds measurement overhead")
@@ -46,9 +48,9 @@ def main() -> None:
 
     plugins, extractors = [], serverplan_fact_extractors(root)
     batch_ids = [int(value) for value in args.batches.split(",")]
-    if any(value not in (1, 2, 3, 4, 5, 6, 7, 8) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
-        parser.error("--batches requires distinct batch numbers from 1,2,3,4,5,6,7,8")
-    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX, 7:BATCH_SEVEN, 8:BATCH_EIGHT}
+    if any(value not in range(1, 11) for value in batch_ids) or len(set(batch_ids)) != len(batch_ids):
+        parser.error("--batches requires distinct batch numbers from 1 through 10")
+    batches = {1: BATCH_ONE, 2: BATCH_TWO, 3: BATCH_THREE, 4: BATCH_FOUR, 5:BATCH_FIVE, 6:BATCH_SIX, 7:BATCH_SEVEN, 8:BATCH_EIGHT, 9:BATCH_NINE, 10:BATCH_TEN}
     names = [name for value in batch_ids for name in batches[value]]
     if args.checks:
         selected_checks = args.checks.split(',')
@@ -57,21 +59,23 @@ def main() -> None:
     graph_checks={'public_api_triples','internal_dead_code','imperative_private_functions'}
     graph_module=None
     for name in names:
-        if name=="cached_pure_lazy_allowlist":continue
+        if name in {"cached_pure_lazy_allowlist", "matching_architecture", "bounded_composed_graph_paths", "schema_bootstrap_contracts"}:continue
         if name in graph_checks:
             if graph_module is None:
                 graph_module=importlib.import_module('scripts.lint_symbol_graph_plugins')
                 extractors.update(graph_module.symbol_graph_fact_extractors(root))
             plugins.append(next(plugin for plugin in graph_module.symbol_graph_linter_plugins(root) if plugin.name==name))
             continue
-        module = importlib.import_module(BATCH_EIGHT_MODULES.get(name,BATCH_SEVEN_MODULES.get(name, BATCH_FIVE_MODULES.get(name,"scripts.lint_" + name))))
+        default_module = BATCH_SEVEN_MODULES.get(name, BATCH_FIVE_MODULES.get(name, "scripts.lint_" + name))
+        module_name = {"schema_architecture": "scripts.lint_schema_architecture_plugin", "connection_service_architecture": "scripts.lint_connection_service_architecture_plugin", "bootstrap_engine_invariants": "scripts.lint_bootstrap_engine_invariants_plugin", "bootstrap_eager_resolve": "scripts.lint_bootstrap_lazy_sql"}.get(name, BATCH_EIGHT_MODULES.get(name, default_module))
+        module = importlib.import_module(module_name)
         if name == "rust_sql_grammar_boundary":
             continue
         plugin_name={"serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch_architecture"}.get(name,name)
         factory = getattr(module, plugin_name + "_plugin")
         plugins.append(factory() if name == "serverplan_grammar_surface" else factory(root))
         extractor_name = {"transaction_patterns": "transaction_pattern", "transaction_callback_wrappers": "transaction_callback_wrapper",
-                          "transaction_closures": "transaction_closure","serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch"}.get(name, name)
+                          "transaction_closures": "transaction_closure","serverplan_target_architecture":"target_architecture","serverplan_dispatch_architecture":"dispatch", "bootstrap_eager_resolve":"bootstrap_lazy_sql"}.get(name, name)
         factory = getattr(module, extractor_name + "_fact_extractors", None)
         if factory is not None:
             extractors.update(factory(root))
@@ -114,6 +118,20 @@ def main() -> None:
     if "grammar_callable_constructors" in names:
         module = importlib.import_module("scripts.lint_grammar_callable_constructors")
         selected = sorted(set(selected) | set(module._iter_files(root / module.GRAMMAR_ROOT)))
+    if "matching_architecture" in names:
+        module = importlib.import_module("scripts.lint_matching_architecture")
+        selected = sorted(set(selected) | set(module._production_paths(root)))
+    if "bounded_composed_graph_paths" in names:
+        module = importlib.import_module("scripts.lint_bounded_composed_graph_paths")
+        selected = sorted(set(selected) | {root / value for value in vars(module).values()
+                          if isinstance(value, Path) and not value.is_absolute() and (root / value).is_file()})
+    if "plan_optimizer_v2" in names:
+        module = importlib.import_module("scripts.lint_plan_optimizer_v2")
+        document = root / module.INVARIANT_DOC_RELPATH
+        if document.is_file(): selected = sorted(set(selected) | {document})
+    if "schema_bootstrap_contracts" in names:
+        module = importlib.import_module("scripts.lint_schema_bootstrap_contracts")
+        selected = sorted(set(selected) | set(module.iter_files(module.DEFAULT_TARGETS)))
     files = [{"path": path.relative_to(root).as_posix(), "source": path.read_text()} for path in selected]
     tree = subprocess.check_output(["git", "-C", str(args.repo), "ls-tree", "-rz", args.revision])
     expected = {}
@@ -142,6 +160,13 @@ def main() -> None:
     cpu_started = time.process_time()
     children_started = resource.getrusage(resource.RUSAGE_CHILDREN)
     results = engine.run_plugins(plugins, max_workers=args.workers)
+    standalone = {}
+    for name, entry in [("matching_architecture", "lint"), ("bounded_composed_graph_paths", "collect_violations")]:
+        if name in names:
+            standalone[name] = getattr(importlib.import_module("scripts.lint_" + name), entry)(root)
+    if "schema_bootstrap_contracts" in names:
+        module = importlib.import_module("scripts.lint_schema_bootstrap_contracts")
+        standalone["schema_bootstrap_contracts"] = module.lint_paths(module.DEFAULT_TARGETS)
     cached_findings=[]
     if 'cached_pure_lazy_allowlist' in names:
         cached=importlib.import_module('scripts.verify_cached_pure_lazy_allowlist')
@@ -160,6 +185,10 @@ def main() -> None:
         profiler.dump_stats(str(args.cpu_profile))
     events = []
     reporter_results = []
+    for name, findings in standalone.items():
+        events.append(dict(test="suite:"+name, call=1, check=name, entry="original-repository-reporter", findings=[
+            dict(path=f.path.relative_to(root).as_posix() if f.path.is_absolute() else f.path.as_posix(), line=f.line, code=f.code, message=f.message)
+            for f in findings]))
     if 'cached_pure_lazy_allowlist' in names:
         events.append({'test':'suite:cached_pure_lazy_allowlist','call':1,'check':'cached_pure_lazy_allowlist','entry':'all','upstream_passed':True,'input_mode':'suite','production_scope':True,'scope':{'include':['**/*.py'],'exclude':[]},'file_set':'suite','findings':[{'path':'l2055_lazy_result/cached_pure_lazy_policy.py','line':1,'column':None,'code':issue,'message':issue} for issue in cached_findings]})
     for result in results:

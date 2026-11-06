@@ -108,7 +108,8 @@ def record(source, output):
     workspace = Path.cwd()
     sys.path[:0] = [str(source), str(source / 'scripts')]
     from data_layer_ten.common import PIN
-    ledger = json.loads((workspace / 'fixtures/host/data-layer-port/batch-10-assertion-ledger.json').read_text())['cases']
+    from data_layer_rule_audit import fixtures_path
+    ledger = json.loads(fixtures_path('host/data-layer-port/batch-10-assertion-ledger.json').read_text())['cases']
     hosts = {name: value for name, value in ledger.items() if value['kind'] == 'host'}
     assert len(hosts) == 57
     collector = OriginalCommands()

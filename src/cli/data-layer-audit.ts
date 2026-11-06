@@ -9,6 +9,9 @@ import { schemaApprovalsSchema, schemaApprovalFacts, type SchemaApprovals } from
 import { codeRuleSchema, loadNativeBinding, rulePackFileSchema, parseJsonWithoutDuplicateKeys, RESULT_PAGE_BYTES, PACKAGE_ROOT } from "../engine/index.js";
 
 const execute = promisify(execFile);
+const pythonExecutable = (value: string | undefined, root: string): string => value === undefined
+  ? existsSync(join(root, ".venv/bin/python")) ? join(root, ".venv/bin/python") : "python3.13"
+  : value.includes("/") || value.includes("\\") ? resolve(value) : value;
 const observations = z.object({ fingerprints: z.tuple([z.string(), z.string()]), firstRefs: z.array(z.string()), secondRefs: z.array(z.string()) }).strict();
 export interface DataLayerAuditOptions {
   repositoryRoot: string;
@@ -26,7 +29,7 @@ export interface DataLayerAuditResult {
   failures: { code: string; message: string }[];
 }
 
-export async function prepareDataLayerAudit(options: DataLayerAuditOptions) {
+export async function configureDataLayerAudit(options: DataLayerAuditOptions) {
   if (options.matchingPhase !== undefined && ![1, 2, 3, 4].includes(options.matchingPhase)) throw new Error("Matching phase must be 1, 2, 3 or 4");
   const root = resolve(options.repositoryRoot), pack = resolve(options.packDirectory);
   const manifestPath = join(pack, "pack.json");
@@ -43,7 +46,7 @@ export async function prepareDataLayerAudit(options: DataLayerAuditOptions) {
   if (ids.includes("data-layer-schema-introspection-data-paths")) {
     let configuration = options.schemaApprovals ?? { entries: [], signature: "NEEDS_SIGNING" };
     if (options.schemaApprovals === undefined && existsSync(join(root, "scripts/lint_schema_introspection_data_paths.py"))) {
-      const python = options.python ?? (existsSync(join(root, ".venv/bin/python")) ? join(root, ".venv/bin/python") : "python3.13");
+      const python = pythonExecutable(options.python, root);
       const response = await execute(python, [join(pack, "runtime/approvals.py"), root], { timeout: 110_000, maxBuffer: 4 * 1024 * 1024 });
       configuration = schemaApprovalsSchema.parse(JSON.parse(response.stdout));
     }
@@ -56,16 +59,14 @@ export async function prepareDataLayerAudit(options: DataLayerAuditOptions) {
       if (!path.startsWith(root + "/") || readFileSync(path, "utf8") !== file.source)
         throw new Error(`Composition probe snapshot does not match the application source: ${file.path}`);
     }
-    const python = options.python ?? (existsSync(join(root, ".venv/bin/python")) ? join(root, ".venv/bin/python") : "python3.13");
+    const python = pythonExecutable(options.python, root);
     // A fresh process observes the actual application on every run, including edits.
     const response = await execute(python, [join(pack, "runtime/observations.py"), root], {
       cwd: root, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }, timeout: 110_000, maxBuffer: 4 * 1024 * 1024,
     });
     batch = observations.parse(JSON.parse(response.stdout));
   }
-  const native = loadNativeBinding();
-  const capabilities = readFileSync(join(PACKAGE_ROOT, "native/src/code_rule_dsl/capabilities.json"), "utf8");
-  const compiled = ids.map(id => {
+  const programs = ids.map(id => {
     const entry = manifest.rules.find(rule => rule.id === id);
     if (!entry) throw new Error(`Rule is absent from the data-layer manifest: ${id}`);
     // Configuration must precede schema normalization, which resolves option expressions.
@@ -85,9 +86,16 @@ export async function prepareDataLayerAudit(options: DataLayerAuditOptions) {
       for (const clause of authored.clauses) if (clause.define?.options?.parameters)
         clause.define.config = { ...clause.define.config, parameters: JSON.stringify({ schemaApprovals: approvals }) };
     }
-    return native.CodeRuleDslRuntime.compile(JSON.stringify(codeRuleSchema.parse(authored)), "json", capabilities);
+    return { id, program: JSON.stringify(codeRuleSchema.parse(authored)) };
   });
-  return { compiled, snapshot };
+  return { programs, snapshot };
+}
+
+export async function prepareDataLayerAudit(options: DataLayerAuditOptions) {
+  const { programs, snapshot } = await configureDataLayerAudit(options);
+  const native = loadNativeBinding();
+  const capabilities = readFileSync(join(PACKAGE_ROOT, "native/src/code_rule_dsl/capabilities.json"), "utf8");
+  return { snapshot, compiled: programs.map(({ program }) => native.CodeRuleDslRuntime.compile(program, "json", capabilities)) };
 }
 
 export function filterMatchingPhase(result: DataLayerAuditResult, phase: DataLayerAuditOptions["matchingPhase"]): DataLayerAuditResult {
@@ -144,7 +152,7 @@ export async function runDataLayerCommand(args: readonly string[], stdout: Pick<
     if (!values.has("--repo") || values.has("--schema-approvals") || values.has("--snapshot") || flags.has("--json"))
       throw new Error("--sign-allowlist requires --repo and signs only the original inline source catalog");
     const root = resolve(values.get("--repo")!);
-    const python = values.get("--python") ?? (existsSync(join(root, ".venv/bin/python")) ? join(root, ".venv/bin/python") : "python3.13");
+    const python = pythonExecutable(values.get("--python"), root);
     const environment = { ...process.env, ...signingEnvironment, PYTHONPATH: [root, join(root, "scripts")].join(process.platform === "win32" ? ";" : ":") };
     try {
       const response = await execute(python, [join(root, "scripts/lint_schema_introspection_data_paths.py"), "--sign-allowlist"], { cwd: root, env: environment, timeout: 110_000, maxBuffer: 4 * 1024 * 1024 });
@@ -165,7 +173,8 @@ export async function runDataLayerCommand(args: readonly string[], stdout: Pick<
     ...(values.has("--rules") ? { ruleIds: values.get("--rules")!.split(",") } : {}), ...(values.has("--python") ? { python: values.get("--python")! } : {}) });
   if (flags.has("--json")) stdout.write(JSON.stringify(result) + "\n");
   else if (flags.has("--summary")) {
-    stdout.write(`${result.violations.length} schema introspection data-path violation(s)\n`);
+    const label = values.get("--rules") === "data-layer-schema-introspection-data-paths" ? "schema introspection data-path" : "data-layer";
+    stdout.write(`${result.violations.length} ${label} violation(s)\n`);
     for (const failure of result.failures) stdout.write(`ERROR ${failure.code}: ${failure.message}\n`);
   } else if (flags.has("--summary-only")) {
     const counts = new Map<string, number>();

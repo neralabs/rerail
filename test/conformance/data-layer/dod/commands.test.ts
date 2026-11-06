@@ -4,8 +4,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { generateKeyPairSync } from "node:crypto";
 import { expect, it } from "vitest";
-import { runDataLayerAudit, runDataLayerCommand } from "../../../../src/cli/index.js";
-import { schemaApprovalMessage } from "../../../../src/cli/data-layer/approvals.js";
+import { runDataLayerAudit, runDataLayerCommand, schemaApprovalMessage } from "../../../../src/cli/index.js";
 const oracle = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-dod-contracts.json", "utf8"));
 const python = [".rerail/data-layer-batch-eight/ci-venv/bin/python", `${process.env.RUNNER_TEMP}/batch-eight-venv/bin/python`].map(p => resolve(p)).find(existsSync);
 it("preserves the original signing canonicalization and deployed trust root", () => {

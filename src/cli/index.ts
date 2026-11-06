@@ -28,4 +28,5 @@ export {
 } from "./show-me.js";
 export { type DashboardPage, type SetupEnvironment, startRerail } from "./repository-setup.js";
 export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";
-export { runDataLayerAudit, runDataLayerCommand, type DataLayerAuditOptions, type DataLayerAuditResult } from "./data-layer-audit.js";
+export { configureDataLayerAudit, prepareDataLayerAudit, runDataLayerAudit, runDataLayerCommand, type DataLayerAuditOptions, type DataLayerAuditResult } from "./data-layer-audit.js";
+export { schemaApprovalMessage, type SchemaApprovals } from "./data-layer/approvals.js";
