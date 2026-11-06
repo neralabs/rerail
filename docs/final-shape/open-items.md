@@ -1424,13 +1424,13 @@ tokens have no field.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
-## O81. A program that derives a relation `core.rr` makes an input
+## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0047)
 
 - Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
   T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
   `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
   a derived table whose columns are `c0, c1`: "names no column in scope".
 - Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
-**Closure:** either the planner names columns by `input_columns` only for relations the program reads as
-inputs (a derived relation keeps `c0, c1`), or a program deriving an input relation is refused at reading and
-the T programs' copies read `core.rr`'s `docof`; the nine tests run again.
+**Closed by 0047:** both. The planner names a column by `input_columns` only for an input
+(`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
+read `kind` and `docof` as inputs. The nine tests run again.

@@ -447,9 +447,19 @@ pub(in crate::code_rule_dsl) struct Model {
     /// View over one input atom → (input, the input column behind each view column).
     view_src: HashMap<String, (String, Vec<Option<String>>)>,
     inputs: Inputs,
+    /// The relations the program's rules derive. Their columns are `c0`, `c1`, … even where an input of the
+    /// same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
+    derived: HashSet<String>,
 }
 
-/// T's input column names; a derived relation's columns are `c0`, `c1`, ….
+impl Model {
+    /// Column `col` of `rel` in SQL: an input's name, or `c{col}` for a relation the program derives.
+    fn col(&self, rel: &str, col: usize) -> String {
+        if self.derived.contains(rel) { format!("c{col}") } else { sql_col(rel, col) }
+    }
+}
+
+/// An input's column names (`sql::select::input_columns`); any other relation's columns are `c0`, `c1`, ….
 pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
@@ -682,7 +692,7 @@ impl Model {
                 let k = constant(&a.args[c]);
                 if let Some(k) = &k
                     && prog.inputs.contains(&a.rel)
-                    && let Some(f) = stats.const_freq(&a.rel, &sql_col(&a.rel, c), k)
+                    && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k)
                 {
                     return f as f64;
                 }
@@ -752,7 +762,7 @@ impl Model {
                 if rcols.len() != 1 || bcols.len() != 1 {
                     continue;
                 }
-                let (rname, bname) = (sql_col(&a.rel, rcols[0]), sql_col(&a.rel, bcols[0]));
+                let (rname, bname) = (self.col(&a.rel, rcols[0]), self.col(&a.rel, bcols[0]));
                 if !stats.indexes.get(&a.rel).into_iter().flatten().any(|ix| ix.len() >= 2 && ix[0] == bname && ix[1] == rname) {
                     continue;
                 }
@@ -1116,7 +1126,7 @@ impl Model {
                 let cols = |a: &Atom, bound: &BTreeSet<String>| -> Vec<String> {
                     (0..a.args.len())
                         .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
-                        .map(|c| sql_col(&a.rel, c))
+                        .map(|c| self.col(&a.rel, c))
                         .collect()
                 };
                 let source = |rel: &str| -> String {
@@ -1182,7 +1192,7 @@ impl Model {
         let mut rows = base;
         for (c, t) in a.args.iter().enumerate() {
             if let Some(k) = constant(t) {
-                rows *= self.stats.const_freq(&a.rel, &sql_col(&a.rel, c), &k).unwrap_or(0) as f64 / base.max(1.0);
+                rows *= self.stats.const_freq(&a.rel, &self.col(&a.rel, c), &k).unwrap_or(0) as f64 / base.max(1.0);
             }
         }
         let card = rows.round_ties_even().max(1.0);
@@ -1212,6 +1222,7 @@ fn first_columns(a: &Atom) -> HashMap<&str, usize> {
 
 /// Reads the statistics and the input relations' cardinalities, distinct counts, fanouts and indexes.
 fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
+    let derived: HashSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
     let mut stats = Stats::new(db, prog, &inputs)?;
     let mut ndv = HashMap::new();
     for (rel, (_, rows)) in &inputs.batch {
@@ -1257,7 +1268,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
         for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             stats.indexes.insert(rel.clone(), vtab_indexes(rel));
         }
-        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs });
+        return Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived });
     }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
@@ -1278,7 +1289,7 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
         }
         stats.indexes.insert(rel.clone(), indexes);
     }
-    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs })
+    Ok(Model { stats, ndv, docof: HashMap::new(), view_src: HashMap::new(), inputs, derived })
 }
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
@@ -1535,7 +1546,7 @@ impl Model {
                 .iter()
                 .enumerate()
                 .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if skip.contains(&v.as_str())))
-                .map(|(c, t)| Ok(eq(col(al, &sql_col(&a.rel, c)), sql_term(t, env, atoms)?)))
+                .map(|(c, t)| Ok(eq(col(al, &self.col(&a.rel, c)), sql_term(t, env, atoms)?)))
                 .collect()
         };
         let subquery = |what: Expr, relation: Relation, al: String, predicates: Vec<Expr>| Select {
@@ -1572,13 +1583,13 @@ impl Model {
                         frm.push((range, vec![eq(col(&ra, "d"), sql_term(&dv, &env, atoms)?)]));
                         let rc = l.args.iter().position(|t| matches!(t, Term::Var(x) if *x == v)).expect("the range column");
                         conds.push(Expr::Between {
-                            input: Box::new(col(&al, &sql_col(&l.rel, rc))),
+                            input: Box::new(col(&al, &self.col(&l.rel, rc))),
                             low: Box::new(col(&ra, "lo")),
                             high: Box::new(col(&ra, "hi")),
                         });
                     }
                     for (c, t) in l.args.iter().enumerate() {
-                        let column = col(&al, &sql_col(&l.rel, c));
+                        let column = col(&al, &self.col(&l.rel, c));
                         match t {
                             Term::Var(v) => match env.get(v) {
                                 Some(e) => conds.push(eq(column, e.clone())),
@@ -1663,7 +1674,7 @@ impl Model {
                     let column = |v: &str| {
                         let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
                         let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
-                        (col(&al, &sql_col(&atom.rel, c)), symbol)
+                        (col(&al, &self.col(&atom.rel, c)), symbol)
                     };
                     let what = match (op, over) {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
@@ -2310,7 +2321,7 @@ impl Run<'_> {
                     a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && vars.iter().collect::<HashSet<_>>().len() == vars.len()
                 }))
             });
-            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => sql_col(rel, c) };
+            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => self.model.col(rel, c) };
             let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
             let cols = if cols.is_empty() { "1".to_owned() } else { cols };
             let mut wheres = Vec::new();
@@ -3127,7 +3138,7 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
         views.push((rel.to_owned(), query));
         model.view_stats(rel, h, a);
         let src = first_columns(a);
-        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| sql_col(&a.rel, c)) } else { None }).collect();
+        let cols = h.args.iter().map(|t| if let Term::Var(v) = t { src.get(v.as_str()).map(|&c| model.col(&a.rel, c)) } else { None }).collect();
         model.view_src.insert(rel.to_owned(), (a.rel.clone(), cols));
         if let ([Term::Var(h0), Term::Var(h1)], [Term::Var(d), Term::Var(n), rest @ ..]) = (h.args.as_slice(), a.args.as_slice())
             && a.rel == "node"

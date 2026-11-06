@@ -34,7 +34,6 @@ fn chosen_line(c: &Chosen) -> String {
 
 /// On T's facts, the port chooses T's plans (anchor, walks, estimated work, rule for rule) and derives T's outputs.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn t_programs_plan_and_run_like_t() {
     let facts = facts();
     let mut failures = Vec::new();
@@ -70,7 +69,6 @@ fn t_programs_plan_and_run_like_t() {
 /// process-wide state (the loaded tape, the native inputs cached by their SQL, the symbols), so each case runs in a
 /// child process of this test, as T's `rdl.py` does.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn t_programs_run_natively_like_t() {
     const CASE: &str = "RERAIL_RDL_NATIVE_CASE";
     if let Ok(case) = std::env::var(CASE) {
@@ -176,7 +174,6 @@ fn outputs_match(name: &str, got: &Outcome, first: &HashMap<i64, i64>, failures:
 /// O13: lowered to atoms and run over the base-relation vtabs of the same files (`facts::vtab::syntax`), T's programs
 /// get T's plans and, decoded, T's outputs.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn t_programs_over_atoms_plan_and_run_like_t() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     let path = crate::code_rule_dsl::prefilter::tests::temp();
@@ -227,7 +224,6 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
 /// (`waves::schedule::run`) give the rows `run_atoms` gives with its own stratum loop, planned from
 /// the estimates and again from the counts the first run's boundary recorded.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::waves::{owner::Backing, schedule};
@@ -303,7 +299,6 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
 /// O12 (option a): `nearest` made by the transducer's file-local FIX (`typing::file_local`) and read as the input
 /// `nearest_<set>(n, a)`, on the CPU and on the device work queue: T's programs derive T's outputs.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -349,7 +344,6 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
 /// O13: T's native modes over atoms. Lowered with the transducer's `nearest` and run over the base-relation vtabs,
 /// each component a mode runs in `logic::native` gives the rows T's pure SQL mode gives (the goldens).
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn t_programs_run_natively_over_atoms_like_t() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::typing::file_local::Binding;
@@ -403,7 +397,6 @@ fn t_programs_run_natively_over_atoms_like_t() {
 /// T's outputs on T's facts, through the same front (prune, magic sets, prune). Their plans may differ from
 /// T's; their outputs may not.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn product_programs_derive_t_outputs() {
     let facts = facts();
     let mut failures = Vec::new();
@@ -433,7 +426,6 @@ fn product_programs_derive_t_outputs() {
 /// bound) derives what the run on T's facts derives, on T's fixture corpus, as one chunk and as several. Node ids
 /// differ only in how they are written (`path:index` against T's global ids), so the own outputs are mapped to T's.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn own_ingestion_derives_what_t_facts_do() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
@@ -490,7 +482,6 @@ fn own_ingestion_derives_what_t_facts_do() {
 /// summaries and a user declaration as `declared_ret` facts, which type its calls, and each typed node gets a
 /// union term; with an empty cache the package's modules are pending, not ⊤, and the calls stay untyped.
 #[test]
-#[ignore = "O81: T's programs derive core.rr's input docof; its columns are named n, d, the derived table's c0, c1"]
 fn typed_corpus_reads_declarations_and_dependency_summaries() {
     use super::corpus::{Typing, run_typed};
     use crate::code_rule_dsl::typing::file_local::Binding;
