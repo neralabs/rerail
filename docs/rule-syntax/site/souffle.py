@@ -506,7 +506,12 @@ def _split_top(toks, sep):
 
 
 def _is_var(t):
-    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t)) and t != "_" and t not in ("must", "may")
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", t)) and t != "_" and t not in ("must", "may") \
+        and t not in BITWISE
+
+
+# Soufflé's word operators: `x band 1` is an expression, not two variables.
+BITWISE = {"band", "bor", "bxor", "bnot", "bshl", "bshr", "bshru", "land", "lor", "lxor", "lnot"}
 
 
 def _vars(toks):

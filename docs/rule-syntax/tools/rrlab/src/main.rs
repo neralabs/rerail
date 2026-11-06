@@ -2,6 +2,7 @@
 //!
 //!   rrlab-facts facts OUTDIR [--root DIR] [--lang LANG] FILE...   one document per FILE, ids 1.. in order
 //!   rrlab-facts tree LANG < code                                  the parse tree as JSON (for pattern compiling)
+//!   rrlab-facts graft OUTDIR --root DIR --next-id N --visit V < spec  trees for strings that hold code (`parsed`)
 //!   rrlab-facts langs                                             the languages this build parses
 //!
 //! Every relation is a TSV file `<relation>.facts`, fields quoted as RFC 4180 (Soufflé's `rfc4180=true`), so texts
@@ -95,6 +96,7 @@ const RELATIONS: &[&str] = &[
     "end_line", "col", "unset", "list_len", "value", "str", "strprefix", "name", "comment", "value_type", "source",
     "src_line", "line_count", "syntax_error", "first_token", "last_token", "token_before", "token_after",
     "next_sibling", "precedes", "spread", "visit_index", "ast_depth", "rrlab_parent", "rrlab_lang", "parsed",
+    "str_part",
 ];
 
 // ---- one document ---------------------------------------------------------------------------------------------
@@ -110,6 +112,8 @@ struct Doc<'a> {
     visit: u64,
     first_error: Option<(usize, String)>,
     ts_ids: HashMap<usize, u64>,        // tree-sitter node id -> fact id (a Vue host's guests look them up)
+    fixed: Option<(usize, usize, usize, usize)>,  // a graft read from a decoded value: every node at (row, col, a, b)
+    lone_cr: Option<Vec<usize>>,        // line starts, when a lone \r makes tree-sitter's rows differ from Ruff's
 }
 
 fn is_comment_kind(k: &str) -> bool {
@@ -130,7 +134,15 @@ impl<'a> Doc<'a> {
     fn place(&mut self, id: u64, n: &Node) {
         let (a, b) = (n.start_byte(), n.end_byte());
         let text = &self.src[a..b];
-        let (s, e) = (n.start_position(), n.end_position());
+        let (mut s, mut e) = (n.start_position(), n.end_position());
+        if let Some(st) = &self.lone_cr {
+            // Ruff's lines: a lone \r ends one too (tree-sitter counts only \n)
+            (s, e) = (point_at(st, a), point_at(st, b));
+        }
+        if let Some((row, col, _, _)) = self.fixed {
+            s = tree_sitter::Point { row, column: col };
+            e = s;
+        }
         // end_line: the line of the last character, so a node ending at column 0 ends on the line before.
         let end_row = if e.column == 0 && e.row > s.row { e.row - 1 } else { e.row };
         let d = self.d;
@@ -147,7 +159,8 @@ impl<'a> Doc<'a> {
         let (a, b) = (n.start_byte(), n.end_byte());
         self.place(id, &n);
         let d = self.d;
-        self.out.row("node", &[&d, &id, &k, &a, &b]);
+        let (na, nb) = self.fixed.map(|f| (f.2, f.3)).unwrap_or((a, b));
+        self.out.row("node", &[&d, &id, &k, &na, &nb]);
         self.out.row("kind", &[&id, &k]);
         let vi = self.visit;
         self.visit += 1;
@@ -216,7 +229,157 @@ impl<'a> Doc<'a> {
             }
         }
         self.literal(id, &n);
+        if self.lang == "python" && self.fixed.is_none() {
+            let top = k == "concatenated_string"
+                || k == "string" && n.parent().map(|p| p.kind()) != Some("concatenated_string");
+            if top {
+                self.str_parts(id, &n, &named);
+            }
+        }
         id
+    }
+
+    /// str_part(lit, i, v, at, spec): the str constants CPython builds from literal lit (a string, or adjacent ones
+    /// as a concatenated_string): plain runs join across adjacent literals; an f-string's interpolations split
+    /// them; a format spec's literal runs are pieces of their own with spec = 1. Bytes and t-strings give none.
+    fn str_parts(&mut self, id: u64, n: &Node, named: &[u64]) {
+        let parts: Vec<(u64, &str)> = if n.kind() == "string" {
+            vec![(id, &self.src[n.start_byte()..n.end_byte()])]
+        } else {
+            let mut v = Vec::new();
+            let mut j = 0;
+            for c in kids(*n).into_iter().filter(|c| c.is_named()) {
+                if c.kind() == "string" {
+                    v.push((named[j], &self.src[c.start_byte()..c.end_byte()]));
+                }
+                j += 1;
+            }
+            v
+        };
+        let mut pieces: Vec<(String, u64, u8)> = Vec::new();
+        let mut cur: Option<(String, u64)> = None;
+        let mut any_f = false;
+        for &(sid, t) in &parts {
+            let pre: String = t.chars().take_while(|c| c.is_ascii_alphabetic()).collect::<String>().to_lowercase();
+            if pre.contains('b') || pre.contains('t') {
+                return;
+            }
+            let rest = &t[pre.len()..];
+            let Some(q) = ["\"\"\"", "'''", "\"", "'"].into_iter()
+                .find(|q| rest.len() >= 2 * q.len() && rest.starts_with(q) && rest.ends_with(q)) else { return };
+            let body = &rest[q.len()..rest.len() - q.len()];
+            let raw = pre.contains('r');
+            let dec = |x: &str| if raw { x.to_string() } else { py_unescape(x) };
+            let push = |cur: &mut Option<(String, u64)>, v: &str| match cur {
+                Some((s, _)) => s.push_str(v),
+                None => *cur = Some((v.to_string(), sid)),
+            };
+            if !pre.contains('f') {
+                push(&mut cur, &dec(body));
+                continue;
+            }
+            any_f = true;
+            let b: Vec<char> = body.chars().collect();
+            let mut i = 0;
+            let mut run = String::new();
+            while i < b.len() {
+                let c = b[i];
+                if c == '\\' && !raw && i + 1 < b.len() {
+                    // an escape, kept whole for py_unescape: \N{…} holds braces that are not a field
+                    let mut j = i + 2;
+                    if b[i + 1] == 'N' && b.get(i + 2) == Some(&'{') {
+                        while j < b.len() && b[j - 1] != '}' {
+                            j += 1;
+                        }
+                    }
+                    run.extend(&b[i..j]);
+                    i = j;
+                } else if (c == '{' || c == '}') && b.get(i + 1) == Some(&c) {
+                    run.push_str(if c == '{' { "{{" } else { "}}" });
+                    i += 2;
+                } else if c == '{' {
+                    let lit = dec(&run).replace("{{", "{").replace("}}", "}");
+                    run.clear();
+                    // the field: an expression to a depth-0 `!`, `:` or `}`
+                    let mut j = i + 1;
+                    let mut depth = 0i32;
+                    let mut quote: Option<char> = None;
+                    while j < b.len() {
+                        let d = b[j];
+                        if let Some(qc) = quote {
+                            if d == qc { quote = None; }
+                        } else if d == '\'' || d == '"' {
+                            quote = Some(d);
+                        } else if "([{".contains(d) {
+                            depth += 1;
+                        } else if ")]}".contains(d) {
+                            if depth == 0 { break; }
+                            depth -= 1;
+                        } else if depth == 0 && (d == ':' || d == '!' && b.get(j + 1) != Some(&'=')) {
+                            break;
+                        }
+                        j += 1;
+                    }
+                    let expr: String = b[i + 1..j.min(b.len())].iter().collect();
+                    let te = expr.trim_end();
+                    let debug = te.ends_with('=') && !["==", "!=", "<=", ">="].iter().any(|o| te.ends_with(o));
+                    let mut text = lit;
+                    if debug {
+                        text.push_str(&expr);
+                    }
+                    if !text.is_empty() {
+                        push(&mut cur, &text);
+                    }
+                    if let Some((v, at)) = cur.take() {
+                        if !v.is_empty() { pieces.push((v, at, 0)); }
+                    }
+                    // a conversion, then a format spec up to the field's closing brace
+                    if j < b.len() && b[j] == '!' {
+                        while j < b.len() && b[j] != ':' && b[j] != '}' { j += 1; }
+                    }
+                    if j < b.len() && b[j] == ':' {
+                        j += 1;
+                        let mut spec = String::new();
+                        let mut depth = 0i32;
+                        while j < b.len() {
+                            let d = b[j];
+                            if d == '{' {
+                                if depth == 0 && !spec.is_empty() {
+                                    pieces.push((dec(&spec), sid, 1));
+                                    spec.clear();
+                                }
+                                depth += 1;
+                            } else if d == '}' {
+                                if depth == 0 { break; }
+                                depth -= 1;
+                            } else if depth == 0 {
+                                spec.push(d);
+                            }
+                            j += 1;
+                        }
+                        if !spec.is_empty() {
+                            pieces.push((dec(&spec), sid, 1));
+                        }
+                    }
+                    i = j + 1;
+                } else {
+                    run.push(c);
+                    i += 1;
+                }
+            }
+            if !run.is_empty() {
+                let lit = dec(&run).replace("{{", "{").replace("}}", "}");
+                push(&mut cur, &lit);
+            }
+        }
+        if let Some((v, at)) = cur.take() {
+            if !any_f || !v.is_empty() {
+                pieces.push((v, at, 0));
+            }
+        }
+        for (i, (v, at, spec)) in pieces.iter().enumerate() {
+            self.out.row("str_part", &[&id, &i, v, at, spec]);
+        }
     }
 
     /// value, str, strprefix, name, comment, spread, value_type: what is derivable from the node alone.
@@ -313,11 +476,67 @@ fn string_contents(lang: &str, text: &str) -> Option<(String, String)> {
     for q in ["\"\"\"", "'''", "\"", "'", "`"] {
         if rest.len() >= 2 * q.len() && rest.starts_with(q) && rest.ends_with(q) {
             let body = &rest[q.len()..rest.len() - q.len()];
-            let v = if raw { body.to_string() } else { unescape(body) };
+            let v = if raw { body.to_string() } else if lang == "python" { py_unescape(body) } else { unescape(body) };
             return Some((p.to_lowercase(), v));
         }
     }
     None
+}
+
+/// A Python str literal's escapes, as the language reference gives them: unknown escapes keep their backslash,
+/// octal up to three digits, \x, \u, \U, a backslash-newline joins lines. \N{name} is kept as written (no name
+/// table here).
+fn py_unescape(s: &str) -> String {
+    let c: Vec<char> = s.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let hex = |c: &[char], i: usize, n: usize| -> Option<char> {
+        if i + n > c.len() { return None; }
+        let h: String = c[i..i + n].iter().collect();
+        u32::from_str_radix(&h, 16).ok().and_then(char::from_u32)
+    };
+    while i < c.len() {
+        if c[i] != '\\' || i + 1 >= c.len() {
+            out.push(c[i]);
+            i += 1;
+            continue;
+        }
+        let e = c[i + 1];
+        i += 2;
+        match e {
+            'n' => out.push('\n'),
+            't' => out.push('\t'),
+            'r' => out.push('\r'),
+            'a' => out.push('\u{7}'),
+            'b' => out.push('\u{8}'),
+            'f' => out.push('\u{c}'),
+            'v' => out.push('\u{b}'),
+            '\\' | '\'' | '"' => out.push(e),
+            '\n' => {}
+            '\r' => {
+                if c.get(i) == Some(&'\n') { i += 1; }
+            }
+            '0'..='7' => {
+                let mut v = e.to_digit(8).unwrap();
+                let mut k = 0;
+                while k < 2 && i < c.len() && c[i].is_digit(8) {
+                    v = v * 8 + c[i].to_digit(8).unwrap();
+                    i += 1;
+                    k += 1;
+                }
+                out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
+            }
+            'x' | 'u' | 'U' => {
+                let n = match e { 'x' => 2, 'u' => 4, _ => 8 };
+                match hex(&c, i, n) {
+                    Some(ch) => { out.push(ch); i += n; }
+                    None => { out.push('\\'); out.push(e); }
+                }
+            }
+            _ => { out.push('\\'); out.push(e); }
+        }
+    }
+    out
 }
 
 fn unescape(s: &str) -> String {
@@ -415,6 +634,27 @@ fn module_name(lang: &str, path: &str) -> (String, String) {
     (m, pkg)
 }
 
+/// Line starts when a Python source has a lone \r, which ends a line for Ruff but not for tree-sitter; None when
+/// tree-sitter's rows are already Ruff's (or the language is not Python).
+fn lone_cr_starts(src: &str, lang: &str) -> Option<Vec<usize>> {
+    let b = src.as_bytes();
+    if lang != "python" || !(0..b.len()).any(|i| b[i] == b'\r' && b.get(i + 1) != Some(&b'\n')) {
+        return None;
+    }
+    let mut v = vec![0];
+    for (i, &c) in b.iter().enumerate() {
+        if c == b'\n' || (c == b'\r' && b.get(i + 1) != Some(&b'\n')) {
+            v.push(i + 1);
+        }
+    }
+    Some(v)
+}
+
+fn point_at(starts: &[usize], at: usize) -> tree_sitter::Point {
+    let row = starts.partition_point(|&x| x <= at) - 1;
+    tree_sitter::Point { row, column: at - starts[row] }
+}
+
 fn python_lines(s: &str) -> Vec<&str> {
     // The line terminators of CPython's tokenizer and Ruff's line index: \r\n, \n and a lone \r. A form feed
     // or \v is whitespace inside a line, so line numbers agree with the tools' (str.splitlines() would not).
@@ -484,7 +724,7 @@ fn document(out: &mut Out, next_id: &mut u64, d: u32, path: &str, lang: Option<&
     parser.set_language(&language(lang).unwrap()).unwrap();
     let tree = parser.parse(src, None).expect("parse");
     let mut doc = Doc { d, src, lang, out, next_id, tokens: vec![], nodes: vec![], visit: 0, first_error: None,
-        ts_ids: HashMap::new() };
+        ts_ids: HashMap::new(), fixed: None, lone_cr: lone_cr_starts(src, lang) };
     doc.walk(tree.root_node(), None, 0);
     if let Some((l, msg)) = doc.first_error.take() {
         doc.out.row("syntax_error", &[&d, &l, &msg]);
@@ -506,7 +746,7 @@ fn document(out: &mut Out, next_id: &mut u64, d: u32, path: &str, lang: Option<&
         parser.set_language(&language(g.lang).unwrap()).unwrap();
         let Some(tree) = parser.parse(&buf, None) else { continue };
         let mut gd = Doc { d, src: &buf, lang: g.lang, out: &mut *out, next_id: &mut *next_id, tokens: vec![],
-            nodes: vec![], visit, first_error: None, ts_ids: HashMap::new() };
+            nodes: vec![], visit, first_error: None, ts_ids: HashMap::new(), fixed: None, lone_cr: None };
         let root = gd.walk(tree.root_node(), None, 0);
         gd.out.row("parsed", &[&host, &g.grammar, &root]);
         token_facts(&mut gd);
@@ -774,6 +1014,84 @@ fn doc_is_node(_toks: &[(u64, usize, usize)], _id: u64) -> bool {
     true
 }
 
+// ---- grafts: strings parsed as code, on request ----------------------------------------------------------------
+
+fn named_kids<'t>(n: Node<'t>) -> Vec<Node<'t>> {
+    kids(n).into_iter().filter(|c| c.is_named() && !c.is_extra()).collect()
+}
+
+/// n's one named child, if it is of kind k.
+fn only<'t>(n: Node<'t>, k: &str) -> Option<Node<'t>> {
+    let c = named_kids(n);
+    (c.len() == 1 && c[0].kind() == k).then(|| c[0])
+}
+
+/// One graft per JSON line of `spec`: {"d", "host", "grammar", "lang", "path", "lo", "hi"} parses bytes [lo, hi)
+/// of the file in place (the rest blanked, line breaks kept, `(` … `)` written around it), so the tree has the
+/// file's own lines and columns; {"d", "host", "grammar", "lang", "value", "line", "col", "a", "b"} parses a
+/// decoded value (an escaped or concatenated string) with every node at the host's place. Ids follow
+/// `next_id`; `parsed(host, grammar, root)` names the tree: the expression, or the module when it does not
+/// parse as one expression (so the ERROR nodes are below the root).
+fn graft(out: &mut Out, next_id: &mut u64, visit: u64, root_dir: &Path, spec: &str) {
+    let mut visit = visit;
+    let mut files: HashMap<String, String> = HashMap::new();
+    for line in spec.lines().filter(|l| !l.trim().is_empty()) {
+        let g: serde_json::Value = serde_json::from_str(line).expect("graft spec");
+        let num = |k: &str| g[k].as_u64().unwrap_or(0) as usize;
+        let (d, host) = (num("d") as u32, num("host") as u64);
+        let grammar = g["grammar"].as_str().unwrap_or("").to_string();
+        let lang = g["lang"].as_str().unwrap_or("python").to_string();
+        let Some(language) = language(&lang) else { continue };
+        let (buf, fixed) = if let Some(v) = g["value"].as_str() {
+            (format!("({v})"), Some((num("line").saturating_sub(1), num("col"), num("a"), num("b"))))
+        } else {
+            let path = g["path"].as_str().unwrap_or("").to_string();
+            let src = files.entry(path.clone()).or_insert_with(|| {
+                String::from_utf8_lossy(&std::fs::read(root_dir.join(&path)).unwrap_or_default()).into_owned()
+            });
+            let (lo, hi) = (num("lo"), num("hi"));
+            if lo == 0 || hi >= src.len() || lo > hi {
+                continue;
+            }
+            let b = src.as_bytes();
+            let mut v: Vec<u8> = b.iter().enumerate()
+                .map(|(i, &c)| if (lo..hi).contains(&i) || c == b'\n' || c == b'\r' { c } else { b' ' }).collect();
+            v[lo - 1] = b'(';
+            v[hi] = b')';
+            (String::from_utf8(v).unwrap_or_default(), None)
+        };
+        let mut parser = Parser::new();
+        parser.set_language(&language).unwrap();
+        let Some(tree) = parser.parse(&buf, None) else { continue };
+        let lang_s: &str = &lang;
+        let mut gd = Doc { d, src: &buf, lang: lang_s, out: &mut *out, next_id: &mut *next_id, tokens: vec![],
+            nodes: vec![], visit, first_error: None, ts_ids: HashMap::new(), fixed, lone_cr: if fixed.is_none() { lone_cr_starts(&buf, lang_s) } else { None } };
+        let module = tree.root_node();
+        let module_id = gd.walk(module, None, 0);
+        let mut root = module_id;
+        if !module.has_error() {
+            if let Some(p) = only(module, "expression_statement").and_then(|s| only(s, "parenthesized_expression")) {
+                let c = named_kids(p);
+                if c.len() == 1 {
+                    root = gd.ts_ids[&c[0].id()];
+                }
+            }
+        }
+        gd.out.row("parsed", &[&host, &grammar, &root]);
+        token_facts(&mut gd);
+        visit = gd.visit;
+        // the wrapper module is not a Python module (no docstring, no scope of its own): kind graft_module
+        let (from, to) = (format!("{module_id}\tmodule\n"), format!("{module_id}\tgraft_module\n"));
+        if let Some(k) = out.files.get_mut("kind") {
+            *k = k.replace(&from, &to);
+        }
+        if let Some(n) = out.files.get_mut("node") {
+            let (from, to) = (format!("\t{module_id}\tmodule\t"), format!("\t{module_id}\tgraft_module\t"));
+            *n = n.replace(&from, &to);
+        }
+    }
+}
+
 // ---- tree as JSON (for the pattern compiler) ----------------------------------------------------------------------
 
 fn tree_json(n: Node, src: &str, field: Option<&str>, s: &mut String) {
@@ -831,6 +1149,27 @@ fn main() {
                 document(&mut out, &mut next_id, k as u32 + 1, f, l.as_deref(), &src);
             }
             out.flush();
+        }
+        Some("graft") => {
+            // graft OUTDIR --root DIR --next-id N --visit V < spec: trees for strings that hold code
+            let dir = PathBuf::from(args.get(2).expect("graft OUTDIR"));
+            let (mut root, mut next_id, mut visit) = (PathBuf::from("."), 0u64, 0u64);
+            let mut i = 3;
+            while i + 1 < args.len() {
+                match args[i].as_str() {
+                    "--root" => root = PathBuf::from(&args[i + 1]),
+                    "--next-id" => next_id = args[i + 1].parse().expect("--next-id N"),
+                    "--visit" => visit = args[i + 1].parse().expect("--visit V"),
+                    a => panic!("graft: unknown argument {a}"),
+                }
+                i += 2;
+            }
+            let mut spec = String::new();
+            std::io::stdin().read_to_string(&mut spec).unwrap();
+            let mut out = Out { dir, files: HashMap::new() };
+            graft(&mut out, &mut next_id, visit, &root, &spec);
+            out.flush();
+            println!("{next_id}");
         }
         _ => {
             eprintln!("usage: rrlab-facts facts OUTDIR [--root DIR] [--lang LANG] FILE... | tree LANG < code | langs");

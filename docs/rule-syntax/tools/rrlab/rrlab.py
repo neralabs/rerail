@@ -200,6 +200,67 @@ def io_input(spec, root):
 _RUNS = []
 
 
+_PY_STR = re.compile(r"(?s)([A-Za-z]*)('\'\'|\"\"\"|'|\")(.*)\2")
+_PY_ESC = re.compile(r"\\(N\{[^}]*\}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[0-7]{1,3}|\r\n|[\s\S])")
+_PY_ESC1 = {"n": "\n", "t": "\t", "r": "\r", "a": "\a", "b": "\b", "f": "\f", "v": "\v", "\\": "\\", "'": "'",
+            '"': '"', "\n": "", "\r\n": ""}
+
+
+def py_string(lit):
+    """A Python string literal's (value, prefix, plain, prefix length, quote length): plain when the value is the
+    text between the quotes as written. None for bytes and f-strings (no value Ruff parses)."""
+    m = _PY_STR.fullmatch(lit)
+    if not m:
+        return None
+    pre, q, body = m.groups()
+    if set(pre.lower()) & {"b", "f", "t"}:
+        return None
+    if "r" in pre.lower() or "\\" not in body:
+        return body, pre, True, len(pre), len(q)
+
+    def esc(e):
+        t = e.group(1)
+        if t in _PY_ESC1:
+            return _PY_ESC1[t]
+        if t[0] in "xuU":
+            return chr(int(t[1:], 16))
+        if t[0] == "N":
+            import unicodedata
+            try:
+                return unicodedata.lookup(t[2:-1])
+            except KeyError:
+                return e.group(0)
+        if t[0] in "01234567":
+            return chr(int(t, 8))
+        return e.group(0)
+    return _PY_ESC.sub(esc, body), pre, False, len(pre), len(q)
+
+
+def scope_glob(g):
+    """A .scope glob as a regex over a root-relative path: `**/` any directories (none too), `**` anything, `*` and
+    `?` within one segment, `{a,b}` either."""
+    out, i = [], 0
+    while i < len(g):
+        c = g[i]
+        if g.startswith("**/", i):
+            out.append("(?:.*/)?"); i += 3; continue
+        if g.startswith("**", i):
+            out.append(".*"); i += 2; continue
+        if c == "*":
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "{":
+            j = g.find("}", i)
+            if j > i:
+                out.append("(?:" + "|".join(re.escape(x) for x in g[i + 1:j].split(",")) + ")"); i = j + 1; continue
+            out.append(re.escape(c))
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return re.compile("".join(out), re.S)
+
+
 _RX = None
 
 
@@ -253,6 +314,7 @@ class Run:
         extra = {"option": o, "option_item": oi}
         docs = [l.split("\t")[1] for l in open(os.path.join(self.inp, "doc.facts")) if l.strip()]
         extra.update(repo_inputs(self.root, docs))
+        extra["directive_global"] = self.directive_globals()
         shutil.copy(os.path.join(self.inp, "value.facts"), os.path.join(self.inp, "static_value.facts"))
         for name, spec in p.io_inputs.items():
             rows, err = io_input(spec, self.root)
@@ -270,6 +332,45 @@ class Run:
                         not any(w.startswith(name + " ") for w in p.warnings):
                     p.warn(f"input {name} has no rows in rrlab")
 
+    def in_scope(self, path):
+        """The rule's .scope: some include glob matches (when it names any), no exclude glob does, and no `test` or
+        `tests` path part under `tests false`."""
+        p = self.prog
+        if not getattr(self, "use_scope", True):
+            return True
+        if not hasattr(self, "_scope"):
+            self._scope = ([scope_glob(g) for g in p.scope], [scope_glob(g) for g in p.scope_exclude])
+        inc, exc = self._scope
+        path = path[2:] if path.startswith("./") else path
+        if inc and not any(r.fullmatch(path) for r in inc):
+            return False
+        if any(r.fullmatch(path) for r in exc):
+            return False
+        if not p.scope_tests and {"test", "tests"} & set(path.split("/")):
+            return False
+        return True
+
+    def directive_globals(self):
+        """directive_global(d, x): the names a `/* global a, b: writable */` (or `globals`) block comment declares,
+        as ESLint reads them: items split at commas and spaces, `name:value`, a ` -- note` dropped; `x: off`
+        declares nothing (eslint-b-scope's global_off reads those from the comment itself)."""
+        texts = {r[0]: r[1] for r in self.table("text")}
+        docof = {r[0]: r[1] for r in self.table("docof")}
+        rows = []
+        for cid, body in self.table("comment"):
+            if not texts.get(cid, "").startswith("/*"):
+                continue
+            m = re.match(r"\s*globals?(?:\s+(.*))?$", body, re.S)
+            if not m or cid not in docof:
+                continue
+            items = re.split(r"\s+--\s", m.group(1) or "", maxsplit=1)[0]
+            items = re.sub(r"\s*:\s*", ":", re.sub(r"\s*,\s*", ",", items.strip()))
+            for it in re.split(r"[\s,]+", items):
+                name, _, val = it.partition(":")
+                if name and val.lower() != "off":
+                    rows.append((docof[cid], name))
+        return sorted(set(rows))
+
     def souffle(self):
         cmd = [SOUFFLE, "-w", "-F", self.inp, "-D", self.out, "-L", FN_DIR, "-l", "rrlabfn",
                os.path.join(self.work, "rule.dl")]
@@ -281,6 +382,10 @@ class Run:
                     and not (i > 1 and ls[i - 2].startswith("Warning")) and l.strip()]
             msg = "\n".join(keep)[:4000]
             raise SystemExit(f"souffle failed ({os.path.join(self.work, 'rule.dl')}):\n{msg}")
+        # a regex the Rust regex crate refuses (look-around, backreferences) matches nothing: say so once
+        for l in r.stderr.splitlines():
+            if l.startswith("rrlab: bad regex") and l[7:] not in self.prog.warnings:
+                self.prog.warn(l[7:])
         return r
 
     def execute(self, max_rounds=60):
@@ -292,6 +397,7 @@ class Run:
             self.souffle()
             rounds += 1
             served = self.serve_matches()
+            served = self.serve_parsed() or served
             if not self.prog.ordered and not served:
                 break
             cur = {o: open(os.path.join(self.out, f"{o}.csv")).read() for o in self.prog.ordered}
@@ -315,15 +421,11 @@ class Run:
         p = self.prog
         if not p.matches:
             return False
+        self.node_cache()
         if not hasattr(self, "_mserved"):
             self._mserved = set()
             self._spans = {}
             self._fn = rx_lib()
-            self._ntext = {r[0]: r[1] for r in self.table("text")}
-            self._nline = {r[0]: int(r[1]) for r in self.table("line")}
-            self._ncol = {r[0]: int(r[1]) for r in self.table("col")}
-            self._ndoc = {r[0]: r[1] for r in self.table("docof")}
-            self._next_id = max((int(i) for i in self._ndoc if i.lstrip("-").isdigit()), default=0) + 1
         add = collections.defaultdict(list)
         for k, m in p.matches.items():
             f = os.path.join(self.out, f"rr_mreq{k}.csv")
@@ -355,6 +457,93 @@ class Run:
             with open(os.path.join(self.inp, f"{rel}.facts"), "a") as fh:
                 fh.write(tsv(rows))
         return bool(add)
+
+    def node_cache(self):
+        """text, line, col and docof of every node (spans and grafts added as they are made), and the next free id."""
+        if hasattr(self, "_ntext"):
+            return
+        self._ntext = {r[0]: r[1] for r in self.table("text")}
+        self._nline = {r[0]: int(r[1]) for r in self.table("line")}
+        self._ncol = {r[0]: int(r[1]) for r in self.table("col")}
+        self._ndoc = {r[0]: r[1] for r in self.table("docof")}
+        self._next_id = max((int(i) for i in self._ndoc if i.lstrip("-").isdigit()), default=0) + 1
+
+    def serve_parsed(self):
+        """Answer rr_preq(s, g): parse each Python string s the rule asks about (grammar "annotation") and graft its
+        tree, ids above every other, with parsed(s, g, root). A plain string's tree has its own place in the file;
+        an escaped or concatenated one is parsed from its value, every node at the string. Bytes and f-strings
+        give no tree, as Ruff refuses them."""
+        if not self.prog.parse_requests:
+            return False
+        f = os.path.join(self.out, "rr_preq.csv")
+        if not os.path.exists(f):
+            return False
+        self.node_cache()
+        if not hasattr(self, "_pserved"):
+            self._pserved = set()
+            self._nodes = {r[1]: (r[0], r[2], int(r[3]), int(r[4])) for r in self.table("node")}
+            self._kids = collections.defaultdict(list)
+            for r in self.table("child"):
+                self._kids[r[0]].append((int(r[2]), r[1]))
+            self._paths = {r[0]: r[1] for r in self.table("doc")}
+            self._visit = max((int(r[1]) for r in self.table("visit_index")), default=0) + 1
+        with open(f, newline="") as fh:
+            reqs = [tuple(c.replace('\\"', '"') for c in r) for r in csv.reader(fh, delimiter="\t", quotechar='"') if r]
+        spec = []
+        for s_id, g in reqs:
+            if (s_id, g) in self._pserved:
+                continue
+            self._pserved.add((s_id, g))
+            if g != "annotation" or s_id not in self._nodes:
+                continue
+            d, kind, a, b = self._nodes[s_id]
+            parts = [s_id] if kind == "string" else \
+                [c for _, c in sorted(self._kids[s_id]) if self._nodes.get(c, ("", ""))[1] == "string"] \
+                if kind == "concatenated_string" else []
+            lits = [py_string(self._ntext.get(c, "")) for c in parts]
+            if not lits or any(x is None for x in lits):
+                continue
+            one = {"d": int(d), "host": int(s_id), "grammar": g, "lang": "python"}
+            if len(lits) == 1 and lits[0][2]:
+                pre, q = lits[0][3], lits[0][4]
+                one.update(path=self._paths[d], lo=a + pre + q, hi=b - q)
+            else:
+                one.update(value="".join(x[0] for x in lits), line=self._nline.get(s_id, 1),
+                           col=self._ncol.get(s_id, 0), a=a, b=b)
+            spec.append(json.dumps(one))
+        if not spec:
+            return False
+        tmp = os.path.join(self.work, "graft")
+        shutil.rmtree(tmp, ignore_errors=True)
+        r = subprocess.run([FACTS_BIN, "graft", tmp, "--root", self.root, "--next-id", str(self._next_id),
+                            "--visit", str(self._visit)], input="\n".join(spec) + "\n", capture_output=True, text=True)
+        if r.returncode:
+            raise SystemExit(f"rrlab-facts graft failed:\n{r.stderr[-2000:]}")
+        self._next_id = int(r.stdout.strip() or self._next_id) + 1
+        added = False
+        for fn in os.listdir(tmp):
+            body = open(os.path.join(tmp, fn), newline="").read()
+            if not body:
+                continue
+            added = True
+            with open(os.path.join(self.inp, fn), "a", newline="") as fh:
+                fh.write(body)
+            rel = fn[:-6]
+            if rel in ("text", "line", "col", "docof", "visit_index"):
+                with open(os.path.join(tmp, fn), newline="") as fh:
+                    for row in csv.reader(fh, delimiter="\t", quotechar='"'):
+                        if rel == "text":
+                            self._ntext[row[0]] = row[1]
+                        elif rel == "line":
+                            self._nline[row[0]] = int(row[1])
+                        elif rel == "col":
+                            self._ncol[row[0]] = int(row[1])
+                        elif rel == "docof":
+                            self._ndoc[row[0]] = row[1]
+                        else:
+                            self._visit = max(self._visit, int(row[1]) + 1)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return added
 
     def span(self, node, b, st, en, add):
         """The id of the span b[st:en] of node's text, a node of its own (made once)."""
@@ -418,6 +607,7 @@ class Run:
                 code = meta["code"] if meta["code"] is not None else r[meta["cols"].index(meta["code_col"])]
                 out.append({"path": pth, "line": ln, "col": c, "code": code, "violation": v, "row": r,
                             "message": self.message(meta, r, line), "syntax_error": d in errs, "at": at})
+        out = [f for f in out if self.in_scope(f["path"])]
         out = self.suppress(out)
         uniq = {}
         for f in out:
@@ -506,8 +696,10 @@ class Run:
             if rn and any(not c or c & rn for c in file_noqa.get(f["path"], [])):
                 continue
             cn = names({"clippy"})
-            if cn and any(a <= f["line"] <= b and (lint in cn or lint.split("::")[-1] in cn)
-                          for a, b, lint in clippy.get(f["path"], [])):
+            # suppress clippy names lints as written ("clippy::x", "clippy::pedantic", "warnings"); attributes
+            # name them with or without the clippy:: path
+            cn = {re.sub(r"^clippy\s*::\s*", "", c) for c in cn}
+            if cn and any(a <= f["line"] <= b and lint in cn for a, b, lint in clippy.get(f["path"], [])):
                 continue
             target = noqa_line.get(f["path"], {}).get(f["line"], f["line"])
             off = state = sql_off = False
@@ -588,7 +780,9 @@ class Run:
             m = re.search(r"\b(?:allow|expect)\s*\((.*)\)", text.get(nid, ""), re.S)
             if not m:
                 continue
-            lints = re.findall(r"clippy\s*::\s*(\w+)", m.group(1))
+            # every lint path the list names (reason = "…" aside), clippy:: dropped: clippy::x, a group, `warnings`
+            args = re.sub(r'\breason\s*=\s*"(?:[^"\\]|\\.)*"', "", m.group(1))
+            lints = [re.sub(r"^clippy::", "", re.sub(r"\s+", "", x)) for x in re.findall(r"[A-Za-z_][\w\s:]*", args)]
             if kind[nid] == "inner_attribute_item":
                 scope = parent.get(nid)
                 a, b = (line.get(scope, 1), end.get(scope, 10 ** 9)) if scope else (1, 10 ** 9)
@@ -675,7 +869,53 @@ def data_root(arg, pack):
     raise SystemExit(f"no packs/{pack}/upstream/*/fixtures.expected.json found: pass --data DIR or set RRLAB_DATA")
 
 
+def ruff_snapshots(src, code, rule_id):
+    """Ruff's own snapshot tests as a recording: (fixtures root, files, findings) for code. The snapshots read are
+    the default-settings ones: named after the fixture (`UP006_0.py`), or after the rule's code or kebab name and
+    the fixture (`F401_F401_0.py`, `assert-tuple_F631.py`); settings variants (`preview_…`, `…_py310`) are left
+    out. Paths are relative to crates/ruff_linter/resources/test/fixtures."""
+    import glob
+    lin = src if os.path.isdir(os.path.join(src, "resources")) else os.path.join(src, "crates", "ruff_linter")
+    root = os.path.join(lin, "resources", "test", "fixtures")
+    if not os.path.isdir(root):
+        raise SystemExit(f"--snapshots: no crates/ruff_linter/resources/test/fixtures under {src}")
+    kebab = re.sub(r"^ruff-[a-z]+\d+-", "", rule_id)
+    files, found = set(), []
+    for snap in sorted(glob.glob(os.path.join(lin, "src", "rules", "*", "snapshots", "*.snap"))):
+        linter = snap.split(os.sep)[-3]
+        name = os.path.basename(snap)[:-5].split("__tests__", 1)[-1]
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.pyi?", name):
+            continue
+        # the name is the fixture's (UP006_0.py), or a code or kebab name, `_`, and the fixture's
+        cands, ok = [], False
+        for prefix, fname in [(None, name)] + [(name[:i], name[i + 1:]) for i, ch in enumerate(name) if ch == "_"]:
+            if prefix not in (None, code, kebab) or prefix is None and not fname.startswith(code):
+                continue
+            cands = glob.glob(os.path.join(root, "**", fname), recursive=True)
+            if cands:
+                ok = True
+                break
+        if not ok:
+            continue
+        mine = [c for c in cands if os.path.basename(os.path.dirname(c)) == linter]
+        rel = os.path.relpath((mine or cands)[0], root)
+        files.add(rel)
+        last = None
+        for l in open(snap, encoding="utf-8", errors="replace"):
+            h = re.match(r"([A-Z]+[0-9]+)\b", l)
+            if h:
+                last = h.group(1)
+            a = re.match(r"\s*-->\s*(\S+?):(\d+):(\d+)", l) or re.match(r"(\S+?):(\d+):(\d+): ([A-Z]+[0-9]+)", l)
+            if a:
+                c = a.group(4) if a.re.groups == 4 else last
+                if c == code:
+                    found.append({"rule": code, "path": rel, "line": int(a.group(2)), "column": int(a.group(3))})
+    return root, sorted(files), found
+
+
 def score(args):
+    if getattr(args, "snapshots", None):
+        return score_snapshots(args)
     data = data_root(args.data, args.pack)
     pack = os.path.join(data, "packs", args.pack)
     conf = json.load(open(os.path.join(pack, "conformance.json")))
@@ -715,6 +955,28 @@ def score(args):
     expected = [f for f in rec["findings"] if f["rule"] == urule and f["path"] in set(files)]
     print(f"rule      {os.path.relpath(rule, RR)}")
     print(f"upstream  {rec['tool']} {rec['version']} {urule}  ({os.path.relpath(rec_dir, data)})")
+    score_files(args, rule, rec, fixtures, files, how, expected, urule, match, pack)
+
+
+def score_snapshots(args):
+    """score --snapshots RUFF_SRC: the rule against Ruff's snapshot tests in a Ruff checkout."""
+    rule = args.rule or os.path.join(RR, "packs", args.pack, args.rule_id + ".rr")
+    if not os.path.exists(rule):
+        cands = [f for f in os.listdir(os.path.join(RR, "packs", args.pack)) if f.endswith(".rr") and args.rule_id in f]
+        if len(cands) == 1:
+            rule = os.path.join(RR, "packs", args.pack, cands[0])
+    prog = L.Program(rule)
+    code = next((v["code"] for v in prog.violations.values() if v["code"]), None)
+    if not code:
+        raise SystemExit(f"{rule}: no violation code to look up in the snapshots")
+    root, files, expected = ruff_snapshots(args.snapshots, code, args.rule_id)
+    print(f"rule      {os.path.relpath(rule, RR)}")
+    print(f"upstream  ruff snapshots {code}  ({args.snapshots})")
+    score_files(args, rule, {"source": {}}, root, files, "Ruff's default-settings snapshots", expected, code,
+                "line+column", os.path.join(RR, "packs", args.pack))
+
+
+def score_files(args, rule, rec, fixtures, files, how, expected, urule, match, pack):
     print(f"files     {len(files)} ({how}); {len(expected)} recorded findings")
     if not files:
         print(f"score     n/a: the recording has no fixtures for {urule}")
@@ -732,6 +994,7 @@ def score(args):
         opts = dict(option_dict(user), **json.loads(g))
         keep = args.keep and (args.keep if len(groups) == 1 else f"{args.keep}-{k}")
         run = Run(rule, members, fixtures, options=opts, keep=keep)
+        run.use_scope = not args.no_scope
         found += run.execute()
         runs.append(run)
     if len(groups) > 1:
@@ -745,6 +1008,10 @@ def score(args):
     errp = set().union(*(err_paths(r) for r in runs))
     tp, fp, fn, explained = compare(expected, actual, divs, lambda x: (x["path"], x["line"]))
     report(tp, fp, fn, explained, args.show, errp)
+    out_scope = [x for x in fn if runs and not runs[0].in_scope(x["path"])] if not args.no_scope else []
+    if out_scope:
+        print(f"scope     {len(out_scope)} of the FN are on files outside the rule's .scope (the engine never reads "
+              f"them): {', '.join(sorted({x['path'] for x in out_scope})[:4])}")
     if args.column or match == "line+column":
         cps = column_points(actual, fixtures)
         ctp, cfp, cfn, _ = compare(expected, cps, divs, lambda x: (x["path"], x["line"], x.get("column")))
@@ -932,7 +1199,9 @@ def column_points(found, root):
     out, cache = [], {}
     for f in found:
         if f["path"] not in cache:
-            cache[f["path"]] = open(os.path.join(root, f["path"]), "rb").read().split(b"\n")
+            raw = open(os.path.join(root, f["path"]), "rb").read()
+            # Python lines end at \r\n, \n or a lone \r (Ruff), as rrlab-facts counts them
+            cache[f["path"]] = re.split(rb"\r\n|\r|\n", raw) if f["path"].endswith((".py", ".pyi")) else raw.split(b"\n")
         lines = cache[f["path"]]
         b = lines[f["line"] - 1] if 0 < f["line"] <= len(lines) else b""
         out.append(dict(f, column=len(b[:f["col"]].decode("utf-8", "replace")) + 1))
@@ -947,6 +1216,7 @@ def cmd_run(args):
         raise SystemExit(f"rrlab: the files' common directory {root} is too shallow to walk for package.json and "
                          f"file facts; put them under one directory or pass --root DIR (3 or more levels deep)")
     files = [os.path.relpath(os.path.abspath(f), root) for f in args.files]
+    Run.use_scope = not args.no_scope
     run = Run(args.rule, files, root, options=json.loads(args.options) if args.options else None, lang=args.lang,
               keep=args.keep, verbose=args.verbose)
     found = run.execute()
@@ -993,6 +1263,9 @@ def main():
     s.add_argument("--all", action="store_true", help="every fixture of the recording, not only the rule's own")
     s.add_argument("--options"); s.add_argument("--data"); s.add_argument("--keep")
     s.add_argument("--show", type=int, default=25); s.add_argument("--column", action="store_true")
+    s.add_argument("--snapshots", metavar="RUFF_SRC", help="score against Ruff's snapshot tests in a Ruff checkout")
+    for x in (r, s):
+        x.add_argument("--no-scope", action="store_true", help="report on every file, ignoring the rule's .scope")
     lw = sp.add_parser("lower", help="print the Soufflé program"); lw.add_argument("rule")
     pt = sp.add_parser("pattern", help="compile a backtick pattern")
     pt.add_argument("lang"); pt.add_argument("pattern"); pt.add_argument("kind", nargs="?")

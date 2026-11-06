@@ -33,7 +33,7 @@ mapped(f) :- doc(_, f, _), match(".*(?<e>\\.[^./]+)", f), option(cat("executable
 // node_shebang(d): isNodeShebang: after `/usr/bin/env`, env's flags (-S, -i, --x, -u NAME, -P DIR, each ending
 // in a space) and assignments (NODE_ENV=production) are skipped, and the first word is the interpreter.
 .decl node_shebang(d: number)
-node_shebang(d) :- runner(d, x), src_shebang(d, t), match(cat(cat("#!.*/usr/bin/env(\\s*(-(-\\S*|[ivS]+|[Pu](\\s+|=)\\S+)(?=\\s|$)|\\w+=(\"([^\"\\\\]|\\\\.)*\"|\\w+)))*\\s*",
+node_shebang(d) :- runner(d, x), src_shebang(d, t), match(cat(cat("#!.*/usr/bin/env(\\s*(-(-\\S*|[ivS]+|[Pu](\\s+|=)\\S+)(\\s+|$)|\\w+=(\"([^\"\\\\]|\\\\.)*\"|\\w+)))*\\s*",
     x), "( .*)?\\s*"), t).
 
 .violation hashbang(at: loc, msg: symbol) code "n/hashbang" "{msg}"

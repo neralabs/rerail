@@ -14,7 +14,7 @@ What changes (README, "Lowering"):
   ordered by earlier       the self-use under `!` or an aggregate reads R__prev; rrlab.py iterates to a fixpoint
   n ~ `pattern`            patterns.py compiles it to kind/field/child/text/op constraints
 """
-import os, re
+import collections, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 RR = os.environ.get("RRLAB_RR") or os.path.dirname(os.path.dirname(HERE))  # docs/rule-syntax
@@ -32,7 +32,7 @@ DROP_DIRECTIVES = {"policy", "description", "mode", "scope", "severity", "gate",
                    "requires", "pragma", "possible", "plan", "limit", "lattice", "once", "tests"}
 SOUFFLE_QUALIFIERS = {"inline", "no_inline", "magic", "no_magic", "brie", "btree", "btree_delete", "eqrel", "override"}
 # Inputs rrlab fills (extractor, repository files, options); any other .input a rule uses is empty, with a warning.
-FILLED = {"doc", "pkg", "path_part", "file_name", "node", "kind", "field", "child", "text", "op", "op_at", "docof",
+FILLED = {"directive_global", "str_part", "doc", "pkg", "path_part", "file_name", "node", "kind", "field", "child", "text", "op", "op_at", "docof",
           "line", "end_line", "col", "unset", "value", "str", "strprefix", "name", "comment", "value_type", "source",
           "src_line", "line_count", "syntax_error", "first_token", "last_token", "token_before", "token_after",
           "next_sibling", "precedes", "spread", "visit_index", "ast_depth", "rrlab_parent", "rrlab_lang",
@@ -240,6 +240,15 @@ class Parser:
             return [("or", [lits] + rest)]
         return lits
 
+    BIT_WORDS = {"band", "bor", "bxor", "bshl", "bshr", "bshru", "land", "lor", "lxor"}
+
+    def continues_expr(self, arith=True):
+        """The next token goes on with an expression: a comparison or an operator (arith: + - * / % ^ too)."""
+        k, v = self.peek()
+        if k == "id":
+            return v in self.BIT_WORDS
+        return k == "op" and (v in CMP or arith and v in {"+", "-", "*", "/", "%", "^"})
+
     def lit(self):
         if self.at("!"):
             self.take(); return ("not", self.lit())
@@ -249,7 +258,7 @@ class Parser:
                 self.take("(")
                 b = self.disj()
                 self.take(")")
-                if not (self.peek()[0] == "op" and self.peek()[1] in CMP | {"+", "-", "*", "/", "%"}):
+                if not self.continues_expr():
                     return ("or", b) if len(b) > 1 else ("or", b)
             except LowerError:
                 pass
@@ -262,7 +271,7 @@ class Parser:
             self.take()
             self.take("(")
             args = self.args(")")
-            if not (self.peek()[0] == "op" and self.peek()[1] in CMP):
+            if not (self.peek()[0] == "op" and self.peek()[1] in CMP) and not self.continues_expr(arith=False):
                 return ("atom", v, args)
             self.i = save
         e1 = self.expr()
@@ -280,21 +289,38 @@ class Parser:
             raise LowerError(f"expected a comparison, found {op[1]!r} in {self.context()}")
         return ("cmp", op[1], e1, self.expr())
 
-    def expr(self):
+    # Soufflé's precedence, loosest first: lor, lxor, land, bor, bxor, band, the shifts, + -, * / %, ^, unary
+    WORD_LEVELS = [("lor",), ("lxor",), ("land",), ("bor",), ("bxor",), ("band",), ("bshl", "bshr", "bshru")]
+
+    def expr(self, level=0):
+        if level < len(self.WORD_LEVELS):
+            e = self.expr(level + 1)
+            while self.peek()[0] == "id" and self.peek()[1] in self.WORD_LEVELS[level]:
+                op = self.take()[1]; e = ("bin", op, e, self.expr(level + 1))
+            return e
         e = self.term()
         while self.peek()[0] == "op" and self.peek()[1] in ("+", "-"):
             op = self.take()[1]; e = ("bin", op, e, self.term())
         return e
 
     def term(self):
-        e = self.unary()
+        e = self.power()
         while self.peek()[0] == "op" and self.peek()[1] in ("*", "/", "%"):
-            op = self.take()[1]; e = ("bin", op, e, self.unary())
+            op = self.take()[1]; e = ("bin", op, e, self.power())
+        return e
+
+    def power(self):
+        e = self.unary()
+        if self.peek() == ("op", "^"):
+            self.take(); e = ("bin", "^", e, self.power())
         return e
 
     def unary(self):
         if self.at("-"):
             self.take(); return ("neg", self.unary())
+        if self.peek() == ("id", "bnot"):
+            # bnot x is x bxor -1 (two's complement), so the rest of the lowering sees one more binary operator
+            self.take(); return ("bin", "bxor", self.unary(), ("num", "-1"))
         return self.primary()
 
     def primary(self):
@@ -456,7 +482,10 @@ class Program:
         self.violations = {}       # name -> {cols, code, code_col, message, suppress, fixes}
         self.fix_names = set()
         self.language = None
-        self.scope = []
+        self.scope = []            # .scope include globs (a path must match one, when there are any)
+        self.scope_exclude = []    # .scope exclude globs
+        self.scope_tests = True    # .scope tests false: no test paths
+        self.scope_words = []
         self.warnings = []
         self.clauses = []          # (file, line, heads, body, edits)
         self.extra = []            # generated Soufflé lines
@@ -466,6 +495,7 @@ class Program:
         self.need = set()          # rr_within, rr_earlier, rr_never
         self.empties = {}          # generated empty relations -> arity types
         self.patterns = pattern_compiler
+        self.parse_requests = False  # parsed(s, g, r) is served between rounds (Python)
         self.matches = {}          # k -> match spec, served by rrlab.py between souffle rounds (match_all, spans)
         self.pattern_report = []
         self.files = []
@@ -527,8 +557,19 @@ class Program:
         elif kw == "language":
             self.language = rest.strip().split()[0]
         elif kw == "scope":
-            if rest.strip().startswith("include"):
-                self.scope += re.findall(r'"([^"]+)"', rest)
+            # .scope include "a", "b" exclude "c" …: the words before each run of strings say which list it joins;
+            # `tests false` drops test paths; report/text/dirs entries are not modelled
+            word = None
+            for m in re.finditer(r'"((?:[^"\\]|\\.)*)"|([A-Za-z_]+)', rest):
+                if m.group(2):
+                    word = m.group(2)
+                    if word == "false" and self.scope_words[-1:] == ["tests"]:
+                        self.scope_tests = False
+                    self.scope_words.append(word)
+                elif word == "include":
+                    self.scope.append(m.group(1))
+                elif word == "exclude":
+                    self.scope_exclude.append(m.group(1))
         elif kw in DROP_DIRECTIVES:
             if kw == "lattice":
                 self.warn(".lattice is not modelled (dropped)")
@@ -627,6 +668,7 @@ class Program:
         return out
 
     def clause(self, rel, line, heads, body):
+        heads, body = rename_apart(heads, body)
         ctx = Ctx(self, heads)
         ctx.type_body(body, heads)
         hs = []
@@ -661,12 +703,21 @@ class Program:
         every enclosing conjunction, less any that use a capture."""
         caps = ctx.capture_vars
         def usable(l):
-            if "rr_mres" in pl(l):
+            if "rr_mres" in pl(l) or "parsed(" in pl(l):
                 return False
             return not (set(lvars(l, [])) & caps)
         for i, l in enumerate(conj):
             around = outer + [x for j, x in enumerate(conj) if j != i and usable(x)]
-            if l[0] == "atom" and l[1] in ctx.markers:
+            if l[0] == "atom" and l[1] == "parsed" and "parsed" in ctx.markers:
+                subj, g = l[2][0], l[2][1]
+                g = g if g[0] == "str" else ("str", '"annotation"')
+                around = grounded(around)
+                if subj[0] == "var" and not any(subj[1] in lvars(x, []) for x in around):
+                    self.warn(f"parsed: cannot tell which strings {pe(subj)} to parse; no rows")
+                    continue
+                head = f"rr_preq({pe(subj)}, {pe(g)})"
+                self.extra.append(f"{head} :- {pc(around)}." if around else f"{head}.")
+            elif l[0] == "atom" and l[1] in ctx.markers:
                 k, subj = ctx.markers[l[1]]
                 around = grounded(around)
                 body = pc(around) if around else None
@@ -694,12 +745,12 @@ class Program:
     def text(self):
         L = [f"// lowered by rrlab from {os.path.relpath(self.path, RR)}"]
         for name, cs in self.decls.items():
-            cols = ", ".join(f"{a}: {self.soufflé_type(t)}" for a, t in cs)
+            cols = ", ".join(f"{col_name(a)}: {self.soufflé_type(t)}" for a, t in cs)
             q = " " + " ".join(self.qual.get(name, [])) if self.qual.get(name) else ""
             L.append(f".decl {name}({cols}){q}")
         for name in self.ordered:
             cs = self.decls[name]
-            L.append(f".decl {name}__prev({', '.join(f'{a}: {self.soufflé_type(t)}' for a, t in cs)})")
+            L.append(f".decl {name}__prev({', '.join(f'{col_name(a)}: {self.soufflé_type(t)}' for a, t in cs)})")
             L.append(f'.input {name}__prev(IO=file, rfc4180=true, delimiter="\\t")')
             self.outputs.add(name)
         # functors: core's, with erased types, plus the lowering's helpers
@@ -709,7 +760,10 @@ class Program:
             sig = ", ".join(f"a{i}: {self.soufflé_type(t)}" for i, t in enumerate(args))
             L.append(f".functor {f}({sig}): {self.soufflé_type(ret)}")
         L.append(".decl rrlab_parent(c: number, p: number)\n.decl rrlab_lang(d: number, l: symbol)")
-        ins = [i for i in dict.fromkeys(self.inputs + ["rrlab_parent", "rrlab_lang"]) if i in self.decls or i.startswith("rrlab_")]
+        # relations a library declares for native rows (no .input of its own): rrlab fills them
+        native = [n for n in ("directive_global",) if n in self.decls]
+        ins = [i for i in dict.fromkeys(self.inputs + native + ["rrlab_parent", "rrlab_lang"])
+               if i in self.decls or i.startswith("rrlab_")]
         ins += [i for i in self.io_inputs if i in self.decls]
         for i in ins:
             L.append(f'.input {i}(IO=file, rfc4180=true, delimiter="\\t")')
@@ -1003,13 +1057,27 @@ class Ctx:
                 key = ("rel", s[1])
             elif s[0] == "str":
                 key = ("kind", s[1][1:-1])
+                if "," in key[1] or "|" in key[1]:
+                    raise LowerError(f"{name}'s set {s[1]} names several kinds in one string: a kind string is one "
+                                     f"kind; declare a relation of the kinds and pass its name")
             else:
                 raise LowerError(f"{name}'s set must be a relation name or a kind string")
             sid = p.set_id(key)
             p.axes.add((name, sid))
             return [("atom", f"rr_{name}{sid}", [self.expr(x, pre) for x in args[:2]])]
+        if name == "parsed" and p.language == "python" and len(args) == 3:
+            # served between rounds: rrlab parses the strings the rule asks about (rr_preq) and grafts their trees
+            p.parse_requests = True
+            if "rr_preq" not in p.decls:
+                p.decls["rr_preq"] = [("s", "number"), ("g", "symbol")]
+                p.outputs.add("rr_preq")
+            a = [self.expr(x, pre) for x in args]
+            if a[2][0] == "var":
+                self.capture_vars.add(a[2][1])
+            self.markers.setdefault("parsed", ("parsed", None))
+            return [("atom", "parsed", a)]
         if name == "parsed" and p.language != "vue":
-            p.warn("parsed is modelled for Vue files only: other files have no rows")
+            p.warn("parsed is modelled for Vue and Python files only: other files have no rows")
         if name in ("match", "match_all") and len(args) == 2 and args[0][0] == "str":
             raw = souffle_unescape(args[0][1][1:-1])
             groups = re.findall(r"\(\?P?<([A-Za-z_]\w*)>", raw)
@@ -1023,7 +1091,7 @@ class Ctx:
                 self.capture_vars |= set(groups)
                 cols = [subj, ("wild",)] + [("wild",) if negated else ("var", g) for g in groups]
                 return [("atom", rel, cols)]
-        if name in ("dfs_first", "dfs_first_memo", "match_all", "str_part", "string_annotation", "signed_list",
+        if name in ("dfs_first", "dfs_first_memo", "match_all", "string_annotation", "signed_list",
                     "git_tracked", "git_rev", "git_has", "git_commit", "tsconfig", "tsconfig_for", "tsconfig_path",
                     "package_export"):
             p.warn(f"{name} is not modelled: it has no rows")
@@ -1110,17 +1178,19 @@ class Ctx:
         decl(res, ftypes + ["symbol"])
         decl(anyr, ftypes)
         p.extra.append(f"{row}({Fc}{', '.join(pe(k) for k in kx)}) :- {pc(lb) if lb else 'true'}.")
-        ks = [f"rrk{i}" for i in range(len(kx))]
+        ks = [f"rrj_k{i}" for i in range(len(kx))]
         counts = []
         for i in range(len(kx)):
-            other = [f"rro{j}" for j in range(len(kx))]
+            other = [f"rrj_o{j}" for j in range(len(kx))]
             cond = [f"{other[j]} = {ks[j]}" for j in range(i)] + [f"{other[i]} < {ks[i]}"]
-            counts.append(f"rrc{i} = count : {{ {row}({Fc}{', '.join(other)}), {', '.join(cond)} }}")
-        p.extra.append(f"{rank}({Fc}{' + '.join(f'rrc{i}' for i in range(len(kx)))}, {ks[-1]}) :- "
+            counts.append(f"rrj_c{i} = count : {{ {row}({Fc}{', '.join(other)}), {', '.join(cond)} }}")
+        p.extra.append(f"{rank}({Fc}{' + '.join(f'rrj_c{i}' for i in range(len(kx)))}, {ks[-1]}) :- "
                        f"{row}({Fc}{', '.join(ks)}), {', '.join(counts)}.")
-        p.extra.append(f"{acc}({Fc}0, x) :- {rank}({Fc}0, x).")
-        p.extra.append(f'{acc}({Fc}r, cat(cat(s, {sep}), x)) :- {rank}({Fc}r, x), r > 0, {acc}({Fc}r0, s), r0 = r - 1.')
-        p.extra.append(f"{res}({Fc}s) :- {acc}({Fc}r, s), rrn = count : {{ {row}({Fc}{', '.join('_' for _ in kx)}) }}, r = rrn - 1.")
+        p.extra.append(f"{acc}({Fc}0, rrj_x) :- {rank}({Fc}0, rrj_x).")
+        p.extra.append(f'{acc}({Fc}rrj_r, cat(cat(rrj_s, {sep}), rrj_x)) :- {rank}({Fc}rrj_r, rrj_x), rrj_r > 0, '
+                       f'{acc}({Fc}rrj_r0, rrj_s), rrj_r0 = rrj_r - 1.')
+        p.extra.append(f"{res}({Fc}rrj_s) :- {acc}({Fc}rrj_r, rrj_s), "
+                       f"rrj_n = count : {{ {row}({Fc}{', '.join('_' for _ in kx)}) }}, rrj_r = rrj_n - 1.")
         p.extra.append(f"{anyr}({F}) :- {row}({Fc}{', '.join('_' for _ in kx)}).")
         out = ("var", p.fresh("s"))
         fv = [("var", v) for v in free]
@@ -1136,6 +1206,128 @@ class Ctx:
         name, vars_ = self.p.patterns(self.p, lang, tick, at)
         args = [root] + [("wild",) if negated else ("var", v) for v in vars_]
         return [("atom", name, args)]
+
+
+# Soufflé keywords and built-in names, which a declaration cannot use as a column name
+SOUFFLE_WORDS = {"as", "nil", "true", "false", "min", "max", "sum", "count", "mean", "range", "cat", "ord", "strlen",
+                 "substr", "contains", "match", "to_number", "to_string", "to_float", "to_unsigned", "band", "bor",
+                 "bxor", "bnot", "bshl", "bshr", "bshru", "land", "lor", "lxor", "lnot", "autoinc", "choice", "brie",
+                 "btree", "eqrel", "inline", "magic", "input", "output", "printsize", "overridable"}
+
+
+def col_name(a):
+    return a + "_" if a in SOUFFLE_WORDS else a
+
+
+def named_args(l):
+    """An atom's arguments that are values: a set axis's last argument names a relation."""
+    return l[2][:2] if l[1] in SET_AXES and len(l[2]) == 3 else l[2]
+
+
+def rename_apart(heads, body):
+    """Aggregate locals renamed apart, as Soufflé scopes them: a variable of an aggregate's (or join's) body is the
+    clause's when the clause uses it outside, else the aggregate's own, so `count : { a(x) }, count : { b(x) }`
+    has two x. Each occurrence takes the outermost enclosing scope that uses the variable directly; inner scopes
+    get a name of their own. Variables named inside a pattern's backticks keep their names."""
+    occ = collections.defaultdict(set)     # var -> scope paths using it directly
+    ticks = set()
+    ids = iter(range(1, 1 << 30))
+
+    def ev(e, path, walk):
+        t = e[0]
+        if t == "var":
+            walk(e, path)
+        elif t == "tick":
+            ticks.update(re.findall(r"\$\$?\$?([A-Za-z_]\w*)", e[1]))
+        elif t in ("call", "fun"):
+            for a in e[2]:
+                ev(a, path, walk)
+        elif t == "bin":
+            ev(e[2], path, walk); ev(e[3], path, walk)
+        elif t == "neg":
+            ev(e[1], path, walk)
+        elif t in ("agg", "join"):
+            inner = path + (id(e),)
+            parts = ([e[2]] if e[2] is not None else []) if t == "agg" else [e[1]] + list(e[2])
+            for x in parts:
+                ev(x, inner, walk)
+            for l in (e[3] if t == "agg" else e[4]):
+                lv(l, inner, walk)
+
+    def lv(l, path, walk):
+        t = l[0]
+        if t == "atom":
+            for a in named_args(l):
+                ev(a, path, walk)
+        elif t == "not":
+            lv(l[1], path, walk)
+        elif t == "cmp":
+            ev(l[2], path, walk); ev(l[3], path, walk)
+        elif t == "or":
+            for c in l[1]:
+                for x in c:
+                    lv(x, path, walk)
+        elif t == "pat":
+            ev(l[1], path, walk)
+            ticks.update(re.findall(r"\$\$?\$?([A-Za-z_]\w*)", l[2]))
+
+    def note(e, path):
+        occ[e[1]].add(path)
+    for _, _, args in heads:
+        for a in args:
+            ev(a, (), note)
+    for l in body:
+        lv(l, (), note)
+    if not any(len(p) for ps in occ.values() for p in ps):
+        return heads, body
+    names = {}
+
+    def name(v, path):
+        if v in ticks:
+            return v
+        for k in range(len(path) + 1):
+            if path[:k] in occ[v]:
+                q = path[:k]
+                break
+        if not q:
+            return v
+        if (v, q) not in names:
+            names[(v, q)] = f"{v}_rr{next(ids)}"
+        return names[(v, q)]
+
+    def re_e(e, path):
+        t = e[0]
+        if t == "var":
+            return ("var", name(e[1], path))
+        if t in ("call", "fun"):
+            return (t, e[1], [re_e(a, path) for a in e[2]])
+        if t == "bin":
+            return ("bin", e[1], re_e(e[2], path), re_e(e[3], path))
+        if t == "neg":
+            return ("neg", re_e(e[1], path))
+        if t == "agg":
+            inner = path + (id(e),)
+            return ("agg", e[1], re_e(e[2], inner) if e[2] is not None else None, [re_l(l, inner) for l in e[3]])
+        if t == "join":
+            inner = path + (id(e),)
+            return ("join", re_e(e[1], inner), [re_e(k, inner) for k in e[2]], e[3], [re_l(l, inner) for l in e[4]])
+        return e
+
+    def re_l(l, path):
+        t = l[0]
+        if t == "atom":
+            keep = len(named_args(l))
+            return ("atom", l[1], [re_e(a, path) for a in l[2][:keep]] + list(l[2][keep:]))
+        if t == "not":
+            return ("not", re_l(l[1], path))
+        if t == "cmp":
+            return ("cmp", l[1], re_e(l[2], path), re_e(l[3], path))
+        if t == "or":
+            return ("or", [[re_l(x, path) for x in c] for c in l[1]])
+        if t == "pat":
+            return ("pat", re_e(l[1], path)) + tuple(l[2:])
+        return l
+    return ([(h[0], h[1], [re_e(a, ()) for a in h[2]]) for h in heads], [re_l(l, ()) for l in body])
 
 
 def free_vars(e, out):
