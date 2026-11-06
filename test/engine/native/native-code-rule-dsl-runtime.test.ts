@@ -789,10 +789,10 @@ clauses:
 
     it.each([
       [
-        "example-app-conn-based-function",
-        "def load(conn: SyncDatabaseConnection):\n    return conn.session()\n",
-        "def load(txn: ReadTransaction):\n    return txn.query()\n",
-        "CONN_BASED_FUNCTION",
+        "example-app-conn-parameter",
+        "def load(conn: Connection):\n    return conn.execute(query)\n",
+        "def load(work: UnitOfWork):\n    return work.query()\n",
+        "CONN_PARAMETER",
       ],
       [
         "example-app-sync-conn-in-async",
@@ -814,7 +814,7 @@ clauses:
       ],
       [
         "example-app-stored-connection",
-        "class Service:\n    def __init__(self, conn: SyncDatabaseConnection):\n        self.conn = conn\n",
+        "class Service:\n    def __init__(self, conn: Connection):\n        self.conn = conn\n",
         "class Service:\n    def __init__(self, pool: DatabasePool):\n        self.pool = pool\n",
         "STORED_CONNECTION",
       ],

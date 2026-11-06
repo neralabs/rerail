@@ -88,6 +88,13 @@ describe("check-internal-refs", () => {
     expect(problems).toEqual([]);
   });
 
+  it("flags a name that only starts with a public one", () => {
+    const problems = privateNameProblems(repository({ "a.txt": `${nera("token-example")} ${nera("test-fixtures-archive")}\n` }));
+    expect(problems).toEqual([
+      { path: "a.txt", line: 1, text: `${nera("token-example")} ${nera("test-fixtures-archive")}`, names: [nera("token-example"), nera("test-fixtures-archive")] },
+    ]);
+  });
+
   it("keeps the ticket check apart from the name check", () => {
     const root = repository({ "a.txt": `${nera("example-app")} ${ticket("NER", 7)}\n` });
     expect(internalRefProblems(root)).toEqual([{ path: "a.txt", line: 1, text: `${nera("example-app")} ${ticket("NER", 7)}` }]);

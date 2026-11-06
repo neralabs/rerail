@@ -18,19 +18,18 @@ import { fileURLToPath } from "node:url";
 export const TICKET = /\bner-\d+/iu;
 
 /** A `nera-` identifier. Its source is also the `git grep -P` pattern; a match is a problem unless it is public. */
-export const NERA_NAME = /\bnera-[a-z0-9][a-z0-9-]*/giu;
+export const NERA_NAME = /\bnera-[a-z0-9][a-z0-9-]*/iu;
 
 /**
- * The public `nera-` identifiers, lowercase: the pack test data bucket, Nera design tokens and the rules about them,
- * and test ids. An entry ending in `-` admits every identifier it starts.
+ * The public `nera-` identifiers, lowercase and exact: the pack test data bucket, a Nera design token and the two
+ * rules about Nera tokens, and test ids.
  */
-export const PUBLIC_NAMES = Object.freeze(["nera-test-fixtures", "nera-card-shadow", "nera-token-", "nera-only", "nera-held"]);
+export const PUBLIC_NAMES = Object.freeze([
+  "nera-test-fixtures", "nera-card-shadow", "nera-token-set", "nera-token-redefined", "nera-only", "nera-held",
+]);
 
 /** Whether `name`, a NERA_NAME match, is public. */
-export function isPublicName(name) {
-  const lower = name.toLowerCase();
-  return PUBLIC_NAMES.some((entry) => (entry.endsWith("-") ? lower.startsWith(entry) : lower === entry));
-}
+export const isPublicName = (name) => PUBLIC_NAMES.includes(name.toLowerCase());
 
 const git = (root, args) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
 
@@ -56,7 +55,8 @@ function grepLines(root, pattern) {
 
 /** The `nera-` identifiers in `text` that are not public, in order, each once. */
 export function privateNames(text) {
-  return [...new Set([...text.matchAll(NERA_NAME)].map(([name]) => name).filter((name) => !isPublicName(name)))];
+  const names = text.matchAll(new RegExp(NERA_NAME.source, `${NERA_NAME.flags}g`));
+  return [...new Set([...names].map(([name]) => name).filter((name) => !isPublicName(name)))];
 }
 
 /** Every tracked path and text line under `root` that names a ticket, as `{ path, line, text }` (`line` 0 for a path). */
