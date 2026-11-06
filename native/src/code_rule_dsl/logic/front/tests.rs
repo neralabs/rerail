@@ -177,3 +177,68 @@ fn components_in_t_order() {
          isasync | reaches_open"
     );
 }
+
+// ---- recursion ----
+
+/// Recursion that makes values, bounded by the data (`cycles`' rules), is accepted; each unbounded form next to
+/// it is refused by name.
+#[test]
+fn value_cycles_bounded_by_the_data() {
+    let decls = ".decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl next_sibling(a: node, b: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, s: symbol)\n.decl e(a: node, b: node)\n.decl lim(k: number)\n.input child, field, next_sibling, kind, text, e, lim\n";
+    let ok = |src: &str| parse(&format!("{decls}{src}")).unwrap_or_else(|e| panic!("{src}: {e}"));
+    let refused = |src: &str| assert!(matches!(parse(&format!("{decls}{src}")), Err(Error::UnboundedValueCycle { .. })), "{src}");
+    // A counter below a constant, or below a value of a lower stratum; not one with no bound, or bounded the
+    // wrong way, or below a value the recursion itself makes.
+    ok(".decl n(x: number)\nn(1).\nn(x + 1) :- n(x), x < 20.\n");
+    ok(".decl n(x: number)\nn(1).\nn(y) :- n(x), y = x + 1, y <= k, lim(k).\n");
+    ok(".decl n(x: number)\nn(9).\nn(x - 1) :- n(x), x > 0.\n");
+    refused(".decl n(x: number)\nn(1).\nn(x + 1) :- n(x).\n");
+    refused(".decl n(x: number)\nn(1).\nn(x + 1) :- n(x), x > 0.\n");
+    refused(".decl n(x: number)\nn(0).\nn(1).\nn(x + 2) :- n(x), n(y), x < y.\n");
+    // A value made from values of lower strata only.
+    ok(".decl upto(p: node, i: number)\nupto(p, 0) :- kind(p, \"list\").\nupto(p, i + 1) :- upto(p, i), child(p, _, i).\n");
+    // Along siblings, the order of the document, with a count made at each step (`arg_index`).
+    ok(".decl arg(t: node, c: node, k: number)\narg(t, c, 0) :- child(t, c, 0).\narg(t, d, k + w) :- arg(t, c, k), next_sibling(c, d), w = count : { child(c, _, _) }.\n");
+    ok(".decl arg(t: node, c: node, k: number)\narg(t, c, 0) :- child(t, c, 0).\narg(t, d, k + 1) :- arg(t, c, k), child(t, c, i), child(t, d, i + 1).\n");
+    refused(".decl arg(t: node, c: node, k: number)\narg(t, c, 0) :- child(t, c, 0).\narg(t, d, k + 1) :- arg(t, c, k), child(t, c, _), child(t, d, _).\n");
+    // A recursive relation's guarantee: unparen(e, m) is m at or below e, so the name moves down (`ruff_qual`);
+    // one rule up instead and there is none.
+    let unparen = ".decl unparen(e: node, m: node)\nunparen(e, e) :- kind(e, k), k != \"parens\".\nunparen(e, m) :- kind(e, \"parens\"), child(e, i, _), unparen(i, m).\n";
+    let qual = ".decl qual(e: node, q: symbol)\nqual(e, x) :- kind(e, \"name\"), text(e, x).\nqual(e, @cat(q, x)) :- unparen(e, m), field(m, \"object\", o), qual(o, q), text(m, x).\n";
+    ok(&format!("{unparen}{qual}"));
+    refused(&format!("{}{qual}", unparen.replace("child(e, i, _)", "child(i, e, _)")));
+    // At or below, and unequal: strictly below (`const_str`'s `deparen(n, e), e != n`).
+    ok(&format!("{unparen}.decl cs(n: node, v: symbol)\ncs(n, v) :- text(n, v).\ncs(n, @cat(v, \"!\")) :- unparen(n, e), e != n, cs(e, v).\n"));
+    refused(&format!("{unparen}.decl cs(n: node, v: symbol)\ncs(n, v) :- text(n, v).\ncs(n, @cat(v, \"!\")) :- unparen(n, e), cs(e, v).\n"));
+    // A regex group is a part of the text: no new value (`gi_path`); and a strictly shorter one when the regex
+    // matches something around it, which bounds a count made beside it (`pct_rest`). A group that may be all of
+    // the text bounds nothing.
+    ok(".decl dirs(d: symbol)\ndirs(s) :- text(_, s).\ndirs(a) :- dirs(p), match(\"(?<a>.+)/[^/]+\", p).\n");
+    ok(".decl rest(v: symbol, r: symbol, i: number)\nrest(v, v, 0) :- text(_, v).\nrest(v, r, i + 1) :- rest(v, s, i), match(\"[^%]*%%(?<r>[\\\\s\\\\S]*)\", s).\n");
+    refused(".decl rest(v: symbol, r: symbol, i: number)\nrest(v, v, 0) :- text(_, v).\nrest(v, r, i + 1) :- rest(v, s, i), match(\"[^%]*(?<r>[\\\\s\\\\S]*)\", s).\n");
+    // A part of a made value is made; a made value through another variable is made; parts split from a bound
+    // value carry it.
+    refused(".decl r(s: symbol)\nr(s) :- text(_, s).\nr(@substr(@cat(x, \"ab\"), 0, 100)) :- r(x).\n");
+    refused(".decl q(n: node, s: symbol)\nq(n, s) :- text(n, s).\nq(n, z) :- q(n, s), y = @cat(s, \"x\"), z = y.\n");
+    refused(".decl r(s: symbol)\nr(s) :- text(_, s).\nr(y) :- r(m), m = @cat(q, x), y = @cat(@cat(q, x), x).\n");
+    // The graph relation and the tree's two ways still bound nothing.
+    refused(".decl q(n: node, s: symbol)\nq(n, s) :- text(n, s).\nq(n, @cat(p, s)) :- e(n, o), q(o, p), text(n, s).\n");
+    // A rule may make a value where the key stays when the cycle through it moves strictly elsewhere (`pct_rest`
+    // and `pct_spec`); not when no move of the cycle is strict.
+    let spec = ".decl rest(v: symbol, r: symbol, i: number)\n.decl spec(v: symbol, i: number, r: symbol)\nrest(v, v, 0) :- text(_, v).\nrest(v, r, i + 1) :- spec(v, i, r).\n";
+    ok(&format!("{spec}spec(v, i, r) :- rest(v, s, i), match(\"[^%]*%(?<r>.*)\", s).\n"));
+    refused(&format!("{spec}spec(v, i, r) :- rest(v, s, i), match(\"[^%]*(?<r>.*)\", s).\n"));
+}
+
+/// The `cycles` gap of a regex group: the bytes a match has outside the group.
+#[test]
+fn regex_group_gaps() {
+    let gap = |re: &str, g: &str| cycles::gap(re, g);
+    assert_eq!(gap("^(?:(?<a>.+)/[^/]+)$", "a"), Some(2));
+    assert_eq!(gap("^(?:[^%]*%%(?<r>.*))$", "r"), Some(2));
+    assert_eq!(gap("^(?:x*(?<r>.*))$", "r"), Some(0));
+    assert_eq!(gap("^(?:(?:ab(?<r>c))+)$", "r"), Some(2));
+    assert_eq!(gap("^(?:(?:ab(?<r>c)){3})$", "r"), Some(8));
+    assert_eq!(gap("^(?:(?<r>a)b|cde)$", "r"), Some(1));
+    assert_eq!(gap("^(?:(?<r>a))$", "s"), None);
+}
