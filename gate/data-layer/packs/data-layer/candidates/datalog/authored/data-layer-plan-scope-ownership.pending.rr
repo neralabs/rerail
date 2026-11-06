@@ -1,0 +1,34 @@
+// PENDING additions to data-layer-plan-scope-ownership.rr (not read by the converter). Once each relation lands:
+//   option_on(name)  (A9, the boolean options that are true): replace the main file's one plan_scope_gate rule by
+//                    the two below, so a configured sourceGate = false runs.
+//   value(n, v)      (W's semantic value, escapes decoded): replace the main file's lifecycle-reflection section
+//                    (lifecycle_reflect, lifecycle_mentions, its violation; it reads `str`, approximately) by the one below.
+// Declares only what the main file does not.
+
+.decl option_on(name: symbol)
+.decl value(n: node, v: symbol)
+.input value, option_on
+
+plan_scope_gate(d) :- node(d, m, "module", _, _), option_on("sourceGate"), node_text(m, s),
+    (contains("PlanScope", s) ; contains("VersionedPlanScope", s) ; contains("_callback_versioned_txn", s) ; contains("execute_read_workflow", s) ; contains("execute_write_workflow", s) ; contains("imported_contract", s) ; contains("run_read_plan_scope_workflow", s) ; contains("run_write_plan_scope_workflow", s)).
+// sourceGate = false: the gate's regex is "^", which every module matches.
+plan_scope_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+
+// ---- lifecycle-reflection: getattr/hasattr (a name or an attribute's `attribute`) called with any of the
+// lifecycle words in a descendant identifier's text or a descendant string's semantic value, in the listed files.
+.decl lifecycle_call(kind: symbol)
+lifecycle_call("call").
+.decl lifecycle_reflect(f: node)
+lifecycle_reflect(f) :- node(_, f, "identifier", _, _), text(f, s), (s = "getattr" ; s = "hasattr").
+lifecycle_reflect(f) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "getattr" ; s = "hasattr").
+.decl lifecycle_mentions(c: node)
+lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), node(_, x, "identifier", _, _), text(x, s),
+    (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
+lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), node(_, x, "string", _, _), value(x, s),
+    (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
+lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), node(_, x, "concatenated_string", _, _), value(x, s),
+    (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
+violation("data-layer-plan-scope-ownership", "lifecycle-reflection", "PSO007", p, l) :-
+    node(_, c, "call", _, _), field(c, "function", f), lifecycle_reflect(f), lifecycle_mentions(c),
+    node(d, c, _, _, _), doc(d, p, _), (p = "conform/versioned_plan_scope_helpers.py" ; p = "data_layer_testing/versioning/query_helpers.py" ; p = "l2000_connection/connection_callback_results.py" ; p = "l2000_connection/connection_plan_workflows.py" ; p = "l2000_connection/plan_scopes.py" ; p = "l7000_versioned_schema/versioned_connection.py" ; p = "l9900_auto_api/_versioning_helpers.py"), plan_scope_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
+
