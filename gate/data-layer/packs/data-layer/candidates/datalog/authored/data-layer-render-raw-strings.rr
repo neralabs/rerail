@@ -5,14 +5,11 @@
 // with `value_type_of(n, "str")`, and `value: {regex: (?s)^.{2}}` is `value(n, v)` searched, so W's decoder (its
 // escapes, `\N{…}` names, refusals and MAX_STRING_BYTES cap) decides, exactly.
 //
-// fstring-literal: W's `parse: pythonFString` has no relation (fstring_piece is not bound), so its literal parts
-// are rebuilt here: each part's string_content nodes decoded, each content's decoded length classed 0, 1 or 2+ by
-// whole-string regexes over its exact source text (`node_text`), one per prefix mode (plain, f, raw, raw f):
-// escapes as W's decoder takes them (offsets.rs, value/python.rs): `\<newline>` is nothing, `\\ \' \" \a…\v`,
-// octal, `\x..`, `\u....`, `\U........` and `\N{…}` one character, an unknown escape two, universal newlines,
-// `{{`/`}}` one character in an f-part. A content no escape reading covers (bad `\x`, `\u`, `\U` digits, a
-// surrogate) is a parse W refuses. Approximations there (blocked on fstring_piece), named: a `\N{name}` is taken
-// as one character whatever the name (W refuses names it does not know); W's MAX_STRING_BYTES cap is not applied.
+// fstring-literal: W's `parse: pythonFString` is `fstring_piece`: its literal children are W's, decoded by W
+// (escapes, `\N{…}` names, refusals, the MAX_STRING_BYTES cap), so `value: {regex: (?s)^.{2}}` on one is `match`
+// on its text, exactly. Only the capture's line is rebuilt here (fstring_piece has no position): a literal child
+// is the run of literal text before an interpolation (or at the end), and its line is the run's first decoded
+// character's.
 //
 // The source gate (`inside module` with `render|'|"|Template\(|SqlFragment\.static\(` on the module's text, or
 // `(?s).*` with sourceGate off) is `literal_gate`, read from the run's options. oracleAnalyzer is in no clause.
@@ -25,6 +22,7 @@
 .decl node_text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl option_on(name: symbol)
 .decl line(n: node, l: number)
 .decl end_line(n: node, l: number)
@@ -52,40 +50,15 @@ literal_in_render(n) :- inside(n, f, literal_fdef), literal_render(f).
 literal_in_raise(n) :- inside(n, _, literal_raise).
 .decl literal_in_concat(n: node)
 literal_in_concat(n) :- child(p, n, _), node(_, p, "concatenated_string", _, _).
-// fstring-literal's parse: a string part's prefix mode, "p" plain, "f" formatted, "rp" raw, "rf" raw formatted
-// (W's decoder reads the prefix letters); a bytes or template part is no str (literal_nostr).
+// fstring-literal's line: a string part's prefix mode, "p" plain, "f" formatted, "rp" raw, "rf" raw formatted
+// (W's decoder reads the prefix letters), and its string_content nodes.
 .decl literal_mode(s: node, m: symbol)
 literal_mode(s, "p") :- node(_, s, "string", _, _), strprefix(s, x), !contains("r", x), !contains("f", x).
 literal_mode(s, "f") :- node(_, s, "string", _, _), strprefix(s, x), !contains("r", x), contains("f", x).
 literal_mode(s, "rp") :- node(_, s, "string", _, _), strprefix(s, x), contains("r", x), !contains("f", x).
 literal_mode(s, "rf") :- node(_, s, "string", _, _), strprefix(s, x), contains("r", x), contains("f", x).
-.decl literal_nostr(s: node)
-literal_nostr(s) :- strprefix(s, x), contains("b", x).
-literal_nostr(s) :- strprefix(s, x), contains("t", x).
-// Texts W's decoder reads, by mode: a part's string_content nodes, and a format spec's text tokens
-// (fstring_literal_stext); each classed by decoded length (1, or 2 for two or more; nothing for none), or refused
-// (literal_tbad). Only fstring-literal reads these: literal, template and static read W's value.
 .decl literal_content(s: node, c: node, m: symbol, t: symbol)
 literal_content(s, c, m, t) :- literal_mode(s, m), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, t).
-.decl literal_ctext(m: symbol, t: symbol)
-literal_ctext(m, t) :- literal_content(_, _, m, t).
-literal_ctext(m, t) :- fstring_literal_stext(_, _, m, t).
-.decl literal_tbad(m: symbol, t: symbol)
-literal_tbad("p", t) :- literal_ctext("p", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\r\\n|[^\\\\])*", t).
-literal_tbad("f", t) :- literal_ctext("f", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\{\\{|\\}\\}|\\r\\n|[^\\\\])*", t).
-.decl literal_tcls(m: symbol, t: symbol, k: number)
-literal_tcls("p", t, 1) :- literal_ctext("p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
-literal_tcls("p", t, 2) :- literal_ctext("p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\r\\n|[^\\\\])*", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t).
-literal_tcls("f", t, 1) :- literal_ctext("f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\{\\{|\\}\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
-literal_tcls("f", t, 2) :- literal_ctext("f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\{\\{|\\}\\}|\\r\\n|[^\\\\])*", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\{\\{|\\}\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t).
-literal_tcls("rp", t, 1) :- literal_ctext("rp", t), match("(?s)(?:\\r\\n|.)?", t).
-literal_tcls("rp", t, 2) :- literal_ctext("rp", t), !match("(?s)(?:\\r\\n|.)?", t).
-literal_tcls("rf", t, 1) :- literal_ctext("rf", t), match("(?s)(?:\\r\\n|\\{\\{|\\}\\}|.)?", t).
-literal_tcls("rf", t, 2) :- literal_ctext("rf", t), !match("(?s)(?:\\r\\n|\\{\\{|\\}\\}|.)?", t).
-.decl literal_bad(c: node)
-literal_bad(c) :- literal_content(_, c, m, t), literal_tbad(m, t).
-.decl literal_cls(c: node, k: number)
-literal_cls(c, k) :- literal_content(_, c, m, t), literal_tcls(m, t, k).
 
 // The policy's repeated kinds: `any [string not f, concatenated_string with no f part]`, not inside a
 // concatenated_string; f is `(?i)^[rub]*f` on the string node's text.
@@ -159,106 +132,86 @@ violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :-
     node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
 
 // ---- fstring-literal ----------------------------------------------------------------------------------------
-// The f-strings parsed (`parse: pythonFString`): an f-string not in a concatenation, a concatenation with an f
-// part, and a format_specifier; each in a render function and not in raise/assert. A part that is bytes or a
-// template, or a content refused, gives no parse.
-.decl fstring_literal_cand(n: node)
-fstring_literal_cand(n) :- node(_, n, "string", _, _), literal_fpart(n), !literal_in_concat(n).
-fstring_literal_cand(n) :- literal_fhas(n), !literal_in_concat(n).
-.decl fstring_literal_refused(n: node)
-fstring_literal_refused(n) :- fstring_literal_cand(n), literal_part(n, s), literal_nostr(s).
-fstring_literal_refused(n) :- fstring_literal_cand(n), literal_part(n, s), child(s, c, _), literal_bad(c).
+// The hosts parsed (`parse: pythonFString`): an f-string not in a concatenation, a concatenation with an f part,
+// and a format_specifier; each in a render function and not in raise/assert. W's tree is fstring_piece's rows:
+// none where W gets none (a bytes or template part, a literal W cannot decode, the MAX_STRING_BYTES cap).
+.decl fstring_literal_host(n: node)
+fstring_literal_host(n) :- node(_, n, "string", _, _), literal_fpart(n), !literal_in_concat(n).
+fstring_literal_host(n) :- literal_fhas(n), !literal_in_concat(n).
+fstring_literal_host(n) :- node(_, n, "format_specifier", _, _).
 .decl fstring_literal_parsed(n: node)
-fstring_literal_parsed(n) :- fstring_literal_cand(n), !fstring_literal_refused(n), literal_in_render(n), !literal_in_raise(n).
-// The parse's literal parts: runs of literal text between interpolations, across the parts of a concatenation.
-// A run's items: each string_content (classed as above; empty ones add nothing) and the debug text of a
-// `{expr=}` field (its expression source and `=`: two characters or more), each with its run's key (the start
-// of the interpolation that ends it, or the string's end), its offset and its line.
-.decl fstring_literal_bound(n: node, b: number)
-fstring_literal_bound(n, b) :- fstring_literal_parsed(n), literal_part(n, s), child(s, i, _), node(_, i, "interpolation", b, _).
-.decl fstring_literal_content(n: node, c: node, o: number)
-fstring_literal_content(n, c, o) :- fstring_literal_parsed(n), literal_part(n, s), child(s, c, _), literal_cls(c, _), node(_, c, _, o, _).
-// Debug fields: an anonymous `=` child (W's test), the token after the expression.
-.decl fstring_literal_debug(i: node)
-fstring_literal_debug(i) :- node(_, i, "interpolation", _, _), token(i, _, "=", _, _).
-fstring_literal_debug(i) :- node(_, i, "format_expression", _, _), token(i, _, "=", _, _).
-// Items: (string, run key, offset, class, line). A debug text's line is its field's: its first character is the
-// one after the `{`. A content's is its first decoded character's: its first line's, or, for a content (not raw)
-// opening with `\<newline>` continuations, which decode to nothing, the first later line of it that is not a lone
-// `\` (the lines between are continuations).
+fstring_literal_parsed(n) :- fstring_literal_host(n), fstring_piece(n, _, _, _), literal_in_render(n), !literal_in_raise(n).
+// The host's replacement fields, in W's order (`fields`): a part's interpolations, a spec's format_expressions;
+// (host, field, start, end).
+.decl fstring_literal_field(n: node, f: node, b: number, e: number)
+fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), literal_part(n, s), child(s, f, _), node(_, f, "interpolation", b, e).
+fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), child(n, f, _),
+    node(_, f, "format_expression", b, e).
+// A run of literal text is keyed by the start of the field that ends it, or the host's end. fstring_piece has
+// one interpolation per field, in order, and a literal child per run that decodes to something: the j-th
+// field's run is the literal right before the j-th interpolation, the last run a literal ending the tree.
+.decl fstring_literal_ford(n: node, b: number, j: number)
+fstring_literal_ford(n, b, j) :- fstring_literal_field(n, _, b, _), j = count : { fstring_literal_field(n, _, b2, _), b2 < b }.
+.decl fstring_literal_pord(n: node, i: number, j: number)
+fstring_literal_pord(n, i, j) :- fstring_literal_parsed(n), fstring_piece(n, i, "interpolation", _),
+    j = count : { fstring_piece(n, i2, "interpolation", _), i2 < i }.
+.decl fstring_literal_later_piece(n: node, i: number)
+fstring_literal_later_piece(n, i) :- fstring_literal_parsed(n), fstring_piece(n, i, _, _), fstring_piece(n, i2, _, _), i2 > i.
+// A run whose literal has two characters or more (`value: {regex: (?s)^.{2}}`, W's search).
+.decl fstring_literal_long(n: node, k: number)
+fstring_literal_long(n, b) :- fstring_literal_ford(n, b, j), fstring_literal_pord(n, i, j), fstring_piece(n, h, "literal", v), i = h + 1,
+    match("(?s:.*)(?:(?s)^.{2})(?s:.*)", v).
+fstring_literal_long(n, e) :- fstring_literal_parsed(n), node(_, n, _, _, e), fstring_piece(n, i, "literal", v), !fstring_literal_later_piece(n, i),
+    match("(?s:.*)(?:(?s)^.{2})(?s:.*)", v).
+// The pieces of source a run's text is decoded from, each one that decodes to something, at (host, first byte,
+// line of its first decoded character): a part's string_content nodes, a debug field's text (`{x = }`'s `x = `,
+// from after the `{`: its field's line), and a spec's raw slices between its fields.
+.decl fstring_literal_item0(n: node, o: number, l: number)
+// A content decodes to nothing when it is only `\<newline>` continuations (not raw). Its first decoded
+// character's line is its first line's, or, for a content opening with continuations, the first later line of
+// it that is not a lone `\` (the lines between are continuations).
+.decl fstring_literal_empty(c: node)
+fstring_literal_empty(c) :- literal_content(_, c, "p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
+fstring_literal_empty(c) :- literal_content(_, c, "f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
+.decl fstring_literal_content(n: node, c: node)
+fstring_literal_content(n, c) :- fstring_literal_parsed(n), literal_part(n, s), literal_content(s, c, _, _), !fstring_literal_empty(c).
 .decl fstring_literal_cont(c: node)
-fstring_literal_cont(c) :- literal_content(_, c, "p", t), literal_cls(c, _), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
-fstring_literal_cont(c) :- literal_content(_, c, "f", t), literal_cls(c, _), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
+fstring_literal_cont(c) :- fstring_literal_content(_, c), literal_content(_, c, "p", t), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
+fstring_literal_cont(c) :- fstring_literal_content(_, c), literal_content(_, c, "f", t), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
 .decl fstring_literal_cnext(c: node, l: number)
 fstring_literal_cnext(c, l) :- fstring_literal_cont(c), node(d, c, _, _, _), line(c, l0), end_line(c, le), tape_line(d, l, sp), l > l0, l <= le,
     text(sp, s), s != "\\".
 .decl fstring_literal_cnext_later(c: node, l: number)
 fstring_literal_cnext_later(c, l) :- fstring_literal_cnext(c, l), fstring_literal_cnext(c, k), k < l.
-.decl fstring_literal_cline(c: node, l: number)
-fstring_literal_cline(c, l) :- literal_cls(c, _), !fstring_literal_cont(c), line(c, l).
-fstring_literal_cline(c, l) :- fstring_literal_cnext(c, l), !fstring_literal_cnext_later(c, l).
-.decl fstring_literal_item(n: node, k: number, o: number, c: number, l: number)
-// The interpolations after a content, and the first of them (its run's key).
-.decl fstring_literal_later(n: node, c: node, b: number)
-fstring_literal_later(n, c, b) :- fstring_literal_content(n, c, o), fstring_literal_bound(n, b), b > o.
-.decl fstring_literal_not_next(n: node, c: node, b: number)
-fstring_literal_not_next(n, c, b) :- fstring_literal_later(n, c, b), fstring_literal_later(n, c, b2), b2 < b.
-fstring_literal_item(n, k, o, x, l) :- fstring_literal_content(n, c, o), fstring_literal_later(n, c, k), !fstring_literal_not_next(n, c, k),
-    literal_cls(c, x), fstring_literal_cline(c, l).
-fstring_literal_item(n, e, o, x, l) :- fstring_literal_content(n, c, o), !fstring_literal_later(n, c, _), node(_, n, _, _, e), literal_cls(c, x),
-    fstring_literal_cline(c, l).
-fstring_literal_item(n, b, b, 2, l) :- fstring_literal_parsed(n), literal_part(n, s), child(s, i, _), node(_, i, "interpolation", b, _), fstring_literal_debug(i), line(i, l).
-// A format_specifier, parsed alone: its literal text is the raw slices between its format_expression fields,
-// after its `:`, decoded with the f prefix (rf where the string holding it is raw). A slice is its text tokens
-// (`token`: classed, and refused, as a content is) and the bytes between the spec's children (extras the lexer
-// skips, whitespace), each byte a character. Approximation, blocked on fstring_piece (no relation gives a byte
-// range's text): a skipped `\r\n` or `\<newline>` is counted as two characters (W's decoder: one, none), and W's
-// MAX_STRING_BYTES cap is not applied.
-.decl fstring_literal_spec(n: node, s: number, e: number)
-fstring_literal_spec(n, s, e) :- node(d, n, "format_specifier", s, e), literal_in_render(n), !literal_in_raise(n), !syntax_error(d).
-.decl fstring_literal_field(n: node, f: node, s: number, e: number)
-fstring_literal_field(n, f, s, e) :- fstring_literal_spec(n, _, _), child(n, f, _), node(_, f, "format_expression", s, e).
-.decl fstring_literal_strkind(kind: symbol)
-fstring_literal_strkind("string").
-.decl fstring_literal_smode(n: node, m: symbol)
-fstring_literal_smode(n, "rf") :- fstring_literal_spec(n, _, _), nearest(n, s, fstring_literal_strkind), strprefix(s, x), contains("r", x).
-fstring_literal_smode(n, "f") :- fstring_literal_spec(n, _, _), nearest(n, s, fstring_literal_strkind), strprefix(s, x), !contains("r", x).
-// Its text tokens: the children after the `:` that are no field, by start offset.
-.decl fstring_literal_stext(n: node, o: number, m: symbol, t: symbol)
-fstring_literal_stext(n, o, m, t) :- fstring_literal_smode(n, m), token(n, i, t, o, _), i > 0, !fstring_literal_field(n, _, o, _).
-// The bytes between two of its children: (spec, start, length).
-.decl fstring_literal_gap(n: node, g: number, w: number)
-fstring_literal_gap(n, g, w) :- fstring_literal_spec(n, _, _), token(n, i, _, _, g), j = i + 1, token(n, j, _, h, _), h > g, w = h - g.
-// A text token W's decoder refuses: no parse.
-.decl fstring_literal_spec_refused(n: node)
-fstring_literal_spec_refused(n) :- fstring_literal_stext(n, _, m, t), literal_tbad(m, t).
-// Slices: (spec, start, line); each ends at the next field's start or the spec's end.
+fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), !fstring_literal_cont(c), node(_, c, _, o, _), line(c, l).
+fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), fstring_literal_cnext(c, l), !fstring_literal_cnext_later(c, l), node(_, c, _, o, _).
+// Debug fields: an anonymous `=` child (W's `debug_end`).
+.decl fstring_literal_debug(f: node)
+fstring_literal_debug(f) :- node(_, f, "interpolation", _, _), token(f, _, "=", _, _).
+fstring_literal_debug(f) :- node(_, f, "format_expression", _, _), token(f, _, "=", _, _).
+fstring_literal_item0(n, o, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), o = b + 1, line(f, l).
+// A spec's slices: after its `:` (the spec's line) and after each field (the line of the field's `}`), each
+// one holding a byte (no field starts it, the spec does not end there). Residual, blocked on a byte range's text
+// (no relation gives the text of a spec's gap between tokens, where the lexer skips `\<newline>`): a non-raw
+// slice opening with a `\<newline>` continuation, which decodes to nothing (only in a spec over several lines),
+// is placed at the slice's own line, where W's first character is on a later one.
 .decl fstring_literal_slice(n: node, a: number, l: number)
-fstring_literal_slice(n, a, l) :- fstring_literal_spec(n, s, _), a = s + 1, line(n, l).
-fstring_literal_slice(n, a, l) :- fstring_literal_field(n, f, _, a), end_line(f, l).
-.decl fstring_literal_slice_after(n: node, a: number, b: number)
-fstring_literal_slice_after(n, a, b) :- fstring_literal_slice(n, a, _), fstring_literal_field(n, _, b, _), b >= a.
-.decl fstring_literal_slice_not_end(n: node, a: number, b: number)
-fstring_literal_slice_not_end(n, a, b) :- fstring_literal_slice_after(n, a, b), fstring_literal_slice_after(n, a, b2), b2 < b.
-.decl fstring_literal_slice_end(n: node, a: number, b: number)
-fstring_literal_slice_end(n, a, b) :- fstring_literal_slice_after(n, a, b), !fstring_literal_slice_not_end(n, a, b).
-fstring_literal_slice_end(n, a, b) :- fstring_literal_slice(n, a, _), !fstring_literal_slice_after(n, a, _), fstring_literal_spec(n, _, b).
-// A slice's items, at its line (its first item starts it).
-fstring_literal_item(n, b, o, k, l) :- fstring_literal_slice_end(n, a, b), fstring_literal_slice(n, a, l), !fstring_literal_spec_refused(n),
-    fstring_literal_stext(n, o, m, t), o >= a, o < b, literal_tcls(m, t, k).
-fstring_literal_item(n, b, g, 1, l) :- fstring_literal_slice_end(n, a, b), fstring_literal_slice(n, a, l), !fstring_literal_spec_refused(n),
-    fstring_literal_gap(n, g, 1), g >= a, g < b.
-fstring_literal_item(n, b, g, 2, l) :- fstring_literal_slice_end(n, a, b), fstring_literal_slice(n, a, l), !fstring_literal_spec_refused(n),
-    fstring_literal_gap(n, g, w), w >= 2, g >= a, g < b.
-fstring_literal_item(n, b, b, 2, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), line(f, l), !fstring_literal_spec_refused(n).
-// A run of two characters or more is a PART (`value: {regex: (?s)^.{2}}`), reported at its first item's line.
-.decl fstring_literal_long(n: node, k: number)
-fstring_literal_long(n, k) :- fstring_literal_item(n, k, _, 2, _).
-fstring_literal_long(n, k) :- fstring_literal_item(n, k, o1, _, _), fstring_literal_item(n, k, o2, _, _), o1 < o2.
+fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", s, _), a = s + 1, line(n, l).
+fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), fstring_literal_field(n, f, _, a), end_line(f, l).
+fstring_literal_item0(n, a, l) :- fstring_literal_slice(n, a, l), node(_, n, _, _, e), a < e, !fstring_literal_field(n, _, a, _).
+// Each item's run: the first field ending after it, else the host's end.
+.decl fstring_literal_after(n: node, o: number, b: number)
+fstring_literal_after(n, o, b) :- fstring_literal_item0(n, o, _), fstring_literal_field(n, _, b, fe), fe > o.
+.decl fstring_literal_not_next(n: node, o: number, b: number)
+fstring_literal_not_next(n, o, b) :- fstring_literal_after(n, o, b), fstring_literal_after(n, o, b2), b2 < b.
+.decl fstring_literal_item(n: node, k: number, o: number, l: number)
+fstring_literal_item(n, k, o, l) :- fstring_literal_item0(n, o, l), fstring_literal_after(n, o, k), !fstring_literal_not_next(n, o, k).
+fstring_literal_item(n, e, o, l) :- fstring_literal_item0(n, o, l), !fstring_literal_after(n, o, _), node(_, n, _, _, e).
+// A long run is a PART, reported at its first item's line.
 .decl fstring_literal_not_first(n: node, k: number, o: number)
-fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _, _), fstring_literal_item(n, k, o2, _, _), o2 < o.
+fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _), fstring_literal_item(n, k, o2, _), o2 < o.
 .decl fstring_literal_at(n: node, l: number)
-fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, _, l), !fstring_literal_not_first(n, k, o).
+fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, l), !fstring_literal_not_first(n, k, o).
 violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :-
     fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _).
 
