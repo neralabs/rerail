@@ -6,8 +6,8 @@
 // Options as the run resolves them: every `$option` case is an alternative gated on the converter-given
 // option_value("entryPoint", v) and option_on("oracleAnalyzer") (defaults: "all", false).
 // Every clause of the policy is here. Parked in data-layer-serverplan-quality.pending.rr: only the quoted_atoms
-// rules of spq-runtime-state-annotations, which read `parsed` and `string_annotation` (CPython / Ruff facts the
-// corpus runner does not bind); without them a string annotation contributes no atom (named in that clause).
+// rules of spq-runtime-state-annotations, which read `parsed` (CPython's `ast.parse` worker) and `string_annotation`
+// (Ruff's table), which the corpus runner does not bind; without them a string annotation contributes no atom.
 // The forbid clauses are their matchers rule for rule:
 // - `kind` is node(_, n, kind, _, _); `regex` tests the node's whole source text (node_text), or the identifier
 //   text where the rule's kinds are identifiers only; a search, as W's `regex` (match() matches the whole string, so
@@ -23,7 +23,7 @@
 //   whose text starts with `#`, per clause `*_xtok`) where a comment can stand before the node in its parent;
 //   elsewhere child()'s index is exact (said per clause);
 // - `not`, multi-branch `any` and stop rules are helper relations named after the clause.
-// Approximations are named per clause.
+// What a clause does not reproduce is named at the clause ("Blocked", "Not modelled").
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -64,9 +64,9 @@
 // class_name, function_name ORDER BY __start, __end DESC) = 1 + the rows of the partition before it
 // (spq_ordered_semantic_inventory_before: smaller start, or the same start and a larger end). Query: k > coalesce(maximum, 0) (no limit
 // row: every occurrence). Key (issue, identity = __start): one finding per row, at the attribute's line.
-// Exact, no approximation of W beyond tr.py's matcher lowering (rows of equal span would tie in the SQL order
-// and in the LIMIT 1: distinct attribute / class / function nodes never share one). Reads node_text (bound on the box since the engine owner's 3d04cdefc) (the
-// module `regex` gates MAINTENANCE|ORDERED_SEMANTIC and ORDERED_SEMANTIC, W's whole module text).
+// Exact (the inputs are their matchers rule for rule; rows of equal span would tie in the SQL order and in the
+// LIMIT 1, and distinct attribute / class / function nodes never share one). Reads node_text (the module `regex`
+// gates MAINTENANCE|ORDERED_SEMANTIC and ORDERED_SEMANTIC, W's whole module text).
 // Option-gated: the module gates and `file` blocks read entryPoint / oracleAnalyzer (option_value, option_on);
 // at entryPoint "all" without oracleAnalyzer the admission is empty (see the default fragment).
 .decl spq_ordered_semantic_inventory_kinds0(kind: symbol)
@@ -228,8 +228,8 @@ violation("data-layer-serverplan-quality", "spq-ordered-semantic-inventory", "SP
 // functions: n or the twin long (no abstract test). `f.__start IN (n.__start, sync.__start)` within the file is
 // node identity (two function_definitions never share a start byte). Key (issue, identity = n.__start): one
 // finding per n, at n's line.
-// Exact, no approximation of W beyond tr.py's matcher lowering. Reads node_text (bound on the box since the engine owner's 3d04cdefc) (the module `regex` gates
-// `_async` and the decorator regex `(?:^|\.)abstractmethod$` on identifier/attribute, W's whole node text).
+// Exact (the inputs are their matchers rule for rule). Reads node_text (the module `regex` gate `_async` and the
+// decorator regex `(?:^|\.)abstractmethod$` on identifier/attribute, W's whole node text).
 // Option-gated: the inputs' `file` blocks read entryPoint / oracleAnalyzer (option_value, option_on).
 .decl spq_sync_async_duplication_kinds0(kind: symbol)
 spq_sync_async_duplication_kinds0("module").
@@ -1888,16 +1888,16 @@ violation("data-layer-serverplan-quality", "spq-vector-filter-literals", "SPQ-04
 //   spq_vector_filter_constants_admission(n)       admission: the module, when its text matches QueryFilter (requireNonemptyInput, per
 //                          file: spq_vector_filter_constants_admitted(d)).
 // DECODED is `replace` over `$STRING` with `value: true` and the never-matching regex \b\B: the right-hand
-// string's value (W's `value`, not followed, as Python's str()), i.e. value(string, v), now bound (escapes decoded,
-// adjacent literals joined). Where that value is not known W fails the clause (transform-fact-failure,
-// demand/driver/catalog/sql_backend.rs); here such a row has no value (APPROXIMATION: a failure is not a finding;
-// for the literals this rule admits, plain strings and literal concatenations without interpolation, value always
-// has a row, so it does not arise).
+// string's value (W's `value`, not followed, as Python's str()), i.e. value(string, v) (escapes decoded, adjacent
+// literals joined). Not modelled: where W cannot know that value it fails the clause (transform-fact-failure,
+// demand/driver/catalog/sql_backend.rs), and a clause failure has no .rr form. It does not arise for the literals
+// the input admits (a str literal with an [rRuU]* prefix, or a concatenation of those), which W decodes, short of
+// W's value budget (rr's value has none): past it W fails the clause where this reports.
 // Stage module_string_values = spq_vector_filter_constants_last (the max __start module_strings row per (path, NAME),
 // taken over every module_strings row, valued or not). Query:
 // filter_names rows with a module_string_values row of the same path and name whose value is 'branch_id' or
 // 'revision_id'. Key (issue, identity = n.__start): one finding per identifier, at its line.
-// Otherwise exact (tr.py's matcher lowering). Reads node_text (the module `regex` gate QueryFilter and the string
+// Otherwise exact (the inputs are their matchers rule for rule). Reads node_text (the module `regex` gate QueryFilter and the string
 // prefix regexes (?i)^[ru]*['"] / (?i)^(?:fr|rf|f)['"], W's whole node text) and value.
 .decl value(n: node, v: symbol)
 // Option-gated: the inputs' `file` blocks read entryPoint / oracleAnalyzer (option_value, option_on).
@@ -2275,39 +2275,26 @@ violation("data-layer-serverplan-quality", "spq-replay-step-tags", "SPQ-047", p,
 // Kept from W/SQL as written:
 // - scope_shadows' fourth branch aliases its subquery `s` over the outer `s`, so `s.id<s.__start` is never true and
 //   every function/class name shadows at module scope (-1): reproduced as such (spq_runtime_state_annotations_shadow at the module node).
-// - rx_extract(x,'^[A-Za-z_]\w*',0) / rx_extract(x,'^[^.]+',0): the longest prefix matching, found as the largest
-//   k with match(re, substr(x, 0, k)) (spq_runtime_state_annotations_head, spq_runtime_state_annotations_seg); NULL (no prefix) gives no row, as the SQL join drops it.
-// - rx_replace(text,'\s+','') on a dotted chain: spq_runtime_state_annotations_strip rebuilds it from the chain's parts, exact because the
-//   text matched `^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*$` (parts and white space only).
+// - rx_extract(x,'^[A-Za-z_]\w*',0) / rx_extract(x,'^[^.]+',0): where x starts with a match, the group of
+//   @rx_replace(x, '^(RE)(?s:.*)$', '$1') (the anchored match is the first one, its greedy run the same:
+//   spq_runtime_state_annotations_head, spq_runtime_state_annotations_seg); where it does not (NULL), no row, as the SQL join drops it.
+// - rx_replace(text,'\s+','') on a dotted member atom is @rx_replace over its node_text (W's capture text).
 // - later_args' nthChild "n+2" counts comments in W: an argument is later where child() puts it after the first, or
 //   where it is child() 0 and a comment token of the type_parameter precedes it (`Annotated[  # c` NL `T, m]`). The
 //   generic_type's nthChild 1 is its base and typed_params' its name, both where the parent starts: exact. A comment
 //   as any_args' ARG spans no atom, so it ignores none: exact.
-// - rx_extract(x,'^[A-Za-z_]\w*',0) of a dotted member atom is its chain's first part (_shead: the parts match
-//   `[A-Za-z_]\w*` whole and '.' ends the match), of an import's dotted_name '^[^.]+' its first identifier where '.'
-//   follows it in the text (_seg_h). Other texts (an atom or dotted_name text that does not match whole and has no
-//   such head) use the prefix search capped at 255 characters (_num; blocked on: no regex extraction over a symbol,
-//   match_group reads document spans only, and a counting recursion is refused); their prefix is empty (no row, as
-//   rx_extract's NULL) unless an identifier holds a character outside \w, so the cap changes nothing short of a
-//   256-character identifier.
-// Approximation (named): quoted_atoms. W parses a string annotation (`x: "Conn"`) with `parse` (its scope table's
-//   type-definition strings) and reads the tree's identifiers and attributes as atoms. That needs `parsed` and
-//   `string_annotation`, which the corpus runner does not bind (CPython / Ruff facts): here a string annotation gives
-//   no atom. The two quoted_atoms rules wait in data-layer-serverplan-quality.pending.rr. node_text is used for the
-//   module regex, the dotted-chain regex and a relative import's module text.
+// node_text is used for the module regex, the dotted-chain regex and text, and a relative import's module text.
+// Blocked (named): quoted_atoms. W parses a string annotation (`x: "Conn"`) with `parse: {grammar: annotation}` and
+//   reads the parsed tree's identifiers and attributes as atoms. That needs `parsed` (core.rr's CPython `ast.parse`
+//   worker) and `string_annotation` (Ruff's table of the strings its semantic model reads as type definitions), which
+//   the corpus runner does not bind: here a string annotation gives no atom. The two quoted_atoms rules wait in
+//   data-layer-serverplan-quality.pending.rr.
 
 .decl spq_runtime_state_annotations_scope_kinds(kind: symbol)
 spq_runtime_state_annotations_scope_kinds("class_definition"). spq_runtime_state_annotations_scope_kinds("function_definition").
 .decl spq_runtime_state_annotations_typed_param_kinds(kind: symbol)
 spq_runtime_state_annotations_typed_param_kinds("default_parameter"). spq_runtime_state_annotations_typed_param_kinds("typed_default_parameter"). spq_runtime_state_annotations_typed_param_kinds("typed_parameter").
-.decl spq_runtime_state_annotations_num(k: number)
-spq_runtime_state_annotations_num(1). spq_runtime_state_annotations_num(2). spq_runtime_state_annotations_num(3). spq_runtime_state_annotations_num(4). spq_runtime_state_annotations_num(5). spq_runtime_state_annotations_num(6). spq_runtime_state_annotations_num(7). spq_runtime_state_annotations_num(8). spq_runtime_state_annotations_num(9). spq_runtime_state_annotations_num(10). spq_runtime_state_annotations_num(11). spq_runtime_state_annotations_num(12). spq_runtime_state_annotations_num(13). spq_runtime_state_annotations_num(14). spq_runtime_state_annotations_num(15). spq_runtime_state_annotations_num(16). spq_runtime_state_annotations_num(17). spq_runtime_state_annotations_num(18). spq_runtime_state_annotations_num(19). spq_runtime_state_annotations_num(20). spq_runtime_state_annotations_num(21). spq_runtime_state_annotations_num(22). spq_runtime_state_annotations_num(23). spq_runtime_state_annotations_num(24). spq_runtime_state_annotations_num(25). spq_runtime_state_annotations_num(26). spq_runtime_state_annotations_num(27). spq_runtime_state_annotations_num(28). spq_runtime_state_annotations_num(29). spq_runtime_state_annotations_num(30). spq_runtime_state_annotations_num(31). spq_runtime_state_annotations_num(32). spq_runtime_state_annotations_num(33). spq_runtime_state_annotations_num(34). spq_runtime_state_annotations_num(35). spq_runtime_state_annotations_num(36). spq_runtime_state_annotations_num(37). spq_runtime_state_annotations_num(38). spq_runtime_state_annotations_num(39). spq_runtime_state_annotations_num(40). spq_runtime_state_annotations_num(41). spq_runtime_state_annotations_num(42). spq_runtime_state_annotations_num(43). spq_runtime_state_annotations_num(44). spq_runtime_state_annotations_num(45). spq_runtime_state_annotations_num(46). spq_runtime_state_annotations_num(47). spq_runtime_state_annotations_num(48). spq_runtime_state_annotations_num(49). spq_runtime_state_annotations_num(50). spq_runtime_state_annotations_num(51). spq_runtime_state_annotations_num(52). spq_runtime_state_annotations_num(53). spq_runtime_state_annotations_num(54). spq_runtime_state_annotations_num(55). spq_runtime_state_annotations_num(56). spq_runtime_state_annotations_num(57). spq_runtime_state_annotations_num(58). spq_runtime_state_annotations_num(59). spq_runtime_state_annotations_num(60). spq_runtime_state_annotations_num(61). spq_runtime_state_annotations_num(62). spq_runtime_state_annotations_num(63). spq_runtime_state_annotations_num(64). spq_runtime_state_annotations_num(65). spq_runtime_state_annotations_num(66). spq_runtime_state_annotations_num(67). spq_runtime_state_annotations_num(68). spq_runtime_state_annotations_num(69). spq_runtime_state_annotations_num(70). spq_runtime_state_annotations_num(71). spq_runtime_state_annotations_num(72). spq_runtime_state_annotations_num(73). spq_runtime_state_annotations_num(74). spq_runtime_state_annotations_num(75). spq_runtime_state_annotations_num(76). spq_runtime_state_annotations_num(77). spq_runtime_state_annotations_num(78). spq_runtime_state_annotations_num(79). spq_runtime_state_annotations_num(80). spq_runtime_state_annotations_num(81). spq_runtime_state_annotations_num(82). spq_runtime_state_annotations_num(83). spq_runtime_state_annotations_num(84). spq_runtime_state_annotations_num(85). spq_runtime_state_annotations_num(86). spq_runtime_state_annotations_num(87). spq_runtime_state_annotations_num(88). spq_runtime_state_annotations_num(89). spq_runtime_state_annotations_num(90). spq_runtime_state_annotations_num(91). spq_runtime_state_annotations_num(92). spq_runtime_state_annotations_num(93). spq_runtime_state_annotations_num(94). spq_runtime_state_annotations_num(95). spq_runtime_state_annotations_num(96). spq_runtime_state_annotations_num(97). spq_runtime_state_annotations_num(98). spq_runtime_state_annotations_num(99). spq_runtime_state_annotations_num(100). spq_runtime_state_annotations_num(101). spq_runtime_state_annotations_num(102). spq_runtime_state_annotations_num(103). spq_runtime_state_annotations_num(104). spq_runtime_state_annotations_num(105). spq_runtime_state_annotations_num(106). spq_runtime_state_annotations_num(107). spq_runtime_state_annotations_num(108). spq_runtime_state_annotations_num(109). spq_runtime_state_annotations_num(110). spq_runtime_state_annotations_num(111). spq_runtime_state_annotations_num(112). spq_runtime_state_annotations_num(113). spq_runtime_state_annotations_num(114). spq_runtime_state_annotations_num(115). spq_runtime_state_annotations_num(116). spq_runtime_state_annotations_num(117). spq_runtime_state_annotations_num(118). spq_runtime_state_annotations_num(119). spq_runtime_state_annotations_num(120). spq_runtime_state_annotations_num(121). spq_runtime_state_annotations_num(122). spq_runtime_state_annotations_num(123). spq_runtime_state_annotations_num(124). spq_runtime_state_annotations_num(125). spq_runtime_state_annotations_num(126). spq_runtime_state_annotations_num(127). spq_runtime_state_annotations_num(128). spq_runtime_state_annotations_num(129). spq_runtime_state_annotations_num(130). spq_runtime_state_annotations_num(131). spq_runtime_state_annotations_num(132). spq_runtime_state_annotations_num(133). spq_runtime_state_annotations_num(134). spq_runtime_state_annotations_num(135). spq_runtime_state_annotations_num(136). spq_runtime_state_annotations_num(137). spq_runtime_state_annotations_num(138). spq_runtime_state_annotations_num(139). spq_runtime_state_annotations_num(140). spq_runtime_state_annotations_num(141). spq_runtime_state_annotations_num(142). spq_runtime_state_annotations_num(143). spq_runtime_state_annotations_num(144). spq_runtime_state_annotations_num(145). spq_runtime_state_annotations_num(146). spq_runtime_state_annotations_num(147). spq_runtime_state_annotations_num(148). spq_runtime_state_annotations_num(149). spq_runtime_state_annotations_num(150). spq_runtime_state_annotations_num(151). spq_runtime_state_annotations_num(152). spq_runtime_state_annotations_num(153). spq_runtime_state_annotations_num(154). spq_runtime_state_annotations_num(155). spq_runtime_state_annotations_num(156). spq_runtime_state_annotations_num(157). spq_runtime_state_annotations_num(158). spq_runtime_state_annotations_num(159). spq_runtime_state_annotations_num(160). spq_runtime_state_annotations_num(161). spq_runtime_state_annotations_num(162). spq_runtime_state_annotations_num(163). spq_runtime_state_annotations_num(164). spq_runtime_state_annotations_num(165). spq_runtime_state_annotations_num(166). spq_runtime_state_annotations_num(167). spq_runtime_state_annotations_num(168). spq_runtime_state_annotations_num(169). spq_runtime_state_annotations_num(170). spq_runtime_state_annotations_num(171). spq_runtime_state_annotations_num(172). spq_runtime_state_annotations_num(173). spq_runtime_state_annotations_num(174). spq_runtime_state_annotations_num(175). spq_runtime_state_annotations_num(176). spq_runtime_state_annotations_num(177). spq_runtime_state_annotations_num(178). spq_runtime_state_annotations_num(179). spq_runtime_state_annotations_num(180). spq_runtime_state_annotations_num(181). spq_runtime_state_annotations_num(182). spq_runtime_state_annotations_num(183). spq_runtime_state_annotations_num(184). spq_runtime_state_annotations_num(185). spq_runtime_state_annotations_num(186). spq_runtime_state_annotations_num(187). spq_runtime_state_annotations_num(188). spq_runtime_state_annotations_num(189). spq_runtime_state_annotations_num(190). spq_runtime_state_annotations_num(191). spq_runtime_state_annotations_num(192). spq_runtime_state_annotations_num(193). spq_runtime_state_annotations_num(194). spq_runtime_state_annotations_num(195). spq_runtime_state_annotations_num(196). spq_runtime_state_annotations_num(197). spq_runtime_state_annotations_num(198). spq_runtime_state_annotations_num(199). spq_runtime_state_annotations_num(200). spq_runtime_state_annotations_num(201). spq_runtime_state_annotations_num(202). spq_runtime_state_annotations_num(203). spq_runtime_state_annotations_num(204). spq_runtime_state_annotations_num(205). spq_runtime_state_annotations_num(206). spq_runtime_state_annotations_num(207). spq_runtime_state_annotations_num(208). spq_runtime_state_annotations_num(209). spq_runtime_state_annotations_num(210). spq_runtime_state_annotations_num(211). spq_runtime_state_annotations_num(212). spq_runtime_state_annotations_num(213). spq_runtime_state_annotations_num(214). spq_runtime_state_annotations_num(215). spq_runtime_state_annotations_num(216). spq_runtime_state_annotations_num(217). spq_runtime_state_annotations_num(218). spq_runtime_state_annotations_num(219). spq_runtime_state_annotations_num(220). spq_runtime_state_annotations_num(221). spq_runtime_state_annotations_num(222). spq_runtime_state_annotations_num(223). spq_runtime_state_annotations_num(224). spq_runtime_state_annotations_num(225). spq_runtime_state_annotations_num(226). spq_runtime_state_annotations_num(227). spq_runtime_state_annotations_num(228). spq_runtime_state_annotations_num(229). spq_runtime_state_annotations_num(230). spq_runtime_state_annotations_num(231). spq_runtime_state_annotations_num(232). spq_runtime_state_annotations_num(233). spq_runtime_state_annotations_num(234). spq_runtime_state_annotations_num(235). spq_runtime_state_annotations_num(236). spq_runtime_state_annotations_num(237). spq_runtime_state_annotations_num(238). spq_runtime_state_annotations_num(239). spq_runtime_state_annotations_num(240). spq_runtime_state_annotations_num(241). spq_runtime_state_annotations_num(242). spq_runtime_state_annotations_num(243). spq_runtime_state_annotations_num(244). spq_runtime_state_annotations_num(245). spq_runtime_state_annotations_num(246). spq_runtime_state_annotations_num(247). spq_runtime_state_annotations_num(248). spq_runtime_state_annotations_num(249). spq_runtime_state_annotations_num(250). spq_runtime_state_annotations_num(251). spq_runtime_state_annotations_num(252). spq_runtime_state_annotations_num(253). spq_runtime_state_annotations_num(254). spq_runtime_state_annotations_num(255).
 .decl spq_runtime_state_annotations_doc(d: number)
-.decl spq_runtime_state_annotations_shead_n(n: node, h: symbol)
-.decl spq_runtime_state_annotations_shead(t: symbol, h: symbol)
-.decl spq_runtime_state_annotations_has_shead(t: symbol)
-.decl spq_runtime_state_annotations_seg_h(t: symbol, h: symbol)
-.decl spq_runtime_state_annotations_has_seg_h(t: symbol)
 .decl spq_runtime_state_annotations_in_attr(n: node)
 .decl spq_runtime_state_annotations_in_type(d: number, n: node, a: node)
 .decl spq_runtime_state_annotations_scope(d: number, s: node)
@@ -2322,18 +2309,15 @@ spq_runtime_state_annotations_num(1). spq_runtime_state_annotations_num(2). spq_
 .decl spq_runtime_state_annotations_from_st(d: number, st: node, module: symbol)
 .decl spq_runtime_state_annotations_imp_src(d: number, st: node, name: symbol, origin: symbol)
 .decl spq_runtime_state_annotations_seg_s(t: symbol)
-.decl spq_runtime_state_annotations_seg_len(t: symbol, k: number)
 .decl spq_runtime_state_annotations_seg(t: symbol, h: symbol)
 .decl spq_runtime_state_annotations_imp(d: number, scope: node, name: symbol, origin: symbol)
 .decl spq_runtime_state_annotations_bound_ctx(n: node)
 .decl spq_runtime_state_annotations_bound_excl(n: node)
 .decl spq_runtime_state_annotations_shadow_src(d: number, n: node, name: symbol)
 .decl spq_runtime_state_annotations_shadow(d: number, scope: node, name: symbol)
-.decl spq_runtime_state_annotations_strip(n: node, v: symbol)
 .decl spq_runtime_state_annotations_dotted(n: node)
 .decl spq_runtime_state_annotations_atom(d: number, a: node, id: symbol, start: number, end: number, atom: symbol)
 .decl spq_runtime_state_annotations_head_s(t: symbol)
-.decl spq_runtime_state_annotations_head_len(t: symbol, k: number)
 .decl spq_runtime_state_annotations_head(t: symbol, h: symbol)
 .decl spq_runtime_state_annotations_need(d: number, s: node, h: symbol)
 .decl spq_runtime_state_annotations_imp_depth(d: number, s: node, h: symbol, k: number)
@@ -2372,14 +2356,9 @@ spq_runtime_state_annotations_from_st(d, st, x) :- spq_runtime_state_annotations
 spq_runtime_state_annotations_from_st(d, st, x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_from_statement", _, _), field(st, "module_name", mn), node(_, mn, k, _, _), k != "dotted_name", node_text(mn, x).
 spq_runtime_state_annotations_imp_src(d, st, x, cat(cat(mo, "."), x)) :- spq_runtime_state_annotations_from_st(d, st, mo), child(st, c, _), !field(st, "module_name", c), node(_, c, "dotted_name", _, _), text(c, x).
 spq_runtime_state_annotations_imp_src(d, st, al, cat(cat(mo, "."), x)) :- spq_runtime_state_annotations_from_st(d, st, mo), child(st, c, _), !field(st, "module_name", c), node(_, c, "aliased_import", _, _), field(c, "name", nm), text(nm, x), field(c, "alias", an), text(an, al).
-spq_runtime_state_annotations_seg_s(x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), text(c, x).
-spq_runtime_state_annotations_seg(x, x) :- spq_runtime_state_annotations_seg_s(x), match("[^.]+", x).
-spq_runtime_state_annotations_seg_h(x, h) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), text(c, x), child(c, i, 0), text(i, h), k = strlen(h), k > 0, substr(x, 0, k) = h, substr(x, k, 1) = ".".
-spq_runtime_state_annotations_has_seg_h(x) :- spq_runtime_state_annotations_seg_h(x, _).
-spq_runtime_state_annotations_seg(x, h) :- spq_runtime_state_annotations_seg_s(x), !match("[^.]+", x), spq_runtime_state_annotations_seg_h(x, h).
-spq_runtime_state_annotations_seg_len(x, k) :- spq_runtime_state_annotations_seg_s(x), !match("[^.]+", x), !spq_runtime_state_annotations_has_seg_h(x), spq_runtime_state_annotations_num(k), k < strlen(x), match("[^.]+", substr(x, 0, k)).
-spq_runtime_state_annotations_seg(x, substr(x, 0, k)) :- spq_runtime_state_annotations_seg_s(x), !match("[^.]+", x), !spq_runtime_state_annotations_has_seg_h(x), k = max j : { spq_runtime_state_annotations_seg_len(x, j) }.
-spq_runtime_state_annotations_imp_src(d, st, h, h) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), text(c, x), spq_runtime_state_annotations_seg(x, h).
+spq_runtime_state_annotations_seg_s(x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), node_text(c, x).
+spq_runtime_state_annotations_seg(x, h) :- spq_runtime_state_annotations_seg_s(x), match("[^.](?s:.*)", x), h = @rx_replace(x, "^([^.]+)(?s:.*)$", "$1").
+spq_runtime_state_annotations_imp_src(d, st, h, h) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), node_text(c, x), spq_runtime_state_annotations_seg(x, h).
 spq_runtime_state_annotations_imp_src(d, st, al, x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "aliased_import", _, _), field(c, "name", nm), text(nm, x), field(c, "alias", an), text(an, al).
 spq_runtime_state_annotations_imp(d, s, x, o) :- spq_runtime_state_annotations_imp_src(d, st, x, o), nearest(st, s, spq_runtime_state_annotations_scope_kinds).
 spq_runtime_state_annotations_imp(d, m, x, o) :- spq_runtime_state_annotations_imp_src(d, st, x, o), !inside(st, _, spq_runtime_state_annotations_scope_kinds), spq_runtime_state_annotations_root(d, m).
@@ -2402,25 +2381,13 @@ spq_runtime_state_annotations_shadow(d, m, x) :- spq_runtime_state_annotations_s
 spq_runtime_state_annotations_shadow(d, m, x) :- spq_runtime_state_annotations_root(d, m), node(d, n, "identifier", _, _), child(g, n, _), node(_, g, "global_statement", _, _), text(n, x).
 spq_runtime_state_annotations_shadow(d, f, x) :- spq_runtime_state_annotations_doc(d), node(d, n, "identifier", _, _), child(g, n, _), node(_, g, "nonlocal_statement", _, _), text(n, x), inside(n, f, "function_definition").
 spq_runtime_state_annotations_atom(d, a, cat("name:", to_string(ns)), ns, ne, x) :- node(d, n, "identifier", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), text(n, x).
-spq_runtime_state_annotations_strip(n, x) :- node(_, n, "identifier", _, _), text(n, x).
-spq_runtime_state_annotations_strip(n, "None") :- node(_, n, "none", _, _).
-spq_runtime_state_annotations_strip(n, "True") :- node(_, n, "true", _, _).
-spq_runtime_state_annotations_strip(n, "False") :- node(_, n, "false", _, _).
-spq_runtime_state_annotations_strip(n, cat(cat(o, "."), x)) :- node(_, n, "attribute", _, _), field(n, "object", b), spq_runtime_state_annotations_strip(b, o), field(n, "attribute", c), text(c, x).
 spq_runtime_state_annotations_dotted(n) :- node(_, n, "attribute", _, _), node_text(n, s), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", s).
-spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_strip(n, v).
+spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), node_text(n, t), v = @rx_replace(t, "\\s+", "").
 spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
-spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_strip(n, v).
+spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), node_text(n, t), v = @rx_replace(t, "\\s+", "").
 spq_runtime_state_annotations_atom(d, a, cat(cat(cat("member:", to_string(ns)), ":"), to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
 spq_runtime_state_annotations_head_s(x) :- spq_runtime_state_annotations_atom(_, _, _, _, _, x).
-spq_runtime_state_annotations_head(x, x) :- spq_runtime_state_annotations_head_s(x), match("[A-Za-z_]\\w*", x).
-spq_runtime_state_annotations_shead_n(n, h) :- node(_, n, "attribute", _, _), field(n, "object", b), !node(_, b, "attribute", _, _), spq_runtime_state_annotations_strip(b, h).
-spq_runtime_state_annotations_shead_n(n, h) :- node(_, n, "attribute", _, _), field(n, "object", b), spq_runtime_state_annotations_shead_n(b, h).
-spq_runtime_state_annotations_shead(v, h) :- spq_runtime_state_annotations_in_type(_, n, _), node(_, n, "attribute", _, _), spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_strip(n, v), spq_runtime_state_annotations_shead_n(n, h), match("[A-Za-z_]\\w*", h).
-spq_runtime_state_annotations_has_shead(x) :- spq_runtime_state_annotations_shead(x, _).
-spq_runtime_state_annotations_head(x, h) :- spq_runtime_state_annotations_head_s(x), !match("[A-Za-z_]\\w*", x), spq_runtime_state_annotations_shead(x, h).
-spq_runtime_state_annotations_head_len(x, k) :- spq_runtime_state_annotations_head_s(x), !match("[A-Za-z_]\\w*", x), !spq_runtime_state_annotations_has_shead(x), spq_runtime_state_annotations_num(k), k < strlen(x), match("[A-Za-z_]\\w*", substr(x, 0, k)).
-spq_runtime_state_annotations_head(x, substr(x, 0, k)) :- spq_runtime_state_annotations_head_s(x), !match("[A-Za-z_]\\w*", x), !spq_runtime_state_annotations_has_shead(x), k = max j : { spq_runtime_state_annotations_head_len(x, j) }.
+spq_runtime_state_annotations_head(x, h) :- spq_runtime_state_annotations_head_s(x), match("[A-Za-z_](?s:.*)", x), h = @rx_replace(x, "^([A-Za-z_]\\w*)(?s:.*)$", "$1").
 spq_runtime_state_annotations_need(d, s, h) :- spq_runtime_state_annotations_atom(d, a, _, _, _, x), spq_runtime_state_annotations_ann(d, a, s), spq_runtime_state_annotations_head(x, h).
 spq_runtime_state_annotations_imp_depth(d, s, h, k) :- spq_runtime_state_annotations_need(d, s, h), spq_runtime_state_annotations_chain(d, s, f, k), spq_runtime_state_annotations_imp(d, f, h, _).
 spq_runtime_state_annotations_first(d, s, h, k) :- spq_runtime_state_annotations_need(d, s, h), k = min j : { spq_runtime_state_annotations_imp_depth(d, s, h, j) }.
@@ -2783,12 +2750,12 @@ violation("data-layer-serverplan-quality", "quality-project-taxonomy", "SPQ-049"
 // The SQL clause rule for rule: each input is its matcher (relation conditional_architecture_<input>(n), the
 // matched node, through the translator), its projections by hand; each stage is a relation:
 //   classes/fns, class_spans/fn_spans  _class(d, n, start, end, name) / _fn(…)
-//   module_names                       _module(d, qualified) (_mpath … _qual<k>: rx_extract and replace by positions)
-//   aliases (from_names, direct_names) _alias(d, start, local, origin) (_from_item, _direct_item, _mstrip: trim)
+//   module_names                       _module(d, qualified): rx_extract and replace as @rx_replace
+//   aliases (from_names, direct_names) _alias(d, start, local, origin) (_from_item, _direct_item, _mfull: trim)
 //   cclasses                           _cclass(d, n, start, end, name, qualified_name): the last class of a name
-//   base_scan, bases                   _base(class, base node)
-//   class_bases                        _class_base(class, name): _head/_chain (rx_extract head and dotted suffix),
-//                                      _resolved (the latest alias before the class, else the head)
+//   base_scan, bases                   _sup, _split, _cut, _stop, _item(class, item text); _base(class, base text)
+//   class_bases                        _class_base(class, name): _base_head/_base_suffix (rx_extract head and
+//                                      dotted suffix), _resolved (the latest alias before the class, else the head)
 //   derived                            _derived(qualified name): recursion along cclasses (finite)
 //   fn_owner                           _fn_cls(f, innermost enclosing class by spans), _has_cls
 //   cmethods, cmethods.derived         _cmethod(d, f, start, end, name, class): the last of (class, name); _cmethod_derived
@@ -2826,37 +2793,26 @@ violation("data-layer-serverplan-quality", "quality-project-taxonomy", "SPQ-049"
 // - Regexes dropped as implied by their sibling tests: controls' \b(?:backend_type|is_sql_backend)\b (the attribute
 //   identifier backend_type / is_sql_backend is a whole word of the text) and callable_params' \bCallable\b on the
 //   parameters (the Callable identifier inside the type is a whole word of it).
-// - rx_extract(text, '^([\w]+)') is the identifier starting at the node's first byte; '^[\w]+((?:\.[\w]+)*)' its
-//   chain of attribute steps whose attribute identifier starts one byte after the object ends (no space, comment or
-//   continuation around the dot); with '$' (compiler-contract) the chain must reach the annotation's end, else ''.
-// - trim(module, '.'): the leading dots off; a module_name has no trailing dot once those are gone.
-// - module_names: rx_extract of the first '(?:^|/)(?:impl|l2070_batching|scripts)/' cut (paths ending in .py),
-//   '/' → '.', else the file's base name without '.py'.
+// - rx_extract(x, RE, g) is the group g of @rx_replace(x, '^(?s:.*?)(?:RE)(?s:.*)$', '$g') where RE matches x (the
+//   lazy prefix starts the match where find_iter's first one starts, and RE's own preference picks the same
+//   match there), else NULL, which here is no row: module_names, the aliases' local, class_bases' head and suffix
+//   (with '$' for compiler-contract's annotation: '' where the whole annotation is no dotted chain).
+// - trim(module, '.') is @rx_replace(module, '^\.+|\.+$', ''); replace(q, '/', '.') is @rx_replace(q, '/', '.').
+// - module_names gives every class and function a qualified name: the rule's scope is **/*.py, so the else
+//   branch's rx_extract always matches (a file named `.py` itself aside, which no corpus holds).
+// - base_scan: the SQL scans t (the superclasses text less its parentheses) a character at a time, the depth the
+//   count of '(' '[' '{' less ')' ']' '}' before; a comma at depth 0 ends an item. Here comma k (from 0) splits
+//   where the prefix before it (@rx_replace with `^((?:[^,]*,){k}[^,]*),.*$`) opens as many brackets as it closes
+//   (strlen of the prefix with every other character replaced away), and an item is the text between consecutive
+//   splits, trimmed of space, tab, LF and CR as trim(item, char(32,9,10,13)). k runs over 0 … n-1, n the commas of
+//   t, written in four base-64 digits (_sup_k1 … _sup_k): exact below 64^4 commas in one superclass list.
 //
-// Approximations (named):
-// - base_scan: the bases are the superclasses argument_list's named children (node_text of each, which has no
-//   surrounding whitespace, as the scan's trim), a child dropped where a comment or line_continuation token stands
-//   in its segment between top-level separators (_base_xseg: the scan's item then holds it and fails both regexes),
-//   not the character scan of its text split at depth-0 commas. They still differ where a string or comment argument
-//   holds an unbalanced bracket (`m="("`, `# (`): it shifts the scan's depth, so the later bases merge into one item
-//   and are dropped, here each child stands alone (a comma inside a top-level string splits only the string's own
-//   segment, which no regex accepts either way). Blocked on: no character scan of a node's text (match_all reads
-//   document spans only; a counting recursion is refused). Keyword arguments (metaclass=M), *splats/**splats,
-//   subscripts (Generic[T]), strings and lambdas fail both bases regexes in both forms, and a comment inside a base
-//   (in its call's parentheses) is in its node_text too: identical.
-// - A base or annotation whose text starts with a keyword (None, True, not, await) has no identifier at its first
-//   byte: the SQL's head is that keyword, here there is no class_bases row. No alias's local is a keyword and a
-//   name without an alias resolution never equals a qualified class name unless a suffix follows: such a base
-//   (`None.x`) could only name a class of a module named None, so no finding changes.
-// - module_names: character positions 0 … 4095 (a longer path gets no module name) and the impl branch's '/'-split
-//   components unrolled to 32 (a deeper module path gets none); a path not ending in .py gets no row where the SQL
-//   keeps the class with a NULL qualified_name (no comparison or m.derived holds for it, so no finding changes).
+// Not modelled (named):
 // - W rejects the whole result when two rows share (detector, issue, identity) ("relational results have
 //   duplicate identities"): backend-control's identity is method start:line, so two controls of one derived method
-//   on one line fail the clause in W; here that line's finding is reported.
-// - Suppression comments (ignoredBy / rerail-ignore) are not modelled.
+//   on one line fail the clause in W; here that line's finding is reported. A clause failure has no .rr form.
+// - Suppression comments (ignoredBy / rerail-ignore).
 // Relations beyond the header's: inside(n, a, set) (the engine's tree relation, as the translator uses it).
-// node_text was awaited; it is now bound (fixtures ran with it).
 // nthChild without ofRule: controls' 2 counts comment tokens (_cx_shift); callable_params' and step_params' 1 is a
 // parameter's name, where the parameter starts, so no comment precedes it: child() index 0, exact.
 .decl conditional_architecture_any_kind(kind: symbol)
@@ -3033,74 +2989,32 @@ conditional_architecture_276(n) :- inside(c268, n, conditional_architecture_any_
 .decl conditional_architecture_k_contract(v: symbol)
 .decl conditional_architecture_class(d: number, n: node, s: number, e: number, nm: symbol)
 .decl conditional_architecture_fn(d: number, n: node, s: number, e: number, nm: symbol)
-.decl conditional_architecture_dig(i: number)
 .decl conditional_architecture_mpath(d: number, p: symbol)
-.decl conditional_architecture_ppos(d: number, i: number)
-.decl conditional_architecture_pcut(d: number, i: number)
-.decl conditional_architecture_has_pcut(d: number)
-.decl conditional_architecture_pgroup(d: number, i: number, n: number)
-.decl conditional_architecture_pslash(d: number, i: number)
-.decl conditional_architecture_has_pslash(d: number)
-.decl conditional_architecture_gslash(d: number, j: number)
-.decl conditional_architecture_gstart(d: number, s: number)
-.decl conditional_architecture_gend(d: number, s: number, e: number)
-.decl conditional_architecture_has_gend_slash(d: number, s: number)
-.decl conditional_architecture_comp(d: number, k: number, c: symbol)
-.decl conditional_architecture_ncomp(d: number, k: number)
-.decl conditional_architecture_qual0(d: number, q: symbol)
-.decl conditional_architecture_qual1(d: number, q: symbol)
-.decl conditional_architecture_qual2(d: number, q: symbol)
-.decl conditional_architecture_qual3(d: number, q: symbol)
-.decl conditional_architecture_qual4(d: number, q: symbol)
-.decl conditional_architecture_qual5(d: number, q: symbol)
-.decl conditional_architecture_qual6(d: number, q: symbol)
-.decl conditional_architecture_qual7(d: number, q: symbol)
-.decl conditional_architecture_qual8(d: number, q: symbol)
-.decl conditional_architecture_qual9(d: number, q: symbol)
-.decl conditional_architecture_qual10(d: number, q: symbol)
-.decl conditional_architecture_qual11(d: number, q: symbol)
-.decl conditional_architecture_qual12(d: number, q: symbol)
-.decl conditional_architecture_qual13(d: number, q: symbol)
-.decl conditional_architecture_qual14(d: number, q: symbol)
-.decl conditional_architecture_qual15(d: number, q: symbol)
-.decl conditional_architecture_qual16(d: number, q: symbol)
-.decl conditional_architecture_qual17(d: number, q: symbol)
-.decl conditional_architecture_qual18(d: number, q: symbol)
-.decl conditional_architecture_qual19(d: number, q: symbol)
-.decl conditional_architecture_qual20(d: number, q: symbol)
-.decl conditional_architecture_qual21(d: number, q: symbol)
-.decl conditional_architecture_qual22(d: number, q: symbol)
-.decl conditional_architecture_qual23(d: number, q: symbol)
-.decl conditional_architecture_qual24(d: number, q: symbol)
-.decl conditional_architecture_qual25(d: number, q: symbol)
-.decl conditional_architecture_qual26(d: number, q: symbol)
-.decl conditional_architecture_qual27(d: number, q: symbol)
-.decl conditional_architecture_qual28(d: number, q: symbol)
-.decl conditional_architecture_qual29(d: number, q: symbol)
-.decl conditional_architecture_qual30(d: number, q: symbol)
-.decl conditional_architecture_qual31(d: number, q: symbol)
-.decl conditional_architecture_pbase_from(d: number, j: number)
 .decl conditional_architecture_module(d: number, q: symbol)
-.decl conditional_architecture_gslash_from(d: number, s: number, j: number)
-.decl conditional_architecture_gslash_before(d: number, s: number, j: number)
 .decl conditional_architecture_from_item(d: number, s: number, i: node, n: node)
 .decl conditional_architecture_direct_item(d: number, s: number, i: node, n: node)
-.decl conditional_architecture_mstrip(n: node, t: symbol)
 .decl conditional_architecture_has_sub(x: node)
 .decl conditional_architecture_mfull(n: node, t: symbol)
 .decl conditional_architecture_alias(d: number, s: number, l: symbol, o: symbol)
 .decl conditional_architecture_cclass(d: number, n: node, s: number, e: number, nm: symbol, qn: symbol)
 .decl conditional_architecture_has_qn(qn: symbol)
-.decl conditional_architecture_base(c: node, b: node)
+.decl conditional_architecture_sup(c: node, t: symbol, n: number)
+.decl conditional_architecture_digit(i: number)
+.decl conditional_architecture_sup_k1(c: node, k: number)
+.decl conditional_architecture_sup_k2(c: node, k: number)
+.decl conditional_architecture_sup_k3(c: node, k: number)
+.decl conditional_architecture_sup_k(c: node, k: number)
+.decl conditional_architecture_split(c: node, k: number)
+.decl conditional_architecture_cut(c: node, k: number)
+.decl conditional_architecture_stop(c: node, k: number)
+.decl conditional_architecture_item(c: node, x: symbol)
+.decl conditional_architecture_base(c: node, x: symbol)
+.decl conditional_architecture_base_head(x: symbol, h: symbol)
+.decl conditional_architecture_base_suffix(x: symbol, sf: symbol)
+.decl conditional_architecture_ann(a: node, x: symbol)
+.decl conditional_architecture_ann_head(a: node, h: symbol)
 .decl conditional_architecture_sp_cand(f: node, i: number, ann: node)
 .decl conditional_architecture_step_ann(f: node, ann: node)
-.decl conditional_architecture_root(r: node)
-.decl conditional_architecture_head(r: node, h: node, hs: symbol)
-.decl conditional_architecture_chain(r: node, x: node, sf: symbol)
-.decl conditional_architecture_chain_more(r: node, x: node)
-.decl conditional_architecture_lead_suffix(r: node, sf: symbol)
-.decl conditional_architecture_full_suffix(r: node, sf: symbol)
-.decl conditional_architecture_has_full_suffix(r: node)
 .decl conditional_architecture_resolve_need(d: number, h: symbol, cs: number)
 .decl conditional_architecture_resolve_cand(d: number, h: symbol, cs: number, s: number)
 .decl conditional_architecture_has_resolve_cand(d: number, h: symbol, cs: number)
@@ -3179,146 +3093,55 @@ conditional_architecture_k_typed("typed_parameter"). conditional_architecture_k_
 conditional_architecture_k_contract("impl.common.l2070_server_plan.sql_backend_executor.SqlBackendExecutor"). conditional_architecture_k_contract("impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"). conditional_architecture_k_contract("l2070_batching.conditional_step.ConditionalStep").
 conditional_architecture_class(d, n, s, e, nm) :- conditional_architecture_classes(n), node(d, n, _, s, e), field(n, "name", x), text(x, nm).
 conditional_architecture_fn(d, n, s, e, nm) :- conditional_architecture_fns(n), node(d, n, _, s, e), field(n, "name", x), text(x, nm).
-conditional_architecture_dig(0). conditional_architecture_dig(1). conditional_architecture_dig(2). conditional_architecture_dig(3). conditional_architecture_dig(4). conditional_architecture_dig(5). conditional_architecture_dig(6). conditional_architecture_dig(7). conditional_architecture_dig(8). conditional_architecture_dig(9). conditional_architecture_dig(10). conditional_architecture_dig(11). conditional_architecture_dig(12). conditional_architecture_dig(13). conditional_architecture_dig(14). conditional_architecture_dig(15). conditional_architecture_dig(16). conditional_architecture_dig(17). conditional_architecture_dig(18). conditional_architecture_dig(19). conditional_architecture_dig(20). conditional_architecture_dig(21). conditional_architecture_dig(22). conditional_architecture_dig(23). conditional_architecture_dig(24). conditional_architecture_dig(25). conditional_architecture_dig(26). conditional_architecture_dig(27). conditional_architecture_dig(28). conditional_architecture_dig(29). conditional_architecture_dig(30). conditional_architecture_dig(31). conditional_architecture_dig(32). conditional_architecture_dig(33). conditional_architecture_dig(34). conditional_architecture_dig(35). conditional_architecture_dig(36). conditional_architecture_dig(37). conditional_architecture_dig(38). conditional_architecture_dig(39). conditional_architecture_dig(40). conditional_architecture_dig(41). conditional_architecture_dig(42). conditional_architecture_dig(43). conditional_architecture_dig(44). conditional_architecture_dig(45). conditional_architecture_dig(46). conditional_architecture_dig(47). conditional_architecture_dig(48). conditional_architecture_dig(49). conditional_architecture_dig(50). conditional_architecture_dig(51). conditional_architecture_dig(52). conditional_architecture_dig(53). conditional_architecture_dig(54). conditional_architecture_dig(55). conditional_architecture_dig(56). conditional_architecture_dig(57). conditional_architecture_dig(58). conditional_architecture_dig(59). conditional_architecture_dig(60). conditional_architecture_dig(61). conditional_architecture_dig(62). conditional_architecture_dig(63).
+conditional_architecture_digit(0). conditional_architecture_digit(1). conditional_architecture_digit(2). conditional_architecture_digit(3). conditional_architecture_digit(4). conditional_architecture_digit(5). conditional_architecture_digit(6). conditional_architecture_digit(7). conditional_architecture_digit(8). conditional_architecture_digit(9). conditional_architecture_digit(10). conditional_architecture_digit(11). conditional_architecture_digit(12). conditional_architecture_digit(13). conditional_architecture_digit(14). conditional_architecture_digit(15). conditional_architecture_digit(16). conditional_architecture_digit(17). conditional_architecture_digit(18). conditional_architecture_digit(19). conditional_architecture_digit(20). conditional_architecture_digit(21). conditional_architecture_digit(22). conditional_architecture_digit(23). conditional_architecture_digit(24). conditional_architecture_digit(25). conditional_architecture_digit(26). conditional_architecture_digit(27). conditional_architecture_digit(28). conditional_architecture_digit(29). conditional_architecture_digit(30). conditional_architecture_digit(31). conditional_architecture_digit(32). conditional_architecture_digit(33). conditional_architecture_digit(34). conditional_architecture_digit(35). conditional_architecture_digit(36). conditional_architecture_digit(37). conditional_architecture_digit(38). conditional_architecture_digit(39). conditional_architecture_digit(40). conditional_architecture_digit(41). conditional_architecture_digit(42). conditional_architecture_digit(43). conditional_architecture_digit(44). conditional_architecture_digit(45). conditional_architecture_digit(46). conditional_architecture_digit(47). conditional_architecture_digit(48). conditional_architecture_digit(49). conditional_architecture_digit(50). conditional_architecture_digit(51). conditional_architecture_digit(52). conditional_architecture_digit(53). conditional_architecture_digit(54). conditional_architecture_digit(55). conditional_architecture_digit(56). conditional_architecture_digit(57). conditional_architecture_digit(58). conditional_architecture_digit(59). conditional_architecture_digit(60). conditional_architecture_digit(61). conditional_architecture_digit(62). conditional_architecture_digit(63).
 conditional_architecture_mpath(d, p) :- conditional_architecture_class(d, _, _, _, _), doc(d, p, _).
 conditional_architecture_mpath(d, p) :- conditional_architecture_fn(d, _, _, _, _), doc(d, p, _).
-conditional_architecture_ppos(d, i) :- conditional_architecture_mpath(d, p), l = strlen(p), conditional_architecture_dig(a), a * 64 <= l, conditional_architecture_dig(b), i = a * 64 + b, i <= l.
-conditional_architecture_pcut(d, 0) :- conditional_architecture_mpath(d, p), match("(?:impl|l2070_batching|scripts)/(?s:.*)", p).
-conditional_architecture_pcut(d, i) :- conditional_architecture_ppos(d, i), conditional_architecture_mpath(d, p), i > 0, k = i - 1, substr(p, k, 1) = "/", n = strlen(p) - i, u = substr(p, i, n), match("(?:impl|l2070_batching|scripts)/(?s:.*)", u).
-conditional_architecture_has_pcut(d) :- conditional_architecture_pcut(d, _).
-conditional_architecture_pgroup(d, i, n) :- conditional_architecture_has_pcut(d), i = min j : { conditional_architecture_pcut(d, j) }, conditional_architecture_mpath(d, p), match("(?s:.*)\\.py", p), n = strlen(p) - i - 3.
-conditional_architecture_pslash(d, i) :- conditional_architecture_ppos(d, i), conditional_architecture_mpath(d, p), i < strlen(p), substr(p, i, 1) = "/".
-conditional_architecture_has_pslash(d) :- conditional_architecture_pslash(d, _).
-conditional_architecture_gslash(d, j) :- conditional_architecture_pgroup(d, i, n), conditional_architecture_pslash(d, j), j >= i, j < i + n.
-conditional_architecture_gstart(d, i) :- conditional_architecture_pgroup(d, i, _).
-conditional_architecture_gstart(d, s) :- conditional_architecture_gslash(d, j), s = j + 1.
-conditional_architecture_gslash_from(d, s, j) :- conditional_architecture_gstart(d, s), conditional_architecture_gslash(d, j), j >= s.
-conditional_architecture_gslash_before(d, s, j) :- conditional_architecture_gstart(d, s), conditional_architecture_gslash(d, j), j < s.
-conditional_architecture_has_gend_slash(d, s) :- conditional_architecture_gslash_from(d, s, _).
-conditional_architecture_gend(d, s, e) :- conditional_architecture_has_gend_slash(d, s), e = min j : { conditional_architecture_gslash_from(d, s, j) }.
-conditional_architecture_gend(d, s, e) :- conditional_architecture_gstart(d, s), !conditional_architecture_has_gend_slash(d, s), conditional_architecture_pgroup(d, i, n), e = i + n.
-conditional_architecture_comp(d, k, c) :- conditional_architecture_gstart(d, s), conditional_architecture_gend(d, s, e), conditional_architecture_mpath(d, p), n = e - s, c = substr(p, s, n), k = count : { conditional_architecture_gslash_before(d, s, _) }.
-conditional_architecture_ncomp(d, k) :- conditional_architecture_pgroup(d, _, _), m = count : { conditional_architecture_gslash(d, _) }, k = m + 1.
-conditional_architecture_qual0(d, c) :- conditional_architecture_comp(d, 0, c).
-conditional_architecture_qual1(d, s) :- conditional_architecture_qual0(d, a), conditional_architecture_comp(d, 1, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual2(d, s) :- conditional_architecture_qual1(d, a), conditional_architecture_comp(d, 2, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual3(d, s) :- conditional_architecture_qual2(d, a), conditional_architecture_comp(d, 3, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual4(d, s) :- conditional_architecture_qual3(d, a), conditional_architecture_comp(d, 4, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual5(d, s) :- conditional_architecture_qual4(d, a), conditional_architecture_comp(d, 5, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual6(d, s) :- conditional_architecture_qual5(d, a), conditional_architecture_comp(d, 6, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual7(d, s) :- conditional_architecture_qual6(d, a), conditional_architecture_comp(d, 7, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual8(d, s) :- conditional_architecture_qual7(d, a), conditional_architecture_comp(d, 8, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual9(d, s) :- conditional_architecture_qual8(d, a), conditional_architecture_comp(d, 9, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual10(d, s) :- conditional_architecture_qual9(d, a), conditional_architecture_comp(d, 10, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual11(d, s) :- conditional_architecture_qual10(d, a), conditional_architecture_comp(d, 11, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual12(d, s) :- conditional_architecture_qual11(d, a), conditional_architecture_comp(d, 12, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual13(d, s) :- conditional_architecture_qual12(d, a), conditional_architecture_comp(d, 13, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual14(d, s) :- conditional_architecture_qual13(d, a), conditional_architecture_comp(d, 14, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual15(d, s) :- conditional_architecture_qual14(d, a), conditional_architecture_comp(d, 15, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual16(d, s) :- conditional_architecture_qual15(d, a), conditional_architecture_comp(d, 16, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual17(d, s) :- conditional_architecture_qual16(d, a), conditional_architecture_comp(d, 17, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual18(d, s) :- conditional_architecture_qual17(d, a), conditional_architecture_comp(d, 18, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual19(d, s) :- conditional_architecture_qual18(d, a), conditional_architecture_comp(d, 19, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual20(d, s) :- conditional_architecture_qual19(d, a), conditional_architecture_comp(d, 20, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual21(d, s) :- conditional_architecture_qual20(d, a), conditional_architecture_comp(d, 21, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual22(d, s) :- conditional_architecture_qual21(d, a), conditional_architecture_comp(d, 22, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual23(d, s) :- conditional_architecture_qual22(d, a), conditional_architecture_comp(d, 23, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual24(d, s) :- conditional_architecture_qual23(d, a), conditional_architecture_comp(d, 24, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual25(d, s) :- conditional_architecture_qual24(d, a), conditional_architecture_comp(d, 25, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual26(d, s) :- conditional_architecture_qual25(d, a), conditional_architecture_comp(d, 26, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual27(d, s) :- conditional_architecture_qual26(d, a), conditional_architecture_comp(d, 27, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual28(d, s) :- conditional_architecture_qual27(d, a), conditional_architecture_comp(d, 28, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual29(d, s) :- conditional_architecture_qual28(d, a), conditional_architecture_comp(d, 29, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual30(d, s) :- conditional_architecture_qual29(d, a), conditional_architecture_comp(d, 30, c), s = cat(cat(a, "."), c).
-conditional_architecture_qual31(d, s) :- conditional_architecture_qual30(d, a), conditional_architecture_comp(d, 31, c), s = cat(cat(a, "."), c).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 1), conditional_architecture_qual0(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 2), conditional_architecture_qual1(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 3), conditional_architecture_qual2(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 4), conditional_architecture_qual3(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 5), conditional_architecture_qual4(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 6), conditional_architecture_qual5(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 7), conditional_architecture_qual6(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 8), conditional_architecture_qual7(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 9), conditional_architecture_qual8(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 10), conditional_architecture_qual9(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 11), conditional_architecture_qual10(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 12), conditional_architecture_qual11(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 13), conditional_architecture_qual12(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 14), conditional_architecture_qual13(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 15), conditional_architecture_qual14(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 16), conditional_architecture_qual15(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 17), conditional_architecture_qual16(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 18), conditional_architecture_qual17(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 19), conditional_architecture_qual18(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 20), conditional_architecture_qual19(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 21), conditional_architecture_qual20(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 22), conditional_architecture_qual21(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 23), conditional_architecture_qual22(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 24), conditional_architecture_qual23(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 25), conditional_architecture_qual24(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 26), conditional_architecture_qual25(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 27), conditional_architecture_qual26(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 28), conditional_architecture_qual27(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 29), conditional_architecture_qual28(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 30), conditional_architecture_qual29(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 31), conditional_architecture_qual30(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 32), conditional_architecture_qual31(d, s).
-conditional_architecture_pbase_from(d, 0) :- conditional_architecture_mpath(d, _), !conditional_architecture_has_pslash(d).
-conditional_architecture_pbase_from(d, j) :- conditional_architecture_has_pslash(d), m = max i : { conditional_architecture_pslash(d, i) }, j = m + 1.
-conditional_architecture_module(d, s) :- conditional_architecture_mpath(d, p), !conditional_architecture_has_pcut(d), conditional_architecture_pbase_from(d, j), n = strlen(p) - j, b = substr(p, j, n), match("(?s:.+)\\.py", b), k = strlen(b) - 3, s = substr(b, 0, k).
+// module_names: rx_extract(path, RE, 1) is the group of @rx_replace(path, '^(?s:.*?)(?:RE)(?s:.*)$', '$1') where RE
+// matches (the lazy prefix puts the match where find_iter's first one starts, and RE's own preference is the same).
+conditional_architecture_module(d, q) :- conditional_architecture_mpath(d, p), match("(?s:.*)(?:(?:^|/)(?:impl|l2070_batching|scripts)/)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)", p), u = @rx_replace(p, "^(?s:.*?)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)$", "$1"), q = @rx_replace(u, "/", ".").
+conditional_architecture_module(d, q) :- conditional_architecture_mpath(d, p), !match("(?s:.*)(?:(?:^|/)(?:impl|l2070_batching|scripts)/)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)([^/]+)\\.py$)(?s:.*)", p), q = @rx_replace(p, "^(?s:.*?)(?:(?:^|/)([^/]+)\\.py$)(?s:.*)$", "$1").
 conditional_architecture_from_item(d, s, i, n) :- conditional_architecture_from_names(n), child(n, i, _), node(d, i, k, s, _), conditional_architecture_k_import_item(k), !field(n, "module_name", i).
 conditional_architecture_direct_item(d, s, i, n) :- conditional_architecture_direct_names(n), child(n, i, _), node(d, i, k, s, _), conditional_architecture_k_import_item(k), !field(n, "module_name", i).
-conditional_architecture_mstrip(n, t) :- conditional_architecture_from_names(n), field(n, "module_name", m), node_text(m, t).
-conditional_architecture_mstrip(n, u) :- conditional_architecture_mstrip(n, t), substr(t, 0, 1) = ".", u = substr(t, 1, 1000000000).
-conditional_architecture_mfull(n, t) :- conditional_architecture_mstrip(n, t), substr(t, 0, 1) != ".".
+conditional_architecture_mfull(n, t) :- conditional_architecture_from_names(n), field(n, "module_name", m), node_text(m, x), t = @rx_replace(x, "^\\.+|\\.+$", "").
 conditional_architecture_alias(d, s, l, o) :- conditional_architecture_from_item(d, s, i, n), node(d, i, "dotted_name", _, _), node_text(i, l), conditional_architecture_mfull(n, m), o = cat(cat(m, "."), l).
 conditional_architecture_alias(d, s, l, o) :- conditional_architecture_from_item(d, s, i, n), node(d, i, "aliased_import", _, _), field(i, "alias", a), node_text(a, l), field(i, "name", x), node_text(x, nm), conditional_architecture_mfull(n, m), o = cat(cat(m, "."), nm).
-conditional_architecture_alias(d, s, l, o) :- conditional_architecture_direct_item(d, s, i, _), node(d, i, "dotted_name", _, _), child(i, h, 0), text(h, l), node_text(i, o).
+conditional_architecture_alias(d, s, l, o) :- conditional_architecture_direct_item(d, s, i, _), node(d, i, "dotted_name", _, _), node_text(i, o), match("\\w(?s:.*)", o), l = @rx_replace(o, "^(\\w+)(?s:.*)$", "$1").
 conditional_architecture_alias(d, s, l, o) :- conditional_architecture_direct_item(d, s, i, _), node(d, i, "aliased_import", _, _), field(i, "alias", a), node_text(a, l), field(i, "name", x), node_text(x, o).
 conditional_architecture_cclass(d, n, s, e, nm, qn) :- conditional_architecture_class(d, n, s, e, nm), s = max u : { conditional_architecture_class(d, _, u, _, nm) }, conditional_architecture_module(d, m), qn = cat(cat(m, "."), nm).
 conditional_architecture_has_qn(qn) :- conditional_architecture_cclass(_, _, _, _, _, qn).
-conditional_architecture_base(c, b) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_class_sups(c), field(c, "superclasses", g), child(g, b, _), !conditional_architecture_base_xseg(g, b), node_text(b, x), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", x).
-conditional_architecture_base(c, b) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_class_sups(c), field(c, "superclasses", g), child(g, b, _), !conditional_architecture_base_xseg(g, b), node_text(b, x), match("[A-Za-z_][\\w.\\s]*\\((?s:.*)\\)", x).
-// base_scan's segment of child b is the argument list's tape tokens between the top-level separators ("(", ",", ")")
-// around it: a comment or line_continuation token there is in the scanned item, which then fails both bases regexes
-// (it starts or ends with the extra, or the extra breaks `[\w.\s]*`/the closing ')'), so b gives no base (_xseg).
-.decl conditional_architecture_sg(g: node)
-.decl conditional_architecture_sep(g: node, i: number)
-.decl conditional_architecture_xt(g: node, i: number)
-.decl conditional_architecture_ti(g: node, b: node, i: number)
-.decl conditional_architecture_xcand(g: node, lo: number, hi: number)
-.decl conditional_architecture_xblocked(g: node, lo: number, hi: number)
-.decl conditional_architecture_base_xseg(g: node, b: node)
-conditional_architecture_sg(g) :- conditional_architecture_class_sups(c), field(c, "superclasses", g).
-conditional_architecture_sep(g, i) :- conditional_architecture_sg(g), token(g, i, ",", _, _).
-conditional_architecture_sep(g, i) :- conditional_architecture_sg(g), token(g, i, "(", _, _).
-conditional_architecture_sep(g, i) :- conditional_architecture_sg(g), token(g, i, ")", _, _).
-conditional_architecture_xt(g, i) :- conditional_architecture_sg(g), token(g, i, t, _, _), substr(t, 0, 1) = "#".
-conditional_architecture_xt(g, i) :- conditional_architecture_sg(g), token(g, i, t, _, _), substr(t, 0, 1) = "\\".
-conditional_architecture_ti(g, b, i) :- conditional_architecture_xt(g, _), child(g, b, _), node(_, b, _, s, e), token(g, i, _, s, e).
-conditional_architecture_xcand(g, j, i) :- conditional_architecture_ti(g, _, i), conditional_architecture_xt(g, j), j < i.
-conditional_architecture_xcand(g, i, j) :- conditional_architecture_ti(g, _, i), conditional_architecture_xt(g, j), i < j.
-conditional_architecture_xblocked(g, lo, hi) :- conditional_architecture_xcand(g, lo, hi), conditional_architecture_sep(g, k), lo < k, k < hi.
-conditional_architecture_base_xseg(g, b) :- conditional_architecture_ti(g, b, i), conditional_architecture_xt(g, j), j < i, !conditional_architecture_xblocked(g, j, i).
-conditional_architecture_base_xseg(g, b) :- conditional_architecture_ti(g, b, i), conditional_architecture_xt(g, j), i < j, !conditional_architecture_xblocked(g, i, j).
+// base_scan: t is the superclasses text without its parentheses, n its commas. A comma (the k-th, from 0) splits at
+// depth 0 where the text before it opens as many brackets as it closes (split); the items are the texts between
+// consecutive splits (cut: commas skipped before the item, from the start or after a split; stop: the next split or
+// the end), trimmed of space, tab, LF and CR. k runs over sup_k: n's digits in base 64, four of them.
+conditional_architecture_sup(c, t, n) :- conditional_architecture_class_sups(c), field(c, "superclasses", g), node_text(g, x), t = substr(x, 1, strlen(x) - 2), n = strlen(@rx_replace(t, "[^,]", "")).
+conditional_architecture_sup_k1(c, k) :- conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = a * 262144, k < n.
+conditional_architecture_sup_k2(c, k) :- conditional_architecture_sup_k1(c, h), conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = h + a * 4096, k < n.
+conditional_architecture_sup_k3(c, k) :- conditional_architecture_sup_k2(c, h), conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = h + a * 64, k < n.
+conditional_architecture_sup_k(c, k) :- conditional_architecture_sup_k3(c, h), conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = h + a, k < n.
+conditional_architecture_split(c, k) :- conditional_architecture_sup_k(c, k), conditional_architecture_sup(c, t, _), re = cat(cat("^((?:[^,]*,){", to_string(k)), "}[^,]*),(?s:.*)$"), u = @rx_replace(t, re, "$1"), o = strlen(@rx_replace(u, "[^(\\[{]", "")), z = strlen(@rx_replace(u, "[^)\\]}]", "")), o = z.
+conditional_architecture_cut(c, 0) :- conditional_architecture_sup(c, _, _).
+conditional_architecture_cut(c, j) :- conditional_architecture_split(c, k), j = k + 1.
+conditional_architecture_stop(c, k) :- conditional_architecture_split(c, k).
+conditional_architecture_stop(c, n) :- conditional_architecture_sup(c, _, n).
+conditional_architecture_item(c, x) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _), q = min y : { conditional_architecture_stop(c, y), y >= j }, re = cat(cat(cat(cat("^(?:[^,]*,){", to_string(j)), "}([^,]*(?:,[^,]*){"), to_string(q - j)), "})(?:,(?s:.*))?$"), u = @rx_replace(t, re, "$1"), x = @rx_replace(u, "^[ \\t\\n\\r]+|[ \\t\\n\\r]+$", "").
+// bases, over the items of a cclasses row (class_bases joins them to it).
+conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", x).
+conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_][\\w.\\s]*\\((?s:.*)", x), match("(?s:.*)\\)", x).
 conditional_architecture_sp_cand(f, i, ann) :- conditional_architecture_step_params(f), field(f, "parameters", ps), child(ps, tp, i), node(_, tp, k, _, _), conditional_architecture_k_typed(k), child(tp, x, 0), node(_, x, "identifier", _, _), text(x, "step"), field(tp, "type", ann).
 conditional_architecture_step_ann(f, ann) :- conditional_architecture_sp_cand(f, i, ann), i = min j : { conditional_architecture_sp_cand(f, j, _) }.
-conditional_architecture_root(b) :- conditional_architecture_base(_, b).
-conditional_architecture_root(a) :- conditional_architecture_step_ann(_, a).
-conditional_architecture_head(r, h, hs) :- conditional_architecture_root(r), node(d, r, _, s, _), node(d, h, "identifier", s, _), text(h, hs).
-conditional_architecture_chain(r, h, "") :- conditional_architecture_head(r, h, _).
-conditional_architecture_chain(r, a, s2) :- conditional_architecture_chain(r, x, s1), field(a, "object", x), node(d, a, "attribute", _, ae), node(d, r, _, _, re), ae <= re, field(a, "attribute", y), node(d, x, _, _, xe), node(d, y, _, ys, _), ys = xe + 1, text(y, at), s2 = cat(cat(s1, "."), at).
-conditional_architecture_chain_more(r, x) :- conditional_architecture_chain(r, x, _), conditional_architecture_chain(r, a, _), field(a, "object", x).
-conditional_architecture_lead_suffix(r, s) :- conditional_architecture_chain(r, x, s), !conditional_architecture_chain_more(r, x).
-conditional_architecture_full_suffix(r, s) :- conditional_architecture_chain(r, x, s), node(d, x, _, _, e), node(d, r, _, _, e).
-conditional_architecture_has_full_suffix(r) :- conditional_architecture_full_suffix(r, _).
-conditional_architecture_resolve_need(d, h, cs) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, b), conditional_architecture_head(b, _, h).
-conditional_architecture_resolve_need(d, h, fs) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_head(a, _, h).
+// rx_extract(x,'^([\w]+)',1) and rx_extract(x,'^[\w]+((?:\.[\w]+)*)',1) (with '$' for the step annotation): the groups
+// of @rx_replace over the same anchored regex; no head (NULL) gives no row, as NULL equals no name.
+conditional_architecture_base_head(x, h) :- conditional_architecture_base(_, x), match("\\w(?s:.*)", x), h = @rx_replace(x, "^(\\w+)(?s:.*)$", "$1").
+conditional_architecture_base_suffix(x, sf) :- conditional_architecture_base_head(x, _), sf = @rx_replace(x, "^\\w+((?:\\.\\w+)*)(?s:.*)$", "$1").
+conditional_architecture_ann(a, x) :- conditional_architecture_step_ann(_, a), node_text(a, x).
+conditional_architecture_ann_head(a, h) :- conditional_architecture_ann(a, x), match("\\w(?s:.*)", x), h = @rx_replace(x, "^(\\w+)(?s:.*)$", "$1").
+conditional_architecture_resolve_need(d, h, cs) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, x), conditional_architecture_base_head(x, h).
+conditional_architecture_resolve_need(d, h, fs) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_ann_head(a, h).
 conditional_architecture_resolve_cand(d, h, cs, s) :- conditional_architecture_resolve_need(d, h, cs), conditional_architecture_alias(d, s, h, _), s < cs.
 conditional_architecture_has_resolve_cand(d, h, cs) :- conditional_architecture_resolve_cand(d, h, cs, _).
 conditional_architecture_resolved(d, h, cs, o) :- conditional_architecture_has_resolve_cand(d, h, cs), m = max s : { conditional_architecture_resolve_cand(d, h, cs, s) }, conditional_architecture_alias(d, m, h, o).
 conditional_architecture_resolved(d, h, cs, h) :- conditional_architecture_resolve_need(d, h, cs), !conditional_architecture_has_resolve_cand(d, h, cs).
-conditional_architecture_class_base(c, nm) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, b), conditional_architecture_head(b, _, h), conditional_architecture_resolved(d, h, cs, o), conditional_architecture_lead_suffix(b, sf), nm = cat(o, sf).
+conditional_architecture_class_base(c, nm) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, x), conditional_architecture_base_head(x, h), conditional_architecture_resolved(d, h, cs, o), conditional_architecture_base_suffix(x, sf), nm = cat(o, sf).
 conditional_architecture_derived("l2070_batching.conditional_step.ConditionalStep").
 conditional_architecture_derived(qn) :- conditional_architecture_derived(b), conditional_architecture_class_base(c, b), conditional_architecture_cclass(_, c, _, _, _, qn).
 conditional_architecture_fn_in(f, c, cs) :- conditional_architecture_fn(d, f, fs, fe, _), conditional_architecture_class(d, c, cs, ce, _), cs < fs, ce >= fe.
@@ -3392,9 +3215,9 @@ conditional_architecture_phys_compile_ok(c) :- conditional_architecture_cmethod(
 conditional_architecture_sem_contract_ok(c) :- conditional_architecture_cmethod(_, m, _, _, "require_sql_physical_conditional", c), conditional_architecture_always(m).
 conditional_architecture_phys_contract_ok(c) :- conditional_architecture_cmethod(_, m, _, _, "require_sql_physical_conditional", c), !conditional_architecture_always(m), !conditional_architecture_backend_fns(m).
 conditional_architecture_lower_ok(c) :- conditional_architecture_cmethod(d, m, ms, me, "_lower_conditional_step", c), conditional_architecture_ncall(d, s, e, x, _), s >= ms, e <= me, match("(?s:.*)(?:SqlConditionalStep\\.from_semantic$)(?s:.*)", x).
-conditional_architecture_ann_suffix(a, s) :- conditional_architecture_full_suffix(a, s), conditional_architecture_step_ann(_, a).
-conditional_architecture_ann_suffix(a, "") :- conditional_architecture_step_ann(_, a), !conditional_architecture_has_full_suffix(a).
-conditional_architecture_step_ok(f) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_head(a, _, h), conditional_architecture_resolved(d, h, fs, o), conditional_architecture_ann_suffix(a, sf), nm = cat(o, sf), nm = "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep".
+conditional_architecture_ann_suffix(a, s) :- conditional_architecture_ann(a, x), match("\\w+(?:\\.\\w+)*", x), s = @rx_replace(x, "^\\w+((?:\\.\\w+)*)$", "$1").
+conditional_architecture_ann_suffix(a, "") :- conditional_architecture_ann(a, x), !match("\\w+(?:\\.\\w+)*", x).
+conditional_architecture_step_ok(f) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_ann_head(a, h), conditional_architecture_resolved(d, h, fs, o), conditional_architecture_ann_suffix(a, sf), nm = cat(o, sf), nm = "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep".
 conditional_architecture_req_call(f, l) :- conditional_architecture_cfunc(d, f, fs, fe, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_ncall(d, s, e, "step.require_sql_physical_conditional", l), s >= fs, e <= fe.
 conditional_architecture_strat_line(f, l) :- conditional_architecture_cfunc(d, f, fs, fe, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_ncall(d, s, e, x, l), s >= fs, e <= fe, match("(?s:.*)(?:_conditional_strategy$)(?s:.*)", x).
 conditional_architecture_strat_before(f, l) :- conditional_architecture_req_call(f, l), conditional_architecture_strat_line(f, k), k <= l.
