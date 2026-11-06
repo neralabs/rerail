@@ -140,9 +140,10 @@
 // In `function f() { g(); }`: within(call_g, body), within(call_g, f), but not within(f, call_g).
 .decl within(n: node, a: node)                           // n is strictly below a
 // Cost: a range test per pair, but its rows are every (node, ancestor) pair. Bind both ends, or use inside/nearest.
-// inside(n, a, set) / has(a, n, set): a is a strict ancestor of n whose kind is in set (decision 0036); the same
-// pairs, read from either end. inside(call, f, "function_definition"): call is somewhere in f. These are the
-// forms rules use: the kind set is part of the axis, so the transducer answers them in one tape pass.
+// inside(n, a, set): a is a strict ancestor of n, and a's kind is in set. has(a, n, set): n is a strict descendant
+// of a, and n's kind is in set. The set always constrains the end being looked for (decision 0036):
+// inside(call, f, "function_definition"): call is somewhere in function f. !has(b, _, "comment"): no comment
+// anywhere inside b. The kind set is part of the axis, so the transducer answers either in one tape pass.
 // Cost (inside, has, nearest, within_stop, precedes_stop): one tape pass per axis and set; keep the set small.
 .decl inside(n: node, a: node, set: relation)
 .decl has(a: node, n: node, set: relation)
