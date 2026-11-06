@@ -45,6 +45,37 @@ pub(super) fn glob_literal(s: &str) -> String {
     out
 }
 
+/// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
+/// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
+/// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
+pub(super) fn search(op: &str, p: &str) -> String {
+    match (op, whole(p)) {
+        ("rx", Some(x)) => x.to_owned(),
+        ("rx", None) => format!("(?s:.*)(?:{p})(?s:.*)"),
+        _ => format!("(?i:(?s:.*)(?:{p})(?s:.*))"),
+    }
+}
+
+/// `X` where `p` is `^(?:X)$`, the group closing at the end.
+fn whole(p: &str) -> Option<&str> {
+    let inner = p.strip_prefix("^(?:")?.strip_suffix(")$")?;
+    // The group `(?:` opens must close only at the last `)`: inside, every `(` closes again.
+    let (mut depth, mut chars, mut class) = (0usize, inner.chars(), false);
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '[' if !class => class = true,
+            ']' if class => class = false,
+            '(' if !class => depth += 1,
+            ')' if !class => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth == 0 && !class).then_some(inner)
+}
+
 /// The text test `op(s, pattern)`, holding or (`neg`) failing.
 fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> {
     let s = term(s)?;
@@ -57,8 +88,7 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
-            "rx" => format!("{bang}match({}, {s})", quote(&format!("(?s).*(?:{p}).*"))),
-            "irx" => format!("{bang}match({}, {s})", quote(&format!("(?is).*(?:{p}).*"))),
+            "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })
     };
