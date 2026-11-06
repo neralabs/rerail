@@ -578,13 +578,11 @@ impl Emitter {
             body.extend(self.tests(source, &s, &["name(_, $s)"], Text::Name)?);
             return Ok(body);
         }
-        // A module's text: read as the names in its file, where the regex only looks for names.
-        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) && module_names(&hir) {
-            self.approx.insert("a module's text read as its file's names".into());
-            let (d, m, s) = (self.var(), self.var(), self.var());
-            let mut body = vec![format!("node({d}, {n}, _, _, _)"), format!("node({d}, {m}, _, _, _)"), format!("name({m}, {s})")];
-            body.extend(self.tests_hir(&hir, source, &s, &["name(_, $s)"], Text::Name)?);
-            return Ok(body);
+        // A module's text, exactly: W's regex searches the file's text (from its first token, comments and strings
+        // included), which `node_text` holds; `rx` is that search.
+        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) {
+            let s = self.var();
+            return Ok(vec![format!("node_text({n}, {s})"), format!("@rx({s}, {})", quote(source))]);
         }
         if !text_kinds {
             return gap(format!("a regex on the text of {} ({source})", names.map_or("any node".to_owned(), |k| k.into_iter().collect::<Vec<_>>().join("|"))));
@@ -807,7 +805,7 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl node_text(n: node, s: sym)
 ";
 
-const BASE_RELATIONS: [&str; 12] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error"];
+const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
 
 /// Python's keywords: tokens, never names.
 const KEYWORDS: [&str; 35] = [
@@ -1341,16 +1339,6 @@ pub(in crate::code_rule_dsl) enum Text {
     Path,
     /// A string's content: any characters.
     Content,
-}
-
-/// Whether a regex only looks for names: literal alternatives of word characters and dots.
-fn module_names(hir: &Hir) -> bool {
-    let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
-    match shape(hir) {
-        Some(Shape::Names(set)) => set.iter().all(|w| word(w)),
-        Some(Shape::Tests(tests)) => tests.iter().all(|(_, w)| word(w)),
-        _ => false,
-    }
 }
 
 /// `$s` is one of `set`: `$s = "a"`, or `$s in {"a", "b"}`.
