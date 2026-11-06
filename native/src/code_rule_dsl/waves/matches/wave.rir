@@ -28143,7 +28143,7 @@ program sha256:65c42b3fb22c4179498dc5de51b7c548c6e526e3b43446ecc2348e07c107c186 
   0011 SUPERTYPE #61903
   0012 CAPTURE L4  ; match
   0013 EMIT L1  ; matcher
-setplan ops=689 outputs=158
+setplan ops=467 outputs=158
   S0 = all
   S1 = kinds [string]
   S2 = kinds [interpolation]
@@ -28151,843 +28151,621 @@ setplan ops=689 outputs=158
   S4 = kinds [assignment]
   S5 = kinds [identifier attribute subscript]
   S6 = kinds [identifier]
-  S7 = intersect S5 S6
-  S8 = intersect S6 S7
-  S9 = intersect S6 S8
-  S10 = terms regex "(?i)(?:^|_)(?:pas+wo?r?d|pass(?:phrase)?|pwd|token|secrete?)(?:$|_)"
-  S11 = uncovered
-  S12 = union [S10 S11]
-  S13 = intersect S9 S12
-  S14 = kinds [attribute]
-  S15 = intersect S5 S14
-  S16 = intersect S14 S15
-  S17 = intersect S14 S16
-  S18 = kinds [subscript]
-  S19 = intersect S5 S18
-  S20 = intersect S18 S19
-  S21 = intersect S18 S20
-  S22 = terms regex "(?i)^[rbuf]*[\\\"'](?:[^\\\"']*_)?(?:pas+wo?r?d|pass(?:phrase)?|pwd|token|secrete?)(?:_[^\\\"']*)?[\\\"']$"
-  S23 = union [S11 S22]
-  S24 = intersect S1 S23
-  S25 = within S21 [S24]
-  S26 = empty
-  S27 = union [S13 S17 S25]
-  S28 = within S4 [S27]
+  S7 = terms regex "(?i)(?:^|_)(?:pas+wo?r?d|pass(?:phrase)?|pwd|token|secrete?)(?:$|_)"
+  S8 = uncovered
+  S9 = union [S7 S8]
+  S10 = intersect S6 S9
+  S11 = kinds [attribute]
+  S12 = kinds [subscript]
+  S13 = terms regex "(?i)^[rbuf]*[\\\"'](?:[^\\\"']*_)?(?:pas+wo?r?d|pass(?:phrase)?|pwd|token|secrete?)(?:_[^\\\"']*)?[\\\"']$"
+  S14 = union [S8 S13]
+  S15 = intersect S1 S14
+  S16 = within S12 [S15]
+  S17 = empty
+  S18 = union [S10 S11 S16]
+  S19 = within S4 [S18]
+  S20 = within S1 [S19]
+  S21 = kinds [comparison_operator]
+  S22 = kinds [identifier attribute]
+  S23 = union [S10 S11]
+  S24 = within S21 [S23]
+  S25 = within S1 [S24]
+  S26 = kinds [keyword_argument]
+  S27 = kinds [concatenated_string string]
+  S28 = kinds [concatenated_string]
   S29 = within S1 [S28]
-  S30 = kinds [comparison_operator]
-  S31 = kinds [identifier attribute]
-  S32 = intersect S6 S31
-  S33 = intersect S6 S32
-  S34 = intersect S6 S33
-  S35 = intersect S12 S34
-  S36 = intersect S14 S31
-  S37 = intersect S14 S36
-  S38 = intersect S14 S37
-  S39 = union [S35 S38]
-  S40 = within S30 [S39]
-  S41 = within S1 [S40]
-  S42 = kinds [keyword_argument]
-  S43 = kinds [concatenated_string string]
-  S44 = intersect S1 S43
-  S45 = intersect S1 S44
-  S46 = intersect S1 S45
-  S47 = intersect S1 S46
-  S48 = kinds [concatenated_string]
-  S49 = within S47 [S48]
-  S50 = intersect S43 S48
-  S51 = union [S46 S50]
-  S52 = intersect S43 S51
-  S53 = intersect S43 S52
-  S54 = kinds [expression_statement]
-  S55 = within S53 [S54]
-  S56 = kinds [call]
-  S57 = kinds [argument_list]
-  S58 = within S56 [S57]
-  S59 = kinds [import_statement import_from_statement]
-  S60 = kinds [import_statement]
-  S61 = intersect S59 S60
-  S62 = intersect S60 S61
-  S63 = kinds [dotted_name]
-  S64 = terms literal "subprocess"
-  S65 = union [S11 S64]
-  S66 = intersect S6 S65
-  S67 = within S62 [S63 S66]
-  S68 = kinds [aliased_import]
-  S69 = within S62 [S63 S66 S68]
-  S70 = kinds [import_from_statement]
-  S71 = intersect S59 S70
-  S72 = intersect S70 S71
-  S73 = within S72 [S63 S66]
-  S74 = union [S67 S69 S73]
-  S75 = intersect S56 S58
-  S76 = within S56 [S31]
-  S77 = intersect S56 S76
-  S78 = terms regex "(?is)\\b(?:select\\s.*\\sfrom\\s|delete\\s+from\\s|insert\\s+into\\s.*\\svalues\\b|update\\s.*\\sset\\s)"
-  S79 = union [S11 S78]
-  S80 = intersect S1 S79
-  S81 = intersect S1 S80
-  S82 = within S81 [S2]
-  S83 = kinds [binary_operator]
-  S84 = within S81 [S83]
-  S85 = within S81 [S14]
-  S86 = terms regex "[\xe2\x80\x8f\xe2\x80\xaa\xe2\x80\xab\xe2\x80\xac\xe2\x80\xad\xe2\x80\xae\xe2\x81\xa6\xe2\x81\xa7\xe2\x81\xa8\xe2\x81\xa9]"
-  S87 = union [S11 S86]
-  S88 = intersect S1 S87
-  S89 = kinds [module]
-  S90 = kinds [identifier default_parameter typed_default_parameter typed_parameter]
-  S91 = intersect S6 S90
-  S92 = intersect S6 S91
-  S93 = intersect S6 S92
-  S94 = terms regex "^timeout$"
-  S95 = union [S11 S94]
-  S96 = intersect S93 S95
-  S97 = intersect S6 S96
-  S98 = kinds [parameters]
-  S99 = within S97 [S98]
-  S100 = kinds [default_parameter typed_default_parameter typed_parameter]
-  S101 = intersect S90 S100
-  S102 = intersect S100 S101
-  S103 = intersect S100 S102
-  S104 = intersect S100 S103
-  S105 = within S104 [S98]
-  S106 = intersect S100 S105
-  S107 = intersect S6 S95
-  S108 = intersect S6 S107
-  S109 = intersect S6 S108
-  S110 = within S106 [S108]
-  S111 = union [S99 S110]
-  S112 = intersect S90 S111
-  S113 = kinds [function_definition]
-  S114 = within S98 [S113]
-  S115 = within S112 [S114]
-  S116 = intersect S90 S115
-  S117 = kinds [while_statement]
-  S118 = kinds [#161]
-  S119 = kinds [await]
-  S120 = kinds [call parenthesized_expression]
-  S121 = within S119 [S120]
-  S122 = within S54 [S121]
-  S123 = within S118 [S122]
-  S124 = intersect S118 S123
-  S125 = within S117 [S124]
-  S126 = kinds [call list set dictionary list_comprehension dictionary_comprehension set_comprehension]
-  S127 = intersect S56 S126
-  S128 = intersect S56 S127
-  S129 = intersect S56 S128
-  S130 = within S5 [S57]
-  S131 = within S129 [S130]
-  S132 = kinds [generator_expression]
-  S133 = within S5 [S132]
-  S134 = within S129 [S133]
-  S135 = kinds [list set dictionary list_comprehension dictionary_comprehension set_comprehension]
-  S136 = intersect S126 S135
-  S137 = union [S131 S134 S136]
-  S138 = intersect S126 S137
-  S139 = kinds [return_statement]
-  S140 = kinds [break_statement]
-  S141 = kinds [continue_statement]
-  S142 = kinds [expression_statement parenthesized_expression]
-  S143 = within S30 [S142]
-  S144 = union [S0 S54]
-  S145 = terms regex "^[()]$"
-  S146 = union [S11 S145]
-  S147 = intersect S144 S146
-  S148 = kinds [comment]
-  S149 = intersect S144 S148
-  S150 = union [S147 S149]
-  S151 = intersect S14 S26
-  S152 = intersect S26 S151
-  S153 = intersect S26 S152
-  S154 = union [S14 S153]
-  S155 = intersect S14 S154
-  S156 = kinds [class_definition]
-  S157 = within S156 [S6]
-  S158 = intersect S156 S157
-  S159 = within S158 [S118]
-  S160 = intersect S156 S159
-  S161 = kinds [identifier attribute parenthesized_expression]
-  S162 = within S56 [S161]
-  S163 = intersect S56 S162
-  S164 = kinds [argument_list generator_expression]
-  S165 = intersect S57 S164
-  S166 = intersect S57 S165
-  S167 = intersect S57 S166
-  S168 = intersect S132 S164
-  S169 = union [S167 S168]
-  S170 = within S163 [S169]
-  S171 = kinds [list_splat]
-  S172 = within S57 [S171]
-  S173 = union [S57 S172]
-  S174 = intersect S57 S173
-  S175 = within S163 [S174]
-  S176 = kinds [import_statement future_import_statement import_from_statement]
-  S177 = within S176 [S89]
-  S178 = intersect S176 S177
-  S179 = kinds [print_statement assert_statement expression_statement return_statement delete_statement raise_statement pass_statement break_statement continue_statement for_statement while_statement function_definition global_statement nonlocal_statement exec_statement type_alias_statement class_definition decorated_definition]
+  S30 = union [S1 S28]
+  S31 = kinds [expression_statement]
+  S32 = within S30 [S31]
+  S33 = kinds [call]
+  S34 = kinds [argument_list]
+  S35 = within S33 [S34]
+  S36 = kinds [import_statement import_from_statement]
+  S37 = kinds [import_statement]
+  S38 = kinds [dotted_name]
+  S39 = terms literal "subprocess"
+  S40 = union [S8 S39]
+  S41 = intersect S6 S40
+  S42 = within S37 [S38 S41]
+  S43 = kinds [aliased_import]
+  S44 = within S37 [S38 S41 S43]
+  S45 = kinds [import_from_statement]
+  S46 = within S45 [S38 S41]
+  S47 = union [S42 S44 S46]
+  S48 = within S33 [S22]
+  S49 = terms regex "(?is)\\b(?:select\\s.*\\sfrom\\s|delete\\s+from\\s|insert\\s+into\\s.*\\svalues\\b|update\\s.*\\sset\\s)"
+  S50 = union [S8 S49]
+  S51 = intersect S1 S50
+  S52 = within S51 [S2]
+  S53 = kinds [binary_operator]
+  S54 = within S51 [S53]
+  S55 = within S51 [S11]
+  S56 = terms regex "[\xe2\x80\x8f\xe2\x80\xaa\xe2\x80\xab\xe2\x80\xac\xe2\x80\xad\xe2\x80\xae\xe2\x81\xa6\xe2\x81\xa7\xe2\x81\xa8\xe2\x81\xa9]"
+  S57 = union [S8 S56]
+  S58 = intersect S1 S57
+  S59 = kinds [module]
+  S60 = kinds [identifier default_parameter typed_default_parameter typed_parameter]
+  S61 = terms regex "^timeout$"
+  S62 = union [S8 S61]
+  S63 = intersect S6 S62
+  S64 = kinds [parameters]
+  S65 = within S63 [S64]
+  S66 = kinds [default_parameter typed_default_parameter typed_parameter]
+  S67 = within S66 [S64]
+  S68 = within S67 [S63]
+  S69 = union [S65 S68]
+  S70 = kinds [function_definition]
+  S71 = within S64 [S70]
+  S72 = within S69 [S71]
+  S73 = kinds [while_statement]
+  S74 = kinds [#161]
+  S75 = kinds [await]
+  S76 = kinds [call parenthesized_expression]
+  S77 = within S75 [S76]
+  S78 = within S31 [S77]
+  S79 = within S74 [S78]
+  S80 = within S73 [S79]
+  S81 = kinds [call list set dictionary list_comprehension dictionary_comprehension set_comprehension]
+  S82 = within S5 [S34]
+  S83 = within S33 [S82]
+  S84 = kinds [generator_expression]
+  S85 = within S5 [S84]
+  S86 = within S33 [S85]
+  S87 = kinds [list set dictionary list_comprehension dictionary_comprehension set_comprehension]
+  S88 = union [S83 S86 S87]
+  S89 = kinds [return_statement]
+  S90 = kinds [break_statement]
+  S91 = kinds [continue_statement]
+  S92 = kinds [expression_statement parenthesized_expression]
+  S93 = within S21 [S92]
+  S94 = union [S0 S31]
+  S95 = terms regex "^[()]$"
+  S96 = union [S8 S95]
+  S97 = intersect S94 S96
+  S98 = kinds [comment]
+  S99 = intersect S94 S98
+  S100 = union [S97 S99]
+  S101 = kinds [class_definition]
+  S102 = within S101 [S6]
+  S103 = within S102 [S74]
+  S104 = kinds [identifier attribute parenthesized_expression]
+  S105 = within S33 [S104]
+  S106 = kinds [argument_list generator_expression]
+  S107 = union [S34 S84]
+  S108 = within S105 [S107]
+  S109 = kinds [list_splat]
+  S110 = within S34 [S109]
+  S111 = within S105 [S34]
+  S112 = kinds [import_statement future_import_statement import_from_statement]
+  S113 = within S112 [S59]
+  S114 = kinds [print_statement assert_statement expression_statement return_statement delete_statement raise_statement pass_statement break_statement continue_statement for_statement while_statement function_definition global_statement nonlocal_statement exec_statement type_alias_statement class_definition decorated_definition]
+  S115 = within S113 [S114]
+  S116 = kinds [true false parenthesized_expression]
+  S117 = within S21 [S116]
+  S118 = within S4 [S31]
+  S119 = kinds [identifier #180]
+  S120 = within S118 [S119]
+  S121 = kinds [lambda parenthesized_expression]
+  S122 = within S120 [S121]
+  S123 = within S122 [S4]
+  S124 = terms regex "^(?<NAME>[lIO])$"
+  S125 = union [S8 S124]
+  S126 = intersect S6 S125
+  S127 = kinds [identifier dotted_name]
+  S128 = kinds [future_import_statement import_from_statement]
+  S129 = kinds [relative_import]
+  S130 = terms regex "^__future__$"
+  S131 = union [S8 S130]
+  S132 = intersect S38 S131
+  S133 = within S129 [S132]
+  S134 = within S45 [S133]
+  S135 = kinds [future_import_statement]
+  S136 = union [S134 S135]
+  S137 = within S127 [S136]
+  S138 = within S128 [S59]
+  S139 = kinds [assert_statement]
+  S140 = kinds [tuple parenthesized_expression]
+  S141 = within S139 [S140]
+  S142 = kinds [tuple]
+  S143 = kinds [yield await]
+  S144 = kinds [yield]
+  S145 = union [S75 S144]
+  S146 = kinds [expression_statement pass_statement]
+  S147 = kinds [pass_statement]
+  S148 = kinds [module #161]
+  S149 = within S147 [S148]
+  S150 = within S31 [S148]
+  S151 = union [S149 S150]
+  S152 = kinds [integer]
+  S153 = kinds [if_statement]
+  S154 = within S153 [S74]
+  S155 = kinds [elif_clause else_clause]
+  S156 = within S154 [S155]
+  S157 = kinds [elif_clause]
+  S158 = within S157 [S154]
+  S159 = within S158 [S155]
+  S160 = kinds [if_statement elif_clause]
+  S161 = kinds [else_clause]
+  S162 = within S161 [S74]
+  S163 = within S154 [S162]
+  S164 = within S157 [S74]
+  S165 = within S164 [S162]
+  S166 = within S165 [S153]
+  S167 = within S154 [S89]
+  S168 = union [S163 S166 S167]
+  S169 = kinds [try_statement]
+  S170 = kinds [import_statement future_import_statement import_from_statement assert_statement expression_statement delete_statement pass_statement]
+  S171 = terms regex "^;$"
+  S172 = union [S8 S171]
+  S173 = intersect S170 S172
+  S174 = within S74 [S170]
+  S175 = within S169 [S174]
+  S176 = kinds [except_clause]
+  S177 = within S176 [S74]
+  S178 = within S175 [S177]
+  S179 = kinds [else_clause finally_clause]
   S180 = within S178 [S179]
-  S181 = kinds [true false parenthesized_expression]
-  S182 = within S30 [S181]
-  S183 = within S4 [S54]
-  S184 = intersect S4 S183
-  S185 = kinds [identifier #180]
-  S186 = within S184 [S185]
-  S187 = intersect S4 S186
-  S188 = kinds [lambda parenthesized_expression]
+  S181 = kinds [for_statement]
+  S182 = intersect S153 S172
+  S183 = intersect S89 S172
+  S184 = within S74 [S89]
+  S185 = within S153 [S184]
+  S186 = within S74 [S185]
+  S187 = within S181 [S186]
+  S188 = within S161 [S184]
   S189 = within S187 [S188]
-  S190 = intersect S4 S189
-  S191 = intersect S4 S190
-  S192 = within S191 [S4]
-  S193 = terms regex "^(?<NAME>[lIO])$"
-  S194 = union [S11 S193]
-  S195 = intersect S6 S194
-  S196 = intersect S6 S195
-  S197 = kinds [identifier dotted_name]
-  S198 = kinds [future_import_statement import_from_statement]
-  S199 = intersect S70 S198
-  S200 = intersect S70 S199
-  S201 = intersect S70 S200
-  S202 = kinds [relative_import]
-  S203 = terms regex "^__future__$"
-  S204 = union [S11 S203]
-  S205 = intersect S63 S204
-  S206 = within S202 [S205]
-  S207 = within S201 [S206]
-  S208 = kinds [future_import_statement]
-  S209 = intersect S198 S208
-  S210 = union [S207 S209]
-  S211 = within S197 [S210]
-  S212 = within S198 [S89]
-  S213 = kinds [assert_statement]
-  S214 = kinds [tuple parenthesized_expression]
-  S215 = within S213 [S214]
-  S216 = kinds [tuple]
-  S217 = kinds [yield await]
-  S218 = kinds [yield]
-  S219 = intersect S217 S218
-  S220 = intersect S218 S219
+  S190 = within S187 [S161]
+  S191 = within S187 [S89]
+  S192 = union [S189 S191]
+  S193 = kinds [with_statement]
+  S194 = within S0 [S181]
+  S195 = kinds [for_in_clause]
+  S196 = within S0 [S195]
+  S197 = union [S194 S196]
+  S198 = union [S21 S197]
+  S199 = kinds [not_operator]
+  S200 = kinds [comparison_operator parenthesized_expression]
+  S201 = within S199 [S200]
+  S202 = terms regex "^\\\\$"
+  S203 = union [S8 S202]
+  S204 = kinds [string_content]
+  S205 = kinds [string_start]
+  S206 = terms regex "[rR]"
+  S207 = union [S8 S206]
+  S208 = intersect S205 S207
+  S209 = within S1 [S208]
+  S210 = within S204 [S1]
+  S211 = within S203 [S210]
+  S212 = kinds [escape_sequence]
+  S213 = terms regex "^\\\\[^\\n\\r\\\\'\"abfnrtv0-7xNuU]"
+  S214 = union [S8 S213]
+  S215 = intersect S212 S214
+  S216 = within S215 [S210]
+  S217 = union [S211 S216]
+  S218 = kinds [format_specifier]
+  S219 = terms regex "\\\\[\\n\\r\\\\'\"abfnrtv0-7xNuU]|(?<BS>\\\\(?:[^\\n\\r\\\\'\"abfnrtv0-7xNuU]|$))"
+  S220 = union [S8 S219]
   S221 = intersect S218 S220
-  S222 = intersect S218 S221
-  S223 = intersect S119 S217
-  S224 = intersect S119 S223
-  S225 = intersect S119 S224
-  S226 = intersect S119 S225
-  S227 = union [S222 S226]
-  S228 = kinds [expression_statement pass_statement]
-  S229 = kinds [pass_statement]
-  S230 = intersect S228 S229
-  S231 = intersect S229 S230
-  S232 = intersect S229 S231
-  S233 = intersect S229 S232
-  S234 = kinds [module #161]
+  S222 = within S2 [S1]
+  S223 = within S221 [S222]
+  S224 = within S176 [S74 S147]
+  S225 = kinds [identifier parenthesized_expression]
+  S226 = within S176 [S225]
+  S227 = kinds [#186]
+  S228 = within S176 [S227]
+  S229 = union [S224 S226 S228]
+  S230 = within S74 [S147]
+  S231 = within S229 [S230]
+  S232 = within S176 [S74 S91]
+  S233 = union [S226 S228 S232]
+  S234 = within S74 [S91]
   S235 = within S233 [S234]
-  S236 = intersect S54 S228
-  S237 = intersect S54 S236
-  S238 = intersect S54 S237
-  S239 = intersect S54 S238
-  S240 = intersect S54 S239
-  S241 = within S240 [S234]
-  S242 = union [S235 S241]
-  S243 = kinds [integer]
-  S244 = kinds [if_statement]
-  S245 = within S244 [S118]
-  S246 = intersect S244 S245
-  S247 = intersect S244 S246
-  S248 = intersect S244 S247
-  S249 = kinds [elif_clause else_clause]
-  S250 = within S248 [S249]
-  S251 = intersect S244 S248
-  S252 = kinds [elif_clause]
-  S253 = within S252 [S246]
-  S254 = intersect S252 S253
-  S255 = intersect S252 S254
-  S256 = within S255 [S249]
-  S257 = kinds [if_statement elif_clause]
-  S258 = intersect S244 S257
-  S259 = intersect S244 S258
-  S260 = intersect S244 S259
-  S261 = intersect S244 S260
-  S262 = intersect S244 S261
-  S263 = within S262 [S118]
-  S264 = intersect S244 S263
-  S265 = kinds [else_clause]
-  S266 = within S265 [S118]
-  S267 = within S264 [S266]
-  S268 = intersect S244 S267
-  S269 = intersect S244 S268
-  S270 = intersect S252 S257
-  S271 = intersect S252 S270
-  S272 = intersect S252 S271
-  S273 = intersect S252 S272
-  S274 = intersect S252 S273
-  S275 = within S274 [S118]
-  S276 = intersect S252 S275
-  S277 = within S276 [S266]
-  S278 = intersect S252 S277
-  S279 = within S278 [S244]
-  S280 = within S264 [S139]
-  S281 = intersect S244 S280
-  S282 = union [S269 S279 S281]
-  S283 = kinds [try_statement]
-  S284 = kinds [import_statement future_import_statement import_from_statement assert_statement expression_statement delete_statement pass_statement]
-  S285 = terms regex "^;$"
-  S286 = union [S11 S285]
-  S287 = intersect S284 S286
-  S288 = intersect S26 S284
-  S289 = union [S287 S288]
-  S290 = within S118 [S284]
-  S291 = intersect S118 S290
-  S292 = within S283 [S291]
-  S293 = intersect S283 S292
-  S294 = kinds [except_clause]
-  S295 = within S294 [S118]
-  S296 = within S293 [S295]
-  S297 = intersect S283 S296
-  S298 = intersect S283 S297
-  S299 = kinds [else_clause finally_clause]
-  S300 = within S298 [S299]
-  S301 = kinds [for_statement]
-  S302 = intersect S244 S286
-  S303 = intersect S26 S244
-  S304 = union [S302 S303]
-  S305 = intersect S139 S286
-  S306 = intersect S26 S139
-  S307 = union [S305 S306]
-  S308 = within S118 [S139]
-  S309 = intersect S118 S308
-  S310 = within S244 [S309]
-  S311 = within S118 [S310]
-  S312 = intersect S118 S311
-  S313 = within S301 [S312]
-  S314 = intersect S301 S313
-  S315 = intersect S301 S314
-  S316 = within S265 [S309]
-  S317 = within S315 [S316]
-  S318 = intersect S301 S315
-  S319 = intersect S301 S318
-  S320 = within S319 [S265]
-  S321 = within S319 [S139]
-  S322 = union [S317 S321]
-  S323 = intersect S301 S322
-  S324 = kinds [with_statement]
-  S325 = within S0 [S301]
-  S326 = kinds [for_in_clause]
-  S327 = within S0 [S326]
-  S328 = union [S325 S327]
-  S329 = union [S30 S328]
-  S330 = kinds [not_operator]
-  S331 = kinds [comparison_operator parenthesized_expression]
-  S332 = within S330 [S331]
-  S333 = terms regex "^\\\\$"
-  S334 = union [S11 S333]
-  S335 = kinds [string_content]
-  S336 = kinds [string_start]
-  S337 = terms regex "[rR]"
-  S338 = union [S11 S337]
-  S339 = intersect S336 S338
-  S340 = within S1 [S339]
-  S341 = within S335 [S1]
-  S342 = within S334 [S341]
-  S343 = kinds [escape_sequence]
-  S344 = terms regex "^\\\\[^\\n\\r\\\\'\"abfnrtv0-7xNuU]"
-  S345 = union [S11 S344]
-  S346 = intersect S343 S345
-  S347 = intersect S343 S346
-  S348 = within S347 [S341]
-  S349 = union [S342 S348]
-  S350 = kinds [format_specifier]
-  S351 = terms regex "\\\\[\\n\\r\\\\'\"abfnrtv0-7xNuU]|(?<BS>\\\\(?:[^\\n\\r\\\\'\"abfnrtv0-7xNuU]|$))"
-  S352 = union [S11 S351]
-  S353 = intersect S350 S352
-  S354 = intersect S350 S353
-  S355 = within S2 [S1]
-  S356 = within S354 [S355]
-  S357 = within S294 [S118 S229]
-  S358 = kinds [identifier parenthesized_expression]
-  S359 = within S294 [S358]
-  S360 = kinds [#186]
-  S361 = within S294 [S360]
-  S362 = union [S357 S359 S361]
-  S363 = intersect S294 S362
-  S364 = within S118 [S229]
-  S365 = intersect S118 S364
-  S366 = within S363 [S365]
-  S367 = within S294 [S118 S141]
-  S368 = union [S359 S361 S367]
-  S369 = intersect S294 S368
-  S370 = within S118 [S141]
-  S371 = intersect S118 S370
-  S372 = within S369 [S371]
-  S373 = terms literal "telnetlib"
-  S374 = union [S11 S373]
-  S375 = intersect S6 S374
-  S376 = within S62 [S63 S375]
-  S377 = within S62 [S63 S68 S375]
-  S378 = within S72 [S63 S375]
-  S379 = union [S376 S377 S378]
-  S380 = terms literal "ftplib"
-  S381 = union [S11 S380]
-  S382 = intersect S6 S381
-  S383 = within S62 [S63 S382]
-  S384 = within S62 [S63 S68 S382]
-  S385 = within S72 [S63 S382]
-  S386 = union [S383 S384 S385]
-  S387 = terms literal "xmlrpc"
-  S388 = union [S11 S387]
-  S389 = intersect S6 S388
-  S390 = within S62 [S63 S389]
-  S391 = within S62 [S63 S68 S389]
-  S392 = within S72 [S63 S389]
-  S393 = union [S390 S391 S392]
-  S394 = terms literal "pyghmi"
-  S395 = union [S11 S394]
-  S396 = intersect S6 S395
-  S397 = within S62 [S63 S396]
-  S398 = within S62 [S63 S68 S396]
-  S399 = within S72 [S63 S396]
-  S400 = union [S397 S398 S399]
-  S401 = within S161 [S164]
-  S402 = within S56 [S401]
-  S403 = kinds [unary_operator]
-  S404 = terms regex "^\\+"
-  S405 = union [S11 S404]
-  S406 = intersect S403 S405
-  S407 = intersect S403 S406
-  S408 = kinds [unary_operator parenthesized_expression]
-  S409 = within S407 [S408]
-  S410 = terms regex "^-"
-  S411 = union [S11 S410]
-  S412 = intersect S403 S411
-  S413 = intersect S403 S412
-  S414 = within S413 [S408]
-  S415 = terms literal "environ"
-  S416 = union [S11 S415]
-  S417 = intersect S6 S416
-  S418 = terms literal "os"
-  S419 = union [S11 S418]
-  S420 = intersect S6 S419
-  S421 = within S14 [S417 S420]
-  S422 = intersect S14 S421
-  S423 = intersect S14 S422
-  S424 = kinds [parenthesized_expression concatenated_string string]
-  S425 = within S57 [S424]
-  S426 = within S56 [S425]
-  S427 = intersect S56 S426
-  S428 = terms regex "^[lr]?strip$"
-  S429 = union [S11 S428]
-  S430 = intersect S6 S429
-  S431 = intersect S6 S430
-  S432 = within S14 [S431]
-  S433 = within S427 [S432]
-  S434 = kinds [false]
-  S435 = within S216 [S171]
-  S436 = kinds [ellipsis integer float true false none concatenated_string string]
-  S437 = intersect S48 S436
-  S438 = intersect S48 S437
-  S439 = intersect S48 S438
-  S440 = kinds [ellipsis integer float true false none string]
-  S441 = intersect S436 S440
-  S442 = union [S439 S441]
-  S443 = intersect S436 S442
-  S444 = within S54 [S424]
-  S445 = intersect S54 S444
-  S446 = intersect S54 S445
-  S447 = intersect S54 S446
-  S448 = intersect S54 S447
-  S449 = within S448 [S89]
-  S450 = kinds [function_definition class_definition]
-  S451 = within S118 [S450]
-  S452 = within S448 [S451]
-  S453 = union [S449 S452]
-  S454 = within S57 [S161]
-  S455 = within S56 [S454]
-  S456 = within S57 [S56]
-  S457 = within S171 [S456]
-  S458 = intersect S171 S457
-  S459 = kinds [dictionary_splat keyword_argument]
-  S460 = within S458 [S459]
-  S461 = within S31 [S56]
-  S462 = intersect S31 S461
-  S463 = intersect S31 S462
-  S464 = within S294 [S216]
-  S465 = kinds [identifier attribute subscript call]
-  S466 = except S0 S465
-  S467 = intersect S216 S466
-  S468 = intersect S83 S466
-  S469 = intersect S83 S468
-  S470 = intersect S83 S469
-  S471 = intersect S83 S470
-  S472 = union [S466 S471]
-  S473 = terms regex "^[(),*+:\\[\\]]$"
-  S474 = union [S11 S473]
-  S475 = intersect S472 S474
-  S476 = kinds [comment #186 parenthesized_expression]
-  S477 = intersect S472 S476
-  S478 = union [S475 S477]
-  S479 = union [S466 S472]
-  S480 = intersect S474 S479
-  S481 = intersect S476 S479
-  S482 = union [S480 S481]
-  S483 = within S479 [S294]
-  S484 = kinds [type]
-  S485 = within S4 [S484]
-  S486 = intersect S4 S485
-  S487 = intersect S4 S486
-  S488 = kinds [#180 attribute subscript parenthesized_expression]
-  S489 = within S487 [S488]
-  S490 = intersect S4 S489
-  S491 = within S490 [S54]
-  S492 = intersect S57 S454
-  S493 = within S56 [S492]
-  S494 = intersect S135 S136
-  S495 = union [S129 S494]
-  S496 = kinds [none]
-  S497 = terms regex "^except$"
-  S498 = union [S11 S497]
-  S499 = kinds [raise_statement]
-  S500 = terms regex "^raise$"
-  S501 = union [S11 S500]
-  S502 = intersect S499 S501
-  S503 = within S118 [S502]
-  S504 = within S294 [S503]
-  S505 = within S498 [S294]
-  S506 = within S196 [S156]
-  S507 = intersect S6 S506
-  S508 = within S196 [S113]
-  S509 = intersect S6 S508
-  S510 = kinds [relative_import dotted_name]
-  S511 = intersect S63 S510
-  S512 = intersect S63 S511
-  S513 = intersect S63 S512
-  S514 = intersect S204 S513
-  S515 = intersect S202 S510
-  S516 = intersect S202 S515
-  S517 = intersect S202 S516
-  S518 = within S517 [S205]
-  S519 = union [S514 S518]
-  S520 = within S70 [S519]
-  S521 = kinds [wildcard_import]
-  S522 = within S521 [S510]
-  S523 = within S70 [S522]
-  S524 = within S70 [S450]
-  S525 = intersect S70 S524
-  S526 = within S525 [S522]
-  S527 = terms regex "^[A-Za-z]*[fF]"
-  S528 = union [S11 S527]
-  S529 = intersect S336 S528
-  S530 = within S1 [S529]
-  S531 = kinds [#180 #181 pattern_list list tuple]
-  S532 = kinds [#180 #181 pattern_list]
-  S533 = intersect S531 S532
-  S534 = intersect S532 S533
-  S535 = intersect S532 S534
-  S536 = intersect S532 S535
-  S537 = kinds [list tuple]
-  S538 = intersect S531 S537
-  S539 = intersect S537 S538
-  S540 = intersect S537 S539
-  S541 = intersect S537 S540
-  S542 = intersect S537 S541
-  S543 = union [S536 S542]
-  S544 = terms regex "^print$"
-  S545 = union [S11 S544]
-  S546 = kinds [print_statement]
-  S547 = kinds [chevron]
-  S548 = within S546 [S547]
-  S549 = within S545 [S548]
-  S550 = union [S31 S549]
-  S551 = within S294 [S294]
-  S552 = within S498 [S551]
-  S553 = terms regex "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
-  S554 = union [S11 S553]
-  S555 = intersect S6 S554
-  S556 = terms regex "^NotImplemented$"
-  S557 = union [S11 S556]
-  S558 = intersect S6 S557
-  S559 = intersect S6 S558
-  S560 = kinds [dictionary]
-  S561 = kinds [lambda]
-  S562 = kinds [lambda_parameters]
-  S563 = within S561 [S562]
-  S564 = kinds [list dictionary parenthesized_expression]
-  S565 = terms regex "^(lambda|:)$"
-  S566 = union [S11 S565]
-  S567 = intersect S564 S566
-  S568 = within S561 [S564]
-  S569 = within S139 [S113]
-  S570 = intersect S139 S569
-  S571 = kinds [none parenthesized_expression]
-  S572 = within S570 [S571]
-  S573 = terms regex "^return$"
-  S574 = union [S11 S573]
-  S575 = intersect S139 S574
-  S576 = intersect S139 S575
-  S577 = within S576 [S113]
-  S578 = terms regex "^(?<BRANCH>elif|else)$"
-  S579 = union [S11 S578]
-  S580 = within S249 [S249]
-  S581 = within S244 [S113]
-  S582 = intersect S244 S581
-  S583 = kinds [raise_statement break_statement continue_statement]
-  S584 = within S139 [S583]
-  S585 = within S582 [S308]
-  S586 = within S249 [S585]
-  S587 = within S579 [S586]
-  S588 = kinds [return_statement break_statement continue_statement]
-  S589 = within S499 [S588]
-  S590 = within S118 [S499]
-  S591 = within S582 [S590]
-  S592 = within S249 [S591]
-  S593 = within S579 [S592]
-  S594 = kinds [return_statement raise_statement break_statement]
-  S595 = within S141 [S594]
-  S596 = within S582 [S370]
-  S597 = within S249 [S596]
-  S598 = within S579 [S597]
-  S599 = kinds [return_statement raise_statement continue_statement]
-  S600 = within S140 [S599]
-  S601 = within S118 [S140]
-  S602 = within S582 [S601]
-  S603 = within S249 [S602]
-  S604 = within S579 [S603]
-  S605 = within S139 [S139]
-  S606 = kinds [finally_clause]
-  S607 = within S283 [S308]
-  S608 = within S294 [S308]
-  S609 = within S283 [S608]
-  S610 = union [S607 S609]
-  S611 = within S606 [S610]
-  S612 = within S118 [S611]
-  S613 = within S139 [S612]
-  S614 = kinds [not_operator parenthesized_expression]
-  S615 = within S330 [S614]
-  S616 = kinds [conditional_expression]
-  S617 = kinds [true parenthesized_expression]
-  S618 = within S616 [S617]
-  S619 = intersect S616 S618
-  S620 = kinds [false parenthesized_expression]
-  S621 = within S619 [S620]
-  S622 = within S616 [S620]
-  S623 = intersect S616 S622
-  S624 = within S623 [S617]
-  S625 = kinds [ellipsis integer float true false none binary_operator unary_operator list tuple dictionary parenthesized_expression concatenated_string string]
-  S626 = within S30 [S625]
-  S627 = intersect S30 S626
-  S628 = kinds [identifier ellipsis integer float true false none binary_operator unary_operator attribute list tuple dictionary parenthesized_expression concatenated_string string]
-  S629 = within S30 [S628]
-  S630 = intersect S30 S629
-  S631 = union [S627 S630]
-  S632 = intersect S30 S631
-  S633 = kinds [integer unary_operator parenthesized_expression]
-  S634 = within S42 [S633]
-  S635 = intersect S42 S634
-  S636 = terms regex "^maxsplit$"
-  S637 = union [S11 S636]
-  S638 = intersect S6 S637
-  S639 = intersect S6 S638
-  S640 = within S635 [S639]
-  S641 = within S57 [S640]
-  S642 = terms regex "^[\\[\\](){},]$"
-  S643 = union [S11 S642]
-  S644 = intersect S633 S643
-  S645 = intersect S26 S633
-  S646 = union [S644 S645]
-  S647 = within S57 [S633]
-  S648 = union [S57 S647]
-  S649 = intersect S57 S648
-  S650 = intersect S57 S649
-  S651 = within S42 [S639]
-  S652 = within S650 [S651]
-  S653 = union [S641 S649]
-  S654 = intersect S57 S653
-  S655 = intersect S57 S654
-  S656 = kinds [none parenthesized_expression concatenated_string string]
-  S657 = within S42 [S656]
-  S658 = intersect S42 S657
-  S659 = terms regex "^sep$"
-  S660 = union [S11 S659]
-  S661 = intersect S6 S660
-  S662 = intersect S6 S661
-  S663 = within S658 [S662]
-  S664 = within S655 [S663]
-  S665 = intersect S57 S655
-  S666 = intersect S57 S665
-  S667 = intersect S643 S656
-  S668 = intersect S26 S656
-  S669 = union [S667 S668]
-  S670 = within S666 [S656]
-  S671 = union [S666 S670]
-  S672 = intersect S57 S671
-  S673 = intersect S57 S672
-  S674 = within S42 [S662]
-  S675 = within S673 [S674]
-  S676 = union [S664 S672]
-  S677 = within S56 [S676]
-  S678 = intersect S56 S677
-  S679 = within S14 [S424]
-  S680 = intersect S14 S679
-  S681 = terms regex "^(split|rsplit)$"
-  S682 = union [S11 S681]
-  S683 = intersect S6 S682
-  S684 = intersect S6 S683
-  S685 = within S680 [S684]
-  S686 = within S678 [S685]
-  S687 = within S161 [S57]
-  S688 = within S56 [S687]
+  S236 = terms literal "telnetlib"
+  S237 = union [S8 S236]
+  S238 = intersect S6 S237
+  S239 = within S37 [S38 S238]
+  S240 = within S37 [S38 S43 S238]
+  S241 = within S45 [S38 S238]
+  S242 = union [S239 S240 S241]
+  S243 = terms literal "ftplib"
+  S244 = union [S8 S243]
+  S245 = intersect S6 S244
+  S246 = within S37 [S38 S245]
+  S247 = within S37 [S38 S43 S245]
+  S248 = within S45 [S38 S245]
+  S249 = union [S246 S247 S248]
+  S250 = terms literal "xmlrpc"
+  S251 = union [S8 S250]
+  S252 = intersect S6 S251
+  S253 = within S37 [S38 S252]
+  S254 = within S37 [S38 S43 S252]
+  S255 = within S45 [S38 S252]
+  S256 = union [S253 S254 S255]
+  S257 = terms literal "pyghmi"
+  S258 = union [S8 S257]
+  S259 = intersect S6 S258
+  S260 = within S37 [S38 S259]
+  S261 = within S37 [S38 S43 S259]
+  S262 = within S45 [S38 S259]
+  S263 = union [S260 S261 S262]
+  S264 = within S104 [S106]
+  S265 = within S33 [S264]
+  S266 = kinds [unary_operator]
+  S267 = terms regex "^\\+"
+  S268 = union [S8 S267]
+  S269 = intersect S266 S268
+  S270 = kinds [unary_operator parenthesized_expression]
+  S271 = within S269 [S270]
+  S272 = terms regex "^-"
+  S273 = union [S8 S272]
+  S274 = intersect S266 S273
+  S275 = within S274 [S270]
+  S276 = terms literal "environ"
+  S277 = union [S8 S276]
+  S278 = intersect S6 S277
+  S279 = terms literal "os"
+  S280 = union [S8 S279]
+  S281 = intersect S6 S280
+  S282 = within S11 [S278 S281]
+  S283 = kinds [parenthesized_expression concatenated_string string]
+  S284 = within S34 [S283]
+  S285 = within S33 [S284]
+  S286 = terms regex "^[lr]?strip$"
+  S287 = union [S8 S286]
+  S288 = intersect S6 S287
+  S289 = within S11 [S288]
+  S290 = within S285 [S289]
+  S291 = kinds [false]
+  S292 = within S142 [S109]
+  S293 = kinds [ellipsis integer float true false none concatenated_string string]
+  S294 = kinds [ellipsis integer float true false none string]
+  S295 = union [S28 S294]
+  S296 = within S31 [S283]
+  S297 = within S296 [S59]
+  S298 = kinds [function_definition class_definition]
+  S299 = within S74 [S298]
+  S300 = within S296 [S299]
+  S301 = union [S297 S300]
+  S302 = within S34 [S104]
+  S303 = within S33 [S302]
+  S304 = within S34 [S33]
+  S305 = within S109 [S304]
+  S306 = kinds [dictionary_splat keyword_argument]
+  S307 = within S305 [S306]
+  S308 = within S22 [S33]
+  S309 = within S176 [S142]
+  S310 = kinds [identifier attribute subscript call]
+  S311 = except S0 S310
+  S312 = intersect S142 S311
+  S313 = intersect S53 S311
+  S314 = terms regex "^[(),*+:\\[\\]]$"
+  S315 = union [S8 S314]
+  S316 = intersect S311 S315
+  S317 = kinds [comment #186 parenthesized_expression]
+  S318 = intersect S311 S317
+  S319 = union [S316 S318]
+  S320 = within S311 [S176]
+  S321 = kinds [type]
+  S322 = within S4 [S321]
+  S323 = kinds [#180 attribute subscript parenthesized_expression]
+  S324 = within S322 [S323]
+  S325 = within S324 [S31]
+  S326 = union [S33 S87]
+  S327 = kinds [none]
+  S328 = terms regex "^except$"
+  S329 = union [S8 S328]
+  S330 = kinds [raise_statement]
+  S331 = terms regex "^raise$"
+  S332 = union [S8 S331]
+  S333 = intersect S330 S332
+  S334 = within S74 [S333]
+  S335 = within S176 [S334]
+  S336 = within S329 [S176]
+  S337 = within S126 [S101]
+  S338 = within S126 [S70]
+  S339 = kinds [relative_import dotted_name]
+  S340 = union [S132 S133]
+  S341 = within S45 [S340]
+  S342 = kinds [wildcard_import]
+  S343 = within S342 [S339]
+  S344 = within S45 [S343]
+  S345 = within S45 [S298]
+  S346 = within S345 [S343]
+  S347 = terms regex "^[A-Za-z]*[fF]"
+  S348 = union [S8 S347]
+  S349 = intersect S205 S348
+  S350 = within S1 [S349]
+  S351 = kinds [#180 #181 pattern_list list tuple]
+  S352 = kinds [#180 #181 pattern_list]
+  S353 = kinds [list tuple]
+  S354 = union [S352 S353]
+  S355 = terms regex "^print$"
+  S356 = union [S8 S355]
+  S357 = kinds [print_statement]
+  S358 = kinds [chevron]
+  S359 = within S357 [S358]
+  S360 = within S356 [S359]
+  S361 = union [S22 S360]
+  S362 = within S176 [S176]
+  S363 = within S329 [S362]
+  S364 = terms regex "^(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])$"
+  S365 = union [S8 S364]
+  S366 = intersect S6 S365
+  S367 = terms regex "^NotImplemented$"
+  S368 = union [S8 S367]
+  S369 = intersect S6 S368
+  S370 = kinds [dictionary]
+  S371 = kinds [lambda]
+  S372 = kinds [lambda_parameters]
+  S373 = within S371 [S372]
+  S374 = kinds [list dictionary parenthesized_expression]
+  S375 = terms regex "^(lambda|:)$"
+  S376 = union [S8 S375]
+  S377 = intersect S374 S376
+  S378 = within S371 [S374]
+  S379 = within S89 [S70]
+  S380 = kinds [none parenthesized_expression]
+  S381 = within S379 [S380]
+  S382 = terms regex "^return$"
+  S383 = union [S8 S382]
+  S384 = intersect S89 S383
+  S385 = within S384 [S70]
+  S386 = terms regex "^(?<BRANCH>elif|else)$"
+  S387 = union [S8 S386]
+  S388 = within S155 [S155]
+  S389 = within S153 [S70]
+  S390 = kinds [raise_statement break_statement continue_statement]
+  S391 = within S89 [S390]
+  S392 = within S389 [S184]
+  S393 = within S155 [S392]
+  S394 = within S387 [S393]
+  S395 = kinds [return_statement break_statement continue_statement]
+  S396 = within S330 [S395]
+  S397 = within S74 [S330]
+  S398 = within S389 [S397]
+  S399 = within S155 [S398]
+  S400 = within S387 [S399]
+  S401 = kinds [return_statement raise_statement break_statement]
+  S402 = within S91 [S401]
+  S403 = within S389 [S234]
+  S404 = within S155 [S403]
+  S405 = within S387 [S404]
+  S406 = kinds [return_statement raise_statement continue_statement]
+  S407 = within S90 [S406]
+  S408 = within S74 [S90]
+  S409 = within S389 [S408]
+  S410 = within S155 [S409]
+  S411 = within S387 [S410]
+  S412 = within S89 [S89]
+  S413 = kinds [finally_clause]
+  S414 = within S169 [S184]
+  S415 = within S176 [S184]
+  S416 = within S169 [S415]
+  S417 = union [S414 S416]
+  S418 = within S413 [S417]
+  S419 = within S74 [S418]
+  S420 = within S89 [S419]
+  S421 = kinds [not_operator parenthesized_expression]
+  S422 = within S199 [S421]
+  S423 = kinds [conditional_expression]
+  S424 = kinds [true parenthesized_expression]
+  S425 = within S423 [S424]
+  S426 = kinds [false parenthesized_expression]
+  S427 = within S425 [S426]
+  S428 = within S423 [S426]
+  S429 = within S428 [S424]
+  S430 = kinds [ellipsis integer float true false none binary_operator unary_operator list tuple dictionary parenthesized_expression concatenated_string string]
+  S431 = within S21 [S430]
+  S432 = kinds [identifier ellipsis integer float true false none binary_operator unary_operator attribute list tuple dictionary parenthesized_expression concatenated_string string]
+  S433 = within S21 [S432]
+  S434 = union [S431 S433]
+  S435 = kinds [integer unary_operator parenthesized_expression]
+  S436 = within S26 [S435]
+  S437 = terms regex "^maxsplit$"
+  S438 = union [S8 S437]
+  S439 = intersect S6 S438
+  S440 = within S436 [S439]
+  S441 = within S34 [S440]
+  S442 = terms regex "^[\\[\\](){},]$"
+  S443 = union [S8 S442]
+  S444 = intersect S435 S443
+  S445 = within S34 [S435]
+  S446 = within S26 [S439]
+  S447 = within S34 [S446]
+  S448 = kinds [none parenthesized_expression concatenated_string string]
+  S449 = within S26 [S448]
+  S450 = terms regex "^sep$"
+  S451 = union [S8 S450]
+  S452 = intersect S6 S451
+  S453 = within S449 [S452]
+  S454 = within S34 [S453]
+  S455 = intersect S443 S448
+  S456 = within S34 [S448]
+  S457 = within S26 [S452]
+  S458 = within S34 [S457]
+  S459 = within S11 [S283]
+  S460 = terms regex "^(split|rsplit)$"
+  S461 = union [S8 S460]
+  S462 = intersect S6 S461
+  S463 = within S459 [S462]
+  S464 = within S35 [S463]
+  S465 = within S104 [S34]
+  S466 = within S33 [S465]
   output 0 S1
-  output 1 S29
-  output 2 S41
-  output 3 S42
-  output 4 S53
-  output 5 S58
-  output 6 S58
-  output 7 S58
-  output 8 S74
-  output 9 S75
-  output 10 S77
-  output 11 S75
-  output 12 S58
-  output 13 S82
-  output 14 S84
-  output 15 S85
-  output 16 S75
-  output 17 S88
-  output 18 S75
-  output 19 S58
-  output 20 S58
-  output 21 S89
-  output 22 S89
-  output 23 S89
-  output 24 S89
-  output 25 S89
-  output 26 S89
-  output 27 S89
-  output 28 S89
-  output 29 S89
-  output 30 S89
-  output 31 S89
-  output 32 S89
-  output 33 S89
-  output 34 S115
-  output 35 S116
-  output 36 S125
-  output 37 S125
-  output 38 S125
-  output 39 S138
-  output 40 S139
-  output 41 S140
-  output 42 S141
-  output 43 S143
-  output 44 S30
-  output 45 S144
-  output 46 S155
-  output 47 S160
-  output 48 S170
-  output 49 S175
-  output 50 S180
-  output 51 S182
-  output 52 S191
-  output 53 S196
-  output 54 S197
-  output 55 S198
-  output 56 S215
-  output 57 S216
-  output 58 S227
-  output 59 S89
-  output 60 S89
-  output 61 S89
-  output 62 S89
-  output 63 S89
-  output 64 S242
-  output 65 S243
-  output 66 S251
-  output 67 S254
-  output 68 S282
-  output 69 S298
-  output 70 S323
-  output 71 S76
-  output 72 S324
-  output 73 S329
-  output 74 S332
-  output 75 S332
-  output 76 S349
-  output 77 S356
-  output 78 S213
-  output 79 S366
-  output 80 S372
-  output 81 S58
-  output 82 S58
-  output 83 S76
-  output 84 S58
-  output 85 S58
-  output 86 S58
-  output 87 S58
-  output 88 S58
-  output 89 S58
-  output 90 S58
-  output 91 S58
-  output 92 S58
-  output 93 S58
-  output 94 S58
-  output 95 S58
-  output 96 S58
-  output 97 S58
-  output 98 S379
-  output 99 S386
-  output 100 S393
-  output 101 S400
-  output 102 S58
-  output 103 S402
-  output 104 S31
-  output 105 S31
-  output 106 S31
-  output 107 S31
-  output 108 S409
-  output 109 S414
-  output 110 S423
-  output 111 S433
-  output 112 S434
-  output 113 S216
-  output 114 S443
-  output 115 S453
-  output 116 S455
-  output 117 S460
-  output 118 S463
-  output 119 S464
-  output 120 S483
-  output 121 S491
-  output 122 S493
-  output 123 S495
-  output 124 S175
-  output 125 S496
-  output 126 S496
-  output 127 S505
-  output 128 S507
-  output 129 S509
-  output 130 S523
-  output 131 S526
-  output 132 S530
-  output 133 S543
-  output 134 S550
-  output 135 S140
-  output 136 S141
-  output 137 S139
-  output 138 S552
-  output 139 S43
+  output 1 S20
+  output 2 S25
+  output 3 S26
+  output 4 S30
+  output 5 S35
+  output 6 S35
+  output 7 S35
+  output 8 S47
+  output 9 S35
+  output 10 S48
+  output 11 S35
+  output 12 S35
+  output 13 S52
+  output 14 S54
+  output 15 S55
+  output 16 S35
+  output 17 S58
+  output 18 S35
+  output 19 S35
+  output 20 S35
+  output 21 S59
+  output 22 S59
+  output 23 S59
+  output 24 S59
+  output 25 S59
+  output 26 S59
+  output 27 S59
+  output 28 S59
+  output 29 S59
+  output 30 S59
+  output 31 S59
+  output 32 S59
+  output 33 S59
+  output 34 S72
+  output 35 S72
+  output 36 S80
+  output 37 S80
+  output 38 S80
+  output 39 S88
+  output 40 S89
+  output 41 S90
+  output 42 S91
+  output 43 S93
+  output 44 S21
+  output 45 S94
+  output 46 S11
+  output 47 S103
+  output 48 S108
+  output 49 S111
+  output 50 S115
+  output 51 S117
+  output 52 S122
+  output 53 S126
+  output 54 S127
+  output 55 S128
+  output 56 S141
+  output 57 S142
+  output 58 S145
+  output 59 S59
+  output 60 S59
+  output 61 S59
+  output 62 S59
+  output 63 S59
+  output 64 S151
+  output 65 S152
+  output 66 S154
+  output 67 S158
+  output 68 S168
+  output 69 S178
+  output 70 S192
+  output 71 S48
+  output 72 S193
+  output 73 S198
+  output 74 S201
+  output 75 S201
+  output 76 S217
+  output 77 S223
+  output 78 S139
+  output 79 S231
+  output 80 S235
+  output 81 S35
+  output 82 S35
+  output 83 S48
+  output 84 S35
+  output 85 S35
+  output 86 S35
+  output 87 S35
+  output 88 S35
+  output 89 S35
+  output 90 S35
+  output 91 S35
+  output 92 S35
+  output 93 S35
+  output 94 S35
+  output 95 S35
+  output 96 S35
+  output 97 S35
+  output 98 S242
+  output 99 S249
+  output 100 S256
+  output 101 S263
+  output 102 S35
+  output 103 S265
+  output 104 S22
+  output 105 S22
+  output 106 S22
+  output 107 S22
+  output 108 S271
+  output 109 S275
+  output 110 S282
+  output 111 S290
+  output 112 S291
+  output 113 S142
+  output 114 S295
+  output 115 S301
+  output 116 S303
+  output 117 S307
+  output 118 S308
+  output 119 S309
+  output 120 S320
+  output 121 S325
+  output 122 S303
+  output 123 S326
+  output 124 S111
+  output 125 S327
+  output 126 S327
+  output 127 S336
+  output 128 S337
+  output 129 S338
+  output 130 S344
+  output 131 S346
+  output 132 S350
+  output 133 S354
+  output 134 S361
+  output 135 S90
+  output 136 S91
+  output 137 S89
+  output 138 S363
+  output 139 S27
   output 140 S6
   output 141 S6
-  output 142 S559
-  output 143 S560
-  output 144 S568
-  output 145 S572
-  output 146 S577
-  output 147 S587
-  output 148 S593
-  output 149 S598
-  output 150 S604
-  output 151 S613
-  output 152 S615
-  output 153 S621
-  output 154 S624
-  output 155 S632
-  output 156 S686
-  output 157 S688
+  output 142 S369
+  output 143 S370
+  output 144 S378
+  output 145 S381
+  output 146 S385
+  output 147 S394
+  output 148 S400
+  output 149 S405
+  output 150 S411
+  output 151 S420
+  output 152 S422
+  output 153 S427
+  output 154 S429
+  output 155 S434
+  output 156 S464
+  output 157 S466
