@@ -801,6 +801,7 @@ impl Batch {
         let mut extra = Extra::new(reads, matches);
         let mut tree = tree::Tree::new(reads);
         let mut fstrings = fstring::FStrings::new(reads, markers);
+        let mut cpython = cpython::CPython::new(reads);
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
@@ -876,6 +877,7 @@ impl Batch {
             extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
             tree.document(&p, dialect, &d.path, python == Some(tag), &mut string);
             fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
+            cpython.document(&p, python == Some(tag), &mut string);
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -910,6 +912,7 @@ impl Batch {
         relations.extend(read);
         relations.extend(tree.relations(&atom));
         relations.extend(fstrings.relations(&atom));
+        relations.extend(cpython.relations(&atom));
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
             docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
@@ -1438,5 +1441,6 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+pub(crate) mod cpython;
 mod fstring;
 mod tree;

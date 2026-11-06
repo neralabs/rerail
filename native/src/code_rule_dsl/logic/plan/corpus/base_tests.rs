@@ -1402,3 +1402,48 @@ late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "mod
     assert_eq!(got[1], "a.b\npkg.mod\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// core.rr's `syntax_error(d, l, msg)` is CPython's verdict (`cpython::syntax`), bound as `cpython_syntax_error`: a file
+/// tree-sitter reads without an error node (an empty block) is rejected, as is an invalid target, with CPython's line and
+/// message; one only `compile` rejects (`return` outside a function) is not. A program that declares
+/// `syntax_error(d: number)` reads the tape's verdict, and both may be read side by side.
+#[test]
+fn syntax_error_is_cpythons_verdict() {
+    let files = [
+        ("empty.py", "x = 1\nif x:\n# nothing\n"),
+        ("target.py", "f() = 1\n"),
+        ("ret.py", "return 1\n"),
+        ("bad.py", "def f(:\n    pass\n"),
+        ("ok.py", "x = 1\n"),
+    ];
+    let dir = corpus("cpython-syntax", &files);
+    let core = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl rejected(p: symbol, l: number, msg: symbol)
+rejected(p, l, msg) :- doc(d, p, _), syntax_error(d, l, msg).
+.decl invalid(p: symbol)
+invalid(p) :- doc(d, p, _), syntax_error(d, _, m), prefix("invalid", m).
+.output rejected, invalid
+"#;
+    let got = run(&dir, core, &["rejected", "invalid"]);
+    assert_eq!(
+        got[0],
+        "bad.py\t1\tinvalid syntax\nempty.py\t3\texpected an indented block after 'if' statement on line 2\ntarget.py\t1\tcannot assign to function call here. Maybe you meant '==' instead of '='?\n"
+    );
+    assert_eq!(got[1], "bad.py\n");
+    let both = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl only_cpython(p: symbol)
+only_cpython(p) :- doc(d, p, _), cpython_syntax_error(d, _, _), !syntax_error(d).
+.decl only_tree(p: symbol)
+only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
+.output only_cpython, only_tree
+"#;
+    let got = run(&dir, both, &["only_cpython", "only_tree"]);
+    // tree-sitter has an error node at `f() = 1` too.
+    assert_eq!(got[0], "empty.py\n");
+    assert_eq!(got[1], "");
+    let _ = std::fs::remove_dir_all(&dir);
+}
