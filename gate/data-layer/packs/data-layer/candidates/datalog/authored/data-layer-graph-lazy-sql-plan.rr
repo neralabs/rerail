@@ -50,8 +50,13 @@ graph_plan_contracts_deco("decorator").
 .decl graph_plan_contracts_file(d: number, p: symbol)
 graph_plan_contracts_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !syntax_error(d), !graph_plan_contracts_unparsed(d),
     !out_scope(d), doc(d, p, _).
-// APPROXIMATION of CPython's verdict (W's gate does not pass `if True:` or `def f():` with no body; tree-sitter has
-// no error there, only an empty block): a block with no statement (comments are not in node).
+// GAP (blocked: CPython's syntax verdict, core.rr's syntax_error(d, l, msg), needs core.rr's isolated ast.parse
+// worker, which the corpus runner does not run): the stages' rows are CPython's `ast` of the file (pythonAst), so a
+// file ast.parse rejects has none, its module row included, and no check fires there. Here, beside W's own gate
+// (`!syntax_error(d)`, the tape's ERROR nodes), one rejection tree-sitter does not mark is approximated: a block
+// with no statement (`if True:` or `def f():` with no body: tree-sitter gives an empty block, CPython an
+// IndentationError; comments are not in node). Any other ast.parse rejection that leaves the tape with no ERROR
+// node is not seen.
 .decl graph_plan_contracts_stmt(b: node)
 graph_plan_contracts_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
 .decl graph_plan_contracts_unparsed(d: number)
