@@ -10,13 +10,17 @@ relations deliver. It records which side should move, and what was changed on th
 In short:
 
 - The engine is behind `core.rr` far more often than the reverse. Most rows below are engine work.
-- Two syntax forms stop all 930 pack rules at the reader: the constant `code "X"` and the `suppress` line.
-  Both are this branch's settled syntax, so the reader should learn them.
+- Two syntax forms stopped all 930 pack rules at the reader: the constant `code "X"` and the `suppress` line.
+  The reader has since learnt both (section 4, status).
 - One engine lowering is wrong rather than missing: `has(a, n, set)` puts the set on the ancestor.
 - This branch changed descriptions in `core.rr`, one `rrlab` fact (`str` of an interpolated literal), two rules
   whose refused construct had an equally clear form, and one malformed message string.
 
-Engine sources read (worktree state of 2026-11-06, which has uncommitted work on top of `e501fa254`):
+Section 6 says where the two engine branches stand: the reader work of section 4 is on a sibling branch that
+`final-rerail-shape` has not merged yet.
+
+Engine sources read for sections 1 and 2 (worktree state of 2026-11-06, which has uncommitted work on top of
+`e501fa254`):
 `native/src/code_rule_dsl/logic/rr/{syntax,lower}.rs`, `logic/front.rs`, `logic/strings/functions.rs`,
 `logic/native/setfix.rs` (`sym_cat`), `logic/plan/corpus.rs` (`NOT_MADE`), and `facts/vtab/syntax.rs` (the base
 relations). Decisions 0036, 0037, 0042 and 0043; open items O70 to O79.
@@ -284,6 +288,51 @@ In order of what it unblocks:
    `doc`'s module `""` for files with none, and `pkg` for Python only; translated programs include `core.rr`
    (O74).
 
+### Status after the engine work (2026-11-06)
+
+The work was done on the sibling branch `jeremybarnes/final-rerail-shape-rr-align`, recorded in its decision
+0046-rr-as-core-rr-states-it.md. The `op` question (O79) was settled as `core.rr` says: `op` is every anonymous
+token, and T's narrower view is kept as `op_t` for T's parity tests.
+
+| Census | Before | After |
+|---|---|---|
+| Library files that parse whole | 51 of 106 | 98 of 106 |
+| Library clauses that lower | 3,831 of 3,905 | 3,890 of 3,906 |
+| Pack files that parse whole | 0 (all stopped at `code "X"`) | 871 of 949 |
+| Pack clauses that lower | 4,602 of 5,242 (with the shim) | 5,220 of 5,264 (no shim) |
+| Data-layer clauses that lower | 293 | 359 of 372 |
+
+Done:
+- items 1 to 5 and 8, apart from the items listed below;
+- from item 6, everything except `ordered by`, `dfs_first`, patterns, `mean` and the unproven value cycles;
+- from item 7, `unset`.
+
+Left, with the reason:
+- **`ordered by`** (37 clauses) needs evaluation in visit order per document, which the planner does not do.
+- **`@place` as a value outside a violation's head** (12 files) needs a place value in the node/span domain.
+- **Value cycles with bounds the check cannot prove yet** (73 files, 15 library clauses): `hex_place`,
+  `norm`/`sci`, `unescape`, `slot_walk`. They are refused, never run to a budget.
+- **Still refused:** `dfs_first`, `~` patterns and `mean`.
+- **Text layer:** captures and `match_all` are still computed per row, not chunk-at-a-time (decisions 0041, 0042).
+- **Not yet made:** `parsed` and `string_annotation` (O80), and `earlier` in CPython's order.
+- **O74:** translated programs still read T's shape.
+- **A relation named `set`** breaks the SQL lowering. Table names need quoting.
+
+Findings replay (path, line, code), as `events / compared / exact / errors`:
+
+| Run | Recordings 1–6 | Batches 7–8 and probes |
+|---|---|---|
+| 0043 and O72 | `2350 155 153 0` | `1638 20 16 0` |
+| After the base relations | `2350 178 176 0` | `1638 95 91 0` |
+| After the reader | `2350 178 171 0` | `1638 117 100 0` |
+| After the PSE fixes | `2350 178 177 0` | `1638 117 113 0` |
+
+The hand-written data-layer rules now lower, and are compared instead of the converted JSON. The drop of 5 was
+plan-scope-side-effects. The recorded findings spell its codes `PSE-050`, but `core.rr` names a violation's code
+after the violation. Its rule now gives each code with `code "PSE-…"`, and it sees through a parenthesized `if`
+test. The replay also drops `.mode log` codes on the suite plugin's events, as the plugin does. The check is then
+7 of 7 and 22 of 22. The last row adds that check's targeted replay to the reader run's other checks.
+
 ## 5. Scores before and after
 
 Only the `str` change touches semantics. In Python, only `lib/python/pyflakes.rr`'s `all_entry` reads `str`.
@@ -317,3 +366,44 @@ The two rewrites (section 3) do not change semantics, and were checked as well:
 | javascript/eslint-no-warning-comments (`--all`) | 10 / 0 / 0 | 10 / 0 / 0 |
 | javascript/eslint-no-warning-comments, every finding on its 44 fixtures | — | identical |
 | python D101 and D103 (`doc_private_module`), `rrlab run` on a package tree with `_priv.py`, `__main__.py`, `__.py`, `___.py`, `_sub/`, `__x__/` | 7 + 7 findings | the same 14 findings |
+
+## 6. Where the engine branches stand (2026-11-06)
+
+There are two engine branches:
+- **`jeremybarnes/final-rerail-shape`** at `a2667aed2`: the final-shape engine itself. Since `42af062ab` it has
+  added steps of decisions 0044 and 0045, and copies of this branch's files.
+- **`jeremybarnes/final-rerail-shape-rr-align`** at `38d105533`: the reader work of section 4, cut from
+  `42af062ab`. It is not merged into `final-rerail-shape`.
+
+How they compare:
+
+| | `final-rerail-shape` | `-rr-align` |
+|---|---|---|
+| `.rr` reader (`rr/syntax.rs`, `rr/lower.rs`) | as `42af062ab`: section 2's first census | section 4's status table |
+| Pack files the reader takes | none (`code "X"` stops all of them) | 871 of 949 |
+| Replay, recordings 1–8 together | `3988 273 266 0` | `3988 295 290 0` |
+| Library files hashed, program cached by them (0044 step 1) | yes | no |
+| Node sets in chunked containers (0045) | steps 1–3 | no |
+
+The rr-align branch was cut before 0044 step 1. A trial merge (`git merge-tree`) conflicts in two files:
+- **`logic/rr.rs`:** step 1 moved `parse_file`'s body into `read_file`, the version that caches the program.
+  rr-align added a check to `parse_file` that refuses rule names starting `rr_`. The check belongs in
+  `read_file`, before lowering, so that a cached program is checked too.
+- **`logic/rr/tests.rs`:** step 1 made `read` and `program` also return the files they read. rr-align's tests
+  call both, so they take the statements from the result.
+
+Neither side changes what the other does. The merge keeps both.
+
+### What 0044 means for the rules
+
+0044's later steps change what `core.rr` describes. Nothing on this branch changes yet:
+- **`file`:** its L0 seeded fact is `file(path, hash)`, but `core.rr` declares `file(path)` for import
+  resolution. Either `core.rr` adds the hash, or the engine keeps `file/1` as a projection. The rules read only
+  the path.
+- **Path facts (step 3):** `module`, `pkg`, `path_part` and `file_name` become `.rr` rules over `file` in the
+  library, instead of base relations computed in Rust. Their `.input` lines in `core.rr` would then become rules,
+  with the same meaning: `doc`'s module is `""` for a file with no dotted module, and `pkg` is for Python only.
+- **`library_file` and `config_file`:** the engine reads these for itself; no rule reads them.
+  `config_file` waits for O76, so that `.input` files (`option`, the ignore lists) become hashed inputs.
+
+0045 changes no rule: it is how the engine stores a set of nodes.

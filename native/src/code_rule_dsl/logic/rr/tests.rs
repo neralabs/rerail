@@ -52,17 +52,17 @@ fn rule_syntax_files_pass_check_rr() {
     let lib: Vec<PathBuf> = rr_files().into_iter().filter(|p| p.starts_with(library())).collect();
     let mut given = BTreeSet::new();
     for f in &lib {
-        given.extend(check::fix_relations(&read(f).unwrap()));
+        given.extend(check::fix_relations(&read(f).unwrap().0));
     }
     let mut problems = Vec::new();
     for f in rr_files() {
-        for (line, vars) in check::grounded(&read(&f).unwrap(), &given) {
+        for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
-        let mut program = program(&f).unwrap();
+        let mut program = program(&f).unwrap().0;
         let core = library().join("core.rr").canonicalize().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
-            program.push((core.clone(), read(&core).unwrap()));
+            program.push((core.clone(), read(&core).unwrap().0));
         }
         let named: Vec<(String, Vec<syntax::Statement>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -607,4 +607,30 @@ fn negated_conjunctions_lower_to_helpers() {
     assert_eq!(helpers("d"), [("!H(0)".to_owned(), vec!["H(0) :- o(\"k\", \"on\"), g(_)".to_owned()])]);
     let printed = print(&p).and_then(|text| parse(&text)).unwrap();
     assert_eq!(difference(&p, &printed), None);
+}
+
+/// Decision 0044 §4: a program is a derivation of the library files it read. Reading it again
+/// reuses it; editing a file it read, or creating one where an include looked, reads it again.
+#[test]
+fn programs_are_kept_by_the_hashes_of_what_they_read() {
+    let dir = std::env::temp_dir().join(format!("rr-library-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (main, helper) = (dir.join("main.rr"), dir.join("zz_helper_0044.rr"));
+    std::fs::write(&helper, ".decl h(x: number)\nh(1).\n").unwrap();
+    std::fs::write(&main, "#include \"zz_helper_0044.rr\"\n.decl r(x: number)\nr(x) :- h(x).\n.output r\n").unwrap();
+    let (first, files) = read_file(&main).unwrap();
+    let names: Vec<String> = files.iter().map(|f| f.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+    assert_eq!(names.first().map(String::as_str), Some("core.rr"), "core.rr first: {names:?}");
+    // In reading order: each file, then what it includes; the helper twice, as the library probe
+    // that found nothing and as the file beside main.rr.
+    assert_eq!(names, ["core.rr", "main.rr", "zz_helper_0044.rr", "zz_helper_0044.rr"]);
+    assert!(files.iter().any(|f| f.sha256.is_none() && f.path.starts_with(library())), "the include's library probe is recorded");
+    assert!(files.iter().filter_map(LibraryFile::fact).all(|f| f.starts_with("library_file(") && f.contains("\"sha256:")));
+    let (again, files_again) = read_file(&main).unwrap();
+    assert_eq!((format!("{first:?}"), &files), (format!("{again:?}"), &files_again), "unchanged files: the same program");
+    std::fs::write(&helper, ".decl h(x: number)\nh(2).\n").unwrap();
+    let (edited, edited_files) = read_file(&main).unwrap();
+    assert_ne!(format!("{first:?}"), format!("{edited:?}"), "an edited include is read again");
+    assert_ne!(files, edited_files);
+    std::fs::remove_dir_all(&dir).unwrap();
 }

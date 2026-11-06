@@ -32,7 +32,7 @@
 // What the script signs (_allowlist_to_entries): "path:count" for each entry, under linter "lint_file_length".
 allow_entry("file_length", e) :- allowlisted(p, n), e = cat(p, ":", to_string(n)).
 allow_sig("file_length", "lint_file_length", s) :- script_line(_, t),
-    match("ALLOWLIST_SIGNATURE(?:\s*:\s*str)?\s*=\s*\"(?<s>[^\"]*)\".*", t).
+    match("ALLOWLIST_SIGNATURE(?:\\s*:\\s*str)?\\s*=\\s*\"(?<s>[^\"]*)\".*", t).
 
 // The script checks the signature only when the allowlist has entries (cli_main: `if allowlist and …`).
 // Unsigned and invalid both fail. No signature line at all fails too: the script could not run without one.
