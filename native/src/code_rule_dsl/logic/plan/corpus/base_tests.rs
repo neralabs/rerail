@@ -348,3 +348,43 @@ vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `static_value(n, v)` is W's value with names followed (`value.follow`): a row exactly where that value is a known
+/// scalar, its `v` W's there; a name bound once in the file to a literal (or to such a name) has the literal's value,
+/// a parameter none, and a literal the value `value` gives it.
+#[test]
+fn static_value_is_ws_followed_value() {
+    let dir = corpus("static-value", &[("a.py", VALUES)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl static_value(n: node, v: symbol)
+.input node, value, static_value
+.decl vals(s: number, e: number, v: symbol)
+vals(s, e, v) :- static_value(n, v), node(_, n, _, s, e).
+.decl plain(s: number, e: number, v: symbol)
+plain(s, e, v) :- value(n, v), node(_, n, _, s, e).
+.output vals, plain
+"#;
+    let out = run(&dir, program, &["vals", "plain"]);
+    let (got, plain) = (spans_and_values(&out[0]), spans_and_values(&out[1]));
+    let text = |s: u64, e: u64| &VALUES[s as usize..e as usize];
+    let scalars = w_scalars("a.py", VALUES, true);
+    assert_eq!(got.iter().map(|(s, e, _)| (*s, *e)).collect::<BTreeSet<_>>(), scalars.iter().map(|(s, e, _)| (*s, *e)).collect(), "{got:?}");
+    for (start, end, ty) in &scalars {
+        let (_, _, v) = got.iter().find(|(s, e, _)| (s, e) == (start, end)).unwrap();
+        assert!(w_value_is("a.py", VALUES, *start, *end, ty, v, true), "{:?} is not W's followed {ty} {v:?}", text(*start, *end));
+    }
+    // Every literal's value is its static value.
+    assert!(plain.iter().all(|row| got.contains(row)), "{plain:?}");
+    let at = |needle: &str, offset: usize| {
+        let start = (VALUES.find(needle).unwrap() + offset) as u64;
+        got.iter().filter(|(s, _, _)| *s == start).map(|(_, _, v)| v.as_str()).collect::<Vec<_>>()
+    };
+    assert_eq!(at("call(A, B, x)", 5), ["k"]);
+    assert_eq!(at("call(A, B, x)", 8), ["k"]);
+    assert_eq!(at("call(A, B, x)", 11), ["aAéb"]);
+    assert_eq!(at("B = A", 4), ["k"]);
+    assert_eq!(at("return A", 7), Vec::<&str>::new());
+    let _ = std::fs::remove_dir_all(&dir);
+}

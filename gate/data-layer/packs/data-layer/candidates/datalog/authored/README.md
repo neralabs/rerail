@@ -77,6 +77,7 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl col(n: loc, c: number)                      // the start's byte column, from 0 (0 on a span)
 .decl node_text(n: node, s: symbol)               // a node's source text, exactly (W's `regex` on a node)
 .decl value(n: node, v: symbol)                   // W's value of an expression, as Python's str(v) of a scalar
+.decl static_value(n: node, v: symbol)            // the same, names followed to their bindings (W's value.follow)
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -100,3 +101,8 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   scalar (a tuple, list, dict, set, bytes). W's budget does not apply: every node is decoded. `v` alone does not say
   the type (the str `"12"` and the int `12` are both `12`); W's `value.eq` on a number compares Python's way (`1 == 1.0
   == True`), so it is every spelling of the number.
+- `static_value(n, v)` is `value` with names followed as W's `value.follow` follows them (`ScopeTable::binding`, up to
+  16 hops): for Python, a name whose file-local binding the read sees (Ruff's model: the latest one) is a plain or
+  annotated assignment with a value, a walrus, or an unpacked name paired with a display's element has that value's
+  (`A = "k"`, then `A`; `B = A`, then `B`); a parameter, an import, a global or builtin, and every name of a file with
+  syntax errors have none. Every row of `value` is a row of `static_value`.

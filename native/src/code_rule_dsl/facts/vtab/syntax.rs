@@ -354,8 +354,8 @@ enum View {
 /// may), and its `col` its start's byte column, both on the tape's lines; `node_text` is its source text, exactly.
 /// `value(n, v)` is W's value of expression node `n` as a string (`matcher::file_values`: a clause's `value` in its
 /// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
-/// (`Document::tape`), no row where W does not know it or it is no scalar. Rows hold string indexes, as
-/// `Batch::build`'s do.
+/// (`Document::tape`), no row where W does not know it or it is no scalar; `static_value(n, v)` the same with names
+/// followed through their file-local bindings (W's `value.follow`). Rows hold string indexes, as `Batch::build`'s do.
 #[derive(Default)]
 struct Extra {
     source: bool,
@@ -369,6 +369,7 @@ struct Extra {
     col: bool,
     node_text: bool,
     value: bool,
+    static_value: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
     src_lines_lf: Vec<[i64; 3]>,
@@ -379,6 +380,7 @@ struct Extra {
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
     values: Vec<[i64; 2]>,
+    static_values: Vec<[i64; 2]>,
 }
 
 impl Extra {
@@ -396,6 +398,7 @@ impl Extra {
             col: read("col"),
             node_text: read("node_text"),
             value: read("value"),
+            static_value: read("static_value"),
             ..Self::default()
         }
     }
@@ -428,18 +431,19 @@ impl Extra {
     /// Document `p`'s rows (its `Document` `d`); `splitlines`: it is Python's.
     fn document(&mut self, p: &Projected, d: &Document, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
-        if self.value {
+        if self.value || self.static_value {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
             if tape.transducer_len() != f.len() {
                 return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
             }
-            let values = &mut self.values;
-            crate::code_rule_dsl::matcher::file_values(tape, file, true, false, &mut |_, ordinal, v, _| {
+            let (values, static_values) = (&mut self.values, &mut self.static_values);
+            crate::code_rule_dsl::matcher::file_values(tape, file, self.value, self.static_value, &mut |followed, ordinal, v, _| {
                 let local = p.local[ordinal as usize];
                 if let (true, Some(v)) = (local != NONE, v) {
-                    values.push([p.global(local), string(&v) as i64]);
+                    let rows = if followed { &mut *static_values } else { &mut *values };
+                    rows.push([p.global(local), string(&v) as i64]);
                 }
             });
         }
@@ -538,6 +542,9 @@ impl Extra {
         }
         if self.value {
             out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)]))));
+        }
+        if self.static_value {
+            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)]))));
         }
         out
     }
