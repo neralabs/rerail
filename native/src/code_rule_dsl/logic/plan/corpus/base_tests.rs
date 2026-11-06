@@ -450,3 +450,29 @@ hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), 
     assert_eq!(got[6], hits);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `match(p, s)` with `p` computed in the rule is the same whole-string test as with a constant pattern, each
+/// distinct (pattern, string) tested once; and the program printed (`rr::print`, the overlay's merge) runs alike.
+#[test]
+fn a_computed_pattern_is_matched_per_row() {
+    let source = "def load(): pass\ndef load_async(): pass\ndef loader(): pass\nx = load_lazy\ny = re_load_x\n";
+    let dir = corpus("computed-pattern", &[("a.py", source)]);
+    let program = r#"
+.decl name(n: node, s: symbol)
+.decl twin(s: symbol, t: symbol)
+twin(s, t) :- name(_, s), name(_, t), x = cat(s, "_[a-z]+"), match(x, t).
+.decl lone(s: symbol)
+lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
+.output twin, lone
+"#;
+    let names = ["load", "load_async", "loader", "load_lazy", "x", "y", "re_load_x"];
+    let whole = |p: &str, s: &str| regex::Regex::new(&format!("^(?:{p})$")).unwrap().is_match(s);
+    let twin = csv(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| format!("{s}\t{t}"))));
+    assert_eq!(twin, "load\tload_async\nload\tload_lazy\n");
+    let lone = csv(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| (*s).to_owned()));
+    let printed = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).unwrap()).unwrap();
+    for program in [program, printed.as_str()] {
+        assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

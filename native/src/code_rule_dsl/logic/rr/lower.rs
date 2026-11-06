@@ -48,6 +48,26 @@ fn test_of(rel: &str) -> Option<&'static str> {
     TESTS.iter().find(|(rr, _)| *rr == rel).map(|(_, engine)| *engine)
 }
 
+/// The whole-string regex of a pattern computed in a rule, `p`: `^(?:p)$` made as the row's pattern is.
+pub(super) fn anchored(p: Term) -> Term {
+    let concat = |a: Term, b: Term| Term::Call("concat".to_owned(), vec![a, b]);
+    concat(Term::Str("^(?:".to_owned()), concat(p, Term::Str(")$".to_owned())))
+}
+
+/// The pattern `anchored` made `p` of, if `p` is one.
+pub(super) fn unanchored(p: &Term) -> Option<&Term> {
+    match p {
+        Term::Call(f, args) if f == "concat" => match args.as_slice() {
+            [Term::Str(open), Term::Call(g, inner)] if open == "^(?:" && g == "concat" => match inner.as_slice() {
+                [p, Term::Str(close)] if close == ")$" => Some(p),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The built-ins that take a relation, and its position.
 pub(super) const RELATION_ARG: [(&str, &[usize]); 7] = [
     ("within_stop", &[2]),
@@ -394,9 +414,13 @@ impl Lowerer {
                 return not_yet(format!("match with named groups, {re:?}"));
             }
             let (s, mut p) = (self.term(s)?, self.term(p)?);
-            // `match` is whole-string, as in Soufflé; the engine's `rx` searches.
-            if op == "rx" && let Term::Str(re) = &p {
-                p = Term::Str(format!("^(?:{re})$"));
+            // `match` is whole-string, as in Soufflé; the engine's `rx` searches. A pattern computed in the rule is
+            // anchored as it is made (`anchored`), and tested per row (`strings::test`, each distinct pair once).
+            if op == "rx" {
+                p = match p {
+                    Term::Str(re) => Term::Str(format!("^(?:{re})$")),
+                    p => anchored(p),
+                };
             }
             return Ok(Literal::Cmp { l: Term::Call(op.to_owned(), vec![s, p]), op: "=", r: Term::Int(if neg { 0 } else { 1 }) });
         }
