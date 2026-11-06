@@ -454,7 +454,10 @@ and not changed after.
   through its built-in apps server, which Bedrock refused mid-run. Every concurrent head was fetched (4,113 refs over
   the 19 repositories) and web access was turned off (`web_search = "disabled"`, `--disable apps`) for agent and
   grader. The stopped runs were bubbletea (6 runs, all graded no conflict) and chi (6 graded conflict) plus 6 not yet
-  graded; none of them are used, and look 1 reruns in full.
+  graded; none of them are used, and look 1 reruns in full. In the rerun, the host running the second half of the
+  pairs crashed after 4 runs (zod #6129/#6338, all graded no conflict) when cleanup raced a Codex child still writing;
+  cleanup can no longer fail a job, and that half reran in full with otherwise unchanged settings. The 4 runs are not
+  used.
 - **Primary** (per treatment against `none`, one-sided, stratified by pair, Holm across the two treatments): R1, the
   share of runs the blind grader judges to conflict with the first pull request's design (yes or unclear count as a
   conflict; errors and empty diffs count as failures) is lower.
