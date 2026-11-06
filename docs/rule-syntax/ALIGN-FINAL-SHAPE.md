@@ -16,7 +16,11 @@ In short:
 - This branch changed descriptions in `core.rr`, one `rrlab` fact (`str` of an interpolated literal), two rules
   whose refused construct had an equally clear form, and one malformed message string.
 
-Engine sources read (worktree state of 2026-11-06, which has uncommitted work on top of `e501fa254`):
+Section 6 says where the two engine branches stand: the reader work of section 4 is on a sibling branch that
+`final-rerail-shape` has not merged yet.
+
+Engine sources read for sections 1 and 2 (worktree state of 2026-11-06, which has uncommitted work on top of
+`e501fa254`):
 `native/src/code_rule_dsl/logic/rr/{syntax,lower}.rs`, `logic/front.rs`, `logic/strings/functions.rs`,
 `logic/native/setfix.rs` (`sym_cat`), `logic/plan/corpus.rs` (`NOT_MADE`), and `facts/vtab/syntax.rs` (the base
 relations). Decisions 0036, 0037, 0042 and 0043; open items O70 to O79.
@@ -362,3 +366,44 @@ The two rewrites (section 3) do not change semantics, and were checked as well:
 | javascript/eslint-no-warning-comments (`--all`) | 10 / 0 / 0 | 10 / 0 / 0 |
 | javascript/eslint-no-warning-comments, every finding on its 44 fixtures | — | identical |
 | python D101 and D103 (`doc_private_module`), `rrlab run` on a package tree with `_priv.py`, `__main__.py`, `__.py`, `___.py`, `_sub/`, `__x__/` | 7 + 7 findings | the same 14 findings |
+
+## 6. Where the engine branches stand (2026-11-06)
+
+There are two engine branches:
+- **`jeremybarnes/final-rerail-shape`** at `a2667aed2`: the final-shape engine itself. Since `42af062ab` it has
+  added steps of decisions 0044 and 0045, and copies of this branch's files.
+- **`jeremybarnes/final-rerail-shape-rr-align`** at `38d105533`: the reader work of section 4, cut from
+  `42af062ab`. It is not merged into `final-rerail-shape`.
+
+How they compare:
+
+| | `final-rerail-shape` | `-rr-align` |
+|---|---|---|
+| `.rr` reader (`rr/syntax.rs`, `rr/lower.rs`) | as `42af062ab`: section 2's first census | section 4's status table |
+| Pack files the reader takes | none (`code "X"` stops all of them) | 871 of 949 |
+| Replay, recordings 1–8 together | `3988 273 266 0` | `3988 295 290 0` |
+| Library files hashed, program cached by them (0044 step 1) | yes | no |
+| Node sets in chunked containers (0045) | steps 1–3 | no |
+
+The rr-align branch was cut before 0044 step 1. A trial merge (`git merge-tree`) conflicts in two files:
+- **`logic/rr.rs`:** step 1 moved `parse_file`'s body into `read_file`, the version that caches the program.
+  rr-align added a check to `parse_file` that refuses rule names starting `rr_`. The check belongs in
+  `read_file`, before lowering, so that a cached program is checked too.
+- **`logic/rr/tests.rs`:** step 1 made `read` and `program` also return the files they read. rr-align's tests
+  call both, so they take the statements from the result.
+
+Neither side changes what the other does. The merge keeps both.
+
+### What 0044 means for the rules
+
+0044's later steps change what `core.rr` describes. Nothing on this branch changes yet:
+- **`file`:** its L0 seeded fact is `file(path, hash)`, but `core.rr` declares `file(path)` for import
+  resolution. Either `core.rr` adds the hash, or the engine keeps `file/1` as a projection. The rules read only
+  the path.
+- **Path facts (step 3):** `module`, `pkg`, `path_part` and `file_name` become `.rr` rules over `file` in the
+  library, instead of base relations computed in Rust. Their `.input` lines in `core.rr` would then become rules,
+  with the same meaning: `doc`'s module is `""` for a file with no dotted module, and `pkg` is for Python only.
+- **`library_file` and `config_file`:** the engine reads these for itself; no rule reads them.
+  `config_file` waits for O76, so that `.input` files (`option`, the ignore lists) become hashed inputs.
+
+0045 changes no rule: it is how the engine stores a set of nodes.
