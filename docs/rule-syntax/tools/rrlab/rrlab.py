@@ -604,7 +604,9 @@ class Run:
                     d = docof[at]; pth = path[d]; ln = line.get(at, 0); c = col.get(at, 0)
                 else:
                     continue
-                code = meta["code"] if meta["code"] is not None else r[meta["cols"].index(meta["code_col"])]
+                # No `code` clause: the code is the violation's own name, as in the engine.
+                code = (meta["code"] if meta["code"] is not None
+                        else r[meta["cols"].index(meta["code_col"])] if meta["code_col"] is not None else v)
                 out.append({"path": pth, "line": ln, "col": c, "code": code, "violation": v, "row": r,
                             "message": self.message(meta, r, line), "syntax_error": d in errs, "at": at})
         out = [f for f in out if self.in_scope(f["path"])]
