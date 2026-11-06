@@ -166,7 +166,14 @@ fn hand_written(check: &str) -> Option<String> {
         return None;
     }
     let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
-    let program = crate::code_rule_dsl::logic::rr::parse_file(&path).ok()?;
+    // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
+    let program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{check}: the hand-written rule does not lower: {e}");
+            return None;
+        }
+    };
     let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
     // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
     if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {

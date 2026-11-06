@@ -1359,33 +1359,28 @@ since reading it is not written. **Closure:** these relations are built natively
 
 ## O78. Where the `.rr` library and rules differ from the recorded findings
 
-The library (`docs/rule-syntax/lib`) and the data-layer rules now live here; More-ergonomic-rule-syntax gets the
-same changes. Hand-written rules on the recorded events: 93 of 98 exact (was 64), after these fixes:
-- `resolve_export` (imports.rr) had no row for a name defined in its own module; its first rule now keeps r = q.
-- `public_name` read `__all__ = []` as no `__all__` (`has_all`); public-api-triples' roots are public names only,
-  and module roots are functions only.
-- `ref_site` (names.rr) counted a binding target as a read of itself (`except E as e`): `bind_target` excludes
-  them, except `x += 1`.
-- An unimported `contextlib.suppress(…)` or `suppress(…)` (swallowed-exceptions) and a bare `TYPE_CHECKING`
-  (names.rr) are matched by their text, as the Python linters do.
-- POSTOPDISPATCH001 asks for an `earlier` comparison, not a `precedes` sibling; `earlier` lowers to document
-  order (`rr::lower`), which is CPython's visit order except a def's decorators and return annotation.
-- `cmp` reads `op_at(c, 0, o)` (O79).
-- The engine: a nested glob alternative (`{{versioned,}x,y}`) is expanded (globset refuses it), a disjunction that
-  binds its variable (`(x = "a" ; x = "b")`) is no set test, and an aggregate's context leaves out comparisons it
-  cannot bind.
+The library (`docs/rule-syntax/lib`) and the data-layer rules now live here; More-ergonomic-rule-syntax's pass is
+brought over as it lands. Hand-written rules on the recorded events: 97 of 98 exact (was 64). Fixed:
+- `resolve_export` kept no row for a name defined in its own module; `public_name` read `__all__ = []` as no
+  `__all__`; public-api roots are public names, module roots functions only.
+- `ref_site` counted a binding target as a read (`bind_only`).
+- An unimported `contextlib.suppress(…)`/`suppress(…)` and a bare `TYPE_CHECKING` match by text, as the linters do.
+- POSTOPDISPATCH001 asks for an `earlier` comparison; `cmp` reads `op_at` (O79).
+- public-api's class methods follow the linter's `public_methods_of_class`: the class, then its bases
+  breadth-first, the first public non-property method of each name (a property does not claim its name).
+  Written five levels deep, since recursion that makes new keys is refused (`UnboundedValueCycle`).
+- swallowed-exceptions follows the linter's scope depth: a raise in a def, class or lambda inside any handler does
+  not count, so a handler inside a def inside a handler is reported (the `nested-handler` probe).
+- missing-async-pairs compares the linter's `node.args.args`: ordinary parameters in order, not `/`-only,
+  `*`-only, `*args` or `**kwargs`.
+- The replay says when a hand-written rule does not lower (it fell back to the converted rule silently).
 
-Left:
-- public-api-triples' chainable-builder reads `text` of a return annotation; the engine's `text` is T's
-  (identifiers only), `core.rr`'s is any node's source (1 event).
-- public-api-triples' property-override-inherits-public: the linter reports the base's `read_lazy` when the
-  exported child overrides it with a property; `mro_method` takes the child's own (1 event).
-- missing-async-pairs compares keyword-only and positional-only parameters by design ("improves on the Python
-  linter"), so 2 events the linter passes are reported.
-- One probe (`nested-handler:analyzer`) records a finding inside a nested def that the plugin's recording of the
-  same source does not.
-**Closure:** `text` of any node in the engine (with T's parity kept for identifiers), and a decision on the
-property-override case; the other two stay as recorded differences.
+Left: public-api's chainable-builder reads `text` of a return annotation. `core.rr` (and the rule-syntax pass's
+ALIGN-FINAL-SHAPE.md) give every node a `text`; the engine's is T's, identifiers only (1 event).
+**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests).
+
+`logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed once in the parallel `logic::` run
+at load 40-55 and passes alone: shared state between tests, not looked into.
 
 ## O79. `op` of a comparison: closed
 

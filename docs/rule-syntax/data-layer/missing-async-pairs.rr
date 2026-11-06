@@ -11,11 +11,11 @@
 // public or `_…_async`, minus the exempt names and `…_lazy`; def foo and async def foo_async pair up per class.
 //   missing_pair        one side exists and does I/O (an I/O method call, or a conn/session/txn… parameter);
 //                       the other side does not exist
-//   signature_mismatch  both sides exist and their parameters, self aside, differ
+//   signature_mismatch  both sides exist and their ordinary parameters (no `/`-only, `*`-only, *args, **kwargs),
+//                       self aside, differ in name or order, as in the Python linter
 // Improves on the Python linter:
 //   a counterpart inherited from a base class counts, across files (the Python linter looks only in the same class body);
 //   classes are told apart by definition, not by name (same-named classes in one file no longer merge);
-//   the whole parameter list is compared, keyword-only parameters included (the Python linter compares positional ones).
 //
 // How to read this file
 //   1. named / side: each def that can take part in a pair, with its base name and side ("sync" or "async").
@@ -141,8 +141,20 @@ pair(c, s, a) :- own(c, b, "async", a), sees(c, b, "sync", s).
 // differ(s, a): some parameter, self aside, is at a position in one def that the other does not have under the same
 // name. The two rules check both directions, so a longer list on either side is a difference.
 .decl differ(s: node, a: node)
-differ(s, a) :- pair(_, s, a), params(s, x, i), x != "self", !params(a, x, i).
-differ(s, a) :- pair(_, s, a), params(a, x, i), x != "self", !params(s, x, i).
+differ(s, a) :- pair(_, s, a), plain_param(s, x, r), !plain_param(a, x, r).
+differ(s, a) :- pair(_, s, a), plain_param(a, x, r), !plain_param(s, x, r).
+// plain_param(f, x, r): the r-th ordinary parameter of f, self aside: the Python linter's `node.args.args`, which
+// leaves out positional-only (before `/`), keyword-only (after `*`), `*args` and `**kwargs`.
+.decl plain_param(f: node, x: symbol, r: number)
+plain_param(f, x, r) :- plain_at(f, x, i), r = count : { plain_at(f, y, j), j < i }.
+// plain_at(f, x, i): parameter x at position i of f's list is ordinary: no `/` after it, no `*`, `*args` or
+// `**kwargs` before it, and not self.
+.decl plain_at(f: node, x: symbol, i: number)
+plain_at(f, x, i) :- param(f, x, i), x != "self", field(f, "parameters", ps),
+    count : { child(ps, s, j), kind(s, "positional_separator"), j > i } = 0,
+    count : { child(ps, s, j), kind(s, k), star_sep(k), j < i } = 0.
+.decl star_sep(kind: symbol)
+star_sep("keyword_separator"). star_sep("list_splat_pattern"). star_sep("dictionary_splat_pattern").
 
 // signature_mismatch: reported at the sync def, naming the async def as `other`.
 .violation signature_mismatch(at: node, cls: symbol, other: node) "{cls}.{at.name}/{other.name}: Argument mismatch"

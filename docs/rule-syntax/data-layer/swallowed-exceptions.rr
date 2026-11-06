@@ -49,7 +49,15 @@ handler(x, b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
 // reraises(x): a raise statement below handler x with no own_scope node in between. within(r, x, own_scope) is
 // "r is below x, and no node of own_scope lies strictly between them": a raise in a nested function does not count.
 .decl reraises(x: node)
-reraises(x) :- handler(x, _), kind(r, "raise_statement"), within_stop(r, x, own_scope).
+reraises(x) :- handler(x, _), kind(r, "raise_statement"), within_stop(r, x, own_scope), !deep_raise(r).
+// deep_raise(r): raise r sits in a def, class or lambda that is itself inside some handler. The Python linter counts
+// the scopes it enters while any handler is open and takes a raise only at depth 0, so a handler inside a def inside
+// another handler never sees its own raise: in `except E: def f(): try: … except V: raise`, the inner handler is
+// reported too.
+.decl nested_k(kind: symbol)
+nested_k("function_definition"). nested_k("class_definition"). nested_k("lambda").
+.decl deep_raise(r: node)
+deep_raise(r) :- kind(r, "raise_statement"), within(r, s), kind(s, k), nested_k(k), kind(h, "except_clause"), within(s, h).
 // protocol_only(x): x catches something (catches has a row), and every type it catches is a protocol exception.
 // The count : { …, !… } = 0 pattern is "for all": there is no caught type outside the set. A bare `except:` catches
 // builtins.BaseException, so it is never protocol-only.
