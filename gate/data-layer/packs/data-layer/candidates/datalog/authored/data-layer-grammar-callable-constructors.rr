@@ -1,6 +1,6 @@
 // data-layer-grammar-callable-constructors: the `constructor-arg` clause (a `budget` over evidence with a name
 // closure), hand-written (decision 0043), and `untyped-called-field`/`any-called-field` over the converter's (at the
-// end: its forms lose metavariables). The other five clauses are the converter's.
+// end: its forms approximate the parameter's type test). The other five clauses are the converter's.
 //
 // The evidence has two kinds of rows, over every in-scope parseable file:
 // - seeds: a top-level class (its parent the module, or a decorated_definition whose parent is the module) whose
@@ -15,9 +15,10 @@
 //
 // `symbol-scope(NAME)`, read at the candidate's scope: the nearest ancestor that is a non-async `def` or the module
 // (`inside … stopBy`, inclusive; nothing between can match). It holds for a module with a top-level `def NAME`; for
-// a `def` whose body defines `NAME` (directly, or decorated); and for a `def` with no parameter at all (the policy's
-// `$PARAM` is bound by nothing, so it is any non-splat parameter), no store of `NAME` anywhere in it
-// (`stored-name`), whose own scope holds it.
+// a `def` whose body defines `NAME` (directly, or decorated); and for a `def` with no parameter at all, no store of
+// `NAME` anywhere in it (`stored-name`), whose own scope holds it. "No parameter at all" is W's reading: `$PARAM`
+// is not one of `symbol-scope`'s params, so the call's frame holds only `NAME`, and the negated pattern's `$PARAM` is
+// a fresh capture (captures.rs, `reads`): the `not` fails on any non-splat parameter, whatever its name.
 // The `^def\s` regex on a function_definition is `!op(f, "async")`, as the converter writes it.
 // Options: none of the policy's (`oracleAnalyzer`, `sourceGate`) is read by this clause.
 
@@ -94,7 +95,8 @@ constructor_stored(n) :- child(q, n, _), node(_, q, "pattern_list", _, _), const
 constructor_stored(n) :- child(q, n, _), node(_, q, "tuple_pattern", _, _), constructor_stored(q).
 constructor_stored(n) :- child(q, n, _), node(_, q, "list_pattern", _, _), constructor_stored(q).
 
-// A `def` with a non-splat parameter (any name: `$PARAM` is unbound).
+// A `def` with a non-splat parameter, any name (`$PARAM` is fresh in `symbol-scope`'s frame, above). A typed
+// splat (`*a: T`) has no identifier child, so it is not one; an untyped splat is a splat pattern, not an identifier.
 .decl constructor_param(p: node)
 constructor_param(p) :- node(_, p, "identifier", _, _).
 constructor_param(p) :- node(_, p, "default_parameter", _, _).
@@ -131,12 +133,15 @@ violation("data-layer-grammar-callable-constructors", "constructor-arg", "CALLAB
     constructor_candidate(n, x), constructor_seed(x), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).
 
 // ---- untyped-called-field and any-called-field ----
-// Authored over the converter's: its rules lose `$PARAM` and `$FIELD` across helper relations (the converted program's
-// parameter test reads `text(v122, …)` with v122 unbound, so any parameter, `self` included, passes), which flags
-// a typed `fn: Callable` as untyped. Both clauses: a non-async `__init__` whose nearest class has a non-async
-// `render` (direct or decorated) that calls `self.FIELD(…)` somewhere, and which assigns `self.FIELD = PARAM`
-// somewhere; then `untyped`: a parameter named PARAM with no type, or no parameter named PARAM at all; `any`: a
-// parameter named PARAM typed `Any` (`Any` or `….Any`, directly in the `type`). One violation per `__init__`.
+// Authored over the converter's: its form tests "no type" as `name(type, s), glob("*?*", s)` (its "a regex on a
+// node of any kind as a name" approximation of `regex: "(?s)."` on the `type` field), and its "no parameter named
+// PARAM" rule ranges over every (node, node) pair (`node(_, v122, …), node(_, n, …), !m146(n, v122)`). Here a
+// parameter is typed when it has a `type` field (a valid parse's `type` node is never empty, so `(?s).` matches it).
+// Both clauses: a non-async `__init__` whose nearest class has a non-async `render` (direct or decorated) that calls
+// `self.FIELD(…)` somewhere, and which assigns `self.FIELD = PARAM` somewhere; then `untyped`: a parameter named
+// PARAM with no type, or no parameter named PARAM at all; `any`: a parameter named PARAM typed `Any` (`Any` or
+// `….Any`, directly in the `type`). `each: FIELD` gives one finding per FIELD, all at the `__init__`: one
+// (path, line) row.
 .decl untyped_param_kinds(kind: symbol)
 untyped_param_kinds("typed_parameter").
 untyped_param_kinds("typed_default_parameter").
