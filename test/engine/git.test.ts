@@ -3,7 +3,9 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { gitCandidates, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobs, runGit } from "../../src/engine/git.js";
+import {
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, runGit,
+} from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
 const roots: string[] = [];
@@ -47,6 +49,60 @@ describe("readGitBlobs", () => {
     const { clone, oid } = await partialClone();
     expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
     expect(partialCloneLacks(clone, oid)).toBe(true);
+  });
+});
+
+describe("readGitBlobIds", () => {
+  it("names each blob a revision or object id resolves to, and nothing for a missing one or a tree, whatever its path holds", async () => {
+    const root = await repository({ "a b.py": "1\n", "x blob": "2\n" });
+    await mkdir(join(root, "dir"));
+    await writeFile(join(root, "dir", "c.py"), "3\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "more");
+    const spaced = git(root, "rev-parse", "HEAD:a b.py").trim();
+    const ids = await readGitBlobIds(root, [
+      "HEAD:./a b.py", "HEAD:./x blob", "HEAD:./dir", "HEAD:./gone blob", spaced, "0".repeat(40), "HEAD:./dir/c.py",
+    ]);
+    expect(Object.fromEntries(ids)).toEqual({
+      "HEAD:./a b.py": spaced,
+      "HEAD:./x blob": git(root, "rev-parse", "HEAD:x blob").trim(),
+      [spaced]: spaced,
+      "HEAD:./dir/c.py": git(root, "rev-parse", "HEAD:dir/c.py").trim(),
+    });
+  });
+
+  it("names nothing outside a repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-ids-"));
+    roots.push(root);
+    await expect(readGitBlobIds(root, ["HEAD:./a.py"])).resolves.toEqual(new Map());
+  });
+});
+
+describe("gitBranchTips and gitCommitsBetween", () => {
+  it("lists each commit a branch or remote-tracking branch points at once, and no tag", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const seed = (await gitHead(root))!;
+    git(root, "branch", "same");
+    git(root, "tag", "v1");
+    git(root, "switch", "--quiet", "-c", "other");
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    const other = (await gitHead(root))!;
+    git(root, "update-ref", "refs/remotes/origin/main", seed);
+    git(root, "tag", "v2", other);
+    git(root, "switch", "--quiet", "--detach", seed);
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "detached");
+    expect((await gitBranchTips(root)).sort()).toEqual([seed, other].sort());
+  });
+
+  it("lists the commits a move added, and none where Git cannot say", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    const seed = (await gitHead(root))!;
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
+    const head = (await gitHead(root))!;
+    expect(await gitCommitsBetween(root, seed, head)).toEqual([head, git(root, "rev-parse", "HEAD~1").trim()]);
+    expect(await gitCommitsBetween(root, head, seed)).toEqual([]);
+    expect(await gitCommitsBetween(root, "0".repeat(40), head)).toEqual([]);
   });
 });
 

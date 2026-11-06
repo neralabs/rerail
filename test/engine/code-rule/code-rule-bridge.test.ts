@@ -836,6 +836,50 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["a shell redirect of its blob", (root: string) => writeFile(join(root, "src", "a.py"), execFileSync("git", ["show", "other:src/a.py"], { cwd: root }))],
+    ["a shell redirect of a remote-tracking branch's blob", async (root: string) => {
+      git(root, "update-ref", "refs/remotes/origin/other", "other");
+      git(root, "branch", "--quiet", "-D", "other");
+      await writeFile(join(root, "src", "a.py"), execFileSync("git", ["show", "origin/other:src/a.py"], { cwd: root }));
+    }],
+    ["a checkout of its path", (root: string) => git(root, "checkout", "other", "--", "src/a.py")],
+    ["a restore from its source", (root: string) => git(root, "restore", "--source", "other", "src/a.py")],
+    // Rerail cannot tell a write of the same bytes from a restore, and takes it for one (docs/reference.md).
+    ["a plain write of exactly its text", (root: string) => writeFile(join(root, "src", "a.py"), "old\nviolation\n")],
+  ])("audits nothing restored from another branch by %s, and measures the next shell edit from it", async (_name, restore) => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => restore(root))).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nviolation\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" }],
+    ]);
+  });
+
+  it("audits a file restored from a branch its own command committed it to", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "a.py"), "old\nmine\n");
+      git(root, "commit", "--quiet", "-am", "mine");
+      git(root, "branch", "backup");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
+
+  it("audits text a branch holds only at another path", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, () => writeFile(join(root, "src", "b.py"), "old\nviolation\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/b.py", language: "python", generatedText: "old\nviolation\n" }],
+    ]);
+  });
+
   it("reports only its own line for a shell edit after a checkout", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
