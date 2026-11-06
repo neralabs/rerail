@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn file_and_parent_filters_do_not_visit_equal_node_ids_in_other_files() -> Result<()> {
+    use crate::code_rule_dsl::{model::FileInput,relational::syntax};
+    use std::sync::atomic::AtomicUsize;
+    let file=FileInput::new("f0.py".into(),"python".into(),Arc::new("f(a,b,c,d,e,f,g,h,i,j)\n".into()),None,None,"test").unwrap();
+    let facts=syntax::Facts::build(&file).unwrap();
+    let files=(0..128).map(|i|(format!("f{i}.py"),Arc::clone(&facts))).collect();
+    let spec:syntax::Spec=serde_json::from_value(serde_json::json!({"name":"nodes","gate":"gate","owners":{}})).unwrap();
+    let source=syntax::sources(&spec,&files,Arc::new(AtomicUsize::new(usize::MAX))).unwrap().remove(0).1;
+    let db=super::super::Database::open()?;
+    let binding=Binding { schema:Arc::new(Metadata {columns:source.columns(),types:source.column_types()}),current:Arc::new(parking_lot::RwLock::new(source)) };
+    let stats=register_inner(&db,"scoped_nodes",binding)?;
+    let parent:i64=db.query_row("SELECT parent FROM scoped_nodes WHERE __path='f7.py' AND kind='identifier' ORDER BY id DESC LIMIT 1",[],|row|row.get(0))?;
+    let query=|sql:&str|->Result<Vec<i64>>{db.prepare(sql)?.query_map([parent],|row|row.get(0))?.collect()};
+    let expected=query("SELECT id FROM scoped_nodes WHERE __path='f7.py' AND +parent=?1 ORDER BY id")?;
+    assert!(!expected.is_empty());
+    stats.candidates.store(0,Ordering::Relaxed);
+    assert_eq!(query("SELECT id FROM scoped_nodes WHERE __path='f7.py' AND parent=?1 ORDER BY id")?,expected);
+    assert!(stats.candidates.load(Ordering::Relaxed)<=expected.len() as u64+1,"scoped lookup visited {} candidates for {} matches",stats.candidates.load(Ordering::Relaxed),expected.len());
+    Ok(())
+}
 struct Rows(Vec<i64>);
 impl Source for Rows {
     fn columns(&self) -> Vec<String> {
