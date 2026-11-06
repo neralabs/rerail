@@ -1337,6 +1337,12 @@ fn symbol_of(atoms: Option<[i64; 3]>, e: Expr) -> Expr {
     if atoms.is_some() { call("sym_atom", vec![e]) } else { e }
 }
 
+/// Whether `t` calls a function that can have no value (`strings::functions`' NULL, as `to_number("a")`): a row
+/// that binds or derives its value needs it not NULL.
+fn partial(t: &Term) -> bool {
+    matches!(t, Term::Call(f, args) if super::strings::functions::signature(f).is_some() || args.iter().any(partial))
+}
+
 fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
     Ok(match t {
         Term::Var(v) => env.get(v).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
@@ -1394,8 +1400,12 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 // A named group of a regex's match (`.rr`'s `match` with captures, `strings::group`); NULL without one.
                 ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
+                // `@dot` (`core.rr`): `a.b`, and `"" . b` is `b`.
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
-                ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
+                ("cat", [x, y]) => Expr::Case {
+                    branches: vec![(eq(x.clone(), string("")), y.clone())],
+                    fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
+                },
                 ("flat_bin", [o, x, y]) => {
                     let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
@@ -1585,6 +1595,9 @@ impl Model {
                     let lv = if let Term::Var(v) = l { Some(v) } else { None };
                     if *op == "=" && lv.is_some_and(|v| !env.contains_key(v)) {
                         let e = sql_term(r, &env, atoms)?;
+                        if partial(r) {
+                            wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
+                        }
                         env.insert(lv.expect("a variable").clone(), e);
                     } else if *op == "="
                         && let Some(lv) = lv
@@ -1595,31 +1608,42 @@ impl Model {
                             rv.iter().all(|v| env.contains_key(v))
                         }
                     {
-                        // A split of the bound whole: at the "." a bound part places, else at every "." (`rdl_int`).
-                        // In atoms mode the text is `sym_text`'s, and the parts are interned (`sym_atom`).
+                        // A split of the bound whole, as `@dot` makes it: `"" . w` is `w`, else at the "." a bound
+                        // part places, or at every "." with a part before it (`rdl_int`). In atoms mode the text
+                        // is `sym_text`'s, and the parts are interned (`sym_atom`).
                         let inputs = &self.inputs;
                         let w = inputs.text_of(&env[lv]);
                         let Term::Call(_, parts) = r else { unreachable!() };
                         let (Term::Var(q), Term::Var(x)) = (&parts[0], &parts[1]) else { unreachable!() };
+                        let case = |when: Expr, then: Expr, otherwise: Expr| Expr::Case { branches: vec![(when, then)], fallback: Box::new(otherwise) };
                         if let Some(eq_) = env.get(q).map(|e| inputs.text_of(e)) {
-                            wh.push(eq(
-                                substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]),
-                                bin(Op::Concatenate, eq_.clone(), string(".")),
-                            ));
-                            env.insert(x.clone(), inputs.symbol_of(substr(vec![w, bin(Op::Add, length(&eq_), integer(2))])));
+                            let empty = eq(eq_.clone(), string(""));
+                            let prefix = eq(substr(vec![w.clone(), integer(1), bin(Op::Add, length(&eq_), integer(1))]), bin(Op::Concatenate, eq_.clone(), string(".")));
+                            wh.push(bin(Op::Or, empty.clone(), prefix));
+                            env.insert(x.clone(), inputs.symbol_of(case(empty, w.clone(), substr(vec![w, bin(Op::Add, length(&eq_), integer(2))]))));
                         } else if let Some(ex) = env.get(x).map(|e| inputs.text_of(e)) {
+                            let whole = eq(w.clone(), ex.clone());
                             let negated = Expr::Unary { operator: SqlUnaryOperator::Negate, input: Box::new(length(&ex)) };
-                            wh.push(eq(substr(vec![w.clone(), bin(Op::Subtract, negated, integer(1))]), bin(Op::Concatenate, string("."), ex.clone())));
-                            wh.push(bin(Op::Greater, length(&w), length(&ex)));
+                            let suffix = bin(
+                                Op::And,
+                                eq(substr(vec![w.clone(), bin(Op::Subtract, negated, integer(1))]), bin(Op::Concatenate, string("."), ex.clone())),
+                                bin(Op::Greater, length(&w), bin(Op::Add, length(&ex), integer(1))),
+                            );
+                            wh.push(bin(Op::Or, whole.clone(), suffix));
                             let end = bin(Op::Subtract, bin(Op::Subtract, length(&w), length(&ex)), integer(1));
-                            env.insert(q.clone(), inputs.symbol_of(substr(vec![w, integer(1), end])));
+                            env.insert(q.clone(), inputs.symbol_of(case(whole, string(""), substr(vec![w, integer(1), end]))));
                         } else {
+                            // Position 1 stands for `"" . w`: a "." there has no part before it.
                             let al = a_name();
                             let at = col(&al, "i");
-                            let conds = vec![bin(Op::LessOrEqual, at.clone(), length(&w)), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))];
+                            let first = eq(at.clone(), integer(1));
+                            let conds = vec![
+                                bin(Op::LessOrEqual, at.clone(), call("max", vec![length(&w), integer(1)])),
+                                bin(Op::Or, first.clone(), eq(substr(vec![w.clone(), at.clone(), integer(1)]), string("."))),
+                            ];
                             frm.push((FromItem::cross(Relation::Integers, al), conds));
                             env.insert(q.clone(), inputs.symbol_of(substr(vec![w.clone(), integer(1), bin(Op::Subtract, at.clone(), integer(1))])));
-                            env.insert(x.clone(), inputs.symbol_of(substr(vec![w, bin(Op::Add, at, integer(1))])));
+                            env.insert(x.clone(), inputs.symbol_of(case(first, w.clone(), substr(vec![w, bin(Op::Add, at, integer(1))]))));
                         }
                     } else {
                         let operator = match *op {
@@ -1771,12 +1795,14 @@ impl Model {
                 Literal::Ast { .. } => return Err(Error::Plan(format!("no SQL for {}", s.lit))),
             }
         }
-        let columns = head
-            .args
-            .iter()
-            .enumerate()
-            .map(|(i, t)| Ok((sql_term(t, &env, atoms)?, Some(format!("c{i}")))))
-            .collect::<Result<Vec<_>>>()?;
+        let mut columns = Vec::new();
+        for (i, t) in head.args.iter().enumerate() {
+            let e = sql_term(t, &env, atoms)?;
+            if partial(t) {
+                wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(e.clone()) });
+            }
+            columns.push((e, Some(format!("c{i}"))));
+        }
         if frm.is_empty() {
             return Err(Error::Plan(format!("rule for {head} reads nothing")));
         }

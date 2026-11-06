@@ -639,3 +639,95 @@ fn("function_definition").
     }
     let _ = std::fs::remove_dir_all(&out);
 }
+
+// ---- functions ----
+
+/// Runs `program` over one Python file, pure SQL (`""`) and on the native set engine (`"program"`): the outputs
+/// `rels`, which both must give alike, and how many components the native run solved natively.
+fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, String>, usize) {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let mut got = Vec::new();
+    let mut native = 0;
+    for modes in ["", "program"] {
+        let out = dir.join(format!("out-{}", if modes.is_empty() { "sql" } else { modes }));
+        let r = super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{modes:?}: {e}"));
+        native = r.native;
+        got.push(rels.iter().map(|rel| (rel.to_string(), std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap())).collect::<BTreeMap<_, _>>());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(got[0], got[1], "SQL and native");
+    (got.remove(0), native)
+}
+
+/// Soufflé's `to_number` (decimal, `0x`, `0b`, C's leading space and trailing text; no value where Soufflé stops
+/// with an error), `max`, `min`, `%` (C's sign; no value for `% 0`), `cat` of any arity, and `@lower` as
+/// JavaScript's `toLowerCase` (Unicode, final sigma). A function with no value gives no row, also through a binding
+/// read only by a negation.
+#[test]
+fn souffle_functions_run() {
+    let program = r#"
+.decl s(t: symbol)
+s("12"). s(" -7px"). s("0x1F"). s("-0b101"). s("abc"). s(""). s("99999999999999999999").
+.decl num(t: symbol, n: number)
+num(t, to_number(t)) :- s(t).
+.decl small(n: number)
+small(1). small(12).
+.decl unlisted(t: symbol)
+unlisted(t) :- s(t), k = to_number(t), !small(k).
+.decl pair(a: number, b: number)
+pair(7, 3). pair(-7, 3). pair(3, 0).
+.decl ar(a: number, b: number, hi: number, lo: number)
+ar(a, b, max(a, b), min(a, b)) :- pair(a, b).
+.decl md(a: number, b: number, m: number)
+md(a, b, m) :- pair(a, b), m = a % b.
+.decl w(a: symbol, b: symbol)
+w("x", "y"). w("ÀÉ İ", "ΑΣ").
+.decl c(s: symbol)
+c(cat(a, "-", b, "-", a)) :- w(a, b).
+.decl low(s: symbol)
+low(@lower(cat(a, " ", b))) :- w(a, b).
+.output num, unlisted, ar, md, c, low
+"#;
+    let (got, _) = run_both("functions", program, &["num", "unlisted", "ar", "md", "c", "low"]);
+    assert_eq!(got["num"], " -7px\t-7\n-0b101\t-5\n0x1F\t31\n12\t12\n");
+    assert_eq!(got["unlisted"], " -7px\n-0b101\n0x1F\n");
+    assert_eq!(got["ar"], "-7\t3\t3\t-7\n3\t0\t3\t0\n7\t3\t7\t3\n");
+    assert_eq!(got["md"], "-7\t3\t-1\n7\t3\t1\n");
+    assert_eq!(got["c"], "x-y-x\nÀÉ İ-ΑΣ-ÀÉ İ\n");
+    assert_eq!(got["low"], "x y\nàé i\u{307} ας\n");
+}
+
+/// `@dot("", b)` is `b` (`core.rr`), built and split: a split of a bound whole gives `""` and the whole, and each
+/// cut at a "." with a part before it; with a bound part, the other. Recursive (the native set engine) and not.
+#[test]
+fn dot_of_the_empty_name_is_the_name() {
+    let program = r#"
+.decl part(s: symbol)
+part(""). part("a"). part("b.c").
+.decl joined(m: symbol, x: symbol, q: symbol)
+joined(m, x, @dot(m, x)) :- part(m), part(x).
+.decl whole(q: symbol)
+whole("a.b.c"). whole("x"). whole(".y").
+.decl split(q: symbol, m: symbol, x: symbol)
+split(q, m, x) :- whole(q), q = @dot(m, x).
+.decl after(q: symbol, m: symbol, x: symbol)
+after(q, m, x) :- whole(q), part(m), q = @dot(m, x).
+.decl tail(x: symbol)
+tail("b.c"). tail("x"). tail("y").
+.decl before(q: symbol, m: symbol, x: symbol)
+before(q, m, x) :- whole(q), tail(x), q = @dot(m, x).
+.decl pre(q: symbol)
+pre(q) :- whole(q).
+pre(m) :- pre(q), q = @dot(m, x), x != "".
+.output joined, split, after, before, pre
+"#;
+    let (got, native) = run_both("dot", program, &["joined", "split", "after", "before", "pre"]);
+    assert!(native > 0, "the native set engine solved a component");
+    assert_eq!(got["joined"], "\t\t\n\ta\ta\n\tb.c\tb.c\na\t\ta.\na\ta\ta.a\na\tb.c\ta.b.c\nb.c\t\tb.c.\nb.c\ta\tb.c.a\nb.c\tb.c\tb.c.b.c\n");
+    assert_eq!(got["split"], ".y\t\t.y\na.b.c\t\ta.b.c\na.b.c\ta\tb.c\na.b.c\ta.b\tc\nx\t\tx\n");
+    assert_eq!(got["after"], ".y\t\t.y\na.b.c\t\ta.b.c\na.b.c\ta\tb.c\nx\t\tx\n");
+    assert_eq!(got["before"], "a.b.c\ta\tb.c\nx\t\tx\n");
+    assert_eq!(got["pre"], "\n.y\na\na.b\na.b.c\nx\n");
+}

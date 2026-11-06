@@ -28,7 +28,7 @@
 //!                                              passed join done as its delta (`-`: one row, 0); comma lists
 //! Rels are numbered in order. A pattern token is `_`, `v<slot>` (binds the slot, or tests it if already bound),
 //! `i:<int>` or `x:<hex symbol>`. The edge table's columns are the key slots, then the ecols slots. A head token is
-//! `v<slot>`, `i:<int>`, `x:<hex>` or `cat:<slot>:<slot>` (the symbols joined by ".").
+//! `v<slot>`, `i:<int>`, `x:<hex>` or `cat:<slot>:<slot>` (`@dot` of the symbols: joined by ".", `""` first gives the second).
 //! `set_fixpoint_run(name[, max_waves])` returns "new_rows waves visits probe_runs probe_skips solve_ms total_ms
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
@@ -99,7 +99,7 @@ fn symbols(conn: &Connection) -> Result<Arc<RwLock<Interner>>> {
     Ok(syms)
 }
 
-/// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`a.b`) over `conn`'s symbols: the planner's SQL holds symbols
+/// `sym_text(a)`, `sym_atom(text)` and `sym_cat(a, b)` (`@dot`: `a.b`, `"" . b` is `b`) over `conn`'s symbols: the planner's SQL holds symbols
 /// as atoms (decision 0009), and these are the only places it reads or makes their text. NULL gives NULL. New symbols
 /// reach the table at `flush_symbols`.
 pub fn register_symbols(conn: &Connection) -> Result<()> {
@@ -812,8 +812,8 @@ unsafe impl VTabCursor for RelCursor {
 //   pos <src> <tok..>      a positive atom; <src> is `d<rel>` (delta), `c<rel>` (full), or `t:<hex table>:<hex
 //                          columns>:<types>`, an input relation (a facts table, a view or a lower stratum's table)
 //   neg <src> <tok..>      a negated atom (every variable bound)
-//   cat <tok> <tok> <tok>  first = second "." third, binding the first or testing it; with the first bound and a part
-//                          unbound, splitting the first at each "." (binding the unbound parts, testing a bound one)
+//   cat <tok> <tok> <tok>  first = `@dot(second, third)`, binding the first or testing it; with the first bound and a
+//                          part unbound, splitting the first (binding the unbound parts, testing a bound one)
 //   eq <tok> <tok>, ne <tok> <tok> equal (binding the first if unbound) or not
 //   lt <tok> <tok>, le <tok> <tok> integer order, both bound
 //   count <src> <tok..> <tok>      the atom's matching tuples (its variables bound), binding or testing the last
@@ -823,7 +823,11 @@ unsafe impl VTabCursor for RelCursor {
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 // T's `near`/`down` steps (ancestor climbs over a loaded tape) are not kept: tree axes run in the transducer.
 
+/// `@dot(a, b)` (`core.rr`): `a.b`, and `"" . b` is `b`.
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
+    if syms.name(a).is_empty() {
+        return b;
+    }
     let mut s = std::mem::take(&mut syms.buf);
     s.clear();
     s.push_str(syms.name(a));
@@ -1229,7 +1233,8 @@ enum Step {
     /// the atom, first seen here).
     Atom { src: Src, neg: bool, keys: Vec<(usize, Key)>, binds: Vec<(usize, usize)>, tests: Vec<(usize, usize)> },
     Cat { out: usize, a: Key, b: Key, bind: bool },
-    /// `whole` split at each "." into `a` and `b`; `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
+    /// `whole` split as `@dot` makes it into `a` and `b` (`""` and the whole, or at each "." with a part before it);
+    /// `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
     Split { whole: Key, a: Option<usize>, b: Option<usize>, ka: Key, kb: Key },
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
@@ -1450,9 +1455,10 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                 go(cx, i + 1, slots);
             }
             Step::Split { whole, a, b, ka, kb } => {
+                // As `cat` makes it: `"" . w`, or at each "." with a part before it.
                 let w = cx.syms.name(val(slots, *whole)).to_owned();
-                for (p, _) in w.match_indices('.') {
-                    let (x, y) = (&w[..p], &w[p + 1..]);
+                for p in std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))) {
+                    let (x, y) = p.map_or(("", w.as_str()), |p| (&w[..p], &w[p + 1..]));
                     match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.name(val(slots, *ka)) != x { continue } }
                     match b { Some(s) => slots[*s] = cx.syms.id(y), None => if cx.syms.name(val(slots, *kb)) != y { continue } }
                     go(cx, i + 1, slots);

@@ -362,3 +362,37 @@ fn hand_written_rules_lowering_report() {
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
 }
+
+// ---- functions ----
+
+/// Soufflé's `cat` of any arity is `concat` folded from the left; `max`, `min`, `to_number` and `%` (`mod`) are the
+/// engine's functions of those names; each prints and reads back as itself. Floats stay refused by name: the engine
+/// has no float values.
+#[test]
+fn souffle_functions_lower() {
+    let p = parse(concat!(
+        ".decl t(s: symbol, n: number)\n.input t\n",
+        ".decl a(s: symbol, n: number)\n",
+        "a(cat(s, \"-\", s, \".\"), max(n, 0) + min(n, 9) % 4) :- t(s, _), t(_, n).\n",
+        "a(@lower(s), to_number(s)) :- t(s, _).\n",
+    ))
+    .unwrap();
+    let heads: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "a").map(|r| r.head.to_string()).collect();
+    assert_eq!(
+        heads,
+        [
+            "a(@concat(@concat(@concat($s, \"-\"), $s), \".\"), @add(@max($n, 0), @mod(@min($n, 9), 4)))",
+            "a(@lower($s), @to_number($s))",
+        ]
+    );
+    let back = parse(&print(&p).unwrap()).unwrap();
+    assert_eq!(difference(&p, &back), None);
+    for (src, what) in [
+        (".decl a(x: number)\na(x) :- a(y), x = to_float(\"1\").", "to_float/1"),
+        (".decl a(x: number)\na(x) :- a(y), x = y + 1.5.", "decimal number 1.5"),
+        (".decl a(x: symbol)\na(x) :- a(y), x = cat(y).", "cat/1"),
+    ] {
+        let e = parse(src).unwrap_err().to_string();
+        assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
+    }
+}
