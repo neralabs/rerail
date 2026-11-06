@@ -22,9 +22,14 @@
 // the leaf `null`, is NULL; else the regex searches v. (A probeSource that is an object or array, whose JSON text
 // json_extract would give, has leaves below the pointer only: it is read as NULL, noted. A JSON string "null" and
 // JSON null are one leaf text, both read as NULL.) `entryPoint` is read by no stage.
-// Approximations (noted): identifiers inside `case` patterns (MatchClass's cls is a Name, a capture's name is a
-// string) are not read as Names; PEP 695 type parameter names are read as Names (CPython: strings); CPython
-// NFKC-normalizes identifiers, this reads the source spelling.
+// - `case` patterns hold no expression (a guard is the case_clause's, outside them): a pattern's dotted name of two
+//   parts or more is a value pattern (Name its first part, an Attribute per further part, all at the first part's
+//   line); of one part a capture (a string), except as a class pattern's cls (a Name). Keyword-pattern, splat and
+//   `as` names are strings.
+// - PEP 695/696 type parameter names (a def's, class's or `type X[…]` alias's `type_parameter`, a `type_default`'s
+//   `name`) are strings; their bounds and defaults are expressions.
+// Gap (noted): CPython NFKC-normalizes identifiers; core.rr's `@nfkc` is not lowered, so this reads the source
+// spelling.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -87,6 +92,26 @@ mode_split_not_name(n) :- node(_, p, "global_statement", _, _), child(p, n, _).
 mode_split_not_name(n) :- node(_, p, "nonlocal_statement", _, _), child(p, n, _).
 mode_split_not_name(n) :- node(_, n, "identifier", _, _), inside(n, a, mode_split_imports), node(_, a, _, _, _).
 mode_split_not_name(n) :- node(_, n, "identifier", _, _), inside(n, a, mode_split_patterns), node(_, a, _, _, _).
+mode_split_not_name(x) :- mode_split_tparam_inner(x), node(_, x, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_tparam_inner(x), node(_, x, "splat_type", _, _), child(x, n, _), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_tparam_inner(x), node(_, x, "constrained_type", _, _), child(x, n, 0), node(_, n, "identifier", _, _).
+mode_split_not_name(n) :- mode_split_tparam_inner(x), node(_, x, "constrained_type", _, _), child(x, f, 0), node(_, f, "type", _, _),
+    child(f, n, 0), node(_, n, "identifier", _, _).
+// The declarations' type parameter lists.
+.decl mode_split_type_params(l: node)
+mode_split_type_params(l) :- node(_, f, "function_definition", _, _), field(f, "type_parameters", l).
+mode_split_type_params(l) :- node(_, c, "class_definition", _, _), field(c, "type_parameters", l).
+mode_split_type_params(l) :- node(_, s, "type_alias_statement", _, _), field(s, "left", g), node(_, g, "generic_type", _, _),
+    child(g, l, _), node(_, l, "type_parameter", _, _).
+mode_split_type_params(l) :- node(_, s, "type_alias_statement", _, _), field(s, "left", t), node(_, t, "type", _, _), child(t, g, 0),
+    node(_, g, "generic_type", _, _), child(g, l, _), node(_, l, "type_parameter", _, _).
+// A parameter: a list item, or a type_default's `name`; its inner node, a `type`'s child.
+.decl mode_split_tparam(p: node)
+mode_split_tparam(p) :- mode_split_type_params(l), child(l, p, _), !node(_, p, "type_default", _, _).
+mode_split_tparam(p) :- mode_split_type_params(l), child(l, it, _), node(_, it, "type_default", _, _), field(it, "name", p).
+.decl mode_split_tparam_inner(x: node)
+mode_split_tparam_inner(x) :- mode_split_tparam(p), node(_, p, "type", _, _), child(p, x, 0).
+mode_split_tparam_inner(p) :- mode_split_tparam(p), !node(_, p, "type", _, _).
 .decl mode_split_params(p: node)
 mode_split_params(p) :- node(_, p, "parameters", _, _).
 mode_split_params(p) :- node(_, p, "lambda_parameters", _, _).
@@ -97,12 +122,19 @@ mode_split_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
 mode_split_imports("import_statement"). mode_split_imports("import_from_statement").
 .decl mode_split_patterns(kind: symbol)
 mode_split_patterns("case_pattern").
+// A pattern's dotted name that is a Name (and Attributes): two parts or more, or a class pattern's cls.
+.decl mode_split_pattern_ref(dn: node)
+mode_split_pattern_ref(dn) :- node(_, dn, "dotted_name", _, _), inside(dn, a, mode_split_patterns), node(_, a, _, _, _), child(dn, _, 1).
+mode_split_pattern_ref(dn) :- node(_, cp, "class_pattern", _, _), child(cp, dn, 0), node(_, dn, "dotted_name", _, _).
 
 .decl mode_split_symbol(d: number, n: node, s: symbol)
 // Name.
 mode_split_symbol(d, n, s) :- node(d, n, "identifier", _, _), text(n, s), !mode_split_not_name(n).
 // Attribute: its attr.
 mode_split_symbol(d, a, s) :- node(d, a, "attribute", _, _), field(a, "attribute", x), text(x, s).
+// Name and Attributes of a pattern's value or cls: the first part, each further part (at the first part's line).
+mode_split_symbol(d, n, s) :- mode_split_pattern_ref(dn), child(dn, n, 0), node(d, n, "identifier", _, _), text(n, s).
+mode_split_symbol(d, dn, s) :- mode_split_pattern_ref(dn), child(dn, x, i), i > 0, text(x, s), node(d, dn, _, _, _).
 // Import: each name's last dotted segment, and its asname.
 mode_split_symbol(d, i, s) :- node(d, i, "import_statement", _, _), field(i, "name", x), mode_split_imported(x, dn),
     mode_split_last(dn, c), text(c, s).
