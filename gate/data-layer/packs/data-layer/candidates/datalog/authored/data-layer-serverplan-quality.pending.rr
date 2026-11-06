@@ -1,6 +1,7 @@
 // data-layer-serverplan-quality, PENDING: the quoted_atoms rules of spq-runtime-state-annotations (SPQ-050).
 // Everything else of the rule is in data-layer-serverplan-quality.rr. Blocked: these rules read `parsed` (core.rr:
-// the CPython `ast.parse` worker's tree of a string) and `string_annotation` (Ruff's table of the strings its
+// the tree of a string; W's `annotation` grammar is Ruff's `parse_type_annotation` of the string's value, not
+// CPython's `ast.parse`, so the bound CPython verdict does not supply it) and `string_annotation` (Ruff's table of the strings its
 // semantic model reads as type definitions), neither of which the corpus runner binds; the main file names the gap
 // at the clause (a string annotation gives no atom there). Once both are bound, add to the main file's clause:
 //   - the declarations below;
