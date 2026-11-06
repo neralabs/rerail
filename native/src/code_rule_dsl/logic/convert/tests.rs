@@ -48,6 +48,36 @@ fn scope_globs(document: &serde_json::Value, key: &str) -> Vec<String> {
     document.get("scope").and_then(|s| s.get(key)).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect()
 }
 
+/// The policy's reference graph configuration: the sibling links and constructor fields of its `calls { graph:
+/// references }` terms and relational `references` inputs, each distinct one once.
+fn reference_graphs(document: &serde_json::Value) -> Vec<serde_json::Map<String, serde_json::Value>> {
+    fn walk(value: &serde_json::Value, out: &mut Vec<serde_json::Map<String, serde_json::Value>>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, inner) in map {
+                    let graph = match (key.as_str(), inner.as_object()) {
+                        ("calls", Some(calls)) if calls.get("graph").and_then(|g| g.as_str()) == Some("references") => Some(calls),
+                        ("references", Some(references)) if references.contains_key("language") => Some(references),
+                        _ => None,
+                    };
+                    if let Some(graph) = graph {
+                        let config: serde_json::Map<_, _> = ["siblingLinks", "constructorFields"].iter().filter_map(|k| graph.get(*k).map(|v| ((*k).to_owned(), v.clone()))).collect();
+                        if !out.contains(&config) {
+                            out.push(config);
+                        }
+                    }
+                    walk(inner, out);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(document, &mut out);
+    out
+}
+
 /// How a replay event adjusts a rule: its scope, which clauses it keeps, and an edit of the policy document before it
 /// compiles (option values, clause edits) that says whether it edited clauses, or why it cannot apply.
 #[derive(Default)]
@@ -87,6 +117,11 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         None => false,
     };
     let configured = edited || option_values(&original) != option_values(&document);
+    // The reference graph the corpus runner binds (`logic::plan::corpus::references`): the policy's, one per policy.
+    let graphs = reference_graphs(&document);
+    if graphs.len() > 1 {
+        return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));
+    }
     let id = document["id"].as_str().unwrap().to_owned();
     // A relational clause is SQL stages: it is not converted but written by hand in `.rr` (list step 30). It is
     // taken out before the rest compiles, since the newer rules' stages use forms (`escape: sql`, `message`,
@@ -208,7 +243,12 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
     // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    // The `.references` setting: the graph's configuration over the run's scope.
+    if let Some(mut graph) = graphs.into_iter().next() {
+        graph.insert("scope".into(), serde_json::json!({"include": include, "exclude": exclude}));
+        prog.settings.push(("references".into(), serde_json::Value::Object(graph).to_string()));
+    }
     // The authored file's clauses over the converter's, with only what `violation` reaches.
     let file = authored.map(|dir| dir.join(format!("{id}.rr"))).filter(|f| f.exists());
     let prog = if let Some(file) = file {
