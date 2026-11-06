@@ -37,6 +37,20 @@ describe("shellCommands", () => {
     expect(shellCommands("a >")).toEqual([["a"]]);
   });
 
+  it("ends a redirect's target at the first space or separator, even inside quotes", () => {
+    expect(shellCommands(`a >"out" b`)).toEqual([["a", "b"]]);
+    expect(shellCommands(`a 2>'err' b`)).toEqual([["a", "2", "b"]]);
+    // Not what a shell does: the target's opening quote is skipped with it, so its closing quote opens a word.
+    expect(shellCommands(`a >"out file" b`)).toEqual([["a", "file b"]]);
+    expect(shellCommands(`a >"o;p" b`)).toEqual([["a"], ["p b"]]);
+  });
+
+  it("keeps the newline of a backslash-newline inside quotes", () => {
+    // Not what a shell does inside double quotes, where the pair joins the lines as it does outside them.
+    expect(shellCommands('echo "a\\\nb" c')).toEqual([["echo", "a\nb", "c"]]);
+    expect(shellCommands("echo 'a\\\nb' c")).toEqual([["echo", "a\\\nb", "c"]]);
+  });
+
   it("leaves leading assignments out of what runs", () => {
     expect(shellCommands("A=1 B_2=x c d")).toEqual([["c", "d"]]);
     expect(shellCommands("c A=1")).toEqual([["c", "A=1"]]);

@@ -1,7 +1,8 @@
 /**
  * `rerail remote`'s dispatch, messages and exit codes, with a fake outbox where the outcome is what the outbox reports.
  */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -71,11 +72,21 @@ describe("rerail remote", () => {
     const tokenFile = join(home, "token.txt");
     writeFileSync(tokenFile, "file-token\n");
     await run(["add", "https://one.example.com", "--name", "team", "--token-file", tokenFile]);
+    await run(["add", "https://two.example.com", "--name", "other", "--token-file", tokenFile]);
+    output = "";
+    await run(["list", "--json"]);
+    const ids = new Map((JSON.parse(output) as { remotes: { name: string; id: string }[] }).remotes.map(remote => [remote.name, remote.id]));
+    expect(ids.get("team")).toEqual(expect.any(String));
+    expect(ids.get("team")).not.toBe(ids.get("other"));
     output = "";
     const forgotten: string[] = [];
     expect(await run(["remove", "team"], { outbox: fakeOutbox({ forget: (key: string) => forgotten.push(key) }) })).toBe(0);
     expect(output).toBe("Removed remote team; its token is deleted.\n");
-    expect(forgotten).toHaveLength(1);
+    // The state it forgets is the removed remote's own, under the id its add gave it.
+    expect(forgotten).toEqual([ids.get("team")]);
+    output = "";
+    await run(["list"]);
+    expect(output).toBe("other\thttps://two.example.com\n");
   });
 
   it("status: JSON, none, one line per remote, and exit 1 on a remote still failing", async () => {
@@ -125,5 +136,31 @@ describe("rerail remote", () => {
   it("exclude and include: name the repository, and refuse what they do not take", async () => {
     await expect(run(["exclude", "--nope"])).rejects.toThrow(/^Unknown option: --nope\nUsage: /u);
     await expect(run(["exclude", "--repo", home])).rejects.toThrow(`Rerail has not seen the repository at ${home} yet, and it has no Git remote to name it by`);
+    await expect(run(["include", "--nope"])).rejects.toThrow(/^Unknown option: --nope\nUsage: /u);
+  });
+
+  it("exclude stops a repository going to any remote, and include lets it go again", async () => {
+    const checkout = join(home, "checkout");
+    mkdirSync(checkout);
+    execFileSync("git", ["init", "--quiet"], { cwd: checkout, stdio: "ignore" });
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:acme/app.git"], { cwd: checkout, stdio: "ignore" });
+    const key = "remote:github.com/acme/app";
+    const listed = async (): Promise<string> => {
+      output = "";
+      expect(await run(["list"])).toBe(0);
+      return output;
+    };
+    // Including a repository that was never excluded changes nothing.
+    expect(await run(["include", "--repo", checkout])).toBe(0);
+    expect(output).toBe(`Remotes receive ${key} again from now on; events recorded while it was excluded are not sent.\n`);
+    expect(await listed()).toBe("No remotes: nothing leaves this machine.\n");
+    output = "";
+    expect(await run(["exclude", "--repo", checkout])).toBe(0);
+    expect(output).toBe(`No remote receives anything of ${key} from now on; what was sent already stays sent.\n`);
+    expect(await listed()).toBe(`No remotes: nothing leaves this machine.\nexcluded\t${key}\n`);
+    output = "";
+    expect(await run(["include", "--repo", checkout])).toBe(0);
+    expect(output).toBe(`Remotes receive ${key} again from now on; events recorded while it was excluded are not sent.\n`);
+    expect(await listed()).toBe("No remotes: nothing leaves this machine.\n");
   });
 });
