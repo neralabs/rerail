@@ -1,6 +1,7 @@
 // data-layer-data-layer-compat-aliases, both clauses by hand: the converter gaps their `compare`.
-// Default options: `sourceGate` true (the module's text matches ` as |=`); `oracleAnalyzer` is read by no clause.
-// With `sourceGate` false the gate is `(?s).*`, always true; the clauses below implement the default only.
+// Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-data-layer-compat-aliases.json.
+// Options: `sourceGate` is read from option_on (true: the module's text matches ` as |=`; false: `(?s).*`, every
+// module); `oracleAnalyzer` is read by no clause.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -11,13 +12,14 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
 // ---- import-alias (DLA001) ---------------------------------------------------------------------------------------
 // An import statement at module level (no function or class around it, any depth) with an aliased_import child
-// whose alias is an identifier not starting with `_` and differs from LEAF, the name's text after its last dot.
-// One finding per aliased_import (`each: ALIAS_NODE`), at its line.
+// whose alias is an identifier not starting with `_` (ALIAS) and differs from LEAF. One finding per aliased_import
+// (`each: ALIAS_NODE`), at its line.
 .decl import_alias_scopes(kind: symbol)
 import_alias_scopes("function_definition"). import_alias_scopes("class_definition").
 .decl import_alias_statement(d: number, s: node)
@@ -25,25 +27,26 @@ import_alias_statement(d, s) :- node(d, s, "import_statement", _, _).
 import_alias_statement(d, s) :- node(d, s, "import_from_statement", _, _).
 .decl import_alias_nested(s: node)
 import_alias_nested(s) :- import_alias_statement(_, s), inside(s, a, import_alias_scopes), node(_, a, _, _, _).
-// LEAF: `replace ^.*\. by ""` over the dotted name's text is its last identifier. Approximation (noted): a dotted
-// name written with spaces (`a . b`) keeps W's leading space in LEAF (" b"), so W flags `import a . b as b` and
-// this does not.
-.decl import_alias_last(src: node, i: number)
-import_alias_last(src, i) :- child(src, _, _), i = max j : { child(src, _, j) }.
-.decl import_alias_leaf(src: node, leaf: symbol)
-import_alias_leaf(src, leaf) :- node(_, src, "dotted_name", _, _), import_alias_last(src, i), child(src, c, i), text(c, leaf).
-// The gate: the module's full text (comments and strings included) contains ` as ` or `=`.
+// LEAF is `replace ^.*\. by ""` over SOURCE's text (the `name` child's node_text): the longest prefix of its first
+// line that ends in `.` taken off. ALIAS, an identifier (no `.`, no line break, no regex metacharacter), equals LEAF
+// exactly when that text is ALIAS, or a line-break-free prefix, a `.`, then ALIAS: the whole-string test below.
+.decl import_alias_same(x: node)
+import_alias_same(x) :- node(_, x, "aliased_import", _, _), field(x, "alias", a), text(a, alias), field(x, "name", src),
+    node_text(src, t), re = cat("(?:[^\\n]*\\.)?", alias), match(re, t).
+// The gate: the module's full text (comments and strings included) contains ` as ` or `=`; with `sourceGate`
+// false, `(?s).*`: every module.
 .decl import_alias_gate(d: number)
-import_alias_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains(" as ", s).
-import_alias_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("=", s).
+import_alias_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains(" as ", s).
+import_alias_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("=", s).
+import_alias_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
 // `not regex ^_` on the alias identifier.
 .decl import_alias_private(a: node)
 import_alias_private(a) :- node(_, a, "identifier", _, _), text(a, s), prefix("_", s).
 violation("data-layer-data-layer-compat-aliases", "import-alias", "DLA001", p, l) :-
     import_alias_statement(d, s), !import_alias_nested(s),
     child(s, x, _), node(_, x, "aliased_import", _, _),
-    field(x, "alias", a), node(_, a, "identifier", _, _), text(a, alias), !import_alias_private(a),
-    field(x, "name", src), import_alias_leaf(src, leaf), alias != leaf,
+    field(x, "alias", a), node(_, a, "identifier", _, _), !import_alias_private(a),
+    field(x, "name", _), !import_alias_same(x),
     import_alias_gate(d),
     in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(x, l).
 
@@ -51,7 +54,8 @@ violation("data-layer-data-layer-compat-aliases", "import-alias", "DLA001", p, l
 // A module-level assignment whose left is an identifier not starting with `_` (TARGET) and whose right is a
 // final-alias, SOURCE != TARGET. final-alias: an identifier (SOURCE is it), an attribute (SOURCE its `attribute`
 // identifier), or an assignment whose right is a final-alias (`a = b = c`). The gate needs no test here: an
-// assignment with a right side has an `=` token, so its module's text contains `=`.
+// assignment with a right side has an `=` token, so its module's text contains `=` (and `sourceGate` false passes
+// every module).
 .decl assignment_alias_scopes(kind: symbol)
 assignment_alias_scopes("function_definition"). assignment_alias_scopes("class_definition").
 .decl assignment_alias_nested(s: node)

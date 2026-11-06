@@ -3,9 +3,8 @@
 // Read from the policy (candidates/rules-ast/data-layer-async-sync-delegation.json) with W's semantics
 // (ast-grep-config: one environment, a relation binds from the FIRST related node that matches, no backtracking).
 //
-// Options at their defaults: sourceGate true (each clause needs the module's full text to contain one of the
-// gate's literals), oracleAnalyzer false (no clause reads it). The option-gated gate is in
-// data-layer-async-sync-delegation.pending.rr, awaiting `option_on` (ConvertFoundation A9).
+// Options from the converter's facts: sourceGate (default true) through `option_on("sourceGate")` (the gate below);
+// oracleAnalyzer (default false) is read by no clause.
 //
 // Shared readings of the policy's matchers:
 // - `syntax: valid`: !syntax_error(d); the scope is the converter's in_scope/out_scope.
@@ -15,11 +14,11 @@
 //   `attribute` identifier (an attribute's text ends with it). Regexes on other nodes (types, return types, the
 //   module) read `node_text`, the node's full source text.
 // - "Real statements" of a block (the policy's `$_`, not a comment, not a docstring): its named children other than
-//   comments and the docstring, an expression_statement whose child is a str string or concatenated_string and
-//   which is the block's first non-comment named child (`nthChild 1, ofRule not comment`).
-//   APPROXIMATION (awaiting `value`/`value_type`, W's `value: {type: str}`): a string is str-valued when its
-//   prefix has neither `b` nor `f` (W leaves an f-string with a replacement field Unknown; an f-string without
-//   one is str there and not here), a concatenated_string when none of its parts has such a prefix.
+//   comments and the docstring, an expression_statement whose child is a string or concatenated_string of W's type
+//   str (`value: {type: str}`: `value_type_of(x, "str")`) and which is the block's first non-comment named child
+//   (`nthChild 1, ofRule not comment`; `child` holds no Python comments, so that is its first `child`). W's value of
+//   an f-string with a replacement field is Unknown, not false, and stays unknown under the policy's `not`; here it
+//   has no `value_type_of` row, so such a first statement counts as real (a three-valued verdict two-valued).
 // - `pattern $X` reusing a bound capture is W's text equality; it is read here as the same node (two functions of
 //   identical text in one class body are not told apart).
 // - `inside … stopBy <kind>` is the nearest enclosing node of that kind (`nearest`); `has … stopBy
@@ -36,12 +35,14 @@
 .decl text(n: loc, s: symbol)
 .decl name(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: loc, l: number)
 .decl syntax_error(d: number)
 .decl node_text(n: node, s: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_on(name: symbol)
 .decl nearest(n: node, a: node, set: relation)
 .decl has(a: node, n: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -55,15 +56,17 @@ asd_fdef("function_definition").
 .decl asd_class(kind: symbol)
 asd_class("class_definition").
 
-// The source gate (sourceGate true): the module's text contains one of the literals of
-// `async\ def|_async|__aenter__|__aexit__|run_in_executor|to_thread|tracked_run_in_executor|tracked_to_thread|
-// legacy_async|legacy_module_async|pure_lazy|resolve_async`.
+// The source gate, every clause's: the module (or, `inside … stopBy end`, a module around the node) matches the
+// option's regex. sourceGate true: `async\ def|_async|__aenter__|__aexit__|run_in_executor|to_thread|
+// tracked_run_in_executor|tracked_to_thread|legacy_async|legacy_module_async|pure_lazy|resolve_async` over the
+// module's text, a search for one of these literals; false: `(?s).*`, which every module matches.
 .decl asd_gate(d: number)
-asd_gate(d) :- node(d, m, "module", _, _), node_text(m, s),
+asd_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s),
     (contains("async def", s) ; contains("_async", s) ; contains("__aenter__", s) ; contains("__aexit__", s) ;
      contains("run_in_executor", s) ; contains("to_thread", s) ; contains("tracked_run_in_executor", s) ;
      contains("tracked_to_thread", s) ; contains("legacy_async", s) ; contains("legacy_module_async", s) ;
      contains("pure_lazy", s) ; contains("resolve_async", s)).
+asd_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
 
 // A document a clause reports in.
 .decl asd_doc(d: number, p: symbol)
@@ -79,17 +82,14 @@ asd_test_path(p) :- doc(_, p, _),
 .decl asd_fname(f: node, s: symbol)
 asd_fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", n), text(n, s).
 
-// A str literal (see the approximation above).
+// A str literal.
 .decl asd_strlit(x: node)
-asd_strlit(x) :- node(_, x, "string", _, _), strprefix(x, p), !contains("b", p), !contains("f", p), !contains("B", p), !contains("F", p).
-asd_strlit(x) :- node(_, x, "concatenated_string", _, _), !asd_badpart(x).
-.decl asd_badpart(x: node)
-asd_badpart(x) :- node(_, x, "concatenated_string", _, _), child(x, c, _), strprefix(c, p),
-    (contains("b", p) ; contains("f", p) ; contains("B", p) ; contains("F", p)).
+asd_strlit(x) :- node(_, x, "string", _, _), value_type_of(x, "str").
+asd_strlit(x) :- node(_, x, "concatenated_string", _, _), value_type_of(x, "str").
 
-// A non-comment named child of b before position i.
+// A named child of its parent before s (`child` has no comments: W's `ofRule not comment` counts none).
 .decl asd_noncomment_before(s: node)
-asd_noncomment_before(s) :- child(b, s, i), child(b, y, j), j < i, !node(_, y, "comment", _, _).
+asd_noncomment_before(s) :- child(b, s, i), child(b, _, j), j < i.
 
 .decl asd_docstring(s: node)
 asd_docstring(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), asd_strlit(x), !asd_noncomment_before(s).
@@ -256,17 +256,11 @@ sync_delegation_local_upto(n, y) :- sync_delegation_local_upto(n, x), asd_next_c
 // (entry) of which is static (a chain, as above).
 .decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "integer", _, _).
-.decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "float", _, _).
-.decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "true", _, _).
-.decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "false", _, _).
-.decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "none", _, _).
-.decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "ellipsis", _, _).
-.decl sync_delegation_static(n: node)
 sync_delegation_static(n) :- node(_, n, "identifier", _, _).
 sync_delegation_static(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p).
 sync_delegation_static(n) :- node(_, n, "concatenated_string", _, _), !sync_delegation_fpart(n).
@@ -278,17 +272,12 @@ sync_delegation_fpart(n) :- node(_, n, "concatenated_string", _, _), child(n, c,
     strprefix(c, p), contains("f", p).
 .decl sync_delegation_coll(n: node)
 sync_delegation_coll(n) :- node(_, n, "tuple", _, _).
-.decl sync_delegation_coll(n: node)
 sync_delegation_coll(n) :- node(_, n, "list", _, _).
-.decl sync_delegation_coll(n: node)
 sync_delegation_coll(n) :- node(_, n, "set", _, _).
-.decl sync_delegation_coll(n: node)
 sync_delegation_coll(n) :- node(_, n, "dictionary", _, _).
 .decl sync_delegation_static_elem(x: node)
 sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "tuple", _, _), sync_delegation_static(x).
-.decl sync_delegation_static_elem(x: node)
 sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "list", _, _), sync_delegation_static(x).
-.decl sync_delegation_static_elem(x: node)
 sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "set", _, _), sync_delegation_static(x).
 sync_delegation_static_elem(x) :- child(n, x, _), node(_, n, "dictionary", _, _), node(_, x, "pair", _, _),
     field(x, "key", a), sync_delegation_static(a), field(x, "value", b), sync_delegation_static(b).
@@ -554,15 +543,9 @@ wrapper_shape_doc(f, p) :- node(d, f, "function_definition", _, _), asd_doc(d, p
 // legacy-boundary alternative binds the same h: the boundary call's own function.)
 .decl wrapper_shape_call_of(x: node, h: node)
 wrapper_shape_call_of(x, h) :- node(_, x, "call", _, _), field(x, "function", h), node(_, h, "identifier", _, _).
-
-// thin (b5-common-10): a `def` whose body is one real statement, a return or expression statement whose child is a
-// call of h (an identifier or attribute), or an `async def` whose one statement awaits such a call. (The policy's
-// legacy-boundary alternative binds the same h: the boundary call's own function.)
-.decl wrapper_shape_call_of(x: node, h: node)
 wrapper_shape_call_of(x, h) :- node(_, x, "call", _, _), field(x, "function", h), node(_, h, "attribute", _, _).
 .decl wrapper_shape_stmt(s: node)
 wrapper_shape_stmt(s) :- node(_, s, "return_statement", _, _).
-.decl wrapper_shape_stmt(s: node)
 wrapper_shape_stmt(s) :- node(_, s, "expression_statement", _, _).
 .decl wrapper_shape_thin(f: node, h: node)
 wrapper_shape_thin(f, h) :- node(_, f, "function_definition", _, _), !op(f, "async"), asd_body_count(f, 1), asd_body_real(f, s),
@@ -704,7 +687,6 @@ wrapper_shape_lazy_thin(f, z) :- wrapper_shape_mode(f, md), asd_body_count(f, 2)
     wrapper_shape_call_of(x, _).
 .decl wrapper_shape_try_tail(s: node)
 wrapper_shape_try_tail(s) :- node(_, s, "try_statement", _, _), child(s, x, _), node(_, x, "else_clause", _, _).
-.decl wrapper_shape_try_tail(s: node)
 wrapper_shape_try_tail(s) :- node(_, s, "try_statement", _, _), child(s, x, _), node(_, x, "finally_clause", _, _).
 .decl wrapper_shape_is_lazy_thin(f: node)
 wrapper_shape_is_lazy_thin(f) :- wrapper_shape_lazy_thin(f, _).

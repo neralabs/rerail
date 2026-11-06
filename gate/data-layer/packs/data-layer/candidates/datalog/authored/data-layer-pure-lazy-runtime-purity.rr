@@ -25,11 +25,11 @@
 // Span containment (`x.__start >= f.body_start AND x.__end <= f.body_end`) is kept as written, the candidates `f`
 // first narrowed to the node's function_definition ancestors (a node in a body's span is in its subtree).
 //
+// raw_strings' DECODED value (substring with value: true) is W's decoded value, `value(n, v)`: escapes decoded, a
+// concatenation's parts joined, exactly; an unknown value (an interpolating f-string part, bytes) reads as "", as
+// W's transform has it (matcher/transform.rs: ComputeError::Unknown is "").
+//
 // Approximations, each named where it is used:
-//   [escapes]     raw_strings' DECODED value (W: the literal's value) is `str`, the content as written: a literal
-//                 holding a backslash escape (non-raw) compares by its written text.
-//   [concat]      a concatenated_string's value is its parts' contents joined, given only for two or three parts,
-//                 each a plain (no b/f prefix) string; W gives every concatenation a value.
 //   [class-cycle] inherited_edges' search (each path skips classes already on it, the least route wins) is computed
 //                 as a depth-first first match: the first base, by position, from which some search finds the
 //                 method, then recursively. Exact on acyclic class graphs; where bases form a cycle the search may
@@ -45,7 +45,7 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl name(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -163,29 +163,15 @@ prs_rsplace(n) :- prs_n(_, n, "string", _, _), inside(n, a, prs_assignk), field(
 prs_rsplace(n) :- prs_n(_, n, "concatenated_string", _, _), inside(n, a, prs_assignk), field(a, "left", t), prs_ident(_, t, _, _, "__all__").
 
 // W's regex `(?i)^[ru]*["']` on the text: the (first part's) prefix letters are all r/u.
-.decl prs_plainstr(c: node, v: symbol)
-prs_plainstr(c, v) :- prs_n(_, c, "string", _, _), strprefix(c, p), match("[ru]*", p), str(c, v).
-
-// Concatenated strings: the parts in order, joined [escapes], for two or three parts [concat].
-.decl prs_ccp(n: node, c: node, j: number)
-// (counted with the part itself, so the count is never over an empty body)
-.decl prs_ccle(n: node, cs: number, cs2: number)
-prs_ccle(n, cs, cs2) :- prs_n(_, n, "concatenated_string", _, _), prs_kid(n, c, _), prs_n(_, c, "string", cs, _), prs_kid(n, c2, _),
-  prs_n(_, c2, "string", cs2, _), cs2 <= cs.
-prs_ccp(n, c, k - 1) :- prs_n(_, n, "concatenated_string", _, _), prs_kid(n, c, _), prs_n(_, c, "string", cs, _),
-  k = count : { prs_ccle(n, cs, _) }.
-.decl prs_ccn(n: node, k: number)
-prs_ccn(n, k) :- prs_ccp(n, _, 0), k = count : { prs_ccp(n, _, _) }.
-.decl prs_ccat(n: node, v: symbol)
-prs_ccat(n, cat(v0, v1)) :- prs_ccn(n, 2), prs_ccp(n, c0, 0), prs_plainstr(c0, v0), prs_ccp(n, c1, 1), prs_plainstr(c1, v1).
-prs_ccat(n, cat(cat(v0, v1), v2)) :- prs_ccn(n, 3), prs_ccp(n, c0, 0), prs_plainstr(c0, v0), prs_ccp(n, c1, 1),
-  prs_plainstr(c1, v1), prs_ccp(n, c2, 2), prs_plainstr(c2, v2).
+.decl prs_sval(n: node, v: symbol)
+prs_sval(n, v) :- prs_rsplace(n), value(n, v).
+prs_sval(n, "") :- prs_rsplace(n), !value(n, _).
 
 // strings(__path, __start, __end, value).
 .decl prs_str(d: number, s: number, e: number, v: symbol)
-prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "string", s, e), prs_plainstr(n, v).
+prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "string", s, e), strprefix(n, p), match("[ru]*", p), prs_sval(n, v).
 prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "concatenated_string", s, e), prs_first(n, c), strprefix(c, p),
-  match("[ru]*", p), prs_ccat(n, v).
+  match("[ru]*", p), prs_sval(n, v).
 
 // ---- functions, classes, attributes, calls, arguments, keywords, returns, assignments, parameters -------------------
 

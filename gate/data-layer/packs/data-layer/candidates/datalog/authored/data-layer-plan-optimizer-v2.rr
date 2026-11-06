@@ -21,28 +21,24 @@
 // tuple.id`, pass_classes' first AnnAssign): there preorder order is byte order, so starts are compared.
 //
 // Approximations (each named again where it is made):
-//   A1 Constant values are the literal as written (`str`), escapes NOT decoded and `{{`/`}}` of f-string pieces kept
-//      doubled: CPython's decoded pieces (core.rr str_part) are CPython-only, an engine gap. Exact for literals
-//      without backslashes or doubled braces.
+//   A1 f-string Constant pieces are the string_content as written, escapes NOT decoded and `{{`/`}}` kept doubled:
+//      CPython's decoded pieces (W's pythonFString parse, fstring_piece; core.rr str_part) are not bound, an engine
+//      gap. Exact for pieces without backslashes or doubled braces. A str Constant that is a plain string or an
+//      all-str concatenation is W's decoded value (value(n, v)), exactly.
 //   A2 adjacent literals with an f-string: CPython merges adjacent literal runs into one Constant (at the first
-//      run's line); here each run (a plain part, or an f-string's string_content) is a piece of its own.
+//      run's line); here each run (a plain part, decoded, or an f-string's string_content) is a piece of its own.
 //   A3 f-string format specs (`{x:spec}`), whose pieces are Constants in CPython, are not read.
-//   A4 PV2-031's word test `\b(Fix|…)\b` runs on the raw piece: an escape `\a \b \f \n \r \t \v` before the word
-//      counts as a boundary (as its decoded control character does); the engine's `\b` is ASCII (Rust's, in W, is
-//      Unicode).
+//   A4 PV2-031's word test `\b(Fix|…)\b` on an f-string piece runs on the raw piece: an escape `\a \b \f \n \r \t
+//      \v` before the word counts as a boundary (as its decoded control character does); the engine's `\b` is ASCII
+//      (Rust's, in W, is Unicode).
 //   A5 identifiers in `case` patterns and PEP 695 type parameter names count as Names (CPython: MatchAs/TypeVar
 //      strings), as in python/ast.rr ast_name.
-//   A6 alias names are the dotted_name's text: `import os . path` (spaces) is "os . path", CPython's "os.path".
-//   A7 a concatenation of more than 4 literals has no full value here, only its last 4 parts' (optimizer_str_tail):
-//      PV2-021's suffix test reads that (exact unless those 4 parts are shorter than `_count`); the equality tests
-//      (".", "count", "count_only", "exists", registry codes) miss a value spelled in 5+ literals; PV2-023 (any str)
-//      is exact (optimizer_str_any).
-//   A8 the registry's doc lines are read to character 10000.
+//   A6 alias names are the dotted_name's text: `import os . path` (spaces) is "os . path", CPython's "os.path"
+//      (joining its identifiers is string-building along siblings, which the engine rejects).
 //
-// optimizer-invariant-registry reads the Markdown doc `docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md` as a document
-// (doc/source/src_line_lf): the corpus runner loads only .py/.rs files (plan/corpus.rs corpus_files), so there the
-// doc is always absent and the clause reports the missing doc (engine gap: text documents). W's `source_text(doc)
-// IS NOT NULL` is read as "the doc is a document in scope".
+// optimizer-invariant-registry reads the Markdown doc `docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md` as a text
+// document (doc/source; its doc_codes input is W's regex over the file, match_group exactly). W's
+// `source_text(doc) IS NOT NULL` is read as "the doc is a document in scope".
 //
 // Options: entryPoint, read from the converter's option_value (the registry's `$option` cases): "scan_file" reports
 // nothing (its union ends `WHERE 0`); "find_violations" is the four branches without the `EXISTS(verifier.py
@@ -50,15 +46,16 @@
 // invariant, so verifier.py, either way. `parameters` is not read by either query; optimizer-file-checks reads no
 // option.
 //
-// The python/ast.rr helpers cannot be #included yet (their closure reads unbound core relations: kind, within,
-// docof, unset, …); the small helpers below mirror them, each saying which.
+// python/ast.rr lowers in an overlay now, but it is not included: its str_const reads str_part (CPython-only,
+// unbound), its ast_name makes no walrus target a Name, and its unparen/assign helpers would come with the whole
+// library. The small helpers below mirror it, each saying which and where they differ.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: loc, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -105,35 +102,22 @@ optimizer_fstr(c) :- optimizer_part_of(s, c), optimizer_form(s, "fstr").
 .decl optimizer_has_nonstr(c: node)
 optimizer_has_nonstr(c) :- optimizer_part_of(s, c), !optimizer_form(s, "str").
 
-// mirrors python/ast.rr str_const: n is a str Constant with value v (A1: as written). A concatenation's value is
-// its parts' in order, written out for up to 4 parts (a recursion making values along siblings is not along the
-// tree); of a longer one, optimizer_str_tail has the last 4 parts' (A7), and optimizer_str_any says it is a str.
-.decl optimizer_parts(c: node, k: number)
-optimizer_parts(c, k) :- node(_, c, "concatenated_string", _, _), !optimizer_has_nonstr(c), k = count : { child(c, _, _) }.
-.decl optimizer_part(c: node, i: number, v: symbol)
-optimizer_part(c, i, v) :- optimizer_parts(c, _), child(c, s, i), str(s, v).
+// mirrors python/ast.rr str_const: n is a str Constant with value v, W's decoded value: a str-form string not in a
+// concatenation, or a concatenation of str-form strings (its parts' values joined).
 .decl optimizer_str_const(n: node, v: symbol)
-optimizer_str_const(n, v) :- optimizer_form(n, "str"), !optimizer_part_of(n, _), str(n, v).
-optimizer_str_const(c, cat(a, b)) :- optimizer_parts(c, 2), optimizer_part(c, 0, a), optimizer_part(c, 1, b).
-optimizer_str_const(c, cat(cat(a, b), e)) :- optimizer_parts(c, 3), optimizer_part(c, 0, a), optimizer_part(c, 1, b),
-    optimizer_part(c, 2, e).
-optimizer_str_const(c, cat(cat(a, b), cat(e, g))) :- optimizer_parts(c, 4), optimizer_part(c, 0, a),
-    optimizer_part(c, 1, b), optimizer_part(c, 2, e), optimizer_part(c, 3, g).
-.decl optimizer_str_tail(c: node, v: symbol)
-optimizer_str_tail(c, cat(cat(a, b), cat(e, g))) :- optimizer_parts(c, k), k > 4, i0 = k - 4, i1 = k - 3, i2 = k - 2,
-    i3 = k - 1, optimizer_part(c, i0, a), optimizer_part(c, i1, b), optimizer_part(c, i2, e), optimizer_part(c, i3, g).
+optimizer_str_const(n, v) :- optimizer_form(n, "str"), !optimizer_part_of(n, _), value(n, v).
+optimizer_str_const(c, v) :- node(_, c, "concatenated_string", _, _), !optimizer_has_nonstr(c), value(c, v).
 .decl optimizer_str_any(n: node)
 optimizer_str_any(n) :- optimizer_str_const(n, _).
-optimizer_str_any(c) :- optimizer_parts(c, _).
 
 // optimizer_fpiece(j, c, v): JoinedStr j has the Constant piece c with value v (A1, A2, A3): each string_content of
-// its f-strings, and each plain part of a concatenation.
+// its f-strings (as written), and each plain part of a concatenation (decoded).
 .decl optimizer_fpiece(j: node, c: node, v: symbol)
 optimizer_fpiece(n, c, v) :- optimizer_fstr(n), node(_, n, "string", _, _), child(n, c, _),
     node(_, c, "string_content", _, _), node_text(c, v).
 optimizer_fpiece(j, c, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "fstr"), child(s, c, _),
     node(_, c, "string_content", _, _), node_text(c, v).
-optimizer_fpiece(j, s, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "str"), str(s, v).
+optimizer_fpiece(j, s, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "str"), value(s, v).
 
 // mirrors python/ast.rr ast_name (nameref less not_name): identifier n is an ast.Name. Unlike ast.rr, a walrus
 // target (`(x := …)`, field "name" of named_expression) is a Name, as in CPython.
@@ -259,8 +243,6 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-020", p,
 // having such a piece (A1-A3).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_str_const(n, v),
     suffix("_count", v), ofc_at(n, _, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_str_tail(n, v),
-    suffix("_count", v), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(_, c, v),
     suffix("_count", v), ofc_at(c, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(j, _, v),
@@ -287,17 +269,20 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-030", p,
     ofc_introspection(x), ofc_at(n, _, p, l).
 
 // PV2-031: a `raise <not a Name>` in a def none of whose str Constants (pieces too) has a repair word (A1-A4).
-// SQL takes every def around the raise; the innermost has the fewest strings, so it decides.
-.decl ofc_piece(s: node, v: symbol)               // each literal run with its value as written
-ofc_piece(s, v) :- optimizer_form(s, "str"), str(s, v).
-ofc_piece(c, v) :- optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v).
-.decl ofc_piece_raw(s: node)
-ofc_piece_raw(s) :- ofc_piece(s, _), optimizer_raw(s).
-ofc_piece_raw(c) :- ofc_piece(c, _), node(_, c, "string_content", _, _), child(s, c, _), optimizer_raw(s).
+// SQL takes every def around the raise; the innermost has the fewest strings, so it decides. A decoded value (a
+// str Constant, a plain piece) is tested as W does; an f-string's string_content as written (A4).
 .decl ofc_hint_piece(s: node)
-ofc_hint_piece(s) :- ofc_piece(s, v), ofc_piece_raw(s),
+ofc_hint_piece(s) :- optimizer_str_const(s, v),
     match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
-ofc_hint_piece(s) :- ofc_piece(s, v), !ofc_piece_raw(s),
+ofc_hint_piece(s) :- optimizer_fpiece(_, s, v), node(_, s, "string", _, _),
+    match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
+.decl ofc_fpiece_raw(c: node)
+ofc_fpiece_raw(c) :- node(_, c, "string_content", _, _), child(s, c, _), optimizer_raw(s).
+ofc_hint_piece(c) :- optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v),
+    ofc_fpiece_raw(c),
+    match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
+ofc_hint_piece(c) :- optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v),
+    !ofc_fpiece_raw(c),
     match("(?s:.*)(?:(?:\\b|\\\\[abfnrtv])(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
 .decl ofc_hinted(f: node)
 ofc_hinted(f) :- ofc_hint_piece(s), ofc_in_def(s, f).
@@ -416,41 +401,10 @@ oir_registered(n, v) :- optimizer_callee_name(n, "OptimizerInvariant"), node(d, 
 .decl oir_code(v: symbol)
 oir_code(v) :- oir_registered(_, v).
 
-// doc_codes: W's regex `\`((?:scope|schema|effects|cardinality|rewrite)\.[a-z_0-9]+)\`` over the doc, every
-// non-overlapping match. No match spans a "\n", so it is read per "\n"-line. A match starts at a backtick and
-// ends at the next one (no backtick in between), so, with the line's backticks in order: the first can start
-// one; a backtick after one that started a match closed it and cannot; any other can (oir_m / oir_nm).
-.decl oir_line(sp: node, s: symbol)
-oir_line(sp, s) :- oir_doc(d), src_line_lf(d, _, sp), text(sp, s), contains("`", s).
-// Character positions 0..9999 of a line, from digit facts (no arithmetic recursion); a line's characters past
-// 10000 are not read (A8).
-.decl oir_digit(x: number)
-oir_digit(0). oir_digit(1). oir_digit(2). oir_digit(3). oir_digit(4). oir_digit(5). oir_digit(6). oir_digit(7).
-oir_digit(8). oir_digit(9).
-.decl oir_num(i: number)
-oir_num(i) :- oir_digit(a), oir_digit(b), oir_digit(c), oir_digit(e), i = a * 1000 + b * 100 + c * 10 + e.
-.decl oir_bt(sp: node, i: number)
-oir_bt(sp, i) :- oir_line(sp, s), oir_num(i), i < strlen(s), substr(s, i, 1) = "`".
-.decl oir_next(sp: node, i: number, j: number)
-.decl oir_after(sp: node, i: number, k: number)
-oir_after(sp, i, k) :- oir_bt(sp, i), oir_bt(sp, k), k > i.
-oir_next(sp, i, j) :- oir_bt(sp, i), j = min k : { oir_after(sp, i, k) }.
-.decl oir_code_at(sp: node, i: number, c: symbol)
-oir_code_at(sp, i, c) :- oir_next(sp, i, j), oir_line(sp, s), c = substr(s, i + 1, j - i - 1),
-    match("(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+", c).
-.decl oir_is_code(sp: node, i: number)
-oir_is_code(sp, i) :- oir_code_at(sp, i, _).
-.decl oir_first(sp: node, i: number)
-oir_first(sp, i) :- oir_line(sp, _), i = min k : { oir_bt(sp, k) }.
-.decl oir_m(sp: node, i: number)
-.decl oir_nm(sp: node, i: number)
-oir_m(sp, i) :- oir_first(sp, i), oir_is_code(sp, i).
-oir_nm(sp, i) :- oir_first(sp, i), !oir_is_code(sp, i).
-oir_m(sp, j) :- oir_nm(sp, i), oir_next(sp, i, j), oir_is_code(sp, j).
-oir_nm(sp, j) :- oir_nm(sp, i), oir_next(sp, i, j), !oir_is_code(sp, j).
-oir_nm(sp, j) :- oir_m(sp, i), oir_next(sp, i, j).
+// doc_codes: W's regex over the doc's content, each match's CODE group (match_group: find_iter's matches).
 .decl oir_doc_code(c: symbol)
-oir_doc_code(c) :- oir_m(sp, i), oir_code_at(sp, i, c).
+oir_doc_code(c) :- oir_doc(d), source(d, sp),
+    match_group("`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", sp, _, "CODE", g), text(g, c).
 
 // verifier.py cites `(<code>)` somewhere in its source (W's instr over source_text).
 .decl oir_cited(v: symbol)

@@ -5,17 +5,22 @@
 // child's index) and `ownership` (a node's nearest-or-self function_definition `fn` and class_definition `cls`,
 // here `nearest`). Every join below is within one document. Each relation is named after the stage it ports.
 //
-// Default options only: entryPoint `_scan_source` (no case of the final query: the default, every family) and
-// externalIoBoundaries null (the signed allowlist). The other entry points and a configured externalIoBoundaries
-// are in data-layer-eager-resolve.pending.rr, awaiting the option facts (ConvertFoundation A9).
+// Options as the run resolves them (`option_value`, `option_item`): entryPoint selects the final query's case
+// (any value but the five cases, the default `_scan_source` included, is the default query, every family);
+// externalIoBoundaries, where it has items, is the approved symbols, else the signed allowlist.
 //
 // Notes against W:
-// - approved_external: the signed allowlist's symbols, taken as signed (APPROX: W keeps an entry only where
-//   `verify_ed25519` passes; @ed25519_ok is not lowered). All 34 are listed below.
-// - raw_strings (`strings`): a `string` literal's value is its raw content, `str` (APPROX: W's `value: true`
-//   substring decodes escapes; a concatenated_string, whose value W joins, gives no row here).
-// - source_lines: a line is src_line_lf's (split at \n, \r kept), as the module regex `(?m)^…$` over [^\n]* reads
-//   it, numbered by \n (W numbers a capture by the tape's lines: the same unless the file has a lone \r).
+// - approved_external, externalIoBoundaries null: the signed allowlist's symbols, taken as signed (APPROX: W
+//   keeps an entry only where `verify_ed25519` passes; @ed25519_ok is not lowered). All 34 are listed below.
+// - externalIoBoundaries `[]` (no symbol) gives no option facts, as null does, so it reads as null here (W: no
+//   approved symbol). No recorded event configures `[]`.
+// - raw_strings (`strings`): a string's (or a concatenation's) decoded value is `value` (W's `substring` with
+//   `value: true`); one W cannot decode (an interpolation) has no row, as its NULL joins nothing in the SQL.
+// - source_lines: the module regex's `LINE` captures, as match_group gives them over the file's source (a
+//   capture may cross a line where `\s*` takes a newline), at the tape line W reports. The module's text starts
+//   at its first token; the lines before it are blank or comments, which give no direct site either way.
+// - function_info's and the multi-line strings' line ranges are `line`..`end_line` (the tape's lines); the SQL
+//   counts `\n` in the text: the two differ only where the text holds a lone `\r`.
 // - display_values (pythonAst unparse) gives the finding's text only; it has a row for every display root of a
 //   file that parses, so it is not read.
 
@@ -24,15 +29,17 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl node_text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: loc, l: number)
 .decl end_line(n: loc, l: number)
 .decl text(n: loc, s: symbol)
-.decl src_line_lf(d: number, l: number, sp: span)
+.decl source(d: number, sp: span)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl option_item(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -148,11 +155,16 @@ eager_kw(c, nm, v) :- node(_, c, "call", _, _), field(c, "arguments", g), child(
 .decl eager_getattr_call(c: node)
 eager_getattr_call(c) :- eager_call_ident(c), field(c, "function", g), node_text(g, s), (s = "getattr" ; s = "hasattr").
 eager_getattr_call(c) :- eager_call_attr(c), eager_callee(c, s), (s = "__getattribute__" ; s = "getattr_static").
+// raw_strings: a string or a concatenation whose text starts `(?i)^[ru]*["']`, inside such a call (at any depth)
+// or a subscript's child; its value decoded (`value`).
+.decl eager_string_kind(s: node)
+eager_string_kind(s) :- node(_, s, "string", _, _).
+eager_string_kind(s) :- node(_, s, "concatenated_string", _, _).
+.decl eager_raw_string(s: node)
+eager_raw_string(s) :- eager_string_kind(s), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
 .decl eager_string(s: node, v: symbol)
-eager_string(s, v) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t), str(s, v),
-  inside(s, c, eager_call_set), eager_getattr_call(c).
-eager_string(s, v) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t), str(s, v),
-  child(p, s, _), node(_, p, "subscript", _, _).
+eager_string(s, v) :- eager_raw_string(s), value(s, v), inside(s, c, eager_call_set), eager_getattr_call(c).
+eager_string(s, v) :- eager_raw_string(s), value(s, v), child(p, s, _), node(_, p, "subscript", _, _).
 // A node of the file starting where such a string does.
 .decl eager_str_at(x: node, v: symbol)
 eager_str_at(x, v) :- eager_string(s, v), node(d, s, _, st, _), node(d, x, _, st, _).
@@ -213,42 +225,47 @@ eager_decorator(f, nm) :- eager_dwalk(f, x), eager_attr(x, nm).
 .decl eager_external_io(f: node)
 eager_external_io(f) :- eager_func(f, _), eager_decorator(f, "external_io_boundary_eager_async").
 
-// ---- approved_external (default: the signed allowlist) ----
+// ---- approved_external: externalIoBoundaries' symbols where it has items, else (null) the signed allowlist ----
+.decl eager_approved_configured(x: number)
+eager_approved_configured(1) :- option_item("externalIoBoundaries", _).
 .decl eager_approved(s: symbol)
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_external").
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_external_async").
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_internal").
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_internal_async").
-eager_approved("l6500_evidence.blob_migration.migrate_blobs_batch").
-eager_approved("l6500_evidence.blob_migration.migrate_blobs_batch_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.store_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.update_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async").
-eager_approved("l6500_evidence.sas_http.handle_sas_download").
-eager_approved("l6500_evidence.sas_http.handle_sas_download_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob").
-eager_approved("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_access").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_access_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_and_serve").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.validate_and_serve").
-eager_approved("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async").
-eager_approved("l6530_managed_secrets.service._resolve_managed_secret_candidate").
-eager_approved("l6530_managed_secrets.service.create_managed_secret_async").
-eager_approved("l6530_managed_secrets.service.delete_managed_secret_async").
-eager_approved("l6530_managed_secrets.service.rotate_managed_secret_async").
+eager_approved(s) :- option_item("externalIoBoundaries", s).
+eager_approved(s) :- eager_signed(s), !eager_approved_configured(1).
+.decl eager_signed(s: symbol)
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external_async").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal_async").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch_async").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async").
+eager_signed("l6500_evidence.sas_http.handle_sas_download").
+eager_signed("l6500_evidence.sas_http.handle_sas_download_async").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access_async").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async").
+eager_signed("l6530_managed_secrets.service._resolve_managed_secret_candidate").
+eager_signed("l6530_managed_secrets.service.create_managed_secret_async").
+eager_signed("l6530_managed_secrets.service.delete_managed_secret_async").
+eager_signed("l6530_managed_secrets.service.rotate_managed_secret_async").
 
 // ---- eager_edges: `self.m()` to a sibling method, `g()` to a top-level function ----
 .decl eager_edge(caller: node, target: node)
@@ -632,15 +649,20 @@ eager_preprocess(d, l, "preprocess:*.resolve(resolved)") :- eager_bcall(c, f), e
   node_text(a, "resolved"), node(d, c, _, _, _), line(c, l).
 
 // ---- source_lines, line_patterns, direct_sites, direct_patterns ----
+// source_lines: each `LINE` capture of the module regex, its start line and text.
+.decl eager_source_line(d: number, l: number, t: symbol)
+eager_source_line(d, l, t) :- source(d, sp),
+  match_group("(?m)^(?<LINE>[^\\n]*(?:\.resolve\(\)|\.resolve_async\(\)|\.result\(\)|\bint\(\s*lazy|\bfloat\(\s*lazy|\bbool\(\s*lazy)[^\\n]*)$", sp, _, "LINE", g),
+  line(g, l), text(g, t).
 .decl eager_line_issue(d: number, l: number, i: symbol)
-eager_line_issue(d, l, ".resolve()") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\.resolve\(\).*", s).
-eager_line_issue(d, l, ".resolve_async()") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\.resolve_async\(\).*", s).
-eager_line_issue(d, l, ".result()") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\.result\(\).*", s).
-eager_line_issue(d, l, "int(lazy...)") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\bint\(\s*lazy.*", s).
-eager_line_issue(d, l, "float(lazy...)") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\bfloat\(\s*lazy.*", s).
-eager_line_issue(d, l, "bool(lazy...)") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\bbool\(\s*lazy.*", s).
+eager_line_issue(d, l, ".resolve()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\.resolve\(\))(?s:.*)", s).
+eager_line_issue(d, l, ".resolve_async()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\.resolve_async\(\))(?s:.*)", s).
+eager_line_issue(d, l, ".result()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\.result\(\))(?s:.*)", s).
+eager_line_issue(d, l, "int(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\bint\(\s*lazy)(?s:.*)", s).
+eager_line_issue(d, l, "float(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\bfloat\(\s*lazy)(?s:.*)", s).
+eager_line_issue(d, l, "bool(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\bbool\(\s*lazy)(?s:.*)", s).
 .decl eager_comment_line(d: number, l: number)
-eager_comment_line(d, l) :- eager_line_issue(d, l, _), src_line_lf(d, l, sp), text(sp, s), match("(?s)\s*#.*", s).
+eager_comment_line(d, l) :- eager_line_issue(d, l, _), eager_source_line(d, l, s), match("\s*#(?s:.*)", s).
 // Inside a multi-line string that is no f-string.
 .decl eager_mlstr(d: number, a: number, b: number)
 eager_mlstr(d, a, b) :- node(d, s, "string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t),
@@ -671,19 +693,34 @@ eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()")
 eager_direct_exempt(d, l, ".result()") :- eager_direct_site(d, l, ".result()"), eager_line_symbol(d, l, s), eager_result_exempt(s).
 eager_direct_exempt(d, l, i) :- eager_direct_site(d, l, i), (i = ".resolve()" ; i = ".resolve_async()" ; i = ".result()"),
   eager_line_symbol(d, l, s), eager_approved(s).
-eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), src_line_lf(d, l, sp), text(sp, s),
+eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), eager_source_line(d, l, s),
   contains("ResolveVersionedForeignKeyTargetIntent(", s).
 // (The SQL's other direct_patterns exclusions test issues no line pattern gives: `transitive:…`, `__dict__`,
 // `getattr_static(`, `peek_*`.)
 .decl eager_direct(d: number, l: number, i: symbol)
 eager_direct(d, l, i) :- eager_direct_site(d, l, i), !eager_direct_exempt(d, l, i).
 
-// ---- the final query (default entry point: every family); the code is the issue ----
+// ---- the final query: entryPoint's case selects one family; any other value (the default `_scan_source`
+// included) is the default query, every family. The code is the issue ----
+.decl eager_entry(e: symbol)
+eager_entry("_scan_transitive_eager_ast").
+eager_entry("_scan_lower_compile_ast").
+eager_entry("_scan_preprocess_ast").
+eager_entry("_scan_external_io_boundary_definition_ast").
+eager_entry("_scan_legacy_boundary_definition_ast").
+.decl eager_entry_case(x: number)
+eager_entry_case(1) :- option_value("entryPoint", e), eager_entry(e).
 .decl eager_finding(d: number, l: number, i: symbol)
-eager_finding(d, l, i) :- eager_transitive(d, l, i).
-eager_finding(d, l, i) :- eager_phase_site(d, l, i).
-eager_finding(d, l, i) :- eager_external(d, l, i).
-eager_finding(d, l, i) :- eager_preprocess(d, l, i).
-eager_finding(d, l, i) :- eager_direct(d, l, i).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), option_value("entryPoint", "_scan_transitive_eager_ast").
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), option_value("entryPoint", "_scan_lower_compile_ast"),
+  (prefix("lower:", i) ; prefix("compile:", i)).
+eager_finding(d, l, i) :- eager_external(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_external(d, l, i), option_value("entryPoint", "_scan_external_io_boundary_definition_ast").
+// `_scan_legacy_boundary_definition_ast` is external_definitions `WHERE 0`: nothing.
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
+eager_finding(d, l, i) :- eager_direct(d, l, i), !eager_entry_case(1).
 violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i),
   in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
