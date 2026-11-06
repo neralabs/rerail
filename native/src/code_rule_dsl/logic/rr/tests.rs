@@ -5,6 +5,60 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
+    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-contract");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), source).unwrap();
+    let rule = root.join("rule.rr");
+    std::fs::write(&rule, program).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap().clone();
+    std::fs::remove_dir_all(root).unwrap();
+    rows
+}
+
+/// A public rule's full diagnostic survives the production planner and transport. Distinct witnesses
+/// and tags at the same line do not collapse into the old five-column finding index.
+#[test]
+fn findings_keep_messages_tags_parameters_and_witnesses() {
+    let rows = finding_contract("x = y\n", r#"
+.policy "contract:diagnostics" revision 1
+.language python
+.violation Bad(at: node, why: symbol, count: number) code "BAD001" tag {why}
+    "{why}:{count}:{at.line}"
+Bad(n, "first\n\t\"", 7) :- kind(n, "identifier").
+Bad(n, "second", 8) :- kind(n, "identifier").
+"#);
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.iter().map(|row| row["at"].as_i64().unwrap()).collect::<BTreeSet<_>>().len(), 2);
+    for row in rows {
+        assert_eq!(row["policy"], "contract:diagnostics");
+        assert_eq!(row["clause"], "Bad");
+        assert_eq!(row["code"], "BAD001");
+        assert_eq!(row["path"], "a.py");
+        assert_eq!(row["line"], 1);
+        assert_eq!(row["tag"], row["parameters"]["why"]);
+        assert_eq!(row["message"], format!("{}:{}:1", row["tag"].as_str().unwrap(), row["parameters"]["count"].as_i64().unwrap()));
+    }
+}
+
+/// This producer binds a source span, not a tree node. Per-file memoization must use its document key.
+#[test]
+fn source_span_producers_retain_rows_through_local_planning() {
+    let rows = finding_contract("# marker\nx = y\n", r#"
+.policy "contract:source" revision 1
+.language python
+#include "python/ast.rr"
+#include "python/calls.rr"
+.decl selected(d: number, t: symbol)
+selected(d, t) :- source(d, sp), text(sp, t), contains("marker", t).
+.violation Seen(at: node, source_text: symbol) "{source_text}"
+Seen(n, t) :- selected(d, t), kind(n, "identifier"), docof(n, d).
+"#);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row["message"] == "# marker\nx = y\n"));
+}
+
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
 }

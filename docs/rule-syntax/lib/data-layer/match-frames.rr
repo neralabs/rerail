@@ -1,0 +1,41 @@
+// data-layer/match-frames: where a node sits among defs and classes, as the scripts' visitors see it.
+//
+// The data-layer scripts keep two stacks while they walk `ast`: one of classes, one of defs. The top of each is
+// "the innermost class" and "the innermost def", each found on its own: in a method's nested helper the innermost
+// class is still the method's class. A def's or class's decorators, defaults, bases and annotations belong to it,
+// because `ast` visits them as its children. And `ast.walk(f)` over a def covers all of that too.
+// python/ast's def_frame is the innermost def only; nearest(n, k, "class_definition") puts decorators outside.
+//
+// Interface
+//   mf_class(n, k)   k is the innermost class around n, whatever defs lie between
+//   mf_def(n, f)     f is the innermost def (async too) around n, whatever classes lie between
+//   mf_walk(n, o)    n is in `ast.walk(o)` for a def or class o, o itself excluded: below it or in its decorators
+//
+//   class A:
+//       @wrap(x)                 mf_class(<x>, A), mf_def(<x>, m): the decorator belongs to m
+//       def m(self):
+//           def helper():
+//               call()           mf_class(<call()>, A), mf_def(<call()>, helper), mf_walk(<call()>, m)
+
+#include "python/names.rr"   // decorator
+
+// mf_up(n, o): o is the innermost def or class around n; a decorator stands for the definition it decorates.
+.decl mf_mark(k: symbol)
+mf_mark("function_definition"). mf_mark("class_definition"). mf_mark("decorator").
+.decl mf_up(n: node, o: node)
+mf_up(n, o) :- nearest(n, o, mf_mark), !kind(o, "decorator").
+mf_up(n, o) :- nearest(n, dc, mf_mark), kind(dc, "decorator"), child(dd, dc, _), field(dd, "definition", o).
+
+// mf_class(n, k): e.g. in `class A: def m(self): x`, mf_class(<x>, A).
+.decl mf_class(n: node, k: node)
+mf_class(n, k) :- mf_up(n, k), kind(k, "class_definition").
+mf_class(n, k) :- mf_up(n, f), kind(f, "function_definition"), mf_class(f, k).
+// mf_def(n, f): e.g. in `def f(): class B: x = 1`, mf_def(<x = 1>, f).
+.decl mf_def(n: node, f: node)
+mf_def(n, f) :- mf_up(n, f), kind(f, "function_definition").
+mf_def(n, f) :- mf_up(n, k), kind(k, "class_definition"), mf_def(k, f).
+
+// mf_walk(n, o): e.g. in `@d(y)` / `def f(a=z): w`, mf_walk(<y>, f), mf_walk(<z>, f), mf_walk(<w>, f).
+.decl mf_walk(n: node, o: node)
+mf_walk(n, o) :- (kind(o, "function_definition") ; kind(o, "class_definition")), within(n, o).
+mf_walk(n, o) :- decorator(o, e), (n = e ; within(n, e)).

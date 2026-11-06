@@ -33,6 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
 use crate::code_rule_dsl::logic::strings::SET;
+mod findings;
 
 /// The text tests: their `.rr` names and the engine's.
 pub(super) const TESTS: [(&str, &str); 11] = [
@@ -88,6 +89,9 @@ struct Violation {
     code: FindingCode,
     node: bool,
     places: bool,
+    columns: Vec<(String, String)>,
+    message: String,
+    tag: Option<usize>,
 }
 
 /// A finding's code: the violation's name, a column's value, or a constant.
@@ -160,7 +164,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             },
             Item::Policy(document) => l.prog.policies.push(document),
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
-            Item::Violation { name, cols, code, code_in, tag, suppress, .. } => l.violation(name, cols, code, code_in, tag, suppress).map_err(at)?,
+            Item::Violation { name, cols, code, code_in, tag, suppress, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
                 if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
                     for (rel, row) in rows {
@@ -183,7 +187,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         })?;
     }
     l.three_valued();
-    l.findings();
+    l.findings()?;
     l.projections();
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
@@ -356,18 +360,15 @@ impl Lowerer {
     /// `.violation V(at, …)`: V is an output relation, and each of its rows is a finding (`findings`). Its
     /// `suppress` lines and `code {c} in "re"` are settings of the findings layer: `.suppress V tool "rule", …` and
     /// `.code_in V "re"`.
-    fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, code_in: Option<String>, tag: Option<String>, suppress: Vec<Suppress>) -> Result<(), Error> {
+    #[allow(clippy::too_many_arguments)]
+    fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, code_in: Option<String>, tag: Option<String>, suppress: Vec<Suppress>, message: String) -> Result<(), Error> {
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
         if !matches!(at.as_str(), "node" | "span" | "loc") {
             return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
         }
         let node = at == "node";
-        // `tag {t}` keeps findings at one place apart; the engine's findings are keyed by place and code, so
-        // it is checked and not carried.
         let column = |c: &String| cols.iter().position(|(n, _)| n == c).ok_or_else(|| Error::Syntax(format!(".violation {name}: no column {c}")));
-        if let Some(t) = &tag {
-            column(t)?;
-        }
+        let tag = tag.as_ref().map(column).transpose()?;
         let code = match code {
             None => FindingCode::Name,
             Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
@@ -381,7 +382,7 @@ impl Lowerer {
         if let Some(re) = code_in {
             self.prog.settings.push(("code_in".to_owned(), format!("{name} {}", super::syntax::quote(&re))));
         }
-        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false });
+        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
         self.decl(name.clone(), cols, &[])?;
         self.prog.outputs.push(name);
         Ok(())
@@ -391,9 +392,9 @@ impl Lowerer {
     /// column's line (the engine's findings relation, as the converter's programs give it). A node's document is
     /// `node`'s column; a span's is `docof` (`core.rr`), and so is its line. A `@place(path, line)` row is read from
     /// V's place relation.
-    fn findings(&mut self) {
+    fn findings(&mut self) -> Result<(), Error> {
         if self.violations.is_empty() {
-            return;
+            return Ok(());
         }
         let policy = self
             .prog
@@ -409,6 +410,7 @@ impl Lowerer {
         let v = |s: &str| Term::Var(s.to_owned());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
         for f in std::mem::take(&mut self.violations) {
+            self.diagnostics(&policy, &f)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
                 _ => None,
@@ -432,6 +434,7 @@ impl Lowerer {
                 self.prog.rules.push(Rule { head, body: vec![atom(&place_relation(&f.name), args)] });
             }
         }
+        Ok(())
     }
 
     fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {

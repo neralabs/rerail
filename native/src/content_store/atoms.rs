@@ -428,7 +428,8 @@ impl Atoms {
         }
         let connection = reader.as_ref().expect("opened above");
         let from = self.state.read().stored;
-        let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 ORDER BY first")?;
+        let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 ORDER BY first")
+            .map_err(|error| StoreError::Corrupt(format!("{}: reading atom segments: {error}", path.display())))?;
         let segments = statement
             .query_map([from as i64], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?, row.get::<_, Vec<u8>>(2)?)))?
             .collect::<Result<Vec<_>, _>>()?;

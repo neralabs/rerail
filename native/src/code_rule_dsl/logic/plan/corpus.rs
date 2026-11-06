@@ -252,7 +252,7 @@ pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> 
             all.kindsets.insert(shared.clone(), kinds);
             set_of.insert(name, shared);
         }
-        let shared_outputs = ["violation"];
+        let shared_outputs = ["violation", "rr_diagnostic"];
         let own: BTreeSet<String> = prog
             .decls
             .keys()
@@ -375,6 +375,7 @@ fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_stor
     ContentStore::open(&path).map(Some)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
     run_programs_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &serde_json::Value::Null)
 }

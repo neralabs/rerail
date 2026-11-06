@@ -25,7 +25,6 @@ pub(in crate::code_rule_dsl) use super::front::Error;
 use super::front::Program;
 pub(in crate::code_rule_dsl) use print::print;
 pub(in crate::code_rule_dsl) use syntax::quote;
-#[cfg(test)]
 pub(in crate::code_rule_dsl) use translate::translate;
 
 /// The library `#include` reads from.
