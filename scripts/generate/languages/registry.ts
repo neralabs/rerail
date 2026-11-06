@@ -64,7 +64,8 @@ export const languageEntrySchema = z
 
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;
 
-type RegistryEntry = { file: string; entry: LanguageEntry };
+/** One language file of the registry: its name, and the entry it holds. */
+export type RegistryEntry = { file: string; entry: LanguageEntry };
 
 /** Claims of a key by one file: the second claim of a kind and key is a problem. */
 type ClaimKey = (kind: string, key: string, file: string) => void;
@@ -113,7 +114,7 @@ function familySuppressionProblems({ file, entry }: RegistryEntry, entries: read
 }
 
 /** Cross-entry rules: unique ids, labels, suffixes and tape tags; one capability vocabulary; runsOn and embeds resolve; a family's languages share its suppressions. */
-export function languageRegistryProblems(entries: readonly { file: string; entry: LanguageEntry }[]): string[] {
+export function languageRegistryProblems(entries: readonly RegistryEntry[]): string[] {
   const problems: string[] = [];
   const owners = new Map<string, string>();
   const claim: ClaimKey = (kind, key, file) => {
@@ -143,8 +144,8 @@ function compareEntries(left: LanguageEntry, right: LanguageEntry): number {
 }
 
 /** Every `.json` file of `directory` parsed against the schema, reported as `label/<file>`; schema problems go to `problems`. */
-function readEntries(directory: string, label: string, problems: string[]): { file: string; entry: LanguageEntry }[] {
-  const entries: { file: string; entry: LanguageEntry }[] = [];
+function readEntries(directory: string, label: string, problems: string[]): RegistryEntry[] {
+  const entries: RegistryEntry[] = [];
   for (const file of readdirSync(directory).filter(file => file.endsWith(".json")).toSorted()) {
     const parsed = languageEntrySchema.safeParse(JSON.parse(readFileSync(resolve(directory, file), "utf8")));
     if (parsed.success) entries.push({ file: `${label}/${file}`, entry: parsed.data });

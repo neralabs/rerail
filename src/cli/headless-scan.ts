@@ -378,7 +378,7 @@ function homeIsScanConfiguration(options: HeadlessScanOptions, home: RerailDatab
 }
 
 /** `run` with a scratch folder that holds the scan's own content store, restoring the environment and removing the folder after. */
-async function inScanScratch<T>(home: RerailDatabase | undefined, run: (scratch: string) => Promise<T>): Promise<T> {
+async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratch: string) => Promise<T>): Promise<T> {
   const scratch = mkdtempSync(join(tmpdir(), "rerail-scan-"));
   const previousStore = process.env.RERAIL_CONTENT_STORE_PATH;
   // The machine-wide content store belongs to the daemon; this process keeps its own, thrown away after.
@@ -549,7 +549,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const packs = installedPackIds(options.packs);
   const home = openHomeDatabase(homeDatabase);
   const useHome = homeIsScanConfiguration(options, home, root, packs);
-  return inScanScratch(home, scratch => scanInScratch(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
+  return withScanScratch(home, scratch => scanInScratch(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
 }
 
 /** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */

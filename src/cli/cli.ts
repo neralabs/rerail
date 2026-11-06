@@ -538,7 +538,7 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
   }
 }
 
-/** The options that have a value: `startRerail`'s and `setupAnswerCommand`'s take none as absent, not `undefined`. */
+/** The options that have a value: `startRerail`'s, `stopRerail`'s and `setupAnswerCommand`'s take none as absent, not `undefined`. */
 function definedOnly<T extends object>(options: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
   return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as { [K in keyof T]?: Exclude<T[K], undefined> };
 }
@@ -556,7 +556,7 @@ function runStopCommand(args: readonly string[], positionals: readonly string[],
   stopRerail(workspace, io, {
     ...databasePathOption(options),
     repository: flags.has("--repository"),
-    ...(session === undefined ? {} : { session }),
+    ...definedOnly({ session }),
   });
   return 0;
 }
@@ -737,9 +737,8 @@ async function runRulesFamilyCommand(args: readonly string[]): Promise<number> {
   return runRulesCommand(args, usage);
 }
 
-/** Set-up, session and pack commands: everything that comes before asking whether a command is the daemon's. */
-async function runContentCommand(command: string, args: readonly string[], context: CommandContext): Promise<number | undefined> {
-  const { home, updater, packageVersion } = context;
+/** Every command that runs without the signed update policy; undefined for a word that is none of them. */
+async function runProjectCommand(command: string, args: readonly string[], { home, updater, packageVersion }: CommandContext): Promise<number | undefined> {
   switch (command) {
     case "setup": return await runSetupCommand(args, { home, packageRoot, updater });
     case "install": return await runInstallCommand(args, { home, packageRoot, updater });
@@ -752,35 +751,19 @@ async function runContentCommand(command: string, args: readonly string[], conte
     case "reset": return runResetCommand(args, usage);
     case "feedback": return await runFeedbackCommand(args, usage, { packageVersion });
     case "scrub": return await runScrubCommand(args, usage);
-    default: return undefined;
-  }
-}
-
-async function runCheckoutCommand(command: string, args: readonly string[], { home, updater, packageVersion }: CommandContext): Promise<number | undefined> {
-  switch (command) {
     case "start":
     case "stop":
       return await runRepositoryCommand(command, args, { home, packageRoot, updater });
-    case "state":
-      return runStateCommand(args);
+    case "state": return runStateCommand(args);
     // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
     case "scan":
     case "settings":
       return await runAuditCommand(command, args, { home, version: packageVersion });
     // Internal testing: the remote sink.
-    case "remote":
-      return await runRemoteCommand(args, { home });
-    default:
-      return undefined;
+    case "remote": return await runRemoteCommand(args, { home });
+    // `daemon`, `status` and `manage`.
+    default: return await runDaemonCommand(command, args, home);
   }
-}
-
-async function runProjectCommand(command: string, args: readonly string[], context: CommandContext): Promise<number | undefined> {
-  const contentExit = await runContentCommand(command, args, context);
-  if (contentExit !== undefined) return contentExit;
-  const daemonExit = await runDaemonCommand(command, args, context.home);
-  if (daemonExit !== undefined) return daemonExit;
-  return await runCheckoutCommand(command, args, context);
 }
 
 /** Commands gated by the signed update policy, plus help; anything else is unknown. */

@@ -482,11 +482,7 @@ export class NativeSessionClient implements NativeSemanticToolRuntime {
     }
   }
 
-  #request(
-    operation: "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close",
-    payload: { event?: unknown; eventEncoding?: "superjson"; input?: unknown; entries?: readonly unknown[] } = {},
-    event?: AdapterEvent,
-  ): Promise<unknown> {
+  #request(operation: StreamedOrExplicitOperation, payload: NativeRequestPayload = {}, event?: AdapterEvent): Promise<unknown> {
     const run = () => this.#runRequest(operation, payload, event);
     const pending = this.#pending.then(run, run);
     this.#pending = pending;

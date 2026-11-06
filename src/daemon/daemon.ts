@@ -357,10 +357,6 @@ function createDaemonServer(options: RerailDaemonOptions, app: Hono): DaemonServ
     : createHttpsServer({ ...HTTP_TIMEOUTS, cert: options.tls.cert, key: options.tls.key }, handle);
 }
 
-async function rememberedPortOf(options: RerailDaemonOptions): Promise<number | undefined> {
-  return options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
-}
-
 /** What a start has running so far, for a failed one to close. */
 interface StartedServices {
   engineService?: EngineService;
@@ -494,7 +490,7 @@ export class RerailDaemon {
       const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
       const server = createDaemonServer(options, app);
       started.server = server;
-      const remembered = await rememberedPortOf(options);
+      const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,

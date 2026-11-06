@@ -307,14 +307,17 @@ function isAsEditLeft(current: Source | undefined, digest: string | undefined): 
   return current !== undefined && current.readError === undefined && current.digest === digest;
 }
 
-/** Whether `scope` lies within the captured paths and every preimage was read; a preimage withheld for secrets throws. */
-function mayRollBack(preimages: RewindableEdit["preimages"], scope: readonly string[]): boolean {
+/** Whether `scope` lies within the captured paths and every preimage was read. */
+function isCaptured(preimages: RewindableEdit["preimages"], scope: readonly string[]): boolean {
   if (scope.length === 0 || scope.some(path => !preimages.has(path))) return false;
-  if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return false;
+  return ![...preimages.values()].some(preimage => preimage.readError !== undefined);
+}
+
+/** Throws when a preimage was withheld for secrets: there is no copy of that file to put back. */
+function assertNoneWithheld(preimages: RewindableEdit["preimages"]): void {
   const secret = [...preimages].find(([, preimage]) => preimage.withheld !== undefined);
   if (secret !== undefined)
     throw new Error(`${secret[0]} holds secrets, by its name or its text, so Rerail kept no copy of it to put back; the edit stays as it is`);
-  return true;
 }
 
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
@@ -470,7 +473,8 @@ export class CodeRuleBridge {
     const rewindable = this.#rewindable.get(toolCallId);
     if (rewindable === undefined || rewindable.revision !== revision) return undefined;
     this.#rewindable.delete(toolCallId);
-    if (!mayRollBack(rewindable.preimages, scope)) return undefined;
+    if (!isCaptured(rewindable.preimages, scope)) return undefined;
+    assertNoneWithheld(rewindable.preimages);
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return undefined;
     return await this.#enqueue(() => this.#rollBack(toolCallId, rewindable, discovery));

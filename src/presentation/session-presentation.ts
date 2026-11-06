@@ -426,9 +426,11 @@ function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknow
 
 type PresentationResponse = z.infer<typeof presentationResponseSchema>;
 type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
+/** A live daemon of this checkout, and what it answered for the session. */
+type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
 
 /** The daemon's answer for the session; undefined when no live daemon of this checkout answers as itself. */
-async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<{ daemon: VerifiedDaemon; response: PresentationResponse } | undefined> {
+async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<LiveResponse | undefined> {
   // The `/api/presentation` response proves liveness; it must not pay for a second probe.
   const daemon = await verifyDaemon(cwd);
   if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return undefined;
@@ -441,7 +443,7 @@ async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: Pres
 
 /** A recorded session as the footer presents it, once it is known to be this session. */
 async function answeredSessionPresentation(
-  answered: AnsweredSession, native: boolean, { daemon, response }: { daemon: VerifiedDaemon; response: PresentationResponse }, { sessionId, host }: PresentationRequest,
+  answered: AnsweredSession, native: boolean, { daemon, response }: LiveResponse, { sessionId, host }: PresentationRequest,
 ): Promise<SessionPresentation> {
   const { session } = answered;
   // The host may sit below its launch root; the session's canonical cwd stays the identity.
@@ -455,7 +457,7 @@ async function answeredSessionPresentation(
 }
 
 /** What the daemon's answer comes to for this request. */
-async function answeredPresentation(answer: { daemon: VerifiedDaemon; response: PresentationResponse }, request: PresentationRequest): Promise<SessionPresentation> {
+async function answeredPresentation(answer: LiveResponse, request: PresentationRequest): Promise<SessionPresentation> {
   const { daemon, response } = answer;
   const { presence } = response;
   if (presence === "silent" && request.onDemand !== true) return silent(presence, response.repositoryState);

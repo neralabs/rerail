@@ -138,7 +138,7 @@ function addImportedNames(node: ts.ImportDeclaration, names: PackageNames): void
  * the local bindings of a package's module or default export (`import fs from "fs"`, `const fs = require("fs")`,
  * `import * as React from "react"`), whose members and component props are the package's.
  */
-function packageNames(file: ts.SourceFile): { exported: Set<string>; bindings: Set<string> } {
+function packageNames(file: ts.SourceFile): PackageNames {
   const names: PackageNames = { exported: new Set<string>(), bindings: new Set<string>() };
   const visit = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node)) addImportedNames(node, names);

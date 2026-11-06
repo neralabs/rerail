@@ -604,7 +604,8 @@ async function planInstall(flags: ReadonlySet<string>, options: ReadonlyMap<stri
   return { parsed, remove, deleteData, uninstall, ...located };
 }
 
-const isUninstall = (remove: boolean, hosts: unknown, managed: boolean): boolean => remove && hosts === undefined && managed;
+/** The whole uninstall: the managed install removed from every coding agent, with no `--agents` list narrowing it. */
+const isUninstall = (remove: boolean, hosts: readonly Harness[] | undefined, managed: boolean): boolean => remove && hosts === undefined && managed;
 
 /** Registers with or unregisters from the coding agents, and records the agents it saw. */
 async function applyInstallPlan({ parsed, root, remove, managed }: InstallPlan, context: SetupContext): Promise<void> {

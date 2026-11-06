@@ -1787,7 +1787,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#recordUndelivered(state, pending);
       return "discarded";
     }
-    const window = this.#ownResultWindow(state, pending, content, metadata);
+    const window = this.#ownResultWindow(state, metadata);
+    this.#addressDelivery(state, pending, content, window);
     if (state.steerStrategy === "rewind" && window !== undefined) return await this.#rewindSteer(state, window, pending, metadata!, isRetired);
     if (this.#holdForDigest(state, pending, metadata)) return "queued";
     return this.#pendSteer(state, pending, metadata);
@@ -1802,17 +1803,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return { boundaryDelivery: this.#deliverInBackground(state, pending, metadata) };
   }
 
-  /** Sets how the steer goes out; the result window it comes back with is the one it rides, if it is the check of that very edit. */
-  #ownResultWindow(state: RuntimeSessionState, pending: PendingSteer, content: string, metadata: SteerMetadata | undefined): ResultWindow | undefined {
-    if (state.steerStrategy === "subagent")
-      pending.delivery = { ...pending.delivery, content: subagentSteer(content, state.descriptor.host), strategy: state.steerStrategy };
+  /** The open result window, when the steer is the check of the very edit whose result is being ingested: the host can put the steer into that result. */
+  #ownResultWindow(state: RuntimeSessionState, metadata: SteerMetadata | undefined): ResultWindow | undefined {
     const window = state.resultWindow;
-    // The check of the very edit whose result is being ingested: the host can put the steer into that result.
     const own = window !== undefined && metadata?.generatedEdit !== undefined
       && state.codeRuleBridge?.checks(window.toolCallId, metadata.revision, metadata.scope) === true;
-    if (!own) return undefined;
-    pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
-    return window;
+    return own ? window : undefined;
+  }
+
+  /** Sets how the steer goes out: reworded for a subagent, and addressed to the result it rides, `window`, when it has one. */
+  #addressDelivery(state: RuntimeSessionState, pending: PendingSteer, content: string, window: ResultWindow | undefined): void {
+    if (state.steerStrategy === "subagent")
+      pending.delivery = { ...pending.delivery, content: subagentSteer(content, state.descriptor.host), strategy: state.steerStrategy };
+    if (window !== undefined) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
   }
 
   /** Rolls the edit back, then pends the steer; queued before the result answers, so the steer goes out with the edit it rolled back. */

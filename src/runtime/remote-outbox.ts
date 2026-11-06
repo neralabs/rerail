@@ -278,7 +278,23 @@ type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | 
 
 const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 0 && batch.oversized.length === 0;
 
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** What the remote's answer to a batch means: `detail` is its status, and the start of its body when it sent one. */
+function postOutcome(status: number, detail: string): PostOutcome {
+  switch (status) {
+    case 200:
+      return { kind: "accepted" };
+    case 401:
+    case 403:
+      return { kind: "unauthorized", error: `unauthorized (${detail})` };
+    case 400:
+    case 413:
+      return { kind: "rejected", error: `rejected (${detail})` };
+    default:
+      return { kind: "retry", error: `HTTP ${detail}` };
+  }
+}
 
 export class RemoteOutbox {
   readonly #home: string;
@@ -414,7 +430,7 @@ export class RemoteOutbox {
         state.prepare("DELETE FROM locks WHERE remote = ? AND holder = ?").run(key, this.#holder);
       }
     } catch (error) {
-      return { remote: remote.name, batches: 0, records: 0, error: messageOf(error) };
+      return { remote: remote.name, batches: 0, records: 0, error: errorMessage(error) };
     } finally {
       state.close();
     }
@@ -650,9 +666,7 @@ export class RemoteOutbox {
     return batch.add(record("rule", provenance.payloadHash, { ruleId: provenance.ruleId, kind: document.kind, mode, document: document.rule }, { hash: provenance.payloadHash }));
   }
 
-  async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<
-    { kind: "accepted" } | { kind: "rejected"; error: string } | { kind: "unauthorized"; error: string } | { kind: "retry"; error: string }
-  > {
+  async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<PostOutcome> {
     const header = {
       type: "batch",
       protocol: SINK_PROTOCOL,
@@ -672,14 +686,10 @@ export class RemoteOutbox {
         signal: stop === undefined ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), stop]),
       });
     } catch (error) {
-      return { kind: "retry", error: error instanceof Error ? error.message : String(error) };
+      return { kind: "retry", error: errorMessage(error) };
     }
     const body = await response.text().catch(() => "");
-    const detail = `${response.status}${body === "" ? "" : ` ${body.slice(0, 200)}`}`;
-    if (response.status === 200) return { kind: "accepted" };
-    if (response.status === 401 || response.status === 403) return { kind: "unauthorized", error: `unauthorized (${detail})` };
-    if (response.status === 400 || response.status === 413) return { kind: "rejected", error: `rejected (${detail})` };
-    return { kind: "retry", error: `HTTP ${detail}` };
+    return postOutcome(response.status, `${response.status}${body === "" ? "" : ` ${body.slice(0, 200)}`}`);
   }
 
   /** The remote holds `records` (or refused them for good, `rejected`): cursors and hashes move past them. */
@@ -851,7 +861,7 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
         else if (result.skipped === undefined) lastErrors.delete(result.remote);
       }
     }, (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       if (lastErrors.get("") !== message) log(`rerail daemon: remote sink: ${message}\n`);
       lastErrors.set("", message);
     }).finally(() => { running = undefined; });

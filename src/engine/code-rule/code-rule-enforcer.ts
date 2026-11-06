@@ -1794,7 +1794,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const cache = pass ?? sourceFactsCache();
     const overlay = pass === undefined ? overlayOf(edit) : undefined;
     // An edit that deletes its source, or has no generated text, sends no file of its own and waits for no facts.
-    const files: WorkspaceFile[] = hasGeneratedText(edit)
+    const own: WorkspaceFile[] = hasGeneratedText(edit)
       ? [{
           path: edit.path,
           language: edit.language,
@@ -1802,9 +1802,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           ...(await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlay)),
         }]
       : [];
-    const repackaged: CodeRuleEdit[] = [];
     const directory = this.#recheckedFolder(edit, serverGraph, pass);
-    if (directory !== undefined) await this.#addRepackaged(edit, directory, { packages, cache, serverGraph, overlay, files, repackaged });
+    const { files: rechecked, repackaged } = directory === undefined
+      ? { files: [], repackaged: [] }
+      : await this.#repackagedSources(edit, directory, { packages, cache, serverGraph, overlay });
+    const files = [...own, ...rechecked];
     const evaluation = await this.#sendFiles(workspace, edit, files, pass);
     recordSentPackages(packages, edit, files);
     if (pass === undefined) workspace.evictInactive();
@@ -1842,20 +1844,23 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return path !== edit.path && !this.#pending.has(path) && (directory === "" || path.startsWith(`${directory}/`));
   }
 
-  /** Adds to `sending.files` each applied source under `directory` whose facts changed; `sending.repackaged` holds their edits. */
-  async #addRepackaged(edit: CodeRuleEdit, directory: string, sending: {
-    packages: ReadonlyMap<string, string>; cache: SourceFactsCache; serverGraph: boolean; overlay: SourceOverlay | undefined; files: WorkspaceFile[]; repackaged: CodeRuleEdit[];
-  }): Promise<void> {
-    for (const [path, sent] of sending.packages) {
+  /** Each applied source under `directory` whose facts changed: `files` to send again, and `repackaged`, the applied edits they came from. */
+  async #repackagedSources(edit: CodeRuleEdit, directory: string, reading: {
+    packages: ReadonlyMap<string, string>; cache: SourceFactsCache; serverGraph: boolean; overlay: SourceOverlay | undefined;
+  }): Promise<{ files: WorkspaceFile[]; repackaged: CodeRuleEdit[] }> {
+    const files: WorkspaceFile[] = [];
+    const repackaged: CodeRuleEdit[] = [];
+    for (const [path, sent] of reading.packages) {
       const stored = this.#applied.get(path);
       if (stored === undefined || !this.#mayRecheck(path, edit, directory)) continue;
-      const facts = await sourceFileFacts(this.#workspaceRoot, path, stored.language, sending.cache, sending.serverGraph, sending.overlay);
+      const facts = await sourceFileFacts(this.#workspaceRoot, path, stored.language, reading.cache, reading.serverGraph, reading.overlay);
       if (JSON.stringify(facts.package ?? null) === sent) continue;
       const applied = await this.#load(stored);
       if (applied.generatedText === undefined) continue;
-      sending.files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
-      sending.repackaged.push(applied);
+      files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
+      repackaged.push(applied);
     }
+    return { files, repackaged };
   }
 
   /**
