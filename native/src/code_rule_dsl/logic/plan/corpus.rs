@@ -392,7 +392,10 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                 Built::Facts(f) => Arc::new(f),
                 Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
             };
-            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
+            let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
+            let digest = core::digest(&facts);
+            drop(digest_span);
+            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts })
         };
         while let Some((d, path)) = at.next() {
             match build(d, path) {

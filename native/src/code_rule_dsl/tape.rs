@@ -1188,11 +1188,14 @@ impl TapeImage {
                 std::ops::ControlFlow::Continue(())
             }
         };
+        let parse = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter parse".into());
         let tree = parser.parse_with_options(
             &mut input,
             None,
             Some(tree_sitter::ParseOptions::new().progress_callback(&mut progress)),
         )?;
+        drop(parse);
+        let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
         Some(Self::encode(tree.root_node(), grammar, source, budget))
     }
 

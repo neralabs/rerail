@@ -68,6 +68,7 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
     let Some((doc, lines)) = tape else {
         return Ok(Built::Unparsed);
     };
+    let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     from_tape(&doc, lines).map(Built::Facts)
 }
 
