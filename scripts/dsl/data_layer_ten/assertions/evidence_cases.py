@@ -59,3 +59,10 @@ def test_original_runs_and_the_wrong_api_cannot_certify_native_helpers():
     report['oracle'] = False
     with pytest.raises(ValueError, match='Wrong helper API'):
         verify_helpers(ledger, oracle, [report], 'workspace', 'contracts')
+
+
+def test_python_dto_construction_cannot_mask_a_native_parse_error():
+    from data_layer_ten.assertions.adapter import decode
+    rows = [{'variables': {'row': {'helper_value': 'null'}}}]
+    with pytest.raises(AssertionError, match='Native parser accepted invalid source'):
+        decode('_parse_source', rows, [{'path': 'helper.py', 'source': 'def broken(:\n'}], {})
