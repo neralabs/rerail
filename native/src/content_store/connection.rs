@@ -331,7 +331,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     crate::code_rule_dsl::text::install(connection)?;
     crate::code_rule_dsl::prefilter::tapes::install(connection)?;
     // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
-    // committed rows (decision 0045).
+    // committed rows (decision 0047).
     super::atoms::Atoms::install(connection)?;
     Ok(())
 }

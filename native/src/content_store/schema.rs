@@ -26,7 +26,7 @@ pub(super) const SCHEMA_VERSION: i64 = 3;
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
 pub const STORE_FILE_NAME: &str = "content-v3.sqlite";
 /// The floor `STORE_FILE_NAME` was introduced at. 3: atoms stored as segments of the arena
-/// (decision 0045); 2 was the prefilter vocabulary keyed by atom.
+/// (decision 0047); 2 was the prefilter vocabulary keyed by atom.
 const STORE_FILE_FLOOR: i64 = 3;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
--- The single interner (atoms.rs, decision 0045): dense, append-only; atom 0 is the empty string.
+-- The single interner (atoms.rs, decision 0047): dense, append-only; atom 0 is the empty string.
 -- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
 -- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
 -- over the process's arena; a row that names an atom commits with or after its segment.
@@ -595,7 +595,7 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
         )));
     }
     // A store is never upgraded (STORE_FILE_NAME): an older floor's `atoms` table would hide the
-    // `atoms` virtual table (decision 0045).
+    // `atoms` virtual table (decision 0047).
     if version != 0 && version < STORE_FILE_FLOOR {
         return Err(StoreError::Invalid(format!(
             "database schema version {version} is older than this build's floor {STORE_FILE_FLOOR}: the store is a cache; delete it"

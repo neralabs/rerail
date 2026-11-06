@@ -20,7 +20,7 @@
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
 //! - `within(n, a)` is the engine's relation read off the tree, and `within_stop(n, a, stop)` that less a stop
-//!   between (`Lowerer::within`, decision 0046);
+//!   between (`Lowerer::within`, decision 0048);
 //! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `+ - * /` and Soufflé's `cat`,
 //!   `strlen`, `to_string`, `substr` are functors.
 //!
@@ -374,7 +374,7 @@ impl Lowerer {
         })
     }
 
-    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0046): a's
+    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0048): a's
     /// subtree for a bound `a`, n's ancestors for a bound `n`, made per node looked up. No range over ids and no
     /// climb through `child` (`core.rr`: tape arithmetic, never Datalog recursion). `within_stop(n, a, stop)`: also
     /// no node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no

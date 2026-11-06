@@ -1313,7 +1313,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "value" => &[&["n"], &["s", "n"]],
         "intval" | "op" | "tape" | "line" => &[&["n"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
-        // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0046).
+        // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0048).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
@@ -3009,7 +3009,7 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
-/// symbols the run makes are the store's atoms (pending until a flush, decision 0045), and derived relations are
+/// symbols the run makes are the store's atoms (pending until a flush, decision 0047), and derived relations are
 /// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
@@ -3067,7 +3067,7 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::forget_inputs(db);
     let out = run(&lowered.program, db, inputs, Some(lowered));
     // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
-    // write transaction (decision 0045).
+    // write transaction (decision 0047).
     super::native::flush_symbols(db)?;
     out
 }
@@ -3168,12 +3168,12 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     let planning = super::profile::span(|| "statistics and plan".into());
     let model = make_plan(prog, db, inputs)?;
     // Relations computed for every node that rules only negate, computed for the keys those rules reach (decision
-    // 0044); in a corpus run only (kept plans), so T's golden plans are unchanged.
+    // 0046); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
     let prog: &Program = match if corpus { demand::split_negations(prog) } else { None } {
         Some((p, demanded)) => {
-            super::profile::decision("demand (decision 0044)", || {
+            super::profile::decision("demand (decision 0046)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
             });
             split = p;

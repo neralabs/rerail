@@ -103,7 +103,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "syntax_error" => &["d"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
-        // Containment read off the tree (`facts::vtab::syntax::within`, decision 0046).
+        // Containment read off the tree (`facts::vtab::syntax::within`, decision 0048).
         "within" => &["n", "a"],
         "span_within" => &["inner", "outer"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).

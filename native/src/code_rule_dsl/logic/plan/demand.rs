@@ -1,4 +1,4 @@
-//! Demand for negated relations (decision 0044): a relation computed for every node that rules only negate is
+//! Demand for negated relations (decision 0046): a relation computed for every node that rules only negate is
 //! computed for the keys those rules reach, not for every node.
 //!
 //! An imperfect conversion leaves relations like
@@ -109,7 +109,7 @@ pub(super) fn split_negations(prog: &Program) -> Option<(Program, Vec<String>)> 
         let vars: Vec<String> = bound.intersection(&later).cloned().collect();
         let Some(types) = vars.iter().map(|v| var_type(prog, &kept, v)).collect::<Option<Vec<String>>>() else {
             // A variable of no known type (bound by a comparison alone): nothing is split.
-            super::super::profile::decision("demand (decision 0044)", || format!("nothing demanded: a variable of a rule for {} has no known type", rule.head.rel));
+            super::super::profile::decision("demand (decision 0046)", || format!("nothing demanded: a variable of a rule for {} has no known type", rule.head.rel));
             return None;
         };
         let pre = format!("pre_{ri}");
@@ -140,7 +140,7 @@ pub(super) fn split_negations(prog: &Program) -> Option<(Program, Vec<String>)> 
     // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
     // leaves the program as it was.
     if let Err(e) = super::super::front::strata(&out) {
-        super::super::profile::decision("demand (decision 0044)", || format!("nothing demanded: the split program does not stratify ({e})"));
+        super::super::profile::decision("demand (decision 0046)", || format!("nothing demanded: the split program does not stratify ({e})"));
         return None;
     }
     Some((out, demanded))
