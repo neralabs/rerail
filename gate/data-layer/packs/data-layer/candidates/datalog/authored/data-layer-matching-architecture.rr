@@ -59,11 +59,11 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 // - `ast_function`/`ast_class` (fn, cls): the nearest enclosing def / class.
 // - Constant kind and value: `value_type_of` and `value` (W's decoded value, Python's str(v): exactly ast_value but
 //   for bytes' hex and complex numbers, which no check reads). An f-string without interpolation: `value`, exactly.
-//   An interpolated f-string's literal parts are its `string_content` nodes' source text, escapes and `{{` not
-//   decoded, one Constant per string_content (CPython merges adjacent literal text across concatenated pieces; its
-//   order and joined text, which MA007 reads, are the same). Blocked on fstring_piece (W's pythonFString parse).
-// - Static text (MA002) and MA007's joined prefix are compared, never built: piece by piece against the constant
-//   words, so any depth of `+` and any number of parts is exact.
+//   An interpolated f-string's and a format spec's literal parts (its Constants): `fstring_piece`'s `literal` rows,
+//   decoded and merged across concatenated pieces as CPython's are. Their line is CPython's (3.12+) lineno, read off
+//   the tree (`matching_file_part_line`, below).
+// - Static text (MA002) through `+` is compared, never built: piece by piece against the constant words, so any
+//   depth of `+` and any number of parts is exact. MA007's joined literal parts: `join` over `fstring_piece`.
 // Options: entryPoint "scan_sources" or "_scan_tree": the gate and the canonical roots are every module (that
 // parses). Any other: the canonical roots are the modules whose path is a production path, or whose source text
 // names a matching contract, or a layer module defining `def match(`, or a path listed in parameters'
@@ -84,6 +84,8 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 .input node_text
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+.decl end_line(n: node, l: number)
 
 // ---- the files read: parsing, in scope, in the gate and among the canonical roots ----
 // The gate (`requireNonemptyInput`) and the roots differ in what their regexes read: the gate's `regex` on the
@@ -274,7 +276,7 @@ matching_file_const_kind(n, "none") :- matching_file_constant(n), value_type_of(
 matching_file_const_kind(n, t) :- matching_file_constant(n), value_type_of(n, t), t != "NoneType".
 .decl matching_file_const(n: node, kind: symbol, v: symbol)
 matching_file_const(n, t, v) :- matching_file_const_kind(n, t), value(n, v).
-// An f-string's interpolations and its literal parts (Constant, each string_content), in source order.
+// An f-string's interpolations and its literal parts (Constants: `fstring_piece`'s literal rows), in source order.
 .decl matching_file_joined(n: node)
 matching_file_joined(n) :- matching_file_node(n), matching_file_fstr(n), !matching_file_concat_piece(n).
 .decl matching_file_concat_piece(n: node)
@@ -284,52 +286,66 @@ matching_file_joined_piece(n, n) :- matching_file_joined(n), node(_, n, "string"
 matching_file_joined_piece(n, p) :- matching_file_joined(n), node(_, n, "concatenated_string", _, _), child(n, p, _).
 .decl matching_file_interpolated(n: node)
 matching_file_interpolated(n) :- matching_file_joined_piece(n, p), child(p, x, _), node(_, x, "interpolation", _, _).
-.decl matching_file_literal(n: node, x: node, s: number)
-matching_file_literal(n, x, s) :- matching_file_joined_piece(n, p), child(p, x, _), node(_, x, "string_content", s, _).
-.decl matching_file_literal_next(n: node, x: node, y: node)
-matching_file_literal_next(n, x, y) :- matching_file_literal(n, x, s), matching_file_literal_after(n, s, _),
-    t = min u : { matching_file_literal_after(n, s, u) }, matching_file_literal(n, y, t).
-.decl matching_file_literal_after(n: node, s: number, u: number)
-matching_file_literal_after(n, s, u) :- matching_file_literal(n, _, s), matching_file_literal(n, _, u), u > s.
-.decl matching_file_literal_first(n: node, x: node)
-matching_file_literal_first(n, x) :- matching_file_literal(n, x, t), t = min u : { matching_file_literal(n, _, u) }.
 // An f-string without interpolations is a JoinedStr of one Constant (its literal text, decoded, the pieces merged):
-// `value` gives that text exactly. With interpolations its Constants are its literal runs, decoded and merged across
-// pieces; here each `string_content` node stands for one, its source text undecoded (fstring_piece, W's
-// pythonFString parse, is not bound): an escape or `{{` in a literal part reads as written (approximation).
+// `value` gives that text exactly.
 .decl matching_file_joined_value(n: node, s: symbol)
 matching_file_joined_value(n, s) :- matching_file_joined(n), !matching_file_interpolated(n), value(n, s).
+// A format spec (`{x:>10}`'s `:>10`, a format_specifier, the `:` its first character) is a JoinedStr of its own,
+// read by the stages like any other (static_parts' roots are every JoinedStr and Constant).
+.decl matching_file_spec(fs: node)
+matching_file_spec(fs) :- matching_file_node(fs), node(_, fs, "format_specifier", _, _).
+// The literal parts (Constants) of an interpolated f-string n or of a spec n: `fstring_piece`'s literal rows, by index.
+.decl matching_file_part(n: node, i: number, v: symbol)
+matching_file_part(n, i, v) :- matching_file_interpolated(n), fstring_piece(n, i, "literal", v).
+matching_file_part(n, i, v) :- matching_file_spec(n), fstring_piece(n, i, "literal", v).
+// A part's window m: the number of interpolations before it (pieces alternate: a literal run between two fields).
+.decl matching_file_part_window(n: node, i: number, m: number)
+matching_file_part_window(n, i, m) :- matching_file_part(n, i, _), m = count : { fstring_piece(n, j, "interpolation", _), j < i }.
+// A part's line, CPython's (3.12+) Constant lineno: where its run's first contributor starts. In an f-string window m
+// (after the tree's m-th interpolation), the contributors in source order are a plain (non-f) piece of a
+// concatenation, from its quote even when empty; an f-piece's `string_content` that decodes to some text (not only
+// line continuations); and last the debug text of the next field (`{x=}`'s `x=`, from after its `{`). In a spec:
+// after its `:`, else after the m-th nested field's `}`.
+.decl matching_file_field(n: node, x: node, s: number)
+matching_file_field(n, x, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), child(p, x, _), node(_, x, "interpolation", s, _).
+matching_file_field(n, x, s) :- matching_file_spec(n), child(n, x, _), node(_, x, "format_expression", s, _).
+.decl matching_file_field_rank(n: node, x: node, m: number)
+matching_file_field_rank(n, x, m) :- matching_file_field(n, x, s), m = count : { matching_file_field(n, _, t), t < s }.
+.decl matching_file_empty_content(x: node)
+matching_file_empty_content(x) :- child(p, x, _), node(_, x, "string_content", _, _), strprefix(p, q), !contains("r", q), node_text(x, t),
+    match("(?:\\\\(?:\\r\\n|\\n|\\r))+", t).
+.decl matching_file_contrib(n: node, x: node, s: number)
+matching_file_contrib(n, p, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), node(_, p, "string", s, _), !matching_file_fstr(p).
+matching_file_contrib(n, x, s) :- matching_file_interpolated(n), matching_file_joined_piece(n, p), matching_file_fstr(p), child(p, x, _),
+    node(_, x, "string_content", s, _), !matching_file_empty_content(x).
+.decl matching_file_contrib_window(n: node, x: node, s: number, m: number)
+matching_file_contrib_window(n, x, s, m) :- matching_file_contrib(n, x, s), m = count : { matching_file_field(n, _, t), t < s }.
+.decl matching_file_has_contrib(n: node, m: number)
+matching_file_has_contrib(n, m) :- matching_file_contrib_window(n, _, _, m).
+.decl matching_file_part_line(n: node, i: number, l: number)
+matching_file_part_line(n, i, l) :- matching_file_interpolated(n), matching_file_part_window(n, i, m), matching_file_has_contrib(n, m),
+    s = min t : { matching_file_contrib_window(n, _, t, m) }, matching_file_contrib_window(n, x, s, m), line(x, l).
+matching_file_part_line(n, i, l) :- matching_file_interpolated(n), matching_file_part_window(n, i, m), !matching_file_has_contrib(n, m),
+    matching_file_field_rank(n, x, m), line(x, l).
+matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, 0), line(n, l).
+matching_file_part_line(n, i, l) :- matching_file_spec(n), matching_file_part_window(n, i, m), m > 0, matching_file_field_rank(n, x, m - 1), end_line(x, l).
 // The offsets into a word the checks compare static text with (the longest, vector_cosine_ops, has 17 characters).
 .decl matching_file_offset(i: number)
 matching_file_offset(0). matching_file_offset(1). matching_file_offset(2). matching_file_offset(3). matching_file_offset(4).
 matching_file_offset(5). matching_file_offset(6). matching_file_offset(7). matching_file_offset(8). matching_file_offset(9).
 matching_file_offset(10). matching_file_offset(11). matching_file_offset(12). matching_file_offset(13). matching_file_offset(14).
 matching_file_offset(15). matching_file_offset(16). matching_file_offset(17).
-// MA007's test, `upper(ltrim(<the literal parts joined>))` starting with a verb, read piece by piece (no text is
-// built): `verb_at(n, x, w, i)`, before literal part x of n the parts read so far are spaces and then w's first i
-// characters (ASCII case ignored, as upper); `verb_done(x, w, i)`, x's text completes w from character i.
-.decl matching_file_verb(w: symbol)
-matching_file_verb("SELECT"). matching_file_verb("INSERT"). matching_file_verb("UPDATE"). matching_file_verb("DELETE").
-matching_file_verb("CREATE"). matching_file_verb("ALTER").
-.decl matching_file_piece_text(x: node, s: symbol)
-matching_file_piece_text(x, s) :- matching_file_literal(n, x, _), matching_file_interpolated(n), node_text(x, s).
-.decl matching_file_verb_done(x: node, w: symbol, i: number)
-matching_file_verb_done(x, w, 0) :- matching_file_piece_text(x, s), matching_file_verb(w), p = cat(cat(" *(?i-u:", w), ")(?s:.*)"), match(p, s).
-matching_file_verb_done(x, w, i) :- matching_file_piece_text(x, s), matching_file_verb(w), matching_file_offset(i), i > 0, i < strlen(w),
-    p = cat(cat("(?i-u:", substr(w, i, strlen(w) - i)), ")(?s:.*)"), match(p, s).
-.decl matching_file_verb_step(x: node, w: symbol, i: number, j: number)
-matching_file_verb_step(x, w, 0, 0) :- matching_file_piece_text(x, s), matching_file_verb(w), match(" *", s).
-matching_file_verb_step(x, w, 0, j) :- matching_file_piece_text(x, s), matching_file_verb(w), matching_file_offset(j), j > 0, j < strlen(w),
-    p = cat(cat(" *(?i-u:", substr(w, 0, j)), ")"), match(p, s).
-matching_file_verb_step(x, w, i, j) :- matching_file_piece_text(x, s), matching_file_verb(w), matching_file_offset(i), i > 0, k = strlen(s),
-    j = i + k, j < strlen(w), p = cat(cat("(?i-u:", substr(w, i, k)), ")"), match(p, s).
-.decl matching_file_verb_at(n: node, x: node, w: symbol, i: number)
-matching_file_verb_at(n, x, w, 0) :- matching_file_interpolated(n), matching_file_literal_first(n, x), matching_file_verb(w).
-matching_file_verb_at(n, y, w, j) :- matching_file_verb_at(n, x, w, i), matching_file_verb_step(x, w, i, j), matching_file_literal_next(n, x, y).
-.decl matching_file_sql_fstring(n: node)
-matching_file_sql_fstring(n) :- matching_file_verb_at(n, x, w, i), matching_file_verb_done(x, w, i).
-matching_file_sql_fstring(n) :- matching_file_joined_value(n, s),
+// MA007's test, `upper(ltrim(<the literal parts joined>))` starting with a verb (upper ASCII, ltrim spaces), over the
+// JoinedStr's literal parts joined in order: an interpolated f-string's or a spec's `join`, else its `value`.
+.decl matching_file_sql_text(s: symbol)
+matching_file_sql_text(s) :- matching_file_joined_text(_, s),
     match(" *(?:[sS][eE][lL][eE][cC][tT]|[iI][nN][sS][eE][rR][tT]|[uU][pP][dD][aA][tT][eE]|[dD][eE][lL][eE][tT][eE]|[cC][rR][eE][aA][tT][eE]|[aA][lL][tT][eE][rR])(?s:.*)", s).
+.decl matching_file_joined_text(n: node, s: symbol)
+matching_file_joined_text(n, s) :- matching_file_joined_value(n, s).
+matching_file_joined_text(n, s) :- matching_file_interpolated(n), s = join v by i : { fstring_piece(n, i, "literal", v) }.
+matching_file_joined_text(n, s) :- matching_file_spec(n), s = join v by i : { fstring_piece(n, i, "literal", v) }.
+.decl matching_file_sql_fstring(n: node)
+matching_file_sql_fstring(n) :- matching_file_joined_text(n, s), matching_file_sql_text(s).
 // BinOp
 .decl matching_file_binop(n: node, o: symbol, l: node, r: node)
 matching_file_binop(n, o, l, r) :- matching_file_node(n), node(_, n, "binary_operator", _, _), op(n, o), field(n, "left", l0), field(n, "right", r0),
@@ -497,15 +513,14 @@ matching_file_class_field(c, a, x, v, k) :- matching_file_class(c, k), field(c, 
 
 // static_strings: a str Constant, an f-string without interpolation, an f-string's literal part, or an Add of them.
 // An f-string without interpolation stands for its one Constant part too: the part has the same text and is no
-// earlier (MA002 takes the first line). An interpolated f-string's parts are its `string_content` nodes (above).
+// earlier (MA002 takes the first line). The literal parts of an interpolated f-string or of a spec are no tree node
+// and in no Add (an Add's JoinedStr is a main f-string's): MA002 reads them apart (`matching_file_part`).
 .decl matching_file_static_leaf(n: node, s: symbol)
 matching_file_static_leaf(n, s) :- matching_file_const(n, "str", s).
 matching_file_static_leaf(n, s) :- matching_file_joined_value(n, s).
-matching_file_static_leaf(x, s) :- matching_file_piece_text(x, s).
 .decl matching_file_is_static(n: node)
 matching_file_is_static(n) :- matching_file_const_kind(n, "str").
 matching_file_is_static(n) :- matching_file_joined(n), !matching_file_interpolated(n).
-matching_file_is_static(x) :- matching_file_piece_text(x, _).
 matching_file_is_static(n) :- matching_file_binop(n, "+", l, r), matching_file_is_static(l), matching_file_is_static(r).
 // MA002's `lower(text) IN (<words>)`, at any depth without building the text: `static_part(n, w, i, j)`, n's static
 // text is w's characters i to j, ASCII case ignored (lower).
@@ -540,9 +555,11 @@ matching_file_finding_line(d, "MA001", l) :- matching_file_application(d), match
 matching_file_finding_line(d, "MA026", l) :- matching_file_implementation(d), matching_file_backend(d, _), l = min x : { matching_file_backend(d, n), line(n, x) }.
 
 // MA002 (application): the first static string naming a physical access method, ASCII case ignored.
-.decl matching_file_physical(d: number, n: node)
-matching_file_physical(d, n) :- matching_file_is_static(n), matching_file_static_part(n, w, 0, j), j = strlen(w), node(d, n, _, _, _).
-matching_file_finding_line(d, "MA002", l) :- matching_file_application(d), matching_file_physical(d, _), l = min x : { matching_file_physical(d, n), line(n, x) }.
+.decl matching_file_physical(d: number, l: number)
+matching_file_physical(d, l) :- matching_file_is_static(n), matching_file_static_part(n, w, 0, j), j = strlen(w), node(d, n, _, _, _), line(n, l).
+matching_file_physical(d, l) :- matching_file_part(n, i, v), node(d, n, _, _, _),
+    match("(?i-u:bit_hamming_ops|halfvec|hnsw|ivfflat|pgvector|sql_table_hnsw|usearch|vector_cosine_ops)", v), matching_file_part_line(n, i, l).
+matching_file_finding_line(d, "MA002", l) :- matching_file_application(d), matching_file_physical(d, _), l = min x : { matching_file_physical(d, x) }.
 
 // Imports: MA015, MA036 (conformance), MA010 (application), MA041, MA019 (facade), MA008 (layer < 5250).
 .decl matching_file_impl_module(m: symbol)
@@ -609,8 +626,9 @@ matching_file_finding(d, "MA011", c) :- matching_file_application(d), matching_f
 matching_file_finding(d, "MA011", c) :- matching_file_application(d), matching_file_callee(c, _, x), node(d, c, _, _, _), !matching_file_match_name(x),
     matching_file_forward_index(d, x, i), matching_file_arg(c, a, i), matching_file_is_static(a).
 
-// MA007 (matching): an f-string whose literal parts, joined, start (spaces trimmed, ASCII case ignored) with a SQL verb.
-matching_file_finding(d, "MA007", n) :- matching_file_matching(d), matching_file_joined(n), matching_file_sql_fstring(n), node(d, n, _, _, _).
+// MA007 (matching): a JoinedStr (an f-string or a spec) whose literal parts, joined, start (spaces trimmed, ASCII case
+// ignored) with a SQL verb.
+matching_file_finding(d, "MA007", n) :- matching_file_matching(d), matching_file_sql_fstring(n), node(d, n, _, _, _).
 
 // MA004 (matching): a try with a broad or Match* handler, and a handler returning a call.
 .decl matching_file_broad(n: node)
