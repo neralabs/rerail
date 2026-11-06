@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    io::Write,
+    io::{BufRead, BufReader, Read, Write},
     process::{Command, Stdio},
 };
 
@@ -33,6 +33,97 @@ pub(crate) struct Response {
     pub documents: Vec<Vec<Row>>,
     pub parses: usize,
     pub module_walks: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RowFrame {
+    document: usize,
+    request: usize,
+    row: Row,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EndFrame {
+    version: [u8; 2],
+    parses: usize,
+    module_walks: usize,
+}
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Frame {
+    Row(RowFrame),
+    End(EndFrame),
+}
+
+fn read_frames(reader: impl BufRead, documents: &[Document]) -> Result<Response, Error> {
+    let mut response = Response {
+        version: [3, 13],
+        documents: documents.iter().map(|_| Vec::new()).collect(),
+        parses: 0,
+        module_walks: 0,
+    };
+    let mut expected = documents.iter().enumerate().flat_map(|(document, value)| {
+        (0..value.requests.len()).map(move |request| (document, request))
+    });
+    let mut reader = reader;
+    let mut ended = false;
+    loop {
+        let mut bytes = Vec::new();
+        let count = reader
+            .by_ref()
+            .take(64 * 1024 * 1024 + 1)
+            .read_until(b'\n', &mut bytes)
+            .map_err(|error| Error(error.to_string()))?;
+        if count == 0 {
+            break;
+        }
+        if count > 64 * 1024 * 1024 || bytes.last() != Some(&b'\n') {
+            return Err(Error(
+                "Python AST projection exceeds its output capacity".into(),
+            ));
+        }
+        if ended {
+            return Err(Error(
+                "Canonical Python AST frames follow the completion frame".into(),
+            ));
+        }
+        match serde_json::from_slice::<Frame>(&bytes).map_err(|error| Error(error.to_string()))? {
+            Frame::Row(frame) => {
+                if expected.next() != Some((frame.document, frame.request)) {
+                    return Err(Error(
+                        "Canonical Python AST frame differs from its demand order".into(),
+                    ));
+                }
+                let request = &documents[frame.document].requests[frame.request];
+                if frame.row.len() != request.fields.len()
+                    || request
+                        .fields
+                        .iter()
+                        .any(|field| !frame.row.contains_key(field))
+                {
+                    return Err(Error(
+                        "Canonical Python AST fields differ from their demand".into(),
+                    ));
+                }
+                response.documents[frame.document].push(frame.row);
+            }
+            Frame::End(frame) => {
+                if frame.version != [3, 13] || expected.next().is_some() {
+                    return Err(Error("Canonical Python AST response is incomplete".into()));
+                }
+                response.parses = frame.parses;
+                response.module_walks = frame.module_walks;
+                ended = true;
+            }
+        }
+    }
+    if !ended {
+        return Err(Error(
+            "Canonical Python AST completion frame is missing".into(),
+        ));
+    }
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -82,7 +173,7 @@ fn batch_part_with_metrics(documents: &[Document]) -> Result<Response, Error> {
         return Err(Error("Python AST batch exceeds its source capacity".into()));
     }
     let input = serde_json::to_vec(
-        &serde_json::json!({"format":"rerail.python-ast/v1","documents":documents}),
+        &serde_json::json!({"format":"rerail.python-ast/v2","documents":documents}),
     )
     .map_err(|e| Error(e.to_string()))?;
     let executable = if cfg!(windows) {
@@ -111,6 +202,13 @@ fn batch_part_with_metrics(documents: &[Document]) -> Result<Response, Error> {
             ))
         })?;
     let write = child.stdin.take().expect("piped stdin").write_all(&input);
+    let frames = read_frames(
+        BufReader::new(child.stdout.take().expect("piped stdout")),
+        documents,
+    );
+    if frames.is_err() {
+        let _ = child.kill();
+    }
     let output = child.wait_with_output().map_err(|e| Error(e.to_string()))?;
     if !output.status.success() {
         return Err(Error(format!(
@@ -119,11 +217,7 @@ fn batch_part_with_metrics(documents: &[Document]) -> Result<Response, Error> {
         )));
     }
     write.map_err(|e| Error(e.to_string()))?;
-    if output.stdout.len() > 64 * 1024 * 1024 {
-        return Err(Error("Python AST batch exceeds its output capacity".into()));
-    }
-    let response: Response =
-        serde_json::from_slice(&output.stdout).map_err(|e| Error(e.to_string()))?;
+    let response = frames?;
     if response.version != [3, 13] || response.documents.len() != documents.len() {
         return Err(Error(
             "Canonical Python AST response shape differs from its request".into(),

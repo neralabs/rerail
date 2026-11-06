@@ -74,7 +74,7 @@ let revision = 0;
 let loadedFiles = 0;
 const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<void> => {
   const cpu = process.cpuUsage(), started = performance.now();
-  await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal }));
+  const applied = JSON.parse(await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision: ++revision, files: batchFiles, removed: [], quiet: true, deferGlobal })));
   loadedFiles += batchFiles.length;
   const elapsed = process.cpuUsage(cpu), memory = process.memoryUsage();
   applies.push({ revision, phase: deferGlobal ? "file-inputs" : "global-results", files: batchFiles.length,
@@ -82,6 +82,11 @@ const send = async (batchFiles: typeof files, deferGlobal: boolean): Promise<voi
     wallMs: performance.now() - started, cpuMs: (elapsed.user + elapsed.system) / 1000,
     peakRssBytes: process.resourceUsage().maxRSS * 1024, rssBytes: memory.rss, heapUsed: memory.heapUsed, external: memory.external, arrayBuffers: memory.arrayBuffers });
   if (values.progress) console.error(JSON.stringify({ phase: deferGlobal ? "file-inputs" : "global-results", loadedFiles, revision, rssBytes: process.memoryUsage().rss }));
+  if (applied.hasEvaluationFailures) {
+    const result = await collect();
+    writeFileSync(`${values.output}.failure.json`, JSON.stringify({ format: "rerail.incomplete-cumulative-run/v1", loadedFiles, revision, nativeSha256, failures: result.failures }, null, 2) + "\n");
+    throw new Error(`Cumulative run stopped after an engine failure: ${JSON.stringify(result.failures.slice(0, 3))}`);
+  }
 };
 const collect = async (): Promise<{ violations: z.infer<typeof pageSchema>["violations"]; failures: unknown[] }> => {
   const violations: z.infer<typeof pageSchema>["violations"] = [], failures: unknown[] = [];

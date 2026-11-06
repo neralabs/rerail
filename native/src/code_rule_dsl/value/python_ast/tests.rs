@@ -1,15 +1,56 @@
 use super::*;
 
 #[test]
+fn streamed_frames_reject_lost_reordered_or_duplicated_projections() {
+    let documents = [Document {
+        source: "pass\n".into(),
+        requests: vec![Request {
+            start: 0,
+            end: 5,
+            kind: "module".into(),
+            fields: vec!["dump".into()],
+            columns: None,
+        }],
+    }];
+    let row = "{\"document\":0,\"request\":0,\"row\":{\"dump\":\"Module\"}}\n";
+    let end = "{\"version\":[3,13],\"parses\":1,\"module_walks\":0}\n";
+    assert_eq!(
+        read_frames(format!("{row}{end}").as_bytes(), &documents)
+            .unwrap()
+            .parses,
+        1
+    );
+    for malformed in [
+        row.to_owned(),
+        end.to_owned(),
+        format!("{row}{row}{end}"),
+        format!("{row}{end}{end}"),
+        format!("{}{end}", row.replace("\"request\":0", "\"request\":1")),
+        format!("{}{end}", row.replace("\"dump\"", "\"unparse\"")),
+    ] {
+        assert!(read_frames(malformed.as_bytes(), &documents).is_err());
+    }
+}
+
+#[test]
 fn coalesced_output_is_bounded_per_projection_and_parses_the_document_once() {
     let source = format!("'{}'\n", "x".repeat(1024 * 1024));
-    let requests = (0..70).map(|_| Request { start:0, end:source.len(), kind:"module".into(), fields:vec!["dump".into()], columns:None }).collect();
-    let response = batch_with_metrics(&[Document { source, requests }]).unwrap_or_else(|error| panic!("{}",error.0));
-    assert_eq!(response.parses,1);
-    assert_eq!(response.module_walks,0);
-    assert_eq!(response.documents[0].len(),70);
-    assert!(response.documents[0][0]["dump"].len()>1024*1024);
-    assert_eq!(response.documents[0][0],response.documents[0][69]);
+    let requests = (0..70)
+        .map(|_| Request {
+            start: 0,
+            end: source.len(),
+            kind: "module".into(),
+            fields: vec!["dump".into()],
+            columns: None,
+        })
+        .collect();
+    let response = batch_with_metrics(&[Document { source, requests }])
+        .unwrap_or_else(|error| panic!("{}", error.0));
+    assert_eq!(response.parses, 1);
+    assert_eq!(response.module_walks, 0);
+    assert_eq!(response.documents[0].len(), 70);
+    assert!(response.documents[0][0]["dump"].len() > 1024 * 1024);
+    assert_eq!(response.documents[0][0], response.documents[0][69]);
 }
 
 #[test]

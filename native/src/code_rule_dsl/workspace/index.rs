@@ -516,7 +516,8 @@ impl WorkspaceIndexTask {
                 package,
                 &file.path,
             )?;
-            input.source_bytes = usize::try_from(*length).map_err(|_| invalid("stored source length exceeds this platform"))?;
+            input.source_bytes = usize::try_from(*length)
+                .map_err(|_| invalid("stored source length exceeds this platform"))?;
             let key = (stored.source_hash, file_context(&input));
             prepared.push((file, input, stored, *length, key));
         }

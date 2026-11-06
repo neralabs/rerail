@@ -57,3 +57,28 @@ The complete native 100-rule run is in progress.
 A further command regression fails before its fix: invalid approval configuration returns zero without `--check`.
 The repaired command returns one for `SIDP000` independently of ordinary report-only findings.
 The isolated signing/command regression passes after that fix.
+
+The first complete native run failed. It reports 25,027 findings versus 25,262 expected.
+All 235 missing findings belong to pure-lazy runtime purity. There are no extra findings.
+The run records 4,776 engine failures, predominantly aggregate canonical-output capacity errors.
+Three older global kernels also exhaust work or report interrupted preparation.
+Cold parent CPU is 2,013.703 seconds; full process-family CPU is 2,046.194 seconds.
+Cold wall time is 2,100.616 seconds; process wall time through close is 2,108.935 seconds.
+Root peak RSS through close is 8,121,270,272 bytes.
+This failed run cannot establish an accepted performance baseline.
+Its files remain under `native-100*` in the local completion directory.
+
+A reduced output regression fails with 70 projections from one parsed document.
+The repair streams bounded projection frames and retains the logical consumer output limits.
+It avoids an aggregate wire limit poisoning unrelated coalesced consumers.
+All 13 canonical producer tests pass, including lost, reordered, and duplicated frame controls.
+
+The repository relation scheduler used the fixed small-file allowance of 50,000 work units.
+It now applies the existing linear source-byte allowance to each rule's own declared source scope.
+Input byte lengths remain available after buffer release and stored-source restoration.
+Two scope tests pass, including UTF-8 byte lengths, release, and unrelated-scope exclusion.
+All 36 existing budget regressions pass. SQL submission limits are unchanged.
+
+A quiet-apply regression reproduces missing failure status before result paging.
+The fixed apply returns `hasEvaluationFailures`; the benchmark stops and retains incomplete-run diagnostics when it is true.
+That regression passes. A new release build is in progress before targeted global recovery validation.

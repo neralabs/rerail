@@ -10,7 +10,7 @@ import unicodedata
 if sys.version_info[:2] != (3, 13):
     raise RuntimeError("Canonical Python AST facts require CPython 3.13")
 request = json.load(sys.stdin)
-if request.get("format") != "rerail.python-ast/v1":
+if request.get("format") != "rerail.python-ast/v2":
     raise ValueError("Unknown Python AST batch format")
 if sum(len(document["source"].encode("utf-8")) for document in request["documents"]) > 8 * 1024 * 1024:
     raise ValueError("Python AST batch exceeds its source capacity")
@@ -57,11 +57,19 @@ KINDS.update({
     'set':(ast.Set,), 'ellipsis':(ast.Constant,),
     'default_parameter':(ast.arg,), 'typed_parameter':(ast.arg,), 'typed_default_parameter':(ast.arg,),
 })
-output = []
-output_bytes = 0
+class Rows:
+    def __init__(self, document):
+        self.document, self.index = document, 0
+    def append(self, row):
+        frame = json.dumps(dict(document=self.document, request=self.index, row=row), ensure_ascii=True, separators=(',', ':'))
+        if len(frame) > 64*1024*1024:
+            raise ValueError('Python AST projection exceeds its output capacity')
+        sys.stdout.write(frame + '\n')
+        self.index += 1
+
 module_walks = 0
 parses = 0
-for document in request["documents"]:
+for document_index, document in enumerate(request["documents"]):
     source = document["source"]
     def text_only(item):
         return set(item['fields']) <= set(TEXT_FIELDS) or item['fields']==['column'] or item['kind'] in {'identifier','dotted_name','relative_import'} and item['fields']==['identifier']
@@ -99,8 +107,9 @@ for document in request["documents"]:
         by_span.setdefault(span,[]).append(node)
         by_start.setdefault(span[0],[]).append((span[1],node))
     source_lines=source.splitlines()
-    rows = []
+    rows = Rows(document_index)
     for item in document["requests"]:
+        output_bytes = 0
         kind = item["kind"]
         if item['fields'] in (['ast_nodes'],['ast_annotations']):
             if kind!='module':raise ValueError('Canonical relation expansion requires a module root')
@@ -202,5 +211,4 @@ for document in request["documents"]:
                 raise ValueError("Python AST batch exceeds its output capacity")
             row[field] = value
         rows.append(row)
-    output.append(rows)
-json.dump({"version": [3, 13], "documents": output, "parses":parses, "module_walks":module_walks}, sys.stdout, ensure_ascii=True)
+sys.stdout.write(json.dumps({"version": [3, 13], "parses":parses, "module_walks":module_walks}, separators=(',',':')) + '\n')

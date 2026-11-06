@@ -1173,9 +1173,20 @@ impl WorkspaceApplyTask {
         }
         check_closed(&self.closed)?;
         if quiet {
+            // Quiet omits findings, but callers can stop a failed batch before requesting pages.
+            let has_failures = replaced.iter().any(|path| {
+                state
+                    .files
+                    .get(path)
+                    .is_some_and(|file| !file.failures.is_empty())
+            }) || !deferred
+                && state
+                    .global_results
+                    .values()
+                    .any(|result| !result.failures.is_empty());
             let profile = metrics.clone();
             let serialization_started = Instant::now();
-            let output = serde_json::to_string(&json!({ "revision": state.revision,
+            let output = serde_json::to_string(&json!({ "revision": state.revision, "hasEvaluationFailures": has_failures,
                 "evaluation": evaluation_json(Evaluation { metrics, ..Evaluation::default() }, None, &[], &[]) })).map_err(json_error)?;
             check_closed(&self.closed)?;
             return profile_result(
