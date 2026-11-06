@@ -4,7 +4,7 @@
 //
 // W's `regex` on a node reads the node's full source text: `text(n, s)` (identifier kinds) where the node is an
 // identifier, `node_text(n, s)` (exact bytes) otherwise. `match(re, s)` is whole-string, so a W search
-// `re$` is `match("(?s).*(?:re)", s)`, `^re` is `match("(?s)(?:re).*", s)`.
+// `re$` is `match("(?s:.*)(?:re)", s)`, `^re` is `match("(?s)(?:re)(?s:.*)", s)`.
 //
 // Anchors: pattern-5/6/7 anchor at `capture.AT`, the regex capture in the string-literal branch; the other
 // branch binds no AT and W reports at the witness (the recorded probe `all-patterns` has both). The capture's

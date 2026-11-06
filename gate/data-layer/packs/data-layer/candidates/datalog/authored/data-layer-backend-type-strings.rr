@@ -39,7 +39,7 @@ comparison_before(c, n, q) :- comparison_first(c, n), comparison_nl(c, q), q > n
 
 // ---- comparison-0-BT002 (BT002) ----
 .decl comparison_0_bt002_hit(c: node, d: number, s: symbol)
-comparison_0_bt002_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:dialect\.name\s*==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s).
+comparison_0_bt002_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:dialect\.name\s*==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-0-BT002", "BT002", p, l) :- comparison_0_bt002_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_0_bt002_hit(c, _, s), contains("\n", s).
 .decl comparison_0_bt002_start(c: node, n: number)
@@ -52,7 +52,7 @@ violation("data-layer-backend-type-strings", "comparison-0-BT002", "BT002", p, l
 
 // ---- comparison-1-BT001 (BT001) ----
 .decl comparison_1_bt001_hit(c: node, d: number, s: symbol)
-comparison_1_bt001_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:dialect\.name\s* in \s*\().*", s).
+comparison_1_bt001_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:dialect\.name\s* in \s*\()(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-1-BT001", "BT001", p, l) :- comparison_1_bt001_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_1_bt001_hit(c, _, s), contains("\n", s).
 .decl comparison_1_bt001_start(c: node, n: number)
@@ -66,7 +66,7 @@ violation("data-layer-backend-type-strings", "comparison-1-BT001", "BT001", p, l
 // ---- comparison-1-BT002 (BT002) ----
 // The `not` regex: the node's text matches it nowhere.
 .decl comparison_1_bt002_hit(c: node, d: number, s: symbol)
-comparison_1_bt002_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:dialect\.name\s+in\s+\().*", s), !match("(?s).*(?:dialect\.name\s* in \s*\().*", s).
+comparison_1_bt002_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:dialect\.name\s+in\s+\()(?s:.*)", s), !match("(?s:.*)(?:dialect\.name\s* in \s*\()(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-1-BT002", "BT002", p, l) :- comparison_1_bt002_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_1_bt002_hit(c, _, s), contains("\n", s).
 .decl comparison_1_bt002_start(c: node, n: number)
@@ -79,7 +79,7 @@ violation("data-layer-backend-type-strings", "comparison-1-BT002", "BT002", p, l
 
 // ---- comparison-2-BT003 (BT003) ----
 .decl comparison_2_bt003_hit(c: node, d: number, s: symbol)
-comparison_2_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:backend_type\s*==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s).
+comparison_2_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:backend_type\s*==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-2-BT003", "BT003", p, l) :- comparison_2_bt003_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_2_bt003_hit(c, _, s), contains("\n", s).
 .decl comparison_2_bt003_start(c: node, n: number)
@@ -92,7 +92,7 @@ violation("data-layer-backend-type-strings", "comparison-2-BT003", "BT003", p, l
 
 // ---- comparison-3-BT003 (BT003) ----
 .decl comparison_3_bt003_hit(c: node, d: number, s: symbol)
-comparison_3_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:\bbackend ==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s).
+comparison_3_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\bbackend ==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-3-BT003", "BT003", p, l) :- comparison_3_bt003_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_3_bt003_hit(c, _, s), contains("\n", s).
 .decl comparison_3_bt003_start(c: node, n: number)
@@ -106,7 +106,7 @@ violation("data-layer-backend-type-strings", "comparison-3-BT003", "BT003", p, l
 // ---- comparison-3-BT000 (BT000) ----
 // The `not` regex: the node's text matches it nowhere.
 .decl comparison_3_bt000_hit(c: node, d: number, s: symbol)
-comparison_3_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:\bbackend\s*==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s), !match("(?s).*(?:\bbackend ==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s).
+comparison_3_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\bbackend\s*==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s), !match("(?s:.*)(?:\bbackend ==\s*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-3-BT000", "BT000", p, l) :- comparison_3_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_3_bt000_hit(c, _, s), contains("\n", s).
 .decl comparison_3_bt000_start(c: node, n: number)
@@ -119,7 +119,7 @@ violation("data-layer-backend-type-strings", "comparison-3-BT000", "BT000", p, l
 
 // ---- comparison-4-BT003 (BT003) ----
 .decl comparison_4_bt003_hit(c: node, d: number, s: symbol)
-comparison_4_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:\bbackend in\s+\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s).
+comparison_4_bt003_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\bbackend in\s+\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-4-BT003", "BT003", p, l) :- comparison_4_bt003_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_4_bt003_hit(c, _, s), contains("\n", s).
 .decl comparison_4_bt003_start(c: node, n: number)
@@ -133,7 +133,7 @@ violation("data-layer-backend-type-strings", "comparison-4-BT003", "BT003", p, l
 // ---- comparison-4-BT000 (BT000) ----
 // The `not` regex: the node's text matches it nowhere.
 .decl comparison_4_bt000_hit(c: node, d: number, s: symbol)
-comparison_4_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:\bbackend\s+in\s+\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s), !match("(?s).*(?:\bbackend in\s+\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']).*", s).
+comparison_4_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:\bbackend\s+in\s+\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s), !match("(?s:.*)(?:\bbackend in\s+\([^)]*[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"'])(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-4-BT000", "BT000", p, l) :- comparison_4_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_4_bt000_hit(c, _, s), contains("\n", s).
 .decl comparison_4_bt000_start(c: node, n: number)
@@ -146,7 +146,7 @@ violation("data-layer-backend-type-strings", "comparison-4-BT000", "BT000", p, l
 
 // ---- comparison-5-BT004 (BT004) ----
 .decl comparison_5_bt004_hit(c: node, d: number, s: symbol)
-comparison_5_bt004_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*\w*class_name).*", s).
+comparison_5_bt004_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*\w*class_name)(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-5-BT004", "BT004", p, l) :- comparison_5_bt004_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_5_bt004_hit(c, _, s), contains("\n", s).
 .decl comparison_5_bt004_start(c: node, n: number)
@@ -160,7 +160,7 @@ violation("data-layer-backend-type-strings", "comparison-5-BT004", "BT004", p, l
 // ---- comparison-5-BT000 (BT000) ----
 // The `not` regex: the node's text matches it nowhere.
 .decl comparison_5_bt000_hit(c: node, d: number, s: symbol)
-comparison_5_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s+in\s+\w*class_name).*", s), !match("(?s).*(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*\w*class_name).*", s).
+comparison_5_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s+in\s+\w*class_name)(?s:.*)", s), !match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*\w*class_name)(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-5-BT000", "BT000", p, l) :- comparison_5_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_5_bt000_hit(c, _, s), contains("\n", s).
 .decl comparison_5_bt000_start(c: node, n: number)
@@ -173,7 +173,7 @@ violation("data-layer-backend-type-strings", "comparison-5-BT000", "BT000", p, l
 
 // ---- comparison-6-BT004 (BT004) ----
 .decl comparison_6_bt004_hit(c: node, d: number, s: symbol)
-comparison_6_bt004_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*type\().*", s).
+comparison_6_bt004_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*type\()(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-6-BT004", "BT004", p, l) :- comparison_6_bt004_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_6_bt004_hit(c, _, s), contains("\n", s).
 .decl comparison_6_bt004_start(c: node, n: number)
@@ -187,7 +187,7 @@ violation("data-layer-backend-type-strings", "comparison-6-BT004", "BT004", p, l
 // ---- comparison-6-BT000 (BT000) ----
 // The `not` regex: the node's text matches it nowhere.
 .decl comparison_6_bt000_hit(c: node, d: number, s: symbol)
-comparison_6_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s).*(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s+in\s+type\().*", s), !match("(?s).*(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*type\().*", s).
+comparison_6_bt000_hit(c, d, s) :- node(d, c, "comparison_operator", _, _), in_scope(d), !out_scope(d), node_text(c, s), match("(?s:.*)(?:[\"'](postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s+in\s+type\()(?s:.*)", s), !match("(?s:.*)(?:[\"'](?:postgresql|neo4j|mariadb|doltdb|mongodb|dolt|mysql|sqlite|postgres|mongo)[\"']\s* in \s*type\()(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-6-BT000", "BT000", p, l) :- comparison_6_bt000_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_6_bt000_hit(c, _, s), contains("\n", s).
 .decl comparison_6_bt000_start(c: node, n: number)
@@ -202,7 +202,7 @@ violation("data-layer-backend-type-strings", "comparison-6-BT000", "BT000", p, l
 // A call whose `function` field is an attribute whose `attribute` field's text is `lower` (`has`, stopBy neighbor,
 // with a field: that field's child; `^lower$`: its whole text), and the regex over the call's text.
 .decl comparison_7_bt005_hit(c: node, d: number, s: symbol)
-comparison_7_bt005_hit(c, d, s) :- node(d, c, "call", _, _), in_scope(d), !out_scope(d), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "lower"), node_text(c, s), match("(?s).*(?:__class__\.__name__\.lower\(\)).*", s).
+comparison_7_bt005_hit(c, d, s) :- node(d, c, "call", _, _), in_scope(d), !out_scope(d), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "lower"), node_text(c, s), match("(?s:.*)(?:__class__\.__name__\.lower\(\))(?s:.*)", s).
 violation("data-layer-backend-type-strings", "comparison-7-BT005", "BT005", p, l) :- comparison_7_bt005_hit(c, d, s), !contains("\n", s), doc(d, p, _), line(c, l).
 comparison_multi(c, s) :- comparison_7_bt005_hit(c, _, s), contains("\n", s).
 .decl comparison_7_bt005_start(c: node, n: number)
