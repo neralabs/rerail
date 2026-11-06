@@ -1,13 +1,13 @@
 {
   "format": "rerail.data-layer-native-assertions/v1",
   "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
-  "engineCommit": "5d218b3d238552643be22835560aa10b80236fdb",
-  "engineSha256": "75468a30ae1520582ed11b4a4bd12680aded5ead1de26a7bd755ca6bcb96b0db",
-  "contractsSha256": "40028bcf39f569a5ce2a76c610df5b93a9604c2801c3cadb862f1bf29462e291",
+  "engineCommit": "5bbe34191",
+  "engineSha256": "21554b9bf6df95211d14407ececdeb5657b0a861eb44cba11193b65feffc0910",
+  "contractsSha256": "42b02bc2bc6c66b32d7bfaf9ddc52aac17e45b7f7f9687ae3476651bcce4f73e",
   "policySha256": {
     "eager_resolve": "ea04fb60a27b8cb60c48f426b38bebf06a76e62a46629fb06d37c609ba325e3d",
-    "lazy_architecture": "cdb2d8a19553e2a9d937d612e9c65271945065e88a711b9e159b03439adc3b65",
-    "pure_lazy_runtime_purity": "22f55291149ed4afaddc84f7dd1819dfd31a11f5f0a4e3d61e036e939d814eaf",
+    "lazy_architecture": "aa6829187db40df122163b82441638f86d85ab5738e3220dc23422c900a05163",
+    "pure_lazy_runtime_purity": "be297814ee19579d51c19690c05196511deef47126642134ac3bf08feb9acc29",
     "cached_pure_lazy_allowlist": "30a298621259d10251e0591993b11d45d28a8b7df8fee8b40e7ebec7fb95fe46",
     "lazy_sql_surface": "8899e4d9de0ce78a4f5f225c93fc8179dd15b9321f68b6489ac7f500b2e04d9a",
     "plan_helpers_allowlist": "05214cca095b138864bce6adaee900e5c8711aa2148250f025ec66954d5e33ec",
@@ -18,13 +18,13 @@
   },
   "factPolicySha256": {
     "cached-policy-comparison.json": "eac7057b25bb4eb45874c199039f028d9a5afeba16f9bce3c0794ca72c4b48a1",
-    "lazy-analyzed.json": "9ec63e0507832bcd17bda4334b6df11058e0cd3e1c18df9265311f7a1a00dd59",
+    "lazy-analyzed.json": "020355e5f5ef531dcc73cd2be377075ce70c4d8bde395231569b50cf88797c4f",
     "memoized-policy-comparison.json": "85c25e3d8d948eb7423cef848b17479a98c2756409f13519ff18783d46ea4921"
   },
   "implementationSha256": {
     "conformance/data-layer/cached-discovery.ts": "1d9b4f4d78a2f77313cc9f4542ea73e146f6ace3f37cc7ded73e2f2be5132959",
     "conformance/data-layer/fact-api.ts": "af59e373f1ddd87d9c017cc304a179656b371fc050432223c2c2cbc68521466f",
-    "conformance/data-layer/native-worker.ts": "0442e206679ecb381faa3d0be2adf357a7f6adf38991f21bc797b68850820e50",
+    "conformance/data-layer/native-worker.ts": "f8bfc6042be9ec3eef1aeeb1ac11dd2f516cab14149003247746926ad1677f76",
     "conformance/data-layer/policies.ts": "9fd8c2fd208e3bcd1fb1cc4af4ad4718e16be9f55d6310c3d311760ddab8d6e1",
     "scripts/dsl/data_layer_audit/api_observations.py": "312d46788b535a044015d7566262ff3eb39d4a03d3a7f68cc9d64544b484b2e0",
     "scripts/dsl/data_layer_audit/api_parity.py": "be3a490d590645b7c51990d1dd0db5690865c0c487911e420f5fe7fd572eccfb",
@@ -34,7 +34,7 @@
     "scripts/dsl/data_layer_audit/graph_api.py": "1d202198e9c39e8dc641e4a6d2397cb30782f17dd26c03dba8e92d646aa598ea",
     "scripts/dsl/data_layer_audit/native_cached.py": "04f1f4957fa9edd5e23164e803c383d74277ff5c364f30bec1e33da6abf60106",
     "scripts/dsl/data_layer_audit/native_contracts.py": "14ed498c5064e71ad1b2c10ad58ed47529ee18ef533804e1ef54d04520290f94",
-    "scripts/dsl/data_layer_audit/native_evidence.py": "bbab8e3655e535d43e39b259e963251922720f1c8d14cac4ed7e2ba62c33a430",
+    "scripts/dsl/data_layer_audit/native_evidence.py": "a7a6f736218fbfe87fac2fb8a90403a8280676b97c781551300925957601bce3",
     "scripts/dsl/data_layer_audit/native_guard.py": "48e435e514b02bb082e2df8007d929ea8e7cb72a726230e1cc5028a8a42c99c0",
     "scripts/dsl/data_layer_audit/native_helpers.py": "d17e8fb60bd3cedcd747d7f5f3b513203da86127079a91b043c594f2fb94278a",
     "scripts/dsl/data_layer_audit/native_instrumentation.py": "935131484b1d3e1958f3a95f26429496a214017f0be1907d8c5517a54e7d48ca",
@@ -55,7 +55,7 @@
     "scripts/dsl/data_layer_eight/eager_contracts.py": "1f504668444d4b7413627956d51d0ddb3218dcaee7316bb5a68f603034e4dddf",
     "scripts/dsl/data_layer_eight/lazy.py": "658ffc89e31d3e8106663d2cc385dc3843bb4f00f6f810c2bb8aecff08bdc4a7",
     "scripts/dsl/data_layer_eight/lazy_bindings.py": "db9d35c0de3a95a4e0c60b34d284c9bf94a5bb84b242336a1e362f30f0b9cbbe",
-    "scripts/dsl/data_layer_eight/lazy_graph.py": "5dccd8ac299a9d213de48f8e9ce5ff955ef4eb79479e97dc635d509ae536f076",
+    "scripts/dsl/data_layer_eight/lazy_graph.py": "808e10f565123a438bbff61f1cd688838bf457bdbf7bd72182dd1e88657a5f48",
     "scripts/dsl/data_layer_eight/lazy_messages.py": "705ba5633876fbbc21e5633d7f064ae9f7d0b6ff34cb68496e203c3d6ede49c9",
     "scripts/dsl/data_layer_eight/lazy_paths.py": "c9be431563bdab60d80e5a97376c8b452f31822a26aa39ee3ec71739d447897d",
     "scripts/dsl/data_layer_eight/model.py": "0eb03f9b5474f890ef043638967ecfa1d102c6b7b1b90f8bb14ab70fab3451e3",
@@ -64,14 +64,14 @@
     "scripts/dsl/data_layer_eight/policy_comparison.py": "1074e60976aeddb6bd9a89f4be438d61f7d07ad0c2c39f6925c0f2331d4b6829",
     "scripts/dsl/data_layer_eight/purity.py": "fb8c23f345a5452ea1e9523587f2fccb39b753f5a2fbb44fcd7ca1d4f82e4c14",
     "scripts/dsl/data_layer_eight/purity_graph.py": "51ab14ca92b80bc5454378b0878c07abe9c04f9503e123fce9521c3b5bc7f88b",
-    "scripts/dsl/data_layer_eight/purity_messages.py": "fd545a832d5c6f0116f041fb4589f9940f1185ee3a0899f3280981271b0e9eb3",
+    "scripts/dsl/data_layer_eight/purity_messages.py": "06ace9b4884bb96d541d5ee0909f600b353a09af513a3a00917a385efecf6e6e",
     "scripts/dsl/data_layer_eight/python_repr.py": "22226120c2e042f4ca67d18b745aa7585d5700b3f120b85c7b44bc0107eff313",
     "scripts/dsl/data_layer_eight/relations.py": "8e37a03cfc4263d99975da7e883764192e27e9af76d8d355409e36cffe9e1555",
     "scripts/dsl/data_layer_eight/sql_surface.py": "1bd17d5d653275655806e82dd7d7721180d114fc5613d58ca45d102b5c397336"
   },
   "executionPaths": {
     "snapshot": {
-      "reportSha256": "e3a1a803c7993f58f64125b6d1c1b6280f718fd63fd92dd23b09c9168c90c37e",
+      "reportSha256": "aa6b575be74e8e1bf8a202be3accaa66f8f7f6cee1be062e2300eaed8cb79465",
       "collected": 456,
       "passed": 456,
       "failed": 0,
@@ -3677,7 +3677,7 @@
       }
     },
     "workspace": {
-      "reportSha256": "8beea876c8b7bd042221ff548266e34b90d30a623647fd726e1b466587b922df",
+      "reportSha256": "4cdfd99684539b18cd1f531b3b0dd8824e5a371736af60bd4437c570c1aed730",
       "collected": 456,
       "passed": 456,
       "failed": 0,
@@ -7291,8 +7291,8 @@
       "differences": 0,
       "semanticFallbacks": [],
       "apiReportSha256": "817516a1d94271c570526ac74da4f8b0cc09229cbe06806b31c63bf5b82e09a3",
-      "factsReportSha256": "0a706a377a1dee95ae9c3a5890a56e58256b34c3758afaedd13e9d3a10766b7a",
-      "graphReportSha256": "3c1da6a2dff22b453cc04a32ea20671f74b76b4d00e2288b0e4e35815ac26be6"
+      "factsReportSha256": "1d8f1db3213482ce0be2fbb6a09af36540b34326199694511e3e4667049ba8d6",
+      "graphReportSha256": "9e7177f2d0b7f6b6bc5697a2129a3c58bc3db81fa9e1e20c801b8ff3cedf89c4"
     },
     "workspace": {
       "apiObservations": 305,
@@ -7301,8 +7301,8 @@
       "differences": 0,
       "semanticFallbacks": [],
       "apiReportSha256": "556e61ec7aff888bf75f2fba4cbb9080a85695060c5d7de39e0c1513989685d2",
-      "factsReportSha256": "116ff8724d6d18037a0932f8753c7c22df35c26aa6678c605383bb2e62ac5999",
-      "graphReportSha256": "0eade3a67a7b2fcceaa52590116dd0ccd570eab6ea92661504e436f9956874eb"
+      "factsReportSha256": "1caa788c834f0febccb64fa2f3e095063e203e7128ac15396d89ab7c36ad14a9",
+      "graphReportSha256": "776aadfe62ac53e448de87e14bf53223572f7aa0c1e1e7aff4ecef743d93a9ca"
     }
   },
   "oracleSha256": {
@@ -7310,7 +7310,7 @@
     "batch-08-complete-facts.json": "9a621595e251cdc7f0e3a699ec7839290a1b077c5000e06362c78d88fcd7eca3"
   },
   "positiveControls": {
-    "reportSha256": "7524d760e058ee4d8480587d304e6b4c3aeaf24371f720c41d6615a1a96aeb6e",
+    "reportSha256": "0d3ea62e73b66a8d9a26908f4ad997fa708602e976d6ae3128b0904851e41ef9",
     "exitCode": 1,
     "failedCases": 183,
     "rejectedByCheck": {
@@ -7514,6 +7514,6 @@
     "Original source files and behavior assertions are unchanged.",
     "Three instrumentation functions (four parametrized cases) translate Python hooks to actual native traversal/materialization counters.",
     "Host signing orchestration, file discovery, constants and DTO formatting remain Python; original detector and analyzer execution is forbidden.",
-    "No full-repository cold execution was run."
+    "These assertion runs do not measure full-repository cold execution; cumulative measurements are recorded separately."
   ]
 }

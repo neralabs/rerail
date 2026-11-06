@@ -2,10 +2,14 @@
 
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
 There are 100 authored ports out of 142 checks. Thirty documents ship in the private pack.
-The cumulative repository result still covers 80 rules.
-
-The [latest completion review](data-layer-batch-ten-dod-audit.md) finds remaining optimizer false negatives and missing production configuration contracts.
-Those gaps remain open. The passing assertion receipts below cover their recorded cases, rather than the full completion criteria.
+The [completion review](data-layer-batch-ten-dod-audit.md) exposed optimizer, production configuration, lifecycle, and cumulative-validation gaps.
+The repairs pass the 57-test production contract matrix and the complete 100-rule repository gate.
+All 25,262 expected findings match over 9,021 code files and seven required documents, with zero engine failures.
+The [v7 completion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds the evidence and implementation files.
+The [measurement](performance-decisions/data-layer-batch-ten-20261106.json) records CPU, wall time, compilation, and RSS.
+Receipt metadata, disabled-evidence guards, and all 36 evidence-validator tests pass.
+Type checking, boundary checks, and Windows path checks pass.
+The structure check retains exactly three pre-existing flat-directory findings; this repair adds none.
 
 ## Completion repair
 
@@ -86,7 +90,7 @@ They produce 104 complete helper observations per API, separately from detector 
 The other 57 cases contain 75 transferable assertion sites across 47 cases.
 Rerail counterparts now cover those sites, with 102 passing contract tests and controls.
 Sixteen Python-specific assertion sites remain in the original tests.
-The v6 receipt lists every assertion decision and keeps source execution separate from its Rerail counterpart.
+The assertion receipt lists every assertion decision and keeps source execution separate from its Rerail counterpart.
 The structural audit maps all 124 cases to their execution targets.
 The conditional observations include 47 calls to the shared analyzer.
 Replay compares diagnostic multiplicity, path, code, message, line, and rule-specific DTO fields through both native APIs.
@@ -106,7 +110,7 @@ A further 878 comparisons check the exact matching file selection, including its
 There are also 106 diagnostic-family removal controls, each checked through both APIs.
 These controls remove one diagnostic code at a time and require all other original findings to remain.
 
-The [v6 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, transferred assertions, and implementation hashes.
+The [v7 completion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, transferred assertions, and implementation hashes.
 It also requires the complete union of focused assertions: 276 inputs, including 194 positives, through both APIs.
 All 67 rule-relevant helper cases require native traces and complete original results.
 Helper replay includes 15 original-evaluated controls, including positive path classification and clean matching modules.
@@ -114,7 +118,26 @@ The [repair regressions](../fixtures/host/data-layer-port/batch-10-repair-regres
 The [journal](data-layer-performance-journal.md) records failed attempts and subsequent verification.
 
 These finite tests provide regression evidence. They do not prove equivalence for every possible Python program.
-No cumulative cold benchmark or new Linear ticket forms part of this repair.
+The complete DoD repair adds production consumer roots, approval validation and signature verification, verified suppression, and `SIDP000`.
+It also supplies matching phases, command summaries, and explicitly requested signing through the original signer.
+Tests use isolated fixture keys. The runner never searches for private keys.
+The original BOM, newline, and Base64 acceptance contracts have separate positive and negative controls.
+The permanent lifecycle matrix covers all ten rules and 57 persistent revisions.
+The focused matrix includes a 68,008-case original-Python Base64 contract.
+
+The [work log](data-layer-batch-ten-dod-worklog.md) records generic capacity fixes and failed full-run attempts.
+It also records SQL repairs for identity selection, lazy rollups, purity seed selection, and bootstrap diagnostic lookup.
+No new Linear ticket was needed.
+The accepted complete-process measurement is 2,856.494 CPU seconds, 3,035.380 wall seconds, and 10,234,003,456 bytes peak RSS.
+Rule compilation is separate: 2.151 CPU seconds and 2.249 wall seconds.
+The [validation summary](performance-decisions/data-layer-batch-ten-validation-20261106.json) retains the earlier sixty-rule gates, 4,317 native assertions, and 1,674 passing Rust tests.
+Twenty-two existing external-corpus benchmarks remain ignored and individually named.
+The source assertion suites do not skip linter cases.
+
+Performance remains expensive. The original complete-process measurement uses 429.978 CPU seconds.
+A one-second external sample identifies cache-eviction bookkeeping as a concrete performance lead.
+That sample does not establish whole-run CPU attribution.
+The journal retains failed runs and distinguishes this correctness baseline from speed comparisons.
 
 ## Run the gates
 
@@ -222,3 +245,33 @@ On macOS, use `gtimeout` in place of `timeout`.
 Run the configured repository test separately for each mode with `-t 'configured repository snapshot'`
 and `-t 'configured repository workspace'`.
 These tests are in `test/conformance/data-layer/batch-ten-configured-repository.test.ts`.
+
+## Reproduce the cumulative gate
+
+Use the pinned checkout and its Python 3.13 environment, including the recorded dependency versions.
+These complete repository measurements have an explicit exception to the ordinary two-minute command bound.
+Run them without profiling or memory-census instrumentation.
+
+```sh
+python3 scripts/profiling/data_layer/measure.py --output /tmp/original-100-process.json -- \
+  python3.13 scripts/dsl/data_layer_suite_record.py \
+  --source /path/to/pinned-data-layer --repo /path/to/git-objects \
+  --batches 1,2,3,4,5,6,7,8,9,10 --workers 1 --output /tmp/original-100.json
+
+python3 scripts/profiling/data_layer/measure.py --output /tmp/native-100-process.json -- \
+  node --import tsx conformance/data-layer/suite.ts \
+  --recording /tmp/original-100.json --source /path/to/pinned-data-layer \
+  --python /absolute/path/to/venv/bin/python --cold-only --progress \
+  --output /tmp/native-100.json
+
+PYTHONPATH=scripts/dsl python3.13 -m data_layer_ten.completion \
+  --contracts /tmp/dod.json --oracle /tmp/original-100.json \
+  --native /tmp/native-100.json --process /tmp/native-100-process.json \
+  --output /tmp/completion.json
+```
+
+Generate `/tmp/dod.json` with Vitest's JSON reporter over `test/conformance/data-layer/dod/`.
+The verifier requires all 57 named tests, both API paths, all 100 programs, exact finding multiplicity, and zero engine failures.
+The cumulative comparison checks rule, path, line, and code.
+Complete latest-ten diagnostic DTOs, configuration, and positive behavior have separate required gates described above.
+The historical reporter cuts for earlier batches remain documented in the original recording.

@@ -3,7 +3,12 @@
 Audited commit: `9ceb4c8ef`.
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The review uses the per-batch and migration criteria in the [restart plan](data-layer-port-restart.md#resume-in-bounded-deliveries).
-Batch ten still falls short of the full completion criteria.
+This section records the failures at that audited commit.
+The repair now passes all 57 production-contract tests and the complete 100-rule repository gate.
+The [v7 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) and [work log](data-layer-batch-ten-dod-worklog.md) retain the repair evidence.
+Receipt metadata, disabled-evidence guards, and all 36 evidence-validator tests pass.
+Type checking, boundary checks, and Windows path checks pass.
+The structure check retains exactly three pre-existing flat-directory findings; this repair adds none.
 
 The [audit record](../fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json) retains inputs, configuration, original findings, native results, source verification, and implementation hashes.
 Six reduced scenarios run through both native APIs: twelve evaluations.
@@ -80,3 +85,26 @@ This review does not reopen those completed assertion transfers.
 The demonstrated gaps do not establish a missing engine capability.
 The optimizer fix is a SQL guard change. The configuration gaps require rule and host integration.
 No Linear issue or production-rule change forms part of this review.
+
+
+## Repair evidence
+
+The malformed-verifier tests now use file presence and cover malformed, valid, absent, edited, and restored inputs.
+Explicit matching roots now reach filesystem discovery, native classification, scopes, and both API paths.
+BOM, bare-CR, and CRLF cases preserve the original disk loader's behavior.
+Approval handling now validates entries, verifies signatures, applies verified suppression, and emits `SIDP000` before source findings.
+Signing tests use isolated fixture keys and delegate only an explicitly requested signing command.
+Sixteen encoding API comparisons and 68,008 recorded Python decoder cases preserve acceptance and rejection.
+Matching phases and command summaries have production command tests.
+All ten rules have a permanent clean/positive/restored/removed/readded matrix, with 57 persistent revisions including dependency edits.
+
+The complete cumulative gate covers 100 current programs and all 9,028 inputs.
+It matches all 25,262 original findings by rule, path, line, and code, with zero engine failures.
+Complete latest-ten DTO, configured-default, helper, transferable-assertion, family-removal, and positive-control gates remain separate requirements in the v7 receipt.
+The earlier sixty-rule observation gates also pass, including the final previously unrun `serverplan_target_architecture` check.
+
+Full migration remains separate: 42 configured checks are not yet ported, and seventy earlier ports remain candidates.
+The historical reporter cuts for earlier batches remain documented in their recordings.
+The 16 Python-specific assertion sites test Python objects; all 75 transferable assertion sites have Rerail counterparts.
+The structure check retains its three existing flat-directory findings. This repair adds none.
+Performance remains expensive. See the journal and accepted measurement for CPU, wall time, compilation, RSS, and the cache-eviction sampling lead.

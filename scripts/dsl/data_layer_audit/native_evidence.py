@@ -82,7 +82,7 @@ def main():
       boundaries=['Original source files and behavior assertions are unchanged.',
         'Three instrumentation functions (four parametrized cases) translate Python hooks to actual native traversal/materialization counters.',
         'Host signing orchestration, file discovery, constants and DTO formatting remain Python; original detector and analyzer execution is forbidden.',
-        'No full-repository cold execution was run.'])
+        'These assertion runs do not measure full-repository cold execution; cumulative measurements are recorded separately.'])
     args.output.write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps({mode:{key:value for key,value in row.items() if key in ('collected','passed','failed','skipped','nativeCalls','casesWithNativeCalls')} for mode,row in report['executionPaths'].items()}))
 

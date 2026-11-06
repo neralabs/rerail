@@ -7184,3 +7184,211 @@ The first Rust test command reached its 115-second compilation bound before exec
 Its log is not a failing assertion result.
 A production rebuild and the complete 100-check oracle are in progress.
 No completion claim or refreshed receipt is issued at this point.
+
+### Recovery runs after the capacity preflight
+
+The complete original oracle finished at the pinned source with 100 checks.
+It contains 9,021 code files and seven required documents: 138,077,148 input bytes.
+The original reporters produce 25,262 findings, with no source-blob mismatch.
+Their phase uses 392.407 CPU seconds; process-family CPU is 429.978 seconds.
+Process wall time is 511.261 seconds; maximum single-process RSS is 4,859,510,784 bytes.
+Concurrent build activity means that wall time is not a controlled comparison.
+
+The first complete native run failed: 25,027 findings and 4,776 engine failures.
+All 235 missing findings belong to `pure_lazy_runtime_purity`; no extra findings appear.
+Cold parent CPU is 2,013.703 seconds and cold wall time is 2,100.616 seconds.
+Compilation takes 1.530 seconds, separately from source configuration and cold execution.
+Process-family CPU is 2,046.194 seconds, with 8,121,270,272 bytes of peak root RSS through close.
+These numbers describe a failed run, not an accepted performance baseline.
+The local `native-100*` files preserve its report and process measurements.
+
+Three reduced regressions drive the subsequent engine repairs.
+A streamed canonical protocol removes the aggregate 64 MiB wire limit while retaining per-consumer output bounds.
+Repository consumers retain source lengths after buffer release and use the existing scope-byte work allowance.
+Physical subtree input partitions preserve one logical repository relation and its file/node identities.
+The 100-stage dependent-consumer guard remains unchanged and passes its regression.
+The identity rule selects constructor calls before unrelated lexical ownership.
+Its new original-evaluated positive and clean cases each include 7,000 unrelated functions.
+
+A three-kernel run over all 9,028 inputs first fails on producer capacity and identity ownership.
+It uses 98.455 process-family CPU seconds, with 3,464,069,120 bytes of maximum single-process RSS.
+After those repairs, the identity kernel has no failures, but both lazy kernels exhaust argument-selection work.
+That failed run uses 421.981 process-family CPU seconds and 3,689,611,264 bytes of maximum single-process RSS.
+The file-local parent lookup had searched every file's postings before SQLite applied its path filter.
+A 128-file regression reduces 1,280 candidates to ten for the same ten matches.
+The repaired virtual table passes file and value constraints together and retains SQLite's comparison checks.
+All four binding tests pass, including IN batches, duplicates, NULL, numeric affinity, and NOCASE controls.
+
+The rebuilt addon passes all 54 focused DoD tests.
+Typecheck and boundary checks pass. The structure check retains only the three existing directory-size findings.
+Fresh source, native replay, and complete-domain kernel gates are running.
+An external five-second sample now exists for the kernel run; temporary SQLite writes dominate that interval's active stacks.
+The earlier sampling attempt missed the process and supplies no profiling evidence.
+Final cumulative acceptance remains open until the recovered kernels and all 100 rules pass.
+
+### Indexed graph and recursive-container recovery
+
+The [recovery record](performance-decisions/data-layer-batch-ten-global-recovery-20261106.json) retains query text, plans, budgets, measurements, and regression identities.
+The later captures distinguish SQL work exhaustion from the outer clause budget.
+At both failures, SQL work is zero while the outer clause still has allowance.
+
+`graph_edges` searched the function relation by execution scope for each target.
+The symbol index could not serve its file/id join.
+A composite identity index returns all 85,677 captured edges in 0.163 CPU seconds, including result hashing.
+The unindexed offline command reaches its 115-second bound and supplies no completed comparison result.
+The original-evaluated graph regression fails before the index repair and passes afterward.
+
+Purity's recursive child query used an OR between parent and call-argument relationships.
+Separate recursive arms preserve the original disjoint cases and permit indexed access.
+A referenced 1,000-entry static-container regression fails before this repair and passes afterward.
+
+The next complete-domain run still fails at lazy `rollups` and purity `global_state`.
+The rollup join concatenates category prefixes onto function columns, hiding the symbol index.
+Decoding the producer's category prefix restores the plain indexed symbol lookup.
+Purity's reference seed searches function-body identifiers separately for each module binding.
+A grouped reference-name batch replaces that repeated search and preserves the original seed multiplicity.
+The expanded fixture uses populated graph rollups and referenced/unreferenced globals beside active functions.
+Both retained kernel regressions fail at the demonstrated stages before these repairs, then pass through both APIs.
+No work allowance changes in these SQL repairs.
+
+The recovered three-kernel run covers all 9,021 code files and seven required documents.
+It matches 235 expected findings with no extras, omissions, or engine failures.
+Cold parent CPU is 324.736 seconds; cold wall time is 373.948 seconds.
+Compilation is 0.086 seconds, recorded separately.
+Process-family CPU through close is 327.361 seconds; process wall time is 377.162 seconds.
+Maximum root RSS through close is 3,783,933,952 bytes.
+This is a three-kernel result, not a 100-rule performance comparison.
+
+All 60 earlier checks pass their original recorded corpus, preserving each observation's complete file domain.
+The last 748-observation check needs eight bounded observation shards; no repository domain is split.
+Both batch-eight assertion APIs pass all 456 original cases, 305 complete API observations, 85 fact inputs, and 12 graph-state inputs.
+Their disabled-detector controls reject positives in all nine original test modules.
+The refreshed batch-eight/nine replay and metadata gates pass 88 assertions.
+The expanded DoD matrix passes all 56 tests, including 57 persistent revisions across ten rules and the optimizer dependency sequence.
+
+Direct full native-unit commands reach the 115-second diagnostic bound without a completed result.
+Exact-name test partitions execute all 1,674 active unit tests successfully.
+The 22 existing ignored external-corpus benchmarks remain named exclusions from the standard unit suite.
+The first local coverage check incorrectly treats ignored benchmarks as missing work and reads an inner subprocess's summary.
+The final inventory validator checks every test identity, the expected ignore set, and the final parent summary.
+The isolated slow assignment-chain regression also passes.
+
+The cumulative 100-rule attempt initially stops before engine evaluation because the command omits the Python environment.
+Its logs remain under `native-100-preparation-env*`; they provide no rule parity evidence.
+The corrected command selects the validated environment explicitly and is running without concurrent validation jobs.
+The cumulative receipt remains pending at this point.
+
+### Disk-pressure failure during the cumulative gate
+
+The first corrected-environment 100-rule run reaches all 9,028 inputs, then fails.
+The first three displayed errors concern matching. The saved report contains 25,354 failure rows across 56 distinct clause/error combinations.
+This count includes repeated disk I/O failures and the bootstrap work interruption diagnosed in the subsequent ample-disk run.
+The filesystem has about 600 MB free at diagnosis.
+This run uses 2,251.489 process-family CPU seconds and 2,825.660 wall seconds.
+Maximum single-process RSS is 9,218,375,680 bytes.
+It is an incomplete diagnostic run, not a parity pass or an accepted performance baseline.
+Its files remain under `native-100-disk-pressure*`.
+
+Duplicate later SQL snapshots are removed after retaining their query plans, budgets, and compact recovery record.
+The original captures are preserved as verified lossless zstd archives: approximately 600 MB and 805 MB.
+Their local manifests include restoration commands.
+An inactive batch-seven profiling build cache accounts for 161 GiB.
+Cargo cleans that rebuildable cache in two bounded commands; the first command reaches its time bound.
+The saved engine binaries, source snapshot, reports, and journals remain intact.
+Available filesystem space rises to about 163 GiB before the retry.
+
+A red/green regression adds filesystem headroom to the complete-run profiler.
+It records initial, minimum, and final free bytes for workspace and SQLite temporary storage.
+The tests also retain the existing waited-for grandchild CPU and exit-status checks.
+No execution backend or measurement configuration flag is added.
+The complete 100-rule gate is running again with the same native addon and rule documents.
+
+### 2026-11-06: isolate and repair bootstrap query exhaustion
+
+The ample-disk 100-rule retry fails only `bootstrap-invariants`.
+Process CPU is 2,229.418 seconds; wall time is 2,314.323 seconds; peak RSS is 10,844,078,080 bytes.
+The filesystem retains at least 152,371,703,808 free bytes. This failure is independent of the earlier disk-pressure failure.
+There is no accepted cumulative result from that attempt.
+
+The complete bootstrap kernel reproduces the failure in isolation.
+Its final query exhausts SQL work after preparation. Isolated packets require 43,679,249 VM steps in total.
+The helper-directory regex also runs 304,753 times despite testing a property of each file.
+File-leading indexes cannot serve the consumers' repository-wide kind and callee lookups.
+A captured-data experiment adds three relevant lookup indexes and replaces that exact regex with SQL string predicates.
+It returns the same empty result bag with 765,030 VM steps and no regex calls.
+This replay excludes preparation and is not an end-to-end speed result.
+
+TDD commits `aa4ea3388` and `0b4af5c47` retain the real 153-file source domain and a positive helper mutation.
+Both APIs fail before the repair and pass afterward, including the clean control.
+The production fix replaces two unsuitable selection indexes, keeps file/id indexes, and indexes function basename/name.
+It uses the exact literal helper-prefix/no-later-slash predicate in SQL. Budgets remain fixed.
+The normal addon passes the kernel over the complete 9,028-input repository:
+10.032 process-family CPU seconds, 10.409 wall seconds, and 1,786,707,968 bytes peak RSS.
+The complete 100-rule gate remains pending. No aggregate speed claim follows from the isolated kernel result.
+
+### 2026-11-06: optional host-configuration decoding boundaries
+
+A review during the final cumulative run finds two independent host defects.
+Explicit matching-root discovery strips UTF-8 BOM with Node's default decoder, unlike Python's `read_text(encoding='utf-8')`.
+Original-evaluated BOM, bare-CR, and CRLF records now pass through both production APIs after preserving BOM and translating disk-file newlines.
+TDD commits: `92b9dcc98`, `dc28f5445`.
+
+Node's Base64 decoder also accepts non-ASCII text appended to a valid approval signature; original Python rejects it.
+Eight encoding scenarios preserve both original acceptance and rejection, including ignored ASCII junk and malformed padding.
+The first attempted decoder fails the trailing-data scenario and 366 systematic original-Python cases; it is rejected.
+The committed compatibility wrapper uses Node's standard byte decoder after matching the recording environment's string validation and padding rules.
+All 68,008 recorded Python decoder cases and sixteen production-API encoding comparisons pass.
+TDD commits: `01a1d1d0b`, `f667f6770`.
+The permanent fixture is generated and compared byte for byte in CI.
+The combined approval and root groups pass 31 tests.
+
+The cumulative run uses neither explicit application roots nor nonempty schema approvals.
+These fixes do not change its selected paths, rule documents, workload, or native addon.
+Brief focused host validations overlap the cumulative run; unrelated native build activity is also present on the machine.
+Process-family CPU remains attributed to the measured process and its waited-for workers. Wall time is not a controlled speed comparison.
+
+During the final full run, a one-second external `sample` capture observes the active global-evaluation worker under `Storage::evict`.
+The active stacks contain string copying, sorting, allocator work, and `BTreeSet` construction.
+The source at `relational/storage/contexts.rs:359` rebuilds a set of live slot names from all context keys when layout capacity is exceeded.
+That is a concrete lead for the next performance investigation. This repair leaves the engine source and measured addon fixed.
+One wall-stack snapshot does not establish aggregate CPU attribution; blocked threads also appear in the sample.
+The compact recovery record preserves the sample hash, collapsed stacks, and source location.
+The sampling overhead is separate background work during this baseline, alongside the previously noted brief host checks and unrelated builds.
+
+### 2026-11-06: accepted complete 100-rule baseline
+
+The normal addon `21554b9bf6df95211d14407ececdeb5657b0a861eb44cba11193b65feffc0910` completes all 100 rules on 9,021 code files and seven required documents.
+Expected and actual findings are both 25,262. There are zero extras, missing findings, engine failures, or incremental comparison differences.
+The native result, process receipt, and workspace-close receipt are under `dod-completion-20261106/native-100-complete*`.
+
+| Boundary | CPU seconds | Wall seconds | Peak RSS bytes |
+| --- | ---: | ---: | ---: |
+| Original 100-rule `run_plugins` phase, including waited-for workers | 392.407 | 468.218 | 4,859,510,784 for the original process |
+| Original complete process family | 429.978 | 511.261 | 4,859,510,784 largest process |
+| Native rule compilation | 2.151 | 2.249 | Included in native process high-water mark |
+| Native cold parent phase, excluding child CPU | 2,768.671 | 3,025.548 | Included in native process high-water mark |
+| Native complete process family through exit | 2,856.494 | 3,035.380 | 10,234,003,456 largest process |
+
+Native host preparation is separately recorded: 1.613 parent CPU seconds and 3.789 wall seconds.
+The close receipt confirms the same 10,234,003,456-byte root high-water mark through cleanup.
+Minimum workspace free space is 122,239,995,904 bytes. Disk pressure does not invalidate this run.
+
+This is a correctness pass and a fresh baseline, not a performance success.
+Measured complete-family CPU is about 6.64 times the original run's CPU; maximum process RSS is about 2.11 times as large.
+The original wall measurement overlapped build activity. Brief host checks, unrelated builds, and one external stack sample overlap this native run.
+Wall-time ratios are therefore not controlled speed comparisons.
+The historical accepted 80-rule run used a different engine and inventory; its 695.641 parent CPU seconds remain historical evidence.
+The native cache-eviction sample provides a concrete next performance lead. It does not establish aggregate attribution from a one-second capture.
+
+The final evidence gates pass: 57 focused DoD tests, 88 batch-eight/nine replay tests, 72 batch-nine production/parser/shape tests, and 36 evidence-validator tests.
+The broader native assertion groups contain 4,317 passing assertions; the earlier sixty-rule replay has 3,079 native calls and no missing coverage or mismatches.
+Receipt generation catches one previously unrun legacy check after the earlier `serverplan_steps` timeout.
+The complete step-observation shards pass, and `serverplan_target_architecture` now passes twelve observations, including ten positives.
+The accepted v7 receipt binds the complete current evidence rather than treating the interrupted legacy orchestration as success.
+
+Type checking, boundaries, Windows path checks, and CI Bash syntax checks pass.
+The structure baseline remains 24 passing metrics and three pre-existing directory findings under one failing metric, with no new finding.
+No original linter assertion is skipped by the repaired source harness.
+The existing 22 ignored Rust external-corpus benchmarks are named in the validation summary and do not represent linter-test exclusions.
+All 75 transferable assertion sites have native counterparts; the 16 Python-object-specific sites remain identified in the source assertion ledger.
+The completed repair does not claim all 142 ports or resolved CPU performance. Forty-two checks remain, and cache eviction is the next measured performance lead.

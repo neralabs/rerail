@@ -1,17 +1,23 @@
 # Restart the data-layer rule ports
 
-Updated: 2026-11-05. Status: 100 ports are authored. Further batch-nine audits exposed public-contract, numeric-equality and file-presence gaps after the earlier repair claims.
-See [the completion audit](data-layer-batch-nine-audit.md). The historical complete repository result covers 80.
+Updated: 2026-11-06. There are 100 authored ports out of 142 configured checks.
+Thirty ship in the opt-in pack. Seventy earlier ports remain candidates; 42 checks remain unported.
 
-Batch ten repairs the disproved completion claim with 1,098 original and original-evaluated cases, 975 complete API results, and 1,392 configured-default observations.
-Both native APIs receive the full matching inventory; source selection no longer runs in Python.
-Its semantic audit adds 276 original-evaluated inputs, including 194 positives.
-All 67 rule-relevant retained helper cases now execute native contracts, with 104 complete helper observations per API.
-The other 57 cases contain 75 transferable assertion sites across 47 cases, now covered by Rerail counterparts.
-The receipt identifies the 16 remaining Python-specific sites individually.
-The current batch-ten environment uses CPython 3.13.18 with Unicode 15.1.
-The [latest completion review](data-layer-batch-ten-dod-audit.md) leaves batch ten incomplete because of optimizer false negatives and missing production configuration contracts.
-See [its report](data-layer-batch-ten.md). The cumulative repository result still covers 80 rules.
+The [batch-ten completion review](data-layer-batch-ten-dod-audit.md) exposed optimizer and production configuration gaps.
+Those repairs are implemented, including consumer roots, approvals, signature verification, phases, summaries, and persistent lifecycle coverage.
+The cumulative 100-rule gate now passes: 25,262 findings match over all 9,028 inputs, with zero engine failures.
+The 57-test production contract matrix also passes.
+Complete-process cost is 2,856.494 CPU seconds, 3,035.380 wall seconds, and 10,234,003,456 bytes peak RSS.
+Performance remains expensive; this result is a correctness baseline.
+See the [current work log](data-layer-batch-ten-dod-worklog.md) and [batch report](data-layer-batch-ten.md).
+
+Batch ten retains 1,098 original and original-evaluated cases, 975 complete API results, and 1,392 configured-default observations.
+Both native APIs receive the full matching inventory; source selection runs in SQL.
+The semantic audit adds 276 original-evaluated inputs, including 194 positives.
+All 67 rule-relevant helper cases execute native contracts, with 104 complete helper observations per API.
+The other 57 cases contain 75 transferable assertion sites across 47 cases, covered by Rerail counterparts.
+The assertion ledger identifies 16 Python-specific assertion sites separately.
+The original-recording environment uses CPython 3.13.18 with Unicode 15.1.
 
 The recovery survey below describes the original 60-rule restart point.
 Batch seven now passes 217 source observations and 50 edit/removal transitions.
