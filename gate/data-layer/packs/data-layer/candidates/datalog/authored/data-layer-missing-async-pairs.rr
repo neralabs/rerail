@@ -17,9 +17,9 @@
 //   typed_parameter holding a list_splat_pattern before it (`not follows … stopBy end`).
 // Transforms: ASYNC_TARGET = NAME + "_async"; BASE = NAME less a final "_async" (written as
 // `NAME = cat(BASE, "_async")`, or BASE = NAME where NAME does not end so).
-// Options at their defaults (oracleAnalyzer false, unread by these clauses; sourceGate true): the module gate is
-// `def\ |async\ def\ ` searched in the module's full text, which is `contains("def ", s)` (the second
-// alternative contains the first). The sourceGate=false form is in the .pending.rr beside this file.
+// Options as the run resolves them: sourceGate (default true) gates every clause on the module's full text
+// matching `def\ |async\ def\ ` (searched), which is `contains("def ", s)` (the second alternative contains the
+// first); false gives `(?s).*`, which every module matches. oracleAnalyzer is declared but no clause reads it.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -29,6 +29,7 @@
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl option_on(name: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -103,7 +104,9 @@ pair_io_name("session_id"). pair_io_name("transaction"). pair_io_name("txn").
 // ---- documents: in scope, parsed, and through the module gate ----
 .decl pair_doc(d: number)
 pair_doc(d) :-
-    in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, s), contains("def ", s).
+    in_scope(d), !out_scope(d), !syntax_error(d), option_on("sourceGate"),
+    node(d, m, "module", _, _), node_text(m, s), contains("def ", s).
+pair_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), !option_on("sourceGate"), node(d, _, "module", _, _).
 
 // ---- eligible defs: pair_def(d, f, class name, name, start, end, async) ----
 .decl pair_name_ok(x: symbol)
