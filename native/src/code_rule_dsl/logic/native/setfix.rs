@@ -860,19 +860,19 @@ pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u
 impl Csr {
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
         // Each row's key read once (a view's values go through its source), then hashed once.
-        let k = cols.len();
-        let mut keys: Vec<i64> = Vec::with_capacity(rel.n * k);
-        for id in 0..rel.n {
+        let (k, n) = (cols.len(), rel.len());
+        let mut keys: Vec<i64> = Vec::with_capacity(n * k);
+        for id in 0..n {
             let row = rel.at(id);
             keys.extend(cols.iter().map(|&c| row.at(c)));
         }
         let key = |id: usize| &keys[id * k..][..k];
-        let hashes: Vec<u64> = (0..rel.n).map(|id| hash_vals(key(id).iter().copied())).collect();
+        let hashes: Vec<u64> = (0..n).map(|id| hash_vals(key(id).iter().copied())).collect();
         // First pass: each key's group (its entry's `.1`, for now) and size; each row's group.
         let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
-        let mut group = vec![0u32; rel.n];
+        let mut group = vec![0u32; n];
         let mut groups = 0u32;
-        for id in 0..rel.n {
+        for id in 0..n {
             match table.find_mut(hashes[id], |&(rep, _, _)| key(rep as usize) == key(id)) {
                 Some(e) => {
                     e.2 += 1;
@@ -899,8 +899,8 @@ impl Csr {
         for e in table.iter_mut() {
             e.1 = start[e.1 as usize];
         }
-        let mut ids = vec![0u32; rel.n];
-        for id in 0..rel.n {
+        let mut ids = vec![0u32; n];
+        for id in 0..n {
             let g = &mut start[group[id] as usize];
             ids[*g as usize] = id as u32;
             *g += 1;
@@ -928,7 +928,7 @@ pub fn derived(conn: &Connection, table: &str) -> Option<Arc<dyn crate::code_rul
 struct Derived(Arc<InRel>);
 impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn columns(&self) -> Vec<String> { (0..self.0.k).map(|i| format!("c{i}")).collect() }
-    fn len(&self) -> usize { self.0.n }
+    fn len(&self) -> usize { self.0.len() }
     fn estimated_matches(&self, _: usize, _: bool) -> usize { 1 }
     fn indexed(&self, _: usize) -> bool { false }
     fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> { None }
@@ -1001,7 +1001,11 @@ impl InRel {
     fn moved(rel: Rel) -> InRel {
         InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx }
     }
-    fn len(&self) -> usize { self.n }
+    /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
+    /// (`syntax::within`) makes them all only for a scan.
+    fn len(&self) -> usize {
+        match &self.view { Some(v) if v.ids.is_none() => v.src.len(), _ => self.n }
+    }
     /// A flat relation's row (a derived one: views are base inputs only).
     fn row(&self, id: usize) -> &[i64] { &self.rows[id * self.k..][..self.k] }
     #[inline]
@@ -1082,7 +1086,7 @@ fn input(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<Arc<InRel
     // A stored table holds symbols as atoms (integers), so any column types read in place there.
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
-            let n = view.ids.as_ref().map_or(view.src.len(), Vec::len);
+            let n = view.ids.as_ref().map_or(0, Vec::len);
             let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new() });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if std::env::var_os("RDL_PROFILE").is_some() {

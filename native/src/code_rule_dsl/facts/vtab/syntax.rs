@@ -30,6 +30,11 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod within;
+
+/// The span-containment relation `within(inner, outer)` (`within::Within`).
+pub(crate) const WITHIN: &str = "within";
+
 /// One document of a batch.
 #[derive(Clone)]
 pub(crate) struct Document {
@@ -893,12 +898,17 @@ pub(crate) fn with_nearest(
         }
         out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
+    // Span containment (P1): made per looked-up node, so a program that never reads it pays nothing.
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch)))));
     Ok(out)
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
 /// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
 pub(crate) fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
+    if let Some(known) = source.statistics() {
+        return known;
+    }
     let rows = source.len();
     // Postings by sorting (no map per value): a run of equal values is one value's postings.
     let moments = |mut values: Vec<(i64, i64)>| -> (i64, i64) {

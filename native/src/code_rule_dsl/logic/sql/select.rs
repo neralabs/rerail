@@ -103,6 +103,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "syntax_error" => &["d"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
+        // Span containment (`facts::vtab::syntax::within`).
+        "within" => &["inner", "outer"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).
         rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &["n", "a"],
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) => &["s"],

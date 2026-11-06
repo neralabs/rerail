@@ -228,3 +228,49 @@ fn modules_and_packages_follow_t() {
     assert_eq!(module("x/src/a/mod.rs"), "crate.a");
     assert_eq!(module("src/lib.rs"), "crate");
 }
+
+/// `within` (P1) holds exactly the pairs of one document's nodes whose spans nest, as the comparison of every
+/// pair gives them: looked up by either column, and scanned. Two documents with errors bring nodes of zero width.
+#[test]
+fn within_holds_exactly_the_nested_pairs() {
+    let store = ContentStore::open(&temp("within")).unwrap();
+    let mut docs: Vec<Document> = documents().into_iter().take(3).collect();
+    for (at, source) in ["x = (1,\nif y:\n", "def f(a, b:\n    return [a for\n", "", "class C:\n"].into_iter().enumerate() {
+        let path = format!("broken{at}.py");
+        let facts = facts(&path, source);
+        docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts });
+    }
+    let (batch, _, _) = Batch::build(&store, docs).unwrap();
+    let within = within::Within::new(Arc::clone(&batch));
+    let nodes = *batch.nodes.last().unwrap();
+    let (id, span) = (|r: usize| batch.id(r), |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let core = p.core[local] as usize;
+        (p.key, p.facts.start[core], p.facts.end[core])
+    });
+    let zero = (0..nodes).filter(|&r| span(r).1 == span(r).2).count();
+    assert!(zero > 0, "the broken documents have nodes of zero width");
+    let mut expected = BTreeSet::new();
+    for a in 0..nodes {
+        for b in 0..nodes {
+            let ((da, sa, ea), (db, sb, eb)) = (span(a), span(b));
+            if da == db && sb <= sa && ea <= eb {
+                expected.insert((id(a), id(b)));
+            }
+        }
+    }
+    let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (within.value(r, 0), within.value(r, 1))).collect() };
+    let ids: Vec<i64> = (0..nodes).map(id).collect();
+    // By outer first (half the nodes), then by inner, then the scan: rows made by one lookup serve the others.
+    let outer_half: BTreeSet<(i64, i64)> = rows(within.lookup(1, &ids[..nodes / 2]).unwrap());
+    let half: BTreeSet<i64> = ids[..nodes / 2].iter().copied().collect();
+    assert_eq!(outer_half, expected.iter().filter(|(_, b)| half.contains(b)).copied().collect());
+    assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
+    assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
+    let all = within.len();
+    let scanned = rows((0..all).collect());
+    assert_eq!(scanned, expected);
+    // Each node's containers are made once: the inner side's rows are exactly the pairs.
+    assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
+    assert_eq!(within.estimated_len(), (0..nodes).map(|r| { let (p, l) = batch.locate(View::Node, r); p.depth[l] as usize + 1 }).sum::<usize>());
+}

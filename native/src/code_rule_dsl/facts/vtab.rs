@@ -60,6 +60,11 @@ pub(crate) trait Source: Send + Sync {
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
         None
     }
+    /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
+    /// reading every row: a source whose rows are made on lookup.
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        None
+    }
 }
 
 #[derive(Default)]

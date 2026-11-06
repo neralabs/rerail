@@ -1313,6 +1313,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "text" | "name" | "str" | "strprefix" | "value" => &[&["n"], &["s", "n"]],
         "intval" | "op" | "tape" | "line" => &[&["n"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
+        // Span containment, made per node looked up either way (`facts::vtab::syntax::within`).
+        "within" => &[&["inner"], &["outer"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.

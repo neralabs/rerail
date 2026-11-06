@@ -503,16 +503,16 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                 }
             }
             let measured = match measured_once.get(&rel) {
-                Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.len()),
+                Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
                     let measured = syntax::statistics(source.as_ref());
-                    measured_once.insert(rel.clone(), (source.len(), measured.clone()));
+                    measured_once.insert(rel.clone(), (source.estimated_len(), measured.clone()));
                     measured
                 }
             };
-            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
-                totals.add(&rel, source.len(), &measured);
+            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || rel.starts_with("nearest_") || rel == syntax::WITHIN || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
+                totals.add(&rel, source.estimated_len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
             modules.bind(&db, &rel, source)?;

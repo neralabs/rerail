@@ -54,6 +54,8 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) unread: Vec<String>,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
+    /// Span comparisons of two nodes of one document, made `within(inner, outer)` (P1).
+    pub(in crate::code_rule_dsl) within: usize,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
@@ -61,10 +63,15 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     report.inlined = inline_node_tests(prog);
     for rule in &mut prog.rules {
         report.constants += fold_constants(rule);
+        report.within += span_containment(rule);
         report.keyed += merge_keyed(rule);
         report.singletons += wild_singletons(rule);
         report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
         report.implied += drop_implied(rule);
+    }
+    if report.within > 0 && !prog.decls.contains_key(WITHIN) {
+        prog.decls.insert(WITHIN.to_owned(), vec![("inner".to_owned(), "node".to_owned()), ("outer".to_owned(), "node".to_owned())]);
+        prog.inputs.push(WITHIN.to_owned());
     }
     report.existentials = project_existentials(prog);
     if merge(prog, &mut report) {
@@ -76,12 +83,60 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     report.unread = drop_unread(prog);
     if super::profile::on() {
         let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
-        let (w, y, u, x) = (report.singletons, report.keyed, report.unread.len(), report.existentials.len());
+        let (w, y, u, x, s) = (report.singletons, report.keyed, report.unread.len(), report.existentials.len(), report.within);
         super::profile::decision("simplified bodies (decision 0038)", || {
-            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one; {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {x} parts of bodies that meet the rest only at a document made relations of documents; {u} relations no output reads dropped")
+            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one; {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {x} parts of bodies that meet the rest only at a document made relations of documents; {s} span comparisons of two nodes made `within`; {u} relations no output reads dropped")
         });
     }
     report
+}
+
+const WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+
+/// Replaces each pair `node(d, a, _, sa, ea), node(d, b, _, sb, eb), sb <= sa, ea <= eb` (one document variable
+/// `d`, either side of each comparison) by `within(a, b)`: the comparisons, not the atoms, which may bind or test
+/// more. A join of every pair of a file's nodes becomes a walk of the tree (`syntax::within`). Returns the pairs
+/// replaced.
+fn span_containment(rule: &mut Rule) -> usize {
+    let var = |t: &Term| if let Term::Var(v) = t { Some(v.clone()) } else { None };
+    // (d, n, start, end) of each positive node atom with variables there.
+    let nodes: Vec<(String, String, String, String)> = rule
+        .body
+        .iter()
+        .filter_map(|l| match l {
+            Literal::Atom(a) if !a.neg && a.rel == "node" && a.args.len() == 5 => {
+                Some((var(&a.args[0])?, var(&a.args[1])?, var(&a.args[3])?, var(&a.args[4])?))
+            }
+            _ => None,
+        })
+        .collect();
+    // `x <= y` as written, either way round.
+    let le = |l: &Literal| -> Option<(String, String)> {
+        match l {
+            Literal::Cmp { l, op: "<=", r } => Some((var(l)?, var(r)?)),
+            Literal::Cmp { l, op: ">=", r } => Some((var(r)?, var(l)?)),
+            _ => None,
+        }
+    };
+    let mut made = 0;
+    'pairs: for (i, inner) in nodes.iter().enumerate() {
+        for (j, outer) in nodes.iter().enumerate() {
+            if i == j || inner.0 != outer.0 || inner.1 == outer.1 {
+                continue;
+            }
+            let starts = rule.body.iter().position(|l| le(l) == Some((outer.2.clone(), inner.2.clone())));
+            let ends = rule.body.iter().position(|l| le(l) == Some((inner.3.clone(), outer.3.clone())));
+            let (Some(starts), Some(ends)) = (starts, ends) else { continue };
+            let within = Literal::Atom(Atom { rel: WITHIN.to_owned(), args: vec![Term::Var(inner.1.clone()), Term::Var(outer.1.clone())], neg: false, gated: false });
+            rule.body[starts.min(ends)] = within;
+            rule.body.remove(starts.max(ends));
+            made += 1;
+            // The rule changed: look again for another pair.
+            made += span_containment(rule);
+            break 'pairs;
+        }
+    }
+    made
 }
 
 /// Moves each part of a body that meets the rest only at a document variable into a relation of documents
@@ -865,6 +920,31 @@ mod tests {
         }
         // `$s` joins the part to the head's node: it stays.
         assert!(rules("near")[0].contains("name($y, $s)"), "{:?}", rules("near"));
+    }
+
+    #[test]
+    fn two_nodes_of_a_document_compared_by_span_are_within() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .input node
+            .decl inside(n: node, b: node)
+            .output inside
+            inside($n, $b) :- node($d, $n, "call", $s, $e), node($d, $b, "try_statement", $bs, $be), $bs <= $s, $be >= $e.
+            .decl other(n: node)
+            .output other
+            other($n) :- node($d, $n, "call", $s, $e), node($d2, $b, "try_statement", $bs, $be), $bs <= $s, $e <= $be.
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        assert_eq!(report.within, 1);
+        assert!(prog.inputs.iter().any(|i| i == "within") && prog.decls.contains_key("within"));
+        let rules = |head: &str| prog.rules.iter().filter(|r| r.head.rel == head).map(|r| r.to_string()).collect::<Vec<_>>();
+        let inside = &rules("inside")[0];
+        assert!(inside.contains("within($n, $b)") && !inside.contains("<="), "{inside}");
+        // Two documents: not a containment of one document's nodes.
+        assert!(!rules("other")[0].contains("within"), "{:?}", rules("other"));
     }
 
     #[test]
