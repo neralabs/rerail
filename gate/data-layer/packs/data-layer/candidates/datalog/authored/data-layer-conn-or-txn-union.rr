@@ -1,10 +1,13 @@
 // data-layer-conn-or-txn-union, clauses `union` (UNION) and `separate` (SEPARATE_PARAMS), from
 // candidates/rules-ast/data-layer-conn-or-txn-union.json (utilities in its `shared` clause).
 //
-// The utilities `connection` and `transaction` (with their unrolled copies -0..-7 and -rec, which close a cycle back
-// to the head: one recursive relation each): an identifier of the name set, an attribute whose `attribute` is one,
-// a string literal (prefix of at most two of r/u/f, any quotes) whose content is one, or a type / type_parameter /
-// generic_type / subscript / tuple / union_type / binary_operator with a direct child that is one.
+// The utilities `connection` and `transaction`: each is a cycle of ten copies (`connection` -> `connection-7` -> … ->
+// `connection-0` -> `connection-rec` -> `connection`), every copy the same matcher, so each is one recursive
+// relation here, exactly: an identifier of the name set, an attribute whose `attribute` is one, a string literal
+// (prefix of at most two of r/u/f, any quotes) whose content is one, or a type / type_parameter / generic_type /
+// subscript / tuple / union_type / binary_operator with a direct child that is one. W's `matches` recursion stops at
+// 256 nested utilities (or 1 MiB of stack: `matcher::util::MAX_UTIL_DEPTH`), failing the clause for the file
+// (`budget-exceeded`) rather than reporting; this recursion has no such limit (a type nested over 256 deep).
 //
 // The clauses' regexes `Connection` and `Transaction` over the function's and its parameter list's full text are
 // implied by the typed-parameter tests that follow them: every name of the connection set contains `Connection`
