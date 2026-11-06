@@ -234,14 +234,38 @@ pub(super) enum Item {
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
-    /// `.violation V(at: node, …) "message"`, its `fix` lines' relations, and `options { … }`.
-    /// `code {c}` and `tag {t}` name the columns holding the finding's code and an extra key field.
-    Violation { name: String, cols: Vec<(String, String)>, code: Option<String>, tag: Option<String>, message: String, fixes: Vec<String> },
+    /// `.violation V(at: loc, …) "message"`, its continuation lines (`suppress`, `fix`, `options { … }`).
+    /// `code {c}` names the column holding the finding's code, `code "X"` gives it; `tag {t}` names an extra key field.
+    Violation { name: String, cols: Vec<(String, String)>, code: Option<Code>, tag: Option<String>, message: String, suppress: Vec<Suppress>, fixes: Vec<Fix> },
     /// `.policy { … }`: a policy document in JSON.
     Policy(serde_json::Value),
     /// A setting directive (`.policy "id" revision 1`, `.mode`, `.scope`, …): its name and its text.
     Setting { key: String, text: String },
     Clause { heads: Vec<Head>, body: Vec<Lit>, edits: Vec<Term> },
+}
+
+/// A `.violation`'s code: a column (`code {c}`) or a constant (`code "E501"`).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Code {
+    Column(String),
+    Const(String),
+}
+
+/// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence it, and the column
+/// whose lines are read for them besides `at`'s.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Suppress {
+    pub(super) tool: String,
+    pub(super) rules: Vec<String>,
+    pub(super) over: Option<String>,
+}
+
+/// A `.violation`'s `fix [safe] F "title"` line: the fix relation it offers.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Fix {
+    pub(super) name: String,
+    pub(super) safe: bool,
+    pub(super) title: String,
 }
 
 /// A statement and the line it starts on.
@@ -354,6 +378,12 @@ impl<'s> Parser<'s> {
             self.i += 1;
         }
         Ok(self.src[start..self.toks[self.i - 1].2].to_owned())
+    }
+
+    /// `{c}`: the column a `.violation` line names.
+    fn column_ref(&mut self) -> Result<String, Error> {
+        let text = self.braces()?;
+        Ok(text.trim_start_matches('{').trim_end_matches('}').trim().to_owned())
     }
 
     /// A type: `number`, `node`, `flat<>`, `shortlex_min<>`.
@@ -499,25 +529,49 @@ impl<'s> Parser<'s> {
             "violation" => {
                 let name = self.id()?;
                 let cols = self.columns()?;
-                // `code {c}`: the finding's code, from a column; `tag {t}`: an extra key field.
+                // `code {c}`: the finding's code, from a column; `code "X"`: a constant code; `tag {t}`: an extra key
+                // field.
                 let (mut code, mut tag) = (None, None);
-                while (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
-                    let which = if self.is_id("code") { &mut code } else { &mut tag };
-                    self.i += 1;
-                    let text = self.braces()?;
-                    *which = Some(text.trim_start_matches('{').trim_end_matches('}').trim().to_owned());
+                loop {
+                    if self.is_id("code") && matches!(self.peek_at(1), Tok::Str(_)) {
+                        self.i += 1;
+                        code = Some(Code::Const(self.string()?));
+                    } else if (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
+                        let is_code = self.is_id("code");
+                        self.i += 1;
+                        let column = self.column_ref()?;
+                        if is_code {
+                            code = Some(Code::Column(column));
+                        } else {
+                            tag = Some(column);
+                        }
+                    } else {
+                        break;
+                    }
                 }
                 let message = self.string()?;
-                let mut fixes = Vec::new();
-                // Continuation lines: `fix [safe] name "…"`, `options { … }`.
+                let (mut suppress, mut fixes) = (Vec::new(), Vec::new());
+                // Continuation lines: `suppress TOOL "rule", … [over {c}]`, `fix [safe] name "…"`, `options { … }`.
                 loop {
-                    if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
+                    if self.is_id("suppress") && matches!(self.peek_at(1), Tok::Id(_)) && matches!(self.peek_at(2), Tok::Str(_)) {
                         self.i += 1;
-                        if self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_)) {
+                        let tool = self.id()?;
+                        let rules = self.list("", Self::string)?;
+                        let over = if self.is_id("over") && self.is_p_at(1, "{") {
+                            self.i += 1;
+                            Some(self.column_ref()?)
+                        } else {
+                            None
+                        };
+                        suppress.push(Suppress { tool, rules, over });
+                    } else if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
+                        self.i += 1;
+                        let safe = self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_));
+                        if safe {
                             self.i += 1;
                         }
-                        fixes.push(self.id()?);
-                        self.string()?;
+                        let name = self.id()?;
+                        fixes.push(Fix { name, safe, title: self.string()? });
                     } else if self.is_id("options") && self.is_p_at(1, "{") {
                         self.i += 1;
                         self.braces()?;
@@ -525,7 +579,7 @@ impl<'s> Parser<'s> {
                         break;
                     }
                 }
-                Item::Violation { name, cols, code, tag, message, fixes }
+                Item::Violation { name, cols, code, tag, message, suppress, fixes }
             }
             "policy" if self.is_p("{") => {
                 let text = self.braces()?;

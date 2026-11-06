@@ -178,7 +178,8 @@ fn unlowered_constructs_are_named() {
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
         (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
-        (".violation v(at: span) \"m\"", "at a span"),
+        (".decl t(s: symbol)\n.input t\n.violation v(at: span) \"m\"\nv(m) :- t(s), match(\"(?<m>x+)\", s).", "at a span that can be a span the engine does not make (a regex capture)"),
+        (".decl first_token(n: node, t: span)\n.input first_token\n.violation v(at: loc) \"m\"\nv(t) :- first_token(_, t).", "at a loc that can be a span the engine does not make (first_token, a span)"),
     ] {
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
@@ -471,4 +472,43 @@ fn souffle_functions_lower() {
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
     }
+}
+
+// ---- violations ----
+
+/// A `.violation`'s constant code is the finding's code; its `suppress` and `fix` lines are settings of the
+/// findings layer; a `loc` column holding nodes and `@place`s gives each its finding, a node at its document and
+/// line, a place at its path and line; and the program prints as itself.
+#[test]
+fn violations_at_places_and_their_lines_lower() {
+    let p = parse(concat!(
+        ".policy \"p\" revision 1\n",
+        ".decl doc(d: number, path: symbol, module: symbol)\n.decl node(d: number, n: node, kind: symbol, start: number, end: number)\n",
+        ".decl line(n: node, l: number)\n.input doc, node, line\n",
+        ".violation V(at: loc, x: symbol) code \"@scope/a-b\" \"{x}\"\n",
+        "    suppress eslint \"@scope/a-b\", \"a-b\" over {x}\n",
+        "    suppress oxlint \"a-b\"\n",
+        "    fix safe drop \"Remove it\"\n",
+        "V(n, \"call\") :- node(_, n, \"call\", _, _).\n",
+        "V(@place(p, 0), p) :- doc(_, p, _).\n",
+        ".decl spot(at: loc)\nspot(@place(\"a.json\", 3)) :- doc(_, _, _).\n",
+        ".violation W(at: span) \"w\"\nW(s) :- spot(s).\n",
+    ))
+    .unwrap();
+    let settings: Vec<(&str, &str)> = p.settings.iter().map(|(k, t)| (k.as_str(), t.as_str())).collect();
+    assert_eq!(settings, [("policy", "\"p\" revision 1"), ("suppress", "V eslint \"@scope/a-b\", \"a-b\" over {x}"), ("suppress", "V oxlint \"a-b\""), ("fix", "V safe drop \"Remove it\"")]);
+    let rules = |rel: &str| p.rules.iter().filter(|r| r.head.rel == "violation" && r.head.args[1] == s(rel)).map(ToString::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        rules("V"),
+        [
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- V($rr_v0, _), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0)) :- V($rr_v0, _), $rr_v0 < -1",
+        ]
+    );
+    // A span column that only places reach has no node finding.
+    assert_eq!(rules("W"), ["violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0)) :- W($rr_v0), $rr_v0 < -1"]);
+    let printed = print(&p).unwrap();
+    let again = parse(&printed).unwrap();
+    assert_eq!(difference(&p, &again), None, "{printed}");
+    assert_eq!(p.settings, again.settings);
 }

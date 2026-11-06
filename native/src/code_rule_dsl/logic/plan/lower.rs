@@ -41,6 +41,11 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "to_string" => (vec![Some(Int)], Some(Name)),
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         "rx_group" => (vec![Some(Name); 3], Some(Name)),
+        // `@place(path, line)` (`rr::lower`'s `PLACE`): a place where a node goes, taken apart again by
+        // `place_path` and `place_line`.
+        "place" => (vec![Some(Name), Some(Int)], Some(Domain::Node)),
+        "place_path" => (vec![Some(Domain::Node)], Some(Name)),
+        "place_line" => (vec![Some(Domain::Node)], Some(Int)),
         f if let Some((_, args, ret)) = crate::code_rule_dsl::logic::strings::functions::signature(f) => {
             let domain = |k: &crate::code_rule_dsl::logic::strings::functions::Kind| {
                 Some(if *k == crate::code_rule_dsl::logic::strings::functions::Kind::Text { Name } else { Int })

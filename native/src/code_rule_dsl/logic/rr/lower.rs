@@ -29,7 +29,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::syntax::{Head, Item, Lit, Statement, Term as STerm};
+use super::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
 use crate::code_rule_dsl::logic::strings::SET;
 
@@ -84,8 +84,11 @@ struct Lowerer {
     lattices: BTreeMap<String, (String, String)>,
     /// Relations given as a kind set.
     sets: BTreeSet<String>,
-    /// `.violation`s: (relation, columns, the column holding the code).
-    violations: Vec<(String, usize, Option<usize>)>,
+    /// `.violation`s, as `findings` makes their findings.
+    violations: Vec<Violation>,
+    /// The columns declared `span` or `loc` (both are `node` to the engine), and which: what `origins` reads of
+    /// relations with no rules.
+    locs: BTreeMap<(String, usize), String>,
     next: usize,
     /// The literals beside the one being lowered, in its conjunction and those enclosing it: what binds an
     /// aggregate's shared variables (`aggregate`).
@@ -129,7 +132,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             },
             Item::Policy(document) => l.prog.policies.push(document),
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
-            Item::Violation { name, cols, code, tag, .. } => l.violation(name, cols, code, tag).map_err(at)?,
+            Item::Violation { name, cols, code, tag, suppress, fixes, .. } => l.violation(name, cols, code, tag, suppress, fixes, line).map_err(at)?,
             Item::Clause { heads, body, edits } => {
                 if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
                     for (rel, row) in rows {
@@ -151,7 +154,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             e => e,
         })?;
     }
-    l.findings();
+    l.findings()?;
     l.projections();
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
@@ -200,6 +203,9 @@ impl Lowerer {
         let mut out = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
             let Some(lattice) = t.strip_suffix("<>") else {
+                if matches!(t.as_str(), "span" | "loc") {
+                    self.locs.insert((name.clone(), i), t.clone());
+                }
                 out.push((c.clone(), ty(t)));
                 continue;
             };
@@ -247,31 +253,52 @@ impl Lowerer {
         }
     }
 
-    /// `.violation V(at, …)`: V is an output relation, and each of its rows is a finding (`findings`).
-    fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<String>, tag: Option<String>) -> Result<(), Error> {
+    /// `.violation V(at, …)`: V is an output relation, and each of its rows is a finding (`findings`). Its
+    /// `suppress` and `fix` lines are settings of the findings layer, as `.mode` is: `suppress V TOOL "rule", …
+    /// [over {c}]` and `fix V [safe] F "title"`.
+    #[allow(clippy::too_many_arguments)]
+    fn violation(&mut self, name: String, cols: Vec<(String, String)>, code: Option<Code>, tag: Option<String>, suppress: Vec<Suppress>, fixes: Vec<Fix>, line: usize) -> Result<(), Error> {
         let Some((_, at)) = cols.first() else { return Err(Error::Syntax(format!(".violation {name} has no `at` column"))) };
-        if at != "node" {
-            return not_yet(format!(".violation {name} at a {at} (only at a node)"));
+        if !matches!(at.as_str(), "node" | "span" | "loc") {
+            return Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span or a loc, not a {at}")));
         }
+        let at = at.clone();
         // `tag {t}` keeps findings at one place apart; the engine's findings are keyed by place and code, so
         // it is checked and not carried.
-        for c in [&code, &tag].into_iter().flatten() {
+        let column = match &code {
+            Some(Code::Column(c)) => Some(c),
+            _ => None,
+        };
+        for c in [column, tag.as_ref()].into_iter().flatten().chain(suppress.iter().filter_map(|s| s.over.as_ref())) {
             if !cols.iter().any(|(n, _)| n == c) {
                 return Err(Error::Syntax(format!(".violation {name}: no column {c}")));
             }
         }
-        let code = code.map(|c| cols.iter().position(|(n, _)| *n == c).expect("a column"));
-        self.violations.push((name.clone(), cols.len(), code));
+        let code = match code {
+            Some(Code::Column(c)) => FindingCode::Column(cols.iter().position(|(n, _)| *n == c).expect("a column")),
+            Some(Code::Const(c)) => FindingCode::Const(c),
+            None => FindingCode::Const(name.clone()),
+        };
+        for s in suppress {
+            let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
+            self.prog.settings.push(("suppress".to_owned(), format!("{name} {} {}{over}", s.tool, s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", "))));
+        }
+        for f in fixes {
+            self.prog.settings.push(("fix".to_owned(), format!("{name} {}{} {}", if f.safe { "safe " } else { "" }, f.name, quote(&f.title))));
+        }
+        self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, at, line });
         self.decl(name.clone(), cols, &[])?;
         self.prog.outputs.push(name);
         Ok(())
     }
 
-    /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
-    /// column's line (the engine's findings relation, as the converter's programs give it).
-    fn findings(&mut self) {
+    /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V (the engine's
+    /// findings relation, as the converter's programs give it). A node `at` is found at its document's path and its
+    /// line; a `@place(path, line)` at that path and line (`PLACE`). A `span` or `loc` column whose values can be
+    /// anything else (a regex capture's span, a token: spans the engine does not make) is refused by name.
+    fn findings(&mut self) -> Result<(), Error> {
         if self.violations.is_empty() {
-            return;
+            return Ok(());
         }
         let policy = self
             .prog
@@ -284,20 +311,85 @@ impl Lowerer {
         self.prog.decls.insert("violation".to_owned(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
         self.prog.outputs.retain(|o| o != "violation");
         self.prog.outputs.push("violation".to_owned());
+        // Without a `@place` or a `span`/`loc` at, every finding is at a node.
+        let places = self.violations.iter().any(|v| v.at != "node") || self.prog.rules.iter().any(|r| r.head.args.iter().chain(r.body.iter().flat_map(literal_terms)).any(has_place));
+        let origins = if places { self.origins() } else { BTreeMap::new() };
         let v = |s: &str| Term::Var(s.to_owned());
-        for (name, arity, code) in std::mem::take(&mut self.violations) {
-            let cols: Vec<Term> = (0..arity).map(|i| if i == 0 || Some(i) == code { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
-            let code = code.map_or_else(|| Term::Str(name.clone()), |i| v(&format!("rr_v{i}")));
+        for Violation { name, arity, code, at, line } in std::mem::take(&mut self.violations) {
+            let origin = origins.get(&(name.clone(), 0)).cloned().unwrap_or_default();
+            if at != "node" && let Some(why) = &origin.other {
+                return Err(Error::Syntax(format!("line {line}: not lowered yet: .violation {name} at a {at} that can be a span the engine does not make ({why})")));
+            }
+            let code_col = match &code {
+                FindingCode::Column(i) => Some(*i),
+                FindingCode::Const(_) => None,
+            };
+            let cols: Vec<Term> = (0..arity).map(|i| if i == 0 || Some(i) == code_col { v(&format!("rr_v{i}")) } else { Term::Wild }).collect();
+            let code = match code {
+                FindingCode::Column(i) => v(&format!("rr_v{i}")),
+                FindingCode::Const(c) => Term::Str(c),
+            };
             let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned(), args, neg: false, gated: false });
-            self.prog.rules.push(Rule {
-                head: Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(name.clone()), code, v("rr_p"), v("rr_l")], neg: false, gated: false },
-                body: vec![
-                    atom(&name, cols),
-                    atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]),
-                    atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]),
-                    atom("line", vec![v("rr_v0"), v("rr_l")]),
-                ],
-            });
+            let head = |path: Term, line: Term| Atom { rel: "violation".to_owned(), args: vec![Term::Str(policy.clone()), Term::Str(name.clone()), code.clone(), path, line], neg: false, gated: false };
+            if at == "node" || origin.node {
+                self.prog.rules.push(Rule {
+                    head: head(v("rr_p"), v("rr_l")),
+                    body: vec![
+                        atom(&name, cols.clone()),
+                        atom("node", vec![v("rr_d"), v("rr_v0"), Term::Wild, Term::Wild, Term::Wild]),
+                        atom("doc", vec![v("rr_d"), v("rr_p"), Term::Wild]),
+                        atom("line", vec![v("rr_v0"), v("rr_l")]),
+                    ],
+                });
+            }
+            if origin.place {
+                let of = |f: &str| Term::Call(f.to_owned(), vec![v("rr_v0")]);
+                self.prog.rules.push(Rule {
+                    head: head(of(PLACE_PATH), of(PLACE_LINE)),
+                    body: vec![atom(&name, cols), Literal::Cmp { l: v("rr_v0"), op: "<", r: Term::Int(UNSET) }],
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// What each column of a derived relation can hold, of the kinds a `loc` has: nodes, `@place`s, and anything
+    /// else (with what made it). A rule's variable holds what every positive literal binding it allows (the
+    /// meet); a relation's column what any rule's head puts there (the join), to a fixpoint. A relation with no
+    /// rules holds what its declared type says: a `node` column nodes, a `span` column spans, a `loc` either.
+    fn origins(&self) -> BTreeMap<(String, usize), Origin> {
+        let derived: BTreeSet<&str> = self.prog.rules.iter().map(|r| r.head.rel.as_str()).chain(self.prog.facts.keys().map(String::as_str)).collect();
+        let mut map: BTreeMap<(String, usize), Origin> = BTreeMap::new();
+        for (rel, rows) in &self.prog.facts {
+            for c in rows.iter().flat_map(|row| 0..row.len()) {
+                map.entry((rel.clone(), c)).or_default().join(&Origin::other(format!("a fact of {rel}")));
+            }
+        }
+        let base = |rel: &str, c: usize| -> Origin {
+            match self.locs.get(&(rel.to_owned(), c)).map(String::as_str) {
+                Some("span") => Origin::other(format!("{rel}, a span")),
+                Some(_) => Origin { node: true, ..Origin::other(format!("{rel}, a node or a span")) },
+                None => match self.prog.decls.get(rel).and_then(|cols| cols.get(c)) {
+                    Some((_, t)) if t == "node" => Origin { node: true, ..Origin::default() },
+                    Some((_, t)) => Origin::other(format!("a {t} of {rel}")),
+                    None if rel.starts_with(AXIS) => Origin { node: true, ..Origin::default() },
+                    None => Origin::other(format!("{rel}, not declared")),
+                },
+            }
+        };
+        loop {
+            let mut changed = false;
+            for rule in &self.prog.rules {
+                let column = |rel: &str, c: usize| if derived.contains(rel) { map.get(&(rel.to_owned(), c)).cloned().unwrap_or_default() } else { base(rel, c) };
+                let vars = rule_origins(&rule.body, &column);
+                let heads: Vec<Origin> = rule.head.args.iter().map(|t| term_origin(t, &vars).unwrap_or_else(|| Origin::other("an unbound variable".to_owned()))).collect();
+                for (c, o) in heads.into_iter().enumerate() {
+                    changed |= map.entry((rule.head.rel.clone(), c)).or_default().join(&o);
+                }
+            }
+            if !changed {
+                return map;
+            }
         }
     }
 
@@ -1060,4 +1152,160 @@ pub(super) fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
         out.push(literal);
     }
     out
+}
+
+// ---- violations ----
+
+/// A `.violation`, as `Lowerer::findings` makes its findings: its relation and arity, its code, the type of its
+/// `at` column (`node`, `span` or `loc`) and its line.
+struct Violation {
+    name: String,
+    arity: usize,
+    code: FindingCode,
+    at: String,
+    line: usize,
+}
+
+/// A finding's code: a column of the violation's row (`code {c}`), or a constant (`code "X"`, or the relation's name).
+enum FindingCode {
+    Column(usize),
+    Const(String),
+}
+
+/// `@place(path, line)` (`core.rr`): a place with no node, as a `loc` value: `-2 - (path << 32 | line)`, `path` the
+/// path's symbol (its atom) and `0 <= line < 2^32`, so no node id (`d << 32 | index`, never negative) and not `unset`
+/// (-1). `@place_path(x)` and `@place_line(x)` take it apart; `plan`'s SQL computes all three, and the native set
+/// engine leaves rules that call them to SQL. A place with no valid line is `unset`, which has no finding.
+pub(super) const PLACE: &str = "place";
+pub(super) const PLACE_PATH: &str = "place_path";
+pub(super) const PLACE_LINE: &str = "place_line";
+
+/// What a `loc` value can be (`Lowerer::origins`): a node, a `@place`, or anything else (`other`, with what made
+/// it: a regex capture, a token, a number).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Origin {
+    node: bool,
+    place: bool,
+    other: Option<String>,
+}
+
+impl Origin {
+    fn node() -> Self {
+        Origin { node: true, ..Origin::default() }
+    }
+
+    fn other(why: String) -> Self {
+        Origin { other: Some(why), ..Origin::default() }
+    }
+
+    /// What either can hold; whether that is more than `self` held.
+    fn join(&mut self, o: &Origin) -> bool {
+        let before = (self.node, self.place, self.other.is_some());
+        self.node |= o.node;
+        self.place |= o.place;
+        if self.other.is_none() {
+            self.other.clone_from(&o.other);
+        }
+        before != (self.node, self.place, self.other.is_some())
+    }
+
+    /// What both can hold.
+    fn meet(&self, o: &Origin) -> Origin {
+        Origin { node: self.node && o.node, place: self.place && o.place, other: self.other.clone().filter(|_| o.other.is_some()) }
+    }
+}
+
+fn has_place(t: &Term) -> bool {
+    match t {
+        Term::Call(f, args) => f == PLACE || args.iter().any(has_place),
+        _ => false,
+    }
+}
+
+fn literal_terms(l: &Literal) -> Vec<&Term> {
+    match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => a.args.iter().collect(),
+        Literal::Cmp { l, r, .. } => vec![l, r],
+        _ => Vec::new(),
+    }
+}
+
+/// What a term holds, given its rule's variables' (`rule_origins`); `None` for a variable nothing binds yet.
+fn term_origin(t: &Term, vars: &BTreeMap<String, Origin>) -> Option<Origin> {
+    Some(match t {
+        Term::Var(v) => return vars.get(v).cloned(),
+        Term::Wild => return None,
+        Term::Call(f, _) if f == PLACE => Origin { place: true, ..Origin::default() },
+        Term::Call(f, _) if f == "rx_group" => Origin::other("a regex capture".to_owned()),
+        Term::Call(f, _) => Origin::other(format!("a value of @{f}")),
+        Term::Int(UNSET) => Origin::default(),
+        Term::Int(_) | Term::Str(_) | Term::Top => Origin::other("a constant".to_owned()),
+    })
+}
+
+/// What each variable of a rule body can hold, `column(rel, c)` giving what a relation's column holds: the meet of
+/// every positive literal binding it, then of the equalities `x = t`; a variable only an order comparison with a node
+/// binds (`within`'s `n > a, n <= a + size`, a range of the tape's ids) is a node.
+fn rule_origins(body: &[Literal], column: &dyn Fn(&str, usize) -> Origin) -> BTreeMap<String, Origin> {
+    fn meet(vars: &mut BTreeMap<String, Origin>, v: &str, o: Origin) {
+        match vars.get_mut(v) {
+            Some(e) => *e = e.meet(&o),
+            None => {
+                vars.insert(v.to_owned(), o);
+            }
+        }
+    }
+    let mut direct = BTreeMap::new();
+    for l in body {
+        match l {
+            Literal::Atom(a) if !a.neg => {
+                for (c, t) in a.args.iter().enumerate() {
+                    if let Term::Var(v) = t {
+                        meet(&mut direct, v, column(&a.rel, c));
+                    }
+                }
+            }
+            Literal::Agg { var, .. } => meet(&mut direct, var, Origin::other("an aggregate".to_owned())),
+            Literal::Nearest { n, a, .. } => {
+                meet(&mut direct, n, Origin::node());
+                meet(&mut direct, a, Origin::node());
+            }
+            Literal::Ast { document, node, captures, .. } => {
+                meet(&mut direct, document, Origin::other("a document".to_owned()));
+                meet(&mut direct, node, Origin::node());
+                captures.iter().for_each(|(_, c)| meet(&mut direct, c, Origin::node()));
+            }
+            _ => {}
+        }
+    }
+    let mut vars = direct.clone();
+    for _ in 0..=body.len() {
+        let mut next = direct.clone();
+        for l in body {
+            let Literal::Cmp { l, op: "=", r } = l else { continue };
+            for (x, t) in [(l, r), (r, l)] {
+                if let Term::Var(x) = x
+                    && let Some(o) = term_origin(t, &vars)
+                {
+                    meet(&mut next, x, o);
+                }
+            }
+        }
+        for l in body {
+            let Literal::Cmp { l, op: "<" | "<=" | ">" | ">=", r } = l else { continue };
+            for (x, y) in [(l, r), (r, l)] {
+                if let (Term::Var(x), Term::Var(y)) = (x, y)
+                    && !next.contains_key(x)
+                    && vars.get(y) == Some(&Origin::node())
+                {
+                    next.insert(x.clone(), Origin::node());
+                }
+            }
+        }
+        if next == vars {
+            break;
+        }
+        vars = next;
+    }
+    vars
 }

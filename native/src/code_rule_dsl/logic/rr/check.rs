@@ -220,7 +220,7 @@ pub(super) fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
     statements
         .iter()
         .flat_map(|(item, _)| match item {
-            Item::Violation { fixes, .. } => fixes.clone(),
+            Item::Violation { fixes, .. } => fixes.iter().map(|f| f.name.clone()).collect(),
             Item::Edit { name } => vec![name.clone()],
             _ => Vec::new(),
         })

@@ -792,3 +792,41 @@ pre(m) :- pre(q), q = @dot(m, x), x != "".
     assert_eq!(got["before"], "a.b.c\ta\tb.c\nx\t\tx\n");
     assert_eq!(got["pre"], "\n.y\na\na.b\na.b.c\nx\n");
 }
+
+// ---- violations ----
+
+/// A `.violation` at a `loc` (`core.rr`): a node's finding is at its document's path and line; a `@place(path,
+/// line)`'s at that path and line, line 0 for the file itself and a path that need not exist; a place passed through
+/// another relation keeps its path and line.
+#[test]
+fn violations_at_places_are_found_at_their_path_and_line() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("places");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "f()\n\ng()\n").unwrap();
+    let program = r#"
+.policy "t:places" revision 1
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl line(n: node, l: number)
+.input node, doc, line
+.violation LONG(at: loc, what: symbol) code "FILE_LENGTH" "{what}"
+    suppress ruff "E501"
+LONG(n, "call") :- node(_, n, "call", _, _).
+LONG(@place(p, 0), "file") :- doc(_, p, _).
+LONG(@place("missing.json", 3), "missing") :- doc(_, _, _).
+.decl spot(d: number, at: loc)
+spot(d, @place(p, 7)) :- doc(d, p, _).
+.violation PIN(at: span) "pin"
+PIN(s) :- spot(_, s).
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(
+        read("violation"),
+        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\nt:places\tPIN\tPIN\ta.py\t7\n"
+    );
+    // The violation's own rows show a place as one.
+    assert_eq!(read("PIN"), "@place(\"a.py\", 7)\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
