@@ -52,7 +52,7 @@ Confirm the pack is ready and your accounts can publish it.
 - **AWS:** `aws sso login`, or any AWS credentials that can read `s3://nera-test-fixtures/rerail/archives/`. The
   publish gate validates the pack on its test data.
 - **npm:** a token that bypasses 2FA cannot set up a trusted publisher.
-- **GitHub:** the publish script creates the release tag.
+- **GitHub:** the tag script creates the release tag.
 
 </details>
 
@@ -72,7 +72,7 @@ npm run fixtures:pull -- --pack <id>   # a ported pack's test data, which the pu
 <details>
 <summary>Why `main` and a clean checkout</summary>
 
-The publish script tags HEAD as `@neralabs/rerail-pack-<id>@<version>`. It refuses a checkout with changes, or a
+The tag script tags HEAD as `@neralabs/rerail-pack-<id>@<version>`. It refuses a checkout with changes, or a
 commit that isn't on GitHub. Don't publish from a feature branch: a squash merge drops the branch's commits, so the
 tag would point at a commit `main` never had.
 
@@ -89,11 +89,12 @@ node --import tsx scripts/release/packs-pack.ts --out /tmp/rule-packs <id> [<id>
 It runs the release workflow's validation, then writes each tarball and a `manifest.json` to `/tmp/rule-packs`. On
 failure, fix the pack in a pull request to `main` and restart at step 1.
 
-## 3. Publish
+## 3. Tag and publish
 
-Publish the tarballs to npm and tag each release.
+Tag each release, then publish the tarballs to npm, as the release workflow does.
 
 ```sh
+node scripts/release/packs-tag.mjs /tmp/rule-packs
 node scripts/release/packs-publish.mjs /tmp/rule-packs
 ```
 
@@ -101,12 +102,13 @@ Approve the "Authenticate your account at: <url>" link in the browser. One appro
 Reruns after a failure are safe.
 
 <details>
-<summary>What the script does, and how reruns work</summary>
+<summary>What the scripts do, and how reruns work</summary>
 
-- **Each pack** is published public under the `latest` dist-tag and checked with an anonymous read. Then `next` is
-  pointed at it (`next` never trails `latest`) and the release tag is pushed to GitHub.
-- **On a rerun,** a version that's already tagged is skipped. A version npm already has but with no tag is checked,
-  has its `next` raised and is tagged, not published again.
+- **The tag script** pushes each release tag to GitHub. On a rerun, a version already tagged is skipped.
+- **The publish script** publishes each pack public under the `latest` dist-tag, then points `next` at it (`next`
+  never trails `latest`). It waits on nothing npm does. On a rerun, a version npm already has has its `next` raised,
+  not published again.
+- Once tagged, a version's publish is only ever re-run, never replanned: if the publish fails, run it again.
 
 </details>
 

@@ -16,6 +16,7 @@ export const REGISTRY: string;
 export const PUBLISH_TAG: string;
 export const HELD_PUBLISH_TAG: string;
 export function releaseTag(name: string, version: string): string;
+export function heldPackNames(held?: string, packs?: readonly ReleasePack[]): string[];
 export function releaseTags(): string[];
 export function createReleaseTag(tag: string, sha: string): string;
 export function isPrivatePack(manifest: unknown, where?: string): boolean;
@@ -23,15 +24,18 @@ export function listPacks(packsDirectory?: string): ReleasePack[];
 export function publishedPacks(packsDirectory?: string): ReleasePack[];
 export function assertCommitOnGitHub(sha: string): void;
 export function alreadyOnRegistry(output: string): boolean;
+export function tagPacks(
+  manifest: readonly { name: string; version: string }[],
+  tags: readonly string[],
+  steps: { tag(tag: string): void; log(line: string): void },
+  held?: readonly string[],
+): { name: string; version: string; distTag: string }[];
 export function releasePacks(
   manifest: readonly { name: string; version: string; file: string }[],
-  tags: readonly string[],
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
-    assertPublic(name: string, version: string): Promise<void>;
     readNext(name: string): Promise<string | null>;
     distTag(name: string, version: string, tag: string): void;
-    tag(tag: string): void;
     log(line: string): void;
   },
   held?: readonly string[],

@@ -866,18 +866,20 @@ The publish gate is:
   contract gates publishing with no workflow change;
 - `npm pack`, and a check that the tarball holds only `package.json` and what `files` publishes, never validation
   material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
-- `npm publish --access public --tag latest` with npm trusted publishing (the `release` environment, so a reviewer
-  approves the run); a check that an anonymous reader gets the version; `next` moved up to it; the tag.
+- the tag, made as soon as the two checks above pass and before anything is published, so a pack's release never
+  waits on npm; then, side by side, its GitHub Release and `npm publish --access public --tag latest` with npm trusted
+  publishing (the `release` environment, so a reviewer approves the run), with `next` moved up to it.
 
 Set-up and `rerail packs add <id>` fetch under `latest` (on the default update channel), so the version is used from
 then on. `next` never trails `latest`: it moves to the version too unless already at a newer one, so the `next`
 channel gets the release. A pack held at an older `latest` (step 3) is published under `next` instead and stays held.
 
-Packs publish one by one, and a failed run can be rerun. A tagged version is skipped. One the registry has without its
-tag (a run that failed after publishing) is checked, has `next` moved up and is tagged, not republished. The
-**Published dist-tags** job lists each published pack's dist-tags in the run summary, and fails if `latest` (`next` for
-a held pack) is not the version just published or `next` is older than `latest`. A pull request touching packs runs
-the gate and packing as a dry run.
+Packs publish one by one, and a failed publish is re-run: the tags and Releases stand, and the re-run publishes the
+same tagged versions. One the registry already has counts as published, and has `next` moved up. The **Published
+dist-tags** job lists each published pack's dist-tags in the run summary, read with no npm login. It fails if a pack
+can't be read that way (it isn't public), if `latest` (`next` for a held pack) is not the version just published, or
+if `next` is older than `latest`. It gates nothing. A pull request touching packs runs the gate and packing as a dry
+run.
 
 </details>
 
@@ -910,9 +912,9 @@ summaries.
   hash their entries carry.
 - Notes past GitHub's 125,000 characters go out as the section's lead and a link to the changelog at the tag
   (`fittedNotes`).
-- Once the publish job has tagged them, the **GitHub Releases** job makes one per published version
-  (`scripts/release/github-release.mjs`), beside **Published dist-tags** rather than after it, so npm lagging on the
-  dist-tags cannot hold back or skip a Release. Rerun, it rewrites an existing Release's notes and flags.
+- Once the **Tag each release** job has tagged them, the **GitHub Releases** job makes one per tagged version
+  (`scripts/release/github-release.mjs`), beside the npm publish rather than after it, so npm can neither hold back
+  nor skip a Release. Rerun, it rewrites an existing Release's notes and flags.
 - A pack's Release is never the repository's latest release, which is core's. It is a pre-release only for a held pack
   published under `next`.
 - Releases missing for older tags, or from a run that failed before its Release, are made by hand with the script's

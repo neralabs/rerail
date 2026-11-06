@@ -1,6 +1,8 @@
 // Shared by the pack release scripts in this directory (docs/pack-format.md, "Versioning and release"). Each
 // released pack version is marked by the git tag `<npm name>@<version>`, changesets' own tag form: a version without
-// its tag has not been published yet.
+// its tag has not been released yet. The tag comes first and npm after, so a release never waits on npm: a version
+// tagged but not on npm yet is published again by re-running its run's publish, which npm's refusal to publish over
+// a version it has makes safe.
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -17,8 +19,14 @@ export const PUBLISH_TAG = "latest";
 /** Where a pack held at an older `latest` (put back on purpose) is published instead, so the hold stays. */
 export const HELD_PUBLISH_TAG = NEXT_TAG;
 
-/** The git tag that marks `name`'s `version` as published. */
+/** The git tag that marks `name`'s `version` as released. */
 export const releaseTag = (name, version) => `${name}@${version}`;
+
+/** The npm names of the packs whose ids `held` lists (space-separated, as packs-plan.mjs writes them). */
+export function heldPackNames(held = "", packs = listPacks()) {
+  const ids = held.split(/\s+/u).filter((id) => id !== "");
+  return packs.filter((pack) => ids.includes(pack.id)).map((pack) => pack.name);
+}
 
 /** `gh api` against this repository (`GH_REPO`, else the checkout's remote), its output as text. */
 const ghApi = (args) => execFileSync("gh", ["api", ...args], { cwd: ROOT, encoding: "utf8" });
@@ -45,35 +53,48 @@ export function assertCommitOnGitHub(sha) {
 /** Whether npm publish's output says the registry already has this version. */
 export const alreadyOnRegistry = (output) => /cannot publish over the previously published versions?|EPUBLISHCONFLICT/iu.test(output);
 
+/** The dist-tag `name` is published under: `next` for a pack in `held` (held at an older `latest`), else `latest`. */
+const publishTag = (name, held) => (held.includes(name) ? HELD_PUBLISH_TAG : PUBLISH_TAG);
+
 /**
- * Releases each `{ name, version, file }` of a packs-pack.ts manifest, so that any failed run can be run again:
- * a version whose tag exists is skipped; one the registry already has without its tag (a run that failed after
- * publishing) is not published again, only taken through the steps after the publish. A pack named in `held` (held
- * at an older `latest`) is published under `next`, every other under `latest`, and then `next` is pointed at it too
- * unless `next` is already at a newer version (raiseNext in dist-tags.mjs), so `next` never trails `latest`. `steps`
- * does the I/O: `publish(file, distTag)` returns `{ ok, output }`, `readNext(name)` resolves to `next` or null, and
- * `assertPublic(name, version)`, `distTag(name, version, tag)` and `tag(tag)` throw on failure. The release tag comes
- * last, so a run that fails before it takes that version through every step again. Returns each
- * `{ name, version, distTag }` this run released.
+ * Tags each `{ name, version }` of a packs-pack.ts manifest `<name>@<version>` with `steps.tag(tag)`, before anything
+ * is published, skipping a tag in `tags` (one that exists already), so a re-run tags only what the first run did not.
+ * Returns every entry as `{ name, version, distTag }`, the dist-tag it is published under (publishTag), for its
+ * GitHub Release, which a re-run rewrites.
  */
-export async function releasePacks(manifest, tags, steps, held = []) {
+export function tagPacks(manifest, tags, steps, held = []) {
   const existing = new Set(tags);
-  const holding = new Set(held);
-  const released = [];
-  for (const { name, version, file } of manifest) {
+  return manifest.map(({ name, version }) => {
     const tag = releaseTag(name, version);
     if (existing.has(tag)) {
-      steps.log(`${tag} is already released; skipped`);
-      continue;
+      steps.log(`${tag} is tagged already`);
+    } else {
+      steps.tag(tag);
+      steps.log(`tagged ${tag}`);
     }
-    const distTag = holding.has(name) ? HELD_PUBLISH_TAG : PUBLISH_TAG;
+    return { name, version, distTag: publishTag(name, held) };
+  });
+}
+
+/**
+ * Publishes each `{ name, version, file }` of a packs-pack.ts manifest, tagged already (tagPacks), waiting on nothing
+ * npm does after a publish, so any failed run can be run again: a version the registry already has is not published
+ * again, only taken through the steps after the publish. A pack named in `held` (held at an older `latest`) is
+ * published under `next`, every other under `latest`, and then `next` is pointed at it too unless `next` is already
+ * at a newer version (raiseNext in dist-tags.mjs), so `next` never trails `latest`. `steps` does the I/O:
+ * `publish(file, distTag)` returns `{ ok, output }`, `readNext(name)` resolves to `next` or null, and
+ * `distTag(name, version, tag)` throws on failure. Returns each `{ name, version, distTag }` this run released.
+ */
+export async function releasePacks(manifest, steps, held = []) {
+  const released = [];
+  for (const { name, version, file } of manifest) {
+    const spec = releaseTag(name, version);
+    const distTag = publishTag(name, held);
     const published = steps.publish(file, distTag);
-    if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${tag} failed`);
-    if (!published.ok) steps.log(`${tag} is already on the registry without its tag; checking and tagging it`);
-    await steps.assertPublic(name, version);
+    if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${spec} failed`);
+    if (!published.ok) steps.log(`${spec} is already on the registry; not published again`);
     if (distTag === PUBLISH_TAG) steps.log(await raiseNext(name, version, steps));
-    steps.tag(tag);
-    steps.log(`released ${tag} under ${distTag}${holding.has(name) ? ` (held at an older ${PUBLISH_TAG})` : ""}`);
+    steps.log(`released ${spec} under ${distTag}${distTag === PUBLISH_TAG ? "" : ` (held at an older ${PUBLISH_TAG})`}`);
     released.push({ name, version, distTag });
   }
   return released;
@@ -242,9 +263,10 @@ export function missingChangesets(changed, changesets, packs) {
 }
 
 /**
- * Which packs a release run publishes, given the git tags that exist. A pack whose version has its tag is already
- * published. One with no tag for its package at all has never been published, and its first publish is made by hand
- * (trusted publishing can only be configured for a package that exists): it is `first`, not `publish`.
+ * Which packs a release run tags and publishes, given the git tags that exist. A pack whose version has its tag is
+ * already released: if its publish failed, re-running that run's publish publishes it. One with no tag for its package
+ * at all has never been published, and its first publish is made by hand (trusted publishing can only be configured
+ * for a package that exists): it is `first`, not `publish`.
  */
 export function planPacks(packs, tags) {
   const existing = new Set(tags);

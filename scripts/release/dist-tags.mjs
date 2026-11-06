@@ -1,7 +1,8 @@
 // Reading npm dist-tags, and keeping `next` from trailing `latest`, for the release scripts in this directory. Core and
-// the packs are published with `--access public`, so an anonymous reader gets their dist-tags: the publish, promote
-// and put-back jobs, which hold no read token, read them that way (readPublicDistTags, `npm dist-tag ls`). The packs'
-// plan and read-back jobs still read with NODE_AUTH_TOKEN set to the workflows' NPM_PACKS_READ_TOKEN in ~/.npmrc.
+// the packs are published with `--access public`, so an anonymous reader gets their dist-tags: the publish, promote,
+// put-back and pack read-back jobs, which hold no read token, read them that way (readPublicDistTags, `npm dist-tag
+// ls`), so the pack read-back also proves each pack public. The packs' plan job still reads with NODE_AUTH_TOKEN set
+// to the workflows' NPM_PACKS_READ_TOKEN in ~/.npmrc.
 // Nothing here needs node_modules: the publish jobs install none.
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";

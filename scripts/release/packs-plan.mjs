@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Which packs a release run publishes: every published pack (not `"private": true`) whose package.json version has no
-// release tag on GitHub yet.
+// Which packs a release run tags and publishes: every published pack (not `"private": true`) whose package.json
+// version has no release tag on GitHub yet. A tagged version whose publish failed is published by re-running that run.
 // A pack never published at all is reported as needing its first publish by hand (docs/publishing-a-new-pack.md) and left out.
 // Of those published, a pack held at an older `latest` (heldPacks in packs.mjs) is published under `next`, so the hold
 // stays; reading that from npm needs NODE_AUTH_TOKEN with a read token, and a pack whose dist-tags cannot be read
