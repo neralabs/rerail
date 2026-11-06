@@ -5,8 +5,9 @@
 // is a module or a function_definition whose text starts with `def`, i.e. not `async def`; the stop node is tested
 // and ends the walk, and the stop rule is `scope` itself) `has` (stopBy `scope`: not through a nested such def) an
 // assignment ASSIGN `annotation = <x>.annotation` with
-//   - layout after CALL (min 0 breaks): the capture CALL lies wholly after ASSIGN, CALL.start >= ASSIGN.end
-//     (matcher/layout.rs `Gap::holds` with `Neighbour::Capture`; zero breaks always holds);
+//   - layout after CALL (min 0 breaks): the capture CALL lies wholly after ASSIGN, CALL.start >= ASSIGN.end. This is
+//     exact: matcher/layout.rs `Gap::holds` keeps a `Neighbour::Capture` only on its side of the node, a capture
+//     takes no `edge` (compile/layout.rs), so a capture elsewhere fails the gap, and `min: 0` breaks always holds;
 //   - not inside (stopBy scope) a scope that has (stopBy scope) a guard call `isinstance(annotation, $TYPE[, ...])`
 //     whose argument list has a direct child equal to $TYPE that is a forwardref-type, laid out after ASSIGN
 //     (guard.start >= ASSIGN.end) and before CALL (CALL.start >= guard.end).
