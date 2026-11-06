@@ -8,16 +8,16 @@
 // other def starts).
 // Options: `sourceGate` gates on the module's text matching `_async|Transaction|Connection` (`(?s).*` when false);
 // the async def's own name ends `_async`, so the gate always holds: left out. `oracleAnalyzer` is read by no clause.
-// Approximation: an annotation written as a string is read through `str` (the literal's content, escapes as
-// written); a concatenated_string annotation has no `str` row, so it matches nothing here. The exact form, over
-// W's semantic value, is in data-layer-sync-async-signatures.pending.rr (awaiting `value`).
+// A string annotation (`string` or `concatenated_string`) is read through W's `value` as the policy's
+// `value: {regex: ^(?:…)$}` reads it: a str value (`value_type_of(n, "str")`), the whole value one of the names.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl node_text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -70,11 +70,14 @@ sas_txn_name("SchemaTransaction"). sas_txn_name("Transaction"). sas_txn_name("Wr
 sas_any_name(s) :- sas_conn_name(s).
 sas_any_name(s) :- sas_txn_name(s).
 
-// A name leaf: an identifier, `x.NAME`, or a string literal whose value is the name.
+// A name leaf: an identifier, `x.NAME`, or a string or concatenated_string whose str value is the name.
 .decl sas_leaf(n: node, s: symbol)
 sas_leaf(n, s) :- node(_, n, "identifier", _, _), text(n, s).
 sas_leaf(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s).
-sas_leaf(n, s) :- node(_, n, "string", _, _), str(n, s).
+sas_leaf(n, s) :- sas_string_kind(n), value(n, s), value_type_of(n, "str").
+.decl sas_string_kind(n: node)
+sas_string_kind(n) :- node(_, n, "string", _, _).
+sas_string_kind(n) :- node(_, n, "concatenated_string", _, _).
 // generic_type's first named child.
 .decl sas_first_child(g: node, c: node)
 sas_first_child(g, c) :- node(_, g, "generic_type", _, _), child(g, c, i), !sas_earlier_child(g, i).
