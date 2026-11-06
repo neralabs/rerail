@@ -305,6 +305,23 @@ fn ts_fields(n: Node, f: &mut oracle::Fields) {
     }
 }
 
+/// The fields of one f-string, not those of strings nested in it.
+fn ts_fields_own(n: Node, f: &mut oracle::Fields) {
+    let mut c = n.walk();
+    for ch in n.children(&mut c) {
+        if ch.kind() == "string" {
+            continue;
+        }
+        match ch.kind() {
+            "interpolation" => f.interp.push((ch.start_byte(), ch.end_byte())),
+            "format_expression" => f.fexpr.push((ch.start_byte(), ch.end_byte())),
+            "format_specifier" => f.spec.push((ch.start_byte(), ch.end_byte())),
+            _ => {}
+        }
+        ts_fields_own(ch, f);
+    }
+}
+
 fn mask_fields(o: &Output) -> oracle::Fields {
     let mut f = oracle::Fields::default();
     let get = |n: &str| -> Mask {
@@ -395,16 +412,18 @@ fn fstr(prog: &[Stmt], list: &str) {
             let triple = pre.len() >= 3 && pre[pre.len() - 3..].iter().all(|&b| b == pre[pre.len() - 1]);
             let raw = pre.iter().any(|&b| b == b'r' || b == b'R');
             let mut want = oracle::Fields::default();
-            let mut cc = n.walk();
-            for ch in n.children(&mut cc) {
-                ts_fields(ch, &mut want);
-            }
+            ts_fields_own(n, &mut want);
             want.interp.sort();
             want.fexpr.sort();
             want.spec.sort();
             match oracle::fstring(src, &esc, st.end_byte(), en.start_byte(), triple, raw, 12) {
                 oracle::FOut::Ok(f, _) if f == want => r.oracle_ok += 1,
-                oracle::FOut::Ok(..) | oracle::FOut::Unsettled => r.oracle_bad += 1,
+                o @ (oracle::FOut::Ok(..) | oracle::FOut::Unsettled) => {
+                    r.oracle_bad += 1;
+                    if std::env::var("SHOW_ORACLE").is_ok() {
+                        eprintln!("ORACLE {:?}\n    tree-sitter {want:?}\n    oracle {o:?}", String::from_utf8_lossy(&src[n.byte_range()]));
+                    }
+                }
                 oracle::FOut::Unsupported(w) => *r.oracle_unsup.entry(w).or_default() += 1,
             }
         }

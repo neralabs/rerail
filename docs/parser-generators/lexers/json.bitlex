@@ -147,8 +147,8 @@ error "non-ASCII outside a string" when code & high
 #   breaks    nothing      rule 6  rule 4   rule 3
 
 mask nstart     = wstart & num
-mask after_dot  = fill(prev(dot & num), ~num) & num    # bytes after a '.' in the same token
-mask after_e    = fill(prev(expc & num), ~num) & num   # bytes after an 'e' in the same token
+mask after_dot  = fill(prev(dot & num) & num, ~num)        # bytes after a '.' in the same token
+mask after_e    = fill(prev(expc & num) & num, ~num)       # bytes after an 'e' in the same token
 mask int_first  = (nstart & digit) | (prev(nstart & minus) & num)
 
 # 1. Only digits, '.', 'e', 'E', '+' and '-'.

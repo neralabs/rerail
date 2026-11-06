@@ -363,6 +363,12 @@ impl<'a> Ev<'a> {
                 };
                 changed = changed.or(&cur.xor(m));
             }
+            if std::env::var("BITLEX_TRACE").is_ok_and(|v| label.contains(&v)) {
+                let show = |m: &Mask| m.ones_iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+                for ((name, _), m) in nexts.iter().zip(&next) {
+                    eprintln!("{label} round {r}: next {name} = [{}]", show(m));
+                }
+            }
             if !changed.any() {
                 self.rounds.push((label, r));
                 return Ok(());
@@ -389,7 +395,11 @@ impl<'a> Ev<'a> {
         }
         let n = self.n;
         if n == 0 {
-            return Ok(());
+            // No segments: evaluate once so every name is defined, over no bytes.
+            self.seg = Some(Seg { first: Mask::zeros(0), last: Mask::zeros(0), lane: lanes[0].clone() });
+            let r = self.exec(body);
+            self.seg = None;
+            return r;
         }
         let split = self.mask(split)?;
         let mut first = split.prev(1);
@@ -637,7 +647,7 @@ impl<'a> Ev<'a> {
             Expr::And(a, b) => self.mask(a)?.and(&self.mask(b)?),
             Expr::Or(a, b) => self.mask(a)?.or(&self.mask(b)?),
             Expr::Xor(a, b) => self.mask(a)?.xor(&self.mask(b)?),
-            Expr::Test { target, method, from, to, k, other } => {
+            Expr::Test { target, method, from, to, k, other, arg } => {
                 let vs = self.lookup(target)?;
                 let mut out = Mask::zeros(n);
                 for v in vs {
@@ -672,6 +682,36 @@ impl<'a> Ev<'a> {
                                 let r = o.map(|o| o[i]).unwrap_or(kk);
                                 if ge { c[i] >= r } else { c[i] == r }
                             })
+                        }
+                        (Val::C(c), "frame" | "since") => {
+                            // A stack of the frames open before each byte: its opener is in M
+                            // (frame), or a byte of M has been seen at its own level (since).
+                            let m = self.mask(arg.as_ref().ok_or("frame/since needs a mask")?)?;
+                            let mut out = Mask::zeros(n);
+                            let mut stack: Vec<bool> = vec![];
+                            let mut before = 0i32;
+                            let first = self.seg.as_ref().map(|s| &s.first);
+                            for i in 0..n {
+                                if first.is_some_and(|f| f.get(i)) {
+                                    stack.clear();
+                                    before = 0
+                                }
+                                if stack.last() == Some(&true) {
+                                    out.set(i)
+                                }
+                                let after = c[i];
+                                if after > before {
+                                    stack.push(method == "frame" && m.get(i));
+                                } else if after < before {
+                                    stack.truncate(after.max(0) as usize);
+                                } else if method == "since" && m.get(i) {
+                                    if let Some(t) = stack.last_mut() {
+                                        *t = true
+                                    }
+                                }
+                                before = after;
+                            }
+                            out
                         }
                         _ => return Err(format!("{target}.{method}: wrong kind of value")),
                     };
@@ -774,8 +814,22 @@ impl<'a> Ev<'a> {
                             }
                         }
                     }
+                    "text" => {
+                        let Some(Arg::S(t)) = args.first() else { return Err("text needs a string".into()) };
+                        Mask::from_fn(n, |i| self.src[i..].starts_with(t))
+                    }
                     "aligned" | "head" => {
-                        let (a, k) = (ea(0)?, na(1, 1)?);
+                        let a = ea(0)?;
+                        // head(a, C): the first C bytes of each run, C a count read before the run.
+                        let by_count: Option<&Vec<i32>> = match args.get(1) {
+                            Some(Arg::E(Expr::Name(c))) => match self.vars.get(c) {
+                                Some(Val::C(v)) => Some(v),
+                                _ => None,
+                            },
+                            _ => None,
+                        };
+                        let k = if by_count.is_some() { 0 } else { na(1, 1)? };
+                        let mut lim = k;
                         let mut out = Mask::zeros(n);
                         let first = self.seg.as_ref().map(|s| &s.first);
                         let mut off = 0usize;
@@ -784,11 +838,14 @@ impl<'a> Ev<'a> {
                                 continue;
                             }
                             if i == 0 || !a.get(i - 1) || first.is_some_and(|f| f.get(i)) {
-                                off = 0
+                                off = 0;
+                                if let Some(c) = by_count {
+                                    lim = if i == 0 { 0 } else { c[i - 1].max(0) as usize };
+                                }
                             } else {
                                 off += 1
                             }
-                            let hit = if f == "aligned" { off % k == 0 } else { off < k };
+                            let hit = if f == "aligned" { off % k == 0 } else { off < lim };
                             if hit {
                                 out.set(i)
                             }

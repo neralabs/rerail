@@ -18,6 +18,7 @@ enum Tok {
 pub enum Arg {
     E(Expr),
     N(u64),
+    S(Vec<u8>),
 }
 
 #[derive(Clone, Debug)]
@@ -30,7 +31,8 @@ pub enum Expr {
     Xor(Box<Expr>, Box<Expr>),
     Call(String, Vec<Arg>),
     /// `T.in(A)`, `T.on(A -> B)`, `T.final(A)`, `T.reached(A)`, `T.eq(k|C)`, `T.ge(k)`.
-    Test { target: String, method: String, from: Vec<String>, to: Vec<String>, k: Option<u64>, other: Option<String> },
+    /// `C.frame(M)`, `C.since(M)` for a count `C`.
+    Test { target: String, method: String, from: Vec<String>, to: Vec<String>, k: Option<u64>, other: Option<String>, arg: Option<Box<Expr>> },
 }
 
 #[derive(Clone, Debug)]
@@ -349,12 +351,14 @@ impl P {
             return Ok(Expr::Name(parts.join(".")));
         }
         let last = parts.last().unwrap().clone();
-        if parts.len() > 1 && ["in", "on", "final", "reached", "eq", "ge"].contains(&last.as_str()) {
+        if parts.len() > 1 && ["in", "on", "final", "reached", "eq", "ge", "frame", "since"].contains(&last.as_str()) {
             parts.pop();
             let target = parts.join(".");
             self.want_p("(")?;
-            let (mut from, mut to, mut k, mut other) = (vec![], vec![], None, None);
-            if last == "eq" || last == "ge" {
+            let (mut from, mut to, mut k, mut other, mut arg) = (vec![], vec![], None, None, None);
+            if last == "frame" || last == "since" {
+                arg = Some(Box::new(self.expr()?));
+            } else if last == "eq" || last == "ge" {
                 match self.peek() {
                     Some(Tok::Int(_)) => k = Some(self.int()?),
                     _ => other = Some(self.ident()?),
@@ -366,7 +370,7 @@ impl P {
                 }
             }
             self.want_p(")")?;
-            return Ok(Expr::Test { target, method: last, from, to, k, other });
+            return Ok(Expr::Test { target, method: last, from, to, k, other, arg });
         }
         if parts.len() > 1 {
             return self.err("a test (in, on, final, reached, eq, ge)");
@@ -376,6 +380,7 @@ impl P {
         loop {
             match self.peek() {
                 Some(Tok::Int(_)) => args.push(Arg::N(self.int()?)),
+                Some(Tok::Str(_)) => args.push(Arg::S(self.string()?)),
                 _ => args.push(Arg::E(self.expr()?)),
             }
             if !self.eat_p(",") {
