@@ -5,6 +5,13 @@ import { readBundledCatalog } from "../../../src/engine/index.js";
 import { TenReplay,canonical,readTenOracle } from "../../../conformance/data-layer/batch-ten.js";
 const oracle=readTenOracle("fixtures/host/data-layer-port/batch-10-complete-api.json.gz");
 const checks=["graph_lazy_sql_plan","bounded_composed_graph_paths","graphql_plan_ownership","plan_optimizer_v2","conditional_architecture","schema_introspection_data_paths","matching_architecture","hnsw_architecture","embedding_vector_orchestration","generated_index_sources"];
+it("requires native helper execution for every retained rule-relevant assertion",()=>{
+ const receipt=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-native-assertions.json","utf8"));
+ const ledger=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-assertion-ledger.json","utf8")).cases as Record<string,{kind:string}>;
+ const wanted=Object.keys(ledger).filter(id=>ledger[id]!.kind==="native-helper").sort();
+ expect(wanted).toHaveLength(67);
+ for(const mode of ["snapshot","workspace"])expect(receipt.helperAssertions[mode].nativeCaseIds).toEqual(wanted);
+});
 // The full 2,871-file assertion runs separately in each API, with its receipt below.
 const unique=[...new Map(oracle.records.filter(r=>!r.test.includes("test_current_matching_architecture_is_clean_tdd_red")).map(r=>[JSON.stringify({...r,test:undefined}),r])).values()];
 it("retains unchanged upstream assertions, complete observations and source digests",()=>{
