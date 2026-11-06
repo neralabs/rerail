@@ -1,0 +1,189 @@
+// data-layer-lazy-sql-surface, authored: clause `sql-surface`, the relational stages in Datalog. Source:
+// packs/data-layer/rules/data-layer-lazy-sql-surface.json. Option `entryPoint` (clause `entry`, default
+// `scan_repo`) is read by no stage.
+//
+// The clause is per file (partitionBy file, the `syntax_gate` input: files that parse): every join is within one
+// document. The SQL `nodes` table is the named nodes less comment, string_start, string_content, string_end,
+// escape_sequence and line_continuation; `ordinal` a node's index among its parent's such children, `text` its full
+// source. Here `child` is the named children less comments: the indexes read below (as_pattern,
+// parenthesized_expression, type, type_parameter, generic_type, subscript, union_type, binary_operator) have no
+// string pieces as children; a line_continuation child would shift them (`\` at a line end inside such a node:
+// not modelled). The finding's code is the stage's `issue` column (the message), its line the row's start node's.
+//
+// Stages:
+// - calls: a call whose function is an attribute: `callee` its attribute's text, `receiver` its object
+//   (lazy_sql_call); only callee_kind = 'attribute' is read.
+// - terminal_names: from a root of kind call/attribute/identifier/as_pattern/parenthesized_expression, step to the
+//   first child of as_pattern/parenthesized_expression and to a call's function; the name of each attribute (its
+//   attribute) and identifier reached (lazy_sql_head, lazy_sql_terminal). Rooted only where it is read: receivers
+//   of execute calls and with_item values.
+// - authority_regions: a with_statement with a with_clause/with_item whose value's terminal names include
+//   explicit_execution_authority and with no attribute node within the value's span (the value included).
+// - peeled: a node, or through type/type_parameter/parenthesized_expression nodes of exactly one child, the first
+//   node of another kind (lazy_sql_peeled).
+// - subscripts: a generic_type/subscript of exactly two children, the first peeling to an identifier (`name`), the
+//   second peeling to the `argument`.
+// - bad_annotations: identifiers `object`/`DatabaseRow`, `none`; `list[DatabaseRow]`; and a union_type or
+//   binary_operator `DatabaseRow | None` (children peeling to identifier DatabaseRow and none, a `|` in the text
+//   between them). Between them: for union_type the grammar's `|` (always); for binary_operator its operator
+//   (`op`), where W reads the bytes between, which also see a `|` in a comment there (not modelled).
+// - diagnostics, the five UNION ALL branches: one violation rule each, below.
+// The final query keeps a file's rows where its module's text (`node_text`, comments and strings included) matches
+// LazyResult|SyncSqlConnection|compile|execute|execute_async|explicit_execution_authority|grammar_lazy|legacy_async|
+// legacy_sync, and its path has no `tests` or `conform` component. Several rows on one line with one message are one
+// finding (key issue, identity; findings are a set).
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.input node_text
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- the file filter (the final query) ----
+.decl lazy_sql_file(d: number)
+lazy_sql_file(d) :- node(d, m, "module", _, _), node_text(m, s),
+    (contains("LazyResult", s) ; contains("SyncSqlConnection", s) ; contains("compile", s) ; contains("execute", s) ;
+     contains("explicit_execution_authority", s) ; contains("grammar_lazy", s) ; contains("legacy_async", s) ; contains("legacy_sync", s)),
+    doc(d, p, _), !match("(.*/)?(tests|conform)(/.*)?", p), !syntax_error(d), in_scope(d), !out_scope(d).
+
+// ---- attributes, calls ----
+.decl lazy_sql_attr(a: node, attr: symbol, object: node)
+lazy_sql_attr(a, s, o) :- node(_, a, "attribute", _, _), field(a, "attribute", i), text(i, s), field(a, "object", o).
+.decl lazy_sql_call(c: node, callee: symbol, receiver: node)
+lazy_sql_call(c, s, r) :- node(_, c, "call", _, _), field(c, "function", f), lazy_sql_attr(f, s, r).
+
+// ---- terminal_names, from the roots read ----
+.decl lazy_sql_root(r: node)
+lazy_sql_root(r) :- lazy_sql_call(_, s, r), (s = "execute" ; s = "execute_async").
+lazy_sql_root(v) :- node(_, i, "with_item", _, _), child(i, v, _).
+.decl lazy_sql_head_kind(kind: symbol)
+lazy_sql_head_kind("call").
+lazy_sql_head_kind("attribute").
+lazy_sql_head_kind("identifier").
+lazy_sql_head_kind("as_pattern").
+lazy_sql_head_kind("parenthesized_expression").
+.decl lazy_sql_head(root: node, n: node)
+lazy_sql_head(r, r) :- lazy_sql_root(r), node(_, r, k, _, _), lazy_sql_head_kind(k).
+lazy_sql_head(r, c) :- lazy_sql_head(r, n), node(_, n, "as_pattern", _, _), child(n, c, 0).
+lazy_sql_head(r, c) :- lazy_sql_head(r, n), node(_, n, "parenthesized_expression", _, _), child(n, c, 0).
+lazy_sql_head(r, c) :- lazy_sql_head(r, n), node(_, n, "call", _, _), field(n, "function", c).
+.decl lazy_sql_terminal(root: node, name: symbol)
+lazy_sql_terminal(r, s) :- lazy_sql_head(r, n), lazy_sql_attr(n, s, _).
+lazy_sql_terminal(r, s) :- lazy_sql_head(r, n), node(_, n, "identifier", _, _), text(n, s).
+
+// ---- authority_regions ----
+.decl lazy_sql_authority_value(v: node)
+lazy_sql_authority_value(v) :- node(_, w, "with_statement", _, _), child(w, k, _), node(_, k, "with_clause", _, _),
+    child(k, i, _), node(_, i, "with_item", _, _), child(i, v, _), lazy_sql_terminal(v, "explicit_execution_authority").
+.decl lazy_sql_qualified_value(v: node)
+lazy_sql_qualified_value(v) :- lazy_sql_authority_value(v), node(d, v, _, vs, ve), node(d, a, "attribute", s, e), s >= vs, e <= ve.
+.decl lazy_sql_region(w: node)
+lazy_sql_region(w) :- node(_, w, "with_statement", _, _), child(w, k, _), node(_, k, "with_clause", _, _),
+    child(k, i, _), node(_, i, "with_item", _, _), child(i, v, _), lazy_sql_authority_value(v), !lazy_sql_qualified_value(v).
+.decl lazy_sql_region_kind(kind: symbol)
+lazy_sql_region_kind("with_statement").
+
+// ---- peeled, subscripts, bad_annotations ----
+.decl lazy_sql_wrapper_kind(kind: symbol)
+lazy_sql_wrapper_kind("type").
+lazy_sql_wrapper_kind("type_parameter").
+lazy_sql_wrapper_kind("parenthesized_expression").
+.decl lazy_sql_peel_root(r: node)
+lazy_sql_peel_root(c) :- node(_, g, "generic_type", _, _), child(g, c, _).
+lazy_sql_peel_root(c) :- node(_, g, "subscript", _, _), child(g, c, _).
+lazy_sql_peel_root(c) :- node(_, n, "union_type", _, _), child(n, c, _).
+lazy_sql_peel_root(c) :- node(_, n, "binary_operator", _, _), child(n, c, _).
+.decl lazy_sql_peel(root: node, n: node)
+lazy_sql_peel(r, r) :- lazy_sql_peel_root(r).
+lazy_sql_peel(r, c) :- lazy_sql_peel(r, n), node(_, n, k, _, _), lazy_sql_wrapper_kind(k), child(n, c, 0), !child(n, _, 1).
+.decl lazy_sql_peeled(root: node, n: node, kind: symbol)
+lazy_sql_peeled(r, n, k) :- lazy_sql_peel(r, n), node(_, n, k, _, _), !lazy_sql_wrapper_kind(k).
+
+.decl lazy_sql_subscript(g: node, name: symbol, argument: node)
+lazy_sql_subscript(g, s, p) :- lazy_sql_subscript_kind(g), child(g, h0, 0), lazy_sql_peeled(h0, h, "identifier"),
+    text(h, s), child(g, a0, 1), !child(g, _, 2), lazy_sql_peeled(a0, p, _).
+.decl lazy_sql_subscript_kind(g: node)
+lazy_sql_subscript_kind(g) :- node(_, g, "generic_type", _, _).
+lazy_sql_subscript_kind(g) :- node(_, g, "subscript", _, _).
+
+.decl lazy_sql_bad(n: node, rendered: symbol)
+lazy_sql_bad(n, s) :- node(_, n, "identifier", _, _), text(n, s), (s = "object" ; s = "DatabaseRow").
+lazy_sql_bad(n, s) :- node(_, n, "none", _, _), node_text(n, s).
+lazy_sql_bad(g, "list[DatabaseRow]") :- lazy_sql_subscript(g, "list", p), node(_, p, "identifier", _, _), text(p, "DatabaseRow").
+lazy_sql_bad(n, "DatabaseRow | None") :- lazy_sql_union(n), child(n, l, 0), lazy_sql_peeled(l, lp, "identifier"), text(lp, "DatabaseRow"),
+    child(n, r, 1), lazy_sql_peeled(r, _, "none").
+.decl lazy_sql_union(n: node)
+lazy_sql_union(n) :- node(_, n, "union_type", _, _).
+lazy_sql_union(n) :- node(_, n, "binary_operator", _, _), op(n, "|").
+
+// ---- diagnostics ----
+.decl lazy_sql_grammar_terminal(s: symbol)
+lazy_sql_grammar_terminal("_grammar_effect_lazy").
+lazy_sql_grammar_terminal("_grammar_row_lazy").
+lazy_sql_grammar_terminal("_grammar_rows_lazy").
+lazy_sql_grammar_terminal("_grammar_value_lazy").
+
+// 1. a connection grammar lazy terminal call
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_call(c, s, _), lazy_sql_grammar_terminal(s),
+    code = cat("connection grammar lazy terminal call: ", s), node(d, c, _, _, _), lazy_sql_file(d), doc(d, p, _), line(c, l).
+
+// 2. a ServerPlan execute outside an execution boundary: trim(lower(name), '_') IN ('plan', 'plan_executor') OR
+// GLOB '*plan', as whole-string regexes over ASCII case (SQLite's lower is ASCII-only).
+.decl lazy_sql_plan_name(s: symbol)
+lazy_sql_plan_name(s) :- lazy_sql_terminal(_, s), match(".*[pP][lL][aA][nN]_*", s).
+lazy_sql_plan_name(s) :- lazy_sql_terminal(_, s), match("_*[pP][lL][aA][nN]_[eE][xX][eE][cC][uU][tT][oO][rR]_*", s).
+.decl lazy_sql_allowed(p: symbol)
+lazy_sql_allowed("impl/common/l2070_server_plan/base_server_plan.py").
+lazy_sql_allowed("impl/common/l2070_server_plan/plan_helpers.py").
+lazy_sql_allowed("impl/common/l5150_fts_polyfill/searcher/sql_helpers.py").
+lazy_sql_allowed("impl/common/l5200_sql_query/_read_ops.py").
+lazy_sql_allowed("impl/common/l5200_sql_query/_write_ops.py").
+lazy_sql_allowed("impl/doltdb/query.py").
+lazy_sql_allowed("l2050_transaction/legacy_wrappers.py").
+lazy_sql_allowed("l2050_transaction/single_intent_execution.py").
+lazy_sql_allowed("l2070_batching/plan_flush_operation.py").
+lazy_sql_allowed("l7000_versioned_schema/versioned_connection.py").
+lazy_sql_allowed("l7800_versioned_merge/merge.py").
+lazy_sql_allowed("l9750_graphql/executor.py").
+lazy_sql_allowed("l9900_auto_api/sparql_router.py").
+.decl lazy_sql_plan_execute(c: node, callee: symbol)
+lazy_sql_plan_execute(c, s) :- lazy_sql_call(c, s, r), (s = "execute" ; s = "execute_async"), lazy_sql_terminal(r, t), lazy_sql_plan_name(t).
+.decl lazy_sql_bounded(c: node)
+lazy_sql_bounded(c) :- lazy_sql_plan_execute(c, _), inside(c, w, lazy_sql_region_kind), lazy_sql_region(w).
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_plan_execute(c, s), !lazy_sql_bounded(c),
+    code = cat(cat("ServerPlan ", s), "() outside execution boundary"), node(d, c, _, _, _), lazy_sql_file(d), doc(d, p, _),
+    !lazy_sql_allowed(p), line(c, l).
+
+// 3. a step's compile() reading ctx's execution state: the attribute's owner `fn` is its nearest function_definition.
+.decl lazy_sql_fn_kind(kind: symbol)
+lazy_sql_fn_kind("function_definition").
+.decl lazy_sql_ctx_attr(s: symbol)
+lazy_sql_ctx_attr("branch_id").
+lazy_sql_ctx_attr("materialized_pipeline").
+lazy_sql_ctx_attr("sql_connection").
+lazy_sql_ctx_attr("txn").
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_attr(a, s, o), lazy_sql_ctx_attr(s),
+    node(_, o, "identifier", _, _), text(o, "ctx"), nearest(a, f, lazy_sql_fn_kind), field(f, "name", i), text(i, "compile"),
+    code = cat("step compile() reads ctx.", s), node(d, a, _, _, _), lazy_sql_file(d), doc(d, p, _), line(a, l).
+
+// 4. SyncSqlConnection defining a grammar terminal: the function's owner `cls` is its nearest class_definition.
+.decl lazy_sql_class_kind(kind: symbol)
+lazy_sql_class_kind("class_definition").
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- node(d, f, "function_definition", _, _), field(f, "name", i),
+    text(i, s), lazy_sql_grammar_terminal(s), nearest(f, k, lazy_sql_class_kind), field(k, "name", j), text(j, "SyncSqlConnection"),
+    code = cat("SyncSqlConnection defines forbidden grammar terminal: ", s), lazy_sql_file(d), doc(d, p, _), line(f, l).
+
+// 5. an untyped LazyResult[...] in the server-plan and backend packages
+violation("data-layer-lazy-sql-surface", "sql-surface", code, p, l) :- lazy_sql_subscript(g, "LazyResult", x), lazy_sql_bad(x, r),
+    code = cat(cat("untyped LazyResult[", r), "]"), node(d, g, _, _, _), lazy_sql_file(d), doc(d, p, _),
+    match("(impl/common/l2070_server_plan/|impl/common/l2200_sql_dialect/|impl/sqlite/|impl/postgres/|impl/mariadb/|impl/doltdb/|l7000_versioned_schema/|l7200_versioned_transactions/|l7800_versioned_merge/|l9750_graphql/|l9900_auto_api/).*", p),
+    line(g, l).

@@ -337,6 +337,32 @@ fn rr_programs_print_as_themselves() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
+/// A regex test prints back as written: `match("X", s)` lowers to the engine's search of `^(?:X)$` and prints as
+/// `match("X", s)` again, never under a leading `(?s)` that would give X's own `.` newlines; a search built another
+/// way prints with the flag on its dots only.
+#[test]
+fn regex_tests_print_back_exactly() {
+    let src = r#"
+.decl t(s: symbol)
+.input t
+.decl a(s: symbol)
+a(s) :- t(s), match("WHEN.*BEGIN", s).
+.decl b(s: symbol)
+b(s) :- t(s), !match("(?i)x(y)", s).
+.output a, b
+"#;
+    let prog = parse(src).unwrap();
+    let text = print(&prog).unwrap();
+    assert!(text.contains(r#"match("WHEN.*BEGIN", s)"#), "{text}");
+    assert!(text.contains(r#"!match("(?i)x(y)", s)"#), "{text}");
+    assert!(!text.contains("(?s)"), "{text}");
+    assert_eq!(difference(&prog, &parse(&text).unwrap()), None);
+    assert_eq!(super::print::search("rx", "a.b"), "(?s:.*)(?:a.b)(?s:.*)");
+    assert_eq!(super::print::search("irx", "a"), "(?i:(?s:.*)(?:a)(?s:.*))");
+    assert_eq!(super::print::search("rx", "^(?:a)|(?:b)$"), "(?s:.*)(?:^(?:a)|(?:b)$)(?s:.*)");
+    assert_eq!(super::print::search("rx", r"^(?:a\)[)]b)$"), r"a\)[)]b");
+}
+
 /// Writes each authored program's `.rr` beside it (run once per change of an `.rdl`).
 #[test]
 #[ignore = "writes files: the .rr translations of the authored .rdl programs"]

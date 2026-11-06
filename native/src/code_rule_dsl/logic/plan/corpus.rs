@@ -18,12 +18,13 @@
 
 use super::{Error, Outcome, Result, lower};
 
-use crate::code_rule_dsl::facts::core::{self, Built};
+use crate::code_rule_dsl::facts::core;
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::model::FileInput;
 use crate::code_rule_dsl::typing::cross_rounds;
+mod references;
 mod typing;
 #[cfg(test)]
 mod base_tests;
@@ -310,6 +311,9 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     bound(&lowered.program)?;
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
+    // built, and linked once they all are (`references`).
+    let references = if rust { None } else { references::Files::new(&prog, &read, &docs.iter().map(|(_, p)| p.clone()).collect::<Vec<_>>())? };
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -355,7 +359,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     // read back, 0.75 s on Python.)
     let decodes = cross.program.outputs.iter().any(|o| o == "finding");
     let mut stored: Vec<(String, Vec<String>)> = Vec::new();
-    for rel in &split.base {
+    for rel in split.base.iter().filter(|rel| !references::RELATIONS.contains(&rel.as_str())) {
         let cols = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n", "start"],
@@ -420,6 +424,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let mut pending_nodes = 0;
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
+        let keep_tapes = syntax::VALUES.iter().any(|rel| read.contains(*rel));
         let build = |d: &i64, path: &String| -> Result<syntax::Document> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
@@ -427,11 +432,16 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             drop(read);
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-            let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-                Built::Facts(f) => Arc::new(f),
-                Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+            let Some((facts, doc)) = core::build_with_tape(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? else {
+                return Err(Error::Plan(format!("{path} did not parse")));
             };
-            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
+            let facts = Arc::new(facts);
+            if let Some(references) = &references {
+                references.add(*d as u32, path, &file.source, &facts)?;
+            }
+            // W's values are read off the tape, in the file's context: kept only for a program that reads them.
+            let tape = keep_tapes.then(|| (doc, file));
+            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts, tape })
         };
         while let Some((d, path)) = at.next() {
             match build(d, path) {
@@ -545,6 +555,14 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     worker.join().map_err(|_| Error::Plan("the chunk builder panicked".to_owned()))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
+    // The reference graph over every chunk's files, bound for the cross-file part with its statistics.
+    if let Some(references) = references {
+        for (rel, columns, values) in references.relations(&store, &read)? {
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            totals.add(rel, source.len(), &syntax::statistics(source.as_ref()));
+            modules.bind(&db, rel, source)?;
+        }
+    }
     statements.enter("stats");
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let mut cross_stats = t_stats;

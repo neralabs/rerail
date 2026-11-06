@@ -19,7 +19,7 @@
 //   converter's, "nthChild among named children").
 
 // `match(re, s)` is Soufflé's: the whole string matches. W's `regex` searches, so each W pattern P is written
-// `(?s).*(?:P).*` (P's own `^`/`$` still anchor at the string's ends).
+// `(?s:.*)(?:P)(?s:.*)` (P's own `^`/`$` still anchor at the string's ends).
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -79,7 +79,7 @@ raw_cursor_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), no
     field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "execute" ; s = "fetchall" ; s = "fetchone"),
     field(f, "object", o).
 .decl raw_cursor_name(x: node)
-raw_cursor_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s).*(?:(?i)cursor|^(?:db|conn|connection|raw_conn|raw_connection)$).*", s).
+raw_cursor_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)cursor|^(?:db|conn|connection|raw_conn|raw_connection)$)(?s:.*)", s).
 .decl raw_cursor_leaf(x: node)
 raw_cursor_leaf(x) :- les_root(x), raw_cursor_name(x).
 raw_cursor_leaf(x) :- les_walk(x, c), raw_cursor_name(c).
@@ -95,19 +95,19 @@ raw_cursor_hit(d, p, l) :- les_entry(0), raw_cursor_target(n, o), raw_cursor_rec
     !out_scope(d), doc(d, p, _), line(n, l).
 
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/mariadb/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
-    match("(?s).*(?:^(?:api/)?impl/mariadb/fts(?:/|$)).*", p), !match("(?s).*(?:^(?:api/)?(?:impl/mariadb/fts/fts_manager\\.py)$).*", p).
+    match("(?s:.*)(?:^(?:api/)?impl/mariadb/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/mariadb/fts/fts_manager\\.py)$)(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/postgres/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
-    match("(?s).*(?:^(?:api/)?impl/postgres/fts(?:/|$)).*", p), !match("(?s).*(?:^(?:api/)?(?:impl/postgres/fts/fts_manager\\.py)$).*", p).
+    match("(?s:.*)(?:^(?:api/)?impl/postgres/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/postgres/fts/fts_manager\\.py)$)(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-impl/sqlite/fts", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
-    match("(?s).*(?:^(?:api/)?impl/sqlite/fts(?:/|$)).*", p), !match("(?s).*(?:^(?:api/)?(?:impl/sqlite/fts/fts_manager\\.py)$).*", p).
+    match("(?s:.*)(?:^(?:api/)?impl/sqlite/fts(?:/|$))(?s:.*)", p), !match("(?s:.*)(?:^(?:api/)?(?:impl/sqlite/fts/fts_manager\\.py)$)(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-l4000_permissions", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
-    match("(?s).*(?:^(?:api/)?l4000_permissions(?:/|$)).*", p).
+    match("(?s:.*)(?:^(?:api/)?l4000_permissions(?:/|$))(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-l5200_vector_index", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
-    match("(?s).*(?:^(?:api/)?l5200_vector_index(?:/|$)).*", p),
-    !match("(?s).*(?:^(?:api/)?(?:l5200_vector_index/index_implementations/pgvector\\.py|l5200_vector_index/vector_capabilities\\.py)$).*", p).
+    match("(?s:.*)(?:^(?:api/)?l5200_vector_index(?:/|$))(?s:.*)", p),
+    !match("(?s:.*)(?:^(?:api/)?(?:l5200_vector_index/index_implementations/pgvector\\.py|l5200_vector_index/vector_capabilities\\.py)$)(?s:.*)", p).
 violation("data-layer-legacy-execution-surfaces", "raw-cursor-l8000_admin/tools", "LEG-050", p, l) :- raw_cursor_hit(_, p, l),
-    match("(?s).*(?:^(?:api/)?l8000_admin/tools(?:/|$)).*", p),
-    !match("(?s).*(?:^(?:api/)?(?:l8000_admin/tools/backup_tools\\.py|l8000_admin/tools/docs_search/fts_index\\.py|l8000_admin/tools/logging_tools\\.py)$).*", p).
+    match("(?s:.*)(?:^(?:api/)?l8000_admin/tools(?:/|$))(?s:.*)", p),
+    !match("(?s:.*)(?:^(?:api/)?(?:l8000_admin/tools/backup_tools\\.py|l8000_admin/tools/docs_search/fts_index\\.py|l8000_admin/tools/logging_tools\\.py)$)(?s:.*)", p).
 
 // ==== file.path regex forbids (LEG-001, LEG-070): oracleAnalyzer true makes each pattern \b\B (never) ====
 // W (workspace/evaluate.rs) runs a file.path regex on every file of the scope, parsed or not (no syntax gate), its
@@ -117,19 +117,19 @@ violation("data-layer-legacy-execution-surfaces", "raw-cursor-l8000_admin/tools"
 inventory_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !option_on("oracleAnalyzer").
 
 violation("data-layer-legacy-execution-surfaces", "inventory-export_cursor.py", "LEG-001", p, 1) :- inventory_file(_, p),
-    match("(?s).*(?:(?:^|/)export_cursor\\.py$).*", p),
+    match("(?s:.*)(?:(?:^|/)export_cursor\\.py$)(?s:.*)", p),
     !(p = "impl/doltdb/export_cursor.py" ; p = "impl/mariadb/export_cursor.py" ; p = "impl/mongodb/export_cursor.py" ;
       p = "impl/neo4j/export_cursor.py" ; p = "impl/postgres/export_cursor.py" ; p = "impl/sqlite/export_cursor.py" ;
       p = "l3500_bulk_ops/export_cursor.py").
 violation("data-layer-legacy-execution-surfaces", "inventory-fts_searcher.py", "LEG-001", p, 1) :- inventory_file(_, p),
-    match("(?s).*(?:(?:^|/)fts_searcher\\.py$).*", p),
+    match("(?s:.*)(?:(?:^|/)fts_searcher\\.py$)(?s:.*)", p),
     !(p = "impl/mariadb/fts/fts_searcher.py" ; p = "impl/mongodb/fts/fts_searcher.py" ; p = "impl/postgres/fts/fts_searcher.py" ;
       p = "impl/read_through/fts_searcher.py" ; p = "impl/sqlite/fts/fts_searcher.py").
 violation("data-layer-legacy-execution-surfaces", "inventory-legacy_wrappers.py", "LEG-001", p, 1) :- inventory_file(_, p),
-    match("(?s).*(?:(?:^|/)legacy_wrappers\\.py$).*", p), p != "l2050_transaction/legacy_wrappers.py".
+    match("(?s:.*)(?:(?:^|/)legacy_wrappers\\.py$)(?s:.*)", p), p != "l2050_transaction/legacy_wrappers.py".
 // No `paths`: every file.
 violation("data-layer-legacy-execution-surfaces", "removed-read-leaves", "LEG-070", p, 1) :- inventory_file(_, p),
-    match("(?s).*(?:^(?:impl/common/l5200_sql_query/_aggregate_query_leaf\\.py|impl/common/l5200_sql_query/_pagination_leaf\\.py|impl/common/l5200_sql_query/_read_query_leaf\\.py)$).*", p).
+    match("(?s:.*)(?:^(?:impl/common/l5200_sql_query/_aggregate_query_leaf\\.py|impl/common/l5200_sql_query/_pagination_leaf\\.py|impl/common/l5200_sql_query/_read_query_leaf\\.py)$)(?s:.*)", p).
 
 // ---- `$option oracleAnalyzer`: true, `filePath (?s).*` (every file); false, `inside` (stopBy end) a module whose text W's regex matches ----
 // legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|
@@ -138,7 +138,7 @@ violation("data-layer-legacy-execution-surfaces", "removed-read-leaves", "LEG-07
 .decl les_module_hit(d: number)
 les_module_hit(d) :- doc(d, _, _), option_on("oracleAnalyzer").
 les_module_hit(d) :- node(d, m, "module", _, _), !option_on("oracleAnalyzer"), node_text(m, s),
-    match("(?s).*(?:legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch).*", s).
+    match("(?s:.*)(?:legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch)(?s:.*)", s).
 
 // ---- the legacy decorator (eager-*: not inside such a function; legacy-execution-graphs' legacy_fns) ----
 // function_definition inside (neighbor) decorated_definition that has (neighbor) a decorator that has (neighbor):
@@ -180,7 +180,7 @@ eager_target(n, o) :- node(_, n, "call", _, _), field(n, "function", f), node(_,
     field(f, "object", o).
 les_root(o) :- eager_target(_, o).
 .decl eager_plan_name(x: node)
-eager_plan_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s).*(?:(?i)^(?:plan|read_plan|server_plan|write_plan)$).*", s).
+eager_plan_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)^(?:plan|read_plan|server_plan|write_plan)$)(?s:.*)", s).
 .decl eager_plan_leaf(x: node)
 eager_plan_leaf(x) :- les_root(x), eager_plan_name(x).
 eager_plan_leaf(x) :- les_walk(x, c), eager_plan_name(c).
@@ -192,7 +192,7 @@ eager_plan_recv(o) :- eager_target(_, o), eager_plan_cast(o).
 eager_plan_recv(o) :- eager_target(_, o), les_walk(o, c), eager_plan_cast(c).
 .decl eager_txn_name(x: node)
 eager_txn_name(x) :- node(_, x, "identifier", _, _), text(x, s),
-    match("(?s).*(?:(?i)^(?:lazy_query|lazy_txn|plan_txn|queries|query|read_txn|scope|sql_query|transaction|txn|typed_query|write_txn)$).*", s).
+    match("(?s:.*)(?:(?i)^(?:lazy_query|lazy_txn|plan_txn|queries|query|read_txn|scope|sql_query|transaction|txn|typed_query|write_txn)$)(?s:.*)", s).
 .decl eager_txn_leaf(x: node)
 eager_txn_leaf(x) :- les_root(x), eager_txn_name(x).
 eager_txn_leaf(x) :- les_walk(x, c), eager_txn_name(c).
@@ -207,8 +207,8 @@ eager_txn_recv(o) :- eager_target(_, o), les_walk(o, c), eager_txn_cast(c).
 .decl eager_site(n: node, o: node, p: symbol, l: number)
 eager_site(n, o, p, l) :- les_entry(0), eager_target(n, o), !eager_in_legacy(n), node(d, n, _, _, _), les_module_hit(d),
     in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _),
-    match("(?s).*(?:^(?:api/)?(?:impl/|data_layer/|l[0-9])).*", p),
-    !match("(?s).*(?:(?:^|/)tests/|^(?:api/)?(?:l2050_transaction/execution_boundary\\.py|l2050_transaction/legacy_wrappers\\.py)$).*", p),
+    match("(?s:.*)(?:^(?:api/)?(?:impl/|data_layer/|l[0-9]))(?s:.*)", p),
+    !match("(?s:.*)(?:(?:^|/)tests/|^(?:api/)?(?:l2050_transaction/execution_boundary\\.py|l2050_transaction/legacy_wrappers\\.py)$)(?s:.*)", p),
     line(n, l).
 violation("data-layer-legacy-execution-surfaces", "eager-plan", "LEG-081", p, l) :- eager_site(_, o, p, l), eager_plan_recv(o).
 violation("data-layer-legacy-execution-surfaces", "eager-txn", "LEG-080", p, l) :- eager_site(_, o, p, l), !eager_plan_recv(o),
@@ -224,7 +224,7 @@ graph_fallback_none_kind("if_statement"). graph_fallback_none_kind("elif_clause"
 graph_fallback_none_operand(t, x) :- node(_, t, "comparison_operator", _, _), child(t, x, _), !node(_, x, "none", _, _).
 les_root(x) :- graph_fallback_none_operand(_, x).
 .decl graph_fallback_none_name(x: node)
-graph_fallback_none_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s).*(?:(?i)^(?:_plan_mixin|mixin|plan_mixin)$).*", s).
+graph_fallback_none_name(x) :- node(_, x, "identifier", _, _), text(x, s), match("(?s:.*)(?:(?i)^(?:_plan_mixin|mixin|plan_mixin)$)(?s:.*)", s).
 .decl graph_fallback_none_leaf(x: node)
 graph_fallback_none_leaf(x) :- les_root(x), graph_fallback_none_name(x).
 graph_fallback_none_leaf(x) :- les_walk(x, c), graph_fallback_none_name(c).
@@ -235,12 +235,12 @@ graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), graph_fallback
 graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), graph_fallback_none_cast(x).
 graph_fallback_none_recv(x) :- graph_fallback_none_operand(_, x), les_walk(x, c), graph_fallback_none_cast(c).
 .decl graph_fallback_none_test(t: node)
-graph_fallback_none_test(t) :- graph_fallback_none_operand(t, x), graph_fallback_none_recv(x), node_text(t, s), match("(?s).*(?:\\bis\\s+None$).*", s).
+graph_fallback_none_test(t) :- graph_fallback_none_operand(t, x), graph_fallback_none_recv(x), node_text(t, s), match("(?s:.*)(?:\\bis\\s+None$)(?s:.*)", s).
 violation("data-layer-legacy-execution-surfaces", "graph-fallback-none", "LEG-060", p, l) :- les_entry(0), node(d, n, k, _, _),
     graph_fallback_none_kind(k), field(n, "condition", t), graph_fallback_none_test(t), les_module_hit(d),
     in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _),
-    match("(?s).*(?:^(?:api/)?impl/common/l9700_sql_graph_query(?:/|$)).*", p),
-    !match("(?s).*(?:^(?:api/)?(?:impl/common/l9700_sql_graph_query/sql_graph_query\\.py)$).*", p), line(n, l).
+    match("(?s:.*)(?:^(?:api/)?impl/common/l9700_sql_graph_query(?:/|$))(?s:.*)", p),
+    !match("(?s:.*)(?:^(?:api/)?(?:impl/common/l9700_sql_graph_query/sql_graph_query\\.py)$)(?s:.*)", p), line(n, l).
 
 // ==== legacy-execution-graphs (relational; code = the row's issue) ====
 // partitionBy file: every join below is within one document. Each SQL input is a matcher over a valid file of the
@@ -384,7 +384,7 @@ legacy_execution_graphs_anchor(f, c) :- legacy_execution_graphs_anchor_start(b, 
 
 // The LEG-08x files: (stripped) path ^(?:impl/|data_layer/|l[0-9]), not (?:^|/)tests/, not the boundary's modules.
 .decl legacy_execution_graphs_l08(d: number, q: symbol)
-legacy_execution_graphs_l08(d, q) :- legacy_execution_graphs_path(d, q), match("(?s).*(?:^(?:impl/|data_layer/|l[0-9])).*", q), !match("(?s).*(?:(?:^|/)tests/).*", q),
+legacy_execution_graphs_l08(d, q) :- legacy_execution_graphs_path(d, q), match("(?s:.*)(?:^(?:impl/|data_layer/|l[0-9]))(?s:.*)", q), !match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q),
     q != "l2050_transaction/execution_boundary.py", q != "l2050_transaction/legacy_wrappers.py".
 // The LEG-010 allowlist.
 .decl legacy_execution_graphs_l010_allowed(q: symbol)
@@ -440,9 +440,9 @@ legacy_execution_graphs_wrappers_user(d) :- legacy_execution_graphs_from(d, _, m
 .decl legacy_execution_graphs_l010_file(d: number, q: symbol)
 legacy_execution_graphs_l010_file(d, q) :- legacy_execution_graphs_path(d, q), !legacy_execution_graphs_l010_allowed(q), !legacy_execution_graphs_valid(d).
 violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_wrappers_from(n),
-    node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), !match("(?s).*(?:(?:^|/)tests/).*", q), doc(d, p, _), line(n, l).
+    node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), !match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), doc(d, p, _), line(n, l).
 violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_wrappers_from(n),
-    node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), match("(?s).*(?:(?:^|/)tests/).*", q), legacy_execution_graphs_wrappers_user(d),
+    node(d, n, _, _, _), legacy_execution_graphs_l010_file(d, q), match("(?s:.*)(?:(?:^|/)tests/)(?s:.*)", q), legacy_execution_graphs_wrappers_user(d),
     doc(d, p, _), line(n, l).
 // LEG-010, direct imports of the wrappers module.
 violation("data-layer-legacy-execution-surfaces", "legacy-execution-graphs", "LEG-010", p, l) :- legacy_execution_graphs_direct(d, n, nm),

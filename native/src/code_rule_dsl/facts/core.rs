@@ -63,12 +63,17 @@ pub(crate) enum Built {
 
 /// Parses `file` in its own dialect and reads its facts off the tape.
 pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
+    Ok(build_with_tape(file)?.map_or(Built::Unparsed, |(facts, _)| Built::Facts(facts)))
+}
+
+/// `build`, with the tape the facts were read off (`None`: the parser stopped at a limit).
+pub(crate) fn build_with_tape(file: &FileInput) -> Result<Option<(Facts, TapeDoc)>, String> {
     let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
     let tape = eval::file_tape(language, file).map_err(|e| e.reason.to_string())?;
     let Some((doc, lines)) = tape else {
-        return Ok(Built::Unparsed);
+        return Ok(None);
     };
-    from_tape(&doc, lines).map(Built::Facts)
+    Ok(Some((from_tape(&doc, lines)?, doc)))
 }
 
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {

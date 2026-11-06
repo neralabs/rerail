@@ -1,0 +1,195 @@
+// data-layer-unresolved-forward-refs: the clause the converter does not convert (decision 0043).
+// Policy: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-unresolved-forward-refs.json.
+// One clause, `inspection` (forbid, `syntax: valid`, anchor the witness: the attribute `$ANNOTATION`).
+//
+// The matcher, rule for rule:
+// - `$ANNOTATION` is the node n: an `attribute` whose `attribute` field is the identifier `annotation` and whose
+//   `object` field is the identifier `f`, an identifier matching (?i:field_info|_info$) (a search over its text),
+//   or a `subscript` whose `value` is an attribute `<x>.model_fields`;
+// - it is either (a) a positional child of an `argument_list` whose parent is a call of get_type_hints, issubclass,
+//   get_args, get_origin, TypeAdapter or isinstance (an identifier, or an attribute naming one), unless that call
+//   is a call of `str` (never, given the names) or of `isinstance` whose second argument is safe; or (b) an operand of a
+//   `comparison_operator` with no `none` operand and an `is` / `is not` operator, or an `==` / `!=` operator and an
+//   identifier operand starting with [A-Z] that is not the comparison's first named child;
+// - and no enclosing call (any depth) is `<D>.get(key, default)` with D one of the resolved-hints names, or an
+//   identifier assigned `get_type_hints(…)` somewhere in D's nearest enclosing function, and the default either n
+//   itself or holding a node equal to n.
+//
+// `arguments {signature: [a, b, /], mode: syntactic}` (arguments.rs `Arguments::syntactic`, Ruff's
+// find_argument): the call's `arguments` field child; a generator_expression is one positional (so no second);
+// otherwise its named children, comments aside, that are no keyword_argument / dictionary_splat, before the first
+// list_splat / parenthesized_list_splat; both slots positional-only, so keywords never bind them. The second slot
+// absent (fewer than two such arguments): the matcher fails (`Passed::Absent` on a bound slot), nothing unknown.
+//
+// `pattern: $X` with X bound (ast-grep's does_node_match_exactly: the same node, else text equality where either
+// side is a named leaf, else same kind and children, anonymous tokens and comments included, pairwise):
+// - `has {has {all: [pattern $SAFE_TYPE, safe-shape]}, field: arguments}`: the candidates are the argument list's
+//   children; SAFE_TYPE itself is one of them, and every candidate equal to it has its kind, text or (tuple) child
+//   shape, so the test is SAFE_TYPE's own shape. Exact.
+// - the `.get` default: `compare DEFAULT eq ANNOTATION, text: node` is node identity (compare.rs: same range and
+//   kind), independent of the candidate: DEFAULT = n. `has pattern $ANNOTATION stopBy end` under a candidate equal
+//   to DEFAULT (DEFAULT itself is one; equal candidates have equal descendants) is: a strict descendant of DEFAULT
+//   equal to n. APPROXIMATION: equality as an attribute with the same node_text: the same text is the same tree,
+//   but structural equality also ignores whitespace between tokens (`f . annotation` equals `f.annotation` in W,
+//   not here). DEFAULT = n never holds with (a) or (b) (n's parent would be the `.get` call's argument list, and
+//   `get` is no inspection name), but is kept as W says it.
+// - `{kind: identifier, pattern: $DICT}` then `has {pattern: $DICT, field: left}`: DICT is a named leaf, so W
+//   compares texts: the left field child's node_text equals DICT's. Exact.
+// - `inside {kind: function_definition, has …} stopBy {kind: function_definition}`: ancestors up to and including
+//   the first function_definition; only a function_definition can match, so it is the nearest one. Exact.
+//
+// The comparison operators are anonymous tokens (field `operators`), not in the op relation and not nodes here; W's
+// `has {regex}` (neighbor) tests them by their text ("is not" / "not in" are aliased token pairs whose text spans
+// both words, whitespace between included). Derived from the gaps of the comparison's text between consecutive
+// operands (child() rows that are no comment / line_continuation): a gap holds one operator token with whitespace,
+// comments and line continuations around it, so a gap whose remainder is `is` or `is not` (one space, as the
+// alias's text must be for ^(?:is|is not)$) holds that token, and the same for `==` / `!=`. The gap text:
+// - two operands: the comparison's text less the operands' (strlen counts characters; the node starts at the first
+//   operand and ends at the last). Exact;
+// - longer chains: byte offsets, from the comparison's start where every operand before the gap has as many
+//   characters as bytes, else from its end where every operand after it has. APPROXIMATION: a non-ASCII comment
+//   in a gap of a chain on the counted side misplaces the cut; a gap of a chain with a non-ASCII operand on both
+//   sides is not read (its operator neither `is` nor `==`/`!=` here).
+// `not {nthChild: 1}`: W counts named children, comments included; the first named child of a comparison is
+// always its first operand (child index 0), so it is child() index > 0. Exact.
+// Identifier texts are read through node_text (W's `regex` subject).
+//
+// Other named approximations: a line_continuation inside an argument list counts as a positional in W
+// (`named_children` keeps it); here it counts only if child() lists it.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl node_text(n: node, s: symbol)
+.input node_text
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- $ANNOTATION ----------------------------------------------------------------------------------------------
+.decl inspection_object(o: node)
+inspection_object(o) :- node(_, o, "identifier", _, _), node_text(o, "f").
+inspection_object(o) :- node(_, o, "identifier", _, _), node_text(o, s), match("(?s:.*)(?:(?i:field_info|_info$))(?s:.*)", s).
+inspection_object(o) :- node(_, o, "subscript", _, _), field(o, "value", v), node(_, v, "attribute", _, _),
+    field(v, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "model_fields").
+.decl inspection_annotation(n: node)
+inspection_annotation(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _),
+    node_text(a, "annotation"), field(n, "object", o), inspection_object(o).
+
+// ---- arguments, mode syntactic: the second positional of an argument_list ------------------------------------
+.decl inspection_splat(kind: symbol)
+inspection_splat("list_splat").
+inspection_splat("parenthesized_list_splat").
+.decl inspection_starred_before(al: node, i: number)
+inspection_starred_before(al, i) :- node(_, al, "argument_list", _, _), child(al, _, i), child(al, s, j), j < i,
+    node(_, s, k, _, _), inspection_splat(k).
+.decl inspection_positional(al: node, a: node, i: number)
+inspection_positional(al, a, i) :- node(_, al, "argument_list", _, _), child(al, a, i), node(_, a, k, _, _),
+    k != "keyword_argument", k != "dictionary_splat", !inspection_splat(k), !inspection_starred_before(al, i).
+.decl inspection_positional_before(al: node, i: number, j: number)
+inspection_positional_before(al, i, j) :- inspection_positional(al, _, i), inspection_positional(al, _, j), j < i.
+.decl inspection_second(al: node, a: node)
+inspection_second(al, a) :- inspection_positional(al, a, i), c = count : { inspection_positional_before(al, i, _) }, c = 1.
+
+// ---- (a) an argument of a type-inspection call ---------------------------------------------------------------
+.decl inspection_fname(s: symbol)
+inspection_fname("get_type_hints"). inspection_fname("issubclass"). inspection_fname("get_args").
+inspection_fname("get_origin"). inspection_fname("TypeAdapter"). inspection_fname("isinstance").
+.decl inspection_function(f: node)
+inspection_function(f) :- node(_, f, "identifier", _, _), node_text(f, s), inspection_fname(s).
+inspection_function(f) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _),
+    node_text(a, s), inspection_fname(s).
+.decl inspection_safe_name(s: symbol)
+inspection_safe_name("str"). inspection_safe_name("ForwardRef"). inspection_safe_name("TypeVar").
+.decl inspection_safe(x: node)
+inspection_safe(x) :- node(_, x, "identifier", _, _), node_text(x, s), inspection_safe_name(s).
+inspection_safe(x) :- node(_, x, "tuple", _, _), child(x, c, _), node(_, c, "identifier", _, _), node_text(c, s),
+    inspection_safe_name(s).
+.decl inspection_excused(c: node)
+inspection_excused(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), node_text(f, "str").
+inspection_excused(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _),
+    node_text(f, "isinstance"), field(c, "arguments", al), inspection_second(al, x), inspection_safe(x).
+.decl inspection_context(n: node)
+inspection_context(n) :- inspection_annotation(n), child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _),
+    node(_, c, "call", _, _), field(c, "function", f), inspection_function(f), !inspection_excused(c).
+
+// ---- (b) an operand of an identity / equality comparison ---------------------------------------------------
+.decl inspection_operand(cmp: node, o: node, i: number)
+inspection_operand(cmp, o, i) :- node(_, cmp, "comparison_operator", _, _), child(cmp, o, i), node(_, o, k, _, _),
+    k != "comment", k != "line_continuation".
+.decl inspection_between(cmp: node, i: number, j: number)
+inspection_between(cmp, i, j) :- inspection_operand(cmp, _, i), inspection_operand(cmp, _, j), inspection_operand(cmp, _, m), i < m, m < j.
+.decl inspection_next(cmp: node, a: node, b: node, i: number)
+inspection_next(cmp, a, b, i) :- inspection_operand(cmp, a, i), inspection_operand(cmp, b, j), i < j, !inspection_between(cmp, i, j).
+.decl inspection_operands(cmp: node, k: number)
+inspection_operands(cmp, k) :- node(_, cmp, "comparison_operator", _, _), k = count : { inspection_operand(cmp, _, _) }.
+// An operand whose characters are fewer than its bytes; the operands with one at or before them, at or after them.
+.decl inspection_wide(cmp: node, i: number)
+inspection_wide(cmp, i) :- inspection_operand(cmp, o, i), node(_, o, _, s, e), node_text(o, t), strlen(t) < e - s.
+.decl inspection_after_wide(cmp: node, i: number)
+inspection_after_wide(cmp, i) :- inspection_operand(cmp, _, i), inspection_wide(cmp, j), j <= i.
+.decl inspection_before_wide(cmp: node, i: number)
+inspection_before_wide(cmp, i) :- inspection_operand(cmp, _, i), inspection_wide(cmp, j), j >= i.
+.decl inspection_gap(cmp: node, g: symbol)
+inspection_gap(cmp, g) :- inspection_operands(cmp, 2), inspection_next(cmp, a, b, _), node_text(cmp, t),
+    node_text(a, ta), node_text(b, tb), x = strlen(ta), y = strlen(t) - strlen(ta) - strlen(tb), y >= 0, g = substr(t, x, y).
+// A chain: counted from the start where no operand before the gap is wide, else from the end where none after is.
+inspection_gap(cmp, g) :- inspection_operands(cmp, k), k > 2, inspection_next(cmp, a, b, i), !inspection_after_wide(cmp, i),
+    node(_, cmp, _, cs, _), node(_, a, _, _, ae), node(_, b, _, bs, _), node_text(cmp, t),
+    x = ae - cs, y = bs - ae, x + y <= strlen(t), g = substr(t, x, y).
+inspection_gap(cmp, g) :- inspection_operands(cmp, k), k > 2, inspection_next(cmp, a, b, i), inspection_after_wide(cmp, i),
+    inspection_operand(cmp, b, j), !inspection_before_wide(cmp, j),
+    node(_, cmp, _, _, ce), node(_, a, _, _, ae), node(_, b, _, bs, _), node_text(cmp, t),
+    x = strlen(t) - (ce - ae), y = bs - ae, x >= 0, g = substr(t, x, y).
+.decl inspection_identity(cmp: node)
+inspection_identity(cmp) :- inspection_gap(cmp, g),
+    match("(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*(?:is|is not)(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*", g).
+.decl inspection_equality(cmp: node)
+inspection_equality(cmp) :- inspection_gap(cmp, g),
+    match("(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*(?:==|!=)(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*", g).
+.decl inspection_none_operand(cmp: node)
+inspection_none_operand(cmp) :- node(_, cmp, "comparison_operator", _, _), child(cmp, c, _), node(_, c, "none", _, _).
+.decl inspection_type_operand(cmp: node)
+inspection_type_operand(cmp) :- node(_, cmp, "comparison_operator", _, _), child(cmp, c, i), i > 0, node(_, c, "identifier", _, _),
+    node_text(c, s), match("[A-Z](?s:.*)", s).
+.decl inspection_comparison(cmp: node)
+inspection_comparison(cmp) :- inspection_identity(cmp), !inspection_none_operand(cmp).
+inspection_comparison(cmp) :- inspection_equality(cmp), inspection_type_operand(cmp), !inspection_none_operand(cmp).
+inspection_context(n) :- inspection_annotation(n), child(cmp, n, _), inspection_comparison(cmp).
+
+// ---- the resolved-hints fallback: `<D>.get(key, n)` -------------------------------------------------------
+.decl inspection_hints_name(s: symbol)
+inspection_hints_name("subtype_annotations"). inspection_hints_name("hints"). inspection_hints_name("type_hints").
+inspection_hints_name("class_annotations"). inspection_hints_name("resolved_annotations"). inspection_hints_name("resolved_hints").
+.decl inspection_kinds_function(kind: symbol)
+inspection_kinds_function("function_definition").
+// A get_type_hints call (an identifier, or an attribute naming it).
+.decl inspection_hints_call(c: node)
+inspection_hints_call(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), node_text(f, "get_type_hints").
+inspection_hints_call(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "get_type_hints").
+// A function holding (any depth) an assignment of a get_type_hints call to a left side whose text is s.
+.decl inspection_assigned(fn: node, s: symbol)
+inspection_assigned(fn, s) :- node(_, asg, "assignment", _, _), field(asg, "left", lft), node_text(lft, s),
+    field(asg, "right", r), inspection_hints_call(r), inside(asg, fn, inspection_kinds_function).
+.decl inspection_dict(o: node)
+inspection_dict(o) :- node(_, o, "identifier", _, _), node_text(o, s), inspection_hints_name(s).
+inspection_dict(o) :- node(_, o, "identifier", _, _), node_text(o, s), nearest(o, fn, inspection_kinds_function), inspection_assigned(fn, s).
+.decl inspection_get_call(c: node, dflt: node)
+inspection_get_call(c, dflt) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "get"), field(f, "object", o), inspection_dict(o),
+    field(c, "arguments", al), inspection_second(al, dflt).
+.decl inspection_kinds_call(kind: symbol)
+inspection_kinds_call("call").
+.decl inspection_fallback(n: node)
+inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, n).
+// A strict descendant m of the default (byte spans; a node of the same span other than the default is below it).
+inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, dflt),
+    node_text(n, s), node_text(m, s), node(d, m, "attribute", ms, me), m != dflt, node(d, dflt, _, ds, de), ds <= ms, me <= de.
+
+violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :-
+    inspection_context(n), !inspection_fallback(n),
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).

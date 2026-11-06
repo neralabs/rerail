@@ -40,9 +40,9 @@
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
 .decl mode_split_enabled(v: symbol)
-mode_split_enabled(v) :- option_value("parameters", v), !match("(?s).*\"probeSource\".*", v).
-mode_split_enabled(v) :- option_value("parameters", v), match("(?s).*\"probeSource\".*", v),
-    match("(?s).*(?:Async|Connection|DatabaseConnection|DoltDBConnection|MariaDBConnection|MongoConnection|Neo4jConnection|PostgresConnection|ReadThroughConnection|SessionHandle|SqlConnection|SqliteConnection|Sync|VersionHandle|VersionedDatabaseConnection|_DatabaseConnectionCore|_SessionHandleCore|_SqlConnectionCore|_VersionHandleCore|_VersionedDatabaseConnectionCore).*", v).
+mode_split_enabled(v) :- option_value("parameters", v), !match("(?s:.*)\"probeSource\"(?s:.*)", v).
+mode_split_enabled(v) :- option_value("parameters", v), match("(?s:.*)\"probeSource\"(?s:.*)", v),
+    match("(?s:.*)(?:Async|Connection|DatabaseConnection|DoltDBConnection|MariaDBConnection|MongoConnection|Neo4jConnection|PostgresConnection|ReadThroughConnection|SessionHandle|SqlConnection|SqliteConnection|Sync|VersionHandle|VersionedDatabaseConnection|_DatabaseConnectionCore|_SessionHandleCore|_SqlConnectionCore|_VersionHandleCore|_VersionedDatabaseConnectionCore)(?s:.*)", v).
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 

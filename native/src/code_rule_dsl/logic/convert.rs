@@ -39,12 +39,22 @@
 //!   clauses together, number more than `k`; no row where it has none. The tree: `inside(n, a, set)` and
 //!   `has(a, n, set)` (`a` a strict ancestor of `n` of a kind in `set`), `nearest(n, a, set)` (the nearest one),
 //!   `set` a relation of kind facts the file declares (`.decl calls(kind: symbol)`, `calls("call").`). The
-//!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give;
+//!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
+//!   The options, as the run resolves them (the policy's config, else each option's default; the replay's per
+//!   event), are given too, read, never derived: `option_on(name: symbol)`, a row per boolean option that is true;
+//!   `option_item(name: symbol, v: symbol)`, a row per item of an array option (strings as they are, others as
+//!   JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object option, as text;
+//!   `option_json(name: symbol, pointer: symbol, v: symbol)`, a row per leaf of a JSON option (an object or array,
+//!   or a string holding one, as `parameters` does) at its JSON pointer (`/lineCounts/a~1b.py`), as W's
+//!   `json_extract` reads it, the leaf as `option_value` renders it. A clause
+//!   whose matchers carry `when: {option: …}` converts for the run's options only (its matchers that do not apply
+//!   give nothing); coverage marks it: an authored clause, gated on these facts, follows every configuration;
 //! - each clause it gives derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, declared
 //!   `.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)`, the rule and clause
 //!   constant and the clause one of the policy's;
 //! - its helper relations and kind sets start with a prefix of their clause's. A name the converter makes is an
-//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`;
+//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
+//!   `option_on`, `option_item`, `option_value`, `option_json`;
 //!   `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name
 //!   declared with other columns;
 //! - a clause it derives is authored, whatever the converter made of it: its rules replace the converter's. A
@@ -160,14 +170,21 @@ impl Emitter {
         Ok(name)
     }
 
-    /// A relation `p(n)` holding where `body` (over `$n`) holds; its name.
-    fn relation(&mut self, bodies: Vec<Body>) -> String {
+    /// A relation `p(n, …)` holding where `bodies` (over `$n`) hold; its atom at `n`. The variables the bodies share
+    /// with the rule around them (made before `mark`: the metavariables it bound) are columns, passed in: a
+    /// variable of a rule of its own is that rule's alone, so one left out would match anything.
+    fn relation(&mut self, bodies: Vec<Body>, mark: usize, n: &str) -> String {
+        let outer = outer_vars(&bodies, mark);
         let name = self.fresh("m");
-        self.decls.insert(name.clone(), "n: node".to_owned());
+        let columns: Vec<String> = std::iter::once("n: node".to_owned()).chain(outer.iter().map(|v| format!("{}: node", &v[1..]))).collect();
+        self.decls.insert(name.clone(), columns.join(", "));
+        let args = |first: &str| std::iter::once(first.to_owned()).chain(outer.iter().cloned()).collect::<Vec<_>>().join(", ");
         for body in bodies {
-            self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
+            // Each column bound in the body: one only negated reads every node first, as `$n` does.
+            let body = outer.iter().fold(nonempty(body, "$n"), |body, v| nonempty(body, v));
+            self.rules.push(format!("{name}({}) :- {}.", args("$n"), body.join(", ")));
         }
-        name
+        format!("{name}({})", args(n))
     }
 
     /// The literals under which `m` holds at `n`.
@@ -187,8 +204,7 @@ impl Emitter {
                 self.approx.insert("supertype as its kinds".into());
                 let set = self.kindset(&st.kinds)?;
                 let bodies = self.kindsets[&set].iter().map(|k| vec![format!("node(_, $n, {}, _, _)", quote(k))]).collect();
-                let r = self.relation(bodies);
-                vec![format!("{r}({n})")]
+                vec![self.relation(bodies, 0, n)]
             }
             AstMatcher::Pattern(p) => self.pattern(p, n)?,
             AstMatcher::Constrained(c) => {
@@ -222,6 +238,7 @@ impl Emitter {
                 body?
             }
             AstMatcher::Any(ms) => {
+                let mark = self.next;
                 let bodies = ms.iter().map(|t| self.scoped(|e| e.body(t, "$n"))).collect::<Res<Vec<_>>>()?;
                 if bodies.iter().any(Vec::is_empty) {
                     return Ok(Vec::new());
@@ -229,20 +246,20 @@ impl Emitter {
                 if bodies.len() == 1 {
                     return Ok(rename(&bodies[0], "$n", n));
                 }
-                let r = self.relation(bodies);
-                vec![format!("{r}({n})")]
+                vec![self.relation(bodies, mark, n)]
             }
             AstMatcher::Not(t) => {
+                let mark = self.next;
                 let body = self.scoped(|e| e.body(t, "$n"))?;
                 if body.is_empty() {
                     return Ok(self.never(n));
                 }
                 // One positive literal over `$n` alone is negated as written.
                 let r = match body.as_slice() {
-                    [one] if single(one) && !one.contains("$v") => one.clone(),
-                    _ => format!("{}($n)", self.relation(vec![body])),
+                    [one] if single(one) && !one.contains("$v") => rename(&[one.clone()], "$n", n).remove(0),
+                    _ => self.relation(vec![body], mark, n),
                 };
-                vec![format!("!{}", rename(&[r], "$n", n)[0])]
+                vec![format!("!{r}")]
             }
             AstMatcher::Inside(related, stop) => self.walk(Axis::Inside, None, related.rule(), stop, n)?,
             AstMatcher::Has(related, stop) => self.walk(Axis::Has, None, related.rule(), stop, n)?,
@@ -260,8 +277,13 @@ impl Emitter {
                         let name = self.fresh("u");
                         self.utils.insert(key, name.clone());
                         self.decls.insert(name.clone(), "n: node".to_owned());
-                        // The relation is every caller's: it knows of the node only what its own rule says.
+                        // The relation is every caller's: it knows of the node only what its own rule says, and
+                        // reads no metavariable a caller bound.
+                        let mark = self.next;
                         let body = u.with_target(|rule| self.scoped(|e| e.at(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
+                        if !outer_vars(std::slice::from_ref(&body), mark).is_empty() {
+                            return gap("a utility reading a metavariable bound outside it");
+                        }
                         self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
                         name
                     }
@@ -383,7 +405,11 @@ impl Emitter {
                 {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
+                    let mark = self.next;
                     let is_stop = self.scoped(|e| e.at(stop, "$s"))?;
+                    if !outer_vars(std::slice::from_ref(&is_stop), mark).is_empty() {
+                        return gap("a stop rule reading a metavariable bound outside it");
+                    }
                     let blocked = self.fresh("blocked");
                     self.decls.insert(blocked.clone(), "low: node, high: node".to_owned());
                     // A stop node strictly between: over `low`, under `high`.
@@ -555,13 +581,11 @@ impl Emitter {
             body.extend(self.tests(source, &s, &["name(_, $s)"], Text::Name)?);
             return Ok(body);
         }
-        // A module's text: read as the names in its file, where the regex only looks for names.
-        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) && module_names(&hir) {
-            self.approx.insert("a module's text read as its file's names".into());
-            let (d, m, s) = (self.var(), self.var(), self.var());
-            let mut body = vec![format!("node({d}, {n}, _, _, _)"), format!("node({d}, {m}, _, _, _)"), format!("name({m}, {s})")];
-            body.extend(self.tests_hir(&hir, source, &s, &["name(_, $s)"], Text::Name)?);
-            return Ok(body);
+        // A module's text, exactly: W's regex searches the file's text (from its first token, comments and strings
+        // included), which `node_text` holds; `rx` is that search.
+        if names.as_ref().is_some_and(|k| k.len() == 1 && k.contains("module")) {
+            let s = self.var();
+            return Ok(vec![format!("node_text({n}, {s})"), format!("@rx({s}, {})", quote(source))]);
         }
         if !text_kinds {
             return gap(format!("a regex on the text of {} ({source})", names.map_or("any node".to_owned(), |k| k.into_iter().collect::<Vec<_>>().join("|"))));
@@ -760,7 +784,8 @@ impl Emitter {
 }
 
 /// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
-/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not.
+/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
+/// Python reference graph (`logic::plan::corpus::references`).
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
@@ -790,9 +815,16 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl visit_index(n: node, i: int)
 .decl path_part(d: int, s: sym)
 .decl file_name(d: int, s: sym)
+.decl value(n: node, v: sym)
+.decl static_value(n: node, v: sym)
+.decl value_type_of(n: node, t: sym)
+.decl value_type(v: sym, t: sym)
+.decl comment(n: node, s: sym)
+.decl reference_edge(src: node, dst: node, via: sym)
+.decl reference_open(n: node)
 ";
 
-const BASE_RELATIONS: [&str; 12] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error"];
+const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
 
 /// Python's keywords: tokens, never names.
 const KEYWORDS: [&str; 35] = [
@@ -844,8 +876,20 @@ pub(in crate::code_rule_dsl) enum Origin {
 /// The columns of `violation(rule, clause, code, path, line)`.
 const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
 
-/// What the converter gives an authored file to read, each one `number` column: the scope and the report gate.
-pub(in crate::code_rule_dsl) const GIVEN: [&str; 3] = ["in_scope", "out_scope", "report_when_gt"];
+/// What the converter gives an authored file to read: the scope, the report gate and the options.
+pub(in crate::code_rule_dsl) const GIVEN: [&str; 7] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json"];
+
+/// The column types of what the converter gives (`GIVEN`), where `rel` is one.
+fn given_types(rel: &str) -> Option<Vec<String>> {
+    let types: &[&str] = match rel {
+        "in_scope" | "out_scope" | "report_when_gt" => &["int"],
+        "option_on" => &["sym"],
+        "option_item" | "option_value" => &["sym", "sym"],
+        "option_json" => &["sym", "sym", "sym"],
+        _ => return None,
+    };
+    Some(types.iter().map(|t| (*t).to_owned()).collect())
+}
 
 /// A base relation's column types (`BASE`), where `rel` is one.
 fn base_types(rel: &str) -> Option<Vec<String>> {
@@ -914,8 +958,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
         }
         let want = match name.as_str() {
             "violation" => Some(VIOLATION.map(str::to_owned).to_vec()),
-            _ if GIVEN.contains(&name.as_str()) => Some(vec!["int".to_owned()]),
-            _ => base_types(name),
+            _ => given_types(name).or_else(|| base_types(name)),
         };
         match want {
             Some(want) if types(columns) != want => {
@@ -1089,6 +1132,24 @@ fn single(literal: &str) -> bool {
 
 fn rename(body: &[String], from: &str, to: &str) -> Body {
     body.iter().map(|l| replace_var(l, from, to)).collect()
+}
+
+/// The variables of `bodies` made before `mark` (`Emitter::fresh` numbers them in order): those of the rule around.
+fn outer_vars(bodies: &[Body], mark: usize) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    for literal in bodies.iter().flatten() {
+        let mut rest = literal.as_str();
+        while let Some(at) = rest.find("$v") {
+            let digits: String = rest[at + 2..].chars().take_while(char::is_ascii_digit).collect();
+            rest = &rest[at + 2 + digits.len()..];
+            if let Ok(k) = digits.parse::<usize>()
+                && k <= mark
+            {
+                out.insert(k);
+            }
+        }
+    }
+    out.into_iter().map(|k| format!("$v{k}")).collect()
 }
 
 /// Replaces the variable `from` (whole names only) in a literal.
@@ -1297,16 +1358,6 @@ pub(in crate::code_rule_dsl) enum Text {
     Path,
     /// A string's content: any characters.
     Content,
-}
-
-/// Whether a regex only looks for names: literal alternatives of word characters and dots.
-fn module_names(hir: &Hir) -> bool {
-    let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.');
-    match shape(hir) {
-        Some(Shape::Names(set)) => set.iter().all(|w| word(w)),
-        Some(Shape::Tests(tests)) => tests.iter().all(|(_, w)| word(w)),
-        _ => false,
-    }
 }
 
 /// `$s` is one of `set`: `$s = "a"`, or `$s in {"a", "b"}`.

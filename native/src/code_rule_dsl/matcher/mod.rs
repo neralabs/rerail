@@ -119,7 +119,8 @@ use util::{
     UTIL_STEPS_LEFT, stack_address,
 };
 use util::{THREE_VALUED, UNKNOWN};
-pub(super) use value::{Bound, Reading, ValueTest};
+pub(super) use value::{Bound, Reading, ValueTest, file_values};
+pub(super) use util::is_comment_kind;
 
 #[derive(Clone)]
 pub(super) struct GrammarMatcher {

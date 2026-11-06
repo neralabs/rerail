@@ -1,0 +1,176 @@
+// data-layer-authentication-plan-purity, clause `authentication-contracts` (relational, 18 stages, partitionBy file),
+// by hand. Source: gate/data-layer/packs/data-layer/rules/data-layer-authentication-plan-purity.json.
+//
+// The SQL reads W's syntax table `nodes` (tree-sitter's named nodes less comment and string parts; `parent` the tree
+// parent, `<field>_id/_kind/_source` the field child, its id, kind and full source text; `text` a node's full text).
+// Here: node/child/field, `text` for identifiers' text and `node_text` for any other node's full text. Each stage is
+// a relation named after it (`auth_plan_<stage>`); the file's documents are the gate's: in scope, parsed.
+// - `depths` weighs block, decorated_definition, else_clause, finally_clause and expression_statement 0, every other
+//   node 1, from the module (0) down; `selected_classes` keeps, per file and class name, the deepest class, then
+//   the latest by start.
+// - `fn.__start < n.__start AND fn.__end >= n.__end` (a def holding a node) is inside(n, fn, {function_definition}):
+//   spans nest, and a def starts before anything in it.
+// - `store_contracts.types` is the assignment's annotation text, a space, and the parameter annotation for an
+//   identifier value; its regexes match a token of `[^\s\[\]|,]*` delimited by those characters or the ends, so
+//   they hold of the joined text exactly when they hold of one part: each part is tested apart (`match` is
+//   whole-string, so the search `(?:^|D)T(?:$|D)` is written `(?s)(?:.*D)?T(?:D.*)?`). Its `call` branch
+//   compares an integer id with 'call:<start>:<end>' text and never holds (the SQL's quirk, kept): '' there.
+// - callee = the attribute's `attribute` text when the function is an attribute, else the function's full text.
+// - `lower(name)` then `instr` is icontains.
+// Option entryPoint (default "scan_sources") is not read by this clause.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl inside(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl auth_plan_doc(d: number, p: symbol)
+auth_plan_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
+.decl auth_plan_def(kind: symbol)
+auth_plan_def("function_definition").
+
+// functions, classes: (node, doc, name).
+.decl auth_plan_functions(f: node, d: number, name: symbol)
+auth_plan_functions(f, d, s) :- node(d, f, "function_definition", _, _), auth_plan_doc(d, _), field(f, "name", x), text(x, s).
+.decl auth_plan_classes(c: node, d: number, name: symbol)
+auth_plan_classes(c, d, s) :- node(d, c, "class_definition", _, _), auth_plan_doc(d, _), field(c, "name", x), text(x, s).
+// methods: a def in a class's body, bare or decorated.
+.decl auth_plan_methods(f: node, cls: node, name: symbol, class_name: symbol)
+auth_plan_methods(f, c, s, cn) :- auth_plan_functions(f, _, s), auth_plan_classes(c, _, cn), field(c, "body", b), child(b, f, _).
+auth_plan_methods(f, c, s, cn) :- auth_plan_functions(f, _, s), auth_plan_classes(c, _, cn), field(c, "body", b), child(b, w, _),
+    node(_, w, "decorated_definition", _, _), child(w, f, _).
+
+// calls: (call, callee).
+.decl auth_plan_calls(c: node, callee: symbol)
+auth_plan_calls(c, s) :- node(d, c, "call", _, _), auth_plan_doc(d, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), text(a, s).
+auth_plan_calls(c, s) :- node(d, c, "call", _, _), auth_plan_doc(d, _), field(c, "function", f), !node(_, f, "attribute", _, _),
+    node_text(f, s).
+
+// parameter_types: a typed parameter's name (its first child, an identifier) and its annotation's text.
+.decl auth_plan_parameter_types(f: node, name: symbol, annotation: symbol)
+auth_plan_parameter_types(f, s, t) :- auth_plan_functions(f, _, _), field(f, "parameters", ps), child(ps, p, _),
+    (node(_, p, "typed_parameter", _, _) ; node(_, p, "typed_default_parameter", _, _)),
+    child(p, x, 0), node(_, x, "identifier", _, _), text(x, s), field(p, "type", y), node_text(y, t).
+
+// depths, along the tree from the module.
+.decl auth_plan_flat(kind: symbol)
+auth_plan_flat("block"). auth_plan_flat("decorated_definition"). auth_plan_flat("else_clause").
+auth_plan_flat("finally_clause"). auth_plan_flat("expression_statement").
+.decl auth_plan_depths(n: node, k: number)
+auth_plan_depths(m, 0) :- node(d, m, "module", _, _), auth_plan_doc(d, _).
+auth_plan_depths(n, j) :- auth_plan_depths(p, j), child(p, n, _), node(_, n, k, _, _), auth_plan_flat(k).
+auth_plan_depths(n, i) :- auth_plan_depths(p, j), child(p, n, _), node(_, n, k, _, _), !auth_plan_flat(k), i = j + 1.
+// selected_classes: per file and name, the deepest, then the latest.
+.decl auth_plan_class_depth(c: node, d: number, name: symbol, k: number)
+auth_plan_class_depth(c, d, s, k) :- auth_plan_classes(c, d, s), auth_plan_depths(c, k).
+.decl auth_plan_deepest(d: number, name: symbol, k: number)
+auth_plan_deepest(d, s, k) :- auth_plan_class_depth(_, d, s, _), k = max j : { auth_plan_class_depth(_, d, s, j) }.
+.decl auth_plan_deepest_start(d: number, name: symbol, st: number)
+auth_plan_deepest_start(d, s, st) :- auth_plan_deepest(d, s, k),
+    st = max b : { auth_plan_class_depth(c, d, s, k), node(_, c, _, b, _) }.
+.decl auth_plan_selected_classes(c: node, d: number, name: symbol)
+auth_plan_selected_classes(c, d, s) :- auth_plan_deepest_start(d, s, st), auth_plan_classes(c, d, s), node(_, c, _, st, _).
+
+// base_heads: a selected class's bases, through parentheses and calls, by name.
+.decl auth_plan_heads(c: node, x: node)
+auth_plan_heads(c, b) :- auth_plan_selected_classes(c, _, _), child(c, a, _), node(_, a, "argument_list", _, _), child(a, b, _),
+    !node(_, b, "comment", _, _).
+auth_plan_heads(c, n) :- auth_plan_heads(c, x), node(_, x, "parenthesized_expression", _, _), child(x, n, _),
+    !node(_, n, "comment", _, _).
+auth_plan_heads(c, n) :- auth_plan_heads(c, x), node(_, x, "call", _, _), field(x, "function", n).
+.decl auth_plan_base_heads(c: node, name: symbol)
+auth_plan_base_heads(c, s) :- auth_plan_heads(c, n), node(_, n, "identifier", _, _), text(n, s).
+auth_plan_base_heads(c, s) :- auth_plan_heads(c, n), node(_, n, "attribute", _, _), field(n, "attribute", a), text(a, s).
+
+// semantic_classes: (doc, name).
+.decl auth_plan_semantic_classes(d: number, name: symbol)
+auth_plan_semantic_classes(d, s) :- auth_plan_selected_classes(_, d, s), suffix("PlanStep", s).
+auth_plan_semantic_classes(d, s) :- auth_plan_selected_classes(c, d, s), auth_plan_base_heads(c, b),
+    (b = "ServerPlanStep" ; b = "NonPublishingStep" ; b = "SqlProducingStep" ; b = "SqlRelationPublisherStep" ;
+     b = "SqlScalarPublisherStep").
+auth_plan_semantic_classes(d, s) :- auth_plan_selected_classes(c, d, s), auth_plan_base_heads(c, b),
+    auth_plan_semantic_classes(d, b).
+
+// step_methods: the methods of any class named as a semantic class.
+.decl auth_plan_step_methods(f: node)
+auth_plan_step_methods(f) :- auth_plan_methods(f, _, _, cn), node(d, f, _, _, _), auth_plan_semantic_classes(d, cn).
+
+// self_stores: `self.<attr> = …` inside a step method: (assignment, method, attr).
+.decl auth_plan_self_stores(n: node, method: node, attr: symbol)
+auth_plan_self_stores(n, f, s) :- node(d, n, "assignment", _, _), auth_plan_doc(d, _), field(n, "left", a),
+    node(_, a, "attribute", _, _), field(a, "object", o), text(o, "self"), field(a, "attribute", x), text(x, s),
+    inside(n, f, auth_plan_def), auth_plan_step_methods(f).
+// The parts of store_contracts.types: the annotation, and an identifier value's parameter annotation.
+.decl auth_plan_type_part(n: node, t: symbol)
+auth_plan_type_part(n, t) :- auth_plan_self_stores(n, _, _), field(n, "type", y), node_text(y, t).
+auth_plan_type_part(n, t) :- auth_plan_self_stores(n, f, _), field(n, "right", v), node(_, v, "identifier", _, _), text(v, s),
+    auth_plan_parameter_types(f, s, t).
+
+// last_methods: per class and name, the latest def.
+.decl auth_plan_last_start(cls: node, name: symbol, st: number)
+auth_plan_last_start(c, s, st) :- auth_plan_methods(_, c, s, _), st = max b : { auth_plan_methods(f, c, s, _), node(_, f, _, b, _) }.
+.decl auth_plan_last_methods(f: node, cls: node, name: symbol, class_name: symbol)
+auth_plan_last_methods(f, c, s, cn) :- auth_plan_last_start(c, s, st), auth_plan_methods(f, c, s, cn), node(_, f, _, st, _).
+// method_calls: (cls, name, callee) of every call inside a last method.
+.decl auth_plan_method_calls(cls: node, name: symbol, callee: symbol)
+auth_plan_method_calls(c, s, x) :- auth_plan_last_methods(f, c, s, _), auth_plan_calls(k, x), inside(k, f, auth_plan_def).
+// entry_reach: (cls, entry, name) reached from a ReadThroughWriteTransaction entry method by callee name.
+.decl auth_plan_entry_reach(cls: node, entry: symbol, name: symbol)
+auth_plan_entry_reach(c, s, s) :- auth_plan_last_methods(_, c, s, cn), contains("ReadThroughWriteTransaction", cn),
+    (s = "__enter__" ; s = "__aenter__").
+auth_plan_entry_reach(c, e, m) :- auth_plan_entry_reach(c, e, s), auth_plan_method_calls(c, s, m), auth_plan_last_methods(_, c, m, _),
+    m != "_establish_legacy_write_authority", m != "_establish_native_write_authority".
+
+// function_decorators: (def, name): a call's callee, an attribute's attr, else the expression's text.
+.decl auth_plan_function_decorators(f: node, name: symbol)
+auth_plan_function_decorators(f, s) :- auth_plan_functions(f, _, _), child(w, f, _), node(_, w, "decorated_definition", _, _),
+    child(w, dc, _), node(_, dc, "decorator", _, _), child(dc, n, _), !node(_, n, "comment", _, _), auth_plan_decorator_name(n, s).
+.decl auth_plan_decorator_name(n: node, s: symbol)
+auth_plan_decorator_name(n, s) :- node(_, dc, "decorator", _, _), child(dc, n, _), auth_plan_calls(n, s).
+auth_plan_decorator_name(n, s) :- node(_, dc, "decorator", _, _), child(dc, n, _), node(_, n, "attribute", _, _),
+    field(n, "attribute", a), text(a, s).
+auth_plan_decorator_name(n, s) :- node(_, dc, "decorator", _, _), child(dc, n, _), !node(_, n, "call", _, _),
+    !node(_, n, "attribute", _, _), !node(_, n, "comment", _, _), node_text(n, s).
+
+// APP001: a step retains a transport object.
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP001", p, l) :- auth_plan_self_stores(n, _, s),
+    (s = "_client" ; s = "client" ; s = "_connection" ; s = "connection" ; s = "_callback" ; s = "callback" ;
+     s = "_registry" ; s = "registry"), node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP001", p, l) :- auth_plan_type_part(n, t),
+    match("(?s)(?:.*[\s\[\]|,])?[^\s\[\]|,]*(?:Client|Connection|Transaction|Callback|Registry|Transport)(?:[\s\[\]|,].*)?", t),
+    node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+// APP002: a step retains a mutable runtime result.
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP002", p, l) :- auth_plan_self_stores(n, _, s),
+    (contains("batched_value", s) ; contains("response", s) ; contains("runtime_result", s)),
+    node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP002", p, l) :- auth_plan_type_part(n, t),
+    match("(?s)(?:.*[\s\[\]|,])?[^\s\[\]|,]*(?:Response|RuntimeResult)(?:[\s\[\]|,].*)?", t),
+    node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+// APP003: a transaction entry reaches an authenticating call.
+.decl auth_plan_authenticates(x: symbol)
+auth_plan_authenticates(x) :- auth_plan_method_calls(_, _, x),
+    (contains("bind_cache_to_current_authority", x) ; contains("adopt_authenticated_remote_session", x)).
+auth_plan_authenticates(x) :- auth_plan_method_calls(_, _, x), contains("resolve", x),
+    (contains("auth", x) ; contains("credential", x) ; contains("admission", x)).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP003", p, l) :- auth_plan_last_methods(n, c, s, _),
+    (s = "__enter__" ; s = "__aenter__"), auth_plan_entry_reach(c, s, r), auth_plan_method_calls(c, r, x), auth_plan_authenticates(x),
+    node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+// APP004: an authentication compatibility method that is not a legacy wrapper of a lazy method.
+.decl auth_plan_lazy_wrapper(f: node)
+auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "legacy_sync" ; s = "legacy_async").
+auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "direct_legacy_sync" ; s = "direct_legacy_async"),
+    auth_plan_calls(k, x), suffix("_lazy", x), inside(k, f, auth_plan_def).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP004", p, l) :- auth_plan_functions(n, d, s),
+    (suffix("_sync", s) ; suffix("_async", s)),
+    (icontains("auth", s) ; icontains("credential", s) ; icontains("admission", s)),
+    !auth_plan_lazy_wrapper(n), auth_plan_doc(d, p), line(n, l).

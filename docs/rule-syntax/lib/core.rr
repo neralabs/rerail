@@ -75,8 +75,12 @@
 .decl static_value(n: node, v: symbol)                   // value after following file-local constant bindings
 // value_type("12", "int") for Python, "number" for TypeScript: the type of a value produced by `value`.
 .decl value_type(v: symbol, t: symbol)                   // "str", "int", "string", "number", …
+// value_type_of(n, "str") for the literal "12", value_type_of(n, "int") for 12, value_type_of(n, "list") for [1]:
+// the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
+// container or bytes has no text in `value`.
+.decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type
+.input value, str, strprefix, name, comment, static_value, value_type, value_type_of
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
@@ -141,6 +145,18 @@
 .decl syntax_error(d: number, l: number, msg: symbol)
 .input source, src_line, src_line_lf, tape_line, line_count, end_line, col, node_text, op_at, prev_token, token
 .input syntax_error
+
+// ---- the Python reference graph (across files) --------------------------------------------------------------
+// Which definition refers to which, over the policy's files, as the linker resolves names: through imports,
+// re-exports and packages, self/cls through the bases breadth first, declared parameter types, constructor
+// fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
+// reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
+// class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
+.decl reference_edge(src: node, dst: node, via: symbol)
+// reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
+// is not all known.
+.decl reference_open(n: node)
+.input reference_edge, reference_open
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -462,3 +478,6 @@
 //                                              ends unknown on any file. Members run as usual.
 // .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
+// .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
+//                                              the reference graph's links, as the policy's `references` gives
+//                                              them, over the files of `scope` (default: every file).

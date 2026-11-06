@@ -14,7 +14,7 @@
 //! | `!@glob($s, {"a", "b"})`                 | `!glob("a", s), !glob("b", s)`                             |
 //! | `$s in {"a", "b"}`                       | `(s = "a" ; s = "b")`                                      |
 //! | `@iequals($s, "a")`                      | `iglob("a", s)`, the pattern's glob characters escaped     |
-//! | `@rx($s, re)`                            | `match("(?s).*(?:re).*", s)` (`match` is whole-string)     |
+//! | `@rx($s, re)`                            | `match("(?s:.*)(?:re)(?s:.*)", s)` (`match` is whole-string) |
 //! | `@cat($a, $b)`                           | `@dot(a, b)`                                               |
 //! | `$n = count { a(…) }`                    | `n = count : { a(…) }`                                     |
 //! | `ast($d, $n, { … }, X: $v)`              | `ast(d, n, { … }, X: v)`                                   |
@@ -199,8 +199,7 @@ fn test(op: &str, s: &T, pattern: &T, neg: bool) -> Result<String, Error> {
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&super::print::glob_literal(p))),
-            "rx" => format!("{bang}match({}, {s})", quote(&format!("(?s).*(?:{p}).*"))),
-            "irx" => format!("{bang}match({}, {s})", quote(&format!("(?is).*(?:{p}).*"))),
+            "rx" | "irx" => format!("{bang}match({}, {s})", quote(&super::print::search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })
     };
