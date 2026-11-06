@@ -40,7 +40,7 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -230,9 +230,9 @@ eager_external_io(f) :- eager_func(f, _), eager_decorator(f, "external_io_bounda
 // W keeps a signed entry only where verify_ed25519 passes on json_object('allowlist', json_array(symbol), 'linter',
 // 'lint_eager_resolve:external_io_boundary', 'version', 1), SQLite's compact form, the signature taken as it is.
 .decl eager_approved_configured(x: number)
-eager_approved_configured(1) :- option_item("externalIoBoundaries", _).
+eager_approved_configured(1) :- option_item("externalIoBoundaries", _, _).
 .decl eager_approved(s: symbol)
-eager_approved(s) :- option_item("externalIoBoundaries", s).
+eager_approved(s) :- option_item("externalIoBoundaries", _, s).
 eager_approved(s) :- eager_signed(s, sig), !eager_approved_configured(1),
   m = cat("{\"allowlist\":[", cat(@json_str(s), "],\"linter\":\"lint_eager_resolve:external_io_boundary\",\"version\":1}")),
   @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", m, sig) = 1.

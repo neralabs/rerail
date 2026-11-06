@@ -5,7 +5,7 @@
 //
 // Options: `when: {option: {oracleAnalyzer: true}}` is `option_on("oracleAnalyzer")`; `sourceGate` on is the
 // module-text test, off (regex `^`) every module; each `category-<X>` utility (`^(?:a|b|…)$` over the escaped
-// items) is `option_item("category-<X>", name)`, and `unclassified-function` is in none of them. Every option is
+// items) is `option_item("category-<X>", _, name)`, and `unclassified-function` is in none of them. Every option is
 // read; none is fixed at its default.
 //
 // Not exact: an annotation string whose value W cannot know (an f-string with an interpolation, a `str`/bytes mix)
@@ -24,7 +24,7 @@
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 // Converter-given options (facts the converter writes, not inputs): true booleans, array items.
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 // A node's full source text, and W's value of an expression (as Python's str(v)) with its type.
 .decl node_text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
@@ -155,7 +155,7 @@ txn_init_in_conn_class(f) :-
 
 // `category-<X>`: the function's name is one of option `category-<X>`'s items (`^(?:a|b|…)$`, escaped).
 .decl txn_named(f: node, cat: symbol)
-txn_named(f, cat) :- field(f, "name", c), node(_, c, "identifier", _, _), text(c, s), option_item(cat, s), prefix("category-", cat).
+txn_named(f, cat) :- field(f, "name", c), node(_, c, "identifier", _, _), text(c, s), option_item(cat, _, s), prefix("category-", cat).
 // `unclassified-function`: not `__init__` of a connection class, and in no category.
 .decl txn_classified(f: node)
 txn_classified(f) :- txn_named(f, _).

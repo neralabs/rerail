@@ -59,7 +59,7 @@
 .input node_text, file_name
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -137,7 +137,7 @@ constructors_aown(a, f) :- constructors_afn(a, f, ls), ls = max x : { constructo
 // ---- the expected callers, split ---------------------------------------------------------------------------------
 // fok(e, d, q): e is d's file name, ':', and q holding no ':' (so the file name is all before e's last ':').
 .decl constructors_fok(e: symbol, d: number, q: symbol)
-constructors_fok(e, d, q) :- option_item("expectedCallers", e), constructors_doc(d, _), file_name(d, f), k = strlen(f),
+constructors_fok(e, d, q) :- option_item("expectedCallers", _, e), constructors_doc(d, _), file_name(d, f), k = strlen(f),
     n = strlen(e), n > k, substr(e, 0, k) = f, substr(e, k, 1) = ":", q = substr(e, k + 1, n - k - 1), !contains(":", q).
 
 // caller(c) = e.
@@ -185,4 +185,4 @@ violation("data-layer-versioned-merged-identity", "constructors", "VMI002", p, l
 violation("data-layer-versioned-merged-identity", "constructors", "VMI003", p, l) :- constructors_ctor(d, c, _, _),
     constructors_reviewed(c), !constructors_ok(c), constructors_doc(d, p), line(c, l).
 violation("data-layer-versioned-merged-identity", "constructors", "VMI001", "impl/common/l2070_server_plan/steps", 1) :-
-    option_item("expectedCallers", e), !constructors_found(e).
+    option_item("expectedCallers", _, e), !constructors_found(e).

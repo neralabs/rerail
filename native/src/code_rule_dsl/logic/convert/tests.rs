@@ -194,7 +194,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     // other values as text, and the leaves of JSON values (an object or array, or a string holding one, as
     // `parameters` does) by JSON pointer, as W's `json_extract` reads them.
     e.decls.insert("option_on".into(), "name: sym".into());
-    e.decls.insert("option_item".into(), "name: sym, v: sym".into());
+    e.decls.insert("option_item".into(), "name: sym, i: int, v: sym".into());
     e.decls.insert("option_value".into(), "name: sym, v: sym".into());
     e.decls.insert("option_json".into(), "name: sym, pointer: sym, v: sym".into());
     let as_text = |v: &Json| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
@@ -205,7 +205,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
                 option_facts.insert(format!("option_on({}).", quote(&name)));
             }
             Json::Bool(false) | Json::Null => {}
-            Json::Array(items) => option_facts.extend(items.iter().map(|item| format!("option_item({}, {}).", quote(&name), quote(&as_text(item))))),
+            Json::Array(items) => option_facts.extend(items.iter().enumerate().map(|(i, item)| format!("option_item({}, {i}, {}).", quote(&name), quote(&as_text(item))))),
             other => {
                 option_facts.insert(format!("option_value({}, {}).", quote(&name), quote(&as_text(other))));
             }
@@ -1348,11 +1348,11 @@ fn the_options_are_given() {
 .decl line(n: node, l: number)
 .decl in_scope(d: number)
 .decl option_on(name: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl category_1_def(n: node, s: symbol)
 category_1_def(n, s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
-violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", _, s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
 "#
     );
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("options");
@@ -1369,7 +1369,8 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     };
     // The defaults: `oracleAnalyzer` off, `category-LEGITIMATE` its default list.
     let defaults = convert_over(&rule, &Adjust { scope: everywhere(), ..Adjust::default() }, Some(&dir)).unwrap();
-    assert!(defaults.program.contains(r#"option_item("category-LEGITIMATE", "__enter__")."#), "{}", defaults.program);
+    let enter_item = |program: &str| program.lines().any(|l| l.starts_with(r#"option_item("category-LEGITIMATE", "#) && l.ends_with(r#", "__enter__")."#));
+    assert!(enter_item(&defaults.program), "{}", defaults.program);
     assert!(!defaults.program.contains(r#"option_on("oracleAnalyzer")."#), "{}", defaults.program);
     assert_eq!(tests(&defaults.program, "defaults"), Vec::<String>::new());
     // As an analyzer event configures it: `oracleAnalyzer` on, the category one name.
@@ -1384,7 +1385,7 @@ violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), ca
     });
     let analyzer = convert_over(&rule, &Adjust { scope: everywhere(), policy: Some(configure), ..Adjust::default() }, Some(&dir)).unwrap();
     assert!(analyzer.configured);
-    assert!(analyzer.program.contains(r#"option_on("oracleAnalyzer")."#) && !analyzer.program.contains(r#"option_item("category-LEGITIMATE", "__enter__")"#), "{}", analyzer.program);
+    assert!(analyzer.program.contains(r#"option_on("oracleAnalyzer")."#) && !enter_item(&analyzer.program), "{}", analyzer.program);
     assert_eq!(tests(&analyzer.program, "analyzer"), ["impl/a.py:3:TEST"]);
     // JSON options, by pointer, as W's `json_extract` reads `parameters`.
     let mut leaves = Vec::new();

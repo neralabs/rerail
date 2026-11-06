@@ -44,8 +44,9 @@
 //!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
 //!   The options, as the run resolves them (the policy's config, else each option's default; the replay's per
 //!   event), are given too, read, never derived: `option_on(name: symbol)`, a row per boolean option that is true;
-//!   `option_item(name: symbol, v: symbol)`, a row per item of an array option (strings as they are, others as
-//!   JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object option, as text;
+//!   `option_item(name: symbol, i: number, v: symbol)`, a row per item of an array option, i from 0 (core.rr's; strings
+//!   as they are, others as JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object
+//!   option, as text;
 //!   `option_json(name: symbol, pointer: symbol, v: symbol)`, a row per leaf of a JSON option (an object or array,
 //!   or a string holding one, as `parameters` does) at its JSON pointer (`/lineCounts/a~1b.py`), as W's
 //!   `json_extract` reads it, the leaf as `option_value` renders it. A clause
@@ -890,7 +891,8 @@ fn given_types(rel: &str) -> Option<Vec<String>> {
     let types: &[&str] = match rel {
         "in_scope" | "out_scope" | "report_when_gt" => &["int"],
         "option_on" => &["sym"],
-        "option_item" | "option_value" => &["sym", "sym"],
+        "option_item" => &["sym", "int", "sym"],
+        "option_value" => &["sym", "sym"],
         "option_json" => &["sym", "sym", "sym"],
         _ => return None,
     };

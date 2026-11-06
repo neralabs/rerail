@@ -49,7 +49,7 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_value(name: symbol, v: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl inside(n: node, a: node, set: relation)
 .decl nearest(n: node, a: node, set: relation)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -481,10 +481,10 @@ prs_col(d2, t, col) :- prs_col(d, f, col), prs_cedge(d, f, d2, t), prs_flag(d2, 
 .decl prs_scansource(z: number)
 prs_scansource(0) :- option_value("entryPoint", "scan_source").
 .decl prs_anyprimary(z: number)
-prs_anyprimary(0) :- option_item("primaryPaths", _).
+prs_anyprimary(0) :- option_item("primaryPaths", _, _).
 .decl prs_pathok(d: number)
 prs_pathok(d) :- prs_doc(d, _, _), !prs_anyprimary(0).
-prs_pathok(d) :- prs_doc(d, p, _), option_item("primaryPaths", p).
+prs_pathok(d) :- prs_doc(d, p, _), option_item("primaryPaths", _, p).
 
 // scan_paths: the colored functions of the primary paths; color = max(color): "pure" where any path brings it.
 .decl prs_active(d: number, f: node)
