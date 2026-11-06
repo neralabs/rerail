@@ -1169,12 +1169,19 @@ export class CodeRuleBridge {
     if (this.#onIgnoreRulesChanged === undefined) return;
     const first: string[] = [];
     for (const path of new Set([...walk.previous.keys(), ...current.keys()])) {
-      if (basename(path) !== GITIGNORE || !walkAnswersFor(discovery, walk, path)) continue;
-      const before = walk.previous.get(path);
-      if (this.#baselinePath(discovery, path, before, walk.baseline)) first.push(path);
-      else if (before?.stamp !== current.get(path)?.stamp) this.#walkedIgnoreChanges.add(path);
+      const seen = this.#walkedIgnoreFile(discovery, walk, current, path);
+      if (seen === "first") first.push(path);
+      else if (seen === "changed") this.#walkedIgnoreChanges.add(path);
     }
     await this.#rememberIgnoreFiles(first);
+  }
+
+  /** How the walk saw `path`, when it is a `.gitignore` the walk answers for: for the first time, or changed since. */
+  #walkedIgnoreFile(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>, path: string): "first" | "changed" | undefined {
+    if (basename(path) !== GITIGNORE || !walkAnswersFor(discovery, walk, path)) return undefined;
+    const before = walk.previous.get(path);
+    if (this.#baselinePath(discovery, path, before, walk.baseline)) return "first";
+    return before?.stamp === current.get(path)?.stamp ? undefined : "changed";
   }
 
   /** Reports each file of a finished tool edit that no rule checked because Git ignores it; best-effort, file by file. */
