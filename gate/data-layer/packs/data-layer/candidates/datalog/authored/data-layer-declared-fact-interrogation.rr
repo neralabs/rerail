@@ -1,0 +1,91 @@
+// data-layer-declared-fact-interrogation: both clauses, by hand (decision 0043). The policy is
+// candidates/rules/data-layer-declared-fact-interrogation.json; it declares no options.
+//
+// Notes against W:
+// - contract-attribute: `value: {regex}` is read from the literal's raw content (APPROX: a name spelled with
+//   escapes, `"defin\x65s"`, is not seen); `nthChild: 2` counts named children without comments (APPROX: W counts
+//   a comment before the string among the arguments).
+// - override-identity: W's `has: {regex: "^(?:==|!=|…)$"}` tests every child token, the operators included. No
+//   relation holds a comparison's operators (`op` has none for comparison_operator, whose tokens are in field
+//   `operators`; op_at is not bound), so each operator is read from the comparison's text: the text between two
+//   operands, cut with `substr` at byte offsets (APPROX: only where the comparison's text is ASCII; a non-ASCII
+//   one reads as `is` only).
+//   The op_at form is in data-layer-declared-fact-interrogation.pending.rr.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- contract-attribute: getattr/hasattr(obj, "<declared contract attribute>", …) ----
+.decl contract_attribute_name(s: symbol)
+contract_attribute_name("auxiliary_query").
+contract_attribute_name("column_type_hints").
+contract_attribute_name("creates_indexes").
+contract_attribute_name("ddl_effect_scope").
+contract_attribute_name("declared_column_type_hints").
+contract_attribute_name("declared_columns").
+contract_attribute_name("defines").
+contract_attribute_name("effects_known").
+contract_attribute_name("ephemeral").
+contract_attribute_name("guarded_creates").
+contract_attribute_name("guarded_indexes").
+contract_attribute_name("modifies_rows").
+contract_attribute_name("reads_outside_itself").
+contract_attribute_name("relation_role").
+contract_attribute_name("relation_scope").
+contract_attribute_name("source_tables").
+// The prefixes of a `str` literal: valid, neither bytes nor template.
+.decl contract_attribute_str_prefix(p: symbol)
+contract_attribute_str_prefix("").
+contract_attribute_str_prefix("r").
+contract_attribute_str_prefix("u").
+contract_attribute_str_prefix("f").
+contract_attribute_str_prefix("fr").
+contract_attribute_str_prefix("rf").
+violation("data-layer-declared-fact-interrogation", "contract-attribute", "CONTRACT_ATTR_PROBE", p, l) :-
+  node(d, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, x),
+  (x = "getattr" ; x = "hasattr"),
+  field(n, "arguments", a), child(a, s, 1), node(_, s, "string", _, _),
+  strprefix(s, q), contract_attribute_str_prefix(q), str(s, v), contract_attribute_name(v),
+  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- override-identity: `type(x).m is Base.m` (either way round), x not self ----
+// override_identity_sep(n, x): the text between two adjacent operands (an operator, spaces, line continuations,
+// comments), cut at byte offsets, which are character offsets where the comparison's text is ASCII (its length in
+// characters is its length in bytes). APPROX: a comparison whose text is not ASCII has no separators here, so it
+// reads as `is` only.
+.decl override_identity_ascii(n: node, s: symbol, ns: number)
+override_identity_ascii(n, s, ns) :- node(_, n, "comparison_operator", ns, ne), node_text(n, s), strlen(s) = ne - ns.
+.decl override_identity_sep(n: node, x: symbol)
+override_identity_sep(n, x) :- override_identity_ascii(n, s, ns), child(n, c, i), node(_, c, _, _, e),
+  j = i + 1, child(n, c2, j), node(_, c2, _, b, _), x = substr(s, e - ns, b - e).
+// A comparison with an operator other than `is` / `is not`.
+.decl override_identity_other_op(n: node)
+override_identity_other_op(n) :- override_identity_sep(n, x),
+  !match("(?:\s|\\\\|#[^\n]*)*is(?:(?:\s|\\\\|#[^\n]*)+not)?(?:\s|\\\\|#[^\n]*)*", x).
+// `^\(\s*self(?:\s*,)?\s*\)$` on the arguments' text: `type(self)`, `type(self,)`.
+.decl override_identity_self_args(g: node)
+override_identity_self_args(g) :- node(_, g, "argument_list", _, _), node_text(g, s),
+  match("\(\s*self(?:\s*,)?\s*\)", s).
+// `type(…).m`, the call's arguments not `(self)`.
+.decl override_identity_type_attr(a: node)
+override_identity_type_attr(a) :- node(_, a, "attribute", _, _), field(a, "object", c), node(_, c, "call", _, _),
+  field(c, "function", f), node(_, f, "identifier", _, _), text(f, "type"),
+  field(c, "arguments", g), node(_, g, "argument_list", _, _), !override_identity_self_args(g).
+violation("data-layer-declared-fact-interrogation", "override-identity", "OVERRIDE_IDENTITY_PROBE", p, l) :-
+  node(d, n, "comparison_operator", _, _), !override_identity_other_op(n),
+  child(n, a, 0), node(_, a, "attribute", _, _), child(n, b, j), j > 0, node(_, b, "attribute", _, _),
+  field(a, "attribute", x), field(b, "attribute", y), text(x, s), text(y, s),
+  (override_identity_type_attr(a) ; override_identity_type_attr(b)),
+  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

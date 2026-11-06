@@ -41,6 +41,28 @@ pub(crate) struct Document {
     pub core: String,
     pub digest: [u8; 32],
     pub facts: Arc<Facts>,
+    /// The tape the facts were read off and the file it parsed, which W's values read (`Extra`: `VALUES`); kept only
+    /// for a program that reads one of them, else `None`.
+    pub(in crate::code_rule_dsl) tape: Option<(crate::code_rule_dsl::tape::TapeDoc, crate::code_rule_dsl::model::FileInput)>,
+}
+
+/// The relations of W's values (`Extra`), for which a batch's documents keep their tapes (`Document::tape`).
+pub(crate) const VALUES: [&str; 4] = ["value", "static_value", "value_type_of", "value_type"];
+
+/// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
+/// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
+pub(crate) fn comment_body(text: &str) -> &str {
+    let body = if let Some(rest) = text.strip_prefix("/*") {
+        let rest = rest.strip_suffix("*/").unwrap_or(rest);
+        rest.strip_prefix(['*', '!']).unwrap_or(rest)
+    } else if let Some(rest) = text.strip_prefix("//") {
+        rest.strip_prefix(['/', '!']).unwrap_or(rest)
+    } else if let Some(rest) = text.strip_prefix("<!--") {
+        rest.strip_suffix("-->").unwrap_or(rest)
+    } else {
+        text.strip_prefix('#').or_else(|| text.strip_prefix("--")).unwrap_or(text)
+    };
+    body.trim()
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -272,10 +294,14 @@ pub(crate) struct Batch {
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | SPAN | k`, past every node of its
 /// document, so no node view has a row of it (`Batch::node`). `k` is 0 for the whole source (`source`), `l` for
 /// physical line `l` (`src_line`), `LF | l` for `\n`-line `l` (`src_line_lf`), `TAPE | l` for the tape's line `l`
-/// (`tape_line`) and `MATCH | i` for the document's `i`th match of a `match_all` regex.
+/// (`tape_line`), `COMMENT | k` for the document's `k`-th comment from 1, in source order, of those no node is
+/// (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but keep Rust's `line_comment`, which is
+/// then the comment's id) and `MATCH | i` for the document's `i`th match or group of a `match_all` or
+/// `match_group` regex.
 pub(crate) const SPAN: u32 = 1 << 31;
 pub(crate) const LF: u32 = 1 << 30;
 pub(crate) const TAPE: u32 = 1 << 29;
+pub(crate) const COMMENT: u32 = 1 << 28;
 pub(crate) const MATCH: u32 = 1 << 27;
 
 /// The physical lines of `source`, as byte ranges without their terminators: as Python's `str.splitlines()`
@@ -354,7 +380,16 @@ enum View {
 /// its end line the line holding its end offset (`src_line`'s numbering). A node's `end_line` is the line holding its
 /// end offset, as W's `layout` counts (its last byte's, but where the node ends with a line terminator, as a module
 /// may), and its `col` its start's byte column, both on the tape's lines; `node_text` is its source text, exactly.
-/// Rows hold string indexes, as `Batch::build`'s do.
+/// `value(n, v)` is W's value of expression node `n` as a string (`matcher::file_values`: a clause's `value` in its
+/// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
+/// (`Document::tape`), no row where W does not know it or it is no scalar; `static_value(n, v)` the same with names
+/// followed through their file-local bindings (W's `value.follow`). `value_type_of(n, t)` names the type of W's value
+/// of `n` as W's `value.type` does (containers and bytes included, a JavaScript RegExp also `object`), and
+/// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
+/// (the str `"12"` and the int `12` both give `12`). `comment(c, s)` is each comment's text without its marker
+/// (`comment_body`); a comment no node is (`COMMENT`) has rows in `text` and `node_text` (its text, marker included),
+/// `line`, `end_line` and `col` as a node's. Rows hold string indexes, as `Batch::build`'s do.
+///
 ///
 /// And each `matchall_<k>(sp, m)` read (`logic::strings::as_relations`, core.rr's `match_all`): `m` each match of
 /// regex `k` in span `sp`'s text, leftmost-first and non-overlapping (Rust's `find_iter`, as W's `regex` reads a
@@ -373,6 +408,11 @@ struct Extra {
     end_line: bool,
     col: bool,
     node_text: bool,
+    value: bool,
+    static_value: bool,
+    value_type_of: bool,
+    value_type: bool,
+    comment: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
     src_lines_lf: Vec<[i64; 3]>,
@@ -382,6 +422,11 @@ struct Extra {
     end_lines: Vec<[i64; 2]>,
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
+    values: Vec<[i64; 2]>,
+    static_values: Vec<[i64; 2]>,
+    value_types_of: Vec<[i64; 2]>,
+    value_types: BTreeSet<[i64; 2]>,
+    comments: Vec<[i64; 2]>,
     /// The regexes of the `match_all` and `match_group` relations read (`Found`).
     matches: Vec<Found>,
 }
@@ -414,6 +459,11 @@ impl Extra {
             end_line: read("end_line"),
             col: read("col"),
             node_text: read("node_text"),
+            value: read("value"),
+            static_value: read("static_value"),
+            value_type_of: read("value_type_of"),
+            value_type: read("value_type"),
+            comment: read("comment"),
             matches: matches
                 .iter()
                 .enumerate()
@@ -432,7 +482,7 @@ impl Extra {
     }
 
     fn spans(&self) -> bool {
-        self.source || self.src_line || self.src_line_lf || self.tape_line
+        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment
     }
 
     /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
@@ -440,7 +490,7 @@ impl Extra {
         self.line && self.spans()
     }
 
-    /// A span's rows in `text` (into `text`), `line`, `end_line` and `col`.
+    /// A span's rows in `text` (into `text`), `line`, `end_line` and `col` (its start's byte column).
     #[allow(clippy::too_many_arguments)]
     fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
         if self.text {
@@ -457,9 +507,48 @@ impl Extra {
         }
     }
 
-    /// Document `p`'s rows; `splitlines`: its lines split as Python's `str.splitlines()` does.
-    fn document(&mut self, p: &Projected, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
+    /// `splitlines`: its lines split as Python's `str.splitlines()` does.
+    #[allow(clippy::too_many_arguments)]
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
+        let plain = self.value || self.value_type_of || self.value_type;
+        // A text-only document has no node, so no value.
+        if (plain || self.static_value) && dialect.is_some() {
+            let Some((tape, file)) = &d.tape else {
+                return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
+            };
+            if tape.transducer_len() != f.len() {
+                return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
+            }
+            let (value, value_type_of, value_type) = (self.value, self.value_type_of, self.value_type);
+            let (values, static_values, types_of, types) = (&mut self.values, &mut self.static_values, &mut self.value_types_of, &mut self.value_types);
+            crate::code_rule_dsl::matcher::file_values(tape, file, plain, self.static_value, &mut |followed, ordinal, v, names| {
+                let local = p.local[ordinal as usize];
+                if local == NONE {
+                    return;
+                }
+                // A value's text is interned only for a relation that holds it.
+                let v = v.filter(|_| followed || value || value_type).map(|v| string(&v) as i64);
+                let n = p.global(local);
+                if followed {
+                    static_values.extend(v.map(|v| [n, v]));
+                    return;
+                }
+                if value && let Some(v) = v {
+                    values.push([n, v]);
+                }
+                for name in names {
+                    let t = string(name) as i64;
+                    if value_type_of {
+                        types_of.push([n, t]);
+                    }
+                    if value_type && let Some(v) = v {
+                        types.insert([v, t]);
+                    }
+                }
+            });
+        }
         if self.line_rows() || self.end_line || self.col || self.node_text {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
@@ -481,6 +570,32 @@ impl Extra {
         let key = i64::from(p.key);
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
+        if self.comment && let Some(dialect) = dialect {
+            use crate::code_rule_dsl::matcher::is_comment_kind;
+            let mut k = 0;
+            for id in 0..f.len() as u32 {
+                // A comment kind's node, not inside another (Rust's doc comment parts are not comments).
+                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+                    continue;
+                }
+                let whole = f.text(id);
+                let c = match p.local[id as usize] {
+                    NONE => {
+                        k += 1;
+                        let c = span(COMMENT | k);
+                        let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                        let col = start - f.lines.start(f.lines.line(start));
+                        self.span(c, f.start_line[id as usize] as usize, f.lines.line(end) + 1, col, whole, text, string);
+                        if self.node_text {
+                            self.node_texts.push([c, string(whole) as i64]);
+                        }
+                        c
+                    }
+                    local => p.global(local),
+                };
+                self.comments.push([c, string(comment_body(whole)) as i64]);
+            }
+        }
         if !(self.spans() || self.line_count) {
             return Ok(());
         }
@@ -601,6 +716,21 @@ impl Extra {
         }
         if self.node_text {
             out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)]))));
+        }
+        if self.value {
+            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)]))));
+        }
+        if self.static_value {
+            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)]))));
+        }
+        if self.value_type_of {
+            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| vec![n, atom(t)]))));
+        }
+        if self.value_type {
+            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| vec![atom(v), atom(t)]))));
+        }
+        if self.comment {
+            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)]))));
         }
         let mut matched = Vec::new();
         for found in self.matches {
@@ -724,7 +854,7 @@ impl Batch {
                 }
             }
             // A text document's lines split as W's `lines` regexes split any file's.
-            extra.document(&p, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
+            extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -972,6 +1102,19 @@ impl Source for Viewed {
 /// The field atom of field `code` in the dialect whose tape tag is `tag`.
 pub(crate) fn field_atom(tag: u8, code: u16) -> u32 {
     u32::from(tag) << 16 | u32::from(code)
+}
+
+/// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
+/// `node`: what W's call summaries name a definition by (`calls::summary::Def`).
+pub(crate) fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
+    let dialect = Dialect::new((facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8)?;
+    let p = Projected::new(key, Arc::clone(facts), Some(&dialect));
+    Ok(p.core
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| matches!(dialect.name(facts, **id), "function_definition" | "class_definition"))
+        .map(|(local, &id)| ((facts.start[id as usize], facts.end[id as usize]), p.global(local as u32)))
+        .collect())
 }
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.

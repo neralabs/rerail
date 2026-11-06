@@ -1,0 +1,11 @@
+// PENDING for data-layer-data-layer-facade-purity.rr (not read by the converter): sourceGate as configured,
+// awaiting the option facts (`option_on`, ConvertFoundation A9). When they are bound, merge this into the main
+// file: add the declaration, replace its facade_gate rule by the first rule below, and add the second.
+
+.decl option_on(name: symbol)
+
+// sourceGate on (the default): the module's text, comments and strings included, matches the gate regex.
+facade_gate(d) :- node(d, m, "module", _, _), option_on("sourceGate"), node_text(m, s),
+  (contains("def ", s) ; contains("class ", s) ; contains("impl.", s) ; contains("=", s) ; contains("(", s)).
+// sourceGate off: the regex is `(?s).*`, which every module matches.
+facade_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").

@@ -1,0 +1,19 @@
+// data-layer-async-sync-delegation, awaiting `option_on(name: symbol)` (ConvertFoundation A9): the source gate as
+// the option `sourceGate` sets it. Merge into data-layer-async-sync-delegation.rr once the converter gives the
+// option facts, replacing that file's `asd_gate` rule with these two (every clause reads `asd_gate`):
+// - sourceGate true (the default): the module's text contains one of the gate's literals;
+// - sourceGate false: the gate's regex is `(?s).*`, which every module matches.
+// The recorded events run with sourceGate false (the oracle's `source_gate: false`), the probe with the default.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl asd_gate(d: number)
+
+asd_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s),
+    (contains("async def", s) ; contains("_async", s) ; contains("__aenter__", s) ; contains("__aexit__", s) ;
+     contains("run_in_executor", s) ; contains("to_thread", s) ; contains("tracked_run_in_executor", s) ;
+     contains("tracked_to_thread", s) ; contains("legacy_async", s) ; contains("legacy_module_async", s) ;
+     contains("pure_lazy", s) ; contains("resolve_async", s)).
+asd_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).

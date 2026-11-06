@@ -6,6 +6,8 @@ use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::test_support::CAPABILITIES;
 use std::path::{Path, PathBuf};
 
+mod reference_tests;
+
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
 
@@ -26,6 +28,9 @@ struct Converted {
     /// Whether the run's options differ from the policy's own (its config, else its defaults), or its clauses were
     /// edited: what an authored file, written for the policy as it is, does not follow.
     configured: bool,
+    /// The clauses whose Python matchers carry `when` (an option condition), with those conditions: what they
+    /// convert to holds for this run's options only.
+    when: BTreeMap<String, Vec<String>>,
 }
 
 /// Why a rule did not convert: the run's configuration does not apply to it, or its authored file is wrong.
@@ -48,6 +53,36 @@ fn scope_globs(document: &serde_json::Value, key: &str) -> Vec<String> {
     document.get("scope").and_then(|s| s.get(key)).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect()
 }
 
+/// The policy's reference graph configuration: the sibling links and constructor fields of its `calls { graph:
+/// references }` terms and relational `references` inputs, each distinct one once.
+fn reference_graphs(document: &serde_json::Value) -> Vec<serde_json::Map<String, serde_json::Value>> {
+    fn walk(value: &serde_json::Value, out: &mut Vec<serde_json::Map<String, serde_json::Value>>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, inner) in map {
+                    let graph = match (key.as_str(), inner.as_object()) {
+                        ("calls", Some(calls)) if calls.get("graph").and_then(|g| g.as_str()) == Some("references") => Some(calls),
+                        ("references", Some(references)) if references.contains_key("language") => Some(references),
+                        _ => None,
+                    };
+                    if let Some(graph) = graph {
+                        let config: serde_json::Map<_, _> = ["siblingLinks", "constructorFields"].iter().filter_map(|k| graph.get(*k).map(|v| ((*k).to_owned(), v.clone()))).collect();
+                        if !out.contains(&config) {
+                            out.push(config);
+                        }
+                    }
+                    walk(inner, out);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(document, &mut out);
+    out
+}
+
 /// How a replay event adjusts a rule: its scope, which clauses it keeps, and an edit of the policy document before it
 /// compiles (option values, clause edits) that says whether it edited clauses, or why it cannot apply.
 #[derive(Default)]
@@ -55,6 +90,23 @@ struct Adjust {
     scope: Option<(Vec<String>, Vec<String>)>,
     keep: Option<Box<dyn Fn(&str) -> bool>>,
     policy: Option<Box<dyn Fn(&mut serde_json::Value) -> Result<bool, String>>>,
+}
+
+/// The leaves of a JSON value, each at its JSON pointer (RFC 6901: `/a/0`, `~` and `/` in keys as `~0`, `~1`).
+fn json_leaves(value: &Json, pointer: String, out: &mut Vec<(String, Json)>) {
+    match value {
+        Json::Object(members) => {
+            for (key, member) in members {
+                json_leaves(member, format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1")), out);
+            }
+        }
+        Json::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                json_leaves(item, format!("{pointer}/{i}"), out);
+            }
+        }
+        leaf => out.push((pointer, leaf.clone())),
+    }
 }
 
 /// A policy's option values, clause by clause: its config's, else the option's default.
@@ -87,6 +139,11 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         None => false,
     };
     let configured = edited || option_values(&original) != option_values(&document);
+    // The reference graph the corpus runner binds (`logic::plan::corpus::references`): the policy's, one per policy.
+    let graphs = reference_graphs(&document);
+    if graphs.len() > 1 {
+        return Err(Failure::Config(format!("{} configures more than one reference graph", document["id"])));
+    }
     let id = document["id"].as_str().unwrap().to_owned();
     // A relational clause is SQL stages: it is not converted but written by hand in `.rr` (list step 30). It is
     // taken out before the rest compiles, since the newer rules' stages use forms (`escape: sql`, `message`,
@@ -133,6 +190,50 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     if let Some(k) = report_when_gt {
         e.facts.push(format!("report_when_gt({k})."));
     }
+    // The options as this run resolves them, for the authored file (`GIVEN`): booleans that hold, array items,
+    // other values as text, and the leaves of JSON values (an object or array, or a string holding one, as
+    // `parameters` does) by JSON pointer, as W's `json_extract` reads them.
+    e.decls.insert("option_on".into(), "name: sym".into());
+    e.decls.insert("option_item".into(), "name: sym, v: sym".into());
+    e.decls.insert("option_value".into(), "name: sym, v: sym".into());
+    e.decls.insert("option_json".into(), "name: sym, pointer: sym, v: sym".into());
+    let as_text = |v: &Json| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
+    let mut option_facts = BTreeSet::new();
+    for (_, name, value) in option_values(&document) {
+        match &value {
+            Json::Bool(true) => {
+                option_facts.insert(format!("option_on({}).", quote(&name)));
+            }
+            Json::Bool(false) | Json::Null => {}
+            Json::Array(items) => option_facts.extend(items.iter().map(|item| format!("option_item({}, {}).", quote(&name), quote(&as_text(item))))),
+            other => {
+                option_facts.insert(format!("option_value({}, {}).", quote(&name), quote(&as_text(other))));
+            }
+        }
+        let json = match &value {
+            Json::String(s) => serde_json::from_str::<Json>(s).ok().filter(|j| j.is_object() || j.is_array()),
+            Json::Object(_) | Json::Array(_) => Some(value.clone()),
+            _ => None,
+        };
+        let mut leaves = Vec::new();
+        if let Some(json) = &json {
+            json_leaves(json, String::new(), &mut leaves);
+        }
+        option_facts.extend(leaves.into_iter().map(|(pointer, leaf)| format!("option_json({}, {}, {}).", quote(&name), quote(&pointer), quote(&as_text(&leaf)))));
+    }
+    e.facts.extend(option_facts);
+    // The clauses whose Python matchers carry `when`: their conversion follows this run's options only.
+    let when: BTreeMap<String, Vec<String>> = document["clauses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            let ast = &c["forbid"]["ast"];
+            let matchers: Vec<&Json> = ast.as_array().map_or_else(|| vec![ast], |a| a.iter().collect());
+            let conditions: Vec<String> = matchers.iter().filter(|m| m["language"] == "python").filter_map(|m| m.get("when")).map(Json::to_string).collect();
+            (!conditions.is_empty()).then(|| (c["id"].as_str().unwrap_or_default().to_owned(), conditions))
+        })
+        .collect();
     let mut clauses: Vec<(String, Result<Origin, Gap>)> = relational
         .into_iter()
         .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
@@ -152,7 +253,12 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
                 ClauseKind::Budget { .. } => return gap("budget"),
                 _ => return gap("another clause kind"),
             };
-            let Some(grammar) = matchers.iter().find(|m| m.language == GrammarDialect::Python) else { return gap("no Python matcher") };
+            let mut pythons = matchers.iter().filter(|m| m.language == GrammarDialect::Python);
+            let Some(grammar) = pythons.next() else { return gap("no Python matcher") };
+            // W reads a file with the first matcher whose `when` and file condition hold (`eval::query::grammar_matcher`).
+            if pythons.next().is_some() {
+                return gap("several Python matchers (the first that applies to a file)");
+            }
             if !grammar.applies {
                 return Ok(());
             }
@@ -208,7 +314,12 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
     // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    // The `.references` setting: the graph's configuration over the run's scope.
+    if let Some(mut graph) = graphs.into_iter().next() {
+        graph.insert("scope".into(), serde_json::json!({"include": include, "exclude": exclude}));
+        prog.settings.push(("references".into(), serde_json::Value::Object(graph).to_string()));
+    }
     // The authored file's clauses over the converter's, with only what `violation` reaches.
     let file = authored.map(|dir| dir.join(format!("{id}.rr"))).filter(|f| f.exists());
     let prog = if let Some(file) = file {
@@ -224,7 +335,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         reachable(prog)
     };
     let program = crate::code_rule_dsl::logic::rr::print(&prog).map_err(|e| Failure::Authored(format!("{id}: the merged program does not print: {e:?}")))?;
-    Ok(Converted { program, clauses, approx: e.approx.clone(), configured })
+    Ok(Converted { program, clauses, approx: e.approx.clone(), configured, when })
 }
 
 /// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
@@ -256,7 +367,7 @@ fn rule_file(check: &str) -> Option<PathBuf> {
 fn convert_the_data_layer_pack() {
     let out = pack().join("datalog");
     std::fs::create_dir_all(&out).unwrap();
-    let (mut total, mut converted, mut authored) = (0, 0, 0);
+    let (mut total, mut converted, mut authored, mut by_options) = (0, 0, 0, 0);
     let mut gaps = BTreeMap::<String, usize>::new();
     let mut approx = BTreeMap::<String, usize>::new();
     let mut per_rule = Vec::new();
@@ -282,13 +393,24 @@ fn convert_the_data_layer_pack() {
         }
         per_rule.push(format!("{id}: {ok}/{} (authored {by_hand})", c.clauses.len()));
         for (clause, r) in &c.clauses {
-            if let Err(Gap(g)) = r {
-                let g: String = g.chars().take(160).collect();
-                per_rule.push(format!("    {clause}: {}", g.replace('\n', " ")));
+            match r {
+                Err(Gap(g)) => {
+                    let g: String = g.chars().take(160).collect();
+                    per_rule.push(format!("    {clause}: {}", g.replace('\n', " ")));
+                }
+                // Converted for the default options: under others the clause says something else.
+                Ok(Origin::Converted) if c.when.contains_key(clause) => {
+                    by_options += 1;
+                    per_rule.push(format!("    {clause}: converted for the default options only (when {}): author it on option_on/option_item", c.when[clause].join(", ")));
+                }
+                _ => {}
             }
         }
     }
-    let mut report = format!("{}/{total} clauses converted or authored ({converted} converted, {authored} authored)\n\ngaps (clauses):\n", converted + authored);
+    let mut report = format!(
+        "{}/{total} clauses converted or authored ({converted} converted, {by_options} of them for the default options only; {authored} authored)\n\ngaps (clauses):\n",
+        converted + authored
+    );
     let mut by_count: Vec<_> = gaps.into_iter().collect();
     by_count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     for (g, n) in by_count {
@@ -322,6 +444,7 @@ fn convert_one_policy() {
     println!("{ok}/{} clauses converted or authored (authored {authored})", c.clauses.len());
     for (clause, r) in &c.clauses {
         match r {
+            Ok(Origin::Converted) if c.when.contains_key(clause) => println!("  {clause}: converted for the default options only (when {})", c.when[clause].join(", ")),
             Ok(Origin::Converted) => println!("  {clause}: converted"),
             Ok(Origin::Authored) => println!("  {clause}: authored"),
             Err(Gap(g)) => println!("  {clause}: gap: {}", g.chars().take(160).collect::<String>()),
@@ -901,6 +1024,58 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     assert_eq!(got, want);
 }
 
+/// A converted rule's findings on one file, and W's of the clauses converted (its lines 0-based), each sorted.
+fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<String>, Vec<String>) {
+    let c = convert_over(rule, &Adjust::default(), None).unwrap();
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    write_files(&dir, [(path, source)]);
+    let mut got = findings(&c.program, &dir).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
+    let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
+    let mut w: Vec<String> = result["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["clauseId"].as_str().is_some_and(|id| converted.contains(id)))
+        .map(|v| format!("{path}:{}:{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["code"].as_str().unwrap()))
+        .collect();
+    for keys in [&mut got, &mut w] {
+        keys.sort();
+        keys.dedup();
+    }
+    (got, w)
+}
+
+/// A metavariable bound around a helper relation (an `any` branch, a `not`) is a column of it, passed in: here the
+/// call's argument must be the name the assignment binds (`$X`), as W finds, not any name: `x = f(x)` is SAME, and
+/// `y = f(z)`, whose argument is not `$X`, is OTHER (the negation). The constructor rule's "parameter named
+/// `$PARAM`" was such a helper.
+#[test]
+fn helpers_take_the_metavariables_bound_around_them() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("metavariables");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("probe.json");
+    let same = serde_json::json!({"any": [{"pattern": "$X"}, {"kind": "call", "has": {"field": "arguments", "stopBy": "neighbor", "has": {"pattern": "$X", "stopBy": "neighbor"}}}]});
+    let clause = |id: &str, code: &str, right: Json| {
+        serde_json::json!({"id": id, "forbid": {"ast": {"language": "python", "rule": {"all": [
+            {"kind": "assignment"},
+            {"has": {"field": "left", "stopBy": "neighbor", "pattern": "$X"}},
+            {"has": {"field": "right", "stopBy": "neighbor", "all": [{"kind": "call"}, right]}},
+        ]}}}, "violation": {"anchor": "witness.span", "code": code, "message": id}})
+    };
+    let policy = serde_json::json!({"format": "rerail.policy/v1", "id": "probe", "revision": 1, "mode": "block", "scope": {"include": ["**/*.py"], "exclude": []},
+        "clauses": [clause("same", "SAME", same.clone()), clause("other", "OTHER", serde_json::json!({"not": same}))]});
+    std::fs::write(&rule, policy.to_string()).unwrap();
+    let (got, w) = converted_and_w(&rule, "a.py", "x = f(x)\ny = f(z)\n", "metavariables-run");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(w, ["a.py:1:SAME", "a.py:2:OTHER"], "W");
+    assert_eq!(got, w);
+}
+
 /// A clause that fails after emitting relations takes them back: the emitter is as it was before the clause.
 #[test]
 fn a_failed_clause_leaves_nothing() {
@@ -912,7 +1087,7 @@ fn a_failed_clause_leaves_nothing() {
     .unwrap();
     let before = e.program(&["violation"]);
     let r = e.clause(|e| {
-        let m = e.relation(vec![vec!["node(_, $n, \"call\", _, _)".to_owned()], vec!["node(_, $n, \"attribute\", _, _)".to_owned()]]);
+        let m = e.relation(vec![vec!["node(_, $n, \"call\", _, _)".to_owned()], vec!["node(_, $n, \"attribute\", _, _)".to_owned()]], 0, "$n");
         e.kindset(&[e.kinds.kind_id("call")].into())?;
         e.approx.insert("an approximation".into());
         gap(format!("after {m}"))
@@ -1087,6 +1262,72 @@ violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !us
     let mut got = findings(&open.program, &run).unwrap();
     got.sort();
     assert_eq!(got, ["impl/a.py:1:escape_hatch", "impl/a.py:2:escape_hatch"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The options, as the run resolves them, are given to the authored file (`option_on`, `option_item`), and a clause
+/// whose matcher is under `when: {option: …}` is marked: `data-layer-transaction-patterns`' `category-1` is only
+/// for `oracleAnalyzer` on (off at the defaults), and lists its names in `category-LEGITIMATE`.
+#[test]
+fn the_options_are_given() {
+    const ID: &str = "data-layer-transaction-patterns";
+    let rule = rule_file("transaction_patterns").unwrap();
+    let plain = convert_over(&rule, &Adjust::default(), None).unwrap();
+    assert_eq!(plain.clauses.iter().find(|(c, _)| c == "category-1").map(|(_, r)| r.clone()), Some(Ok(Origin::Converted)));
+    assert_eq!(plain.when.get("category-1").map(Vec::as_slice), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
+    let authored = format!(
+        r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl in_scope(d: number)
+.decl option_on(name: symbol)
+.decl option_item(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl category_1_def(n: node, s: symbol)
+category_1_def(n, s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
+violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+"#
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("options");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
+    let everywhere = || Some((vec!["**/*".to_owned()], Vec::new()));
+    // Each run in a directory of its own: a second corpus run over one output directory in a process decodes
+    // its symbols with the first run's atoms.
+    let tests = |program: &str, name: &str| {
+        let run = dir.join(name);
+        write_files(&run, [("impl/a.py", "def __enter__(self):\n    pass\ndef __exit__(self):\n    pass\n")]);
+        findings(program, &run).unwrap().into_iter().filter(|f| f.ends_with(":TEST")).collect::<Vec<_>>()
+    };
+    // The defaults: `oracleAnalyzer` off, `category-LEGITIMATE` its default list.
+    let defaults = convert_over(&rule, &Adjust { scope: everywhere(), ..Adjust::default() }, Some(&dir)).unwrap();
+    assert!(defaults.program.contains(r#"option_item("category-LEGITIMATE", "__enter__")."#), "{}", defaults.program);
+    assert!(!defaults.program.contains(r#"option_on("oracleAnalyzer")."#), "{}", defaults.program);
+    assert_eq!(tests(&defaults.program, "defaults"), Vec::<String>::new());
+    // As an analyzer event configures it: `oracleAnalyzer` on, the category one name.
+    let configure: Box<dyn Fn(&mut Json) -> Result<bool, String>> = Box::new(|document| {
+        for clause in document["clauses"].as_array_mut().unwrap() {
+            let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) else { continue };
+            if define.get("options").is_some_and(|o| o.get("oracleAnalyzer").is_some()) {
+                define.insert("config".into(), serde_json::json!({"oracleAnalyzer": true, "category-LEGITIMATE": ["__exit__"]}));
+            }
+        }
+        Ok(false)
+    });
+    let analyzer = convert_over(&rule, &Adjust { scope: everywhere(), policy: Some(configure), ..Adjust::default() }, Some(&dir)).unwrap();
+    assert!(analyzer.configured);
+    assert!(analyzer.program.contains(r#"option_on("oracleAnalyzer")."#) && !analyzer.program.contains(r#"option_item("category-LEGITIMATE", "__enter__")"#), "{}", analyzer.program);
+    assert_eq!(tests(&analyzer.program, "analyzer"), ["impl/a.py:3:TEST"]);
+    // JSON options, by pointer, as W's `json_extract` reads `parameters`.
+    let mut leaves = Vec::new();
+    json_leaves(&serde_json::json!({"connectionPath": "a", "lineCounts": {"x/y.py": 3}, "probe": [true]}), String::new(), &mut leaves);
+    let leaves: Vec<(String, String)> = leaves.into_iter().map(|(p, v)| (p, v.as_str().map_or_else(|| v.to_string(), str::to_owned))).collect();
+    let want = [("/connectionPath", "a"), ("/lineCounts/x~1y.py", "3"), ("/probe/0", "true")].map(|(p, v)| (p.to_owned(), v.to_owned()));
+    assert_eq!(leaves, want);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

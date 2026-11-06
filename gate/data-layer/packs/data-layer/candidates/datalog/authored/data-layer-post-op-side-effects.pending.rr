@@ -1,0 +1,78 @@
+// data-layer-post-op-side-effects, clause signed-surface: what the main file cannot say yet. Not read by the
+// converter. Signatures: waiting for an engine functor @ed25519_ok(key_hex, message, signature_base64) = 1/0, a
+// JSON string encoder @json_str, an ordered group-concat `join … by … sep …` (as
+// docs/rule-syntax/lib/data-layer/signing.rr writes them), @rx_replace, and a decoded `value(n, v)`. It replaces
+// the main file's ss_fate_valid, ss_surface_valid, ss_runtime_valid and the folded signed sets ss_fate_signed,
+// ss_surface_signed, ss_runtime_signed, ss_runtime_signature, ss_opt_default/ss_opt_run/ss_opt_signed
+// ([signed-default] [runtime-sig]), and ss_sig_run's [sig-escapes].
+//
+// W's behaviour the functor must match (the policy's stages fate_valid, surface_valid, runtime_valid):
+//   verify_ed25519(key, message, signature) is 1 when `signature`, base64-decoded (after rx_replace removes every
+//   character outside [A-Za-z0-9+/=]), is a valid Ed25519 signature of the UTF-8 bytes of `message` under the
+//   32-byte public key `key` (hex 7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6); 0 for a
+//   malformed key or signature (never an error: gate/data-layer/test/conformance/data-layer/
+//   integrated-compatibility.test.ts, "verifies detached signatures without treating malformed signatures as
+//   runtime failures"). No .rs file of this repository names verify_ed25519 (git grep), so the decoder's base64
+//   strictness is unspecified here; base64 characters after the "==" padding are accepted by a lenient
+//   decoder (Python's base64.b64decode) and rejected by a strict one [b64-lenient]: the functor must pick one.
+//   message = '{"allowlist":' || json_group_array(entry ORDER BY entry) || ',"linter":"<linter>","version":1}',
+//   '[]' for no entries; json_group_array writes `["a","b"]` (no spaces, strings JSON-escaped, non-ASCII kept as
+//   is; Python's json.dumps with ensure_ascii escapes it, so they differ only on non-ASCII entries). Linters:
+//   fates "post_op_side_effects" (entries "symbol=fate", one per membership), surface "post_op_surface" (the
+//   distinct surface symbols), runtime "post_op_runtime_allowlist" (every registry row's value, duplicates kept).
+//   Signatures: fates and surface the options fatesSignature and surfaceSignature; runtime the value of the first
+//   ALLOWLIST_SIGNATURE string of post_op_allowlist.py (least __start), '' when there is none.
+// Minimal reproducer of the gap (the engine rejects the functor and `join`):
+//   .decl ok(x: number)
+//   ok(v) :- m = join q by e sep "," : { e = "a", q = @json_str(e) },
+//       v = @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", cat("[", cat(m, "]")), "AAAA").
+//   expected: ok(0).
+
+.decl option_item(name: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl value(n: node, v: symbol)
+
+// ---- signatures --------------------------------------------------------------------------------------------------
+
+.decl ss_key(hex: symbol)
+ss_key("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6").
+
+// rx_replace(s, '[^A-Za-z0-9+/=]', ''): building the cleaned text by a character recursion is a value cycle the
+// engine rejects (UnboundedValueCycle: cat along a string, not the tree), so this needs a functor too:
+// @rx_replace(s, "[^A-Za-z0-9+/=]", "") (or @ed25519_ok doing that cleanup itself on its signature argument).
+.decl ss_cleaned(s: symbol, c: symbol)
+ss_cleaned(s, @rx_replace(s, "[^A-Za-z0-9+/=]", "")) :- option_value("fatesSignature", s).
+ss_cleaned(s, @rx_replace(s, "[^A-Za-z0-9+/=]", "")) :- option_value("surfaceSignature", s).
+ss_cleaned(s, @rx_replace(s, "[^A-Za-z0-9+/=]", "")) :- ss_sig_value(s).
+
+// ss_message(list, m): the canonical message of each signed list.
+.decl ss_message(list: symbol, m: symbol)
+ss_message("fates", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_side_effects\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by e sep "," : { ss_fate_entry(e), q = @json_str(e) }.
+ss_message("surface", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_surface\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by e sep "," : { ss_surface(e), q = @json_str(e) }.
+// The registry keeps duplicate values: one element per row, ordered by value (rows of one value are equal text).
+ss_message("runtime", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_runtime_allowlist\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by (v, n) sep "," : { ss_reg_exact(n, v), q = @json_str(v) }.
+
+// The registry with W's decoded values (value(n, v): escapes decoded), replacing ss_reg's [escapes].
+.decl ss_reg_exact(n: node, v: symbol)
+ss_reg_exact(n, v) :- ss_registry_node(d, n), ss_doc(d, "l2070_batching/post_op_allowlist.py"), value(n, v).
+// The first signature string's decoded value, '' when there is none [sig-tie] remains.
+.decl ss_sig_value(s: symbol)
+ss_sig_value(s) :- ss_sig_node(n), value(n, s).
+ss_sig_value("") :- ss_unit(0), !ss_sig_start(_).
+
+.decl ss_signed_with(list: symbol, sig: symbol)
+ss_signed_with("fates", c) :- option_value("fatesSignature", s), ss_cleaned(s, c).
+ss_signed_with("surface", c) :- option_value("surfaceSignature", s), ss_cleaned(s, c).
+ss_signed_with("runtime", c) :- ss_sig_value(s), ss_cleaned(s, c).
+
+.decl ss_verified(list: symbol)
+ss_verified(l) :- ss_message(l, m), ss_signed_with(l, s), ss_key(k), @ed25519_ok(k, m, s) = 1.
+.decl ss_fate_valid(x: number)
+ss_fate_valid(0) :- ss_verified("fates").
+.decl ss_surface_valid(x: number)
+ss_surface_valid(0) :- ss_verified("surface").
+.decl ss_runtime_valid(x: number)
+ss_runtime_valid(0) :- ss_verified("runtime").

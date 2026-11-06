@@ -1,0 +1,115 @@
+// PENDING (not read by the converter) for data-layer-serverplan-dispatch-architecture. Two parts:
+//
+// (A) backend-identity, step-name-compare, dialect-compare and dialect-truth, awaiting `value(n, v)` and
+//     `value_type_of(n, t)` (W's semantic value of a literal, escapes decoded; W's value regex matches str values
+//     only). When bound, append part A to authored/data-layer-serverplan-dispatch-architecture.rr (it reads that
+//     file's declarations and backend_identity_boundary, backend_identity_callee). Checked with a stand-in
+//     (`value(n, v), value_type_of(n, "str")` read as `str(n, v)`, exact for the recorded literals, which have no
+//     escapes): the replay's 59 events all exact, these clauses' SPD001/SPD003/SPD004 findings included.
+//
+// (B) the option gate, awaiting `option_value(name, v)` (ConvertFoundation A9). W: every forbid clause opens with
+//     `{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "scan_source": {"filePath":
+//     {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}`: entryPoint "all" or "scan_source" lets
+//     every file through, any other value none (`\b\B` never matches). When bound, add part B's declarations and
+//     add `backend_identity_entry()` to the body of every authored forbid violation rule (step-isinstance,
+//     step-type-compare, and part A's four). executor-provenance reads no option; the converted clauses
+//     (backend-family, step-class-match) carry the same `$option`, resolved by the converter.
+
+// ======== (A) ========
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+
+.decl backend_identity_cmp(kind: symbol)
+backend_identity_cmp("comparison_operator").
+
+// ---- backend-identity (SPD001) ----
+// A comparison with a backend source below it (`has` stopBy end) and, below it too, a BackendType member or a
+// backend-name string. The clause's first alternatives (the comparison itself an identifier, attribute or call)
+// cannot hold of a comparison_operator. The inline source rule equals the util `backend-source`.
+.decl backend_identity_source(n: node)
+backend_identity_source(n) :- node(_, n, "identifier", _, _), text(n, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "object", o), backend_identity_source(o).
+backend_identity_source(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, m),
+    (m = "backend_type_for" ; m = "get_backend_type" ; m = "get_backend_type_async").
+// A string or concatenated_string (kinds are tested as `node` constants: a kind is not a symbol to compare).
+.decl backend_identity_strnode(n: node)
+backend_identity_strnode(n) :- node(_, n, "string", _, _).
+backend_identity_strnode(n) :- node(_, n, "concatenated_string", _, _).
+.decl backend_identity_literal(n: node)
+backend_identity_literal(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "BackendType").
+backend_identity_literal(n) :-
+    backend_identity_strnode(n), value(n, v), value_type_of(n, "str"),
+    match("(?i)^(?:doltdb|mariadb|mongodb|mysql|neo4j|postgres|postgresql|sqlite)$", v).
+violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SPD001", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    backend_identity_source(x), inside(x, n, backend_identity_cmp),
+    backend_identity_literal(y), inside(y, n, backend_identity_cmp),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), doc(d, p, _), line(n, l).
+
+// ---- step-name-compare (SPD003) ----
+// A comparison with a child `type(x).__name__` or `x.__class__.__name__`, and below it a string whose value names a
+// step type.
+.decl step_name_compare_type(o: node)
+step_name_compare_type(o) :- node(_, o, "call", _, _), field(o, "function", f), backend_identity_callee(f, "type").
+step_name_compare_type(o) :- node(_, o, "attribute", _, _), field(o, "attribute", a), node(_, a, "identifier", _, _), text(a, "__class__").
+.decl step_name_compare_name(n: node)
+step_name_compare_name(n) :-
+    node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "__name__"),
+    field(n, "object", o), step_name_compare_type(o).
+.decl step_name_compare_literal(n: node)
+step_name_compare_literal(n) :-
+    backend_identity_strnode(n), value(n, v), value_type_of(n, "str"),
+    match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$", v).
+violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "SPD003", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, x, _), step_name_compare_name(x),
+    step_name_compare_literal(y), inside(y, n, backend_identity_cmp),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), doc(d, p, _), line(n, l).
+
+// ---- the dialect reference: `dialect`, `x.dialect`, `getattr(x, "dialect"…)` ----
+// getattr's string the arguments' second named non-comment child (nthChild 2 ofRule not comment: `child`'s index
+// leaves comments out), its value "dialect".
+.decl dialect_truth_ref(n: node)
+dialect_truth_ref(n) :- node(_, n, "identifier", _, _), text(n, "dialect").
+dialect_truth_ref(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "dialect").
+dialect_truth_ref(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "getattr"),
+    field(n, "arguments", g), child(g, s, 1), node(_, s, "string", _, _), value(s, "dialect"), value_type_of(s, "str").
+
+// ---- dialect-compare (SPD004) ----
+// A comparison with a dialect reference child and a `None` child.
+violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), doc(d, p, _), line(n, l).
+
+// ---- the util `dialect-truth`, and dialect-truth (SPD004) ----
+// A dialect reference; `not` with one as a child; `bool(ref)` with exactly one named non-comment argument; a boolean
+// operator with a dialect-truth child. Found as the condition of an if/elif/while/conditional expression (field
+// condition of the parent; tree-sitter-python's conditional_expression has no such field, so that kind never holds),
+// or as a direct child of an assert or a comprehension's if clause.
+.decl dialect_truth(n: node)
+dialect_truth(n) :- dialect_truth_ref(n).
+dialect_truth(n) :- node(_, n, "not_operator", _, _), child(n, c, _), dialect_truth_ref(c).
+dialect_truth(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "bool"),
+    field(n, "arguments", g), child(g, c, 0), dialect_truth_ref(c), !child(g, _, 1).
+dialect_truth(n) :- node(_, n, "boolean_operator", _, _), child(n, c, _), dialect_truth(c).
+.decl dialect_truth_at(n: node)
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "if_statement", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "elif_clause", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "conditional_expression", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "while_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "assert_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "if_clause", _, _).
+violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :-
+    dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), doc(d, p, _), line(n, l).
+
+// ======== (B) ========
+.decl option_value(name: symbol, v: symbol)
+.decl backend_identity_entry()
+backend_identity_entry() :- option_value("entryPoint", "all").
+backend_identity_entry() :- option_value("entryPoint", "scan_source").

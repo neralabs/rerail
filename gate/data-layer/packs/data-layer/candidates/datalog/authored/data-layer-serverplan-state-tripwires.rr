@@ -1,0 +1,363 @@
+// data-layer-serverplan-state-tripwires, authored (decision 0043): all 31 clauses of
+// gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-serverplan-state-tripwires.json (the converter's
+// first source). Options are read from the converter's facts (option_on, option_value), so every configuration
+// runs as the oracle runs it; defaults oracleAnalyzer false, entryPoint "all", sourceProvided true, returnKindsHex.
+// Not started from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_state_tripwires*.rr: those port the
+// older candidates/rules/ policy (SQL over the syntax table, `ast(…)` atoms), not the rules-ast one.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl intval(n: node, v: number)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+// A node's full source text, exact bytes (W's `regex` and captures read it): comments and strings included.
+.decl node_text(n: node, s: symbol)
+.input node_text
+
+// ---- shared by every clause ----
+// The policy's `state-project-source` admit, `any [matches it, inside it (stopBy end)]`: the document's module, whose
+// whole text (comments and strings too) the regex searches (`match` is a full match: the search is wrapped in `(?s:.*)`). The regex's `def\ compile` is `def compile`.
+.decl spt_project(d: number)
+spt_project(d) :- node(d, m, "module", _, _), node_text(m, s),
+    match("(?s:.*)(?:CompilationContext|CompiledStep|LazyResult|LazySeq|PipelineLifecycleEffect|PipelineResolvedIR|ResolvedRefs|RuntimeBuilder|StepIR|def compile|execute_runtime|execute_runtime_nested_steps|grammar_|in_server_plan_execution|pending_pipeline_effects|post_op|pre_op|preprocess|runtime_builder|runtime_ref|runtime_result)(?s:.*)", s).
+// The options, as the run resolves them (given by the converter, read only).
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
+// `$option oracleAnalyzer` cases: true admits every file (`filePath (?s).*`), false (the default) the admit above.
+.decl spt_admitted(d: number)
+spt_admitted(d) :- spt_project(d).
+spt_admitted(d) :- doc(d, _, _), option_on("oracleAnalyzer").
+// The 28 ast clauses' `when: {option: {entryPoint: {in: [...]}}}` (state-projection-recovery's evidence has the same
+// four cases, `filePath (?s).*` each, and `\b\B` (nothing) by default).
+.decl spt_entry_point(v: symbol)
+spt_entry_point("all"). spt_entry_point("scan_source"). spt_entry_point("scan_tree"). spt_entry_point("scan_project_sources").
+// A document the policy runs on: in scope, valid syntax (`syntax: valid`), admitted, at one of the entry points.
+.decl spt_doc(d: number, p: symbol)
+spt_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), spt_admitted(d), option_value("entryPoint", e), spt_entry_point(e).
+// `filePath: {regex: "/tests/"}`.
+.decl spt_tests_path(d: number)
+spt_tests_path(d) :- doc(d, p, _), contains("/tests/", p).
+
+// ---- awaiting `value` ----
+// Six clauses read W's semantic `value` of string literals, which the corpus runner does not bind yet:
+// queue-udf-symbols, serverplan-ddl, private-lazy-ref, state-signatures, state-flow-narrow, state-projection-recovery.
+// They are in data-layer-serverplan-state-tripwires.pending.rr, written to be appended to this file as it stands once
+// `value` is bound (with `value := str` substituted the whole rule gives all 79 recorded events exactly).
+
+// ---- the 28 ast clauses ----
+// Every one is `all [<its rule>, <state-project-source admit>]` (`spt_doc`), under `when: entryPoint in [all,
+// scan_source, scan_tree, scan_project_sources]` (true at the default "all"), anchored at the matched node
+// (`witness.span`): the finding is the node's path and start line.
+
+.decl spt_fdef(kind: symbol)
+spt_fdef("function_definition").
+.decl spt_defs(kind: symbol)
+spt_defs("function_definition"). spt_defs("class_definition").
+.decl spt_type_kind(kind: symbol)
+spt_type_kind("type").
+.decl spt_block_kind(kind: symbol)
+spt_block_kind("block").
+.decl spt_arglist_kind(kind: symbol)
+spt_arglist_kind("argument_list").
+// Kind tests read as atoms (a kind compared in a disjunction does not type-check: "$k is a Kind and a Name").
+.decl spt_string_kind(kind: symbol)
+spt_string_kind("string"). spt_string_kind("concatenated_string").
+.decl spt_typed_param_kind(kind: symbol)
+spt_typed_param_kind("typed_parameter"). spt_typed_param_kind("typed_default_parameter").
+
+// `any [identifier ~ /^S$/, all [attribute, has (neighbor, field attribute) identifier ~ /^S$/]]`: n is named s.
+.decl spt_named(n: node, s: symbol)
+spt_named(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+spt_named(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s).
+// A call whose `function` is named s (an identifier s, or an attribute whose attribute is s).
+.decl spt_callee(c: node, s: symbol)
+spt_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), spt_named(f, s).
+// A call whose `function` is the identifier s.
+.decl spt_bare_callee(c: node, s: symbol)
+spt_bare_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
+// A call `o.s(…)`: its function an attribute with attribute s and object o.
+.decl spt_method(c: node, s: symbol, o: node)
+spt_method(c, s, o) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), field(f, "object", o).
+// A function_definition's name.
+.decl spt_fn_name(f: node, s: symbol)
+spt_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s).
+// A call's keyword argument: `has (neighbor, field arguments) has (neighbor) keyword_argument` named k, value v.
+.decl spt_kwarg(c: node, k: symbol, v: node)
+spt_kwarg(c, k, v) :- node(_, c, "call", _, _), field(c, "arguments", args), child(args, a, _), node(_, a, "keyword_argument", _, _),
+    field(a, "name", x), node(_, x, "identifier", _, _), text(x, k), field(a, "value", v).
+.decl spt_kwarg_name(c: node, k: symbol)
+spt_kwarg_name(c, k) :- node(_, c, "call", _, _), field(c, "arguments", args), child(args, a, _), node(_, a, "keyword_argument", _, _),
+    field(a, "name", x), node(_, x, "identifier", _, _), text(x, k).
+
+// The planning scope every `inside (stopBy end) any [...]` names: a function_definition named compile, lower, post_op,
+// pre_op, preprocess, pending_pipeline_effects, *_lazy or apply_*_effect, or one decorated (its parent a
+// decorated_definition with a decorator whose child is named pure_lazy).
+.decl spt_planning_fn(f: node)
+spt_planning_fn(f) :- spt_fn_name(f, s), (s = "compile" ; s = "lower" ; s = "post_op" ; s = "pre_op" ; s = "preprocess" ; s = "pending_pipeline_effects").
+spt_planning_fn(f) :- spt_fn_name(f, s), suffix("_lazy", s).
+// `^apply_.*_effect$` over an identifier (no `/`, no newline) is this glob.
+spt_planning_fn(f) :- spt_fn_name(f, s), glob("apply_*_effect", s).
+spt_planning_fn(f) :- node(_, f, "function_definition", _, _), child(w, f, _), node(_, w, "decorated_definition", _, _),
+    child(w, dec, _), node(_, dec, "decorator", _, _), child(dec, x, _), spt_named(x, "pure_lazy").
+.decl spt_in_planning(n: node)
+spt_in_planning(n) :- inside(n, f, spt_fdef), spt_planning_fn(f).
+// `inside (stopBy end) all [any [function_definition, class_definition], has (neighbor, field name) identifier ~ /^preprocess$/]`.
+.decl spt_in_preprocess(n: node)
+spt_in_preprocess(n) :- inside(n, a, spt_defs), field(a, "name", x), node(_, x, "identifier", _, _), text(x, "preprocess").
+
+// The names the policy lists.
+.decl spt_queue_auth_name(s: symbol)
+spt_queue_auth_name("_apply_sql_session_queue_token_async"). spt_queue_auth_name("_authorize_trigger_queues_if_needed").
+spt_queue_auth_name("_authorize_trigger_queues_if_needed_async"). spt_queue_auth_name("_configure_ripple_queue_auth").
+spt_queue_auth_name("_configure_ripple_queue_auth_async"). spt_queue_auth_name("_get_current_ripple_queue_token").
+spt_queue_auth_name("_reset_queue_auth_token_now"). spt_queue_auth_name("_revoke_ripple_queue_auth").
+spt_queue_auth_name("_revoke_ripple_queue_auth_async"). spt_queue_auth_name("authorize_ripple_trigger_queue_insert").
+spt_queue_auth_name("authorize_ripple_trigger_queue_insert_async"). spt_queue_auth_name("revoke_ripple_trigger_queue_insert").
+spt_queue_auth_name("revoke_ripple_trigger_queue_insert_async"). spt_queue_auth_name("set_queue_auth_token").
+spt_queue_auth_name("set_queue_auth_token_async").
+.decl spt_grammar_name(s: symbol)
+spt_grammar_name("execute_grammar_fetchall_direct"). spt_grammar_name("execute_grammar_fetchall_direct_async").
+spt_grammar_name("execute_grammar_fetchall_with_params_direct"). spt_grammar_name("execute_grammar_fetchall_with_params_direct_async").
+spt_grammar_name("execute_grammar_fetchone_direct"). spt_grammar_name("execute_grammar_fetchone_direct_async").
+spt_grammar_name("execute_grammar_fetchone_with_params_direct"). spt_grammar_name("execute_grammar_fetchone_with_params_direct_async").
+spt_grammar_name("grammar_effect_lazy"). spt_grammar_name("grammar_execute"). spt_grammar_name("grammar_execute_async").
+spt_grammar_name("grammar_fetchall"). spt_grammar_name("grammar_fetchall_async"). spt_grammar_name("grammar_fetchone").
+spt_grammar_name("grammar_fetchone_async"). spt_grammar_name("grammar_row_lazy"). spt_grammar_name("grammar_rows_lazy").
+spt_grammar_name("grammar_scalar"). spt_grammar_name("grammar_scalar_async"). spt_grammar_name("grammar_value_lazy").
+// `all [regex /grammar_/, call named one of spt_grammar_name]`: every listed name contains `grammar_`, and the call's
+// text contains its function's, so the regex is implied (exact, no text read).
+.decl spt_grammar_call(c: node)
+spt_grammar_call(c) :- spt_callee(c, s), spt_grammar_name(s).
+
+// `state-tail-<w>`: an identifier w, an attribute whose attribute is w, a call whose function is one, or a
+// parenthesized_expression whose child is one (recursive along the tree).
+.decl spt_tail_word(w: symbol)
+spt_tail_word("query"). spt_tail_word("conn"). spt_tail_word("connection"). spt_tail_word("cursor"). spt_tail_word("txn").
+spt_tail_word("PlanExecutor"). spt_tail_word("executor").
+.decl spt_tail(n: node, w: symbol)
+spt_tail(n, w) :- spt_named(n, w), spt_tail_word(w).
+spt_tail(n, w) :- node(_, n, "call", _, _), field(n, "function", f), spt_tail(f, w).
+spt_tail(n, w) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), spt_tail(c, w).
+// A call `<tail w>.m(…)`.
+.decl spt_tail_call(c: node, m: symbol, w: symbol)
+spt_tail_call(c, m, w) :- spt_method(c, m, o), spt_tail(o, w).
+
+// The planning IO of preprocess-io and provider-io: a grammar call, a bare execute/fetch call, or a method call on a
+// connection, cursor, query or transaction tail.
+.decl spt_io_bare(s: symbol)
+spt_io_bare("execute"). spt_io_bare("execute_async"). spt_io_bare("execute_ddl"). spt_io_bare("execute_ddl_async").
+spt_io_bare("executemany"). spt_io_bare("executemany_async"). spt_io_bare("fetchall"). spt_io_bare("fetchall_async").
+spt_io_bare("fetchone"). spt_io_bare("fetchone_async"). spt_io_bare("scalar"). spt_io_bare("scalar_async").
+.decl spt_io_pair(w: symbol, m: symbol)
+spt_io_pair("conn", "execute"). spt_io_pair("conn", "execute_async"). spt_io_pair("conn", "fetchall"). spt_io_pair("conn", "fetchall_async"). spt_io_pair("conn", "fetchone"). spt_io_pair("conn", "fetchone_async").
+spt_io_pair("connection", "execute"). spt_io_pair("connection", "execute_async"). spt_io_pair("connection", "fetchall"). spt_io_pair("connection", "fetchall_async"). spt_io_pair("connection", "fetchone"). spt_io_pair("connection", "fetchone_async").
+spt_io_pair("query", "execute"). spt_io_pair("query", "execute_async"). spt_io_pair("query", "fetchall"). spt_io_pair("query", "fetchall_async"). spt_io_pair("query", "fetchone"). spt_io_pair("query", "fetchone_async").
+spt_io_pair("txn", "execute"). spt_io_pair("txn", "execute_async"). spt_io_pair("txn", "fetchall"). spt_io_pair("txn", "fetchall_async"). spt_io_pair("txn", "fetchone"). spt_io_pair("txn", "fetchone_async").
+spt_io_pair("cursor", "execute"). spt_io_pair("cursor", "executemany").
+.decl spt_io_call(c: node)
+spt_io_call(c) :- spt_grammar_call(c).
+spt_io_call(c) :- spt_bare_callee(c, s), spt_io_bare(s).
+spt_io_call(c) :- spt_tail_call(c, m, w), spt_io_pair(w, m).
+
+violation("data-layer-serverplan-state-tripwires", "queue-auth-definitions", "SPT-001", p, l) :-
+    spt_fn_name(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "queue-auth-calls", "SPT-001", p, l) :-
+    spt_callee(n, s), spt_queue_auth_name(s), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "terminal-hydration-definitions", "SPT-002", p, l) :-
+    spt_fn_name(n, s), (s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "large-column-reentry", "SPT-002", p, l) :-
+    spt_callee(n, s), (s = "explicit_plan_execution_scope" ; s = "hydrate_many_post_op" ; s = "hydrate_one_post_op" ; s = "runtime_sql_conn_from_hydrator"),
+    spt_in_planning(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "large-column-hydration", "SPT-002", p, l) :-
+    spt_callee(n, "convert_row_to_model"), spt_in_planning(n), spt_kwarg(n, "hydrate_large_columns", v), node(_, v, "true", _, _),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "direct-planning-io", "SPT-003", p, l) :-
+    spt_grammar_call(n), spt_in_planning(n), !spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "query-planning-io", "SPT-003", p, l) :-
+    spt_tail_call(n, m, "query"), (m = "execute" ; m = "execute_async"), spt_in_planning(n), !spt_in_preprocess(n),
+    node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "preprocess-io", "SPT-011", p, l) :-
+    spt_io_call(n), spt_in_preprocess(n), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// provider-io: inside (stopBy end) a function_definition of impl/common/l2070_server_plan/backend_profiles.py whose
+// name (an identifier: the regex reads its text) contains component or score.
+.decl spt_provider_fn(f: node)
+spt_provider_fn(f) :- spt_fn_name(f, s), (contains("component", s) ; contains("score", s)), node(d, f, _, _, _),
+    doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _).
+violation("data-layer-serverplan-state-tripwires", "provider-io", "SPT-019", p, l) :-
+    spt_io_call(n), inside(n, f, spt_fdef), spt_provider_fn(f), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "nested-plan-execution", "SPT-005", p, l) :-
+    spt_callee(n, s), (s = "execute_runtime_nested_steps_async" ; s = "execute_runtime_nested_steps_sync"), spt_in_planning(n),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "executor-plan-execution", "SPT-005", p, l) :-
+    spt_tail_call(n, m, w), (m = "execute" ; m = "execute_async"), (w = "PlanExecutor" ; w = "executor"), spt_in_planning(n),
+    node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "materialized-pipeline", "SPT-012", p, l) :-
+    node(d, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "materialized_pipeline"),
+    spt_in_planning(n), spt_doc(d, p), line(n, l).
+
+// context-authority: `ctx.materialized_pipeline|sql_connection|txn` in planning scope or in a *sql_builder function
+// with a parameter typed CompilationContext (the name's `not ^(?:compile|lower|…)$` is implied by the suffix) (the parameter's `type` field is a `type` node: its identifier branch is
+// never true, its `has (stopBy end)` branch is an identifier below it).
+.decl spt_ctx_builder_fn(f: node)
+spt_ctx_builder_fn(f) :- spt_fn_name(f, s), suffix("sql_builder", s),
+    field(f, "parameters", ps), child(ps, q, _), node(_, q, k, _, _), spt_typed_param_kind(k),
+    field(q, "type", t), node(_, i, "identifier", _, _), text(i, "CompilationContext"), inside(i, t, spt_type_kind).
+.decl spt_ctx_scope(n: node)
+spt_ctx_scope(n) :- spt_in_planning(n).
+spt_ctx_scope(n) :- inside(n, f, spt_fdef), spt_ctx_builder_fn(f).
+violation("data-layer-serverplan-state-tripwires", "context-authority", "SPT-020", p, l) :-
+    node(d, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "ctx"),
+    field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "materialized_pipeline" ; s = "sql_connection" ; s = "txn"),
+    spt_ctx_scope(n), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// resolved-ref-access: `<resolved>.get|peek|resolve_server_ref(…)`, the object named resolved/resolved_refs, or of
+// another kind than identifier/attribute with `resolved` in its full text.
+.decl spt_resolved_object(o: node)
+spt_resolved_object(o) :- spt_named(o, s), (s = "resolved" ; s = "resolved_refs").
+spt_resolved_object(o) :- node(_, o, k, _, _), k != "identifier", k != "attribute", node_text(o, s), contains("resolved", s).
+violation("data-layer-serverplan-state-tripwires", "resolved-ref-access", "SPT-010", p, l) :-
+    spt_method(n, m, o), (m = "get" ; m = "peek" ; m = "resolve_server_ref"), spt_resolved_object(o), spt_in_planning(n),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// production-ir-class: a class not named SqlStepIR with a base (a child of its superclasses argument_list) named
+// PipelineResolvedIR/StepIR or with such a name below it: some node strictly below the argument_list.
+.decl spt_ir_base_name(s: symbol)
+spt_ir_base_name("PipelineResolvedIR"). spt_ir_base_name("StepIR").
+violation("data-layer-serverplan-state-tripwires", "production-ir-class", "SPT-006", p, l) :-
+    node(d, n, "class_definition", _, _), field(n, "name", x), !text(x, "SqlStepIR"), field(n, "superclasses", bs),
+    spt_named(b, s), spt_ir_base_name(s), inside(b, bs, spt_arglist_kind), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// `all [identifier, regex /^(?:StepIR|PipelineResolvedIR|[A-Za-z_]\w*IR)$/, not SqlStepIR]`: over an identifier's text
+// (word characters only) the regex is the glob `[A-Za-z_]*IR`.
+.decl spt_ir_ident(n: node)
+spt_ir_ident(n) :- node(_, n, "identifier", _, _), text(n, s), glob("[A-Za-z_]*IR", s), s != "SqlStepIR".
+violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :-
+    node(d, n, "call", _, _), field(n, "function", f), spt_ir_ident(f), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "production-ir-construction", "SPT-006", p, l) :-
+    node(d, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), spt_ir_ident(a),
+    spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "compiled-ir-value", "SPT-006", p, l) :-
+    spt_callee(n, "CompiledStep"), spt_kwarg(n, "ir", v), !spt_callee(v, "SqlStepIR"), node(d, n, _, _, _), spt_doc(d, p),
+    !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "test-only-acknowledgement", "SPT-006", p, l) :-
+    spt_kwarg_name(n, "tripwire_acknowledged_test_only"), node(d, n, _, _, _), spt_doc(d, p), !spt_tests_path(d), line(n, l).
+
+// executor-ir-dispatch: isinstance(x, <IR>) in the two executors: the second argument (nthChild 2 of the non-comment
+// children: child index 1) an IR identifier or with one below it (an identifier, a leaf, is below a exactly when its
+// span is within a's and it is not a).
+violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :-
+    spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p),
+    (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"),
+    field(n, "arguments", args), child(args, a, 1), spt_ir_ident(a), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "executor-ir-dispatch", "SPT-006", p, l) :-
+    spt_callee(n, "isinstance"), node(d, n, _, _, _), spt_doc(d, p),
+    (p = "impl/common/l2070_server_plan/sql_backend_executor.py" ; p = "l2070_batching/executor.py"),
+    field(n, "arguments", args), child(args, a, 1), node(d, a, _, a0, a1), spt_ir_ident(x), node(d, x, _, xs, xe), x != a,
+    xs >= a0, xe <= a1, line(n, l).
+
+// step-aware-eager-helper: a grammar call in the FTS searcher whose own function (inside with stopBy
+// function_definition: the nearest one) has a step-execution check somewhere in its body.
+.decl spt_step_aware_fn(f: node)
+spt_step_aware_fn(f) :- node(_, f, "function_definition", _, _), field(f, "body", b), inside(c, b, spt_block_kind),
+    spt_callee(c, s), (s = "in_server_plan_execution" ; s = "in_server_plan_step_execution").
+violation("data-layer-serverplan-state-tripwires", "step-aware-eager-helper", "SPT-025", p, l) :-
+    spt_grammar_call(n), node(d, n, _, _, _), spt_doc(d, p), prefix("impl/common/l5150_fts_polyfill/searcher/", p),
+    nearest(n, f, spt_fdef), spt_step_aware_fn(f), !spt_tests_path(d), line(n, l).
+
+// graph-id-config: `<…graph_id…>: T = …` in a dataclass Graph…Config, T naming Any/LazyResult/object/str or naming no
+// …ServerRef (the assignment's `type` field is a `type` node, so only the `has (stopBy end)` branches can hold).
+.decl spt_gid_loose(t: node)
+spt_gid_loose(t) :- node(_, i, "identifier", _, _), text(i, s), (s = "Any" ; s = "LazyResult" ; s = "object" ; s = "str"), inside(i, t, spt_type_kind).
+.decl spt_gid_server_ref(t: node)
+spt_gid_server_ref(t) :- node(_, i, "identifier", _, _), text(i, s), suffix("ServerRef", s), inside(i, t, spt_type_kind).
+.decl spt_gid_type(t: node)
+spt_gid_type(t) :- spt_gid_loose(t).
+spt_gid_type(t) :- node(_, t, _, _, _), !spt_gid_server_ref(t).
+.decl spt_gid_stop(kind: symbol)
+spt_gid_stop("class_definition"). spt_gid_stop("function_definition").
+.decl spt_gid_config(c: node)
+spt_gid_config(c) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s),
+    (s = "ContainmentEdgesReadConfig" ; s = "GraphSearchReadConfig").
+spt_gid_config(c) :- node(d, c, "class_definition", _, _), field(c, "name", x), text(x, s), contains("Graph", s), suffix("Config", s),
+    doc(d, p, _), contains("graph_read", p).
+.decl spt_gid_dataclass(c: node)
+spt_gid_dataclass(c) :- child(w, c, _), node(_, w, "decorated_definition", _, _), child(w, dec, _), node(_, dec, "decorator", _, _),
+    child(dec, x, _), spt_named(x, "dataclass").
+spt_gid_dataclass(c) :- child(w, c, _), node(_, w, "decorated_definition", _, _), child(w, dec, _), node(_, dec, "decorator", _, _),
+    child(dec, x, _), spt_callee(x, "dataclass").
+violation("data-layer-serverplan-state-tripwires", "graph-id-config", "SPT-032", p, l) :-
+    node(d, n, "assignment", _, _), field(n, "left", x), node(_, x, "identifier", _, _), text(x, s), contains("graph_id", s),
+    field(n, "type", t), spt_gid_type(t), nearest(n, c, spt_gid_stop), spt_gid_config(c), spt_gid_dataclass(c),
+    spt_doc(d, p), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "legacy-preop", "SPT-008", p, l) :-
+    spt_callee(n, "CompiledStep"), spt_kwarg_name(n, k), (k = "async_pre_op" ; k = "pre_op"), node(d, n, _, _, _), spt_doc(d, p),
+    !spt_tests_path(d), line(n, l).
+
+violation("data-layer-serverplan-state-tripwires", "mcp-default-graph", "SPT-034", p, l) :-
+    spt_callee(n, "resolve_defaults"), nearest(n, f, spt_fdef), spt_fn_name(f, s), (s = "_get_neighbors" ; s = "_get_overview" ; s = "_traverse"),
+    node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// graph-terminal-chain: `<chain from graph_query_builder_lazy(…)>.<terminal>(…)`.
+.decl spt_graph_chain(n: node)
+spt_graph_chain(n) :- spt_callee(n, "graph_query_builder_lazy").
+spt_graph_chain(n) :- node(_, n, "attribute", _, _), field(n, "object", o), spt_graph_chain(o).
+spt_graph_chain(n) :- node(_, n, "call", _, _), field(n, "function", f), spt_graph_chain(f).
+.decl spt_lazy_terminal(s: symbol)
+spt_lazy_terminal("aggregate_later"). spt_lazy_terminal("bindings_later"). spt_lazy_terminal("count_lazy").
+spt_lazy_terminal("execute_aggregate_lazy"). spt_lazy_terminal("execute_bindings_lazy"). spt_lazy_terminal("execute_graph_lazy").
+spt_lazy_terminal("execute_lazy"). spt_lazy_terminal("exists_lazy").
+violation("data-layer-serverplan-state-tripwires", "graph-terminal-chain", "SPT-031", p, l) :-
+    spt_method(n, m, o), spt_lazy_terminal(m), spt_graph_chain(o), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+
+// lazy-callback-terminal: map_lazy_result/flat_map_lazy_result with a lazy terminal, plan builder or `._step_ref_id`
+// as (or below) a positional argument after the first, or as (or below) a callback/fn/func/transform keyword's value.
+.decl spt_lct_mark(n: node)
+spt_lct_mark(n) :- spt_callee(n, s), spt_lazy_terminal(s).
+spt_lct_mark(n) :- spt_callee(n, s), (s = "LazyBuilderContext" ; s = "_add_intent" ; s = "_add_intent_by_ref" ; s = "_get_lazy_plan").
+spt_lct_mark(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "_step_ref_id").
+// a is a mark or has one below it (span within, not it).
+.decl spt_lct_holds(a: node)
+spt_lct_holds(a) :- spt_lct_arg(a), spt_lct_mark(a).
+spt_lct_holds(a) :- spt_lct_arg(a), node(d, a, _, a0, a1), spt_lct_mark(x), node(d, x, _, xs, xe), x != a, xs >= a0, xe <= a1.
+.decl spt_lct_call(c: node)
+spt_lct_call(c) :- spt_callee(c, s), (s = "flat_map_lazy_result" ; s = "map_lazy_result").
+// The candidates: positional (not keyword_argument) children of the arguments other than the first, and the values of
+// the callback keywords.
+.decl spt_lct_arg(a: node)
+spt_lct_arg(a) :- spt_lct_positional(_, a).
+spt_lct_arg(v) :- spt_lct_keyword(_, v).
+.decl spt_lct_positional(c: node, a: node)
+spt_lct_positional(c, a) :- spt_lct_call(c), field(c, "arguments", args), child(args, a, i), i != 0, !node(_, a, "keyword_argument", _, _).
+.decl spt_lct_keyword(c: node, v: node)
+spt_lct_keyword(c, v) :- spt_lct_call(c), spt_kwarg(c, k, v), (k = "callback" ; k = "fn" ; k = "func" ; k = "transform").
+violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :-
+    spt_lct_positional(n, a), spt_lct_holds(a), node(d, n, _, _, _), spt_doc(d, p), line(n, l).
+violation("data-layer-serverplan-state-tripwires", "lazy-callback-terminal", "SPT-030", p, l) :-
+    spt_lct_keyword(n, v), spt_lct_holds(v), node(d, n, _, _, _), spt_doc(d, p), line(n, l).

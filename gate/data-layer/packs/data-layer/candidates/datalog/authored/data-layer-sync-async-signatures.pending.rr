@@ -1,0 +1,6 @@
+// Pending for data-layer-sync-async-signatures (not read by the converter): awaiting `value(n: node, v: symbol)`,
+// W's semantic value of a string or concatenated_string (escapes decoded, pieces joined). When it is bound, replace
+// the main file's `sas_leaf(n, s) :- node(_, n, "string", _, _), str(n, s).` with these, and declare `value`.
+.decl value(n: node, v: symbol)
+sas_leaf(n, s) :- node(_, n, "string", _, _), value(n, s).
+sas_leaf(n, s) :- node(_, n, "concatenated_string", _, _), value(n, s).
