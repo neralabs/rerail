@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use super::syntax::quote;
 use super::translate::{relation, var};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, Error, Literal, Program, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Atom, Error, Literal, Program, Term, Value};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};
 
 fn ty(t: &str) -> &str {
@@ -78,6 +78,12 @@ fn atom(a: &Atom, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
     {
         return Ok(format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?));
     }
+    if let Some(set) = a.rel.strip_prefix(DESCENDANTS)
+        && kindsets.contains(&set.to_owned())
+        && let [n, x] = a.args.as_slice()
+    {
+        return Ok(format!("{bang}has({}, {}, {set})", term(x)?, term(n)?));
+    }
     Ok(format!("{bang}{}({})", relation(&a.rel), terms(&a.args)?))
 }
 
@@ -91,6 +97,11 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
                 AggOp::Count => "count".to_owned(),
                 AggOp::Min => format!("min {}", var(over.as_deref().unwrap_or("_"))),
                 AggOp::Max => format!("max {}", var(over.as_deref().unwrap_or("_"))),
+                AggOp::Sum => format!("sum {}", var(over.as_deref().unwrap_or("_"))),
+                AggOp::Join { by, sep } => {
+                    let by: Vec<String> = by.iter().map(|b| var(b)).collect();
+                    format!("join {} by ({}) sep {}", var(over.as_deref().unwrap_or("_")), by.join(", "), quote(sep))
+                }
             };
             format!("{} = {op} : {{ {} }}", var(v), atom(a, kindsets)?)
         }
@@ -121,7 +132,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     }
     let mut lattices = BTreeSet::new();
     // The tree axes' relations are made again from `inside(n, a, set)` (`front::finish`).
-    let axis = |rel: &str| rel.strip_prefix(AXIS).is_some_and(|set| prog.kindsets.contains_key(set));
+    let axis = |rel: &str| rel.strip_prefix(AXIS).or_else(|| rel.strip_prefix(DESCENDANTS)).is_some_and(|set| prog.kindsets.contains_key(set));
     for (name, cols) in &prog.decls {
         if axis(name) {
             continue;
@@ -142,6 +153,8 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
+                // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
+                _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }

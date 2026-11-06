@@ -465,11 +465,16 @@ fn ready(l: &Literal, bound: &BTreeSet<String>) -> bool {
     match l {
         Literal::Atom(a) if a.neg => a.vars().is_subset(bound),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound).is_some(),
-        Literal::Agg { var, over, atom, .. } => {
+        Literal::Agg { var, over, atom, op } => {
             let mut need = atom.vars();
             need.remove(var);
             if let Some(o) = over {
                 need.remove(o);
+            }
+            if let AggOp::Join { by, .. } = op {
+                by.iter().for_each(|b| {
+                    need.remove(b);
+                });
             }
             need.is_subset(bound)
         }
@@ -1310,8 +1315,13 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" | "name" | "str" | "strprefix" | "value" => &[&["n"], &["s", "n"]],
-        "intval" | "op" | "op_at" | "tape" | "line" => &[&["n"]],
+        "text" | "name" | "str" | "strprefix" | "value" | "comment" | "static_value" => &[&["n"], &["s", "n"]],
+        "intval" | "op" | "op_t" | "op_at" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" => &[&["n"]],
+        "first_token" | "last_token" => &[&["n"]],
+        "token_before" | "token_after" => &[&["x"]],
+        "next_sibling" => &[&["a"], &["b"]],
+        "source" | "src_line" | "line_count" => &[&["d"]],
+        "str_part" => &[&["lit"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0048).
         "within" => &[&["n"], &["a"]],
@@ -1319,7 +1329,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
-        rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
+        rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         _ => &[],
@@ -1418,6 +1428,9 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
                 ("mul", [x, y]) => bin(Op::Multiply, x.clone(), y.clone()),
                 ("div", [x, y]) => bin(Op::Divide, x.clone(), y.clone()),
+                // Soufflé's `max(a, b)` and `min(a, b)`: SQL's scalar `max` and `min`.
+                ("max", [x, y]) => call("max", vec![x.clone(), y.clone()]),
+                ("min", [x, y]) => call("min", vec![x.clone(), y.clone()]),
                 // `.rr`'s string functions (Soufflé's): `substr` counts from 0.
                 ("strlen", [x]) => length(&text_of(atoms, x)),
                 ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
@@ -1426,7 +1439,11 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
-                ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
+                // `@dot("", y)` is `y` (`core.rr`).
+                ("cat", [x, y]) => Expr::Case {
+                    branches: vec![(bin(Op::Equal, x.clone(), string("")), y.clone())],
+                    fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
+                },
                 ("flat_bin", [o, x, y]) => {
                     let big = integer(1i64 << 40);
                     let [plus, minus, times] = match atoms {
@@ -1544,11 +1561,11 @@ impl Model {
             alias += 1;
             format!("t{alias}")
         };
-        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: Option<&str>| -> Result<Vec<Expr>> {
+        let neg_conds = |a: &Atom, al: &str, env: &HashMap<String, Expr>, skip: &[&str]| -> Result<Vec<Expr>> {
             a.args
                 .iter()
                 .enumerate()
-                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if Some(v.as_str()) == skip))
+                .filter(|(_, t)| !matches!(t, Term::Wild) && !matches!(t, Term::Var(v) if skip.contains(&v.as_str())))
                 .map(|(c, t)| Ok(eq(col(al, &sql_col(&a.rel, c)), sql_term(t, env, atoms)?)))
                 .collect()
         };
@@ -1608,7 +1625,7 @@ impl Model {
                 }
                 Literal::Atom(l) => {
                     let al = a_name();
-                    let conds = neg_conds(l, &al, &env, None)?;
+                    let conds = neg_conds(l, &al, &env, &[])?;
                     let query = subquery(integer(1), self.relation(prog, &l.rel, false), al, conds);
                     wh.push(Expr::Exists { negated: true, query: Box::new(query) });
                 }
@@ -1667,12 +1684,34 @@ impl Model {
                 }
                 Literal::Agg { var, op, over, atom } => {
                     let al = a_name();
-                    let conds = neg_conds(atom, &al, &env, over.as_deref())?;
+                    // The aggregated variable and a `join`'s ordering ones are the body's own (where the rule does not
+                    // bind them): not correlated.
+                    let mut local: Vec<&str> = over.iter().map(String::as_str).collect();
+                    if let AggOp::Join { by, .. } = op {
+                        local.extend(by.iter().map(String::as_str).filter(|b| !env.contains_key(*b)));
+                    }
+                    let conds = neg_conds(atom, &al, &env, &local)?;
+                    let column = |v: &str| {
+                        let c = atom.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).expect("the aggregated column");
+                        let symbol = prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
+                        (col(&al, &sql_col(&atom.rel, c)), symbol)
+                    };
                     let what = match (op, over) {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
-                        (AggOp::Min | AggOp::Max, Some(o)) => {
-                            let c = atom.args.iter().position(|t| matches!(t, Term::Var(v) if v == o)).expect("the aggregated column");
-                            call(if *op == AggOp::Min { "min" } else { "max" }, vec![col(&al, &sql_col(&atom.rel, c))])
+                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(o).0]),
+                        // Soufflé's sum is 0 over no rows.
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(o).0]), integer(0)]),
+                        // `rr_join(sep, value, key, …)` (`strings::functions`) orders and joins text; symbols in as text.
+                        (AggOp::Join { by, sep }, Some(o)) => {
+                            let text = |(e, symbol): (Expr, bool)| if symbol { self.inputs.text_of(&e) } else { e };
+                            let mut args = vec![string(sep), text(column(o))];
+                            for b in by {
+                                args.push(match env.get(b) {
+                                    Some(e) => e.clone(),
+                                    None => text(column(b)),
+                                });
+                            }
+                            self.inputs.symbol_of(call("coalesce", vec![call("rr_join", args), string("")]))
                         }
                     };
                     let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);

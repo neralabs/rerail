@@ -795,7 +795,11 @@ unsafe impl VTabCursor for RelCursor {
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 // T's `near`/`down` steps (ancestor climbs over a loaded tape) are not kept: tree axes run in the transducer.
 
+/// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
+    if syms.name(a).is_empty() {
+        return b;
+    }
     let mut s = std::mem::take(&mut syms.buf);
     s.clear();
     syms.atoms.with_str(a as crate::content_store::atoms::Sym, |a| s.push_str(a));
@@ -1481,6 +1485,12 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             }
             Step::Split { whole, a, b, ka, kb } => {
                 let w = cx.syms.name(val(slots, *whole)).to_owned();
+                // `@dot("", w)` is `w`: with "" given for the first part, the second is the whole.
+                if a.is_none() && cx.syms.name(val(slots, *ka)).is_empty() {
+                    match b { Some(s) => slots[*s] = val(slots, *whole), None => if val(slots, *kb) != val(slots, *whole) { return } }
+                    go(cx, i + 1, slots);
+                    return;
+                }
                 for (p, _) in w.match_indices('.') {
                     let (x, y) = (&w[..p], &w[p + 1..]);
                     match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.name(val(slots, *ka)) != x { continue } }

@@ -516,6 +516,11 @@ fn template<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     Value::Utf16(units)
 }
 
+/// A template chunk's cooked text (`cooked`), lone surrogates replaced.
+pub(crate) fn cooked_text(chunk: &str) -> Option<String> {
+    cooked(chunk).map(|units| String::from_utf16_lossy(&units))
+}
+
 /// A template chunk's cooked code units: line terminators normalized to LF, escapes decoded.
 pub(super) fn cooked(chunk: &str) -> Option<Vec<u16>> {
     let normalized = chunk.replace("\r\n", "\n").replace('\r', "\n");

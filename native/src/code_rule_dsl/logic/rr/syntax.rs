@@ -234,14 +234,39 @@ pub(super) enum Item {
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
-    /// `.violation V(at: node, …) "message"`, its `fix` lines' relations, and `options { … }`.
-    /// `code {c}` and `tag {t}` name the columns holding the finding's code and an extra key field.
-    Violation { name: String, cols: Vec<(String, String)>, code: Option<String>, tag: Option<String>, message: String, fixes: Vec<String> },
+    /// `.violation V(at: loc, …) "message"`, its `fix` lines' relations, its `suppress` lines, and `options { … }`.
+    /// `code {c}` names the column holding the finding's code (`in "re"`: the codes it may produce), `code "X"` gives
+    /// it, and `tag {t}` names an extra key field.
+    Violation {
+        name: String,
+        cols: Vec<(String, String)>,
+        code: Option<Code>,
+        code_in: Option<String>,
+        tag: Option<String>,
+        message: String,
+        fixes: Vec<String>,
+        suppress: Vec<Suppress>,
+    },
     /// `.policy { … }`: a policy document in JSON.
     Policy(serde_json::Value),
     /// A setting directive (`.policy "id" revision 1`, `.mode`, `.scope`, …): its name and its text.
     Setting { key: String, text: String },
     Clause { heads: Vec<Head>, body: Vec<Lit>, edits: Vec<Term> },
+}
+
+/// A `.violation`'s code: a column's value (`code {c}`), or a constant (`code "E501"`).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Code {
+    Column(String),
+    Constant(String),
+}
+
+/// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence its findings.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Suppress {
+    pub(super) tool: String,
+    pub(super) rules: Vec<String>,
+    pub(super) over: Option<String>,
 }
 
 /// A statement and the line it starts on.
@@ -251,11 +276,13 @@ pub(super) struct Parser<'s> {
     src: &'s str,
     toks: Vec<Spanned>,
     i: usize,
+    /// Inside an aggregate's value or key, where `x :` ends the term (`agg_part`).
+    no_named: bool,
 }
 
 impl<'s> Parser<'s> {
     pub(super) fn new(src: &'s str) -> Result<Self, Error> {
-        Ok(Self { src, toks: tokens(src)?, i: 0 })
+        Ok(Self { src, toks: tokens(src)?, i: 0, no_named: false })
     }
 
     fn peek(&self) -> &Tok {
@@ -499,17 +526,34 @@ impl<'s> Parser<'s> {
             "violation" => {
                 let name = self.id()?;
                 let cols = self.columns()?;
-                // `code {c}`: the finding's code, from a column; `tag {t}`: an extra key field.
-                let (mut code, mut tag) = (None, None);
-                while (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
-                    let which = if self.is_id("code") { &mut code } else { &mut tag };
-                    self.i += 1;
-                    let text = self.braces()?;
-                    *which = Some(text.trim_start_matches('{').trim_end_matches('}').trim().to_owned());
+                // `code {c}`: the finding's code, from a column (`in "re"` after it: the codes it may produce);
+                // `code "X"`: a constant code; `tag {t}`: an extra key field.
+                let (mut code, mut code_in, mut tag) = (None, None, None);
+                loop {
+                    if self.is_id("code") && matches!(self.peek_at(1), Tok::Str(_)) {
+                        self.i += 1;
+                        code = Some(Code::Constant(self.string()?));
+                    } else if (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
+                        let is_code = self.is_id("code");
+                        self.i += 1;
+                        let text = self.braces()?;
+                        let column = text.trim_start_matches('{').trim_end_matches('}').trim().to_owned();
+                        if is_code {
+                            code = Some(Code::Column(column));
+                            if self.is_id("in") && matches!(self.peek_at(1), Tok::Str(_)) {
+                                self.i += 1;
+                                code_in = Some(self.string()?);
+                            }
+                        } else {
+                            tag = Some(column);
+                        }
+                    } else {
+                        break;
+                    }
                 }
                 let message = self.string()?;
-                let mut fixes = Vec::new();
-                // Continuation lines: `fix [safe] name "…"`, `options { … }`.
+                let (mut fixes, mut suppress) = (Vec::new(), Vec::new());
+                // Continuation lines: `fix [safe] name "…"`, `suppress TOOL "rule", …`, `options { … }`.
                 loop {
                     if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
                         self.i += 1;
@@ -518,6 +562,21 @@ impl<'s> Parser<'s> {
                         }
                         fixes.push(self.id()?);
                         self.string()?;
+                    } else if self.is_id("suppress") && matches!(self.peek_at(1), Tok::Id(_)) && matches!(self.peek_at(2), Tok::Str(_)) {
+                        self.i += 1;
+                        let tool = self.id()?;
+                        let mut rules = vec![self.string()?];
+                        while self.is_p(",") && matches!(self.peek_at(1), Tok::Str(_)) {
+                            self.i += 1;
+                            rules.push(self.string()?);
+                        }
+                        // `over {c}`: the comment is read on the lines of column c's node too.
+                        let mut over = None;
+                        if self.is_id("over") && self.is_p_at(1, "{") {
+                            self.i += 1;
+                            over = Some(self.braces()?.trim_start_matches('{').trim_end_matches('}').trim().to_owned());
+                        }
+                        suppress.push(Suppress { tool, rules, over });
                     } else if self.is_id("options") && self.is_p_at(1, "{") {
                         self.i += 1;
                         self.braces()?;
@@ -525,7 +584,7 @@ impl<'s> Parser<'s> {
                         break;
                     }
                 }
-                Item::Violation { name, cols, code, tag, message, fixes }
+                Item::Violation { name, cols, code, code_in, tag, message, fixes, suppress }
             }
             "policy" if self.is_p("{") => {
                 let text = self.braces()?;
@@ -729,27 +788,19 @@ impl<'s> Parser<'s> {
                 self.i += 1;
                 return self.aggregate(s);
             }
-            // `sum strlen(v) : {…}`: an aggregate over a call, when a `:` follows it.
-            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && matches!(self.peek_at(1), Tok::Id(_)) && self.is_p_at(2, "(") => {
+            // `min (a, b)`: a call, unless a `:` follows the parentheses (`min (a + b) : { … }`).
+            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && self.is_p_at(1, "(") => return self.call_or_aggregate(s),
+            // `sum x : {…}`, `sum strlen(x) - strlen(a) : {…}`, `join x by k sep "," : {…}`: an aggregate over a term,
+            // when a `:`, `by` or `sep` follows it; otherwise a variable named like an aggregate.
+            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && !matches!(self.peek_at(1), Tok::P("," | ")" | "=" | "!=" | "<" | ">" | "<=" | ">=" | "+" | "-" | "*" | "/" | "%" | "." | ";" | "}")) => {
                 let save = self.i;
                 self.i += 1;
-                if self.primary().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep")) {
+                if self.agg_part().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep")) {
                     self.i = save + 1;
                     return self.aggregate(s);
                 }
                 self.i = save;
                 Term::Var(s)
-            }
-            Tok::Id(s)
-                if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join")
-                    && (self.is_p_at(2, ":") || matches!(self.peek_at(2), Tok::Id(w) if w == "by" || w == "sep") || self.is_p_at(1, "(")) =>
-            {
-                // `min x : {…}`, `min (a, b) : {…}` would be a call `min(a, b)` if no `:` follows; see below.
-                if self.is_p_at(1, "(") {
-                    return self.call_or_aggregate(s);
-                }
-                self.i += 1;
-                return self.aggregate(s);
             }
             Tok::Id(s) if self.is_p_at(1, "(") => {
                 self.i += 2;
@@ -757,7 +808,7 @@ impl<'s> Parser<'s> {
                 self.p(")")?;
                 return Ok(Term::Call { name: s, functor: false, args });
             }
-            Tok::Id(s) if self.is_p_at(1, ":") => {
+            Tok::Id(s) if self.is_p_at(1, ":") && !self.no_named => {
                 self.i += 2;
                 return Ok(Term::Named(s, Box::new(self.term()?)));
             }
@@ -768,16 +819,13 @@ impl<'s> Parser<'s> {
         Ok(t)
     }
 
-    /// An aggregate's value or key: a variable (followed by `:`, `by` or `sep`, so not an `ast` capture) or a term.
+    /// An aggregate's value or key: a term, in which `x :` is a variable followed by the aggregate's `:`, not an
+    /// `ast` capture.
     fn agg_part(&mut self) -> Result<Term, Error> {
-        if let Tok::Id(v) = self.peek().clone()
-            && v != "_"
-            && !self.is_p_at(1, "(")
-        {
-            self.i += 1;
-            return Ok(Term::Var(v));
-        }
-        self.primary()
+        let named = std::mem::replace(&mut self.no_named, true);
+        let t = self.term();
+        self.no_named = named;
+        t
     }
 
     /// `min(a, b)` is a call unless a `:` follows the parentheses (`min (a + b) : { … }`).

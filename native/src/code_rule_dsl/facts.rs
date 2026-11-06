@@ -34,6 +34,8 @@ pub(crate) mod runs;
 mod set_census;
 #[allow(dead_code)]
 pub(crate) mod vtab;
+/// `core.rr`'s repository inputs (decision 0046).
+pub(crate) mod repository;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
 #[allow(dead_code, unused_imports, clippy::all)]
 pub(crate) mod ygraph;
