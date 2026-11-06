@@ -305,8 +305,8 @@ and `/healthz` report it as `dev` rather than `bundled`.
 Open a pull request against `main` that links its issue, if it has one. Changes are squash-merged after review.
 
 - `npm run check` passes: the type check, the layer boundaries, the repository structure gate, Windows-safe paths and
-  no internal ticket IDs. While the pull request stages pack data in a `publish/`, structure metric #3 fails for each
-  such tool-pack until the data is published.
+  no internal references (ticket IDs, `nera-` names outside the public list). While the pull request stages pack data
+  in a `publish/`, structure metric #3 fails for each such tool-pack until the data is published.
 - `npm test` passes, with `npm run build` run first (several suites run the built package from `dist/`).
 - `npm run check:licenses` and `reuse lint` pass (`uvx --from 'reuse[charset-normalizer]==6.2.0' reuse lint`, as CI
   runs it).
@@ -326,14 +326,32 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
 - A feature that enters, graduates from or leaves internal testing updates
   [docs/internal-testing.md](docs/internal-testing.md), which lists exactly what is in
   ([governance](docs/GOVERNANCE.md#internal-testing-features) says who approves a graduation or removal).
-- No internal name, customer name, internal URL or old product name (such as "Tempo") is in the code, the docs, the
-  commits or the pull request's title and description. `npm run check` catches only internal ticket IDs and a few stale
-  paths in tracked files; the rest is yours to read for, and a squash-merged commit message can't be changed afterwards.
+- It carries only approved Rerail context ([Keeping private context out](#keeping-private-context-out)).
 - A change to what a package does keeps its npm page current: its `README.md`, and `keywords` and `repository` in its
   `package.json`, for core and for a pack.
 
 Whoever merges the Release pull request checks the same of the release as a whole
 ([docs/release.md](docs/release.md#before-merging)).
+
+### Keeping private context out
+
+The repository, its pull requests and its CI logs are public. A contribution carries only context approved for Rerail:
+what the change does and the public sources it rests on. Before you publish a branch or a pull request, check its
+fixtures, test data, code comments, commit messages, pull request title, body and comments, and any agent session
+traces or transcripts you attach or paste from, for:
+
+- the names of Nera's private repositories and projects, or text quoted from them;
+- customer names, and old product names (such as "Tempo");
+- internal ticket IDs, internal URLs and links to internal tools: Notion, Slack, Orca shares, signed attachment URLs;
+- personal paths and usernames (`/Users/<you>/…`, a home directory in a stack trace or a scratch path);
+- anything about research participants or the people whose prompts or sessions a study read.
+
+Replace each with a neutral description or a generic example (`/Users/me`, "a private web application"), keeping what
+a test case tests. `npm run check:internal-refs` fails on internal ticket IDs and on any `nera-` identifier outside
+its public list (`PUBLIC_NAMES` in `scripts/check/check-internal-refs.mjs`), in tracked paths and text. It sees only
+that hyphenated form: the same name written with an underscore, a slash or as a scoped package passes, and so do
+pull request text, links and personal details, so those are yours to check. A squash-merged commit message can't be
+changed afterwards.
 
 ## Reporting a bug
 

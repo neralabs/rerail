@@ -9,8 +9,9 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
 - `check/`: the checks `npm run check` and `check:*` run, including the layer boundary lint
   (`check-boundaries.mjs`), the Windows checkout check (`check-windows-paths.mjs`: every tracked path short
   enough and named so Windows can check it out), the internal reference check (`check-internal-refs.mjs`: no
-  internal ticket ID in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs
-  `ci.yml`'s path filters skip import, from the entry points it lists, matches their filter) and the licence allowlist.
+  internal ticket ID, and no `nera-` identifier outside its list of public ones, in a tracked path or text), the CI
+  path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
+  points it lists, matches their filter) and the licence allowlist.
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's

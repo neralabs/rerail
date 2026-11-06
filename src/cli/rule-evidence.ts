@@ -28,7 +28,7 @@ const CALLS_BEFORE = 3;
 const CALL_TEXT_LENGTH = 120;
 
 /**
- * Phrases a person uses when correcting an agent, from the Tempo study of 59,690 prompts. A prompt matching
+ * Phrases a person uses when correcting an agent, from a study of 59,690 prompts. A prompt matching
  * none of them is not reported. `standing` marks a phrase that states a rule rather than reacting to one turn.
  */
 export const CORRECTION_FAMILIES: ReadonlyArray<{ name: string; standing: boolean; pattern: RegExp }> = [

@@ -717,7 +717,7 @@ clauses:
 
     it.each([
       [
-        "example-data-layer-layer-violations",
+        "example-layers-layer-violations",
         "impl/module.py",
         "# module header\nfrom impl.internal import Service\n",
         "layer_violations",
@@ -754,8 +754,8 @@ clauses:
       expect(result.violations[0]).toMatchObject({ code, path });
     });
 
-    it("limits eager resolve violations to explicit plan scope bodies", () => {
-      const compiled = compileCodeRuleFile("example-data-layer-plan-scope-side-effects");
+    it("limits eager resolve violations to explicit read and write scope bodies", () => {
+      const compiled = compileCodeRuleFile("example-layers-scope-side-effects");
       const unrelated = evaluate(
         compiled,
         snapshot([
@@ -766,33 +766,33 @@ clauses:
           },
         ]),
       );
-      const inPlanScope = evaluate(
+      const inScope = evaluate(
         compiled,
         snapshot([
           {
             language: "python",
-            path: "impl/common/plan.py",
+            path: "impl/common/scope.py",
             source:
-              "def load(conn, lazy):\n    with conn.session().open_write_plan() as scope:\n        value = lazy.resolve()\n        scope.execute()\n",
+              "def load(conn, lazy):\n    with conn.session().open_write_scope() as scope:\n        value = lazy.resolve()\n        scope.execute()\n",
           },
         ]),
       );
 
       expect(unrelated).toMatchObject({ status: "completed", violations: [], failures: [] });
-      expect(inPlanScope).toMatchObject({ status: "completed", failures: [] });
-      expect(inPlanScope.violations).toHaveLength(1);
-      expect(inPlanScope.violations[0]).toMatchObject({
-        code: "plan_scope_side_effects",
-        path: "impl/common/plan.py",
+      expect(inScope).toMatchObject({ status: "completed", failures: [] });
+      expect(inScope.violations).toHaveLength(1);
+      expect(inScope.violations[0]).toMatchObject({
+        code: "scope_side_effects",
+        path: "impl/common/scope.py",
       });
     });
 
     it.each([
       [
-        "example-app-conn-based-function",
-        "def load(conn: SyncDatabaseConnection):\n    return conn.session()\n",
-        "def load(txn: ReadTransaction):\n    return txn.query()\n",
-        "CONN_BASED_FUNCTION",
+        "example-app-conn-parameter",
+        "def load(conn: Connection):\n    return conn.execute(query)\n",
+        "def load(work: UnitOfWork):\n    return work.query()\n",
+        "CONN_PARAMETER",
       ],
       [
         "example-app-sync-conn-in-async",
@@ -814,7 +814,7 @@ clauses:
       ],
       [
         "example-app-stored-connection",
-        "class Service:\n    def __init__(self, conn: SyncDatabaseConnection):\n        self.conn = conn\n",
+        "class Service:\n    def __init__(self, conn: Connection):\n        self.conn = conn\n",
         "class Service:\n    def __init__(self, pool: DatabasePool):\n        self.pool = pool\n",
         "STORED_CONNECTION",
       ],
