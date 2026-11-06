@@ -1,0 +1,42 @@
+// PENDING for data-layer-eager-resolve.rr (not read by the converter): the options as configured, awaiting the
+// option facts (ConvertFoundation A9: option_value, option_item). When they are bound, merge this into the main
+// file: add the declarations, replace its five eager_finding rules by the ones below, and gate its eager_approved
+// facts on the default (each `eager_approved("…").` becomes `eager_approved("…") :- eager_approved_default(1).`).
+// The replay's 18 configured eager_resolve misses are all this: each event runs one entry point (one family) and
+// some configure externalIoBoundaries; the main file runs the default query, every family.
+// NOTE: option_item cannot tell externalIoBoundaries null (the signed list) from [] (no symbol); both read as null.
+
+.decl option_value(name: symbol, v: symbol)
+.decl option_item(name: symbol, v: symbol)
+
+// entryPoint: each case of the final query selects one family; any other value (the default `_scan_source`
+// included) is the default query, every family.
+.decl eager_entry(e: symbol)
+eager_entry("_scan_transitive_eager_ast").
+eager_entry("_scan_lower_compile_ast").
+eager_entry("_scan_preprocess_ast").
+eager_entry("_scan_external_io_boundary_definition_ast").
+eager_entry("_scan_legacy_boundary_definition_ast").
+.decl eager_entry_case(x: number)
+eager_entry_case(1) :- option_value("entryPoint", e), eager_entry(e).
+.decl eager_entry_default(x: number)
+eager_entry_default(1) :- !eager_entry_case(1).
+
+eager_finding(d, l, i) :- eager_transitive(d, l, i), eager_entry_default(1).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), option_value("entryPoint", "_scan_transitive_eager_ast").
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), eager_entry_default(1).
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), option_value("entryPoint", "_scan_lower_compile_ast"),
+  (prefix("lower:", i) ; prefix("compile:", i)).
+eager_finding(d, l, i) :- eager_external(d, l, i), eager_entry_default(1).
+eager_finding(d, l, i) :- eager_external(d, l, i), option_value("entryPoint", "_scan_external_io_boundary_definition_ast").
+// `_scan_legacy_boundary_definition_ast` is external_definitions `WHERE 0`: nothing.
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), eager_entry_default(1).
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
+eager_finding(d, l, i) :- eager_direct(d, l, i), eager_entry_default(1).
+
+// externalIoBoundaries: the configured symbols, else (null) the signed allowlist.
+.decl eager_approved_configured(x: number)
+eager_approved_configured(1) :- option_item("externalIoBoundaries", _).
+.decl eager_approved_default(x: number)
+eager_approved_default(1) :- !eager_approved_configured(1).
+eager_approved(s) :- option_item("externalIoBoundaries", s).
