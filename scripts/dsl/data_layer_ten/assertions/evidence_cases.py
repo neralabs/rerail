@@ -66,3 +66,12 @@ def test_python_dto_construction_cannot_mask_a_native_parse_error():
     rows = [{'variables': {'row': {'helper_value': 'null'}}}]
     with pytest.raises(AssertionError, match='Native parser accepted invalid source'):
         decode('_parse_source', rows, [{'path': 'helper.py', 'source': 'def broken(:\n'}], {})
+
+
+def test_unrelated_detector_reports_cannot_stand_in_for_helper_reports():
+    ledger, oracle, report = example()
+    core = dict(oracle=False,mode='snapshot',exitCode=0,cases={'detector-case':[]},engineSha256='engine',semanticFallbacks=[])
+    summary=verify_helpers(ledger,oracle,[report,core],'snapshot','contracts')
+    assert summary['cases']==1 and summary['calls']==1
+    with pytest.raises(ValueError,match='Missing native helper'):
+        verify_helpers(ledger,oracle,[core],'snapshot','contracts')

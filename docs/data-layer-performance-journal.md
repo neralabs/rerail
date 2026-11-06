@@ -6973,3 +6973,86 @@ The branch has 100 authored ports out of 142, with 30 documents in the private p
 The historical complete repository result still covers 80 rules.
 No cumulative cold benchmark or new native-kernel measurement was run in this repair.
 The earlier Rust-suite result was not rerun or presented as new evidence.
+
+## 2026-11-05 — Execute the 67 unfinished batch-ten helper cases
+
+The previous completion statement overstated native coverage.
+It left 67 rule-relevant unit cases on their Python implementations.
+Overlapping detector tests did not translate those assertions.
+This delivery executes those cases through native contracts.
+It retains the upstream assertions in 66 cases and explicitly translates one instrumentation assertion.
+
+The assertion ledger names all 124 previously retained cases.
+It assigns 67 to native helper execution and 57 to Python host assertions.
+The host cases comprise 15 CLI cases, 14 dataclass cases, and 28 constant or module-layout cases.
+They remain executable tests and do not count as native coverage.
+
+The native cases cover 47 legacy AST-helper cases, 12 decorator cases, four parse/handoff cases,
+two path cases, one approval-validation case, and one traversal-instrumentation case.
+Five non-shipped SQL contract programs implement their twelve entry points.
+The legacy helper contracts preserve their own semantics, which differ from the active graph collector.
+Decorator extraction and path classification share production relations or predicates.
+The matching helper uses the production matching-context relations.
+All ten shipped rule documents regenerate byte for byte without changes.
+
+Original helper bodies are forbidden during native source runs.
+The adapter maps native node IDs to Python AST objects for the unchanged assertions.
+It does not perform the original selection logic.
+Native syntax facts decide parse success or failure before Python constructs its AST DTO.
+A regression test rejects native acceptance followed by a Python parse failure.
+The instrumentation case asserts actual native parse and module-walk counts, both exactly one.
+Its receipt records the original and translated assertion hashes.
+
+Three failing-test commits precede the implementation:
+`76838b97f` requires all 67 cases, `e92143987` requires native call traces,
+and `92e7a4f54` prevents DTO parsing from masking a native parser defect.
+The verifier tests also reject missing observations, changed programs, wrong APIs,
+original executions, and missing rows for false Boolean results.
+
+| Gate | Result |
+| --- | --- |
+| Native helper source assertions | 67 cases and 104 complete observations pass per API |
+| Helper replay | 104 original observations plus 15 original-evaluated supplemental observations; 238 comparisons across both APIs |
+| Helper removal controls | All 12 entry points reject disabled implementations; 24 replay tests including parity tests |
+| Complete source corpus | 1,098 cases per API: 974 native detector cases, 67 native helper cases, 57 Python host cases |
+| Detector parity | 975 observations, including 870 positives, remain unchanged |
+| Evidence verifier | 19 tests pass |
+| Generation | Helper programs, original helper observations, and all ten production programs reproduce byte for byte |
+| Typecheck and boundaries | Pass |
+| Structure | 24 metrics pass; the same three directory-size findings remain |
+
+Snapshot source evidence uses three quarter shards and two eighth shards.
+Workspace source evidence uses eight eighth shards.
+Some earlier larger or concurrent runs reached the 115-second cap.
+Those incomplete runs are excluded; the remaining workspace shards passed on separate retries.
+CI now uses eight bounded source shards for each API.
+
+The production programs and native addon are unchanged.
+The addon SHA-256 remains `464f424955f220cdf8ed74937c93d97cc461e9ba5b19e515f11cc68e86920ba8`.
+The unchanged full matching-repository reports, configured-default reports, focused-contract reports,
+and detector-removal report from the preceding audit are reused explicitly.
+They are not new full-repository runs.
+The new native helper reports and removal controls supply the additional evidence.
+No cold repository benchmark, native build, or Rust-suite run occurred in this delivery.
+
+The v5 receipt binds 137 files and verifies each helper case, observation, native call, and contract hash.
+It records the 57 host case IDs and their reasons separately.
+The branch still has 100 authored ports out of 142; the historical cumulative repository run covers 80.
+
+The adjacent batch-nine file bindings were refreshed for the CI change.
+Its existing source observations were reused without claiming new source executions.
+All 32 TypeScript compatibility tests pass in this delivery.
+
+The combined detector replay command reached the 115-second cap and is excluded.
+A five-rule replay group also reached that cap and is excluded.
+The combined graph replay and its single-API replay also exceeded their 90-second test timeouts.
+Each detector replay test now covers half its observations for one API.
+The two disjoint halves retain every observation.
+CI runs metadata and controls separately, then each detector, API, and part.
+Local verification uses those same bounded commands.
+
+Final bounded replay verification passes all 40 detector/API partitions and 14 metadata or control tests.
+Their exact union has 54 assertion identities, with no failures, duplicates, or missing identities.
+Partitioning changes test grouping, not corpus size or expected results.
+The final helper replay has 24 passing tests, and the evidence verifier has 19 passing tests.
+Final typecheck, CI YAML and shell syntax, and both batch-nine and batch-ten file bindings pass.

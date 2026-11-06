@@ -57,12 +57,13 @@ def normalized(record):
  return record
 
 def verify(oracle,reports,controls=False,mode=None,policies=None):
- seen=set();records=[];calls=[];engine=None;outcomes={};original_calls=Counter()
+ seen=set();records=[];calls=[];engine=None;outcomes={};original_calls=Counter();helper_cases=set()
  for report in reports:
   if report.get('oracle') is not False:raise ValueError('Cannot certify original execution as native')
   if mode is not None and report['mode']!=mode:raise ValueError('Wrong native API mode')
   if seen&report['cases'].keys():raise ValueError('Duplicate test coverage')
   seen.update(report['cases']);outcomes.update(report['cases']);records.extend(expand(report)['records']);calls.extend(report['calls']);original_calls.update(report.get('originalCalls',{}))
+  helper_cases.update(record['test'] for record in report.get('helperRecords',[]))
   if report['semanticFallbacks']:raise ValueError('Original detector executed')
   if report.get('originalCalls',{}).get('matching_architecture:_source_requires_matching_scan'):raise ValueError('Python matching selection executed')
   if report['exitCode']!=(1 if controls else 0):raise ValueError('Unexpected assertion result')
@@ -91,17 +92,24 @@ def verify(oracle,reports,controls=False,mode=None,policies=None):
  rejected={call['check'] for call in calls if (call['test'],call['check'],call['entry']) in positives and call['test'] in failed and call['findings']==0}
  if controls and rejected!=set(CHECKS):raise ValueError('A disabled detector escaped positives: '+str(set(CHECKS)-rejected))
  unique={json.dumps({k:v for k,v in normalized(r).items() if k!='test'},sort_keys=True):r for r in wanted}
- return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),retainedPythonCases=len(seen-{r['test'] for r in records}),retainedPythonCaseIds=sorted(seen-{r['test'] for r in records}),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
+ return dict(cases=len(seen),completeResults=len(records),positiveResults=sum(bool(r['expected']) for r in wanted),distinctObservations=len(unique),distinctPositiveObservations=sum(bool(r['expected']) for r in unique.values()),detectorCases=len({r['test'] for r in records}),nativeHelperCases=len(helper_cases),retainedPythonCases=len(seen-{r['test'] for r in records}-helper_cases),retainedPythonCaseIds=sorted(seen-{r['test'] for r in records}-helper_cases),perRule=dict(Counter(r['check'] for r in records)),engineSha256=engine,rejected=sorted(rejected),caseOutcomes=outcomes,originalCalls=dict(original_calls),semanticFallbacks=[])
 
-def receipt(oracle_path,snapshot,workspace,controls,configured,contracts):
+def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_replay):
  policies={c:hashlib.sha256((Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json')).read_bytes()).hexdigest() for c in CHECKS}
  oracle=read_report(oracle_path);paths={mode:verify(oracle,[read_report(path) for path in reports],mode=mode,policies=policies) for mode,reports in [('snapshot',snapshot),('workspace',workspace)]};negative=verify(oracle,[read_report(path) for path in controls],True,mode='snapshot')
  assert paths['snapshot']['engineSha256']==paths['workspace']['engineSha256']==negative['engineSha256']
  configured_path=Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz');configured_summary=verify_configured(read_report(configured_path),[read_report(p) for p in configured])
  contracts_path=Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json');contract_summary=verify_contracts(read_report(contracts_path),[read_report(p) for p in contracts])
+ from data_layer_ten.assertions.evidence import verify_helpers,verify_replay
+ ledger=read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'];helper_oracle=read_report(Path('fixtures/host/data-layer-port/batch-10-helper-assertions.json'))
+ helper_hash=hashlib.sha256(Path('fixtures/host/data-layer-port/batch-10-helper-contracts.json').read_bytes()).hexdigest()
+ helper_summary={mode:verify_helpers(ledger,helper_oracle,[read_report(path) for path in reports],mode,helper_hash) for mode,reports in [('snapshot',snapshot),('workspace',workspace)]}
+ helper_replay_summary=verify_replay(helper_oracle,[read_report(path) for path in helper_replay])
  files=set(Path('scripts/dsl/data_layer_ten').rglob('*.py'))|{Path('scripts/generate/packs/data_layer_batch_ten.py'),oracle_path,configured_path,Path('conformance/data-layer/batch-ten.ts'),Path('conformance/data-layer/native-worker.ts'),Path('conformance/data-layer/execution.ts'),Path('conformance/data-layer/policies.ts'),Path('test/conformance/data-layer/batch-ten.test.ts'),Path('test/conformance/data-layer/batch-ten-defaults.test.ts')}
  files|={Path('test/conformance/data-layer')/name for name in ['batch-ten-file-contracts.test.ts','batch-ten-families.test.ts','batch-ten-configured-repository.test.ts']}
  files|={Path('fixtures/host/data-layer-port/batch-10-file-contract-regressions.json')}
+ files|={Path('fixtures/host/data-layer-port')/name for name in ['batch-10-assertion-ledger.json','batch-10-helper-assertions.json','batch-10-helper-contracts.json']}
+ files|={Path('conformance/data-layer/helper-assertions.ts'),Path('test/conformance/data-layer/batch-ten-helpers.test.ts')}
  files|={Path('scripts/dsl/data_layer_audit')/name for name in ['native_suite.py','native_guard.py','native_scanners.py']}
  files|=set(Path('test/engine/native/data-layer-ten').glob('*.ts'))|{Path('.github/workflows/ci.yml')}
  files|=set(Path('fixtures/host/data-layer-port').glob('batch-10-*seeds.json'))|{Path('fixtures/host/data-layer-port/batch-10-repair-regressions.json'),Path('test/conformance/data-layer/batch-ten-repair.test.ts')}
@@ -110,7 +118,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts):
  files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}
- return dict(format='rerail.data-layer-batch-ten-assertions/v4',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,focusedContracts=contract_summary,positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
+ return dict(format='rerail.data-layer-batch-ten-assertions/v5',sourcePin=PIN,engineSha256=paths['snapshot']['engineSha256'],executionPaths=paths,configured=configured_summary,focusedContracts=contract_summary,helperAssertions=helper_summary,helperReplay=helper_replay_summary,hostAssertionLedger={case:row for case,row in ledger.items() if row['kind']=='host'},positiveControls=negative,fileSha256={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)})
 def main():
- p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--contracts',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured,a.contracts),indent=2)+'\n')
+ p=argparse.ArgumentParser();p.add_argument('--oracle',type=Path,required=True);p.add_argument('--snapshot',type=Path,nargs='+',required=True);p.add_argument('--workspace',type=Path,nargs='+',required=True);p.add_argument('--controls',type=Path,nargs='+',required=True);p.add_argument('--configured',type=Path,nargs='+',required=True);p.add_argument('--contracts',type=Path,nargs='+',required=True);p.add_argument('--helper-replay',type=Path,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.write_text(json.dumps(receipt(a.oracle,a.snapshot,a.workspace,a.controls,a.configured,a.contracts,a.helper_replay),indent=2)+'\n')
 if __name__=='__main__':main()

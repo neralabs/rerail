@@ -61,29 +61,40 @@ The annotation producer evaluates only demanded expression roots.
 It does not construct labels for every canonical AST node.
 No native engine feature, capacity limit, or statement limit changed in this round.
 
-## What the 124 Python cases cover
+## Resolution of the 124 retained assertions
 
-These tests remain unchanged Python tests. They are not native detector comparisons.
-The receipt lists every identity under `retainedPythonCaseIds`.
+The earlier delivery left 67 rule-relevant unit assertions on their Python implementations.
+Passing overlapping detector tests did not replace those assertions.
+All 67 now execute native contracts through both APIs.
+The assertions remain unchanged in 66 cases.
+One traversal assertion uses the explicit native instrumentation translation described below.
+The [case ledger](../fixtures/host/data-layer-port/batch-10-assertion-ledger.json) identifies every target and boundary.
 
-| Cases | Original assertion target | Relationship to the native port |
+| Cases | Original assertion target | Current execution |
 | ---: | --- | --- |
-| 47 | Legacy AST helper functions | The current graph collector does not call these helpers. Its class, method, assignment, and mention behavior is tested through detector results. |
-| 12 | Decorator-name helper | The helper runs in Python. Native detector cases separately cover its decorator forms and rejection behavior. |
-| 4 | AST handoff helper | Tests the Python framework's tree argument and error contract. Native parse and malformed-module contracts have separate engine tests. |
-| 15 | Python CLI | Tests argument parsing, mocked findings, output, and exit status. The rerail rules do not implement this Python CLI. |
-| 14 | Python violation dataclass | Tests Python equality, hashing, field types, and immutability. Native results have their own complete DTO comparisons. |
-| 28 | Constants and module paths | Tests Python module layout and constant types. The generator reads the pinned constants; regeneration checks the shipped documents. |
-| 2 | Introspection path helper | Remain Python helper assertions. Configured reporter comparisons separately test native path selection. |
-| 1 | Approval configuration validator | Tests rejection of an internal approval entry. The pinned shipped allowlist is empty; no mutable approval API was added to rerail. |
-| 1 | Python traversal-cache instrumentation | Counts `_walk_nodes` calls in a Python helper. It does not measure native module walks or prove native performance. |
+| 47 | Legacy AST helpers | Exact SQL unit contracts select nodes, statements, assignments, and mentions. These preserve the legacy helpers without changing the active collector's different semantics. |
+| 12 | Decorator extraction | Native contracts use the production `single_decorators` relation. |
+| 4 | Parsing and AST handoff | Native syntax facts decide success or failure. Python constructs the AST DTO only after native validation. A disagreement fails the test. |
+| 2 | Introspection path classification | Native contracts use the same SQL predicate as the shipped rule. Supplemental original-evaluated cases include positive paths. |
+| 1 | Approval configuration | SQL validates prefixes and test paths, preserving messages and error order. Additional cases exercise clean entries, multiple errors, and NUL. |
+| 1 | Traversal instrumentation | The original input and Boolean assertion remain. Its Python mock-count assertion becomes actual native parse and module-walk assertions. The receipt binds both source hashes and counters. |
+| 15 | Python CLI | Retained host tests for argument parsing, mocked findings, formatting, and exit status. |
+| 14 | Python dataclass | Retained host tests for Python equality, hashing, types, and immutability. |
+| 28 | Constants and module paths | Retained host tests for the pinned Python module layout and definitions. |
 
-This separation identifies the scope of the port. It does not convert those 124 passes into native coverage.
+The 67 native helper cases produce 104 complete observations per API.
+They remain separate from the 975 detector observations.
+Host adapters map native node IDs to the original AST objects; they do not call the original selection helpers.
+The source runner rejects execution of the original helper bodies during native runs.
+
+The remaining 57 tests still assert Python-specific host behavior.
+Their exact identities and reasons appear under `hostAssertionLedger` in the v5 receipt.
+They continue to run, and they do not count as native detector or helper coverage.
 
 ## Acceptance evidence
 
 The source assertion corpus has 1,098 cases and 975 complete detector observations, including 870 positives.
-Of those cases, 974 invoke native detectors; the 124 cases above retain their Python assertion targets.
+Of those cases, 974 invoke native detectors, 67 invoke native helper contracts, and 57 retain host assertion targets.
 Every original detector observation must match through both snapshot and workspace execution.
 
 The focused corpus has 276 original-evaluated inputs, including 194 positives.
@@ -92,10 +103,15 @@ The configured corpus has 1,392 original reporter observations, including 978 po
 Both APIs compare all 1,392 results and 439 matching file-selection observations.
 The resulting gate has 3,662 configured assertions.
 
-The v4 receipt verifies the full identity set for focused assertions.
+The v5 receipt verifies the full identity sets for focused and helper assertions.
 It rejects failed, empty, partial, skipped, duplicated, or unexpectedly selected coverage.
 CI runs focused tests in three bounded groups and verifies their union.
 Diagnostic-removal controls still cover all 106 observed diagnostic families.
+
+Helper replay checks all 104 original observations and 15 supplemental observations through both APIs.
+It also rejects disabled implementations of all 12 helper entry points.
+These are 238 result comparisons and 12 execution-removal controls, in 24 replay tests.
+CI regenerates the helper programs, checks byte equality, and verifies every required native call trace.
 
 The source runner's `--mutant` option now creates an actual disabled-policy directory.
 Previously, it only skipped baseline comparison and required callers to supply disabled policies separately.

@@ -76,9 +76,13 @@ Their expected results come from original execution, without an assumption that 
 
 There are 975 complete detector observations, including 870 positive observations, across 974 tests.
 Of these observations, 781 have distinct normalized inputs and results; 683 are positive.
-The other 124 cases still execute Python helpers or CLI assertions. They are not native detector comparisons.
-The v4 receipt lists all their test IDs explicitly under `retainedPythonCaseIds`.
-The structural audit identifies their assertion targets and explains their relationship to the native ports.
+The other 124 cases were previously left on Python implementations.
+Of these, 67 rule/helper cases now execute native contracts.
+The assertions remain unchanged in 66 cases; one traversal assertion uses actual native counters.
+They produce 104 complete helper observations per API, separately from detector results.
+The remaining 57 cases test the Python CLI, dataclass behavior, constants, and module paths.
+The v5 receipt lists those host targets individually under `hostAssertionLedger`.
+The structural audit maps all 124 cases to their execution targets.
 The conditional observations include 47 calls to the shared analyzer.
 Replay compares diagnostic multiplicity, path, code, message, line, and rule-specific DTO fields through both native APIs.
 It also checks that public diagnostics agree with SQL result rows.
@@ -97,8 +101,10 @@ A further 878 comparisons check the exact matching file selection, including its
 There are also 106 diagnostic-family removal controls, each checked through both APIs.
 These controls remove one diagnostic code at a time and require all other original findings to remain.
 
-The [receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, and implementation hashes.
+The [v5 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, and implementation hashes.
 It also requires the complete union of focused assertions: 276 inputs, including 194 positives, through both APIs.
+All 67 rule-relevant helper cases require native traces and complete original results.
+Helper replay includes 15 original-evaluated controls, including positive path classification and clean matching modules.
 The [repair regressions](../fixtures/host/data-layer-port/batch-10-repair-regressions.json) preserve the nine disproving audit inputs.
 The [journal](data-layer-performance-journal.md) records failed attempts and subsequent verification.
 
@@ -121,7 +127,7 @@ PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
 python3.13 scripts/dsl/data_layer_ten/suite.py \
   --source /path/to/pinned-data-layer --repo /path/to/git-objects \
   --baseline fixtures/host/data-layer-port/batch-10-complete-api.json.gz \
-  --policies packs/data-layer/rules --part 0 --parts 4 \
+  --policies packs/data-layer/rules --part 0 --parts 8 \
   --mode snapshot --output /tmp/batch-ten-0.json
 ```
 
@@ -136,17 +142,32 @@ python3.13 scripts/dsl/data_layer_ten/suite.py \
   /path/to/pinned-data-layer/scripts/tests/test_lint_matching_architecture.py::test_current_matching_architecture_is_clean_tdd_red
 ```
 
-Run the small assertion command for parts 0 through 3, then repeat both commands with `--mode workspace`.
+Run the small assertion command for parts 0 through 7, then repeat both commands with `--mode workspace`.
 Add `--oracle` and omit `--baseline` to record original execution.
-The recorder does not change upstream assertions or linter implementations.
+Original recording leaves upstream assertions and linter implementations unchanged.
+Native execution translates one Python mock-count assertion into actual native instrumentation assertions.
+The semantic audit describes that translation and its source hashes.
 Native replay needs CPython 3.13 on PATH.
 
 Run compact replay and configured defaults separately:
 
 ```sh
-npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts
+timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts -t '^(?!matches complete )'
+for check in graph_lazy_sql_plan bounded_composed_graph_paths graphql_plan_ownership \
+  plan_optimizer_v2 conditional_architecture schema_introspection_data_paths matching_architecture \
+  hnsw_architecture embedding_vector_orchestration generated_index_sources
+do
+  for mode in snapshot workspace
+  do
+    for part in 0 1
+    do
+      timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts -t "^matches complete $check .* $mode API part $part$"
+    done
+  done
+done
 npx vitest run --dir test test/conformance/data-layer/batch-ten-repair.test.ts test/engine/native/data-layer-ten/
 npx vitest run --dir test test/conformance/data-layer/batch-ten-families.test.ts
+npx vitest run --dir test test/conformance/data-layer/batch-ten-helpers.test.ts
 ```
 
 Run the focused file-contract tests in bounded groups:

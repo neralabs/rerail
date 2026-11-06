@@ -5,7 +5,9 @@ See [the completion audit](data-layer-batch-nine-audit.md). The historical compl
 
 Batch ten repairs the disproved completion claim with 1,098 original and original-evaluated cases, 975 complete API results, and 1,392 configured-default observations.
 Both native APIs receive the full matching inventory; source selection no longer runs in Python.
-Its semantic audit adds 276 original-evaluated inputs, including 194 positives, and separates 124 Python helper and CLI cases from native detector coverage.
+Its semantic audit adds 276 original-evaluated inputs, including 194 positives.
+All 67 rule-relevant retained helper cases now execute native contracts, with 104 complete helper observations per API.
+The remaining 57 cases test Python-specific CLI, dataclass, constant, and module-layout behavior; the receipt lists each host target explicitly.
 The current batch-ten environment uses CPython 3.13.18 with Unicode 15.1.
 See [its report](data-layer-batch-ten.md). The cumulative repository result still covers 80 rules.
 

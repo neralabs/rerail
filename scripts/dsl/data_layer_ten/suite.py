@@ -28,12 +28,19 @@ class Suite(NineSuite):
     finally:self.adapter_depth-=1
   return adapter
  def pytest_configure(self):
+  from weakref import WeakKeyDictionary
+  from data_layer_ten.assertions.adapter import preorder,install
+  self.node_ids=WeakKeyDictionary()
+  helper_path=self.workspace/'fixtures/host/data-layer-port/batch-10-helper-assertions.json'
+  self.helper_baseline=json.loads(helper_path.read_text())['records'] if helper_path.exists() else []
   parse,walk=ast.parse,ast.walk
   @wraps(parse)
   def capture(source,*args,**kwargs):
    tree=parse(source,*args,**kwargs)
    if isinstance(source,(str,bytes)):
-    for node in walk(tree):self.trees[node]=source.decode() if isinstance(source,bytes) else source
+    for ordinal,node in enumerate(preorder(tree)):
+     self.trees[node]=source.decode() if isinstance(source,bytes) else source
+     self.node_ids[node]=ordinal
    return tree
   self.replace(ast,'parse',capture)
   self.modules={check:importlib.import_module('scripts.lint_'+check) for check in self.checks}
@@ -53,9 +60,12 @@ class Suite(NineSuite):
      # The host materializes source inventory. SQLite supplies all conditional decisions.
      def finish_file(self):return {}
     self.replace(self.shared,'ConditionalArchitectureCollector',SourceInventory)
+  install(self)
   if not self.oracle:
    def guard(frame,event,arg):
     if event!='call':return
+    if frame.f_code in self.helper_code_names:
+     name=self.helper_code_names[frame.f_code];self.semantic_fallbacks.append(name);raise AssertionError('Original helper executed: '+name)
     detail=original_codes.get(frame.f_code)
     if detail is not None:
      check,name,passive=detail;key=check+':'+name
@@ -171,6 +181,8 @@ class Suite(NineSuite):
   return tuple(result) if check=='hnsw_architecture' or check=='matching_architecture' and entry!='_scan_tree' else result
  def pytest_collection_modifyitems(self,items):
   items[:]=items[getattr(self,'part',0)::getattr(self,'parts',1)]
+  from data_layer_ten.assertions.adapter import translate
+  translate(self,items)
 def main():
  p=argparse.ArgumentParser();p.add_argument('--source',type=Path,required=True);p.add_argument('--repo',type=Path,required=True);p.add_argument('--output',type=Path,required=True);p.add_argument('--policies',type=Path,required=True);p.add_argument('--oracle',action='store_true');p.add_argument('--baseline',type=Path);p.add_argument('--mode',choices=['snapshot','workspace'],default='snapshot');p.add_argument('--checks',default=','.join(CHECKS));p.add_argument('--mutant',action='store_true');p.add_argument('--part',type=int,default=0);p.add_argument('--parts',type=int,default=1);p.add_argument('tests',nargs='*');args=p.parse_args()
  workspace=Path.cwd();root=args.source.resolve();repo=args.repo.resolve();output=args.output.resolve();output.parent.mkdir(parents=True,exist_ok=True)
@@ -178,6 +190,8 @@ def main():
   from data_layer_ten.evidence import disabled_policies
   args.policies=disabled_policies(args.policies.resolve(),output.parent/(output.stem+'-mutant-policies'))
  os.environ['RERAIL_NATIVE_POLICY_DIRECTORY']=str(args.policies.resolve());sys.path[:0]=[str(root),str(root/'scripts')]
+ os.environ['RERAIL_NATIVE_CONTRACTS']=str(workspace/'fixtures/host/data-layer-port/batch-10-helper-contracts.json')
+ helper_hash=hashlib.sha256(Path(os.environ['RERAIL_NATIVE_CONTRACTS']).read_bytes()).hexdigest()
  from data_layer_ten.evidence import read_report
  baseline=expand(read_report(args.baseline)) if args.baseline else None
  if not args.oracle and baseline is None:p.error('A recorded original baseline is required')
@@ -191,10 +205,11 @@ def main():
   exitcodes.append(int(pytest.main(['--rootdir',str(root),'-c',str(root/'pyproject.toml'),'-q',*collection],plugins=[backend])));backends.append(backend)
  records=[r for b in backends for r in b.records];cases={k:v for b in backends for k,v in b.outcomes.items()};calls=[r for b in backends for r in b.calls];fallbacks=[r for b in backends for r in b.semantic_fallbacks]
  code=max(exitcodes);wanted=[r for r in baseline['records'] if r['test'] in cases] if baseline else records
- if policies()!=policy_hashes:code=1
+ if policies()!=policy_hashes or hashlib.sha256(Path(os.environ['RERAIL_NATIVE_CONTRACTS']).read_bytes()).hexdigest()!=helper_hash:code=1
  from collections import Counter
  missing=Counter((r['test'],r['check'],r['entry']) for r in wanted)-Counter((r['test'],r['check'],r['entry']) for r in records)
  if missing or fallbacks:code=1
  report=dict(format='rerail.data-layer-batch-ten/v1',oracle=args.oracle,mode=args.mode,exitCode=code,policySha256=policy_hashes,sourceFilesChecked=verify_sources(root,repo,PIN),records=records,calls=calls,cases=cases,semanticFallbacks=fallbacks,originalCalls={k:sum(b.original_calls.get(k,0) for b in backends) for k in set().union(*(b.original_calls.keys() for b in backends))},retainedCaseIds=sorted(set(cases)-{r['test'] for r in records}),missingResults=list(missing.elements()),engineSha256=hashlib.sha256(backends[0].engine_path.read_bytes()).hexdigest())
+ report.update(helperRecords=[r for b in backends for r in b.helper_records],helperCalls=[call for b in backends for call in b.helper_calls],assertionTranslations=[translation for b in backends for translation in b.assertion_translations],helperContractsSha256=helper_hash)
  output.write_text(json.dumps(compact(report),indent=2)+'\n');raise SystemExit(code)
 if __name__=='__main__':main()
