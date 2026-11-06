@@ -1,0 +1,9 @@
+// data-layer-serverplan-bypass, pending: awaiting the converter's option facts (`option_value`, A9). Once they
+// are given, replace bypass_hit's rule in data-layer-serverplan-bypass.rr with the one below (and add the
+// declarations) and delete this file: the clauses' `entryPoint` cases `all`, `scan_file` and `scan_source`
+// match every path, any other value none.
+.decl option_value(name: symbol, v: symbol)
+.decl bypass_entry(v: symbol)
+bypass_entry("all"). bypass_entry("scan_file"). bypass_entry("scan_source").
+bypass_hit(h, p, l) :- bypass_call(c, h), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    doc(d, p, _), line(c, l), option_value("entryPoint", v), bypass_entry(v).
