@@ -3,7 +3,7 @@
 // every returned string is interned here so the pointer outlives the call.
 //
 // Approximations (README, "Functors"): semver ignores prerelease tags; nfkc is the
-// identity; to_precision follows %g; tree_digest, unparse and ed25519_ok are stubs (rrlab warns when a rule uses them).
+// identity; to_precision follows %g; tree_digest and unparse are stubs; ed25519_ok uses libsodium when it is found (else a stub) (rrlab warns when a rule uses them).
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -357,4 +357,30 @@ extern "C" int32_t place(const char* path, int32_t line) {
 }
 extern "C" const char* tree_digest(int32_t n) { return intern("node:" + std::to_string(n)); }
 extern "C" const char* unparse(int32_t n) { return intern("<node " + std::to_string(n) + ">"); }
+#ifdef RRLAB_SODIUM
+#include <sodium.h>
+// key: 64 hex digits; sig: base64, decoded as Python's base64.b64decode does by default (characters outside the
+// alphabet are dropped, padding is not required to be exact). 1 when sig is key's Ed25519 signature of message.
+extern "C" int32_t ed25519_ok(const char* key, const char* message, const char* sig) {
+    if (sodium_init() < 0) return 0;
+    unsigned char pk[32];
+    size_t n = 0;
+    if (strlen(key) != 64 || sodium_hex2bin(pk, 32, key, 64, nullptr, &n, nullptr) != 0 || n != 32) return 0;
+    std::string b;
+    for (const char* c = sig; *c; ++c)
+        if (isalnum((unsigned char)*c) || *c == '+' || *c == '/') b += *c;
+    std::string raw;
+    int val = 0, bits = 0;
+    for (char c : b) {
+        int d = isupper((unsigned char)c) ? c - 'A' : islower((unsigned char)c) ? c - 'a' + 26
+              : isdigit((unsigned char)c) ? c - '0' + 52 : c == '+' ? 62 : 63;
+        val = (val << 6) | d; bits += 6;
+        if (bits >= 8) { bits -= 8; raw += (char)((val >> bits) & 0xff); }
+    }
+    if (raw.size() != crypto_sign_BYTES) return 0;
+    return crypto_sign_verify_detached((const unsigned char*)raw.data(), (const unsigned char*)message,
+                                       strlen(message), pk) == 0 ? 1 : 0;
+}
+#else
 extern "C" int32_t ed25519_ok(const char*, const char*, const char*) { return 0; }
+#endif

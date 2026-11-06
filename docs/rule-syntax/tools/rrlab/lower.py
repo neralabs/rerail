@@ -484,6 +484,7 @@ class Program:
         self.language = None
         self.scope = []            # .scope include globs (a path must match one, when there are any)
         self.scope_exclude = []    # .scope exclude globs
+        self.on_syntax = None      # .on syntax_error report CODE [at line 1]: (code, at line 1)
         self.scope_tests = True    # .scope tests false: no test paths
         self.scope_words = []
         self.warnings = []
@@ -570,6 +571,10 @@ class Program:
                     self.scope.append(m.group(1))
                 elif word == "exclude":
                     self.scope_exclude.append(m.group(1))
+        elif kw == "on" and rest.strip().startswith("syntax_error"):
+            m2 = re.match(r'syntax_error\s+report\s+"?([^"\s]+)"?(\s+at\s+line\s+1)?', rest.strip())
+            if m2:
+                self.on_syntax = (m2.group(1), bool(m2.group(2)))
         elif kw in DROP_DIRECTIVES:
             if kw == "lattice":
                 self.warn(".lattice is not modelled (dropped)")
@@ -1133,7 +1138,10 @@ class Ctx:
     def expr(self, e, pre, in_agg=False):
         t = e[0]
         if t in ("call", "fun"):
-            if t == "fun" and e[1] in ("tree_digest", "unparse", "ed25519_ok", "nfkc"):
+            stubs = ("tree_digest", "unparse", "nfkc") + (() if os.path.exists("/opt/homebrew/opt/libsodium/include/sodium.h")
+                                                          or os.path.exists("/usr/local/opt/libsodium/include/sodium.h")
+                                                          or os.path.exists("/usr/include/sodium.h") else ("ed25519_ok",))
+            if t == "fun" and e[1] in stubs:
                 self.p.warn(f"@{e[1]} is a stub in rrlab")
             return (t, e[1], [self.expr(a, pre, in_agg) for a in e[2]])
         if t == "bin":

@@ -78,6 +78,10 @@ Scope and options:
 - A production (plugin) event keeps `.scope` and drops the rule's `.mode log` codes.
 - An event's options are passed as `option` rows.
 
+`.on syntax_error report CODE [at line 1]` is modelled: a file with a syntax error loses its other findings and
+reports CODE, at its first error's line or at line 1. `@ed25519_ok` verifies with libsodium when it is installed
+(`brew install libsodium`); otherwise it is a stub that always gives 0, and rrlab warns.
+
 `dl.py` has the details.
 
 ## Scores (2026-11-05)

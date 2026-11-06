@@ -59,8 +59,14 @@ def ensure_built():
             # the whole archive: nothing in functors.cpp calls the Rust functors, souffle looks them up by name
             whole = (["-Wl,-force_load," + rx_lib, "-framework", "CoreFoundation"] if sys.platform == "darwin"
                      else ["-Wl,--whole-archive", rx_lib, "-Wl,--no-whole-archive", "-lpthread", "-ldl"])
+            # libsodium, when installed, gives a real @ed25519_ok (static, so souffle needs no library path)
+            sodium = next((d for d in ("/opt/homebrew/opt/libsodium", "/usr/local/opt/libsodium", "/usr")
+                           if os.path.exists(os.path.join(d, "include", "sodium.h"))
+                           and os.path.exists(os.path.join(d, "lib", "libsodium.a"))), None)
+            na = (["-DRRLAB_SODIUM", "-I" + os.path.join(sodium, "include"), os.path.join(sodium, "lib", "libsodium.a")]
+                  if sodium else [])
             subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-O2", "-shared", "-fPIC", "-o", tmp, cpp]
-                           + whole, check=True)
+                           + na + whole, check=True)
             os.replace(tmp, lib)
             if sys.platform == "darwin":  # souffle looks for lib<name>.so on some builds
                 alt = os.path.join(FN_DIR, "librrlabfn.so")
@@ -610,6 +616,15 @@ class Run:
                         else r[meta["cols"].index(meta["code_col"])] if meta["code_col"] is not None else v)
                 out.append({"path": pth, "line": ln, "col": c, "code": code, "violation": v, "row": r,
                             "message": self.message(meta, r, line), "syntax_error": d in errs, "at": at})
+        if p.on_syntax:
+            # .on syntax_error: the document is withheld (its other findings go) and the error is the finding
+            code, at1 = p.on_syntax
+            out = [f for f in out if not f["syntax_error"]]
+            for r in self.table("syntax_error"):
+                if r[0] in path:
+                    out.append({"path": path[r[0]], "line": 1 if at1 else int(r[1]), "col": 0, "code": code,
+                                "violation": None, "row": r, "message": r[2] if len(r) > 2 else "syntax error",
+                                "syntax_error": True, "at": None})
         out = [f for f in out if self.in_scope(f["path"])]
         out = self.suppress(out)
         uniq = {}
