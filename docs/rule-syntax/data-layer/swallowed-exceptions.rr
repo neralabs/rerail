@@ -107,9 +107,14 @@ CRITICAL(w, "contextlib.suppress", s) :- suppress_with(w, c), !keyerror_only(c),
 // suppress_with(w, c): an item of with-statement w is the call c = contextlib.suppress(…), however imported.
 // The callee is resolved by sym_of, so `from contextlib import suppress as s` and imports inside functions count;
 // the Python linter matches the text `contextlib.suppress`, or `suppress` after a module-level from-import.
+// An unresolved callee falls back to that text (the second rule).
 .decl suppress_with(w: node, c: node)
 suppress_with(w, c) :- kind(w, "with_statement"), child(w, cl, _), kind(cl, "with_clause"), child(cl, it, _),
     field(it, "value", c), callee(c, f), sym_of(f, "contextlib.suppress").
+// A callee that resolves to nothing (no import of it in sight) is matched by its text, as the Python linter does:
+// `contextlib.suppress(…)` with no `import contextlib`, or a bare `suppress(…)`.
+suppress_with(w, c) :- kind(w, "with_statement"), child(w, cl, _), kind(cl, "with_clause"), child(cl, it, _),
+    field(it, "value", c), callee(c, f), !sym_of(f, _), name(f, t), (t = "contextlib.suppress" ; t = "suppress").
 // keyerror_only(c): exactly one positional argument, and it resolves to builtins.KeyError (the Python linter's ["KeyError"]).
 // `suppress()` with no argument is not KeyError-only, so it is reported, as in the Python linter.
 .decl keyerror_only(c: node)

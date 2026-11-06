@@ -138,12 +138,13 @@ data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\.py", p).
 // _scan_exported_module_functions). Methods: o is the exported class's qualified name (_scan_exported_class_methods).
 .decl root(o: symbol, f: node)
 // An exported module-level function, public (no leading _), not defined under _internal/.
-root(m, f) :- data_layer_module(m), exports(m, _, q), qualname(f, q), !nearest(f, _, nonmod),
+root(m, f) :- data_layer_module(m), exports(m, x, q), public_name(m, x), qualname(f, q), kind(f, "function_definition"),
+    !nearest(f, _, nonmod),
     def_name(f, n), !prefix("_", n), count : { docof(f, d), doc(d, p, _), prefix("_internal/", p) } = 0.
 // A public method of an exported class, own or inherited (mro_method follows the bases, across files).
 // Skipped as in the Python linter: private classes, Protocol classes (by name or by a base), classes named Async…,
 // _-prefixed methods, the method_skip names, private-decorated methods, and properties (getter, setter, deleter).
-root(cq, f) :- data_layer_module(m), exports(m, _, cq), class_def(c, cq), def_name(c, x), !private(c),
+root(cq, f) :- data_layer_module(m), exports(m, y, cq), public_name(m, y), class_def(c, cq), def_name(c, x), !private(c),
     !match(".*(?:Protocol$|^Async).*", x), count : { class_base(c, b), contains("Protocol", b) } = 0,
     mro_method(cq, n, f), !prefix("_", n), !method_skip(n), !private(f),
     count : { deco(f, q), glob("**{property,.setter,.deleter}", q) } = 0.
