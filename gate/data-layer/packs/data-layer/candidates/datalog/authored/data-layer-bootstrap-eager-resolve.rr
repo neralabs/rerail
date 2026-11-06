@@ -12,8 +12,9 @@
 //   argument, a `**` splat nor a comment (CPython keeps keywords apart; `*x` is in args).
 // Lines: CPython's lineno of a Call or For is its first token's line, tree-sitter's start line.
 // The outer `WHERE instr(path,'bootstrap')>0` is contains("bootstrap", p). The gate (`syntax: valid`) is
-// !syntax_error(d), tree-sitter's verdict. Remaining gap: CPython's verdict is not bound; a gated file tree-sitter
-// accepts and CPython rejects fails W's pythonAst stage (its worker raises: the run errors), and is read here.
+// !syntax_error(d), tree-sitter's verdict. Remaining gap: CPython's syntax verdict (core.rr's syntax_error(d, l,
+// msg)) is not bound by the corpus runner; a gated file tree-sitter accepts and CPython rejects fails W's pythonAst
+// stage (its worker raises: the run errors), and is read here.
 // Options (entryPoint, parameters) are not read by this clause. Checked against the recorded batch 9-10 API
 // events (all exact) and fixtures.
 
