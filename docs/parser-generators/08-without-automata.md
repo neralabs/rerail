@@ -1,6 +1,6 @@
 # Parser generators: machines as bit operations, and Python without automata
 
-Status: design with a prototype measurement, 2026-11-06. It follows `03-bitlex.md` §3.2 and
+Status: design with prototype measurements, 2026-11-06. It follows `03-bitlex.md` §3.2 and
 `05-many-states.md`.
 
 ## Intro
@@ -20,8 +20,15 @@ There are two routes, and they meet:
    triangle, so a toggle and a count mod 3 say which string a byte is in. Comments and short
    strings end at a line end, so everything except triple-quoted strings is local to one line.
 
-A prototype of route 2 agrees byte for byte with the `strings` machine on every file of both
-corpora where it settles in one pass (§4).
+Two prototypes measure route 2 on the corpora (§4, §5):
+
+- **Strings and comments** agree byte for byte with the `strings` machine wherever they settle.
+  With per-line hypotheses, 99% of lines settle in one round and all but 5 within five.
+- **F-string interpolations and format specs** equal tree-sitter's on all 42,956 data-layer
+  f-strings. On CPython, all but 20 Python 3.12-specific ones match. Four rounds settle 99.9%.
+
+§6 shows how a `"""` split across a 64-byte boundary is handled with a few carried bits. §7 turns
+the whole design into fixed work with no data-dependent branch.
 
 ## 1. Is the current lowering branch-free?
 
@@ -169,84 +176,223 @@ delimiter depends only on the bytes before it, so by induction from the left the
 self-consistent assignment. Each pass is straight-line mask code. A file that has not settled
 after a fixed number of passes falls back.
 
-**Per-line hypotheses** remove the passes. A line that holds a triple-quote event can start in
-one of three states: code, inside `'''`, or inside `"""`. Its bytes up to the first triple of that
-kind are local work under each hypothesis. The result is the line's action on the three states,
-with an error for impossible starts.
+Speculate-and-verify over the whole file converges slowly when a file holds many hidden triple
+quotes. One misread triple shifts the pairing of every triple after it, so each pass fixes about
+one (§4.1). Per-line hypotheses confine the damage to one line.
 
-- **In the common case the action is a reflection** (or the identity). Composing lines is then
-  the same toggle and count mod 3, over lines instead of quotes.
-- **A line with a hidden triple** may act otherwise: `x = "'''"` keeps code as code, but makes
-  "inside `'''`" an error.
-- **Composing actions** on three states is a 3-entry map scan, one `TBL` per line with a triple
-  quote. That is the only place a map is left, and it touches a small fraction of lines.
+**Per-line hypotheses.** A line can start in one of three states: code, inside `'''`, or inside
+`"""`. Under each, the line's bytes are classified locally:
 
-## 4. Measured: the prototype
+- **Inside a triple string:** everything up to the first triple of that kind is string. From
+  there on the line is in code.
+- **In code:** the short-string scan, the comment fill and any triple strings that open and close
+  on the line.
+- **Inside the line,** speculate-and-verify settles the triple quotes. A wrong guess now corrupts
+  only the rest of its own line, so it settles in a round or two (§4.2).
 
-`prototypes/nofsa.rs` (plain Rust, no dependencies; run with a file listing paths) implements route 2 with speculate-and-verify. It classifies
-every byte as code, string or comment, and compares the result with the 13-state `strings`
-machine of `lexers/python.bitlex`, simulated byte by byte. All files in each list are included,
-including those tree-sitter rejects.
+The result is the line's *action*: the state it ends in for each of the three it may start in, or
+an error for an impossible start.
+
+- **Most lines are the identity.** Only 2.7% of lines hold a triple-quote candidate.
+- **Most of the others are reflections,** such as a docstring's first line, which swaps code and
+  inside `"""`.
+- **About 100 lines per corpus are not one-to-one.** `"""RSA PKCS#1 v1.5"""`, read as starting
+  inside `"""`, closes at the first `"""` and then turns the rest of the line into a comment. So it
+  ends in code whichever of those two states it starts in.
+
+So lines compose as maps on three states, not as group elements. A map on three states is three
+2-bit fields. Composing two is three selects, and it is needed only for lines that hold a
+triple-quote candidate. The line's real start state then selects which hypothesis's masks hold.
+
+## 4. Measured: the prototypes
+
+`prototypes/nofsa.rs` is plain Rust with no dependencies, run with a file that lists paths. It
+compares against the 13-state `strings` machine of `lexers/python.bitlex`, simulated byte by
+byte.
+
+### 4.1 Whole-file speculate-and-verify
+
+Every file in each list is included, among them those tree-sitter rejects.
 
 | | data-layer Python | CPython 3.15 |
 |---|---:|---:|
 | files | 13,088 | 2,054 |
 | both reject (an unterminated string) | 1 | 2 |
-| **settled in 1 pass** | 13,016 (99.46%) | 2,009 (97.8%) |
-| settled in 2–3 passes | 39 | 21 |
-| settled in 4–8 passes | 22 | 9 |
+| settled in 1 pass | 13,016 (99.46%) | 2,009 (97.8%) |
+| settled in 2–8 passes | 61 | 30 |
 | not settled in 8 passes | 10 | 13 |
 | **bytes classified differently from the machine, in settled files** | **0** | **0** |
 | the closed form of §2.2 against direct reflection | equal on every event | equal on every event |
 
-- **Exact where it settles.** No settled file differs from the machine in any byte.
-- **The files that need passes quote code.** Examples are codemods, linters and tests that hold
-  `'''` or `"""` inside strings.
-- **Passes cost a full lexing pass each,** because one misread triple quote shifts every triple
-  after it. That is why per-line hypotheses (§3.3) are the better design for the 0.5–2% of files
-  with hidden triple quotes. On the 98–99.5% that settle in one pass, speculate-and-verify costs a
-  single pass plus the check.
+The files that need passes quote code: codemods, linters and tests.
+
+### 4.2 Per-line hypotheses
+
+Each line that holds a triple-quote candidate was classified under all three start states. The
+result was compared with the machine run over the same line from the same state.
+
+| | data-layer Python | CPython 3.15 |
+|---|---:|---:|
+| lines | 4,207,502 | 1,065,750 |
+| lines with a triple-quote candidate | 116,441 (2.77%) | 28,409 (2.67%) |
+| their action is not the identity | 47,353 | 22,615 |
+| their action is not one-to-one | 95 | 102 |
+| (line, start state) pairs that agree with the machine | 349,321 | 85,223 |
+| pairs that differ | 1 | 0 |
+| pairs not settled in 6 rounds | 1 | 4 |
+| rounds | 1: 99.3%; at most 5 | 1: 99.0%; at most 5 |
+
+The pairs that differ or do not settle are runs of quotes whose grouping into triples depends on
+the state before them, such as `''''one''''` inside a short string, or `'''` → `''''''` in a
+comment. Each sends its file to fallback: 2 files in the data layer, and 4 lines in CPython
+(including `test_fstring.py`).
 
 ## 5. F-strings without a machine
 
-Not prototyped. The same two ideas apply.
+`prototypes/fstr.rs` builds interpolations and format specs this way and compares them with
+tree-sitter's `interpolation`, `format_expression` and `format_specifier` spans. It does this for
+every f-string in files that tree-sitter parses without error.
 
-- **Depth is a prefix sum.** Inside an f-string body, `{ ( [` add 1 and `} ) ]` subtract 1.
-  - Literal text is depth 0, and an interpolation is depth ≥ 1. A `:` at depth 1 starts the
-    format spec, which runs to the brace that returns to depth 0.
-  - There is no depth bound and no states per depth. Today's machine has 5 states per level, for
-    depths 0–4.
-- **Speculate and verify the two exceptions:**
-  - `{{` and `}}` are escapes in literal text but two braces in code (`f"{ {1:2}}"`).
-  - A quote inside an interpolation starts a string whose braces do not count.
+### 5.1 The method
 
-  Assume `{{` and `}}` are escapes and that interpolation quotes pair by the reflection scan.
-  Compute depth, then check that every escape pair lies at depth 0 and every counted quote at
-  depth ≥ 1. Repeat on failure. Both exceptions are rare, so one pass should settle nearly every
-  file. That is to be measured.
-- **Nested f-strings** are the same computation over the inner string's body, one level per pass.
-  This is the cascade `f1`, `f2` already uses.
-- **PEP 701 quote reuse** (`f"{x["a"]}"`) is the case where an interpolation's string uses the
-  outer quote. With depth as a prefix sum, a quote at depth ≥ 1 belongs to the interpolation
-  whatever its kind. So the triple and short-string scans would have to skip f-string
-  interpolations, which needs the depth first: one more speculate-and-verify round.
+The *context* before each byte of an f-string body is four values:
 
-## 6. What changes in the lexer
+- the depth, an integer;
+- whether the byte is in an inner string, and which kind;
+- whether it is in a comment;
+- whether it is in format-spec text.
+
+Each round computes every byte's *role* from the previous round's context, then the new context
+from the roles:
+
+| bytes | role | decided by |
+|---|---|---|
+| a run of `{` at depth 0 | pairs are escapes; an odd last one opens an interpolation (+1) | the context at the run's first byte only |
+| a run of `{` at depth ≥ 1 | each opens (+1): a dict or set, or a nested field in a spec | as above |
+| a run of `}` starting at depth `d` | the first `min(d, length)` close (−1), the rest are `}}` escapes; an odd remainder is an error | as above |
+| `( [` and `) ]` at depth ≥ 1, not in spec text | +1 and −1 | the previous context |
+| `'` `"` at depth ≥ 1, not in spec text | inner strings, by the reflection scan of §2.2, restarted at each interpolation | a scan within the round |
+| `#` at depth ≥ 1, not in an inner string | a comment, filled to the newline | a fill within the round |
+| `:` at depth 1, not in an inner string | the format spec starts, filled until depth returns to 0 | the previous context |
+| `\N{` in literal text of a non-raw f-string | an escape through its `}` | local |
+
+The new depth is a prefix sum of the roles. When a round leaves the context unchanged, it is the
+answer, and the only possible one:
+
+- every role depends only on the context strictly before its byte (a brace run, on its first
+  byte);
+- so by induction from the left there is exactly one self-consistent context.
+
+**Two things make it converge fast.**
+
+1. **Inner strings and comments are scans within the round,** not facts carried from round to
+   round. A first version carried them, and paired one quote per round. It needed up to 29 rounds.
+2. **A first guess that ignores depth.** For one round, every `{{` and `}}` counts as an escape
+   and an odd remainder counts as ±1. That gets most depths right at once, and the exact rounds
+   only correct and confirm.
+
+A rule that depended on bytes inside its own run was a bug the measurement caught. An early
+version decided each `{` of a run from its own context, so a wrong grouping could be consistent
+with itself (`{prefix}/{{name}}` grew a phantom interpolation). Deciding a run from its first byte
+restores the uniqueness argument.
+
+### 5.2 Measured
+
+| | data-layer Python | CPython 3.15 |
+|---|---:|---:|
+| f-strings | 42,956 | 5,998 |
+| f-string body bytes | 2.04 MB, 1.22% of all bytes | 0.29 MB, 0.78% |
+| **interpolations and specs equal to tree-sitter's** | **42,956 (all)** | 5,978 |
+| different | 0 | 7: a format spec nested inside a nested field's spec, all in `test_fstring.py` |
+| not supported | 0 | 13: a triple-quoted string inside an interpolation (11), a newline in a one-line f-string's interpolation (2); both are Python 3.12 forms |
+| rounds, including the confirming one | 1 (no interpolation): 575; 2: 31,209; 3: 10,544; 4: 621; 5–7: 7 | 1: 576; 2: 4,374; 3: 969; 4: 60; 5–6: 6 |
+
+So four rounds settle 99.98% of data-layer f-strings and 99.9% of CPython's. Seven rounds settle
+all of them.
+
+### 5.3 What is left
+
+- **Nested format specs** (`{x:{w:0}}`) need the spec rule at every depth, not only at depth 1.
+- **PEP 701 quote reuse** needs the triple-quote and short-string scans to skip interpolation
+  code. That is one more round across the two layers.
+- **Nested f-strings** are an inner string with an `f` prefix. Their bodies get the same rounds,
+  one level later.
+
+## 6. A `"""` split by a 64-byte boundary
+
+Take a `"""` whose first quote is byte 63 of block `k`, and whose other two are bytes 0 and 1 of
+block `k + 1`. Every fact it needs is either read across the boundary or carried in a few bits.
+
+| fact | how it crosses | carry or halo |
+|---|---|---|
+| "this quote is not escaped" | `after_odd_run(backslash)`; a run of backslashes may end block `k` | 1 bit: the run's parity |
+| "three quotes start here": `dq & next(dq, 1) & next(dq, 2)` | `next` reads bytes 0 and 1 of block `k + 1`. The input is in memory, so this is an unaligned load, not a carry | a 2-byte halo |
+| "this run of quotes is grouped from its start" (`''''` is `'''` then `'`) | below | 3 bits |
+| "bytes 0 and 1 of block `k + 1` belong to the triple at 63" | `span(triple, 3)` looks 2 bytes back | the last 2 bits of the triple mask |
+| the triple scan's state | the reflection scan | 1 parity bit + a residue mod 3 |
+| the line's state under each hypothesis | short-string scan, comment fill, per hypothesis | 3 × (parity + mod 3 + 1 bit) |
+
+**Run grouping without knowing where the run started.** A run of quotes may begin many blocks
+earlier, and triples are counted from its first byte. Let `P0`, `P1`, `P2` be the masks of bytes
+whose file position is 0, 1 or 2 mod 3. Since 64 ≡ 1 (mod 3), they rotate by one position from
+each block to the next. A block picks its three constants by its index mod 3, which is a select,
+not a branch. Then:
+
+```text
+run_start = q & ~prev(q_same)                         # q_same: same quote character, unescaped
+F_r       = fill(run_start & P_r, ~q_same)            # bytes of runs that started at phase r
+aligned   = (F_0 & P_0) | (F_1 & P_1) | (F_2 & P_2)   # 0, 3, 6, … bytes from the run's start
+triple    = aligned & next(q_same, 1) & next(q_same, 2)
+```
+
+The three `fill`s carry one borrow bit each. The grouping is then right however long the run, and
+wherever it started.
+
+**On the device,** the same facts cross a threadgroup boundary as part of the summary in
+`06-block-parallel.md`. The triple scan's carry is a group element, so the carry-in is applied by
+the closed form of §2.2: a select on the parity and an add mod 3.
+
+## 7. No data-dependent branches: spend work instead
+
+A mispredicted branch costs 13–20 cycles, in which a core could have issued 50–100 SIMD instructions. So the
+design avoids every branch whose direction depends on the file, and pays for that with work that
+is the same for every file:
+
+- **All three line hypotheses are always computed,** for every line. Lines without a triple
+  candidate give the identity, and their hypothesis lanes cost the same mask work as the main lane.
+  That triples the short-string and comment work, which is a few tens of operations per 64 bytes.
+- **Rounds are unrolled to a fixed count, never looped until done.**
+  - Inside lines: 5 rounds over the gathered lines that hold a triple candidate, 2.7% of lines.
+    Round 1 settles 99%.
+  - In f-strings: 1 first-guess round and 4 exact rounds over the gathered f-string bodies, 1.2%
+    of bytes. That settles 99.98%. Seven rounds settle all of the data-layer and CPython f-strings.
+
+  A body that is still changing after the last round sets the file's error bit. That is one OR per
+  file, read once, like every other fallback condition.
+- **Gathers replace branches.** Lines and bodies that need rounds are compacted with prefix counts
+  (simdjson's flattening, or a scan on Metal). The rounds then run over dense lists, so their cost
+  is in proportion to the lines and bodies that need them.
+- **What remains data-dependent:**
+  - Loop trip counts, which are sizes: blocks, gathered lines, gathered bodies.
+  - The per-file fallback decision.
+
+  A branch on a file's fallback bit is taken about once in 300 files, so it is predicted. No branch
+  is taken per byte, per event or per token.
+
+## 8. What changes in the lexer
 
 | machine today | replaced by | carry between blocks |
 |---|---|---|
-| `strings`, 13 states | segmented reflection scan for short strings, comment `fill`, reflection scan for triple quotes, and a check | parity + mod 3 (lines); parity + mod 3 (triples); 1 bit (comment) |
-| `fstrings`, 25 states, two instances | depth prefix sum, spec `fill`, reflection scan for inner strings, and a check | depth (an integer), 1 bit (spec), parity + mod 3 |
-
-- **No event compaction.** Every step is a word operation over 64-byte blocks, as in simdjson.
-- **Carries are group elements** (parities, residues and counts) and borrow bits, so a block's
-  carry-in is applied with XORs, adds and selects.
-- **The check** is one more mask pass, and its failure triggers either a rerun or the line
-  hypotheses.
+| `strings`, 13 states | short-string reflection scan and comment fill per line, under 3 hypotheses; triple-quote reflection scan; line actions composed as 3-state maps; 5 unrolled rounds inside lines | per hypothesis: parity, mod 3, 1 bit; triples: parity, mod 3; run grouping: 3 bits |
+| `fstrings`, 25 states, two instances | depth prefix sum; inner strings by reflection scan; comment and spec fills; 1 + 4 unrolled rounds over gathered f-string bodies | depth (an integer), parity, mod 3, 2 bits |
 
 Recommended order:
 
-1. Build the short-string and triple-quote scans with speculate-and-verify. That replaces
-   `strings` for 99.5% of data-layer files.
-2. Add per-line hypotheses for the rest.
-3. Measure the f-string version (§5) before replacing `fstrings`.
+1. Write these as Bitlex constructs:
+   - `reflect(events, b)` for the mod-3 scan;
+   - `hypotheses` for per-line lanes;
+   - `rounds N { … }` for unrolled fixed points, with an error on non-convergence.
+2. Port `prototypes/nofsa.rs` and `prototypes/fstr.rs` into the reference evaluator. They are the
+   oracles for the mask versions.
+3. Cover nested specs and PEP 701 (§5.3). After that, no file in either corpus needs either
+   machine, other than the few already sent to fallback.
