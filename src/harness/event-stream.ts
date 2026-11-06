@@ -10,7 +10,7 @@ import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
   decodeRerailEventFrame,
   encodeRerailEventResult,
-  InactiveSessionError,
+  INACTIVE_SESSION,
   RERAIL_EVENT_PROTOCOL_PREFACE,
   type RerailEventErrorFrame,
 } from "../runtime/event-protocol.js";
@@ -45,9 +45,17 @@ function eventIdFromLine(line: string): string | null {
   }
 }
 
+/**
+ * Read by `code`, not `instanceof InactiveSessionError`: `build:events` bundles this stream with its own copy of the
+ * class, so an event loop built from the package's other entry points throws a different one.
+ */
+function isInactiveSession(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === INACTIVE_SESSION;
+}
+
 function errorFrame(line: string, error: unknown): RerailEventErrorFrame {
   const message = error instanceof Error ? error.message : String(error);
-  const code = error instanceof InactiveSessionError ? error.code : "invalid-event";
+  const code = isInactiveSession(error) ? INACTIVE_SESSION : "invalid-event";
   return { eventId: eventIdFromLine(line), error: { code, message } };
 }
 

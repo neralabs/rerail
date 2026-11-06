@@ -3,10 +3,14 @@ import { RERAIL_HOSTS, STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
+export const INACTIVE_SESSION = "inactive-session";
 
-/** An event for a session the runtime has not started or has ended; the event stream answers it as `inactive-session`. */
+/**
+ * An event for a session the runtime has not started or has ended; the event stream answers it as `inactive-session`.
+ * The stream reads the `code`, not the class, so an event loop may throw any `Error` whose `code` is `inactive-session`.
+ */
 export class InactiveSessionError extends Error {
-  readonly code = "inactive-session";
+  readonly code = INACTIVE_SESSION;
 
   constructor(sessionId: string) {
     super(`Inactive session: ${sessionId}`);
