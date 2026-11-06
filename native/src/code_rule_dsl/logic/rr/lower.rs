@@ -18,10 +18,15 @@
 //! - `.violation V(at: node, …)` declares V as an output, and each row of V is a finding
 //!   `violation(policy, V, code, path, line)` at `at`'s line (the code is V, or the `code {c}` column);
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out.
+//! - core.rr is the prelude: a relation read and not declared takes its declaration there, and the core relations
+//!   that are tree arithmetic lower to the base relations (`core`).
 //!
 //! Not lowered yet, each a named error: patterns (``n ~ `…` ``), `must`/`may`, a `.violation` at a span or place,
 //! `ordered by`, `sum`/`mean`/`join`, `match` captures, arithmetic, Soufflé's built-in functions (`cat`, `strlen`),
 //! negated disjunctions other than test sets, and the built-ins that take a relation besides the kind-set ones.
+
+mod core;
+pub(in crate::code_rule_dsl) use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -86,6 +91,11 @@ struct Lowerer {
     /// Whether the clause being lowered binds a variable named `top` in an atom: there `top` is that variable, not
     /// the lattice's top (`child(x, top, _)`).
     top_var: bool,
+    /// The relations the program derives (rules or facts): core.rr's names among them are the program's own.
+    derived: BTreeSet<String>,
+    /// The literals of the conjunctions around the literal being lowered: where an aggregate's body finds what binds
+    /// the variables it shares with the rule (`aggregate`).
+    around: Vec<Lit>,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -128,6 +138,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             }
         }
     }
+    l.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(l.prog.facts.keys().cloned()).collect();
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -139,6 +150,8 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         })?;
     }
     l.findings();
+    l.within_kinds();
+    l.declare_core()?;
     l.kind_sets()?;
     crate::code_rule_dsl::logic::front::finish(l.prog)
 }
@@ -284,10 +297,16 @@ impl Lowerer {
     fn conjunction(&mut self, lits: &[Lit], context: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
         let mut acc = vec![Vec::new()];
         for (k, lit) in lits.iter().enumerate() {
-            // The variables used outside this literal, which an aggregate inside it is correlated on.
+            // The variables used outside this literal, which an aggregate inside it is correlated on: another
+            // aggregate's body's are that aggregate's own, as in Soufflé.
             let mut outer: Vec<String> = context.iter().cloned().collect();
-            lits.iter().enumerate().filter(|(j, _)| *j != k).for_each(|(_, l)| l.vars(&mut outer));
-            let alts = self.literal(lit, &outer.into_iter().collect())?;
+            lits.iter().enumerate().filter(|(j, _)| *j != k).for_each(|(_, l)| visible(l, &mut outer));
+            // The literals around it, which bind them (`aggregate`).
+            let saved = self.around.len();
+            self.around.extend(lits.iter().enumerate().filter(|(j, _)| *j != k).map(|(_, l)| l.clone()));
+            let alts = self.literal(lit, &outer.into_iter().collect());
+            self.around.truncate(saved);
+            let alts = alts?;
             acc = acc.iter().flat_map(|a| alts.iter().map(move |b| a.iter().chain(b).cloned().collect::<Vec<_>>())).collect();
         }
         Ok(acc.into_iter().map(merge_negated_tests).collect())
@@ -310,6 +329,9 @@ impl Lowerer {
             }
             Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
             Lit::Atom { rel, args, neg } => {
+                if let Some(literals) = self.rewrite(rel, args, *neg)? {
+                    return Ok(vec![literals]);
+                }
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
                 // variables (`front::finish`'s computed-term check).
                 let mut atom = self.atom(rel, args, *neg)?;
@@ -375,7 +397,7 @@ impl Lowerer {
                 Ok(name.clone())
             }
             STerm::Str(kind) => {
-                let name = format!("rr_kind_{}", kind.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>());
+                let name = kind_set_name(kind);
                 self.prog.kindsets.insert(name.clone(), vec![kind.clone()]);
                 Ok(name)
             }
@@ -490,8 +512,15 @@ impl Lowerer {
         if let [Lit::Atom { rel, args, neg: false }] = body
             && test_of(rel).is_none()
             && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast")
+            && !self.rewritten(rel)
         {
-            let Literal::Atom(atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
+            let Literal::Atom(mut atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
+            // The body's own variables are `_`: the aggregate binds none of them.
+            for t in &mut atom.args {
+                if matches!(t, Term::Var(v) if !outer.contains(v) && over.as_ref() != Some(v)) {
+                    *t = Term::Wild;
+                }
+            }
             return Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom }]);
         }
         // Otherwise a helper relation of the body. `count` counts the body's distinct rows, so it keeps every
@@ -499,14 +528,58 @@ impl Lowerer {
         let inner = body_vars(body);
         let cols: Vec<String> = inner.iter().filter(|v| op == AggOp::Count || over.as_ref() == Some(*v) || outer.contains(*v)).cloned().collect();
         let name = self.fresh("agg");
-        let bodies = self.conjunction(body, outer)?;
+        // A variable the rule shares that no atom of the body binds (`b > o` in `min b : { r(n, b), b > o }`) has
+        // its value from the rule, as in Soufflé: the helper reads it from the literals around that bind it.
+        let context = self.binding(body, &cols.iter().filter(|c| outer.contains(*c)).cloned().collect());
+        let bodies = self.conjunction(&context.into_iter().chain(body.iter().cloned()).collect::<Vec<_>>(), outer)?;
         let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect();
         self.prog.decls.insert(name.clone(), types);
         let args: Vec<Term> = cols.iter().map(|c| Term::Var(c.clone())).collect();
         for b in bodies {
             self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: args.clone(), neg: false, gated: false }, body: b });
         }
-        Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args, neg: false, gated: false } }])
+        // The aggregate reads the helper at the rule's variables: the body's own (`count`'s) are `_` there.
+        let read = cols.iter().map(|c| if outer.contains(c) || over.as_ref() == Some(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
+        Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args: read, neg: false, gated: false } }])
+    }
+
+    /// The literals around an aggregate (`around`) that bind those of `shared` no positive atom of `body` binds:
+    /// the positive atoms that hold one, and the equalities `x = …` that give one, with what binds theirs in turn.
+    fn binding(&self, body: &[Lit], shared: &BTreeSet<String>) -> Vec<Lit> {
+        let atom_vars = |l: &Lit| -> Option<BTreeSet<String>> {
+            match l {
+                Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() => Some(body_vars(std::slice::from_ref(l))),
+                _ => None,
+            }
+        };
+        let bound: BTreeSet<String> = body.iter().filter_map(atom_vars).flatten().collect();
+        let mut need: BTreeSet<String> = shared.difference(&bound).cloned().collect();
+        let mut chosen: Vec<usize> = Vec::new();
+        let mut have = BTreeSet::new();
+        while let Some(v) = need.iter().find(|v| !have.contains(*v)).cloned() {
+            have.insert(v.clone());
+            for (i, l) in self.around.iter().enumerate() {
+                if chosen.contains(&i) {
+                    continue;
+                }
+                if let Some(vars) = atom_vars(l) {
+                    if vars.contains(&v) {
+                        chosen.push(i);
+                        have.extend(vars);
+                    }
+                    continue;
+                }
+                let (Lit::Cmp { l: STerm::Var(x), op: "=", r } | Lit::Cmp { l: r, op: "=", r: STerm::Var(x) }) = l else { continue };
+                if *x == v && !matches!(r, STerm::Agg { .. }) {
+                    chosen.push(i);
+                    let mut vs = Vec::new();
+                    r.vars(&mut vs);
+                    need.extend(vs);
+                }
+            }
+        }
+        chosen.sort_unstable();
+        chosen.into_iter().map(|i| self.around[i].clone()).collect()
     }
 
     /// A helper column's type: the column it fills in the body's atoms.
@@ -602,6 +675,36 @@ impl Lowerer {
             self.prog.decls.remove(&set);
         }
         Ok(())
+    }
+}
+
+/// The kind set of one kind, `"call"`: `rr_kind_call`.
+fn kind_set_name(kind: &str) -> String {
+    format!("rr_kind_{}", kind.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>())
+}
+
+/// The variables a literal shares with the rule around it: those of an aggregate's body are the aggregate's own.
+fn visible(l: &Lit, out: &mut Vec<String>) {
+    fn term(t: &STerm, out: &mut Vec<String>) {
+        match t {
+            STerm::Agg { .. } => {}
+            STerm::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+            STerm::Bin { l, r, .. } => {
+                term(l, out);
+                term(r, out);
+            }
+            STerm::Named(_, t) => term(t, out),
+            other => other.vars(out),
+        }
+    }
+    match l {
+        Lit::Atom { args, .. } => args.iter().for_each(|a| term(a, out)),
+        Lit::Cmp { l, r, .. } => {
+            term(l, out);
+            term(r, out);
+        }
+        Lit::Group { alts, .. } => alts.iter().flatten().for_each(|l| visible(l, out)),
+        Lit::Pattern { .. } => l.vars(out),
     }
 }
 
