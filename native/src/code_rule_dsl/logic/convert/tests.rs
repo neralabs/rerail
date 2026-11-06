@@ -399,6 +399,10 @@ fn converted_rules_give_the_recorded_findings() {
         if only.as_ref().is_some_and(|o| !o.contains(&check)) {
             continue;
         }
+        // `RERAIL_REPLAY_EVENT=<text>`: only the events whose name contains it.
+        if std::env::var("RERAIL_REPLAY_EVENT").is_ok_and(|e| !event["test"].as_str().unwrap_or("").contains(&e)) {
+            continue;
+        }
         let row = per_check.entry((event["_group"].as_str().unwrap().to_owned(), check.clone())).or_default();
         row[0] += 1;
         // Configured oracles, path-skip overrides, and comparisons of the message or of oracle metadata (which
@@ -439,6 +443,14 @@ fn converted_rules_give_the_recorded_findings() {
             std::fs::write(&p, f["source"].as_str().unwrap()).unwrap();
         }
         let out = dir.join(".out");
+        // `RERAIL_REPLAY_SHOW=a,b`: relations a and b are outputs too, and their rows are printed.
+        let show: Vec<String> = std::env::var("RERAIL_REPLAY_SHOW").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default();
+        let program = show.iter().fold(program, |p, r| format!("{p}\n.output {r}\n"));
+        // `RERAIL_REPLAY_EXTRA=<file>`: `.rr` rules added to every replayed program, to try a change to a rule.
+        let program = match std::env::var("RERAIL_REPLAY_EXTRA") {
+            Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
+            Err(_) => program,
+        };
         let mut got: Vec<String> = match super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
             Ok(_) => std::fs::read_to_string(out.join("violation.csv"))
                 .unwrap_or_default()
@@ -454,9 +466,16 @@ fn converted_rules_give_the_recorded_findings() {
                 continue;
             }
         };
+        for r in &show {
+            let rows = std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap_or_else(|_| "(no file)".to_owned());
+            eprintln!("{} {r}:\n{rows}", event["test"]);
+        }
         let mut want: Vec<String> = event["findings"].as_array().unwrap().iter().map(|f| format!("{}:{}:{}", f["path"].as_str().unwrap(), f["line"], f["code"].as_str().unwrap())).collect();
+        // Findings are a set of keys (path, line, code): a key found twice is one finding.
         got.sort();
+        got.dedup();
         want.sort();
+        want.dedup();
         if got == want {
             row[2] += 1;
         } else {

@@ -1357,3 +1357,13 @@ since reading it is not written. **Closure:** these relations are built natively
 - The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
   no new values; this extends O11's bound.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
+
+## O78. The copied `.rr` library does not resolve a re-export of a definition
+
+In `docs/rule-syntax/lib/python/imports.rr` (a copy of More-ergonomic-rule-syntax), `resolve_export(q, r)`
+has no row when `q` names a function defined in a workspace module: the first rule excludes `r = q`, and the
+second requires that the module not export the name. So `from impl.common.query import read` in
+`data_layer/__init__.py` exports nothing, and public-api-triples finds nothing on 20 of its events. One added
+rule, `resolve_export(q, q) :- export_query(q), split_dot(q, m, x), exports(m, x, q).`, takes it from 15 to 28
+of 37 events exact (tried with the replay's `RERAIL_REPLAY_EXTRA`; the copy is unchanged). **Closure:** the
+user decides whether the copy is corrected here or in its own branch.
