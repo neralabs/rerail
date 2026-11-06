@@ -136,7 +136,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
    * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
-   * session wrote a file, so every session walking a worktree is steered on what it finds there.
+   * session wrote a file, so what it finds there is recorded under the repository and steers no session.
    */
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;

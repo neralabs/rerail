@@ -854,6 +854,18 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
+  it("records a shell write in another worktree in Log, so it steers no session, and steers on one in its own folder", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode])).toEqual([
+      [[relative(root, join(worktree, "src", "a.py"))], "log"],
+      [["src/a.py"], undefined],
+    ]);
+  });
+
   it("audits a shell write in a worktree in a folder the session's checkout ignores", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(root, ".ignored", "w"));

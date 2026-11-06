@@ -97,7 +97,14 @@ function violations(audits: readonly RecordedRun[]) {
   })));
 }
 
-function router(sessionRoot: string, databasePath: string, recorder: AuditRecorder, ruleCatalog?: RuleCatalog, followGitignore = false): CheckoutCodeRuleRouter {
+function router(
+  sessionRoot: string,
+  databasePath: string,
+  recorder: AuditRecorder,
+  ruleCatalog?: RuleCatalog,
+  followGitignore = false,
+  requestSteer: () => Promise<undefined> = async () => undefined,
+): CheckoutCodeRuleRouter {
   const owners = new CheckoutOwners();
   const catalogs = new CheckoutCatalogs(databasePath, ruleCatalog === undefined ? {} : { ruleCatalog });
   const auditor = new CheckoutCodeRuleRouter({
@@ -105,7 +112,7 @@ function router(sessionRoot: string, databasePath: string, recorder: AuditRecord
     startingCheckout: startingCheckout(owners, sessionRoot).checkoutRoot,
     owners,
     catalogs,
-    steerDelivery: { requestSteer: async () => undefined },
+    steerDelivery: { requestSteer },
     audits: recorder,
     followGitignore,
   });
@@ -456,6 +463,26 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     await edit(auditor, "main-from-worktree", 1, join(main, "api", "x.py"));
 
     expect(violations(audits)).toEqual([{ checkout: main, path: "api/x.py", code: "SESSION", mode: "block" }]);
+  });
+
+  it("records a worktree's findings from a Log batch, as another worktree's walk sends them, and steers on none", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder, audits } = recordingAudits();
+    const requestSteer = vi.fn(async () => undefined);
+    const auditor = router(session, databasePath, recorder, undefined, false, requestSteer);
+    await auditor.openWorkspace("log-batch");
+    const edits = [{ path: join(worktree, "api", "x.py"), language: "python" as const, generatedText: "NEEDLE\n" }];
+
+    await auditor.auditGeneratedEdits("log-batch", { revision: 1, checkpoints: ["edit"], mode: "log", edits });
+    await auditor.settleGeneratedEdits();
+    expect(audits.map(audit => [audit.workspaceRoot, audit.mode])).toEqual([[worktree, "log"]]);
+    expect(violations(audits)).toEqual([{ checkout: worktree, path: "api/x.py", code: "SESSION", mode: "block" }]);
+    expect(requestSteer).not.toHaveBeenCalled();
+
+    // The same edit as the session's own steers it.
+    await auditor.auditGeneratedEdits("log-batch", { revision: 2, checkpoints: ["edit"], edits });
+    await auditor.settleGeneratedEdits();
+    expect(requestSteer).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the stopped value a worktree outside the checkout has of its own", async () => {

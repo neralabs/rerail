@@ -1106,7 +1106,7 @@ export class CodeRuleBridge {
 
   /**
    * Walks the other worktrees once, behind the session folder's walk and never in its way: a command does not wait for
-   * it, so what it finds reaches the agent at a later boundary. A boundary that comes before the next walk is due sets a
+   * it, and what it finds is recorded, never steered (`#auditWalkEdits`). A boundary that comes before the next walk is due sets a
    * timer rather than dropping it, and one that comes while a walk runs has it walk again after, so the last write of a
    * turn is still seen.
    */
@@ -1194,12 +1194,17 @@ export class CodeRuleBridge {
     this.#observations?.set(this.#cwd, new Map(this.#observed));
   }
 
+  /**
+   * Audits what a walk found. The other worktrees' walk cannot tell which session wrote a file there, so its findings are
+   * recorded under the repository in `log` mode and steer no session; the session that made a change is steered on it
+   * by its own tool call or its own folder's walk.
+   */
   async #auditWalkEdits(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[], uncaptured: Map<string, string>): Promise<void> {
     const { own, gitWritten } = await this.#separateGitWrites(discovery, edits, uncaptured);
     const checkpoints = discoveryCheckpoints(strongerCheckpoint(walk.checkpoint, discovery.requested));
     try {
       if (gitWritten.length > 0) await this.#auditEdits(discovery, gitWritten, checkpoints, new Map(), "log");
-      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured);
+      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured, walk.inSession ? undefined : "log");
     } catch (error) {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
