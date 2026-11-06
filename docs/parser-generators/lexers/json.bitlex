@@ -90,8 +90,8 @@ mask opening    = lex.on(code -> str)
 mask closing    = lex.on(str -> code)
 mask body       = inside & ~opening              # between the quotes
 
-# An escape is a backslash in a body that is not itself escaped, and the byte after it.
-mask esc        = backslash & body & ~escaped
+# An escape is a backslash at an even offset in its run of backslashes, and the byte after it.
+mask esc        = backslash & body & aligned(backslash, 2)
 mask esc_bytes  = span(esc, 2)
 mask content    = body & ~esc_bytes
 
@@ -158,7 +158,7 @@ error "number: bad start"       when (nstart & ~(digit | minus)) | (nstart & min
 # 3. At most one '.', at most one 'e', and no '.' after the 'e'.
 error "number: '.' or e twice"  when (dot & (after_dot | after_e)) | (expc & after_e)
 # 4. A '.' has a digit on each side.
-error "number: bare '.'"        when dot & ~(prev(digit) & next(digit))
+error "number: bare '.'"        when num & dot & ~(prev(digit) & next(digit))
 # 5. A sign is first ('-' only) or right after the 'e'.
 error "number: misplaced sign"  when num & sign & ~prev(expc) & ~(nstart & minus)
 # 6. The integer part is 0, or does not start with 0.
