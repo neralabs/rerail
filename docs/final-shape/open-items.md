@@ -1357,15 +1357,28 @@ since reading it is not written. **Closure:** these relations are built natively
   no new values; this extends O11's bound.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
-## O78. The copied `.rr` library does not resolve a re-export of a definition
+## O78. Where the copied `.rr` library and rules differ from the recorded findings
 
 In `docs/rule-syntax/lib/python/imports.rr` (a copy of More-ergonomic-rule-syntax), `resolve_export(q, r)`
 has no row when `q` names a function defined in a workspace module: the first rule excludes `r = q`, and the
 second requires that the module not export the name. So `from impl.common.query import read` in
 `data_layer/__init__.py` exports nothing, and public-api-triples finds nothing on 20 of its events. One added
 rule, `resolve_export(q, q) :- export_query(q), split_dot(q, m, x), exports(m, x, q).`, takes it from 15 to 28
-of 37 events exact (tried with the replay's `RERAIL_REPLAY_EXTRA`; the copy is unchanged). **Closure:** the
-user decides whether the copy is corrected here or in its own branch.
+of 37 events exact (tried with the replay's `RERAIL_REPLAY_EXTRA`; the copy is unchanged).
+
+The other hand-written rules' misses that the engine computes as written:
+- `nameref` (names.rr) counts every identifier as a read, binding targets too (`except E as e`, `x = 1`): a
+  handler that binds `e` and never reads it is a WARNING, not CRITICAL (swallowed-exceptions, 1 event).
+- A name is matched only once it resolves through an import: `contextlib.suppress(…)` and `suppress(…)` without
+  `import contextlib`, and `if TYPE_CHECKING:` without importing it, are not recognized, where the Python
+  linters match the dotted text (swallowed-exceptions 2 events, layer-violations 1).
+- post-op-no-internal-dispatch's POSTOPDISPATCH001 asks for an earlier comparison with `precedes`, which
+  `core.rr` defines among one parent's children; two `if`s' comparisons are not siblings (1 event).
+- missing-async-pairs compares keyword-only and positional-only parameters by design ("improves on the Python
+  linter"), so 2 events the linter passes are reported.
+- One probe (`nested-handler:analyzer`) records a finding inside a nested def that the plugin's recording of the
+  same source does not.
+**Closure:** the user decides whether the copies are corrected here or in their own branch.
 
 ## O79. `op` of a comparison: `core.rr` has it, T's facts do not
 
