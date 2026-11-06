@@ -152,7 +152,7 @@ describe("Claude Code one-shot hook", () => {
     }
   });
 
-  it("shows a late steer's line at Stop and gives the coding agent its block at the next tool call, not with the person's prompt", async () => {
+  it("holds a turn-end steer whole, line and block, for the coding agent's next tool call, not for Stop or the person's prompt", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
@@ -160,9 +160,9 @@ describe("Claude Code one-shot hook", () => {
       delivery("steer", editSteer("a", "Fix a."), ["a"]),
       delivery("steer", editSteer("b", "Fix b."), ["b"]),
     ];
-    // Without a daemon the rules stay unlinked, so each line is the header alone; without colour the mark is plain.
+    // Nothing goes out at Stop: a line there would say the agent was steered while it has been told nothing.
     expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": blocks }), storageRoot, { NO_COLOR: "1" }))
-      .toEqual({ systemMessage: "\n◆ R E R A I L · a  steered\n◆ R E R A I L · b  steered" });
+      .toEqual({});
 
     // UserPromptSubmit's context lands inside the person's turn, so every steer held then waits for the next tool call.
     const prompt = scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] });
@@ -172,8 +172,9 @@ describe("Claude Code one-shot hook", () => {
     const output = await handleClaudeEvent({
       ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {},
     }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" });
+    // Without a daemon the rules stay unlinked, so each line is the header alone; without colour the mark is plain.
     expect(output).toEqual({
-      systemMessage: "◆ R E R A I L · c  steered",
+      systemMessage: "\n◆ R E R A I L · a  steered\n◆ R E R A I L · b  steered\n◆ R E R A I L · c  steered",
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         // The held steers reached the agent after it had moved on, and their lead says so; the new one leads as an edit's.
@@ -186,7 +187,7 @@ describe("Claude Code one-shot hook", () => {
     });
   });
 
-  it("counts a late steer once, when the person sees its line at Stop, not again when its block reaches the agent", async () => {
+  it("counts a late steer once, when it reaches the agent with its line at the next tool call, and nothing at Stop", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const common = { session_id: "claude-session", cwd: root };
@@ -198,13 +199,13 @@ describe("Claude Code one-shot hook", () => {
     const late = [delivery("steer", editSteer("a", "Fix a."), ["a"]), delivery("steer", editSteer("b", "Fix b."), ["b"])];
 
     await serve({ ...common, hook_event_name: "Stop", prompt_id: "p1" }, scriptedLoop({ "turn-end": late }));
-    expect(receipts).toEqual([["a", "b"]]);
+    expect(receipts).toEqual([]);
 
     await serve({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p2", prompt: "next" }, scriptedLoop({ "user-prompt": [delivery("steer", editSteer("c", "Fix c."), ["c"])] }));
-    expect(receipts).toEqual([["a", "b"]]);
+    expect(receipts).toEqual([]);
 
     await serve({ ...common, hook_event_name: "PostToolUse", tool_name: "Read", tool_use_id: "tool-2", tool_input: {}, tool_response: "ok" }, scriptedLoop({}));
-    expect(receipts).toEqual([["a", "b"], ["c"]]);
+    expect(receipts).toEqual([["a", "b", "c"]]);
   });
 
   it("prints the why link after the word when the terminal cannot draw links", () => {

@@ -1,0 +1,1 @@
+A session is steered on a shell write only when the file was stamped while one of its tool calls ran. A write by another session in the same folder, an editor, or a backgrounded process no longer steers a session that did not make it, and is the preimage of that session's next edit of the file.

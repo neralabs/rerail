@@ -151,8 +151,16 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);
+      // A command's write while the baseline is still pending: its result waits for the walk, which the gate releases.
+      await runtime.ingest({
+        kind: "call", eventId: "shell-call", sessionId: session.sessionId, toolCallId: "shell", toolName: "Bash", input: { command: "./write.sh" },
+      });
       await writeFile(join(root, "shell.py"), "safe()\n");
+      const shellResult = runtime.ingest({
+        kind: "result", eventId: "shell-result", sessionId: session.sessionId, toolCallId: "shell", toolName: "Bash", output: "",
+      });
       gate.resolve();
+      expect(await shellResult).toEqual([]);
       await enforcer!.settle();
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual(expect.arrayContaining([
         expect.objectContaining({

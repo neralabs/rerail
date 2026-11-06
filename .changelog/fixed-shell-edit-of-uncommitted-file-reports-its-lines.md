@@ -1,0 +1,1 @@
+A shell edit of a file that already had an unstaged change when the session opened, or of an untracked file, reports only the lines it changed, measured from the text the session first saw, instead of every finding in the file.

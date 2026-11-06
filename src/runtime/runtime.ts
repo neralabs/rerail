@@ -850,6 +850,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (event.kind === "call") {
       const id = event.toolCallId;
       const preimages = await bridge?.begin(id, event.toolName, event.input);
+      // Answered without code rules while the evaluator opens: not begun, but what it writes is the session's own.
+      if (bridge === undefined) await state.codeRuleBridge?.unwatchedCall(id);
       await this.#append(state, {
         type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
         ...(preimages === undefined ? {} : { preimages }),
@@ -861,6 +863,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
       if (index >= 0) {
         const [call] = state.pendingCodeRuleCalls.splice(index, 1);
+        if (bridge === undefined) await state.codeRuleBridge?.unwatchedResult(call!.id);
         // While the result is ingested, a steer from the call's edit check rides it, and a `rewind` one may roll the edit
         // back (`#rewind`).
         const window: ResultWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };

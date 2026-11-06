@@ -44,9 +44,9 @@ const steerLines: SteerLines = deliveries => {
 };
 
 /**
- * Steers reach the model as `additionalContext` and the person as one `systemMessage` line per rule; at `Stop`, only
- * the person's lines (`steerHookOutput`), since Codex records a `Stop` block's reason as the user's turn. `note` is the
- * session-start note, which only the model sees.
+ * Steers reach the model as `additionalContext` and the person as one `systemMessage` line per rule; at `Stop`,
+ * nothing (`steerHookOutput`), since Codex records a `Stop` block's reason as the user's turn: the steers wait for the
+ * next message. `note` is the session-start note, which only the model sees.
  */
 export function codexHookOutput(hook: string, deliveries: readonly HeldDelivery[], note?: string): HookOutput {
   return steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines, note);
@@ -67,6 +67,6 @@ export async function handleCodexEvent(
   if (hook === "Stop") return codexHookOutput(hook, await linkDeliveries(await holdStopSteers(path, deliveries), cwd));
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId, await presentedSessionNoteRules({ host: "codex", sessionId, cwd })) : undefined;
   const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
-  // `linkDeliveries` copies each delivery, so a held steer keeps its `shown` mark.
+  // `linkDeliveries` copies each delivery, so a held steer keeps its `late` mark.
   return codexHookOutput(hook, await linkDeliveries(routed, cwd), note);
 }

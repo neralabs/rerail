@@ -679,12 +679,12 @@ With `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` set for the runtime's proces
 
 #### How AI-output scope finds changed lines
 
-AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command.
+AI-output scope diffs source, not violation IDs: it compares each edit with pre-edit source captured at the host's tool-call boundary. A new file is entirely generated. A file Git wrote is no edit at all, whichever session ran the command. A shell write is the session's own only when the file was stamped while one of the session's tool calls ran, since an agent writes only through its tool calls; any other change the walk finds (another session's write in the same folder, an editor's, a process a command left running in the background) is another writer's: no edit of this session's, recorded in Log with no generated lines where the session had changed the file, and kept as the text the session's next edit of the file measures from. A tool call whose result never comes (one the person interrupted) counts as running until the turn's end.
 
 <details>
 <summary>Fallbacks when no pre-edit source was captured</summary>
 
-Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB). Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
+Without a boundary (a shell write, a Codex `apply_patch` its hooks don't show), Rerail uses the file's last-seen text this session (from the most recently changed 64 MB): what the session's own edits left, what another writer or a Git move left, or, for a file changed before the session and never staged or untracked, what the session's first walk read (`git status` names them). Else it uses the file's Git index or `HEAD` blob. Each counts only if its SHA-256 matches the pre-change file. Blob reads never fetch a partial clone's missing objects.
 
 If nothing matches, the edit reports its whole file, as `touched-files` does, until Rerail has seen the file change in the session. Parsing and cross-file query context may exceed reporting scope. Source, parse and match caches are incremental; repository scans stream bounded batches through a separate native workspace.
 
