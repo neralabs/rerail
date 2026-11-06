@@ -4,14 +4,14 @@
 // Both clauses: a `return` statement, in a non-test file under impl/common/l2070_server_plan/steps/ whose name holds
 // `history`, that directly returns a string, a set/tuple/list literal or a `frozenset(...)` call, and has string
 // descendants whose values are the given words. `has` with no stopBy is a direct child; `stopBy: end` any descendant.
-// APPROXIMATION: `str` (the literal's raw contents, escapes kept; none for an f-string with interpolations) stands in
-// for W's semantic `value` (escapes decoded). The .pending.rr reads `value`, awaiting the runner's binding.
+// W's `value: {regex}` reads string values only: `value` (escapes decoded, adjacent literals joined) of type `str`.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
@@ -41,7 +41,8 @@ history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _)
 
 // A string below the return statement with the given value.
 .decl history_runtime_word(n: node, v: symbol)
-history_runtime_word(n, v) :- node(_, s, "string", _, _), str(s, v), inside(s, n, history_runtime_ret).
+history_runtime_word(n, v) :- node(_, s, "string", _, _), value(s, v), value_type_of(s, "str"),
+    inside(s, n, history_runtime_ret).
 
 violation("data-layer-history-serverplan-projection", "history-runtime", "HSP-002", p, l) :-
     history_runtime_shape(n), history_runtime_word(n, "history"), history_runtime_word(n, "runtime"),

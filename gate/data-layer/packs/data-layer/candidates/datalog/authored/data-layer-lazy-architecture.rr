@@ -20,10 +20,12 @@
 // with its own child order (lazy_vkid): a pair's children under a dictionary are the dictionary's (keys before
 // values), an argument_list lists positional arguments before keywords, a conditional_expression puts its test
 // first. "The first row by (visit_key, channel)" is a walk down that tree (lazy_apick, lazy_bpick: the first child
-// whose subtree holds a mark, until a marked node), so no rank is computed. APPROXIMATION: a dictionary that mixes
-// `**x` with pairs orders the splat's descendants as a block, where W's flat comparison can interleave them with
-// the pairs' (the second key of a pair's child is the pair's ordinal). An event's visit_key is the owned node with
-// the event's span (the topmost such node; any of them orders the same against other events), '' when none.
+// whose subtree holds a mark, until a marked node), so no rank is computed. APPROXIMATION (a tree walk cannot
+// merge two subtrees' keys): under a dictionary, a pair's child is keyed (child ordinal, pair ordinal) and a
+// `**x` by its ordinal alone, so in `{k: v, **x, …}` (a pair at ordinal 0, the splat at 1) W's keys of x and of v
+// are both …/1/0/ and their descendants interleave by their own ordinals; here the splat's subtree comes first,
+// as a block. Every other mix of pairs and splats orders the same in both. An event's visit_key is the owned node
+// with the event's span (the topmost such node; any of them orders the same against other events), '' when none.
 //
 // Reachability (graph_*, "memoized-first", ordered_first.rs): one graph per file (the edges' __path), nodes the
 // path-derived symbols, sinks shared. A root's result is its first edge, in visit order, into a sink or into a
@@ -34,36 +36,32 @@
 // that poisoning is not modelled, so cycles can give more findings than W.
 //
 // Other approximations, each named where it is used:
-// - strings (raw_strings): DECODED is W's semantic value; here `str` (the content, escapes not decoded), for
-//   `string` nodes only (a concatenated_string has no row).
-// - SQL LIMIT 1 without ORDER BY (module_aliases' from-import of the token): the earliest import.
-// - arguments and strings are joined on __start: for a concatenated_string argument W has two rows (the whole
-//   value, and its first part's, which starts there too); here only the first part's.
-// - graph_functions keeps, per symbol, the function with the largest fact_order (a string); here the largest
-//   region start, the same except for two files whose symbols collide (a.py's class b vs a/b.py).
-// - terminal_values' depth cap 64 is not modelled (a chain of more than 64 bindings).
+// - SQL LIMIT 1 without ORDER BY (module_aliases' from-import of the token): SQLite's first row, which this
+//   program takes as the earliest import (the imports table's insertion order, read through its (__path, local)
+//   index); SQLite does not promise that order.
+// - terminal_values' depth cap 64 is not modelled (a chain of more than 64 bindings): counting recursion is not
+//   lowered (UnboundedValueCycle).
 // Findings are a set of keys: rows of one code on one line collapse (the SQL key is (issue, identity)).
 //
 // ==== deleted-cold-<k>, deleted-sidecar-<k> (forbid regex over file.content) ====
-// `\A[\s\S]*?(?<SURFACE>literal)`: the first occurrence of the literal in the file; the finding is on its line,
-// the first source line holding it (no literal holds a line break). Lines are src_line_lf's (split at \n only), as
-// the linter counts them (1 + the \n before the occurrence); W's capture line also counts \r and \r\n: a file with
-// a lone \r before the occurrence is numbered differently there.
+// `\A[\s\S]*?(?<SURFACE>literal)`: the first occurrence of the literal in the file; the finding is on the line of
+// capture.SURFACE. No literal holds a line terminator, so that is the first line holding the literal, in the tape's
+// numbering (`tape_line`: \r\n, \r, \n), which is W's capture line. Exact. (The upstream linter counts \n only: the
+// two differ after a lone \r.)
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl node_text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: loc, l: number)
 .decl text(n: loc, s: symbol)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl src_line_lf(d: number, l: number, sp: span)
+.decl tape_line(d: number, l: number, sp: span)
+.decl value(n: node, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
@@ -139,12 +137,25 @@ lazy_kw(c, name, v) :- lazy_args(c, g, _), lazy_par(k, g, _), lazy_kind(k, "keyw
     lazy_ntext(kn, name), field(k, "value", v), lazy_kind(v, _).
 .decl lazy_haskw(c: node, name: symbol)
 lazy_haskw(c, name) :- lazy_kw(c, name, _).
-// strings (raw_strings): a string inside a function_definition whose text starts [ru]*["'] (case-insensitive);
-// value: see the header (str, not W's decoded value).
+// strings (raw_strings): a string or concatenated_string inside a function_definition whose text starts [ru]*["']
+// (case-insensitive; W's regex over the node's text); its row is (doc, node, start, end). DECODED is the
+// substring from 0 of the node's value (`value`, escapes decoded, parts joined), the empty text where the value is
+// not known (a concatenated_string with an interpolating f-string part: W's transform gives '' then). W's transform
+// also de-indents a multi-line value; no test here reads leading whitespace of a later line.
+.decl lazy_strk(k: symbol)
+lazy_strk("string"). lazy_strk("concatenated_string").
+.decl lazy_strn(d: number, n: node, s: number, e: number)
+lazy_strn(d, n, s, e) :- lazy_n(d, n, k, s, e), lazy_strk(k), inside(n, _, lazy_fnset), lazy_ntext(n, t), match("(?i:[ru]*[\"'])(?s:.*)", t).
+.decl lazy_hasval(n: node)
+lazy_hasval(n) :- lazy_strn(_, n, _, _), value(n, _).
+.decl lazy_strval(n: node, v: symbol)
+lazy_strval(n, v) :- lazy_strn(_, n, _, _), value(n, v).
+lazy_strval(n, "") :- lazy_strn(_, n, _, _), !lazy_hasval(n).
+// strings: (doc, __start, value); a concatenated_string and its first part share a start (two rows, as in W).
 .decl lazy_strv(d: number, s: number, v: symbol)
-lazy_strv(d, s, v) :- lazy_n(d, n, "string", s, _), inside(n, _, lazy_fnset), strprefix(n, p), match("[rRuU]*", p), str(n, v).
+lazy_strv(d, s, v) :- lazy_strn(d, n, s, _), lazy_strval(n, v).
 .decl lazy_hasstr(d: number, s: number)
-lazy_hasstr(d, s) :- lazy_strv(d, s, _).
+lazy_hasstr(d, s) :- lazy_strn(d, _, s, _).
 // an argument's string value (strings joined on __start).
 .decl lazy_argstr(c: node, pos: number, v: symbol)
 lazy_argstr(c, pos, v) :- lazy_arg(c, a, pos), lazy_n(d, a, _, s, _), lazy_strv(d, s, v).
@@ -702,7 +713,7 @@ lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, "literal_kwargs", v),
 lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, k, v), (k = "literal_payload" ; k = "default_value"), lazy_tag(f, v, "callable"),
     !lazy_haskw(c, "closed_post_op"), lazy_leaf(f, c, "ResultMaterializationSpec").
 lazy_ev0(f, c, "payload", 14) :- lazy_resin(f, c, "literal_post_op"), !lazy_haskw(c, "closed_post_op"), lazy_argtag(f, c, 0, "callable").
-lazy_ev0(f, n, "dolt", 15) :- lazy_owned(f, o), lazy_n(d, o, _, s, e), lazy_n(d, n, "string", s, e), lazy_strv(d, s, v),
+lazy_ev0(f, n, "dolt", 15) :- lazy_owned(f, o), lazy_n(d, o, _, s, e), lazy_strn(d, n, s, e), lazy_strval(n, v),
     (icontains("dolt_", v) ; icontains("dolt log", v) ; icontains("dolt branches", v)).
 lazy_ev0(f, a, "bootstrap", 16) :- lazy_owned(f, a), lazy_asg(a, l, "attribute"), lazy_selfrooted(l).
 lazy_ev0(f, a, "bootstrap", 16) :- lazy_owned(f, a), lazy_asg(a, l, "subscript"), lazy_selfrooted(l).
@@ -778,8 +789,26 @@ lazy_reach(r, r) :- lazy_af(r).
 lazy_reach(r, t) :- lazy_reach(r, n), lazy_nd(n, d), lazy_nd(r, d), lazy_edge(n, _, t).
 
 // ---- the call graph (graph_functions, graph_edges) ----
+// graph_functions: per symbol, across files, the functions no other function of the symbol has a larger
+// fact_order than. fact_order is the text of the enclosing classes' region starts (classes starting before the
+// function and ending at or after it: its class ancestors), outermost first, then the function's own, each 20
+// digits, '/1/' between: as text it orders as that sequence of numbers, lexicographically, a proper prefix first.
+.decl lazy_foenc(f: node, r: number)
+lazy_foenc(f, r) :- lazy_sym(f, _), inside(f, c, lazy_clsset), lazy_region(c, r).
+.decl lazy_foel(f: node, i: number, v: number)
+lazy_foel(f, i, r) :- lazy_foenc(f, r), i = count : { lazy_foenc(f, r2), r2 < r }.
+lazy_foel(f, i, r) :- lazy_sym(f, _), lazy_region(f, r), i = count : { lazy_foenc(f, _) }.
+.decl lazy_folen(f: node, n: number)
+lazy_folen(f, n) :- lazy_sym(f, _), n = count : { lazy_foel(f, _, _) }.
+.decl lazy_sympair(f: node, g: node)
+lazy_sympair(f, g) :- lazy_sym(f, s), lazy_sym(g, s), f != g.
+.decl lazy_fodiff(f: node, g: node, i: number)
+lazy_fodiff(f, g, i) :- lazy_sympair(f, g), lazy_foel(f, i, a), lazy_foel(g, i, b), a != b.
+.decl lazy_hasfodiff(f: node, g: node)
+lazy_hasfodiff(f, g) :- lazy_fodiff(f, g, _).
 .decl lazy_symlater(f: node)
-lazy_symlater(f) :- lazy_sym(f, s), lazy_sym(g, s), lazy_region(f, r), lazy_region(g, r2), r2 > r.
+lazy_symlater(f) :- lazy_hasfodiff(f, g), i = min j : { lazy_fodiff(f, g, j) }, lazy_foel(f, i, a), lazy_foel(g, i, b), b > a.
+lazy_symlater(f) :- lazy_sympair(f, g), !lazy_hasfodiff(f, g), lazy_folen(f, n), lazy_folen(g, m), m > n.
 .decl lazy_gf(f: node)
 lazy_gf(f) :- lazy_sym(f, _), !lazy_symlater(f).
 // a function's graph node: the graph function of its symbol.
@@ -1114,7 +1143,7 @@ deleted_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), suffix(".py", p),
     !option_value("entryPoint", "scan_files.ast-component"), !option_value("entryPoint", "collector-extra"),
     !option_value("entryPoint", "analyzed-functions").
 .decl deleted_at(clause: symbol, d: number, l: number)
-deleted_at(c, d, l) :- deleted_doc(d, _), src_line_lf(d, l, sp), text(sp, t), deleted_surface(c, s), contains(s, t).
+deleted_at(c, d, l) :- deleted_doc(d, _), tape_line(d, l, sp), text(sp, t), deleted_surface(c, s), contains(s, t).
 .decl deleted_has(clause: symbol, d: number)
 deleted_has(c, d) :- deleted_at(c, d, _).
 violation("data-layer-lazy-architecture", "deleted-cold-0", "LA-018", p, l) :- deleted_has("deleted-cold-0", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-0", d, l2) }.

@@ -2,23 +2,24 @@
 // Policy: candidates/rules-ast/data-layer-internal-dead-code.json. Starts from
 // native/src/code_rule_dsl/logic/programs/data_layer/internal_dead_code.rr (its stage-per-relation layout), rewritten
 // over the base relations: no `ast(…)` atoms, no SQL builtins.
-// PENDING on two inputs: W's reference graph, `reference_edge(src, dst, via)` (the `references` setting:
-// siblingLinks and constructorFields below; the SQL's `reference_edges` rows, between definitions), and the
-// option fact `option_on("oracleAnalyzer")` (ConvertFoundation A9). Replaces nothing: the clause has no main file
-// until both are bound.
+// W's reference graph is `reference_edge(src, dst, via)` (the SQL's `reference_edges` rows, between definitions; the
+// converter's `.references` setting gives the policy's siblingLinks and constructorFields); the option
+// oracleAnalyzer is `option_on("oracleAnalyzer")`.
 //
 // A SQL row keyed by (__path, __start) is a node here. Ids and qualified names are built with `cat`: id
 // module::name or module::Class.name, fqname module.name or module.Class.name, module the path's dotted module
 // (`doc`'s module: the SQL's replace(rx_replace(path, '/__init__\.py$|\.py$', ''), '/', '.')).
+// Exact: a decorator's name is `^@\s*([^\s(]+)`'s group read on the decorator's line (`match_group`, the match at
+// the decorator's column); a base's name is the SQL's trim(rx_replace(rx_replace(text, '(?s)\[.*$', ''), '^.*\.',
+// '')), tested per row as a pattern over the base's text for each identifier in it; an `__all__` entry is W's
+// `value` of the string or concatenation; the dynamic imports are the regex's matches over the module's source,
+// from the module's first token on, and their `module`/`attr` groups (`match_group`, whose `m` is the match).
 // Approximations (noted):
-// - a decorator's name is its expression's dotted name (an identifier, an attribute chain, or a call's function):
-//   the SQL takes the text after `@` up to whitespace or `(`, which differs for other expressions (`@x[0]`);
-// - an import item's original name is the dotted name's text without spaces (the SQL: the item's first word);
-// - a base's name is its leaf name (an identifier, an attribute's attr, a subscript's or generic type's leaf); the
-//   SQL strips from the first `[` and through the last `.`, which differs where the object holds a subscript;
-// - an `__all__` entry's value is `str` of a plain string (escapes kept; a concatenation gives none), not W's value;
-// - a dynamic import `import_module('m').a` is found by testing each resolved name's `m`, `a` against the module's
-//   text (the regex with `m`'s dots unescaped), not by the regex's captures, which do not lower;
+// - an import item's original name is the dotted name's text without spaces (the SQL: the first word of the
+//   comma-split, comment-stripped item text, which differs for a backslash continuation or a dotted name written
+//   with spaces); the SQL's string splitting is a recursion building strings, which does not lower;
+// - the relative import climb (one package per dot) and the hierarchy's depth are unrolled, to 8 dots and 24 hops: a
+//   counter in a recursion does not lower (UnboundedValueCycle);
 // - among several bases at the least depth holding a public method, the one first by route is found greedily
 //   (exact for routes, which are the bases' start offsets in order).
 
@@ -28,7 +29,10 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl name(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl col(n: loc, c: number)
+.decl source(d: number, sp: span)
+.decl tape_line(d: number, l: number, sp: span)
 .decl node_text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -62,12 +66,15 @@ unreachable_fn_class(f, c, cx) :- unreachable_fn(f, _, _), nearest(f, c, unreach
 // raw_classes: every class.
 .decl unreachable_cls(c: node, d: number, x: symbol)
 unreachable_cls(c, d, x) :- node(d, c, "class_definition", _, _), unreachable_doc(d, _, _), field(c, "name", n), text(n, x).
-// raw_decorators: (definition, decorator name).
+// raw_decorators: (definition, decorator name): `^@\s*([^\s(]+)` over the decorator's text, read on its first line
+// (a decorator starts its line, so the line's match at its column is the one W's regex finds).
 .decl unreachable_deco(o: node, x: symbol)
-unreachable_deco(o, x) :- node(_, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _),
-    node(_, dc, "decorator", _, _), child(dc, e, 0), name(e, x).
-unreachable_deco(o, x) :- node(_, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _),
-    node(_, dc, "decorator", _, _), child(dc, e, 0), node(_, e, "call", _, _), field(e, "function", fn), name(fn, x).
+unreachable_deco(o, x) :- unreachable_deco_at(o, d, l, c), tape_line(d, l, sp),
+    match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+// A decorator of definition o: its document, line and column.
+.decl unreachable_deco_at(o: node, d: number, l: number, c: number)
+unreachable_deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _),
+    node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
 
 // ---- inventory, declarations ----
 // unreachable_inv(id, x, d, name, kind, module, fqname)
@@ -214,27 +221,30 @@ unreachable_resolved(fq, id) :- unreachable_fq(fq, id).
 unreachable_resolved(fq, id) :- unreachable_resolved(t, id), unreachable_import(_, _, m, n, t, "symbol"), fq = cat(m, cat(".", n)), !unreachable_fq(fq, _).
 
 // ---- bases, base_edges ----
-// raw_bases: (class, base node, its leaf name, its text).
+// raw_bases: (class, base node, its text).
 .decl unreachable_base_k(kind: symbol)
 unreachable_base_k("identifier"). unreachable_base_k("attribute"). unreachable_base_k("generic_type"). unreachable_base_k("subscript").
 .decl unreachable_raw_base(c: node, b: node)
 unreachable_raw_base(c, b) :- unreachable_cls(c, _, _), field(c, "superclasses", al), child(al, b, _), node(_, b, k, _, _), unreachable_base_k(k).
 .decl unreachable_base_text(c: node, s: symbol)
 unreachable_base_text(c, s) :- unreachable_raw_base(c, b), node_text(b, s).
-.decl unreachable_leaf(e: node, x: symbol)
-unreachable_leaf(e, x) :- unreachable_raw_base(_, e), node(_, e, "identifier", _, _), text(e, x).
-unreachable_leaf(e, x) :- unreachable_leaf_of(e), node(_, e, "identifier", _, _), text(e, x).
-unreachable_leaf(e, x) :- unreachable_leaf_of(e), node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
-unreachable_leaf(e, x) :- unreachable_leaf_of(e), node(_, e, "subscript", _, _), field(e, "value", v), unreachable_leaf(v, x).
-unreachable_leaf(e, x) :- unreachable_leaf_of(e), node(_, e, "generic_type", _, _), child(e, v, 0), unreachable_leaf(v, x).
-.decl unreachable_leaf_of(e: node)
-unreachable_leaf_of(e) :- unreachable_raw_base(_, e).
-unreachable_leaf_of(v) :- unreachable_leaf_of(e), node(_, e, "subscript", _, _), field(e, "value", v).
-unreachable_leaf_of(v) :- unreachable_leaf_of(e), node(_, e, "generic_type", _, _), child(e, v, 0).
-// base_edges(owner id, base id, ordinal): the base's leaf name, by an import of the owner's module naming a class,
+// The base's name, the SQL's trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')): its text up to the
+// first `[`, less everything through the last `.` of its first line, less spaces around. Where that is a name it is
+// an identifier of the base (or the base itself); each one is tested: the text is [<first-line text>.] name
+// [`[`…], spaces around the name.
+.decl unreachable_leaf(b: node, x: symbol)
+unreachable_leaf(b, x) :- unreachable_raw_base(_, b), node(_, b, "identifier", _, _), text(b, x).
+unreachable_leaf(b, x) :- unreachable_raw_base(_, b), inside(i, b, unreachable_base_in_k), node(_, i, "identifier", _, _), text(i, x).
+.decl unreachable_base_in_k(kind: symbol)
+unreachable_base_in_k("identifier"). unreachable_base_in_k("attribute"). unreachable_base_in_k("generic_type").
+unreachable_base_in_k("subscript").
+.decl unreachable_base_name_of(b: node, x: symbol)
+unreachable_base_name_of(b, x) :- unreachable_leaf(b, x), node_text(b, s),
+    match(cat("(?:[^\\n\\[]*\\.)? *", cat(x, " *(?:\\[(?s:.*))?")), s).
+// base_edges(owner id, base id, ordinal): the base's name, by an import of the owner's module naming a class,
 // else a class of the owner's module, else the one class of that name.
 .decl unreachable_bname(owner: symbol, m: symbol, bn: symbol, ord: number)
-unreachable_bname(id, m, bn, s) :- unreachable_raw_base(c, b), unreachable_decl(id, c, _, _, "class", m, _), unreachable_leaf(b, bn), node(_, b, _, s, _).
+unreachable_bname(id, m, bn, s) :- unreachable_raw_base(c, b), unreachable_decl(id, c, _, _, "class", m, _), unreachable_base_name_of(b, bn), node(_, b, _, s, _).
 .decl unreachable_base_import(owner: symbol, base: symbol)
 unreachable_base_import(id, b) :- unreachable_bname(id, m, bn, _), unreachable_import(_, _, m, bn, t, "symbol"), unreachable_decl(b, _, _, _, "class", _, t).
 .decl unreachable_base_module(owner: symbol, base: symbol)
@@ -329,7 +339,9 @@ unreachable_first_all(d, a) :- unreachable_all(a, d), node(_, a, _, s, _), s = m
 unreachable_all_array(a, r) :- unreachable_all(a, _), field(a, "right", r), node(_, r, "list", _, _).
 unreachable_all_array(a, r) :- unreachable_all(a, _), field(a, "right", r), node(_, r, "tuple", _, _).
 .decl unreachable_all_name(a: node, n: symbol)
-unreachable_all_name(a, n) :- unreachable_all_array(a, r), child(r, v, _), node(_, v, "string", _, _), str(v, n).
+// raw_all_names: a string or concatenation directly in the array, its W value (the TEXT transform's `value: true`).
+unreachable_all_name(a, n) :- unreachable_all_array(a, r), child(r, v, _), node(_, v, "string", _, _), value(v, n).
+unreachable_all_name(a, n) :- unreachable_all_array(a, r), child(r, v, _), node(_, v, "concatenated_string", _, _), value(v, n).
 // export_names: (document, name, target).
 .decl unreachable_export(d: number, n: symbol, t: symbol)
 unreachable_export(d, n, t) :- unreachable_import(i, d, _, n, t, "symbol"), child(mo, i, _), node(_, mo, "module", _, _),
@@ -494,11 +506,23 @@ unreachable_imported_modules(q) :- unreachable_imported_module(m), split_dot(m, 
 unreachable_root(s) :- unreachable_exported(s).
 unreachable_root(s) :- unreachable_public(o, _, s), unreachable_exported(o).
 unreachable_root(s) :- unreachable_imported_modules(m), s = cat("@module:", m).
-// oracleAnalyzer false: dynamic imports `import_module('m').attr` anywhere in a module's text (strings too),
-// resolved by name: for each resolved name m.attr, its text tested.
-unreachable_root(s) :- !option_on("oracleAnalyzer"), unreachable_resolved(fq, s), split_dot(fq, m, a), !contains(".", a),
-    node(d, mo, "module", _, _), unreachable_doc(d, _, _), node_text(mo, t),
-    match(cat("^(?s:.*)(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"]", cat(m, cat("['\"]\\s*\\)\\.", cat(a, "(?:[^A-Za-z0-9_](?s:.*))?$")))), t).
+// oracleAnalyzer false: dynamic imports `import_module('m').attr` anywhere in a module's text (strings and comments
+// too): each match of raw_dynamic_imports' regex (`each: ENTRY`) in the module's source, from the module's first
+// token on, its `module` and `attr` groups naming m.attr.
+
+.decl unreachable_dyn(d: number, fq: symbol)
+unreachable_dyn(d, fq) :- unreachable_dyn_at(d, fq, lm, _), unreachable_dyn_module(d, l0, _), lm > l0.
+unreachable_dyn(d, fq) :- unreachable_dyn_at(d, fq, l0, cm), unreachable_dyn_module(d, l0, c0), cm >= c0.
+// The module's first token: its line and column.
+.decl unreachable_dyn_module(d: number, l: number, c: number)
+unreachable_dyn_module(d, l, c) :- !option_on("oracleAnalyzer"), unreachable_doc(d, _, _), node(d, mo, "module", _, _), line(mo, l), col(mo, c).
+// Each match m.attr at line l, column c.
+.decl unreachable_dyn_at(d: number, fq: symbol, l: number, c: number)
+unreachable_dyn_at(d, fq, l, c) :- unreachable_dyn_module(d, _, _), source(d, sp),
+    match_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "module", gm),
+    match_group("(?:\\bimport_module|\\bload_python_module|\\bimportlib\\.import_module)\\(\\s*['\"](?P<module>[^'\"]+)['\"]\\s*\\)\\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)", sp, m, "attr", ga),
+    line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+unreachable_root(s) :- unreachable_dyn(_, fq), unreachable_resolved(fq, s).
 
 // ---- reach_edges ----
 .decl unreachable_hook(n: symbol)

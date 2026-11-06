@@ -1328,3 +1328,77 @@ from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][
     assert_eq!(of("f'{x:{\"nested\"}}'"), ["0 format_spec {\"nested\"}", "0 interpolation x"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// internal-dead-code's decorator names: a decorator's line (`tape_line`) and column, the `match_group` whose match `m`
+/// is at that column (`col(m, c)` joined on a bound `c`), and the group's text. W: the `lines` regex's capture at
+/// each decorator's line and column.
+#[test]
+fn match_group_joined_on_its_match_column() {
+    let source = "@app.route('/x')\ndef f(): pass\n\nclass C:\n    @ staticmethod\n    def g(): pass\n    x = '@notadeco'\n";
+    let dir = corpus("match-group-col", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl child(p: node, c: node, i: number)
+.decl tape_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl deco_at(o: node, d: number, l: number, c: number)
+deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
+.decl deco(l: number, x: symbol)
+deco(l, x) :- deco_at(_, d, l, c), tape_line(d, l, sp), match_all("@\\s*(?P<n>[^\\s(]+)", sp, m), match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+.output deco
+"#;
+    let got = run(&dir, program, &["deco"]);
+    let decorators: BTreeSet<(u64, u64)> = w(json!({ "ast": { "language": "python", "rule": { "kind": "decorator" } } }), "a.py", source)
+        .iter()
+        .map(|v| (v["span"]["startLine"].as_u64().unwrap(), v["span"]["startColumn"].as_u64().unwrap()))
+        .collect();
+    let regex = json!({ "regex": { "source": "file.content", "pattern": "@\\s*(?P<n>[^\\s(]+)", "lines": {} } });
+    let at = json!({ "anchor": "capture.n", "code": "X", "message": "x" });
+    let whole = w_as(regex.clone(), "python", "a.py", source);
+    let groups = w_reporting(regex, at, "python", "a.py", source);
+    let want = csv(whole.iter().zip(&groups).filter(|(m, _)| decorators.contains(&(m["span"]["startLine"].as_u64().unwrap(), m["span"]["startColumn"].as_u64().unwrap()))).map(|(_, g)| {
+        let at = |k: &str| g["span"][k].as_u64().unwrap() as usize;
+        format!("{}\t{}", at("startLine") + 1, &source[at("startByte")..at("endByte")])
+    }));
+    assert_eq!(want, "1\tapp.route\n5\tstaticmethod\n");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// internal-dead-code's dynamic imports: two groups of one match (`match_group` twice on `m`), the match's `line` and
+/// `col`, and a disjunction over them (one rule per alternative, each reading the match relations).
+#[test]
+fn match_groups_of_one_match_and_a_disjunction() {
+    let re = r#"(?:\bimport_module|\bimportlib\.import_module)\(\s*['"](?P<module>[^'"]+)['"]\s*\)\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)"#;
+    let source = "import importlib\nx = importlib.import_module('pkg.mod').run\n  y = import_module( \"a.b\" ).c\n";
+    let dir = corpus("match-groups-disjunction", &[("a.py", source)]);
+    let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
+    let program = r#"
+.decl source(d: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl dyn_at(fq: symbol, l: number, c: number)
+dyn_at(fq, l, c) :- source(_, sp), match_group("RE", sp, m, "module", gm), match_group("RE", sp, m, "attr", ga), line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+.decl late(fq: symbol)
+late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "module", gm), text(gm, fq), (line(m, l), l > 2 ; col(m, c), c < 5).
+.output dyn_at, late
+"#
+    .replace("RE", &quoted);
+    let got = run(&dir, &program, &["dyn_at", "late"]);
+    let regex = json!({ "regex": { "source": "file.content", "pattern": re } });
+    let whole = w_as(regex.clone(), "python", "a.py", source);
+    let group = |g: &str| w_reporting(regex.clone(), json!({ "anchor": format!("capture.{g}"), "code": "X", "message": "x" }), "python", "a.py", source);
+    let text = |v: &Value| &source[v["span"]["startByte"].as_u64().unwrap() as usize..v["span"]["endByte"].as_u64().unwrap() as usize];
+    let (modules, attrs) = (group("module"), group("attr"));
+    let want = csv(whole.iter().zip(modules.iter().zip(&attrs)).map(|(m, (gm, ga))| {
+        format!("{}.{}\t{}\t{}", text(gm), text(ga), m["span"]["startLine"].as_u64().unwrap() + 1, m["span"]["startColumn"])
+    }));
+    assert_eq!(want, "a.b.c\t3\t6\npkg.mod.run\t2\t4\n");
+    assert_eq!(got[0], want);
+    assert_eq!(got[1], "a.b\npkg.mod\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

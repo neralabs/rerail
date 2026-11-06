@@ -1,16 +1,14 @@
 // data-layer-serverplan-dispatch-architecture: the clauses the converter does not convert, authored from
-// candidates/rules-ast/data-layer-serverplan-dispatch-architecture.json: here step-isinstance, step-type-compare and
-// executor-provenance; backend-family and step-class-match stay converted. backend-identity, step-name-compare,
-// dialect-compare and dialect-truth are written in authored/data-layer-serverplan-dispatch-architecture.pending.rr,
-// awaiting `value`/`value_type_of` (W's semantic value); move them back here when those relations are bound.
-// The relational clause follows the SQL stages as
+// candidates/rules-ast/data-layer-serverplan-dispatch-architecture.json: here backend-identity, step-isinstance,
+// step-type-compare, step-name-compare, dialect-compare, dialect-truth and executor-provenance; backend-family and
+// step-class-match stay converted. The relational clause follows the SQL stages as
 // native/src/code_rule_dsl/logic/programs/data_layer/serverplan_dispatch_architecture.rr reads them, rewritten over
 // the base relations (no shards, no SQL builtins).
 //
-// Options: the defaults (entryPoint "all", oracleAnalyzer false). Every forbid clause opens with
-// `{"$option": "entryPoint", cases: {all, scan_source: any file}, default: no file}`: at "all" (and "scan_source")
-// it holds for every file, so it is left out here; another entryPoint matches nothing in W. oracleAnalyzer is read by
-// no clause. The option gate is in the .pending.rr file too (awaiting option_value).
+// Options: every forbid clause opens with `{"$option": "entryPoint", cases: {all, scan_source: any file}, default:
+// no file}`: `backend_identity_entry` (the run's entryPoint "all" or "scan_source") is in every authored forbid
+// clause's body; the converted ones (backend-family, step-class-match) carry the same `$option`, resolved by the
+// converter. executor-provenance reads no option, nor does any clause read oracleAnalyzer.
 //
 // `regex` over a node is W's regex over its full source text (`node_text`); an identifier's text is `text`.
 // `match(re, s)` is Soufflé's, a match of the whole of s: W's (and SQLite rx_matches') unanchored search R is
@@ -25,6 +23,9 @@
 .decl intval(n: node, v: number)
 .decl line(n: loc, l: number)
 .decl syntax_error(d: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -34,6 +35,10 @@
 .decl backend_identity_boundary(d: number)
 backend_identity_boundary(d) :- doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _).
 backend_identity_boundary(d) :- doc(d, "impl/common/l2070_server_plan/backend_traits.py", _).
+
+// The `$option` gate: entryPoint "all" or "scan_source" lets every file through, any other value none.
+.decl backend_identity_entry(v: symbol)
+backend_identity_entry(v) :- option_value("entryPoint", v), (v = "all" ; v = "scan_source").
 
 // A call's function child named m: `m(…)` or `x.m(…)` (`has` field function, then identifier m or an attribute
 // whose attribute field is identifier m).
@@ -63,7 +68,7 @@ step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("
 violation("data-layer-serverplan-dispatch-architecture", "step-isinstance", "SPD002", p, l) :-
     node(d, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "isinstance"),
     field(n, "arguments", g), child(g, c, 1), step_type(c),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), doc(d, p, _), line(n, l).
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ---- step-type-compare (SPD002) ----
 // A comparison with a child `type(…)` and a child step type.
@@ -71,8 +76,98 @@ violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "S
     node(d, n, "comparison_operator", _, _),
     child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), backend_identity_callee(f, "type"),
     child(n, x, _), step_type(x),
-    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), doc(d, p, _), line(n, l).
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
+.decl backend_identity_cmp(kind: symbol)
+backend_identity_cmp("comparison_operator").
+
+// ---- backend-identity (SPD001) ----
+// A comparison with a backend source below it (`has` stopBy end) and, below it too, a BackendType member or a
+// backend-name string. The clause's first alternatives (the comparison itself an identifier, attribute or call)
+// cannot hold of a comparison_operator. The inline source rule equals the util `backend-source`.
+.decl backend_identity_source(n: node)
+backend_identity_source(n) :- node(_, n, "identifier", _, _), text(n, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "object", o), backend_identity_source(o).
+backend_identity_source(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, m),
+    (m = "backend_type_for" ; m = "get_backend_type" ; m = "get_backend_type_async").
+// A string or concatenated_string (kinds are tested as `node` constants: a kind is not a symbol to compare).
+.decl backend_identity_strnode(n: node)
+backend_identity_strnode(n) :- node(_, n, "string", _, _).
+backend_identity_strnode(n) :- node(_, n, "concatenated_string", _, _).
+// W's `value: {regex: R}` reads str values only: `value(n, v), value_type_of(n, "str")`; R is anchored at both
+// ends, so the whole-string `match` is its search.
+.decl backend_identity_literal(n: node)
+backend_identity_literal(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "BackendType").
+backend_identity_literal(n) :-
+    backend_identity_strnode(n), value(n, v), value_type_of(n, "str"),
+    match("(?i)^(?:doltdb|mariadb|mongodb|mysql|neo4j|postgres|postgresql|sqlite)$", v).
+violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SPD001", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    backend_identity_source(x), inside(x, n, backend_identity_cmp),
+    backend_identity_literal(y), inside(y, n, backend_identity_cmp),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- step-name-compare (SPD003) ----
+// A comparison with a child `type(x).__name__` or `x.__class__.__name__`, and below it a string whose value names a
+// step type.
+.decl step_name_compare_type(o: node)
+step_name_compare_type(o) :- node(_, o, "call", _, _), field(o, "function", f), backend_identity_callee(f, "type").
+step_name_compare_type(o) :- node(_, o, "attribute", _, _), field(o, "attribute", a), node(_, a, "identifier", _, _), text(a, "__class__").
+.decl step_name_compare_name(n: node)
+step_name_compare_name(n) :-
+    node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "__name__"),
+    field(n, "object", o), step_name_compare_type(o).
+.decl step_name_compare_literal(n: node)
+step_name_compare_literal(n) :-
+    backend_identity_strnode(n), value(n, v), value_type_of(n, "str"),
+    match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$", v).
+violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "SPD003", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, x, _), step_name_compare_name(x),
+    step_name_compare_literal(y), inside(y, n, backend_identity_cmp),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- the dialect reference: `dialect`, `x.dialect`, `getattr(x, "dialect"…)` ----
+// getattr's string the arguments' second named non-comment child (nthChild 2 ofRule not comment: `child`'s index
+// leaves comments out), its value "dialect".
+.decl dialect_truth_ref(n: node)
+dialect_truth_ref(n) :- node(_, n, "identifier", _, _), text(n, "dialect").
+dialect_truth_ref(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "dialect").
+dialect_truth_ref(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "getattr"),
+    field(n, "arguments", g), child(g, s, 1), node(_, s, "string", _, _), value(s, "dialect"), value_type_of(s, "str").
+
+// ---- dialect-compare (SPD004) ----
+// A comparison with a dialect reference child and a `None` child.
+violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- the util `dialect-truth`, and dialect-truth (SPD004) ----
+// A dialect reference; `not` with one as a child; `bool(ref)` with exactly one named non-comment argument; a boolean
+// operator with a dialect-truth child. Found as the condition of an if/elif/while/conditional expression (field
+// condition of the parent; tree-sitter-python's conditional_expression has no such field, so that kind never holds),
+// or as a direct child of an assert or a comprehension's if clause.
+.decl dialect_truth(n: node)
+dialect_truth(n) :- dialect_truth_ref(n).
+dialect_truth(n) :- node(_, n, "not_operator", _, _), child(n, c, _), dialect_truth_ref(c).
+dialect_truth(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "bool"),
+    field(n, "arguments", g), child(g, c, 0), dialect_truth_ref(c), !child(g, _, 1).
+dialect_truth(n) :- node(_, n, "boolean_operator", _, _), child(n, c, _), dialect_truth(c).
+.decl dialect_truth_at(n: node)
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "if_statement", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "elif_clause", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "conditional_expression", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "while_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "assert_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "if_clause", _, _).
+violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :-
+    dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _),
+    in_scope(d), !syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
 
 // ======== executor-provenance (relational, partitionBy file) ========
 // The stages, by name, over base_server_plan.py. Its syntax inputs are every named node of the module but comments
@@ -83,8 +178,8 @@ violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "S
 // field F, stopBy neighbor); `text` `node_text`; `ordinal` the row's index among its parent's rows (by start).
 // A kind test is a `node` constant (or a helper of them), never a comparison of a kind variable.
 // UNION ALL's duplicate rows are one finding per (issue, node), as the findings key (issue, identity) has them.
-// Approximations (named): see `executor_header_word` (executor_types' class-header arm), `executor_cast_int`
-// (CAST AS INTEGER), and the regexes' `\w`/`\b` (the text layer's \b is ASCII; SQLite's rx_matches is W's regex).
+// Approximations (named): `executor_cast_int` (CAST AS INTEGER), and the regexes' `\w`/`\b` (the text layer's \b is
+// ASCII; SQLite's rx_matches is W's regex).
 
 .decl executor_doc(d: number)
 executor_doc(d) :-
@@ -200,21 +295,15 @@ executor_types(d, x) :-
     executor_field(n, "left", lv), executor_row(d, lv), node(_, lv, "identifier", _, _),
     executor_field(n, "right", rv), executor_row(d, rv), node(_, rv, "identifier", _, _),
     text(rv, y), executor_types(d, y), text(lv, x).
-// The class-header arm, `rx_matches(text, '^class\s+\w+\([^\n:]*\b' || t.name || '\b')`: the regex is built from the
-// recursive name, which a constant `match` cannot say. Here: an identifier inside the class's superclasses list,
-// which opens right after the class name, on the class's first line, with text t. Approximation (named): W also
-// accepts the name as a word of a string or comment in that part of the header, and rejects it after a `:` there
-// (a slice, lambda or dict in a base).
-.decl executor_arglist(kind: symbol)
-executor_arglist("argument_list").
-.decl executor_header_word(n: node, w: symbol)
-executor_header_word(n, w) :-
-    executor_row(d, n), node(_, n, "class_definition", _, _), field(n, "name", nm), node(_, nm, _, _, e),
-    field(n, "superclasses", sc), node(_, sc, _, e, _), line(n, ln),
-    executor_row(d, c), node(_, c, "identifier", _, _), inside(c, sc, executor_arglist), line(c, ln), text(c, w).
+// The class-header arm, `rx_matches(text, '^class\s+\w+\([^\n:]*\b' || t.name || '\b')`, the name extracted with
+// `^class\s+([A-Za-z_]\w*)`: the pattern computed per row from the recursive name (every name of executor_types is
+// an identifier, `[A-Za-z_]\w*` or BackendExecutor, so it holds no regex metacharacter); `^` anchors the search, so
+// the whole-string `match` with `(?s:.*)` after it is rx_matches' search. The extracted name is the class's name
+// field (the pattern holds only where `class\s+` is followed by the name and `(`).
 executor_types(d, x) :-
-    executor_row(d, n), node(_, n, "class_definition", _, _), executor_header_word(n, w), executor_types(d, w),
-    node_text(n, t), match("class\s+\w+\((?s:.*)", t), field(n, "name", nm), node_text(nm, x), match("[A-Za-z_]\w*", x).
+    executor_row(d, n), node(_, n, "class_definition", _, _), node_text(n, t), executor_types(d, w),
+    re = cat(cat("class\s+\w+\([^\n:]*\b", w), "\b(?s:.*)"), match(re, t),
+    field(n, "name", nm), node_text(nm, x), match("[A-Za-z_]\w*", x).
 
 // annotation_edges and annotations.
 .decl executor_ann_edge(src: node, dst: node)

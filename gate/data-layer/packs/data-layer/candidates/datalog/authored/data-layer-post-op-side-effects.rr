@@ -5,8 +5,9 @@
 // that file is in the corpus; the bypass-tree query's at each bypassing module's start, line 1.
 //
 // Options, read from the converter's option facts (the run's resolved options): entryPoint (option_value: the
-// `query` and `trusted_overrides` cases), fateOverrides (option_item), fatesSignature and surfaceSignature
-// (option_value; see [signed-default]). All followed.
+// `query` and `trusted_overrides` cases), fateOverrides (option_json: its items in the option's order, at their
+// pointers "/0", "/1", …, so the scalar subqueries' first override of a symbol is the least index), fatesSignature
+// and surfaceSignature (option_value; see [signed-default]). All followed.
 //
 // Signatures. The stages fate_valid, surface_valid and runtime_valid call verify_ed25519(key, message, signature)
 // over a canonical JSON message (json_group_array of the sorted entries); the engine has no ed25519, JSON or
@@ -29,16 +30,10 @@
 //             same holds for the signature options. The exact form, with an @ed25519_ok functor, is in the
 //             .pending.rr file.
 //
-// String values. W's `capture.DECODED.text` (substring with value: true) and the `value` matcher read a string's
-// decoded value; the engine gives `str`, the content as written. They agree on raw strings and on strings without a
-// backslash; a non-raw string with one has no value here [escapes] (APPROXIMATION: that row of strings, registry or
-// runtime_refs is missing; a registry string without a value makes runtime_valid false, since its row would be in
-// the signed message). A concatenated_string's value is its parts' values joined; one of more than 4 parts, or
-// with an f-string part with braces or a bytes part, has no value [parts]. The ALLOWLIST_SIGNATURE literal is
-// decoded as Python does for the cleanup only: simple escapes (\n \t \r \\ \' \" \a \b \f \v, backslash-newline)
-// give no base64 character;
-// an unknown escape keeps its backslash (removed by the cleanup); \x, \u, \U, \N and octal escapes make the
-// signature unknown, so invalid [sig-escapes] (APPROXIMATION: W decodes them).
+// String values. W's `capture.DECODED.text` (substring with value: true) reads a string's decoded value: value(n,
+// v), escapes decoded and a concatenated_string's parts joined, exactly. An unknown value (a part that is an
+// f-string with an interpolation, or bytes) reads as the empty text, as W's transform has it
+// (matcher/transform.rs: ComputeError::Unknown is "").
 //
 // Findings are a set of (path, line, code): the oracle's several rows of one code (one per registry string, per
 // membership, …) are one key here.
@@ -48,14 +43,14 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl option_item(name: symbol, v: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl value(n: node, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
@@ -117,49 +112,26 @@ ss_dataclass_decorator(dec) :- node(_, dec, "decorator", _, _), child(dec, c, _)
 ss_spec(d, x) :- node(d, k, "class_definition", _, _), ss_doc(d, _), ss_top(k), field(k, "name", cn), text(cn, x), suffix("Spec", x),
     child(dd, k, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), ss_dataclass_decorator(dec).
 
-// A string literal's value (as written, see [escapes] and [parts]).
-.decl ss_lit(n: node, v: symbol)
-ss_lit(n, v) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p), contains("r", p), str(n, v).
-ss_lit(n, v) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p), !contains("r", p), str(n, v), !contains("\\", v).
-ss_lit(n, v) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p), !contains("b", p), contains("r", p), str(n, v),
-    !contains("{", v), !contains("}", v).
-ss_lit(n, v) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p), !contains("b", p), !contains("r", p), str(n, v),
-    !contains("\\", v), !contains("{", v), !contains("}", v).
-
-// A concatenated_string's parts joined. The engine admits no recursion that concatenates along siblings (a value
-// cycle not bounded by the tree), so the join is written out for 1 to 4 parts [parts]: APPROXIMATION, a
-// concatenated_string of more than 4 parts has no value here.
-.decl ss_part(c: node, i: number, v: symbol)
-ss_part(c, i, v) :- node(_, c, "concatenated_string", _, _), child(c, s, i), ss_lit(s, v).
-.decl ss_join(c: node, v: symbol)
-ss_join(c, v) :- ss_part(c, 0, v), !child(c, _, 1).
-ss_join(c, cat(a, b)) :- ss_part(c, 0, a), ss_part(c, 1, b), !child(c, _, 2).
-ss_join(c, cat(a, cat(b, x))) :- ss_part(c, 0, a), ss_part(c, 1, b), ss_part(c, 2, x), !child(c, _, 3).
-ss_join(c, cat(a, cat(b, cat(x, y)))) :- ss_part(c, 0, a), ss_part(c, 1, b), ss_part(c, 2, x), ss_part(c, 3, y), !child(c, _, 4).
-
 // The string evidence: a `string` or `concatenated_string` whose text starts with only r/u prefix letters
 // (`(?i)^[ru]*["']`; a concatenated string's text starts with its first part's), in a valid in-scope document.
 .decl ss_strnode(d: number, n: node, start: number, end: number)
 ss_strnode(d, n, s, e) :- node(d, n, "string", s, e), ss_doc(d, _), strprefix(n, p), match("[ru]*", p).
 ss_strnode(d, n, s, e) :- node(d, n, "concatenated_string", s, e), ss_doc(d, _), child(n, f, 0), strprefix(f, p), match("[ru]*", p).
 
-// Its value, where it has one.
+// Its value: W's decoded value, the empty text where W's is unknown.
 .decl ss_val(n: node, v: symbol)
-ss_val(n, v) :- ss_strnode(_, n, _, _), node(_, n, "string", _, _), ss_lit(n, v).
-ss_val(n, v) :- ss_strnode(_, n, _, _), node(_, n, "concatenated_string", _, _), ss_join(n, v).
+ss_val(n, v) :- ss_strnode(_, n, _, _), value(n, v).
+ss_val(n, "") :- ss_strnode(_, n, _, _), !value(n, _).
 
 // strings: every such string, with its value.
 .decl ss_string(d: number, n: node, start: number, end: number, v: symbol)
 ss_string(d, n, s, e, v) :- ss_strnode(d, n, s, e), ss_val(n, v).
 
-// registry: the strings anywhere inside a module-level `SIGNED_POST_OP_SYMBOLS = …`; ss_registry_novalue those
-// without a value here [escapes].
+// registry: the strings anywhere inside a module-level `SIGNED_POST_OP_SYMBOLS = …`.
 .decl ss_registry_node(d: number, n: node)
 ss_registry_node(d, n) :- ss_strnode(d, n, _, _), inside(n, a, ss_assign_k), ss_assign_to(a, "SIGNED_POST_OP_SYMBOLS"), ss_top_assign(a).
 .decl ss_registry(d: number, n: node, v: symbol)
 ss_registry(d, n, v) :- ss_registry_node(d, n), ss_val(n, v).
-.decl ss_registry_novalue(d: number, n: node)
-ss_registry_novalue(d, n) :- ss_registry_node(d, n), !ss_val(n, _).
 
 // signature: the strings anywhere inside a module-level annotated `ALLOWLIST_SIGNATURE: T = …`.
 .decl ss_signature(d: number, n: node, start: number)
@@ -208,7 +180,7 @@ ss_return(d, s, e, l) :- node(d, r, "return_statement", s, e), ss_doc(d, _), lin
 // overrides: the fateOverrides items, each split at its first "=" as substr/instr do (no "=": symbol "" and the
 // whole entry as fate). ss_override_rest(e, q): q a suffix of e with no "=" before it (suffixes only).
 .decl ss_override_rest(e: symbol, q: symbol)
-ss_override_rest(e, e) :- option_item("fateOverrides", e).
+ss_override_rest(e, e) :- option_json("fateOverrides", _, e).
 ss_override_rest(e, t) :- ss_override_rest(e, q), strlen(q) > 0, substr(q, 0, 1) != "=", t = substr(q, 1, 1000000000).
 .decl ss_override(entry: symbol, sym: symbol, fate: symbol)
 ss_override(e, s, f) :- ss_override_rest(e, q), substr(q, 0, 1) = "=", s = substr(e, 0, strlen(e) - strlen(q)), f = substr(q, 1, 1000000000).
@@ -216,16 +188,42 @@ ss_override(e, "", e) :- ss_override_rest(e, "").
 .decl ss_override_sym(sym: symbol)
 ss_override_sym(s) :- ss_override(_, s, _).
 
+// The overrides in the option's order: item i at pointer "/i", the index read from its decimal digits (no
+// number-parsing functor: written out for indices below 1000000, more than any option list holds).
+.decl ss_digit(c: symbol, v: number)
+ss_digit("0", 0). ss_digit("1", 1). ss_digit("2", 2). ss_digit("3", 3). ss_digit("4", 4).
+ss_digit("5", 5). ss_digit("6", 6). ss_digit("7", 7). ss_digit("8", 8). ss_digit("9", 9).
+.decl ss_ov_digits(p: symbol, ds: symbol)
+ss_ov_digits(p, ds) :- option_json("fateOverrides", p, _), substr(p, 0, 1) = "/", ds = substr(p, 1, 1000000000).
+.decl ss_ov_index(i: number, e: symbol)
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 1, ss_digit(ds, i).
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 2, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), i = a * 10 + b.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 3, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), i = a * 100 + b * 10 + c.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 4, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), ss_digit(substr(ds, 3, 1), x), i = a * 1000 + b * 100 + c * 10 + x.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 5, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), ss_digit(substr(ds, 3, 1), x), ss_digit(substr(ds, 4, 1), y),
+    i = a * 10000 + b * 1000 + c * 100 + x * 10 + y.
+ss_ov_index(i, e) :- option_json("fateOverrides", p, e), ss_ov_digits(p, ds), strlen(ds) = 6, ss_digit(substr(ds, 0, 1), a),
+    ss_digit(substr(ds, 1, 1), b), ss_digit(substr(ds, 2, 1), c), ss_digit(substr(ds, 3, 1), x), ss_digit(substr(ds, 4, 1), y),
+    ss_digit(substr(ds, 5, 1), z), i = a * 100000 + b * 10000 + c * 1000 + x * 100 + y * 10 + z.
+.decl ss_ov_at(i: number, sym: symbol, fate: symbol)
+ss_ov_at(i, s, f) :- ss_ov_index(i, e), ss_override(e, s, f).
+// The scalar subqueries' fate of a symbol (fates, POSTOP002): the first override's in the option's order (a scan of
+// the overrides stage, a UNION ALL of the items in order).
+.decl ss_first_override(sym: symbol, fate: symbol)
+ss_first_override(s, f) :- ss_ov_at(i, s, f), i = min j : { ss_ov_at(j, s, _) }.
+
 // memberships: PostOpKind/PostOpBehavior members of post_op.py and post_op_specs.py, "Class.NAME".
 .decl ss_membership(sym: symbol)
 ss_membership(cat(c, cat(".", x))) :- ss_member(d, c, x), ss_doc(d, p), (p = "l2070_batching/post_op.py" ; p = "l2070_batching/post_op_specs.py"),
     (c = "PostOpKind" ; c = "PostOpBehavior").
 
-// fates: each membership's override fate, else audit_required. APPROXIMATION [override-order]: two overrides of one
-// symbol give it both fates here (so the fates message is not the signed one); W's scalar subquery takes the first
-// in the option's order, which option_item does not keep.
+// fates: each membership's first override fate, else audit_required.
 .decl ss_fate(sym: symbol, fate: symbol)
-ss_fate(s, f) :- ss_membership(s), ss_override(_, s, f).
+ss_fate(s, f) :- ss_membership(s), ss_first_override(s, f).
 ss_fate(s, "audit_required") :- ss_membership(s), !ss_override_sym(s).
 
 // [signed-default]: whether a signature option, cleaned as rx_replace does ([^A-Za-z0-9+/=] removed), is the
@@ -286,9 +284,9 @@ ss_reg(n, v) :- ss_registry(d, n, v), ss_doc(d, "l2070_batching/post_op_allowlis
 ss_reg_value(v) :- ss_reg(_, v).
 
 // runtime_valid [runtime-sig]: the registry rows are exactly the signed registry (each signed value once, no other
-// value, no row without a value) and the first signature string (least start; at a tie, a concatenated_string and
-// its first part, the concatenated_string [sig-tie]: APPROXIMATION, SQLite's choice among equal __start is
-// unspecified) cleans to the signature recorded for it.
+// value) and the first signature string's value (least start; at a tie, a concatenated_string and its first part,
+// the concatenated_string [sig-tie]: APPROXIMATION, SQLite's choice among equal __start is unspecified; '' when
+// there is none) cleans to the signature recorded for it.
 .decl ss_runtime_signed(v: symbol)
 .decl ss_runtime_signature(sig: symbol)
 ss_runtime_signature("LfKJGRAPH2yBnDMoevmv5KyZcuPE3hsX4bkEUPXblphuoyI3+QG+racYSEau1uxNHvBPDG2bMmsxGgohzanjCQ==").
@@ -296,7 +294,6 @@ ss_runtime_signature("LfKJGRAPH2yBnDMoevmv5KyZcuPE3hsX4bkEUPXblphuoyI3+QG+racYSE
 ss_runtime_differs(0) :- ss_reg_value(v), !ss_runtime_signed(v).
 ss_runtime_differs(0) :- ss_runtime_signed(v), !ss_reg_value(v).
 ss_runtime_differs(0) :- ss_reg_value(v), k = count : { ss_reg(_, v) }, k > 1.
-ss_runtime_differs(0) :- ss_registry_novalue(d, _), ss_doc(d, "l2070_batching/post_op_allowlist.py").
 
 // The signature string: the least start among post_op_allowlist.py's signature strings.
 .decl ss_sig_start(s: number)
@@ -306,50 +303,22 @@ ss_sig_node(n) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "concatenat
 ss_sig_node(n) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "string", _, _), !ss_sig_concat_at(m).
 .decl ss_sig_concat_at(s: number)
 ss_sig_concat_at(m) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "concatenated_string", _, _).
-
-// The string literals the cleanup reads: the signature string, or each part of it. raw is 1 for an r prefix.
-.decl ss_sig_lit(n: node, raw: number, s: symbol)
-ss_sig_lit(n, 1, s) :- ss_sig_node(n), node(_, n, "string", _, _), strprefix(n, p), contains("r", p), str(n, s).
-ss_sig_lit(n, 0, s) :- ss_sig_node(n), node(_, n, "string", _, _), strprefix(n, p), !contains("r", p), str(n, s).
-ss_sig_lit(c, 1, s) :- ss_sig_node(n), node(_, n, "concatenated_string", _, _), child(n, c, _), strprefix(c, p), contains("r", p), str(c, s).
-ss_sig_lit(c, 0, s) :- ss_sig_node(n), node(_, n, "concatenated_string", _, _), child(n, c, _), strprefix(c, p), !contains("r", p), str(c, s).
+// Its decoded value (coalesce(…, '')).
+.decl ss_sig_value(s: symbol)
+ss_sig_value(s) :- ss_sig_node(n), ss_val(n, s).
+ss_sig_value("") :- ss_unit(0), !ss_sig_start(_).
 
 // The cleanup is matched against the recorded signature rather than built (a recursion concatenating characters is
-// a value cycle the engine rejects): ss_sig_run(n, raw, q, t) reads literal n with q left to read and t left of
-// the recorded signature to match; every step only takes suffixes. A base64 character of the literal must be t's
-// next one; any other character is what rx_replace removes. Escapes (non-raw literals): a simple escape decodes to
-// a non-base64 character, both characters skipped; an unknown escape keeps its backslash, which is removed; a coded
-// escape (\x, \u, \U, \N, octal) stops the run, so the signature does not match [sig-escapes].
-.decl ss_simple_escape(e: symbol)
-ss_simple_escape("\n"). ss_simple_escape("\\"). ss_simple_escape("'"). ss_simple_escape("\"").
-ss_simple_escape("a"). ss_simple_escape("b"). ss_simple_escape("f"). ss_simple_escape("n").
-ss_simple_escape("r"). ss_simple_escape("t"). ss_simple_escape("v").
-.decl ss_coded_escape(e: symbol)
-ss_coded_escape("x"). ss_coded_escape("u"). ss_coded_escape("U"). ss_coded_escape("N").
-ss_coded_escape("0"). ss_coded_escape("1"). ss_coded_escape("2"). ss_coded_escape("3").
-ss_coded_escape("4"). ss_coded_escape("5"). ss_coded_escape("6"). ss_coded_escape("7").
-.decl ss_sig_run(n: node, raw: number, q: symbol, t: symbol)
-// A string: from its start, with the whole recorded signature to match.
-ss_sig_run(n, r, s, t) :- ss_sig_node(n), node(_, n, "string", _, _), ss_sig_lit(n, r, s), ss_runtime_signature(t).
-// A concatenated_string: its first part from there, each next part where the one before it ended.
-ss_sig_run(p, r, s, t) :- ss_sig_node(n), node(_, n, "concatenated_string", _, _), child(n, p, 0), ss_sig_lit(p, r, s), ss_runtime_signature(t).
-ss_sig_run(p, r, s, t) :- ss_sig_end(o, t), ss_sig_node(n), child(n, o, i), k = i + 1, child(n, p, k), ss_sig_lit(p, r, s).
-ss_sig_run(n, r, q2, t2) :- ss_sig_run(n, r, q, t), h = substr(q, 0, 1), strlen(h) = 1, (r = 1 ; h != "\\"), match("[A-Za-z0-9+/=]", h),
-    substr(t, 0, 1) = h, q2 = substr(q, 1, 1000000000), t2 = substr(t, 1, 1000000000).
-ss_sig_run(n, r, q2, t) :- ss_sig_run(n, r, q, t), h = substr(q, 0, 1), strlen(h) = 1, (r = 1 ; h != "\\"), !match("[A-Za-z0-9+/=]", h),
-    q2 = substr(q, 1, 1000000000).
-ss_sig_run(n, 0, q2, t) :- ss_sig_run(n, 0, q, t), substr(q, 0, 1) = "\\", e = substr(q, 1, 1), ss_simple_escape(e), q2 = substr(q, 2, 1000000000).
-ss_sig_run(n, 0, q2, t) :- ss_sig_run(n, 0, q, t), substr(q, 0, 1) = "\\", e = substr(q, 1, 1), strlen(e) = 1, !ss_simple_escape(e), !ss_coded_escape(e),
-    q2 = substr(q, 1, 1000000000).
-// ss_sig_end(n, t): literal n read to its end, t of the recorded signature left.
-.decl ss_sig_end(n: node, t: symbol)
-ss_sig_end(n, t) :- ss_sig_run(n, _, "", t).
-
-// The signature string cleans to the recorded signature: all of it matched at the end of the string, or of the
-// concatenated_string's last part.
+// a value cycle the engine rejects): ss_sig_run(q, t) reads the value with q left to read and t left of the
+// recorded signature to match; every step only takes suffixes. A base64 character must be t's next one; any other
+// character is what rx_replace removes.
+.decl ss_sig_run(q: symbol, t: symbol)
+ss_sig_run(s, t) :- ss_sig_value(s), ss_runtime_signature(t).
+ss_sig_run(q2, t2) :- ss_sig_run(q, t), h = substr(q, 0, 1), strlen(h) = 1, match("[A-Za-z0-9+/=]", h), substr(t, 0, 1) = h,
+    q2 = substr(q, 1, 1000000000), t2 = substr(t, 1, 1000000000).
+ss_sig_run(q2, t) :- ss_sig_run(q, t), h = substr(q, 0, 1), strlen(h) = 1, !match("[A-Za-z0-9+/=]", h), q2 = substr(q, 1, 1000000000).
 .decl ss_sig_matches(x: number)
-ss_sig_matches(0) :- ss_sig_node(n), node(_, n, "string", _, _), ss_sig_end(n, "").
-ss_sig_matches(0) :- ss_sig_node(n), node(_, n, "concatenated_string", _, _), child(n, p, i), k = i + 1, !child(n, _, k), ss_sig_end(p, "").
+ss_sig_matches(0) :- ss_sig_run("", "").
 
 .decl ss_runtime_valid(x: number)
 ss_runtime_valid(0) :- ss_unit(0), !ss_runtime_differs(0), ss_sig_matches(0).
@@ -409,8 +378,8 @@ ss_finding("POSTOP202") :- ss_unit(0), !ss_runtime_valid(0).
 ss_finding("POSTOP201") :- ss_unit(0), !ss_surface_valid(0).
 // POSTOP001: a trusted override naming no membership.
 ss_finding("POSTOP001") :- ss_trusted(_, s, _), !ss_membership(s).
-// POSTOP002: a membership whose trusted fate (else audit_required) must be burnt down.
-ss_finding("POSTOP002") :- ss_membership(s), ss_trusted(_, s, f), ss_bad_fate(f).
+// POSTOP002: a membership whose first trusted fate (else audit_required) must be burnt down.
+ss_finding("POSTOP002") :- ss_membership(s), ss_trusted_sym(s), ss_first_override(s, f), ss_bad_fate(f).
 ss_finding("POSTOP002") :- ss_membership(s), !ss_trusted_sym(s).
 
 .decl ss_any_finding(x: number)

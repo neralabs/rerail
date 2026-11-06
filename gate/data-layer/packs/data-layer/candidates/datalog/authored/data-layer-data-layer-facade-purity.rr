@@ -1,36 +1,40 @@
 // data-layer-data-layer-facade-purity: every clause, by hand (decision 0043). The policy is
-// candidates/rules-ast/data-layer-data-layer-facade-purity.json. Default options only: sourceGate on (the module's
-// text must match `def\ |class\ |impl\.|=|\(`); oracleAnalyzer is read by no clause. sourceGate off is in
-// data-layer-data-layer-facade-purity.pending.rr, awaiting the option facts (option_on).
+// candidates/rules-ast/data-layer-data-layer-facade-purity.json. Options as the run resolves them: sourceGate
+// (`option_on`); oracleAnalyzer is read by no clause.
 //
 // Notes against W:
 // - impl-import: W reports one finding per `$IMPORT` binding, all at the import statement's line; findings are a
 //   set of keys (contract J1), so they count once.
-// - expression: W's `value: {type: str}` is read from the literal's prefix and raw content (APPROX: a literal
-//   whose escapes do not decode, e.g. a lone surrogate `\ud800`, or longer than 64 KiB, is no `str` in W).
-// - statement: only named nodes are tested (W may also visit an anonymous `;` between top-level statements). A
-//   top-level decorated definition's decorators are its children at the module, so each is a FAC002 statement,
-//   as the policy says.
+// - expression: W's `value: {type: str}` is value_type_of(c, "str").
+// - statement: the rule names no kind, so W tests anonymous tokens too (compile/ast_rule.rs,
+//   kindless_rules_are_accepted_and_test_anonymous_tokens): a top-level `;` is a FAC002 statement. It is a token
+//   row of the module that is no named child and no comment; its line is the end line of the named child before
+//   it (only spaces and line continuations, which are named children, can lie between a statement and its `;`).
+//   A top-level decorated definition's decorators are its children at the module, so each is a FAC002
+//   statement, as the policy says.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
-.decl name(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl line(n: node, l: number)
+.decl end_line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_on(name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
-// ---- the source gate: the module's text (comments and strings in it) matches `def\ |class\ |impl\.|=|\(` ----
+// ---- the source gate: with sourceGate on (the default), the module's text (comments and strings in it) matches
+// `def\ |class\ |impl\.|=|\(`; off, the regex is `(?s).*`, which every module matches ----
 .decl facade_gate(d: number)
-facade_gate(d) :- node(d, m, "module", _, _), node_text(m, s),
+facade_gate(d) :- node(d, m, "module", _, _), option_on("sourceGate"), node_text(m, s),
   (contains("def ", s) ; contains("class ", s) ; contains("impl.", s) ; contains("=", s) ; contains("(", s)).
+facade_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 
 // ---- shared: a node at the top level (the module's child, or a decorated definition's at the module) ----
 .decl facade_top(n: node)
@@ -120,24 +124,11 @@ violation("data-layer-data-layer-facade-purity", "assignment", "FAC004", p, l) :
   in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- expression (FAC002): a top-level expression statement other than an assignment or a `str` literal ----
-// W's `value: {type: str}` on a string: no interpolation (`str` holds the content only then), a valid prefix with
-// neither b nor t; on a concatenation: every string in it so.
-.decl facade_str_prefix(p: symbol)
-facade_str_prefix("").
-facade_str_prefix("r").
-facade_str_prefix("u").
-facade_str_prefix("f").
-facade_str_prefix("fr").
-facade_str_prefix("rf").
-.decl facade_str1(c: node)
-facade_str1(c) :- node(_, c, "string", _, _), strprefix(c, p), facade_str_prefix(p), str(c, _).
-.decl facade_concat_bad(c: node)
-facade_concat_bad(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), !facade_str1(s).
 .decl facade_expression_ok(n: node)
 facade_expression_ok(n) :- child(n, c, _), node(_, c, "assignment", _, _).
 facade_expression_ok(n) :- child(n, c, _), node(_, c, "augmented_assignment", _, _).
-facade_expression_ok(n) :- child(n, c, _), facade_str1(c).
-facade_expression_ok(n) :- child(n, c, _), node(_, c, "concatenated_string", _, _), !facade_concat_bad(c).
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "string", _, _), value_type_of(c, "str").
+facade_expression_ok(n) :- child(n, c, _), node(_, c, "concatenated_string", _, _), value_type_of(c, "str").
 violation("data-layer-data-layer-facade-purity", "expression", "FAC002", p, l) :-
   node(d, n, "expression_statement", _, _), child(m, n, _), node(_, m, "module", _, _), !facade_expression_ok(n),
   facade_gate(d),
@@ -155,3 +146,19 @@ facade_statement_allowed(n) :- node(_, n, "decorated_definition", _, _).
 violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :-
   facade_top(n), !facade_statement_allowed(n), node(d, n, _, _, _), facade_gate(d),
   in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+// An anonymous token at the top level (`;`): a token row of the module (or of a top-level decorated definition,
+// which has none in the grammar) that is no named child and no comment, at the end line of the named child
+// before it.
+.decl facade_top_parent(p: node)
+facade_top_parent(m) :- node(_, m, "module", _, _).
+facade_top_parent(w) :- node(_, w, "decorated_definition", _, _), child(m, w, _), node(_, m, "module", _, _).
+.decl facade_named_at(p: node, st: number, en: number)
+facade_named_at(p, st, en) :- facade_top_parent(p), child(p, c, _), node(_, c, _, st, en).
+.decl facade_anon(p: node, st: number)
+facade_anon(p, st) :- facade_top_parent(p), token(p, _, s, st, en), !match("#(?s:.*)", s), !facade_named_at(p, st, en).
+.decl facade_anon_line(p: node, st: number, l: number)
+facade_anon_line(p, st, l) :- facade_anon(p, st), e = max x : { facade_named_at(p, _, x), x <= st },
+  child(p, c, _), node(_, c, _, _, e), end_line(c, l).
+violation("data-layer-data-layer-facade-purity", "statement", "FAC002", p, l) :-
+  facade_anon_line(t, _, l), node(d, t, _, _, _), facade_gate(d),
+  in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).

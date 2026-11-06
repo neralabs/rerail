@@ -1,7 +1,7 @@
-// data-layer-embedding-vector-orchestration, clause embedding-orchestration (relational, partitionBy file), options
-// at their defaults: entryPoint "all" takes the query's `default` case, the union filtered to EVO001, EVO101, EVO102,
-// EVO104, EVO105, EVO106 (EVO107 and EVO108 are reported only under entryPoint scan_source / scan_file /
-// _violations_for_files: authored/data-layer-embedding-vector-orchestration.pending.rr, awaiting option_value).
+// data-layer-embedding-vector-orchestration, clause embedding-orchestration (relational, partitionBy file). The
+// query is `$option: entryPoint` (option_value, the run's; default "all"): scan_source, scan_file and
+// _violations_for_files take the whole union; any other value the `default` case, the union filtered to EVO001,
+// EVO101, EVO102, EVO104, EVO105, EVO106 (so EVO107 and EVO108 only under those three).
 // `parameters` is read by no stage. requireNonemptyInput gate: a file whose module text does not match the gate
 // regex gives no rows (the cst is gated by it too); the gate regex is an alternation of literals, so it is
 // `contains` over the module's full text (node_text).
@@ -9,8 +9,9 @@
 // The stages read CPython's ast (pythonAst over the cst); here over tree-sitter's tree:
 //   calls: a Call c, its func f (parentheses dropped, as ast has none) and, where f is an Attribute, its attr
 //     (`callee`) and its value (the receiver, parentheses dropped). Every issue asks callee_kind = 'Attribute'.
-//   fn (ast_function): ASSUMPTION (named): the innermost FunctionDef/AsyncFunctionDef holding the node in ast's
-//     tree, lambdas transparent; a decorator's expression belongs to the def it decorates (ast nests it there).
+//   fn (ast_function, value/python_ast/metadata.py at 40e7b6cac): the innermost FunctionDef/AsyncFunctionDef whose
+//     ast subtree holds the node, lambdas transparent; a def's decorators, defaults and annotations are its
+//     children in ast, so they are its; a class's decorators are the class's, so their fn is the class's fn.
 //   functions: function_definition (tree-sitter's async def is one too); classes: class_definition.
 //   qual_functions / embedding_calls: qualname is the enclosing classes' names joined by "." then "." and the
 //     function's name, else the name, else "<module>". It is read only against EVO001's exemption list, whose
@@ -34,7 +35,7 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl node_text(n: node, s: symbol)
-.input node_text
+.decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -79,11 +80,19 @@ embedding_txn(r) :- node(d, r, "identifier", _, _), embedding_doc(d), text(r, s)
 embedding_txn(r) :- node(d, r, "attribute", _, _), embedding_doc(d), field(r, "attribute", a), text(a, s), suffix("txn", s).
 
 // ---- fn and the enclosing functions ----
-// mirrors python/ast.rr def_frame (restricted to the calls asked about)
+// python/ast.rr's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
+// fn (def_frame gives them none). embedding_fn(x, f) for x in embedding_fn_at: a call, or the decorated_definition
+// of a class whose decorator holds one, up the tree through such classes.
+.decl embedding_fn_at(x: node)
+embedding_fn_at(n) :- embedding_attr_call(n, _, _).
+embedding_fn_at(dd) :- embedding_fn_at(x), nearest(x, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _).
 .decl embedding_fn(n: node, f: node)
-embedding_fn(n, f) :- embedding_attr_call(n, _, _), nearest(n, f, embedding_fn_marks), node(_, f, "function_definition", _, _).
-embedding_fn(n, f) :- embedding_attr_call(n, _, _), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, f, embedding_fn_marks), node(_, f, "function_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
     child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), embedding_fn(dd, f).
 .decl embedding_fn_name(f: node, x: symbol)
 embedding_fn_name(f, x) :- node(d, f, "function_definition", _, _), embedding_doc(d), field(f, "name", n), text(n, x).
 .decl embedding_within(n: node, f: node)
@@ -143,6 +152,19 @@ embedding_issue(f, "EVO104") :- embedding_fn_name(f, x), node(d, f, _, _, _), do
     (suffix("_sync_lazy", x) ; suffix("_async_lazy", x) ; suffix("_lazy_async", x) ; suffix("_lazy_sync", x)).
 embedding_issue(n, "EVO102") :- embedding_attr_call(n, x, _), embedding_resolve(x), node(d, n, _, _, _), doc(d, p, _),
     embedding_worker_path(p), embedding_within(n, f), embedding_fn_name(f, y), suffix("_lazy", y).
+// The whole union's two more (entryPoint scan_source, scan_file, _violations_for_files).
+.decl embedding_full_union(v: symbol)
+embedding_full_union("scan_source"). embedding_full_union("scan_file"). embedding_full_union("_violations_for_files").
+.decl embedding_publisher(s: symbol)
+embedding_publisher("_publish_claimed_queue_message_ref"). embedding_publisher("_publish_worker_scalar_int_ref").
+embedding_publisher("_publish_worker_scalar_string_ref").
+.decl embedding_in_publisher(n: node)
+embedding_in_publisher(n) :- embedding_fn(n, f), embedding_fn_name(f, x), embedding_publisher(x).
+embedding_issue(n, "EVO107") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_next_ref", _),
+    node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
+embedding_issue(n, "EVO108") :- option_value("entryPoint", v), embedding_full_union(v),
+    embedding_attr_call(n, "_add_server_step", _), !embedding_in_publisher(n), node(d, n, _, _, _), doc(d, p, _),
+    embedding_worker_path(p).
 
 violation("data-layer-embedding-vector-orchestration", "embedding-orchestration", i, p, l) :- embedding_issue(n, i),
     node(d, n, _, _, _), doc(d, p, _), line(n, l).

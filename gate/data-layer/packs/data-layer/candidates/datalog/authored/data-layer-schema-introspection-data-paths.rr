@@ -1,30 +1,49 @@
 // data-layer-schema-introspection-data-paths: the relational clause schema-introspection, by hand.
 //
 // Its SQL runs over CPython `ast` rows (`pythonAst`); the script it ports is nera-data-layer
-// scripts/lint_schema_introspection_data_paths.py. Options: the defaults, entryPoint "all" and parameters
-// "{}", so the gate is the `default` case (a valid module whose text matches the trigger regex) and the query
-// its `default` case (the findings in data paths only).
-//
-// The gate's text test is introspection_text_doc (`node_text`); every call finding implies it (the callee is a
-// trigger word), so they skip it. A string's value is read as written (`str`, the content between the quotes):
-// a marker made only by escapes, or split across adjacent literals, is in
-// data-layer-schema-introspection-data-paths.pending.rr, awaiting `value` (decoded); so are the option cases.
+// scripts/lint_schema_introspection_data_paths.py.
+// Options: `entryPoint` from `option_value`. Under `_collect_violations` the gate is every valid module of the
+// scope and the query has no data-path filter; under every other value (the default "all" included) the gate is
+// a valid module whose text matches the trigger regex and the query keeps data paths only. `parameters` is read
+// by no clause.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl node_text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
-// introspection_doc(d, p): a valid module of the scope on a data path: under one of the data-path prefixes and
-// with no allowed marker in "/" + path.
+// The gate: the module's text (W's `regex` on the module: comments and strings included) matches the trigger
+// regex, case-sensitively (its alternatives are literals; those holding a shorter one are left out).
+.decl introspection_trigger(s: symbol)
+introspection_trigger("SqlTableExists"). introspection_trigger("TableExistsIntent").
+introspection_trigger("TableExistsStep"). introspection_trigger("_column_exists_uncached").
+introspection_trigger("_fetch_table_columns"). introspection_trigger("_table_exists_uncached").
+introspection_trigger("column_exists"). introspection_trigger("flush_schema_plan").
+introspection_trigger("get_table_columns"). introspection_trigger("get_table_schema").
+introspection_trigger("information_schema"). introspection_trigger("inspect").
+introspection_trigger("list_collection_names"). introspection_trigger("pragma table_info").
+introspection_trigger("show columns"). introspection_trigger("show tables"). introspection_trigger("sqlite_master").
+introspection_trigger("table_exists").
+.decl introspection_text_doc(d: number)
+introspection_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), introspection_trigger(x), contains(x, s).
+.decl introspection_gate(d: number, p: symbol)
+introspection_gate(d, p) :- option_value("entryPoint", "_collect_violations"), node(d, _, "module", _, _),
+    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _).
+introspection_gate(d, p) :- option_value("entryPoint", v), v != "_collect_violations", node(d, _, "module", _, _),
+    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), introspection_text_doc(d).
+
+// The data paths: under one of the data-path prefixes and with no allowed marker in "/" + path.
 .decl introspection_prefix(s: symbol)
 introspection_prefix("l2050_transaction/"). introspection_prefix("l2055_lazy_result/").
 introspection_prefix("l2060_query_builder/"). introspection_prefix("l2070_batching/").
@@ -52,13 +71,19 @@ introspection_rooted("tests/").
 .decl introspection_marked(d: number)
 introspection_marked(d) :- doc(d, p, _), introspection_allowed(m), contains(m, p).
 introspection_marked(d) :- doc(d, p, _), introspection_rooted(m), prefix(m, p).
+.decl introspection_data_path(d: number)
+introspection_data_path(d) :- doc(d, p, _), introspection_prefix(x), prefix(x, p), !introspection_marked(d).
+
+// introspection_doc(d, p): a file the query reports in.
 .decl introspection_doc(d: number, p: symbol)
-introspection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), introspection_prefix(x),
-    prefix(x, p), !introspection_marked(d).
+introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", "_collect_violations").
+introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", v), v != "_collect_violations",
+    introspection_data_path(d).
 
 // The defs that hold a node as `ast` nests them (a def's decorators are its own): introspection_owner(n, f)
-// for every enclosing def, introspection_frame(n, f) for the innermost (the script's function_stack[-1];
-// mirrors python/ast.rr def_frame).
+// for every enclosing def (`n.id BETWEEN owner.id AND owner.last`), introspection_frame(n, f) for the innermost
+// (the row's `fn`; mirrors python/ast.rr def_frame). A class's decorator is the class's, so its innermost def is
+// the one around the class.
 .decl introspection_fdef(kind: symbol)
 introspection_fdef("function_definition").
 .decl introspection_deco(kind: symbol)
@@ -73,7 +98,6 @@ introspection_owner(n, f) :- inside(n, dc, introspection_deco), child(dd, dc, _)
 introspection_frame(n, f) :- nearest(n, f, introspection_frame_mark), node(_, f, "function_definition", _, _).
 introspection_frame(n, f) :- nearest(n, dc, introspection_frame_mark), node(_, dc, "decorator", _, _),
     child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
-// A class's decorator: the innermost def is the one around the class.
 introspection_frame(n, f) :- nearest(n, dc, introspection_frame_mark), node(_, dc, "decorator", _, _),
     child(dd, dc, _), field(dd, "definition", k), node(_, k, "class_definition", _, _),
     nearest(dc, f, introspection_fdef).
@@ -86,8 +110,8 @@ introspection_word("reconcile"). introspection_word("schema"). introspection_wor
 introspection_authority(n) :- introspection_owner(n, f), field(f, "name", nm), text(nm, x), introspection_word(w),
     icontains(w, x).
 
-// The calls: callee by Name or Attribute, the func's parentheses taken off (mirrors python/ast.rr unparen and
-// call_name, without the subscript step).
+// The calls: callee by Name or Attribute (calls.callee), the func's parentheses taken off (mirrors python/ast.rr
+// unparen and call_name, without the subscript step).
 .decl introspection_peel(c: node, e: node)
 introspection_peel(c, g) :- node(d, c, "call", _, _), introspection_doc(d, _), field(c, "function", g).
 introspection_peel(c, i) :- introspection_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
@@ -96,6 +120,8 @@ introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "identifier",
 introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a),
     text(a, x).
 
+.decl introspection_flush(x: symbol)
+introspection_flush("flush_schema_plan"). introspection_flush("flush_schema_plan_async").
 .decl introspection_forbidden(x: symbol)
 introspection_forbidden("SqlTableExists"). introspection_forbidden("TableExistsIntent").
 introspection_forbidden("TableExistsStep"). introspection_forbidden("_column_exists_uncached").
@@ -116,57 +142,61 @@ introspection_primitive_call(c) :- introspection_callee(c, x), node(d, c, _, _, 
 
 // A schema-plan flush in a versioned backend, whatever def holds it.
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
-    introspection_callee(c, x), (x = "flush_schema_plan" ; x = "flush_schema_plan_async"), node(d, c, _, _, _),
-    introspection_doc(d, p), prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
+    introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p),
+    prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
 // An introspection call outside every schema-authority def, other than a primitive definition's.
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
     introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c),
     !introspection_primitive_call(c), node(d, c, _, _, _), introspection_doc(d, p), line(c, l).
 
-// String markers (ast Constant str values, lower-cased, holding a marker), outside every schema-authority def and
-// not a string statement (a docstring or any lone string expression), in a file that passes the gate's text
-// test. A literal with no b or f prefix is a Constant of its own, or one part of an adjacent-string run, which
-// is one Constant at the run (if no part has a b or f prefix). Approximation: the value is the literal's text as
-// written (str), not decoded; a part's marker is the run's (a marker split across parts is missed).
-.decl introspection_fb(s: node)
-introspection_fb(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("b", p).
-introspection_fb(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("f", p).
+// String markers: an ast Constant whose value is a str holding a marker (SQLite's `lower`, ASCII only: the
+// regexes fold ASCII case only), outside every schema-authority def and not the value of an expression statement
+// (a docstring or any lone string statement).
+.decl introspection_sql_marker(m: symbol, re: symbol)
+introspection_sql_marker("information_schema", "(?s:.*)(?i-u:information_schema)(?s:.*)").
+introspection_sql_marker("pragma table_info", "(?s:.*)(?i-u:pragma table_info)(?s:.*)").
+introspection_sql_marker("show columns", "(?s:.*)(?i-u:show columns)(?s:.*)").
+introspection_sql_marker("show tables", "(?s:.*)(?i-u:show tables)(?s:.*)").
+introspection_sql_marker("sqlite_master", "(?s:.*)(?i-u:sqlite_master)(?s:.*)").
+// The literal expressions: a `string` not in an adjacent-string run, or a run (`concatenated_string`), which is
+// one ast node. introspection_f(e): e is or holds an f-string (ast's JoinedStr).
 .decl introspection_in_run(s: node)
 introspection_in_run(s) :- node(_, c, "concatenated_string", _, _), child(c, s, _).
-.decl introspection_fb_run(c: node)
-introspection_fb_run(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), introspection_fb(s).
-.decl introspection_raw_const(n: node, c: symbol)
-introspection_raw_const(s, c) :- node(d, s, "string", _, _), introspection_doc(d, _), !introspection_fb(s),
-    !introspection_in_run(s), str(s, c).
-introspection_raw_const(r, c) :- node(d, r, "concatenated_string", _, _), introspection_doc(d, _),
-    !introspection_fb_run(r), child(r, s, _), str(s, c).
+.decl introspection_lit(e: node)
+introspection_lit(s) :- node(d, s, "string", _, _), introspection_doc(d, _), !introspection_in_run(s).
+introspection_lit(c) :- node(d, c, "concatenated_string", _, _), introspection_doc(d, _).
+.decl introspection_fpart(s: node)
+introspection_fpart(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("f", p).
+.decl introspection_f(e: node)
+introspection_f(s) :- introspection_lit(s), introspection_fpart(s).
+introspection_f(c) :- introspection_lit(c), child(c, s, _), introspection_fpart(s).
+// The string statements: an expression statement whose one expression (parentheses taken off; a trailing comma
+// makes a tuple) is e.
+.decl introspection_stmt_peel(st: node, e: node)
+introspection_stmt_peel(st, e) :- node(_, st, "expression_statement", _, _), child(st, e, 0), !child(st, _, 1),
+    !token(st, _, ",", _, _).
+introspection_stmt_peel(st, i) :- introspection_stmt_peel(st, e), node(_, e, "parenthesized_expression", _, _),
+    child(e, i, 0).
 .decl introspection_stmt_string(n: node)
-introspection_stmt_string(n) :- node(_, st, "expression_statement", _, _), child(st, n, 0), !child(st, _, 1).
-.decl introspection_sql_marker(s: symbol)
-introspection_sql_marker("information_schema"). introspection_sql_marker("pragma table_info").
-introspection_sql_marker("show columns"). introspection_sql_marker("show tables").
-introspection_sql_marker("sqlite_master").
-// An f-string's literal pieces are Constants too (JoinedStr.values), whose parent is the JoinedStr (so an
-// f-string statement's pieces count). Approximations: a piece is read as written (escapes not decoded), each
-// piece on its own (pieces of adjacent f-strings, and plain literals joined to one, are not joined), at the
-// piece's line.
-introspection_raw_const(k, c) :- node(d, s, "string", _, _), introspection_doc(d, _), strprefix(s, p),
-    contains("f", p), !contains("b", p), child(s, k, _), node(_, k, "string_content", _, _), node_text(k, c).
-
-// The gate: the module's text (comments and strings included) matches the trigger regex, case-sensitively.
-.decl introspection_trigger(s: symbol)
-introspection_trigger("SqlTableExists"). introspection_trigger("TableExistsIntent").
-introspection_trigger("TableExistsStep"). introspection_trigger("_column_exists_uncached").
-introspection_trigger("_fetch_table_columns"). introspection_trigger("_table_exists_uncached").
-introspection_trigger("column_exists"). introspection_trigger("flush_schema_plan").
-introspection_trigger("get_table_columns"). introspection_trigger("get_table_schema").
-introspection_trigger("information_schema"). introspection_trigger("inspect").
-introspection_trigger("list_collection_names"). introspection_trigger("pragma table_info").
-introspection_trigger("show columns"). introspection_trigger("show tables"). introspection_trigger("sqlite_master").
-introspection_trigger("table_exists").
-.decl introspection_text_doc(d: number)
-introspection_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), introspection_trigger(x), contains(x, s).
+introspection_stmt_string(n) :- introspection_stmt_peel(_, n).
+// introspection_const(n, v): a Constant str and its value. A plain literal or run is a Constant, its value W's
+// `value` (escapes decoded, parts joined). A literal or run holding an f-string with no interpolation is a
+// JoinedStr holding one Constant (its value; never a statement's own value, the JoinedStr is), taken at the
+// literal's line.
+.decl introspection_const(n: node, v: symbol)
+introspection_const(e, v) :- introspection_lit(e), !introspection_f(e), value_type_of(e, "str"), value(e, v),
+    !introspection_stmt_string(e).
+introspection_const(e, v) :- introspection_lit(e), introspection_f(e), value_type_of(e, "str"), value(e, v).
+// An f-string with an interpolation has no `value`: its Constants are its literal pieces (JoinedStr.values).
+// Approximation, until W's f-string pieces (fstring_piece) are bound: each `string_content` piece is read as
+// written (escapes and `{{` not decoded), on its own, at the piece's line; the pieces of adjacent f-strings, and
+// plain literals joined to one, are not joined (and those plain literals are not read).
+introspection_const(k, c) :- introspection_lit(e), introspection_f(e), !value(e, _), introspection_fpiece(e, s),
+    strprefix(s, p), !contains("b", p), child(s, k, _), node(_, k, "string_content", _, _), node_text(k, c).
+.decl introspection_fpiece(e: node, s: node)
+introspection_fpiece(s, s) :- introspection_lit(s), introspection_fpart(s).
+introspection_fpiece(c, s) :- introspection_lit(c), child(c, s, _), introspection_fpart(s).
 
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
-    introspection_raw_const(n, c), introspection_sql_marker(m), icontains(m, c), !introspection_stmt_string(n),
-    !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p), introspection_text_doc(d), line(n, l).
+    introspection_const(n, v), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
+    node(d, n, _, _, _), introspection_doc(d, p), line(n, l).

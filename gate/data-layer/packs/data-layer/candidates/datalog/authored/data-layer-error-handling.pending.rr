@@ -1,9 +1,0 @@
-// PENDING (awaiting the converter's option facts, ConvertFoundation A9: `option_on`). Not read by the converter.
-// The sourceGate option: true (the default) is the module-text regex; false is `^`, which every module matches.
-// When option_on is given, replace the main file's three log_reraise_gate rules with these four.
-.decl option_on(name: symbol)
-.input option_on
-log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.error", s).
-log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("logger.warning", s).
-log_reraise_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("txn.commit", s).
-log_reraise_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).

@@ -1,13 +1,12 @@
-// data-layer-readthrough-authority-architecture, awaiting `value(n, v)` (W's semantic value, escapes decoded):
-// merge into data-layer-readthrough-authority-architecture.rr once the corpus runner binds it.
-// The clauses read `value` on `string` and `concatenated_string` nodes as W's `value: { eq: "…" }` does:
-// - `value(s, "x")`, s no bytes literal, is W's value equal to the str "x" (W: b"x" == "x" is false). A bytes
-//   literal is told by its prefix (`strprefix` has a `b`; a concatenation by a part's), whatever row `value`
-//   gives it.
-// - no `value` row on a string or concatenated_string is W's Unknown (an f-string with a replacement field, a
-//   t-string, a malformed escape, mixed str/bytes, over 64 KiB). Both clauses read values, so W evaluates them
-//   three-valued: Unknown never matches, and under `not` it stays Unknown, which reports nothing.
-// The leading `regex: (?s).*` of each clause holds for every node and is left out.
+// data-layer-readthrough-authority-architecture: runtime-seed and complete-identity, which read W's `value`.
+// The clauses read `value` on `string` and `concatenated_string` nodes as W's `value: { eq: "…" }` does
+// (`ValueTest::holds`, three-valued):
+// - W's value is the str "x": `value(s, "x"), value_type_of(s, "str")` (a bytes literal b"x" has a known value,
+//   type `bytes`, no `value` row, and W's eq with "x" is false).
+// - W's value is unknown (an f-string with a replacement field, a t-string, a malformed escape, mixed str/bytes):
+//   no `value_type_of` row, as `file_values` gives types only for known values. W's eq is then Unknown: it never
+//   matches, and under `not` it stays Unknown, which reports nothing.
+// The leading `regex: (?s).*` of each clause holds for every node and is left out. No options.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -15,8 +14,8 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl line(n: node, l: number)
-.decl strprefix(n: node, s: symbol)
 .decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -24,20 +23,14 @@
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- runtime-seed -----------------------------------------------------------------------------------------------
-// Every string or concatenated_string whose value is "__readthrough_local_overlays" (a string inside a
+// Every string or concatenated_string whose value is the str "__readthrough_local_overlays" (a string inside a
 // concatenated_string is tested on its own value too, as W visits it).
 .decl runtime_seed_kind(k: symbol)
 runtime_seed_kind("string").
 runtime_seed_kind("concatenated_string").
 
-// A bytes literal, or a concatenation with a bytes part (all bytes, or a mix, which W leaves Unknown).
-.decl runtime_seed_bytes(s: node)
-runtime_seed_bytes(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("b", p).
-runtime_seed_bytes(s) :-
-    node(_, s, "concatenated_string", _, _), child(s, c, _), strprefix(c, p), contains("b", p).
-
 violation("data-layer-readthrough-authority-architecture", "runtime-seed", "RTA002", p, l) :-
-    node(d, s, k, _, _), runtime_seed_kind(k), value(s, "__readthrough_local_overlays"), !runtime_seed_bytes(s),
+    node(d, s, k, _, _), runtime_seed_kind(k), value(s, "__readthrough_local_overlays"), value_type_of(s, "str"),
     in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(s, l).
 
 // ---- complete-identity ------------------------------------------------------------------------------------------
@@ -54,12 +47,6 @@ complete_identity_fdef("function_definition").
 .decl complete_identity_strkind(k: symbol)
 complete_identity_strkind("string").
 complete_identity_strkind("concatenated_string").
-
-// As runtime_seed_bytes.
-.decl complete_identity_bytes(s: node)
-complete_identity_bytes(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("b", p).
-complete_identity_bytes(s) :-
-    node(_, s, "concatenated_string", _, _), child(s, c, _), strprefix(c, p), contains("b", p).
 
 .decl complete_identity_key(v: symbol)
 complete_identity_key("upstream_namespace").
@@ -81,17 +68,17 @@ complete_identity_def(m, m) :- complete_identity_compile(m).
 complete_identity_def(m, g) :-
     node(_, m, "decorated_definition", _, _), child(m, g, _), complete_identity_compile(g).
 
-// Key t has a string of that value below g.
+// Key t has a string whose value is the str t below g.
 .decl complete_identity_hit(g: node, t: symbol)
 complete_identity_hit(g, t) :-
     complete_identity_compile(g), inside(s, g, complete_identity_fdef), node(_, s, k, _, _),
-    complete_identity_strkind(k), value(s, t), complete_identity_key(t), !complete_identity_bytes(s).
+    complete_identity_strkind(k), value(s, t), complete_identity_key(t), value_type_of(s, "str").
 
 // Some string below g has no known value.
 .decl complete_identity_unknown(g: node)
 complete_identity_unknown(g) :-
     complete_identity_compile(g), inside(s, g, complete_identity_fdef), node(_, s, k, _, _),
-    complete_identity_strkind(k), !value(s, _).
+    complete_identity_strkind(k), !value_type_of(s, _).
 
 // Some key has no string of its value below g.
 .decl complete_identity_miss(g: node)

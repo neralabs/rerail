@@ -1,8 +1,6 @@
 // data-layer-serverplan-name-inference, authored from candidates/rules-ast/data-layer-serverplan-name-inference.json
-// (no options; no `syntax` condition, so files with a syntax error are read too, as W reads them): here
-// reference-parse, reference-synthesis and column-type. column-shape is written in
-// authored/data-layer-serverplan-name-inference.pending.rr, awaiting `op_at` (`op` holds no comparison's operator
-// tokens); move it back here when op_at is bound.
+// (no options; no `syntax` condition, so files with a syntax error are read too, as W reads them): every clause,
+// column-shape, reference-parse, reference-synthesis and column-type.
 //
 // Each clause ends in W's `layout: {line: R}`: R searched in the physical line the node starts on (the node's first
 // byte, `line(n, l)`), without its terminator, the lines split as W splits them (Ruff's \n, \r\n, \r): that line is
@@ -21,12 +19,26 @@
 .decl tape_line(d: number, l: number, sp: span)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl op_at(n: node, i: number, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
 // The text of the line node n starts on.
 .decl column_shape_line_of(n: node, s: symbol)
 column_shape_line_of(n, s) :- node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, s).
+
+// ---- column-shape (SPNI001) ----
+// A comparison_operator with a `==` or `!=` token among its children (`has` stopBy neighbor: every child, anonymous
+// tokens included; no named child's text is `==`, so only an operator token can be: `op_at`, a comparison's tokens
+// in field `operators`), its text naming a column, `.keys(` or `set(row…)`, on a line quoting a shape column.
+.decl column_shape_cmp(n: node)
+column_shape_cmp(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, "==").
+column_shape_cmp(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, "!=").
+violation("data-layer-serverplan-name-inference", "column-shape", "SPNI001", p, l) :-
+    column_shape_cmp(n),
+    node_text(n, t), match("(?s:.*)(?:column|\.keys\s*\(|set\s*\(\s*(?:row|rows|value)\s*\))(?s:.*)", t),
+    column_shape_line_of(n, s), match("(?s:.*)['\"](?:count|deleted_count|ok|message|__exists|__result)['\"](?s:.*)", s),
+    node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- the calls `x.<method>(…)`: function an attribute whose attribute field is the method name ----
 // (`has` field function / field attribute, stopBy neighbor: the field's child itself.)
@@ -47,16 +59,21 @@ violation("data-layer-serverplan-name-inference", "reference-parse", "SPNI002", 
     node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- reference-synthesis (SPNI003) ----
-// `x.get/pop/setdefault(f"…{…ref…}….raw…")`: the f-string the arguments' first named child (`nthChild: 1`).
-// Approximation (named): W's nthChild counts named siblings, comments included; `child` indexes leave comments out,
-// so a comment before the first argument (`get(  # c` newline `f"…")`) is counted by W and not here.
+// `x.get/pop/setdefault(f"…{…ref…}….raw…")`: the f-string the arguments' first named child (`nthChild: 1`). W's
+// nthChild counts named siblings, comments included; `child`'s index leaves comments out, so the string is
+// `child(g, s, 0)` with no comment token of g (`token`: comments included, a comment's text starts with `#`, which
+// no other token of an argument list's does) before it.
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl reference_synthesis_comment_before(g: node, st: number)
+reference_synthesis_comment_before(g, st) :-
+    field(_, "arguments", g), child(g, s, 0), node(_, s, _, st, _), token(g, _, t, s0, _), s0 < st, match("#(?s:.*)", t).
 .decl reference_synthesis_call(n: node)
 reference_synthesis_call(n) :-
     node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, m),
     (m = "get" ; m = "pop" ; m = "setdefault").
 violation("data-layer-serverplan-name-inference", "reference-synthesis", "SPNI003", p, l) :-
     reference_synthesis_call(n),
-    field(n, "arguments", g), child(g, s, 0), node(_, s, "string", _, _), node_text(s, t),
+    field(n, "arguments", g), child(g, s, 0), node(_, s, "string", st, _), !reference_synthesis_comment_before(g, st), node_text(s, t),
     match("f['\"][^\n]*?\{[^}]*ref[^}]*\}[^\n]*?(?:\.raw|\.raw_rows|\.write|\.updated_rows|\.updated_count|_count|_updated_rows|_updated_count)(?s:.*)", t),
     column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\.(?:get|pop|setdefault)\s*\((?s:.*)", ls),
     node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).

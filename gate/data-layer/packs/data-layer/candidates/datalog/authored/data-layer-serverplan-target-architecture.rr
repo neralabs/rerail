@@ -1,20 +1,22 @@
 // data-layer-serverplan-target-architecture: four clauses by hand (executor-imports, strategy-getattr,
 // strategy-isinstance, required-contracts); the converter gives the other twelve.
 //
-// Options, at their defaults: `entryPoint` "all" (the three AST clauses run for "all" and "scan_sources", for no
-// other value: `spta_entry_point`), `requiredShape` true (required-contracts reports; false gives nothing:
-// `spta_required_shape`). The option-gated forms are in data-layer-serverplan-target-architecture.pending.rr
-// (awaiting the converter's option facts). `oracleAnalyzer` is read by no clause.
-// Approximation: strategy-getattr reads a string's value through `str` (the literal's content as written); a
-// concatenated_string has no `str` row and matches nothing here (awaiting `value`, also in the pending file).
-// Comments are not in `child`, so `nthChild` `ofRule: {not: comment}` is a position among `child`'s children.
+// Options, as the run gives them: `entryPoint` (the three AST clauses run for "all" and "scan_sources", for no other
+// value: `spta_entry_point`), `requiredShape` (required-contracts reports when true; its false case ends in `WHERE 0`:
+// `spta_required_shape`). `oracleAnalyzer` is read by no clause.
+// strategy-getattr reads the second argument's W `value` (a str: `value_type_of(y, "str")`), a string or a
+// concatenated_string. Comments are not in `child`, so `nthChild` `ofRule: {not: comment}` is a position among
+// `child`'s children.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl node_text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -24,9 +26,9 @@
 .output violation
 
 .decl spta_entry_point(on: number)
-spta_entry_point(1).
+spta_entry_point(1) :- option_value("entryPoint", v), (v = "all" ; v = "scan_sources").
 .decl spta_required_shape(on: number)
-spta_required_shape(1).
+spta_required_shape(1) :- option_on("requiredShape").
 
 .decl spta_doc(d: number, p: symbol)
 spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
@@ -68,7 +70,8 @@ spta_call(d, p, c, s, al) :- spta_doc(d, p), prefix("impl/common/l2070_server_pl
 
 // getattr(x, "_stmt" | "_grammar" | "grammar").
 violation("data-layer-serverplan-target-architecture", "strategy-getattr", "SPTA008", p, l) :-
-    spta_entry_point(1), spta_call(_, p, c, "getattr", al), spta_second(al, y), node(_, y, "string", _, _), str(y, v),
+    spta_entry_point(1), spta_call(_, p, c, "getattr", al), spta_second(al, y), node(_, y, k, _, _),
+    (k = "string" ; k = "concatenated_string"), value(y, v), value_type_of(y, "str"),
     (v = "_stmt" ; v = "_grammar" ; v = "grammar"), line(c, l).
 
 // isinstance(x, T) where T is, or holds, a plain name starting `Sql` or ending `Grammar` or `Stmt`.

@@ -1,9 +1,0 @@
-// PENDING for data-layer-declared-fact-interrogation.rr (not read by the converter): the operators from op_at,
-// awaiting `op_at(n, i, s)`. When it is bound, merge this into the main file: add the declaration, replace the
-// override_identity_other_op rule there by the one below, and delete override_identity_at and
-// override_identity_sep (the separators read from the text, exact only where they are ASCII).
-
-.decl op_at(n: node, i: number, s: symbol)
-
-override_identity_other_op(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, s),
-  (s = "==" ; s = "!=" ; s = "<" ; s = ">" ; s = "<=" ; s = ">=" ; s = "<>" ; s = "in" ; s = "not in").

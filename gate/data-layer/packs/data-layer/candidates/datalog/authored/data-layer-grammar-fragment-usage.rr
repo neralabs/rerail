@@ -15,8 +15,9 @@
 //   a class can match R); `nearest(n, c, class kinds)`.
 // - `layout: { after|before: { to: capture.X, breaks: { min: 0 } } }` is only "X lies wholly after (before) the
 //   node" (matcher/layout.rs: the capture must lie on its side; min 0 breaks always holds): byte offsets.
-// - `compare … text: index` is the element's index in its list (commas before it): its named-child index.
-//   APPROXIMATION: a comment inside the tuple or pattern shifts the named-child index, not W's.
+// - `compare … text: index` is the element's index in its list (matcher/compare.rs `element_index`): the `,` tokens
+//   before it among its parent's children (`token`), comments not counted.
+// - `regex: ^def\s` on a `function_definition` is its text (`node_text`) starting `def` and a white space.
 // `captured-return` is a budget over rows (`group_by: [path, position]`, at most 0): every return row whose method
 // the class's `reachable` closure holds is its own group, a violation at the `return`. The closure is per class
 // (`partition_by: [path, owner]`), seeded with `render`, along `self.<target>()`/`cls.<target>()` call rows
@@ -24,15 +25,17 @@
 // effective one: the first `render` (`not inside earlier-method`), the last of any other name (`not inside
 // later-method`).
 //
-// APPROXIMATIONS, until `value` (W's decoded semantic value) is bound; the exact forms are in
-// `data-layer-grammar-fragment-usage.pending.rr`:
-// - a string's value is its raw content (`str`), escapes not decoded: `'list[\x46]'` holds no word `F` here (the
-//   batch-4 probe `quoted-alias-137` misses); a concatenation's value is read part by part, so a word split across
-//   parts is not seen;
-// - `value: { type: str }` is read from the prefix letters: no `f`, `b` or `t` (W also gives no value over its size
-//   cap or for a lone surrogate escape);
-// - `identifierWords` words (`[A-Za-z_][A-Za-z0-9_]*`, a digit before a word not joining it) are read with `word`,
-//   whose words are runs of `[A-Za-z0-9_]`: `9F` holds the identifier word `F` in W, not here.
+// Strings, exactly (W's decoder through `value` and `value_type_of`):
+// - `value: { type: str }` is `value_type_of(n, "str")`; `value: { regex: R }` (strings only) is
+//   `value(n, v), value_type_of(n, "str"), match("(?s:.*)(?:R)(?s:.*)", v)`.
+// - `parse: { grammar: identifierWords }` reads the decoded `str` text (`literal::parse_string`, `decode_python`; no
+//   words for bytes, a `t` string or an unknown value), words being the leftmost-first runs of `[A-Za-z_][A-Za-z0-9_]*`
+//   (literal/identifier_words.rs: a digit before a word does not join it, `9F` holds `F`). An alias `x` (an ASCII
+//   identifier, else no word equals it) is a word of `v` exactly when `v` holds `x` with nothing but digits between it
+//   and the start or a non-`[A-Za-z0-9_]` character before, and the end or such a character after:
+//   `(?s:.*)(?:^|[^A-Za-z0-9_])[0-9]*x(?:$|[^A-Za-z0-9_])(?s:.*)`. The `compare … eq` of the word and the alias is
+//   their texts' equality.
+//   ASSUMED: `value`'s decoding of a literal (matcher/value.rs) and `decode_python`'s agree (escapes, the size cap).
 // The import's `name` regexes (`(?:^|\.)SqlFragment$`, `^(?:Sql|_Sql)`) read the name node's full text (`node_text`).
 // Options: none of the policy's (`oracleAnalyzer`, `sourceGate`) is read by these clauses.
 
@@ -42,7 +45,9 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl strprefix(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
@@ -50,7 +55,7 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, node_text, str, strprefix, op, line, syntax_error
+.input doc, node, child, field, text, node_text, value, value_type_of, token, strprefix, op, line, syntax_error
 .output violation
 
 // ---- shared: kind sets (the axes' sets are used nowhere else) ----
@@ -58,6 +63,9 @@
 constructor_class_kinds("class_definition").
 .decl constructor_fdef_kinds(kind: symbol)
 constructor_fdef_kinds("function_definition").
+// `all: [{ kind: function_definition }, { regex: ^def\s }]`: a function that is not `async`.
+.decl constructor_sync_def(f: node)
+constructor_sync_def(f) :- node(_, f, "function_definition", _, _), node_text(f, s), match("def\\s(?s:.*)", s).
 
 // ---- shared: strings ----
 // A `string` that is not an f-string (`(?i)^[rub]*f` fails).
@@ -70,10 +78,9 @@ constructor_f_concat(c) :- node(_, c, "concatenated_string", _, _), child(c, s, 
 .decl constructor_plain_literal(n: node)
 constructor_plain_literal(n) :- constructor_plain_part(n).
 constructor_plain_literal(n) :- node(_, n, "concatenated_string", _, _), !constructor_f_concat(n).
-// Its value (APPROXIMATION above: raw content, a concatenation part by part).
+// Its value when it is a `str`, decoded (`value`; a concatenation's is the parts joined).
 .decl constructor_literal_value(n: node, v: symbol)
-constructor_literal_value(n, v) :- constructor_plain_literal(n), node(_, n, "string", _, _), str(n, v).
-constructor_literal_value(n, v) :- constructor_plain_literal(n), node(_, n, "concatenated_string", _, _), child(n, s, _), node(_, s, "string", _, _), str(s, v).
+constructor_literal_value(n, v) :- constructor_plain_literal(n), value(n, v), value_type_of(n, "str").
 
 // ---- shared: fragment-type ----
 // `from … import …SqlFragment as NAME`: the file's fragment aliases.
@@ -98,8 +105,9 @@ constructor_type_kinds("parenthesized_expression").
 constructor_fragment_type(n) :- node(_, n, "identifier", _, _), text(n, "SqlFragment").
 constructor_fragment_type(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "SqlFragment").
 constructor_fragment_type(n) :- node(d, n, "identifier", _, _), text(n, x), constructor_fragment_alias(d, x).
-constructor_fragment_type(n) :- constructor_literal_value(n, v), word("SqlFragment", v).
-constructor_fragment_type(n) :- constructor_literal_value(n, v), node(d, n, _, _, _), constructor_fragment_alias(d, x), word(x, v).
+constructor_fragment_type(n) :- constructor_literal_value(n, v), match("(?s:.*)(?:(?:^|[^A-Za-z0-9_])SqlFragment(?:$|[^A-Za-z0-9_]))(?s:.*)", v).
+constructor_fragment_type(n) :- constructor_literal_value(n, v), node(d, n, _, _, _), constructor_fragment_alias(d, x), match("[A-Za-z_][A-Za-z0-9_]*", x),
+    w = cat("(?s:.*)(?:^|[^A-Za-z0-9_])[0-9]*", cat(x, "(?:$|[^A-Za-z0-9_])(?s:.*)")), match(w, v).
 constructor_fragment_type(n) :- node(_, n, k, _, _), constructor_type_kinds(k), child(n, c, _), constructor_fragment_type(c).
 
 // ---- shared: grammar-class and grammar-base ----
@@ -146,7 +154,7 @@ constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, s, _
 constructor_self_param(q) :- child(q, i, _), node(_, i, "identifier", _, _), text(i, "self").
 
 violation("data-layer-grammar-fragment-usage", "constructor-fragment", "sqlfragment_usage", p, l) :-
-    node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"),
+    node(d, f, "function_definition", _, _), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"),
     nearest(f, c, constructor_class_kinds), constructor_grammar_class(c), field(f, "parameters", ps), child(ps, q, _), constructor_param_shape(q),
     !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
 
@@ -156,13 +164,9 @@ violation("data-layer-grammar-fragment-usage", "attribute-fragment", "sqlfragmen
     nearest(a, c, constructor_class_kinds), constructor_grammar_class(c), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(a, l).
 
 // ---- captured-return: build-string ----
-// A plain string whose value is a `str` (APPROXIMATION above: from the prefix letters).
-.decl captured_str_part(n: node)
-captured_str_part(n) :- node(_, n, "string", _, _), strprefix(n, x), !contains("f", x), !contains("b", x), !contains("t", x).
+// The util's first alternative: a plain literal not inside a concatenation whose value is a `str`.
 .decl captured_in_concat(n: node)
 captured_in_concat(n) :- node(_, n, "string", _, _), child(c, n, _), node(_, c, "concatenated_string", _, _).
-.decl captured_bad_concat(c: node)
-captured_bad_concat(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _), !captured_str_part(s).
 .decl captured_str_method(s: symbol)
 captured_str_method("casefold").
 captured_str_method("format").
@@ -179,8 +183,7 @@ captured_str_method("translate").
 captured_str_method("upper").
 
 .decl captured_bs(n: node)
-captured_bs(n) :- captured_str_part(n), !captured_in_concat(n).
-captured_bs(n) :- node(_, n, "concatenated_string", _, _), !captured_bad_concat(n).
+captured_bs(n) :- constructor_plain_literal(n), !captured_in_concat(n), value_type_of(n, "str").
 captured_bs(n) :- node(_, n, "string", _, _), strprefix(n, x), contains("f", x), !captured_in_concat(n).
 captured_bs(n) :- constructor_f_concat(n).
 captured_bs(n) :- node(_, n, "format_specifier", _, _).
@@ -201,7 +204,7 @@ captured_bs(n) :- node(d, n, "identifier", _, _), text(n, x), node(d, n, _, us, 
 
 .decl captured_binding_place(a: node)
 captured_binding_place(a) :- node(_, a, "assignment", _, _), !inside(a, _, constructor_class_kinds).
-captured_binding_place(a) :- node(_, a, "assignment", _, _), nearest(a, f, constructor_fdef_kinds), !op(f, "async"), field(f, "name", i),
+captured_binding_place(a) :- node(_, a, "assignment", _, _), nearest(a, f, constructor_fdef_kinds), constructor_sync_def(f), field(f, "name", i),
     node(_, i, "identifier", _, _), text(i, "__init__").
 .decl captured_string_binding(d: number, x: symbol, e: number)
 captured_string_binding(d, x, e) :- node(d, a, "assignment", _, e), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r),
@@ -222,12 +225,12 @@ captured_self_assign(a, x) :- node(_, a, "assignment", _, _), field(a, "left", l
 captured_assign(a, x) :- captured_name_assign(a, x).
 captured_assign(a, x) :- captured_self_assign(a, x).
 
-// A class's `__init__` (non-async), directly in its body or decorated there.
+// A class's `__init__` (`^def\s`: not async), directly in its body or decorated there.
 .decl captured_init(c: node, f: node)
-captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, f, _), node(_, f, "function_definition", _, _), !op(f, "async"),
+captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, f, _), constructor_sync_def(f),
     field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
 captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, g, _), node(_, g, "decorated_definition", _, _),
-    field(g, "definition", f), node(_, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
+    field(g, "definition", f), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
 
 .decl captured_pattern_kinds(kind: symbol)
 captured_pattern_kinds("tuple_pattern").
@@ -243,8 +246,16 @@ captured_field(c, x) :- node(_, c, "class_definition", _, _), field(c, "body", b
 captured_field(c, x) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, s, _), node(_, s, "expression_statement", _, _), child(s, a, _), captured_assign(a, x).
 captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), inside(a, f, constructor_fdef_kinds), captured_assign(a, x).
 captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), inside(a, f, constructor_fdef_kinds), field(a, "left", lp), node(_, lp, lk, _, _),
-    captured_pattern_kinds(lk), child(lp, t, i), captured_self_attr(t, x), field(a, "right", rp), node(_, rp, rk, _, _), captured_value_list_kinds(rk),
-    child(rp, v, i), captured_bs(v).
+    captured_pattern_kinds(lk), child(lp, t, _), captured_self_attr(t, x), captured_index(lp, t, i), field(a, "right", rp), node(_, rp, rk, _, _),
+    captured_value_list_kinds(rk), child(rp, v, _), captured_bs(v), captured_index(rp, v, i).
+
+// `compare … text: index`: an element's index, the `,` tokens before it among its parent's children (for the
+// patterns and value lists above only).
+.decl captured_index_list(p: node)
+captured_index_list(p) :- node(_, p, k, _, _), captured_pattern_kinds(k).
+captured_index_list(p) :- node(_, p, k, _, _), captured_value_list_kinds(k).
+.decl captured_index(p: node, c: node, k: number)
+captured_index(p, c, k) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, e), token(p, i, _, s, e), k = count : { token(p, j, ",", _, _), j < i }.
 
 // A parameter named p (as the util shapes `$PARAM`), and one with no type or an `Any`/`str` one.
 .decl captured_param_named(q: node, p: symbol)

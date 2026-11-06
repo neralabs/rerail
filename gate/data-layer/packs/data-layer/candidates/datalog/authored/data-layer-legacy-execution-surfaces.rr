@@ -3,18 +3,24 @@
 // Clauses: raw-cursor-* (6), inventory-*.py (3), removed-read-leaves, eager-plan, eager-txn, graph-fallback-none,
 // legacy-execution-graphs.
 //
-// Options at their defaults: entryPoint "all" (every `$option entryPoint` case holds: `les_entry(0)`),
-// oracleAnalyzer false (the file.path patterns as written; the module-text `inside`). Ignored: any other value of
-// either. The option-gated version (`option_on`/`option_value`, ConvertFoundation A9) is
-// data-layer-legacy-execution-surfaces.pending.rr, which replaces this file when the converter gives those facts.
+// Options, from the converter's facts (`option_on`, `option_value`):
+// - entryPoint: every ast clause (and every relational input) starts with `$option entryPoint`: `all` and
+//   `scan_file_content` give `filePath (?s).*` (holds), anything else `\b\B` (never): `les_entry(0)`.
+// - oracleAnalyzer: true makes the file.path patterns `\b\B`, and the module-text `inside` `filePath (?s).*`.
+//
+// Not started from native/src/code_rule_dsl/logic/programs/data_layer/legacy_execution_surfaces.rr: that program is
+// over the older candidates/rules policy and embeds W's matchers (`ast(d, n, {…})`) and t17's builtins; this file
+// says each matcher in base relations.
 //
 // Semantics followed (native/src/code_rule_dsl/matcher/relation.rs):
 // - `has` stopBy neighbor: a direct child; with `field`: that field's child.
 // - `has` with a stop rule: descendants in pre-order; a descendant the stop rule matches is still tested, its
-//   subtree is not entered (`descend_until`). The walk goes through `child` (named children): an anonymous token
-//   has no children and matches none of the inner rules, so leaving it out changes nothing.
-// - `nthChild: 2`: the converter's form, `child(_, x, 1)` (the second named child; approximation as the
-//   converter's, "nthChild among named children").
+//   subtree is not entered (`descend_until`). The walk goes through `child` (named children less comments): an
+//   anonymous token or a comment has no named children and matches none of the inner rules (identifiers, calls),
+//   so leaving them out changes nothing.
+// - `nthChild: 2` (matcher/nth_child.rs): the second of the parent's named children, comments included (tree-sitter
+//   names them; `child` leaves them out): `child(a, x, j)` with j plus the comments of `a` before x equal to 1. A
+//   comment is a token of `a` whose text starts with `#` (no other Python token does).
 
 // `match(re, s)` is Soufflé's: the whole string matches. W's `regex` searches, so each W pattern P is written
 // `(?s:.*)(?:P)(?s:.*)` (P's own `^`/`$` still anchor at the string's ends).
@@ -30,12 +36,16 @@
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
-// entryPoint at its default, `all`: its case holds (one unit row).
+// entryPoint `all` or `scan_file_content` (one unit row).
 .decl les_entry(u: number)
-les_entry(0).
+les_entry(0) :- option_value("entryPoint", "all").
+les_entry(0) :- option_value("entryPoint", "scan_file_content").
 
 // ---- the receiver walk shared by the receiver tests (raw-cursor-*, eager-*, graph-fallback-none) ----
 // The stop rule: `not any [attribute, call, subscript, parenthesized_expression]` or `inside subscript` (neighbor,
@@ -58,10 +68,15 @@ les_root(x) :- les_cast_arg(_, x).
 les_walk(r, c) :- les_root(r), child(r, c, _).
 les_walk(r, c2) :- les_walk(r, c), les_open(c), child(c, c2, _).
 // `call` whose function (neighbor, field function) is the identifier `cast`, and x the second named child of its
-// arguments (`has field arguments` → `has neighbor` → `nthChild 2`).
+// arguments, comments counted (`has field arguments` → `has neighbor` → `nthChild 2`).
+.decl les_cast_args(c: node, a: node)
+les_cast_args(c, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "cast"),
+    field(c, "arguments", a).
+.decl les_cast_comment(a: node, s: number)
+les_cast_comment(a, s) :- les_cast_args(_, a), token(a, _, t, s, _), prefix("#", t).
 .decl les_cast_arg(c: node, x: node)
-les_cast_arg(c, x) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "cast"),
-    field(c, "arguments", a), child(a, x, 1).
+les_cast_arg(c, x) :- les_cast_args(c, a), child(a, x, j), j <= 1, node(_, x, _, xs, _),
+    k = count : { les_cast_comment(a, s), s < xs }, j + k = 1.
 
 // ==== raw-cursor-* (LEG-050) ====
 // call → has(field function) attribute → has(field attribute) identifier ^(?:execute|fetchall|fetchone)$,
@@ -104,12 +119,12 @@ violation("data-layer-legacy-execution-surfaces", "raw-cursor-l8000_admin/tools"
     match("(?s:.*)(?:^(?:api/)?l8000_admin/tools(?:/|$))(?s:.*)", p),
     !match("(?s:.*)(?:^(?:api/)?(?:l8000_admin/tools/backup_tools\\.py|l8000_admin/tools/docs_search/fts_index\\.py|l8000_admin/tools/logging_tools\\.py)$)(?s:.*)", p).
 
-// ==== file.path regex forbids (LEG-001, LEG-070), oracleAnalyzer false (true makes each pattern \b\B) ====
+// ==== file.path regex forbids (LEG-001, LEG-070): oracleAnalyzer true makes each pattern \b\B (never) ====
 // W (workspace/evaluate.rs) runs a file.path regex on every file of the scope, parsed or not (no syntax gate), its
 // `paths` filter first; the witness is the match's span within the path, line 1. `paths.include` `**/*` holds for
 // every path; the excludes are literal paths.
 .decl inventory_file(d: number, p: symbol)
-inventory_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d).
+inventory_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !option_on("oracleAnalyzer").
 
 violation("data-layer-legacy-execution-surfaces", "inventory-export_cursor.py", "LEG-001", p, 1) :- inventory_file(_, p),
     match("(?s:.*)(?:(?:^|/)export_cursor\\.py$)(?s:.*)", p),
@@ -126,12 +141,13 @@ violation("data-layer-legacy-execution-surfaces", "inventory-legacy_wrappers.py"
 violation("data-layer-legacy-execution-surfaces", "removed-read-leaves", "LEG-070", p, 1) :- inventory_file(_, p),
     match("(?s:.*)(?:^(?:impl/common/l5200_sql_query/_aggregate_query_leaf\\.py|impl/common/l5200_sql_query/_pagination_leaf\\.py|impl/common/l5200_sql_query/_read_query_leaf\\.py)$)(?s:.*)", p).
 
-// ---- oracleAnalyzer false: `inside` (stopBy end) a module whose text W's regex matches (true: every file) ----
+// ---- `$option oracleAnalyzer`: true, `filePath (?s).*` (every file); false, `inside` (stopBy end) a module whose text W's regex matches ----
 // legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|
 // execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch, over the module's
 // full text (comments and strings included). Every node but the module is inside it, so it is per document.
 .decl les_module_hit(d: number)
-les_module_hit(d) :- node(d, m, "module", _, _), node_text(m, s),
+les_module_hit(d) :- doc(d, _, _), option_on("oracleAnalyzer").
+les_module_hit(d) :- node(d, m, "module", _, _), !option_on("oracleAnalyzer"), node_text(m, s),
     match("(?s:.*)(?:legacy_wrappers|legacy_execution_boundary|run_in_legacy_execution_boundary|_legacy_delegate_stub|execute|execute_async|_execute_now|resolve|resolve_async|fetchall_raw|fetchone_raw|execute_raw|fetch)(?s:.*)", s).
 
 // ---- the legacy decorator (eager-*: not inside such a function; legacy-execution-graphs' legacy_fns) ----

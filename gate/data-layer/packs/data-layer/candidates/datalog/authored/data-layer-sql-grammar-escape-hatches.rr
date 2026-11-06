@@ -1,28 +1,27 @@
-// data-layer-sql-grammar-escape-hatches: every clause authored (decision 0043).
+// data-layer-sql-grammar-escape-hatches: every clause authored (decision 0043), from the policy
+// candidates/rules-ast/data-layer-sql-grammar-escape-hatches.json (the converter's first source).
 // Options are read from the converter-given option_on/option_item (sourceGate, ALLOWLISTED_CLASSES, DATA_VALUE_PARAMS,
 // OPERATOR_PARAMS, SCHEMA_METADATA_CLASSES, CALLSITE_PROTECTED_CLASSES, grammar_class_names, safe_param_types), the
-// report gate from report_when_gt.
-// The version that reads `prev_token` (exact `follows`) instead of usage_gap's text cut is
-// authored/data-layer-sql-grammar-escape-hatches.pending.rr, awaiting prev_token.
-// oracleAnalyzer is declared but no clause reads it.
+// report gate from report_when_gt. oracleAnalyzer is declared but no clause reads it.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
-.decl end_line(n: node, l: number)
+.decl end_line(n: loc, l: number)
 .decl node_text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl prev_token(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-// tape_line(d, l, sp): line l as line(n, l) numbers them (W's `layout` lines); its text is text(sp, s).
-.decl tape_line(d: number, l: number, sp: node)
+.decl tape_line(d: number, l: number, sp: span)
 // Given by the converter (read only): the resolved options.
 .decl option_on(name: symbol)
 .decl option_item(name: symbol, v: symbol)
@@ -206,33 +205,35 @@ unsafe_literal_kind("integer"). unsafe_literal_kind("float"). unsafe_literal_kin
 .decl unsafe_literal(p: node)
 unsafe_literal(p) :- unsafe_walk(p, n), node(_, n, k, _, _), unsafe_literal_kind(k).
 
-// A string leaf: a non-f string, or a concatenated_string with no f-string part, parsed as identifierWords (each
-// maximal run of [A-Za-z0-9_] gives one word, from its first [A-Za-z_] to the run's end: literal/identifier_words.rs);
-// each word not a safe name is a leaf.
-// APPROXIMATION: W parses the DECODED value; this reads `str` (the content as written, escapes kept), and a
-// concatenated_string part by part (a word running across two parts, `"Fo" "o"`, is two words here). Exact once
-// `value(n, v)` is bound: `unsafe_text(p, v) :- …, value(n, v).` for both kinds.
+// A string leaf: a non-f string, or a concatenated_string with no f-string part (the regex `(?i)^[rub]*f` on a part's
+// text: a prefix holding `f`), its DECODED text (literal/offsets.rs decode_python, the concatenation's parts joined)
+// parsed as identifierWords (each maximal run of [A-Za-z0-9_] gives one word, from its first [A-Za-z_] to the run's
+// end: literal/identifier_words.rs); each word not a safe name is a leaf. W's decoded text is the node's `value` as a
+// str: a bytes, t-string or malformed literal, or one decoding past 64 KiB, is unknown there (no words) and has no
+// str value here.
 .decl unsafe_fpart(n: node)
 unsafe_fpart(n) :- node(_, n, "string", _, _), strprefix(n, f), contains("f", f).
-.decl unsafe_text(p: node, v: symbol)
-unsafe_text(p, v) :- unsafe_walk(p, n), node(_, n, "string", _, _), !unsafe_fpart(n), str(n, v).
 .decl unsafe_fconcat(n: node)
 unsafe_fconcat(n) :- node(_, n, "concatenated_string", _, _), child(n, x, _), unsafe_fpart(x).
+.decl unsafe_text(p: node, v: symbol)
 unsafe_text(p, v) :-
-    unsafe_walk(p, n), node(_, n, "concatenated_string", _, _), !unsafe_fconcat(n), child(n, x, _),
-    node(_, x, "string", _, _), str(x, v).
+    unsafe_walk(p, n), node(_, n, "string", _, _), !unsafe_fpart(n), value_type_of(n, "str"), value(n, v).
+unsafe_text(p, v) :-
+    unsafe_walk(p, n), node(_, n, "concatenated_string", _, _), !unsafe_fconcat(n), value_type_of(n, "str"), value(n, v).
 .decl unsafe_len(v: symbol, k: number)
 unsafe_len(v, k) :- unsafe_text(_, v), k = strlen(v).
 .decl unsafe_ch(v: symbol, i: number, c: symbol)
-// Positions 0 … 4095 (a * 64 + b), not a recursion (the engine refuses a value made inside one).
-// APPROXIMATION: a string's characters past the 4096th are not read (no type annotation string is that long).
+// Positions 0 … 262143 (a * 4096 + b * 64 + c), not a recursion (the engine refuses a value made inside one, and
+// match_all reads only document spans, not a value): every character of a value W decodes (at most 64 KiB).
 .decl unsafe_digit64(a: number)
 unsafe_digit64(0). unsafe_digit64(1). unsafe_digit64(2). unsafe_digit64(3). unsafe_digit64(4). unsafe_digit64(5). unsafe_digit64(6). unsafe_digit64(7). unsafe_digit64(8). unsafe_digit64(9). unsafe_digit64(10). unsafe_digit64(11). unsafe_digit64(12). unsafe_digit64(13). unsafe_digit64(14). unsafe_digit64(15).
 unsafe_digit64(16). unsafe_digit64(17). unsafe_digit64(18). unsafe_digit64(19). unsafe_digit64(20). unsafe_digit64(21). unsafe_digit64(22). unsafe_digit64(23). unsafe_digit64(24). unsafe_digit64(25). unsafe_digit64(26). unsafe_digit64(27). unsafe_digit64(28). unsafe_digit64(29). unsafe_digit64(30). unsafe_digit64(31).
 unsafe_digit64(32). unsafe_digit64(33). unsafe_digit64(34). unsafe_digit64(35). unsafe_digit64(36). unsafe_digit64(37). unsafe_digit64(38). unsafe_digit64(39). unsafe_digit64(40). unsafe_digit64(41). unsafe_digit64(42). unsafe_digit64(43). unsafe_digit64(44). unsafe_digit64(45). unsafe_digit64(46). unsafe_digit64(47).
 unsafe_digit64(48). unsafe_digit64(49). unsafe_digit64(50). unsafe_digit64(51). unsafe_digit64(52). unsafe_digit64(53). unsafe_digit64(54). unsafe_digit64(55). unsafe_digit64(56). unsafe_digit64(57). unsafe_digit64(58). unsafe_digit64(59). unsafe_digit64(60). unsafe_digit64(61). unsafe_digit64(62). unsafe_digit64(63).
-unsafe_ch(v, i, c) :-
-    unsafe_len(v, k), unsafe_digit64(a), a * 64 < k, unsafe_digit64(b), i = a * 64 + b, i < k, c = substr(v, i, 1).
+.decl unsafe_block(v: symbol, j: number)
+unsafe_block(v, j) :-
+    unsafe_len(v, k), unsafe_digit64(a), a * 4096 < k, unsafe_digit64(b), j = a * 4096 + b * 64, j < k.
+unsafe_ch(v, i, c) :- unsafe_block(v, j), unsafe_len(v, k), unsafe_digit64(e), i = j + e, i < k, c = substr(v, i, 1).
 // unsafe_next(v, i, j): j is the character after i.
 .decl unsafe_next(v: symbol, i: number, j: number)
 unsafe_next(v, i, j) :- unsafe_ch(v, i, _), j = i + 1, unsafe_ch(v, j, _).
@@ -266,10 +267,15 @@ unsafe_word_end(v, j) :- unsafe_word_run(v, _, j), h = j + 1, unsafe_ch(v, h, c)
 unsafe_word(v, w) :- unsafe_word_run(v, i, j), unsafe_word_end(v, j), w = substr(v, i, j - i + 1).
 unsafe_leaf(p, w) :- unsafe_text(p, v), unsafe_word(v, w), !unsafe_safe_name(w), !unsafe_str_exempt_name(p, w).
 
-.decl unsafe_parameter_hit(d: number, p: node)
-unsafe_parameter_hit(d, p) :-
-    unsafe_grammar_class(d, cls, _), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_leaf(p, s), !unsafe_known(s).
-unsafe_parameter_hit(d, p) :- unsafe_grammar_class(d, cls, _), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_literal(p).
+// owner: the class's name, the budget's third group key (row.path, row.position, row.owner).
+.decl unsafe_parameter_hit(d: number, p: node, owner: symbol)
+unsafe_parameter_hit(d, p, owner) :-
+    unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_leaf(p, s), !unsafe_known(s).
+unsafe_parameter_hit(d, p, owner) :-
+    unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_literal(p).
+// One finding per group: (path, the parameter's line, owner).
+.decl unsafe_group(d: number, l: number, owner: symbol)
+unsafe_group(d, l, owner) :- unsafe_parameter_hit(d, p, owner), line(p, l).
 
 // ---- usage-0 … usage-8 --------------------------------------------------------------------------------------------
 // usage-i, for its name X, matches a node that is
@@ -292,30 +298,10 @@ usage_import_kind("dotted_name"). usage_import_kind("aliased_import").
 .decl usage_comma_kind(k: symbol)
 usage_comma_kind("identifier"). usage_comma_kind("call"). usage_comma_kind("attribute"). usage_comma_kind("subscript").
 usage_comma_kind("dotted_name"). usage_comma_kind("aliased_import"). usage_comma_kind("generic_type"). usage_comma_kind("type").
-// usage_prev(n, s): n's previous sibling token is `,` or `import` (W's `follows`, stopBy neighbor: the sibling right
-// before n in the full tree, anonymous tokens and comments included). The text between the previous named sibling
-// (or the parent's start) and n holds only whitespace, anonymous tokens and comments (strings and line continuations
-// are named nodes; comments run to the line's end, and every `#` there starts one), so the last token is `,` when
-// that text's last non-blank line has no `#` and ends with `,`; `import` likewise, as a whole word.
-// APPROXIMATION: the text is cut from the parent's node_text by byte offsets, which substr reads as characters: only
-// where every character of the parent before n is ASCII (checked); elsewhere neither token is found. Exact form, once
-// bound: `usage_prev(n, s) :- prev_token(n, s).` (authored/data-layer-sql-grammar-escape-hatches.pending.rr).
-.decl usage_cand(n: node)
-usage_cand(n) :- node(_, n, k, _, _), usage_import_kind(k), node_text(n, s), prefix("Sql", s).
-usage_cand(n) :- node(_, n, k, _, _), usage_import_kind(k), node_text(n, s), prefix("_SqlPrebuilt", s).
-usage_cand(n) :- node(_, n, k, _, _), usage_comma_kind(k), node_text(n, s), prefix("Sql", s).
-usage_cand(n) :- node(_, n, k, _, _), usage_comma_kind(k), node_text(n, s), prefix("_SqlPrebuilt", s).
-.decl usage_gap(n: node, g: symbol)
-usage_gap(n, g) :-
-    usage_cand(n), child(p, n, 0), node(_, p, _, ps, _), node(_, n, _, ns, _), node_text(p, t), b = ns - ps,
-    prf = substr(t, 0, b), match("[\\x00-\\x7F]*", prf), g = prf.
-usage_gap(n, g) :-
-    usage_cand(n), child(p, n, i), i > 0, h = i - 1, child(p, sib, h), node(_, sib, _, _, se),
-    node(_, p, _, ps, _), node(_, n, _, ns, _), node_text(p, t), b = ns - ps,
-    prf = substr(t, 0, b), match("[\\x00-\\x7F]*", prf), r = se - ps, g = substr(t, r, b - r).
+// usage_prev(n, s): the token right before n among its parent's children, anonymous ones and comments included (W's
+// `follows`, stopBy neighbor, its regex `^,$` / `^import$` on that token's text).
 .decl usage_prev(n: node, s: symbol)
-usage_prev(n, ",") :- usage_gap(n, g), match("(?s)(?:.*[\\n\\r])?[^#\\n\\r]*,[ \\t\\f\\v\\r\\n]*", g).
-usage_prev(n, "import") :- usage_gap(n, g), match("(?s)(?:.*[\\n\\r])?(?:[^#\\n\\r]*[^A-Za-z0-9_#\\n\\r])?import[ \\t\\f\\v\\r\\n]*", g).
+usage_prev(n, s) :- prev_token(n, s).
 // usage-0: SqlAdminQuery
 .decl usage_0_hit(d: number, n: node)
 usage_0_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlAdminQuery", s), usage_call_slot(n).
@@ -411,7 +397,7 @@ usage_8_current(d, n) :- usage_8_hit(d, n), esc_doc(d), !usage_8_earlier(n).
 // Each clause's findings as keys (a set: J1).
 .decl esc_found(clause: symbol, path: symbol, line: number)
 esc_found("forbidden-class", p, l) :- forbidden_class_hit(d, n), doc(d, p, _), line(n, l).
-esc_found("unsafe-parameter", p, l) :- unsafe_parameter_hit(d, n), doc(d, p, _), line(n, l).
+esc_found("unsafe-parameter", p, l) :- unsafe_group(d, l, _), doc(d, p, _).
 esc_found("usage-0", p, l) :- usage_0_current(d, n), doc(d, p, _), line(n, l).
 esc_found("usage-1", p, l) :- usage_1_current(d, n), doc(d, p, _), line(n, l).
 esc_found("usage-2", p, l) :- usage_2_current(d, n), doc(d, p, _), line(n, l).
@@ -421,32 +407,37 @@ esc_found("usage-5", p, l) :- usage_5_current(d, n), doc(d, p, _), line(n, l).
 esc_found("usage-6", p, l) :- usage_6_current(d, n), doc(d, p, _), line(n, l).
 esc_found("usage-7", p, l) :- usage_7_current(d, n), doc(d, p, _), line(n, l).
 esc_found("usage-8", p, l) :- usage_8_current(d, n), doc(d, p, _), line(n, l).
-// report_when (count > k, converter-given report_when_gt): nothing unless the rule's findings, all files and clauses
-// together, number more than k. W counts witnesses; this counts distinct (clause, path, line) keys, the same where no
-// clause has two witnesses on one line (findings are a set of keys, J1).
-.decl esc_total(k: number)
-.decl esc_any(x: number)
-esc_any(1) :- esc_found(_, _, _).
-esc_total(k) :- esc_any(1), k = count : { esc_found(_, _, _) }.
-violation("data-layer-sql-grammar-escape-hatches", "forbidden-class", "escape_hatch", p, l) :- esc_found("forbidden-class", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "forbidden-class", "escape_hatch", p, l) :- esc_found("forbidden-class", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "unsafe-parameter", "escape_hatch", p, l) :- esc_found("unsafe-parameter", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "unsafe-parameter", "escape_hatch", p, l) :- esc_found("unsafe-parameter", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-0", "escape_hatch", p, l) :- esc_found("usage-0", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-0", "escape_hatch", p, l) :- esc_found("usage-0", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-1", "escape_hatch", p, l) :- esc_found("usage-1", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-1", "escape_hatch", p, l) :- esc_found("usage-1", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-2", "escape_hatch", p, l) :- esc_found("usage-2", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-2", "escape_hatch", p, l) :- esc_found("usage-2", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-3", "escape_hatch", p, l) :- esc_found("usage-3", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-3", "escape_hatch", p, l) :- esc_found("usage-3", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-4", "escape_hatch", p, l) :- esc_found("usage-4", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-4", "escape_hatch", p, l) :- esc_found("usage-4", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-5", "escape_hatch", p, l) :- esc_found("usage-5", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-5", "escape_hatch", p, l) :- esc_found("usage-5", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-6", "escape_hatch", p, l) :- esc_found("usage-6", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-6", "escape_hatch", p, l) :- esc_found("usage-6", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-7", "escape_hatch", p, l) :- esc_found("usage-7", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-7", "escape_hatch", p, l) :- esc_found("usage-7", p, l), report_when_gt(g), esc_total(k), k > g.
-violation("data-layer-sql-grammar-escape-hatches", "usage-8", "escape_hatch", p, l) :- esc_found("usage-8", p, l), !report_when_gt(_).
-violation("data-layer-sql-grammar-escape-hatches", "usage-8", "escape_hatch", p, l) :- esc_found("usage-8", p, l), report_when_gt(g), esc_total(k), k > g.
+// report_when (count > k, converter-given report_when_gt): nothing unless the rule's witnesses, all files and clauses
+// together, number more than k (eval/mod.rs, workspace/results.rs: W counts violations, one per witness). A forbid
+// clause's witness is its matched node (nested matches, `SqlUnsafe(x)` after a `,` and its `function`, are two); the
+// budget's is its group (path, the parameter's line, owner).
+.decl esc_usage_witness(clause: symbol, n: node)
+esc_usage_witness("usage-0", n) :- usage_0_current(_, n).
+esc_usage_witness("usage-1", n) :- usage_1_current(_, n).
+esc_usage_witness("usage-2", n) :- usage_2_current(_, n).
+esc_usage_witness("usage-3", n) :- usage_3_current(_, n).
+esc_usage_witness("usage-4", n) :- usage_4_current(_, n).
+esc_usage_witness("usage-5", n) :- usage_5_current(_, n).
+esc_usage_witness("usage-6", n) :- usage_6_current(_, n).
+esc_usage_witness("usage-7", n) :- usage_7_current(_, n).
+esc_usage_witness("usage-8", n) :- usage_8_current(_, n).
+.decl esc_n_class(k: number)
+esc_n_class(k) :- report_when_gt(_), k = count : { forbidden_class_hit(_, _) }.
+.decl esc_n_param(k: number)
+esc_n_param(k) :- report_when_gt(_), k = count : { unsafe_group(_, _, _) }.
+.decl esc_n_usage(k: number)
+esc_n_usage(k) :- report_when_gt(_), k = count : { esc_usage_witness(_, _) }.
+.decl esc_report(x: number)
+esc_report(1) :- esc_found(_, _, _), !report_when_gt(_).
+esc_report(1) :- report_when_gt(g), esc_n_class(a), esc_n_param(b), esc_n_usage(c), k = a + b + c, k > g.
+violation("data-layer-sql-grammar-escape-hatches", "forbidden-class", "escape_hatch", p, l) :- esc_found("forbidden-class", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "unsafe-parameter", "escape_hatch", p, l) :- esc_found("unsafe-parameter", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-0", "escape_hatch", p, l) :- esc_found("usage-0", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-1", "escape_hatch", p, l) :- esc_found("usage-1", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-2", "escape_hatch", p, l) :- esc_found("usage-2", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-3", "escape_hatch", p, l) :- esc_found("usage-3", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-4", "escape_hatch", p, l) :- esc_found("usage-4", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-5", "escape_hatch", p, l) :- esc_found("usage-5", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-6", "escape_hatch", p, l) :- esc_found("usage-6", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-7", "escape_hatch", p, l) :- esc_found("usage-7", p, l), esc_report(1).
+violation("data-layer-sql-grammar-escape-hatches", "usage-8", "escape_hatch", p, l) :- esc_found("usage-8", p, l), esc_report(1).
