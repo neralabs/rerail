@@ -19,7 +19,8 @@
 //!   `violation(policy, V, code, path, line)` at `at`'s line (the code is V, or the `code {c}` column);
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
-//! - `within(n, a)` and `within_stop(n, a, stop)` are ranges over the tape's preorder ids (`Lowerer::within`);
+//! - `within(n, a)` is the engine's relation read off the tree, and `within_stop(n, a, stop)` that less a stop
+//!   between (`Lowerer::within`, decision 0046);
 //! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `+ - * /` and Soufflé's `cat`,
 //!   `strlen`, `to_string`, `substr` are functors.
 //!
@@ -152,7 +153,9 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.projections();
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
-    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "split_dot", "unset"]) {
+    // `within` stays where a rule reads it: the lowering made it the engine's relation.
+    let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
+    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
         l.prog.inputs.retain(|i| i != b);
     }
@@ -371,10 +374,10 @@ impl Lowerer {
         })
     }
 
-    /// `within(n, a)`: n is strictly below a. A node is `d << 32 | its preorder index` and its subtree the ids
-    /// `a + 1 ..= a + size` (`facts::vtab::syntax`'s `tape`), so it is a range over ids: `tape(a, _, z, _),
-    /// n > a, n <= a + z`, which the tape's lookups answer for a bound `a`. `within_stop(n, a, stop)`: also no
-    /// node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
+    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0046): a's
+    /// subtree for a bound `a`, n's ancestors for a bound `n`, made per node looked up. No range over ids and no
+    /// climb through `child` (`core.rr`: tape arithmetic, never Datalog recursion). `within_stop(n, a, stop)`: also
+    /// no node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
     /// ancestor in `stop`, or its nearest one is a or above it.
     fn within(&mut self, rel: &str, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
         let (n, a, stop) = match args {
@@ -383,35 +386,13 @@ impl Lowerer {
             _ => return not_yet(format!("{}{rel}/{}", if neg { "!" } else { "" }, args.len())),
         };
         let (n, a) = (self.term(n)?, self.term(a)?);
-        self.prog.decls.entry("tape".to_owned()).or_insert_with(|| ["n", "par", "size", "depth"].iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
-        if !self.prog.inputs.iter().any(|i| i == "tape") {
-            self.prog.inputs.push("tape".to_owned());
+        let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        self.prog.decls.insert(within.to_owned(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        if !self.prog.inputs.iter().any(|i| i == within) {
+            self.prog.inputs.push(within.to_owned());
         }
-        let z = Term::Var(self.fresh("size"));
-        let tape = Literal::Atom(Atom { rel: "tape".to_owned(), args: vec![a.clone(), Term::Wild, z.clone(), Term::Wild], neg: false, gated: false });
-        let end = Term::Call("add".to_owned(), vec![a.clone(), z]);
+        let below = vec![Literal::Atom(Atom { rel: within.to_owned(), args: vec![n.clone(), a.clone()], neg, gated: false })];
         let cmp = |l: &Term, op: &'static str, r: &Term| Literal::Cmp { l: l.clone(), op, r: r.clone() };
-        if neg {
-            return Ok(vec![vec![tape.clone(), cmp(&n, "<=", &a)], vec![tape, cmp(&n, ">", &end)]]);
-        }
-        let below = match (&n, &a) {
-            // Nothing else gives n: the nodes below a are listed, following `child` down from the a's the rule
-            // gives (work in proportion to the nodes found; there is no range read of ids yet).
-            (Term::Var(nv), Term::Var(av)) if !self.bound_beside(nv) => {
-                let ctx = self.context(std::slice::from_ref(av))?;
-                let rel = self.fresh("below");
-                self.prog.decls.insert(rel.clone(), vec![("a".to_owned(), "node".to_owned()), ("n".to_owned(), "node".to_owned())]);
-                let v = |x: &str| Term::Var(x.to_owned());
-                let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned(), args, neg: false, gated: false });
-                let head = |args: Vec<Term>| Atom { rel: rel.clone(), args, neg: false, gated: false };
-                let mut seed = ctx.clone();
-                seed.args = vec![v("a")];
-                self.prog.rules.push(Rule { head: head(vec![v("a"), v("n")]), body: vec![Literal::Atom(seed), atom("child", vec![v("a"), v("n"), Term::Wild])] });
-                self.prog.rules.push(Rule { head: head(vec![v("a"), v("n")]), body: vec![atom(&rel, vec![v("a"), v("m")]), atom("child", vec![v("m"), v("n"), Term::Wild])] });
-                vec![Literal::Atom(ctx), atom(&rel, vec![a.clone(), n.clone()])]
-            }
-            _ => vec![tape, cmp(&n, ">", &a), cmp(&n, "<=", &end)],
-        };
         let Some(stop) = stop else { return Ok(vec![below]) };
         let set = self.set_name("within_stop", stop)?;
         let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
@@ -597,17 +578,6 @@ impl Lowerer {
         Ok(head)
     }
 
-    /// Whether a positive atom beside the literal being lowered (not a text test or `within`) binds `v`.
-    fn bound_beside(&self, v: &str) -> bool {
-        let atoms: Vec<Lit> = self
-            .siblings
-            .iter()
-            .filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "within" | "within_stop")))
-            .cloned()
-            .collect();
-        body_vars(&atoms).contains(v)
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn aggregate(&mut self, var: &str, agg: &str, over: Option<&STerm>, by: &[STerm], sep: &Option<String>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Vec<Literal>, Error> {
         let op = match agg {
@@ -650,7 +620,7 @@ impl Lowerer {
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
         let bound: BTreeSet<String> = body_vars(
-            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "within" | "within_stop"))).cloned().collect::<Vec<_>>(),
+            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none())).cloned().collect::<Vec<_>>(),
         );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {

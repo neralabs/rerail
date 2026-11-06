@@ -54,52 +54,52 @@ k5("assignment").
 .decl m239(n: node)
 .decl m244(n: node)
 .decl m247(n: node)
-.decl m257(n: node)
-.decl m258(n: node)
-.decl m261(n: node)
-.decl m270(n: node)
-.decl m272(n: node)
-.decl m279(n: node)
-.decl m280(n: node)
+.decl m252(n: node)
+.decl m253(n: node)
+.decl m256(n: node)
+.decl m265(n: node)
+.decl m267(n: node)
+.decl m274(n: node)
+.decl m275(n: node)
+.decl m282(n: node)
+.decl m283(n: node)
 .decl m287(n: node)
-.decl m288(n: node)
-.decl m292(n: node)
+.decl m293(n: node)
 .decl m298(n: node)
+.decl m299(n: node)
 .decl m30(n: node)
-.decl m303(n: node)
-.decl m304(n: node)
+.decl m302(n: node)
 .decl m307(n: node)
 .decl m31(n: node)
+.decl m311(n: node)
 .decl m312(n: node)
-.decl m316(n: node)
-.decl m317(n: node)
-.decl m320(n: node)
-.decl m326(n: node)
-.decl m329(n: node)
+.decl m315(n: node)
+.decl m321(n: node)
+.decl m324(n: node)
+.decl m334(n: node)
+.decl m335(n: node)
 .decl m339(n: node)
-.decl m340(n: node)
-.decl m344(n: node)
-.decl m354(n: node)
+.decl m349(n: node)
+.decl m360(n: node)
+.decl m364(n: node)
 .decl m365(n: node)
-.decl m369(n: node)
-.decl m370(n: node)
-.decl m378(n: node)
+.decl m373(n: node)
 .decl m38(n: node)
+.decl m380(n: node)
 .decl m385(n: node)
+.decl m386(n: node)
 .decl m39(n: node)
-.decl m390(n: node)
-.decl m391(n: node)
-.decl m397(n: node)
-.decl m400(n: node)
-.decl m410(n: node)
-.decl m413(n: node)
-.decl m419(n: node)
-.decl m426(n: node)
-.decl m437(n: node)
+.decl m392(n: node)
+.decl m395(n: node)
+.decl m405(n: node)
+.decl m408(n: node)
+.decl m414(n: node)
+.decl m421(n: node)
+.decl m432(n: node)
+.decl m449(n: node)
 .decl m45(n: node)
-.decl m454(n: node)
-.decl m457(n: node)
-.decl m463(n: node)
+.decl m452(n: node)
+.decl m458(n: node)
 .decl m5(n: node)
 .decl m52(n: node)
 .decl m53(n: node)
@@ -120,18 +120,18 @@ k5("assignment").
 .decl u18(n: node)
 .decl u199(n: node)
 .decl u219(n: node)
-.decl u262(n: node)
-.decl u289(n: node)
-.decl u308(n: node)
-.decl u321(n: node)
-.decl u341(n: node)
-.decl u349(n: node)
-.decl u392(n: node)
+.decl u257(n: node)
+.decl u284(n: node)
+.decl u303(n: node)
+.decl u316(n: node)
+.decl u336(n: node)
+.decl u344(n: node)
+.decl u387(n: node)
 .decl u40(n: node)
-.decl u405(n: node)
-.decl u430(n: node)
-.decl u449(n: node)
-.decl u458(n: node)
+.decl u400(n: node)
+.decl u425(n: node)
+.decl u444(n: node)
+.decl u453(n: node)
 .decl u6(n: node)
 .decl u67(n: node)
 .decl u72(n: node)
@@ -348,79 +348,79 @@ m239(n) :- node(_, n, "function_definition", _, _), child(v232, n, _), node(_, v
 m244(n) :- node(_, n, "identifier", _, _), text(n, v243), (v243 = "compile" ; v243 = "lower" ; v243 = "post_op" ; v243 = "pre_op" ; v243 = "preprocess").
 m247(n) :- node(_, n, "typed_parameter", _, _).
 m247(n) :- node(_, n, "typed_default_parameter", _, _).
-m257(n) :- node(_, n, "identifier", _, _), text(n, v249), v249 = "CompilationContext".
-m257(n) :- node(v251, v250, _, v252, v253), node(v251, n, _, v254, v255), v254 <= v252, v253 <= v255, v250 != n, node(_, v250, "identifier", _, _), text(v250, v256), v256 = "CompilationContext".
-m258(n) :- inside(n, v224, k0), m239(v224).
-m258(n) :- inside(n, v240, k0), node(_, v240, "function_definition", _, _), field(v240, "name", v241), node(_, v241, "identifier", _, _), text(v241, v242), suffix("sql_builder", v242), !m244(v241), field(v240, "parameters", v245), child(v245, v246, _), m247(v246), field(v246, "type", v248), m257(v248).
-m261(n) :- node(v259, n, _, _, _), doc(v259, v260, _), contains("/tests/", v260).
-m270(n) :- node(_, n, "identifier", _, _).
-m270(n) :- node(_, n, "attribute", _, _).
-m272(n) :- node(_, n, "identifier", _, _), text(n, v267), (v267 = "resolved" ; v267 = "resolved_refs").
-m272(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v268), node(_, v268, "identifier", _, _), text(v268, v269), (v269 = "resolved" ; v269 = "resolved_refs").
-m272(n) :- !m270(n), name(n, v271), contains("resolved", v271).
-m279(n) :- node(_, n, "identifier", _, _), text(n, v277), v277 = "pending_pipeline_effects".
-m279(n) :- node(_, n, "identifier", _, _), text(n, v278), glob("apply_*_effect", v278).
-m280(n) :- node(_, n, "identifier", _, _), text(n, v275), (v275 = "compile" ; v275 = "lower" ; v275 = "post_op" ; v275 = "pre_op" ; v275 = "preprocess").
-m280(n) :- node(_, n, "identifier", _, _), text(n, v276), suffix("_lazy", v276).
-m280(n) :- m279(n).
-m287(n) :- node(_, n, "identifier", _, _), text(n, v284), v284 = "pure_lazy".
-m287(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v285), node(_, v285, "identifier", _, _), text(v285, v286), v286 = "pure_lazy".
-m288(n) :- node(_, n, "function_definition", _, _), field(n, "name", v274), m280(v274).
-m288(n) :- node(_, n, "function_definition", _, _), child(v281, n, _), node(_, v281, "decorated_definition", _, _), child(v281, v282, _), node(_, v282, "decorator", _, _), child(v282, v283, _), m287(v283).
-m292(n) :- node(_, n, "identifier", _, _), text(n, v291), v291 = "SqlStepIR".
+m252(n) :- node(_, n, "identifier", _, _), text(n, v249), v249 = "CompilationContext".
+m252(n) :- within(v250, n), node(_, v250, "identifier", _, _), text(v250, v251), v251 = "CompilationContext".
+m253(n) :- inside(n, v224, k0), m239(v224).
+m253(n) :- inside(n, v240, k0), node(_, v240, "function_definition", _, _), field(v240, "name", v241), node(_, v241, "identifier", _, _), text(v241, v242), suffix("sql_builder", v242), !m244(v241), field(v240, "parameters", v245), child(v245, v246, _), m247(v246), field(v246, "type", v248), m252(v248).
+m256(n) :- node(v254, n, _, _, _), doc(v254, v255, _), contains("/tests/", v255).
+m265(n) :- node(_, n, "identifier", _, _).
+m265(n) :- node(_, n, "attribute", _, _).
+m267(n) :- node(_, n, "identifier", _, _), text(n, v262), (v262 = "resolved" ; v262 = "resolved_refs").
+m267(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v263), node(_, v263, "identifier", _, _), text(v263, v264), (v264 = "resolved" ; v264 = "resolved_refs").
+m267(n) :- !m265(n), name(n, v266), contains("resolved", v266).
+m274(n) :- node(_, n, "identifier", _, _), text(n, v272), v272 = "pending_pipeline_effects".
+m274(n) :- node(_, n, "identifier", _, _), text(n, v273), glob("apply_*_effect", v273).
+m275(n) :- node(_, n, "identifier", _, _), text(n, v270), (v270 = "compile" ; v270 = "lower" ; v270 = "post_op" ; v270 = "pre_op" ; v270 = "preprocess").
+m275(n) :- node(_, n, "identifier", _, _), text(n, v271), suffix("_lazy", v271).
+m275(n) :- m274(n).
+m282(n) :- node(_, n, "identifier", _, _), text(n, v279), v279 = "pure_lazy".
+m282(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v280), node(_, v280, "identifier", _, _), text(v280, v281), v281 = "pure_lazy".
+m283(n) :- node(_, n, "function_definition", _, _), field(n, "name", v269), m275(v269).
+m283(n) :- node(_, n, "function_definition", _, _), child(v276, n, _), node(_, v276, "decorated_definition", _, _), child(v276, v277, _), node(_, v277, "decorator", _, _), child(v277, v278, _), m282(v278).
+m287(n) :- node(_, n, "identifier", _, _), text(n, v286), v286 = "SqlStepIR".
+m293(n) :- node(_, n, "identifier", _, _), text(n, v290), (v290 = "PipelineResolvedIR" ; v290 = "StepIR").
+m293(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v291), node(_, v291, "identifier", _, _), text(v291, v292), (v292 = "PipelineResolvedIR" ; v292 = "StepIR").
 m298(n) :- node(_, n, "identifier", _, _), text(n, v295), (v295 = "PipelineResolvedIR" ; v295 = "StepIR").
 m298(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v296), node(_, v296, "identifier", _, _), text(v296, v297), (v297 = "PipelineResolvedIR" ; v297 = "StepIR").
-m303(n) :- node(_, n, "identifier", _, _), text(n, v300), (v300 = "PipelineResolvedIR" ; v300 = "StepIR").
-m303(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v301), node(_, v301, "identifier", _, _), text(v301, v302), (v302 = "PipelineResolvedIR" ; v302 = "StepIR").
-m304(n) :- m298(n).
-m304(n) :- inside(v299, n, k4), m303(v299).
-m307(n) :- node(v305, n, _, _, _), doc(v305, v306, _), contains("/tests/", v306).
-m312(n) :- node(_, n, "identifier", _, _), text(n, v311), v311 = "SqlStepIR".
-m316(n) :- node(_, n, "identifier", _, _), text(n, v315), v315 = "SqlStepIR".
-m317(n) :- node(_, n, "identifier", _, _), text(n, v310), (glob("PipelineResolvedIR", v310) ; glob("StepIR", v310) ; glob("[A-Z_a-z]*IR", v310)), !m312(n).
-m317(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v313), node(_, v313, "identifier", _, _), text(v313, v314), (glob("PipelineResolvedIR", v314) ; glob("StepIR", v314) ; glob("[A-Z_a-z]*IR", v314)), !m316(v313).
-m320(n) :- node(v318, n, _, _, _), doc(v318, v319, _), contains("/tests/", v319).
-m326(n) :- node(_, n, "identifier", _, _), text(n, v323), v323 = "CompiledStep".
-m326(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v324), node(_, v324, "identifier", _, _), text(v324, v325), v325 = "CompiledStep".
-m329(n) :- node(v327, n, _, _, _), doc(v327, v328, _), contains("/tests/", v328).
-m339(n) :- node(_, n, "identifier", _, _), text(n, v336), v336 = "SqlStepIR".
-m339(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v337), node(_, v337, "identifier", _, _), text(v337, v338), v338 = "SqlStepIR".
-m340(n) :- node(_, n, "call", _, _), field(n, "function", v335), m339(v335).
-m344(n) :- node(v342, n, _, _, _), doc(v342, v343, _), contains("/tests/", v343).
-m354(n) :- node(_, n, "identifier", _, _), text(n, v351), v351 = "isinstance".
-m354(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v352), node(_, v352, "identifier", _, _), text(v352, v353), v353 = "isinstance".
-m365(n) :- node(_, n, "identifier", _, _), text(n, v362), (v362 = "Any" ; v362 = "LazyResult" ; v362 = "object" ; v362 = "str").
-m365(n) :- inside(v363, n, k5), node(_, v363, "identifier", _, _), text(v363, v364), (v364 = "Any" ; v364 = "LazyResult" ; v364 = "object" ; v364 = "str").
-m369(n) :- node(_, n, "identifier", _, _), text(n, v366), suffix("ServerRef", v366).
-m369(n) :- inside(v367, n, k5), node(_, v367, "identifier", _, _), text(v367, v368), suffix("ServerRef", v368).
-m370(n) :- m365(n).
-m370(n) :- node(_, n, _, _, _), !m369(n).
-m378(n) :- node(_, n, "identifier", _, _), text(n, v373), (v373 = "ContainmentEdgesReadConfig" ; v373 = "GraphSearchReadConfig").
-m378(n) :- name(n, v374), contains("Graph", v374), name(n, v375), suffix("Config", v375), node(v376, n, _, _, _), doc(v376, v377, _), contains("graph_read", v377).
+m299(n) :- m293(n).
+m299(n) :- inside(v294, n, k4), m298(v294).
+m302(n) :- node(v300, n, _, _, _), doc(v300, v301, _), contains("/tests/", v301).
+m307(n) :- node(_, n, "identifier", _, _), text(n, v306), v306 = "SqlStepIR".
+m311(n) :- node(_, n, "identifier", _, _), text(n, v310), v310 = "SqlStepIR".
+m312(n) :- node(_, n, "identifier", _, _), text(n, v305), (glob("PipelineResolvedIR", v305) ; glob("StepIR", v305) ; glob("[A-Z_a-z]*IR", v305)), !m307(n).
+m312(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v308), node(_, v308, "identifier", _, _), text(v308, v309), (glob("PipelineResolvedIR", v309) ; glob("StepIR", v309) ; glob("[A-Z_a-z]*IR", v309)), !m311(v308).
+m315(n) :- node(v313, n, _, _, _), doc(v313, v314, _), contains("/tests/", v314).
+m321(n) :- node(_, n, "identifier", _, _), text(n, v318), v318 = "CompiledStep".
+m321(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v319), node(_, v319, "identifier", _, _), text(v319, v320), v320 = "CompiledStep".
+m324(n) :- node(v322, n, _, _, _), doc(v322, v323, _), contains("/tests/", v323).
+m334(n) :- node(_, n, "identifier", _, _), text(n, v331), v331 = "SqlStepIR".
+m334(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v332), node(_, v332, "identifier", _, _), text(v332, v333), v333 = "SqlStepIR".
+m335(n) :- node(_, n, "call", _, _), field(n, "function", v330), m334(v330).
+m339(n) :- node(v337, n, _, _, _), doc(v337, v338, _), contains("/tests/", v338).
+m349(n) :- node(_, n, "identifier", _, _), text(n, v346), v346 = "isinstance".
+m349(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v347), node(_, v347, "identifier", _, _), text(v347, v348), v348 = "isinstance".
+m360(n) :- node(_, n, "identifier", _, _), text(n, v357), (v357 = "Any" ; v357 = "LazyResult" ; v357 = "object" ; v357 = "str").
+m360(n) :- inside(v358, n, k5), node(_, v358, "identifier", _, _), text(v358, v359), (v359 = "Any" ; v359 = "LazyResult" ; v359 = "object" ; v359 = "str").
+m364(n) :- node(_, n, "identifier", _, _), text(n, v361), suffix("ServerRef", v361).
+m364(n) :- inside(v362, n, k5), node(_, v362, "identifier", _, _), text(v362, v363), suffix("ServerRef", v363).
+m365(n) :- m360(n).
+m365(n) :- node(_, n, _, _, _), !m364(n).
+m373(n) :- node(_, n, "identifier", _, _), text(n, v368), (v368 = "ContainmentEdgesReadConfig" ; v368 = "GraphSearchReadConfig").
+m373(n) :- name(n, v369), contains("Graph", v369), name(n, v370), suffix("Config", v370), node(v371, n, _, _, _), doc(v371, v372, _), contains("graph_read", v372).
+m380(n) :- node(_, n, "identifier", _, _), text(n, v377), v377 = "dataclass".
+m380(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v378), node(_, v378, "identifier", _, _), text(v378, v379), v379 = "dataclass".
 m385(n) :- node(_, n, "identifier", _, _), text(n, v382), v382 = "dataclass".
 m385(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v383), node(_, v383, "identifier", _, _), text(v383, v384), v384 = "dataclass".
-m390(n) :- node(_, n, "identifier", _, _), text(n, v387), v387 = "dataclass".
-m390(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v388), node(_, v388, "identifier", _, _), text(v388, v389), v389 = "dataclass".
-m391(n) :- m385(n).
-m391(n) :- node(_, n, "call", _, _), field(n, "function", v386), m390(v386).
-m397(n) :- node(_, n, "identifier", _, _), text(n, v394), v394 = "CompiledStep".
-m397(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v395), node(_, v395, "identifier", _, _), text(v395, v396), v396 = "CompiledStep".
-m400(n) :- node(v398, n, _, _, _), doc(v398, v399, _), contains("/tests/", v399).
-m410(n) :- node(_, n, "identifier", _, _), text(n, v407), (v407 = "ddl_effect_lazy" ; v407 = "grammar_effect_lazy").
-m410(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v408), node(_, v408, "identifier", _, _), text(v408, v409), (v409 = "ddl_effect_lazy" ; v409 = "grammar_effect_lazy").
-m413(n) :- node(v411, n, _, _, _), doc(v411, v412, _), contains("/tests/", v412).
-m419(n) :- node(_, n, "identifier", _, _), text(n, v415), prefix("ddl_", v415).
-m419(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v416), name(v416, v418), prefix("ddl_", v418).
-m426(n) :- node(_, n, "identifier", _, _), text(n, v423), v423 = "resolve_defaults".
-m426(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v424), node(_, v424, "identifier", _, _), text(v424, v425), v425 = "resolve_defaults".
-m437(n) :- node(_, n, "identifier", _, _), text(n, v434), v434 = "_lazy_result_step_ref_id".
-m437(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v435), node(_, v435, "identifier", _, _), text(v435, v436), v436 = "_lazy_result_step_ref_id".
-m454(n) :- node(_, n, "identifier", _, _), text(n, v451), v451 = "graph_query_builder_lazy".
-m454(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v452), node(_, v452, "identifier", _, _), text(v452, v453), v453 = "graph_query_builder_lazy".
-m457(n) :- node(_, n, "call", _, _), field(n, "function", v450), m454(v450).
-m457(n) :- node(_, n, "attribute", _, _), field(n, "object", v455), u449(v455).
-m457(n) :- node(_, n, "call", _, _), field(n, "function", v456), u449(v456).
-u449(n) :- m457(n).
-m463(n) :- node(_, n, "identifier", _, _), text(n, v460), (v460 = "flat_map_lazy_result" ; v460 = "map_lazy_result").
-m463(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v461), node(_, v461, "identifier", _, _), text(v461, v462), (v462 = "flat_map_lazy_result" ; v462 = "map_lazy_result").
+m386(n) :- m380(n).
+m386(n) :- node(_, n, "call", _, _), field(n, "function", v381), m385(v381).
+m392(n) :- node(_, n, "identifier", _, _), text(n, v389), v389 = "CompiledStep".
+m392(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v390), node(_, v390, "identifier", _, _), text(v390, v391), v391 = "CompiledStep".
+m395(n) :- node(v393, n, _, _, _), doc(v393, v394, _), contains("/tests/", v394).
+m405(n) :- node(_, n, "identifier", _, _), text(n, v402), (v402 = "ddl_effect_lazy" ; v402 = "grammar_effect_lazy").
+m405(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v403), node(_, v403, "identifier", _, _), text(v403, v404), (v404 = "ddl_effect_lazy" ; v404 = "grammar_effect_lazy").
+m408(n) :- node(v406, n, _, _, _), doc(v406, v407, _), contains("/tests/", v407).
+m414(n) :- node(_, n, "identifier", _, _), text(n, v410), prefix("ddl_", v410).
+m414(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v411), name(v411, v413), prefix("ddl_", v413).
+m421(n) :- node(_, n, "identifier", _, _), text(n, v418), v418 = "resolve_defaults".
+m421(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v419), node(_, v419, "identifier", _, _), text(v419, v420), v420 = "resolve_defaults".
+m432(n) :- node(_, n, "identifier", _, _), text(n, v429), v429 = "_lazy_result_step_ref_id".
+m432(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v430), node(_, v430, "identifier", _, _), text(v430, v431), v431 = "_lazy_result_step_ref_id".
+m449(n) :- node(_, n, "identifier", _, _), text(n, v446), v446 = "graph_query_builder_lazy".
+m449(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v447), node(_, v447, "identifier", _, _), text(v447, v448), v448 = "graph_query_builder_lazy".
+m452(n) :- node(_, n, "call", _, _), field(n, "function", v445), m449(v445).
+m452(n) :- node(_, n, "attribute", _, _), field(n, "object", v450), u444(v450).
+m452(n) :- node(_, n, "call", _, _), field(n, "function", v451), u444(v451).
+u444(n) :- m452(n).
+m458(n) :- node(_, n, "identifier", _, _), text(n, v455), (v455 = "flat_map_lazy_result" ; v455 = "map_lazy_result").
+m458(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v456), node(_, v456, "identifier", _, _), text(v456, v457), (v457 = "flat_map_lazy_result" ; v457 = "map_lazy_result").
 .output violation

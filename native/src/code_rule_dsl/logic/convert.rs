@@ -10,8 +10,8 @@
 //! The relations, per node `n`:
 //! - `inside` (to the end): `inside($n, $a, set)`, the set being the kinds the ancestor's rule allows;
 //! - `inside` with a stop rule: the same, less ancestors past the first stop node (`blocked`);
-//! - `has` likewise, read from the ancestor; with a field, the descendant is within that field's child
-//!   (byte spans, both nodes bound);
+//! - `has` likewise, read from the ancestor; from a node of unknown kinds, `within(m, n)` (the tree); with a
+//!   field, the descendant is within that field's child (byte spans, both nodes bound);
 //! - neighbours: `child(p, c, i)` or `field(p, f, c)`.
 
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
@@ -322,7 +322,7 @@ impl Emitter {
                     body.push(format!("inside({low}, {high}, {ancestors})"));
                 } else {
                     // `has` from a node of unknown kinds: the descendant is any node within it.
-                    body.extend(within_strict(&low, &high, self));
+                    body.push(within_strict(&low, &high));
                 }
                 if let Some(f) = &field {
                     // The path enters `high` through `f`: `low` lies within that field's child.
@@ -353,7 +353,7 @@ impl Emitter {
                     match (axis, &ancestors) {
                         (Axis::Inside, _) => b.push(format!("inside($s, $high, {set})")),
                         (_, Some(ancestors)) => b.push(format!("inside($s, $high, {ancestors})")),
-                        _ => b.extend(within_strict("$s", "$high", self)),
+                        _ => b.push(within_strict("$s", "$high")),
                     }
                     self.rules.push(format!("{blocked}($low, $high) :- {}.", b.join(", ")));
                     body.push(format!("!{blocked}({low}, {high})"));
@@ -840,18 +840,18 @@ fn replace_var(literal: &str, from: &str, to: &str) -> String {
     out
 }
 
-/// `a`'s span within `b`'s (or equal): both bound.
-/// `a` within `b`: in the same document (spans are a document's byte offsets), its span inside `b`'s.
+/// `a` strictly below `b` in the tree: the language's `within` (`core.rr`), which the engine reads off the tree
+/// (decision 0046).
+fn within_strict(a: &str, b: &str) -> String {
+    format!("within({a}, {b})")
+}
+
+/// `a`'s span within `b`'s (or equal). Used where `a` is already below `b`'s parent and `b` is one of its children,
+/// whose spans don't overlap: then it says "`a` is `b` or below it", which the front syntax has no alternative
+/// for. The engine makes it `span_within` (decision 0046).
 fn within(a: &str, b: &str, e: &mut Emitter) -> Body {
     let (d, s, t, u, w) = (e.var(), e.var(), e.var(), e.var(), e.var());
     vec![format!("node({d}, {a}, _, {s}, {t})"), format!("node({d}, {b}, _, {u}, {w})"), format!("{u} <= {s}"), format!("{t} <= {w}")]
-}
-
-/// `a` strictly within `b`: contained and not `b`.
-fn within_strict(a: &str, b: &str, e: &mut Emitter) -> Body {
-    let mut body = within(a, b, e);
-    body.push(format!("{a} != {b}"));
-    body
 }
 
 enum Shape {

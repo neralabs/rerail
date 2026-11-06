@@ -11,7 +11,7 @@ k0("call"). k0("raise_statement").
 .decl k1(kind: symbol)
 k1("function_definition").
 .decl in_scope(d: number)
-.decl m23(n: node)
+.decl m18(n: node)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
@@ -116,9 +116,9 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
 violation("data-layer-raw-execute-regression", "removed-calls", "RER001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "call", _, _), field(n, "function", v3), node(_, v3, "attribute", _, _), field(v3, "attribute", v4), node(_, v4, "identifier", _, _), text(v4, v5), (v5 = "_execute_grammar" ; v5 = "_execute_sql_or_schema_statement" ; v5 = "_execute_sql_or_schema_statement_async" ; v5 = "_execute_template_with_params" ; v5 = "_execute_template_with_params_async" ; v5 = "execute_grammar" ; v5 = "execute_sql" ; v5 = "fetchall_grammar" ; v5 = "fetchall_raw" ; v5 = "fetchall_raw_async" ; v5 = "fetchone_grammar" ; v5 = "fetchone_raw" ; v5 = "fetchone_raw_async" ; v5 = "nonportably_execute_sql" ; v5 = "raw_execute" ; v5 = "raw_execute_async" ; v5 = "raw_execute_fetch" ; v5 = "raw_execute_fetch_async"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m23(n) :- node(_, n, "raise_statement", _, _).
-m23(n) :- node(_, n, "call", _, _), field(n, "function", v19), node(_, v19, "attribute", _, _), field(v19, "attribute", v20), name(v20, v22), prefix("_raise_", v22).
-violation("data-layer-raw-execute-regression", "mixed-marker-0", "RER001", p, 1) :- node(v25, n, _, _, _), doc(v25, v26, _), node(_, n, "module", _, _), node(v27, n, _, _, _), node(v27, v28, _, _, _), name(v28, v29), contains("_execute_sql_or_schema_statement", v29), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
-violation("data-layer-raw-execute-regression", "mixed-marker-1", "RER001", p, 1) :- node(v30, n, _, _, _), doc(v30, v31, _), node(_, n, "module", _, _), node(v32, n, _, _, _), node(v32, v33, _, _, _), name(v33, v34), contains("_execute_sql_or_schema_statement_async", v34), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
-violation("data-layer-raw-execute-regression", "mixed-marker-2", "RER001", p, 1) :- node(v35, n, _, _, _), doc(v35, v36, _), node(_, n, "module", _, _), node(v37, n, _, _, _), node(v37, v38, _, _, _), name(v38, v39), contains("_is_schema_ddl_statement", v39), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+m18(n) :- node(_, n, "raise_statement", _, _).
+m18(n) :- node(_, n, "call", _, _), field(n, "function", v14), node(_, v14, "attribute", _, _), field(v14, "attribute", v15), name(v15, v17), prefix("_raise_", v17).
+violation("data-layer-raw-execute-regression", "mixed-marker-0", "RER001", p, 1) :- node(v20, n, _, _, _), doc(v20, v21, _), node(_, n, "module", _, _), node(v22, n, _, _, _), node(v22, v23, _, _, _), name(v23, v24), contains("_execute_sql_or_schema_statement", v24), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-raw-execute-regression", "mixed-marker-1", "RER001", p, 1) :- node(v25, n, _, _, _), doc(v25, v26, _), node(_, n, "module", _, _), node(v27, n, _, _, _), node(v27, v28, _, _, _), name(v28, v29), contains("_execute_sql_or_schema_statement_async", v29), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-raw-execute-regression", "mixed-marker-2", "RER001", p, 1) :- node(v30, n, _, _, _), doc(v30, v31, _), node(_, n, "module", _, _), node(v32, n, _, _, _), node(v32, v33, _, _, _), name(v33, v34), contains("_is_schema_ddl_statement", v34), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 .output violation

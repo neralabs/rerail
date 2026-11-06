@@ -1,5 +1,9 @@
-//! `within(inner, outer)`: `outer`'s span holds `inner`'s, in one document (P1, notes T10 and
-//! t10-p1-p3-perspective). Exactly the pairs of `node(d, inner, _, s, e), node(d, outer, _, s2, e2),
+//! Containment read off the tree, made per looked-up node (decision 0046), in two modes:
+//!
+//! - **`within(n, a)`** (`Mode::Tree`, the language's built-in, `core.rr`): `n` is strictly below `a`. The
+//!   containers of `n` are its ancestors; the nodes `a` holds are its subtree, a preorder interval.
+//! - **`span_within(inner, outer)`** (`Mode::Span`, what `simplify::span_containment` makes of two span
+//!   comparisons): `outer`'s span holds `inner`'s, in one document. Exactly the pairs of `node(d, inner, _, s, e), node(d, outer, _, s2, e2),
 //! s2 <= s, e <= e2`, read off the tree instead of compared for every pair of a file's nodes:
 //!
 //! - **The containers of a node** (`inner` bound): the node, its ancestors, and its descendants with the
@@ -10,8 +14,9 @@
 //!   document's nodes of zero width inside its span.
 //!
 //! Rows are made per node a join looks up (nothing for a node never bound), kept for the batch, and
-//! never moved: a row's id is stable, and reading it takes no lock. A scan makes every node's
-//! containers. The planner's statistics come from the tree (depths and subtree sizes), not the rows.
+//! never moved: a row's id is stable, and reading it takes no lock. The two sides keep their rows apart:
+//! rows made from `inner` are ids `0..`, rows made from `outer` ids from `OUTER` on. A scan makes every
+//! node's containers and reads ids `0..len`, so it sees each pair once. The planner's statistics come from the tree (depths and subtree sizes), not the rows.
 use super::{Batch, NONE};
 use crate::code_rule_dsl::facts::vtab::Source;
 use parking_lot::Mutex;
@@ -19,16 +24,28 @@ use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+/// Which containment the rows are.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Mode {
+    /// Strictly below in the tree.
+    Tree,
+    /// Span inside span, equal spans included.
+    Span,
+}
+
 /// Rows live in chunks of doubling size: chunk `k` holds `BASE << k` rows.
 const BASE: usize = 1024;
-const CHUNKS: usize = 32;
+const CHUNKS: usize = 22;
+/// The first id of the rows made from `outer`.
+const OUTER: usize = 1 << 31;
 
 pub(super) struct Within {
     batch: Arc<Batch>,
-    /// Each row: inner node row << 32 | outer node row (rows of the batch's `node`).
-    chunks: [OnceLock<Box<[AtomicU64]>>; CHUNKS],
-    /// Rows made, and per node row the run of its rows as inner (`0`) or outer (`1`).
-    made: Mutex<(usize, [FxHashMap<u32, (u32, u32)>; 2])>,
+    mode: Mode,
+    /// Per side, each row: inner node row << 32 | outer node row (rows of the batch's `node`).
+    chunks: [[OnceLock<Box<[AtomicU64]>>; CHUNKS]; 2],
+    /// Per side, the rows made and per node row the run of its rows as inner (`0`) or outer (`1`).
+    made: Mutex<([usize; 2], [FxHashMap<u32, (u32, u32)>; 2])>,
     /// Every node's containers made (a scan): the rows they span.
     all: OnceLock<usize>,
     /// Per document, its nodes of zero width (locals).
@@ -45,11 +62,12 @@ fn slot(row: usize) -> (usize, usize) {
 }
 
 impl Within {
-    pub(super) fn new(batch: Arc<Batch>) -> Self {
+    pub(super) fn new(batch: Arc<Batch>, mode: Mode) -> Self {
         Within {
             batch,
-            chunks: std::array::from_fn(|_| OnceLock::new()),
-            made: Mutex::new((0, [FxHashMap::default(), FxHashMap::default()])),
+            mode,
+            chunks: std::array::from_fn(|_| std::array::from_fn(|_| OnceLock::new())),
+            made: Mutex::new(([0, 0], [FxHashMap::default(), FxHashMap::default()])),
             all: OnceLock::new(),
             zero: OnceLock::new(),
             shape: OnceLock::new(),
@@ -80,9 +98,18 @@ impl Within {
         })
     }
 
-    /// The nodes (locals) whose span holds `local`'s.
+    /// The nodes (locals) that hold `local`.
     fn containers(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        if self.mode == Mode::Tree {
+            let mut out = Vec::new();
+            let mut up = p.parent[local as usize];
+            while up != NONE {
+                out.push(up);
+                up = p.parent[up as usize];
+            }
+            return out;
+        }
         let (s, e) = self.span(doc, local);
         let holds = |b: u32| {
             let (bs, be) = self.span(doc, b);
@@ -112,9 +139,12 @@ impl Within {
         out
     }
 
-    /// The nodes (locals) whose span `local`'s holds.
+    /// The nodes (locals) that `local` holds.
     fn contained(&self, doc: usize, local: u32) -> Vec<u32> {
         let p = &self.batch.docs[doc];
+        if self.mode == Mode::Tree {
+            return (local + 1..=local + p.size[local as usize]).collect();
+        }
         let (s, e) = self.span(doc, local);
         let end = local + p.size[local as usize];
         let mut out: Vec<u32> = (local..=end).collect();
@@ -145,23 +175,34 @@ impl Within {
         if let Some(&run) = made.1[side].get(&row) {
             return run;
         }
-        let start = made.0;
+        let start = made.0[side];
+        assert!(start + others.len() <= OUTER, "within: more rows than ids");
         for (i, other) in others.iter().enumerate() {
             let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
             let (k, at) = slot(start + i);
-            let chunk = self.chunks[k].get_or_init(|| (0..BASE << k).map(|_| AtomicU64::new(0)).collect());
+            let chunk = self.chunks[side][k].get_or_init(|| (0..BASE << k).map(|_| AtomicU64::new(0)).collect());
             chunk[at].store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
         }
-        made.0 += others.len();
-        self.len.store(made.0, Ordering::Release);
-        let run = (start as u32, others.len() as u32);
+        made.0[side] += others.len();
+        if side == 0 {
+            self.len.store(made.0[0], Ordering::Release);
+        }
+        let run = ((start + side * OUTER) as u32, others.len() as u32);
         made.1[side].insert(row, run);
         run
     }
 
+    fn names(&self) -> [&'static str; 2] {
+        match self.mode {
+            Mode::Tree => ["n", "a"],
+            Mode::Span => ["inner", "outer"],
+        }
+    }
+
     fn pair(&self, row: usize) -> u64 {
-        let (k, at) = slot(row);
-        self.chunks[k].get().expect("a row made")[at].load(Ordering::Relaxed)
+        let side = usize::from(row >= OUTER);
+        let (k, at) = slot(row - side * OUTER);
+        self.chunks[side][k].get().expect("a row made")[at].load(Ordering::Relaxed)
     }
 
     fn shape(&self) -> (i64, i64, i64, i64) {
@@ -169,7 +210,9 @@ impl Within {
             let (mut rows, mut nodes, mut sq_inner, mut sq_outer) = (0i64, 0i64, 0i64, 0i64);
             for p in &self.batch.docs {
                 for l in 0..p.len() as usize {
-                    let (d, s) = (i64::from(p.depth[l]) + 1, i64::from(p.size[l]) + 1);
+                    // Span mode counts the node itself on both sides.
+                    let own = i64::from(self.mode == Mode::Span);
+                    let (d, s) = (i64::from(p.depth[l]) + own, i64::from(p.size[l]) + own);
                     rows += d;
                     nodes += 1;
                     sq_inner += d * d;
@@ -183,9 +226,9 @@ impl Within {
 
 impl Source for Within {
     fn columns(&self) -> Vec<String> {
-        vec!["inner".to_owned(), "outer".to_owned()]
+        self.names().iter().map(|&c| c.to_owned()).collect()
     }
-    /// Every row: a scan makes each node's containers.
+    /// Every pair once: a scan makes each node's containers, ids `0..len`.
     fn len(&self) -> usize {
         *self.all.get_or_init(|| {
             for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
@@ -222,6 +265,7 @@ impl Source for Within {
     /// depth + 1, per outer node its subtree. Values never cross documents.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let (rows, nodes, sq_inner, sq_outer) = self.shape();
-        Some(vec![("inner".to_owned(), rows, nodes, sq_inner, sq_inner), ("outer".to_owned(), rows, nodes, sq_outer, sq_outer)])
+        let [inner, outer] = self.names();
+        Some(vec![(inner.to_owned(), rows, nodes, sq_inner, sq_inner), (outer.to_owned(), rows, nodes, sq_outer, sq_outer)])
     }
 }

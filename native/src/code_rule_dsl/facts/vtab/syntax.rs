@@ -32,8 +32,10 @@ use std::sync::Arc;
 
 mod within;
 
-/// The span-containment relation `within(inner, outer)` (`within::Within`).
+/// The language's `within(n, a)`, `n` strictly below `a` (`within::Within`, tree mode).
 pub(crate) const WITHIN: &str = "within";
+/// `span_within(inner, outer)`, `outer`'s span holding `inner`'s (`within::Within`, span mode).
+pub(crate) const SPAN_WITHIN: &str = "span_within";
 
 /// One document of a batch.
 #[derive(Clone)]
@@ -898,8 +900,9 @@ pub(crate) fn with_nearest(
         }
         out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
-    // Span containment (P1): made per looked-up node, so a program that never reads it pays nothing.
-    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch)))));
+    // Containment (decision 0046): made per looked-up node, so a program that never reads it pays nothing.
+    out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));
+    out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Span))));
     Ok(out)
 }
 

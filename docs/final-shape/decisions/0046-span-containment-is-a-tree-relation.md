@@ -1,6 +1,7 @@
-# 0046: Span containment is a relation read off the tree, `within(inner, outer)`
+# 0046: Containment is a relation read off the tree: `within(n, a)` and `span_within(inner, outer)`
 
-Status: accepted (2026-11-06; built and measured)
+Status: accepted (2026-11-06; built and measured; amended the same day: the language's `within` is served by the
+same relation, and the converter writes it, §4)
 
 ## Intro
 
@@ -23,8 +24,8 @@ million on the full corpus (notes `t10-p1-p3-perspective.md`, P1).
 
 `simplify::span_containment` looks for two positive `node` atoms on the same file variable, with
 `u <= s` and `t <= w` between their spans (written either way round). It replaces the two
-comparisons with `within(a, b)`. The `node` atoms stay, because they may bind or test more. The
-span variables then usually become `_`. `within(inner: node, outer: node)` is declared as an
+comparisons with `span_within(a, b)`. The `node` atoms stay, because they may bind or test more. The
+span variables then usually become `_`. `span_within(inner: node, outer: node)` is declared as an
 input.
 
 ### 2. The relation is the tree's, made on lookup
@@ -45,7 +46,11 @@ uses that to answer both directions exactly:
   - the file's zero-width nodes inside its span.
 
 Rows are made only for the nodes a join looks up. They are kept for the batch in chunks that never
-move, so a row's id is stable and reading it takes no lock. A scan makes every node's containers,
+move, so a row's id is stable and reading it takes no lock. The two directions keep their rows
+apart: rows made from `inner` have ids from 0, rows made from `outer` ids from 2^31. A scan reads
+ids `0..len` after making every node's containers, so it sees each pair once. (The first build kept
+one store, so a scan after lookups by `outer` saw some pairs twice; the brute-force test now looks
+up by `outer` before it scans.) A scan makes every node's containers,
 about the sum of (depth + 1) rows, which is linear in the nodes times their depth.
 
 The planner's statistics come from the tree, not from the rows:
@@ -64,6 +69,32 @@ either: `InRel::len` asks the source only when a step scans.
   errors or empty bodies, which bring zero-width nodes.
 - `two_nodes_of_a_document_compared_by_span_are_within` checks the rewrite, and that two nodes on
   different file variables are left alone.
+
+### 4. The language's `within` is the same relation, in tree mode
+
+`core.rr` already had `within(n, a)`: n strictly below a. It was lowered at read time to a range
+over preorder ids (`tape(a, _, z, _), n > a, n <= a + z`), or, when nothing else bound n, to a
+recursive `below` relation climbing `child`. That recursion is what `core.rr` says the tape exists
+to avoid.
+
+Now the lowering keeps `within(n, a)` as an atom, and the engine serves it from the same source in
+tree mode:
+
+- `n` bound: its ancestors (its depth);
+- `a` bound: its subtree, the ids `a + 1 ..= a + size` (its size).
+
+`within_stop` is that atom plus the stop test, as before. The span relation is named `span_within`,
+so one name has one meaning.
+
+The converter now writes `within(m, n)` for `has` from a node of unknown kinds and for its
+`blocked` relation (13 of the 14 clauses that compared spans). Before, it wrote span comparisons.
+The 14th, a `has` through a field, says "the descendant is the field's child or below it". The
+front syntax the converter writes has no alternatives, and the child is one of its parent's
+children, whose spans don't overlap. So it keeps the span comparisons, and the engine makes them
+`span_within`.
+
+Where the ancestor's kinds are known, the converter already writes `inside_<set>`. None of the 14
+clauses knew them: in each, only the inner node's kind was fixed (`call`, `identifier`).
 
 ## What the prior work says
 
@@ -89,7 +120,13 @@ Instructions retired, with machine load 50–97:
 | serverplan-quality, 9,010 files | 371.2e9 | 355.6e9 |
 | `m650`'s join, rows into its steps (9,010 files) | 13.3 million | about 24 thousand |
 
-The replay's totals are unchanged (3988 273 228 0, 1638 95 55 0, 2350 178 173 0).
+The replay's totals are unchanged (3988 273 228 0, 1638 95 55 0, 2350 178 173 0), with both span
+and tree semantics for the 13 strict clauses.
+
+After §4: transaction-closures 4.9e9 (200 files) and 236.4e9 (9,010 files); serverplan-quality
+355.1e9 and 361.4e9 in two runs at load 67–109. The joins' rows (14,394,225) and SQL VM steps were
+identical in both profiles, so the spread is load. `m650` now reads `within(call, n)` by `n`
+(986 → 9,217 rows), with no `!=` filter after it.
 
 The first build counted a view's rows when loading it. That made all of `within` at engine open,
 and serverplan-quality rose to 413e9. Counting on first scan fixed it.

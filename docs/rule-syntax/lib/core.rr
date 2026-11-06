@@ -129,7 +129,8 @@
 // would materialise every (node, ancestor) pair; on the tape each question is a range comparison.
 // In `function f() { g(); }`: within(call_g, body), within(call_g, f), but not within(f, call_g).
 .decl within(n: node, a: node)                           // n is strictly below a
-// Cost: a range test per pair, but its rows are every (node, ancestor) pair. Bind both ends, or use inside/nearest.
+// Cost: read off the tree for the end that is bound: n's ancestors (its depth), or a's subtree (its size). Bind
+// one end; with neither bound it is every (node, ancestor) pair. A kind set on a belongs in inside/has.
 // inside(n, a, set) / has(a, n, set): a is a strict ancestor of n whose kind is in set (decision 0036); the same
 // pairs, read from either end. inside(call, f, "function_definition"): call is somewhere in f. These are the
 // forms rules use: the kind set is part of the axis, so the transducer answers them in one tape pass.

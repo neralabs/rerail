@@ -12,23 +12,23 @@ k0("module").
 .decl k1(kind: symbol)
 k1("identifier").
 .decl in_scope(d: number)
-.decl m174(n: node)
-.decl m180(n: node)
+.decl m134(n: node)
+.decl m140(n: node)
 .decl out_scope(d: number)
-.decl t110(s: symbol)
-.decl t124(s: symbol)
-.decl t163(s: symbol)
-.decl t177(s: symbol)
-.decl t183(s: symbol)
-.decl t190(s: symbol)
-.decl t196(s: symbol)
-.decl t202(s: symbol)
+.decl t123(s: symbol)
+.decl t137(s: symbol)
+.decl t143(s: symbol)
+.decl t150(s: symbol)
+.decl t156(s: symbol)
+.decl t162(s: symbol)
 .decl t32(s: symbol)
 .decl t54(s: symbol)
-.decl t68(s: symbol)
+.decl t63(s: symbol)
 .decl t7(s: symbol)
-.decl t82(s: symbol)
-.decl t96(s: symbol)
+.decl t72(s: symbol)
+.decl t81(s: symbol)
+.decl t90(s: symbol)
+.decl t99(s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 in_scope(d) :- doc(d, p, _), glob("docs/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/**/*.py", p).
@@ -66,35 +66,35 @@ violation("data-layer-legacy-execution-surfaces", "raw-txn-l4000_permissions", "
 violation("data-layer-legacy-execution-surfaces", "raw-txn-l8000_admin/tools", "LEG-040", p, l) :- node(v40, n, _, _, _), doc(v40, v41, _), node(_, n, "call", _, _), field(n, "function", v42), node(_, v42, "attribute", _, _), field(v42, "attribute", v43), node(_, v43, "identifier", _, _), text(v43, v44), (v44 = "execute_raw" ; v44 = "fetchall_raw" ; v44 = "fetchone_raw"), node(v45, n, _, _, _), doc(v45, v46, _), (glob("api/l8000_admin/tools", v46) ; glob("api/l8000_admin/tools/**", v46) ; glob("l8000_admin/tools", v46) ; glob("l8000_admin/tools/**", v46)), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 t54(s) :- text(_, s), icontains("cursor", s).
 t54(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
-t68(s) :- text(_, s), icontains("cursor", s).
-t68(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
-t82(s) :- text(_, s), icontains("cursor", s).
-t82(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
-t96(s) :- text(_, s), icontains("cursor", s).
-t96(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
-t110(s) :- text(_, s), icontains("cursor", s).
-t110(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
-t124(s) :- text(_, s), icontains("cursor", s).
-t124(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
-t163(s) :- doc(_, s, _), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
-t163(s) :- doc(_, _, s), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
-violation("data-layer-legacy-execution-surfaces", "boundary-calls", "LEG-082", p, l) :- node(v157, n, _, _, _), doc(v157, v158, _), node(_, n, "call", _, _), field(n, "function", v159), node(_, v159, "identifier", _, _), text(v159, v160), (v160 = "run_in_legacy_execution_boundary" ; v160 = "run_in_legacy_execution_boundary_async"), node(v161, n, _, _, _), doc(v161, v162, _), (glob("api/data_layer/**", v162) ; glob("api/impl/**", v162) ; glob("api/l[0-9]*", v162) ; glob("api/l[0-9]*/**", v162) ; glob("data_layer/**", v162) ; glob("impl/**", v162) ; glob("l[0-9]*", v162) ; glob("l[0-9]*/**", v162)), !t163(v162), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m174(n) :- node(_, n, "dotted_name", _, _), text(n, v170), v170 = "legacy_execution_boundary".
-m174(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v171), name(v171, v173), v173 = "legacy_execution_boundary".
-t177(s) :- doc(_, s, _), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
-t177(s) :- doc(_, _, s), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
-violation("data-layer-legacy-execution-surfaces", "raw-boundary-import", "LEG-084", p, l) :- node(v164, n, _, _, _), doc(v164, v165, _), node(_, n, "import_from_statement", _, _), field(n, "module_name", v166), name(v166, v168), (v168 = "l2000_connection.execution_boundary" ; v168 = "l2050_transaction.execution_boundary"), child(n, v169, _), m174(v169), node(v175, n, _, _, _), doc(v175, v176, _), (glob("api/data_layer/**", v176) ; glob("api/impl/**", v176) ; glob("api/l[0-9]*", v176) ; glob("api/l[0-9]*/**", v176) ; glob("data_layer/**", v176) ; glob("impl/**", v176) ; glob("l[0-9]*", v176) ; glob("l[0-9]*/**", v176)), !t177(v176), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m180(n) :- node(_, n, "if_statement", _, _).
-m180(n) :- node(_, n, "elif_clause", _, _).
-t183(s) :- doc(_, s, _), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
-t183(s) :- doc(_, _, s), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
-t190(s) :- doc(_, s, _), prefix("docs/data_history/", s).
-t190(s) :- doc(_, _, s), prefix("docs/data_history/", s).
-violation("data-layer-legacy-execution-surfaces", "post-fetch-filter_query_results", "LEG-071", p, l) :- node(v185, n, _, _, _), doc(v185, v186, _), node(_, n, "identifier", _, _), text(n, v187), contains("filter_query_results", v187), node(v188, n, _, _, _), doc(v188, v189, _), (prefix("api/docs/", v189) ; prefix("api/impl/common/l2070_server_plan/", v189) ; prefix("api/impl/common/l5200_sql_query/", v189) ; prefix("api/l4000_permissions/", v189) ; prefix("api/reqs/", v189) ; prefix("docs/", v189) ; prefix("impl/common/l2070_server_plan/", v189) ; prefix("impl/common/l5200_sql_query/", v189) ; prefix("l4000_permissions/", v189) ; prefix("reqs/", v189)), !t190(v189), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-t196(s) :- doc(_, s, _), prefix("docs/data_history/", s).
-t196(s) :- doc(_, _, s), prefix("docs/data_history/", s).
-violation("data-layer-legacy-execution-surfaces", "post-fetch-filter_query_results_async", "LEG-071", p, l) :- node(v191, n, _, _, _), doc(v191, v192, _), node(_, n, "identifier", _, _), text(n, v193), contains("filter_query_results_async", v193), node(v194, n, _, _, _), doc(v194, v195, _), (prefix("api/docs/", v195) ; prefix("api/impl/common/l2070_server_plan/", v195) ; prefix("api/impl/common/l5200_sql_query/", v195) ; prefix("api/l4000_permissions/", v195) ; prefix("api/reqs/", v195) ; prefix("docs/", v195) ; prefix("impl/common/l2070_server_plan/", v195) ; prefix("impl/common/l5200_sql_query/", v195) ; prefix("l4000_permissions/", v195) ; prefix("reqs/", v195)), !t196(v195), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-t202(s) :- doc(_, s, _), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
-t202(s) :- doc(_, _, s), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
-violation("data-layer-legacy-execution-surfaces", "graph-fallback-text", "LEG-061", p, l) :- node(v197, n, _, _, _), doc(v197, v198, _), node(_, n, "identifier", _, _), text(n, v199), (contains("fetchall_via_plan", v199) ; contains("fetchone_via_plan", v199) ; contains("grammar_row_lazy", v199) ; contains("grammar_rows_lazy", v199)), node(v200, n, _, _, _), doc(v200, v201, _), (prefix("api/impl/common/l9700_sql_graph_query/", v201) ; prefix("impl/common/l9700_sql_graph_query/", v201)), !t202(v201), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t63(s) :- text(_, s), icontains("cursor", s).
+t63(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
+t72(s) :- text(_, s), icontains("cursor", s).
+t72(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
+t81(s) :- text(_, s), icontains("cursor", s).
+t81(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
+t90(s) :- text(_, s), icontains("cursor", s).
+t90(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
+t99(s) :- text(_, s), icontains("cursor", s).
+t99(s) :- text(_, s), (iglob("conn", s) ; iglob("connection", s) ; iglob("db", s) ; iglob("raw_conn", s) ; iglob("raw_connection", s)).
+t123(s) :- doc(_, s, _), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
+t123(s) :- doc(_, _, s), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
+violation("data-layer-legacy-execution-surfaces", "boundary-calls", "LEG-082", p, l) :- node(v117, n, _, _, _), doc(v117, v118, _), node(_, n, "call", _, _), field(n, "function", v119), node(_, v119, "identifier", _, _), text(v119, v120), (v120 = "run_in_legacy_execution_boundary" ; v120 = "run_in_legacy_execution_boundary_async"), node(v121, n, _, _, _), doc(v121, v122, _), (glob("api/data_layer/**", v122) ; glob("api/impl/**", v122) ; glob("api/l[0-9]*", v122) ; glob("api/l[0-9]*/**", v122) ; glob("data_layer/**", v122) ; glob("impl/**", v122) ; glob("l[0-9]*", v122) ; glob("l[0-9]*/**", v122)), !t123(v122), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m134(n) :- node(_, n, "dotted_name", _, _), text(n, v130), v130 = "legacy_execution_boundary".
+m134(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v131), name(v131, v133), v133 = "legacy_execution_boundary".
+t137(s) :- doc(_, s, _), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
+t137(s) :- doc(_, _, s), (glob("**/tests/**", s) ; glob("api/l2050_transaction/execution_boundary.py", s) ; glob("api/l2050_transaction/legacy_wrappers.py", s) ; glob("l2050_transaction/execution_boundary.py", s) ; glob("l2050_transaction/legacy_wrappers.py", s)).
+violation("data-layer-legacy-execution-surfaces", "raw-boundary-import", "LEG-084", p, l) :- node(v124, n, _, _, _), doc(v124, v125, _), node(_, n, "import_from_statement", _, _), field(n, "module_name", v126), name(v126, v128), (v128 = "l2000_connection.execution_boundary" ; v128 = "l2050_transaction.execution_boundary"), child(n, v129, _), m134(v129), node(v135, n, _, _, _), doc(v135, v136, _), (glob("api/data_layer/**", v136) ; glob("api/impl/**", v136) ; glob("api/l[0-9]*", v136) ; glob("api/l[0-9]*/**", v136) ; glob("data_layer/**", v136) ; glob("impl/**", v136) ; glob("l[0-9]*", v136) ; glob("l[0-9]*/**", v136)), !t137(v136), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m140(n) :- node(_, n, "if_statement", _, _).
+m140(n) :- node(_, n, "elif_clause", _, _).
+t143(s) :- doc(_, s, _), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+t143(s) :- doc(_, _, s), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+t150(s) :- doc(_, s, _), prefix("docs/data_history/", s).
+t150(s) :- doc(_, _, s), prefix("docs/data_history/", s).
+violation("data-layer-legacy-execution-surfaces", "post-fetch-filter_query_results", "LEG-071", p, l) :- node(v145, n, _, _, _), doc(v145, v146, _), node(_, n, "identifier", _, _), text(n, v147), contains("filter_query_results", v147), node(v148, n, _, _, _), doc(v148, v149, _), (prefix("api/docs/", v149) ; prefix("api/impl/common/l2070_server_plan/", v149) ; prefix("api/impl/common/l5200_sql_query/", v149) ; prefix("api/l4000_permissions/", v149) ; prefix("api/reqs/", v149) ; prefix("docs/", v149) ; prefix("impl/common/l2070_server_plan/", v149) ; prefix("impl/common/l5200_sql_query/", v149) ; prefix("l4000_permissions/", v149) ; prefix("reqs/", v149)), !t150(v149), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t156(s) :- doc(_, s, _), prefix("docs/data_history/", s).
+t156(s) :- doc(_, _, s), prefix("docs/data_history/", s).
+violation("data-layer-legacy-execution-surfaces", "post-fetch-filter_query_results_async", "LEG-071", p, l) :- node(v151, n, _, _, _), doc(v151, v152, _), node(_, n, "identifier", _, _), text(n, v153), contains("filter_query_results_async", v153), node(v154, n, _, _, _), doc(v154, v155, _), (prefix("api/docs/", v155) ; prefix("api/impl/common/l2070_server_plan/", v155) ; prefix("api/impl/common/l5200_sql_query/", v155) ; prefix("api/l4000_permissions/", v155) ; prefix("api/reqs/", v155) ; prefix("docs/", v155) ; prefix("impl/common/l2070_server_plan/", v155) ; prefix("impl/common/l5200_sql_query/", v155) ; prefix("l4000_permissions/", v155) ; prefix("reqs/", v155)), !t156(v155), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+t162(s) :- doc(_, s, _), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+t162(s) :- doc(_, _, s), (s = "api/impl/common/l9700_sql_graph_query/sql_graph_query.py" ; s = "impl/common/l9700_sql_graph_query/sql_graph_query.py").
+violation("data-layer-legacy-execution-surfaces", "graph-fallback-text", "LEG-061", p, l) :- node(v157, n, _, _, _), doc(v157, v158, _), node(_, n, "identifier", _, _), text(n, v159), (contains("fetchall_via_plan", v159) ; contains("fetchone_via_plan", v159) ; contains("grammar_row_lazy", v159) ; contains("grammar_rows_lazy", v159)), node(v160, n, _, _, _), doc(v160, v161, _), (prefix("api/impl/common/l9700_sql_graph_query/", v161) ; prefix("impl/common/l9700_sql_graph_query/", v161)), !t162(v161), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 .output violation

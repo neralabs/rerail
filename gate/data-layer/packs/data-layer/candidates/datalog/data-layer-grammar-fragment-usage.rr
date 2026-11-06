@@ -16,9 +16,9 @@ k1("module").
 k2("import_from_statement").
 .decl in_scope(d: number)
 .decl m20(n: node)
-.decl m46(n: node)
-.decl m49(n: node)
-.decl m50(n: node)
+.decl m41(n: node)
+.decl m44(n: node)
+.decl m45(n: node)
 .decl m9(n: node)
 .decl out_scope(d: number)
 .decl u24(n: node)
@@ -41,10 +41,10 @@ violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_u
 m9(n) :- field(n, "name", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "SqlDeferredRenderable" ; v8 = "SqlFragment" ; v8 = "SqlPreRenderedFragment").
 m20(n) :- node(_, n, "function_definition", _, _), field(n, "name", v15), node(_, v15, "identifier", _, _), text(v15, v16), v16 = "render".
 m20(n) :- node(_, n, "decorated_definition", _, _), field(n, "definition", v17), node(_, v17, "function_definition", _, _), field(v17, "name", v18), node(_, v18, "identifier", _, _), text(v18, v19), v19 = "render".
-u29(n) :- node(v31, v30, _, v32, v33), node(v31, n, _, v34, v35), v34 <= v32, v33 <= v35, v30 != n, node(_, v30, "import_from_statement", _, _), child(v30, v36, _), node(_, v36, "aliased_import", _, _), field(v36, "name", v37), name(v37, v38), (glob("*.SqlFragment", v38) ; glob("SqlFragment", v38)).
-m46(n) :- strprefix(n, v45), contains("f", v45).
-m49(n) :- child(n, v47, _), node(_, v47, "string", _, _), strprefix(v47, v48), contains("f", v48).
-m50(n) :- node(_, n, "string", _, _), !m46(n).
-m50(n) :- node(_, n, "concatenated_string", _, _), !m49(n).
+u29(n) :- within(v30, n), node(_, v30, "import_from_statement", _, _), child(v30, v31, _), node(_, v31, "aliased_import", _, _), field(v31, "name", v32), name(v32, v33), (glob("*.SqlFragment", v33) ; glob("SqlFragment", v33)).
+m41(n) :- strprefix(n, v40), contains("f", v40).
+m44(n) :- child(n, v42, _), node(_, v42, "string", _, _), strprefix(v42, v43), contains("f", v43).
+m45(n) :- node(_, n, "string", _, _), !m41(n).
+m45(n) :- node(_, n, "concatenated_string", _, _), !m44(n).
 violation("data-layer-grammar-fragment-usage", "syntax-error", "python_parse_error", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
 .output violation

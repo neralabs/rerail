@@ -178,5 +178,9 @@ drop to about the matches.
 3. The converter's `inside` where kinds are known, last, and only as tidying. The engine
    handles both forms by then.
 
+   Done (decision 0046 §4). No converted clause knew the ancestor's kinds, so none could use
+   `inside`. The converter writes the language's `within` instead, which the engine serves
+   from the same tree relation.
+
 Both fixes are measured the same way: the replay totals stay identical, and instructions
 retired go down on s200 and on the full corpus.
