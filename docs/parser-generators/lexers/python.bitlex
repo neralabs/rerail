@@ -336,7 +336,7 @@ token float    = start is_float  through number
 mask flt       = fill(is_float, ~number) & number           # the bytes of float tokens
 mask dec       = number & ~flt & ~based                     # the bytes of decimal integers
 mask radix_at  = based & prev(num_start)                    # the x, o or b
-mask body      = based & ~num_start & ~radix_at             # what follows it
+mask nbody     = based & ~num_start & ~radix_at             # what follows it
 mask hdig      = (fill(radix_at & xradix, ~number) & hexdig)
                | (fill(radix_at & oradix, ~number) & octdig)
                | (fill(radix_at & bradix, ~number) & bindig) # a digit of the token's own base
@@ -344,14 +344,14 @@ mask after_dot = fill(prev(dotc & number), ~number) & number
 mask after_e   = fill(prev(expc & flt), ~number) & number
 
 # 1. Only the bytes each kind allows.
-error "number: bad byte"     when (body & ~(hdig | usc | lsuf)) | (dec & ~(digit | usc | lsuf | jsuf))
+error "number: bad byte"     when (nbody & ~(hdig | usc | lsuf)) | (dec & ~(digit | usc | lsuf | jsuf))
                                   | (flt & ~(digit | usc | dotc | expc | signc | jsuf))
 # 2. A suffix (l, L, j, J) is the last byte.
 error "number: inner suffix" when number & (lsuf | jsuf) & ~lasts(number)
 # 3. 0x, 0o, 0b are followed by a digit of the base or a '_'.
 error "number: bare radix"   when radix_at & ~next(hdig | usc)
 # 4. In 0x… a '_' is followed by a digit of the base; elsewhere it follows a decimal digit.
-error "number: bad '_'"      when (body & usc & ~next(hdig))
+error "number: bad '_'"      when (nbody & usc & ~next(hdig))
                                   | ((dec | flt) & usc & ~prev(digit))
 # 5. At most one '.', at most one e, and no '.' after the e.
 error "number: '.' or e twice" when (flt & dotc & (after_dot | after_e)) | (flt & expc & after_e)
@@ -424,4 +424,4 @@ error "an identifier that starts with a non-start character" when code & high & 
 # A non-ASCII byte there is taken as part of a word; if it is U+200B and the like, it is not.
 error "a non-ASCII character right before a string prefix" when opened & prev(pfx) & (prev(high, 2) | (prev(pfx, 2) & prev(high, 3)))
 # Implicit (03-bitlex.md §2.4): overlapping tokens, bytes in no token and not skipped, a `munch`
-# whose fixed point did not settle, and a `check` that failed.
+# whose fixed point did not settle, and a machine that ends outside its `final` states.

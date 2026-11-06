@@ -90,6 +90,11 @@ mask opening    = lex.on(code -> str)
 mask closing    = lex.on(str -> code)
 mask body       = inside & ~opening              # between the quotes
 
+# An escape is a backslash in a body that is not itself escaped, and the byte after it.
+mask esc        = backslash & body & ~escaped
+mask esc_bytes  = span(esc, 2)
+mask content    = body & ~esc_bytes
+
 # --- Outside strings -----------------------------------------------------------------------------
 
 mask cmt_start  = lex.on(code -> s1)
