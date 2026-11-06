@@ -42,9 +42,12 @@
 //   `NOT coalesce(…, 0)` reports a NULL projection too. VMI001 an expected item no constructor's caller is, at the
 //   policy's location `impl/common/l2070_server_plan/steps` (start/end 0: W's default span, line 1).
 //
-// Exact: no approximation.
-// W's error on duplicate relational identities (key caller+issue with the finding id) is not modelled: it needs two
-// rows at one span, which these inputs cannot produce.
+// The clause implements the policy's stages as written, for every expectedCallers list; the one divergence is W's
+// failure on duplicate relational identities (finding id = path, span and the key caller+issue). Only VMI001 rows can
+// collide: an expectedCallers list naming one item twice gives two rows at (location, 0, 0) with one key, and W fails
+// the clause ("relational results have duplicate identities") where this program, reading option_item (a set),
+// reports the item once. The default list names no item twice. Constructor rows are one per call node, so distinct
+// spans. An error result is not a violation, so this is not expressible here.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
