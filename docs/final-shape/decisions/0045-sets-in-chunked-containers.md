@@ -1,6 +1,6 @@
 # 0045: Node sets are chunked containers: arrays, bitmaps and runs
 
-Status: proposed (user agreed to the draft, 2026-11-06); thresholds wait on the measurement (Steps)
+Status: proposed (user agreed to the draft, 2026-11-06); step 1 measured (Evidence)
 
 ## Intro
 
@@ -98,9 +98,37 @@ Only chunks present in the inputs are visited: an intersection walks the shorter
 - **Containers are per document**, so 0044's per-document derivations replace a document's
   chunks and nothing else.
 
+## Evidence: the census (step 1)
+
+`facts::set_census` (ignored test), on the 9,010-file repository at `2b1504ad`: 18,423,804 nodes in
+the engine's id space. 120 sets: every kind, and "inside a node of kind K" for `function_definition`,
+`class_definition`, `call`, `with_statement`, `except_clause` and `lambda`. Sizes, not timings
+(23.4 s CPU with parsing, 232 MB peak; load 108, which does not affect sizes).
+
+| Form | All 120 sets |
+|---|---|
+| dense bitmap over the whole space (0024 §1 dense) | 276 MB |
+| dense bitmap per document, documents with members only | 154 MB |
+| sorted u32 lists | 201 MB |
+| **containers (array, bitmap or runs per chunk)** | **42 MB** |
+
+- **A chunk is almost always a document.** The largest file has 145,555 nodes; 5 files of 9,010
+  are over one chunk.
+- **Kind sets are arrays.** 393,314 array chunks, 242 bitmap chunks (mostly `identifier`), and
+  almost no runs: a kind's members are rarely next to each other.
+- **Inside-sets are runs.** "Inside a function" is 15.6 M members in 135 K runs: 0.6 MB as runs,
+  62 MB as a u32 list (100x). "Inside a class": 7.3 M members, 30 K runs, 0.18 MB.
+- **Most (set, document) pairs are empty: 61%.** A chunked operation skips them; a dense one does
+  not.
+- So the common operation, a kind set inside a scope set, is an array against runs: a binary
+  search per member over a few runs.
+
+Not measured yet: operation time, and the sets the data-layer programs actually build (label
+results, candidate roots, text slots). Step 2 measures both against `NodeSet`.
+
 ## Steps
 
-1. **Measure first** (the 9,010-file repository, core facts only, no rule run). For every kind
+1. **Measure first** (done, Evidence) (the 9,010-file repository, core facts only, no rule run). For every kind
    set and every `inside_<set>` result the data-layer programs use, per document chunk: the
    member count, the run count, and the size as array, bitmap and runs. Report the distribution
    and what Roaring's thresholds would choose.
