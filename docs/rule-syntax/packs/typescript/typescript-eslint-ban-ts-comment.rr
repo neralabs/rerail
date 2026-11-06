@@ -1,0 +1,63 @@
+.policy "typescript-eslint-ban-ts-comment" revision 3
+.description "Don't use @ts-ignore or @ts-nocheck, and give each @ts-expect-error a short explanation; they silence TypeScript errors without saying why."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-a.rr"
+//   ts_directive(c, d, desc)
+
+// typescript-eslint's ban-ts-comment: comments that switch TypeScript's checking, `@ts-<directive>`. Each
+// directive has an option: true bans it, "allow-with-description" asks for a reason of at least
+// minimumDescriptionLength (3) characters, { descriptionFormat: "regex" } also asks the reason to match, false
+// allows it. Defaults: ts-ignore and ts-nocheck true, ts-expect-error "allow-with-description", ts-check false.
+//   // @ts-ignore                       → banned; suggestion: @ts-expect-error
+//   // @ts-expect-error                 → needs a description     // @ts-expect-error: TS2345 until v2   fine
+//   // @ts-nocheck   after the first statement: not a pragma there, so fine
+.violation ban_ts_comment(at: node, id: symbol, msg: symbol) code "@typescript-eslint/ban-ts-comment" "{msg}"
+    suppress eslint "@typescript-eslint/ban-ts-comment"
+    suppress oxlint "ban-ts-comment"
+    fix use_expect_error "Replace \"@ts-ignore\" with \"@ts-expect-error\"."
+ban_ts_comment(c, "tsIgnoreInsteadOfExpectError", "Use \"@ts-expect-error\" instead of \"@ts-ignore\", as \"@ts-ignore\" will do nothing if the following line is error-free.") :-
+    live(c, "ignore", _), mode("ignore", "ban").
+ban_ts_comment(c, "tsDirectiveComment", cat("Do not use \"@ts-", cat(d, "\" because it alters compilation errors."))) :-
+    live(c, d, _), d != "ignore", mode(d, "ban").
+ban_ts_comment(c, "tsDirectiveCommentRequiresDescription", cat("Include a description after the \"@ts-", cat(d,
+    cat("\" directive to explain why it is necessary. The description must be ", cat(to_string(k), " characters or longer."))))) :-
+    live(c, d, s), mode(d, "describe"), min_length(k), trimmed_length(s, n), n < k.
+ban_ts_comment(c, "tsDirectiveCommentDescriptionNotMatchPattern", cat("The description for the \"@ts-", cat(d,
+    cat("\" directive must match the ", cat(f, " format."))))) :-
+    live(c, d, s), mode(d, "describe"), min_length(k), trimmed_length(s, n), n >= k, format(d, f),
+    !match(cat("[\\s\\S]*(?:", cat(f, ")[\\s\\S]*")), s).
+use_expect_error(c, "tsIgnoreInsteadOfExpectError", _) :- text(c, t), u = @replace_all(t, "@ts-ignore", "@ts-expect-error")
+    => replace(c, `$u`).
+
+// live(c, d, s): directive comment c, minus a `@ts-nocheck` at or after the first statement's line (TypeScript
+// reads it only in the file's leading comments).
+.decl live(c: node, d: symbol, s: symbol)
+live(c, d, s) :- ts_directive(c, d, s), d != "nocheck".
+live(c, "nocheck", s) :- ts_directive(c, "nocheck", s), !after_code(c).
+.decl after_code(c: node)  // a statement of c's program starts on c's line or before it
+after_code(c) :- ts_directive(c, "nocheck", _), docof(c, f), program(f, p), line(c, l), child(p, x, _),
+    !kind(x, "comment"), line(x, m), m <= l.
+
+// mode(d, m): "ban", "describe" or "off" for directive d, from its option or the default.
+.decl mode(d: symbol, m: symbol)
+mode(d, "ban") :- directive_name(d), option(cat("ts-", d), "true").
+mode(d, "describe") :- directive_name(d), (option(cat("ts-", d), "allow-with-description") ; format(d, _)).
+mode(d, m) :- directive_name(d), !option(cat("ts-", d), _), !format(d, _), default_mode(d, m).
+.decl default_mode(d: symbol, m: symbol)
+default_mode("ignore", "ban"). default_mode("nocheck", "ban"). default_mode("expect-error", "describe").
+default_mode("check", "off").
+.decl directive_name(d: symbol)
+directive_name(d) :- default_mode(d, _).
+.decl format(d: symbol, f: symbol)  // { descriptionFormat: f }, flattened as ts-ignore/descriptionFormat
+format(d, f) :- directive_name(d), (option(cat("ts-", cat(d, "/descriptionFormat")), f) ;
+    option(cat("ts-", cat(d, ".descriptionFormat")), f)).
+.decl min_length(k: number)
+min_length(to_number(v)) :- option("minimumDescriptionLength", v).
+min_length(3) :- !option("minimumDescriptionLength", _).
+// trimmed_length(s, n): s.trim() has n characters (counted as bytes: exact for ASCII; the plugin counts graphemes).
+.decl trimmed_length(s: symbol, n: number)
+trimmed_length(s, strlen(t)) :- live(_, _, s), match("\\s*(?<t>\\S(?:[\\s\\S]*\\S)?)\\s*", s).
+trimmed_length(s, 0) :- live(_, _, s), match("\\s*", s).

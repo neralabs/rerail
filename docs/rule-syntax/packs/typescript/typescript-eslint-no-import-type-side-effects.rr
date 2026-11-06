@@ -1,0 +1,31 @@
+.policy "typescript-eslint-no-import-type-side-effects" revision 4
+.description "Use a top-level import type when every imported name is an inline type import; otherwise a side-effect import stays at runtime."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+// typescript-eslint's no-import-type-side-effects: an import whose every name is marked `type` inline. Under
+// verbatimModuleSyntax (or importsNotUsedAsValues: preserve) TypeScript keeps it as `import "m"`, a side-effect
+// import; a top-level `import type` is dropped entirely. The fix moves the qualifier to the top.
+//   import { type A, type B } from "m";     → import type { A, B } from "m";
+//   import { type A, B } from "m";          fine: B is a value      import D, { type E } from "m";   fine
+.violation no_import_type_side_effects(at: node) code "@typescript-eslint/no-import-type-side-effects"
+    "TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime. Convert this to a top-level type qualifier to properly remove the entire import."
+    suppress eslint "@typescript-eslint/no-import-type-side-effects"
+    suppress oxlint "no-import-type-side-effects"
+    fix safe hoist_type "Use a top-level `import type`"
+no_import_type_side_effects(i) :- kind(i, "import_statement"), !op(i, "type"), specifier(i, _),
+    count : { specifier(i, s), !inline_type(s) } = 0.
+
+// specifier(i, s): s is one of the names i binds: a default, `* as ns`, or a `{ … }` specifier.
+.decl specifier(i: node, s: node)
+specifier(i, s) :- kind(i, "import_statement"), child(i, c, _), kind(c, "import_clause"), child(c, s, _),
+    (kind(s, "identifier") ; kind(s, "namespace_import")).
+specifier(i, s) :- kind(i, "import_statement"), child(i, c, _), kind(c, "import_clause"), child(c, n, _),
+    kind(n, "named_imports"), child(n, s, _), kind(s, "import_specifier").
+.decl inline_type(s: node)  // `type A` inside the braces
+inline_type(s) :- kind(s, "import_specifier"), first_token(s, t), text(t, "type"), field(s, "name", n), t != n.
+
+// Each inline `type` goes, and one is added after `import`.
+hoist_type(i) :- specifier(i, s), first_token(s, t) => delete(t).
+hoist_type(i) :- first_token(i, t) => replace(t, `$t type`).  // `import` is a token: insert_after takes nodes

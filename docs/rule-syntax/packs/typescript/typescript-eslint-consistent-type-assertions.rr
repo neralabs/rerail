@@ -1,0 +1,68 @@
+.policy "typescript-eslint-consistent-type-assertions" revision 2
+.description "Write TypeScript type assertions with as instead of angle brackets; the angle-bracket form can't be used in TSX files."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/ts-a.rr"
+//   assertion(n, e, w), cast_text(n, s), cast_type(n, t), const_cast(n); estree_parent, deparen
+
+// typescript-eslint's consistent-type-assertions: one way of writing type assertions.
+//   assertionStyle "as" (the default):     <T>x          → Use 'as T' instead of '<T>'.
+//   assertionStyle "angle-bracket":        x as T        → Use '<T>' instead of 'as T'.
+//   assertionStyle "never":                x as T        → Do not use any type assertions. (`as const` is fine)
+// With the preferred style, objectLiteralTypeAssertions and arrayLiteralTypeAssertions ("allow", the default,
+// "allow-as-parameter" or "never") also forbid asserting a literal's type, unless the type is any, unknown or
+// const, or (allow-as-parameter) the assertion is an argument, a callee, a thrown value, a default value, a
+// JSX expression or a tagged template's substitution:
+//   const x = {} as Foo;   → Always prefer const x: T = { ... }.        f({} as Foo)  fine with allow-as-parameter
+.violation consistent_type_assertions(at: node, id: symbol, msg: symbol)
+    code "@typescript-eslint/consistent-type-assertions" "{msg}"
+    suppress eslint "@typescript-eslint/consistent-type-assertions"
+    fix to_as "Write the assertion with `as`"
+    fix to_annotation "Annotate the variable instead"
+    fix to_satisfies "Use `satisfies` instead"
+consistent_type_assertions(n, "as", cat("Use 'as ", cat(s, cat("' instead of '<", cat(s, ">'."))))) :-
+    style("as"), assertion(n, _, "angle-bracket"), cast_text(n, s).
+consistent_type_assertions(n, "angle-bracket", cat("Use '<", cat(s, cat(">' instead of 'as ", cat(s, "'."))))) :-
+    style("angle-bracket"), assertion(n, _, "as"), cast_text(n, s).
+consistent_type_assertions(n, "never", "Do not use any type assertions.") :- style("never"), assertion(n, _, _),
+    !const_cast(n).
+consistent_type_assertions(n, "unexpectedObjectTypeAssertion", "Always prefer const x: T = { ... }.") :-
+    literal_cast(n, "object", "objectLiteralTypeAssertions").
+consistent_type_assertions(n, "unexpectedArrayTypeAssertion", "Always prefer const x: T[] = [ ... ].") :-
+    literal_cast(n, "array", "arrayLiteralTypeAssertions").
+
+.decl style(w: symbol)  // assertionStyle
+style(w) :- option("assertionStyle", w).
+style("as") :- !option("assertionStyle", _).
+
+// literal_cast(n, k, o): n asserts the type of a literal of kind k in the preferred style, and option o forbids it.
+.decl literal_cast(n: node, k: symbol, o: symbol)
+literal_cast(n, k, o) :- style(w), w != "never", assertion(n, e, w), kind(e, k), (k = "object" ; k = "array"),
+    literal_option(k, o), (option(o, "never") ; option(o, "allow-as-parameter"), !as_parameter(n)), checked_type(n).
+.decl literal_option(k: symbol, o: symbol)
+literal_option("object", "objectLiteralTypeAssertions"). literal_option("array", "arrayLiteralTypeAssertions").
+// checked_type(n): any, unknown and const are always allowed (a qualified `A.const` is not const).
+.decl checked_type(n: node)
+checked_type(n) :- cast_type(n, _), !top_cast(n).
+.decl top_cast(n: node)  // `as any`, `as (unknown)`
+top_cast(n) :- cast_type(n, t), type_child(t, y), kind(y, "predefined_type"), (text(y, "any") ; text(y, "unknown")).
+// as_parameter(n): isAsParameter, on ESTree's parent (parentheses aside).
+.decl as_parameter(n: node)
+as_parameter(n) :- estree_parent(n, p), (kind(p, "call_expression") ; kind(p, "new_expression") ;
+    kind(p, "throw_statement") ; kind(p, "jsx_expression") ; kind(p, "assignment_pattern") ;
+    kind(p, "object_assignment_pattern") ; kind(p, "required_parameter") ; kind(p, "optional_parameter")).
+as_parameter(n) :- estree_parent(n, a), kind(a, "arguments"), estree_parent(a, c),
+    (kind(c, "call_expression") ; kind(c, "new_expression")).
+as_parameter(n) :- estree_parent(n, s), kind(s, "template_substitution"), estree_parent(s, t),
+    estree_parent(t, c), kind(c, "call_expression").
+
+// Fixes. `<T>x` → `(x as T)`: the parentheses keep the meaning wherever the assertion stood. x is taken as
+// written, so `<T>(b || c)` keeps its own parentheses: `((b || c) as T)`.
+to_as(n, "as", _) :- assertion(n, _, "angle-bracket"), child(n, x, 1), cast_text(n, s) => replace(n, `($x as $s)`).
+// const x = {} as T;  →  const x: T = {};      or      const x = {} satisfies T;
+to_annotation(n, _, _) :- literal_cast(n, _, _), estree_parent(n, v), kind(v, "variable_declarator"),
+    !field(v, "type", _), field(v, "name", x), assertion(n, e, _), cast_text(n, s)
+    => replace(x, `$x: $s`), replace(n, `$e`).
+to_satisfies(n, _, _) :- literal_cast(n, _, _), assertion(n, e, _), cast_text(n, s) => replace(n, `$e satisfies $s`).

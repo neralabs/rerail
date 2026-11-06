@@ -1,0 +1,37 @@
+.policy "typescript-eslint-no-confusing-non-null-assertion" revision 4
+.description "Avoid a non-null assertion right before =, ==, ===, in or instanceof; it reads like != or a negated test."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-common.rr"
+//   deparen(e, x)
+
+// typescript-eslint's no-confusing-non-null-assertion: an assignment or comparison whose left side ends in a
+// `!` token, unless a `)` closes the left side first. The left side need not be the assertion itself.
+//   a! == b          → looks like a != b             a! = b    → looks like a != b
+//   1 + b! === 3     → the left side `1 + b!` ends in `!`
+//   a! in b          a! instanceof B                 → read as !(a in b)
+//   (a!) == b        fine: the parenthesis separates them
+// Reported at the whole expression. The suggestions drop the `!` (when the left side is the assertion) or
+// wrap the left side in parentheses.
+.violation no_confusing_non_null_assertion(at: node, id: symbol, msg: symbol)
+    code "@typescript-eslint/no-confusing-non-null-assertion" "{msg}"
+    suppress eslint "@typescript-eslint/no-confusing-non-null-assertion"
+    suppress oxlint "no-confusing-non-null-assertion"
+    fix wrap_left "Wrap the left-hand side in parentheses"
+no_confusing_non_null_assertion(n, id, m) :- confusing(n, l, o), last_token(l, t), text(t, "!"),
+    token_after(l, u), !text(u, ")"), says(o, id, m).
+wrap_left(n, _, _) :- confusing(n, l, _) => insert_before(l, `(`), insert_after(l, `)`).
+
+// confusing(n, l, o): n is `l o …` with one of the operators; l is ESTree's left, without its parentheses.
+.decl confusing(n: node, l: node, o: symbol)
+confusing(n, l, o) :- (kind(n, "binary_expression") ; kind(n, "assignment_expression")), op(n, o), says(o, _, _),
+    field(n, "left", w), deparen(w, l).
+
+.decl says(o: symbol, id: symbol, msg: symbol)
+says("=", "confusingAssign", "Confusing combination of non-null assertion and equal test like \"a! = b\", which looks very similar to not equal \"a != b\".").
+says("==", "confusingEqual", "Confusing combination of non-null assertion and equal test like \"a! == b\", which looks very similar to not equal \"a !== b\".").
+says("===", "confusingEqual", "Confusing combination of non-null assertion and equal test like \"a! == b\", which looks very similar to not equal \"a !== b\".").
+says("in", "confusingOperator", "Confusing combination of non-null assertion and `in` operator like \"a! in b\", which might be misinterpreted as \"!(a in b)\".").
+says("instanceof", "confusingOperator", "Confusing combination of non-null assertion and `instanceof` operator like \"a! instanceof b\", which might be misinterpreted as \"!(a instanceof b)\".").

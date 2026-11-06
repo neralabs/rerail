@@ -1,0 +1,63 @@
+.policy "typescript-eslint-no-empty-function" revision 8
+.description "Avoid empty TypeScript functions, methods and arrows; add the missing code or a comment explaining why it is empty."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-functions.rr"
+//   function_node, fn_block, empty_block, fn_holder, member_kind, fn_words, generator
+
+// typescript-eslint's no-empty-function: ESLint's rule, with TypeScript's exceptions. A function whose `{ }` body
+// holds no statement and no comment.
+//   function foo() {}                  → Unexpected empty function 'foo'.
+//   function foo() { /* no-op */ }     fine: the comment says why
+//   const f = () => 0;                 fine: no block at all
+// `allow` lists kinds that may be empty: functions, arrowFunctions, generatorFunctions, methods,
+// generatorMethods, getters, setters, constructors, asyncFunctions, asyncMethods; and TypeScript's
+// private-constructors, protected-constructors, decoratedFunctions (a decorated method, getter or setter) and
+// overrideMethods. A constructor with parameter properties (`constructor(private a) {}`) is never reported.
+// Reported at the body's `{`.
+.violation no_empty_function(at: node, name: symbol) code "@typescript-eslint/no-empty-function"
+    "Unexpected empty {name}. Implement it, or add a comment saying why it is intentionally empty."
+    suppress eslint "@typescript-eslint/no-empty-function"
+    suppress oxlint "no-empty-function"
+    suppress biome "lint/suspicious/noEmptyBlockStatements"
+    fix explain "Add comment inside empty {name}."
+no_empty_function(b, s) :- fn_block(f, b), empty_block(b), sort(f, k), !allowed(f, k), fn_words(f, s).
+explain(b, _) => replace(b, `{ /* empty */ }`).
+
+// sort(f, k): ESLint's getKind. A method, getter, setter or constructor is its own kind; any other function,
+// an object or class property's value too, is a function. Then a generator or async prefix:
+//   ({ async *m() {} })   generatorMethods      class A { f = async function () {} }   asyncFunctions
+.decl sort(f: node, k: symbol)
+sort(f, "arrowFunctions") :- kind(f, "arrow_function").
+sort(f, "getters") :- member_kind(f, "get").
+sort(f, "setters") :- member_kind(f, "set").
+sort(f, "constructors") :- member_kind(f, "constructor").
+sort(f, k) :- base(f, b), prefixed(f, b, k).
+.decl base(f: node, b: symbol)
+base(f, "Methods") :- member_kind(f, "method").
+base(f, "Functions") :- function_node(f), !kind(f, "arrow_function"), !kind(f, "method_definition").
+.decl prefixed(f: node, b: symbol, k: symbol)
+prefixed(f, b, cat("generator", b)) :- base(f, b), generator(f).
+prefixed(f, b, cat("async", b)) :- base(f, b), !generator(f), op(f, "async").
+prefixed(f, b, k) :- base(f, b), !generator(f), !op(f, "async"), (b = "Methods", k = "methods" ;
+    b = "Functions", k = "functions").
+
+// allowed(f, k): the `allow` option names f's kind, or one of the TypeScript exceptions holds. Those are for
+// class members only (ESTree's MethodDefinition): a decorated field `@d f = () => {}` is not excused.
+.decl allowed(f: node, k: symbol)
+allowed(f, k) :- sort(f, k), option_item("allow", _, k).
+allowed(f, "constructors") :- sort(f, "constructors"), field(f, "parameters", ps), child(ps, p, _),
+    (child(p, m, _), kind(m, "accessibility_modifier") ; op(p, "readonly") ;
+    child(p, m, _), kind(m, "override_modifier")).
+allowed(f, "constructors") :- sort(f, "constructors"), child(f, m, _), kind(m, "accessibility_modifier"),
+    text(m, a), (a = "private", option_item("allow", _, "private-constructors") ;
+    a = "protected", option_item("allow", _, "protected-constructors")).
+allowed(f, k) :- sort(f, k), kind(f, "method_definition"),
+    (decorated(f), option_item("allow", _, "decoratedFunctions") ;
+     child(f, o, _), kind(o, "override_modifier"), option_item("allow", _, "overrideMethods")).
+// A decorator sits before its member in TypeScript's class body.
+.decl decorated(m: node)
+decorated(m) :- next_sibling(d, m), kind(d, "decorator").
+decorated(m) :- child(m, d, _), kind(d, "decorator").
