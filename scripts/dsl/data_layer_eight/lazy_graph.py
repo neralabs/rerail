@@ -21,7 +21,7 @@ def apply(stages,vals):
       traversal('graph_permission',"SELECT f.__path,f.symbol id,f.fact_order ordinal FROM function_flags f",'SELECT __path,src,dst,ordinal,location FROM graph_edges',"SELECT NULL __path,target.symbol id,target.__start location FROM graph_functions target WHERE target.symbol IN "+vals('PREPROCESS_PERMISSION_IO_ENTRYPOINTS'),True),
     ]
     stages[insertion:insertion]=shared
-    get('rollups')['query']="SELECT f.__path,f.id root,c.kind category,r.location FROM graph_rollups r CROSS JOIN graph_categories c JOIN function_flags f ON r.__path=c.kind||':'||f.__path AND r.root=c.kind||':'||f.symbol"
+    get('rollups')['query']="SELECT f.__path,f.id root,c.kind category,r.location FROM graph_rollups r JOIN graph_categories c ON c.kind=substr(r.__path,1,instr(r.__path,':')-1) AND c.kind=substr(r.root,1,instr(r.root,':')-1) JOIN function_flags f ON f.__path=substr(r.__path,instr(r.__path,':')+1) AND f.symbol=substr(r.root,instr(r.root,':')+1)"
     get('legacy_matches')['query']='SELECT f.__path,f.id root,r.location FROM graph_legacy r JOIN function_flags f ON f.__path=r.__path AND f.symbol=r.root'
     index=stages.index(get('transitive_matches'))
     stages[index:index]=[

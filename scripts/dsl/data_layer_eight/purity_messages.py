@@ -7,8 +7,16 @@ def apply(stages, values):
     get=lambda name:next(stage for stage in stages if stage['name']==name)
     immutable=literals(values('IMMUTABLE_GLOBAL_CALLS'))
     globals_=get('global_state')
-    globals_['query']="""WITH RECURSIVE immutable_walk(__path,binding,root,node) AS (
-      SELECT a.__path,a.id,v.value,v.value FROM module_bindings a JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id JOIN nodes n ON n.__path=v.__path AND n.id=v.value WHERE n.kind IN ('dictionary','list','set') AND EXISTS(SELECT 1 FROM active_functions f JOIN nodes used ON used.__path=f.__path AND used.__start>=f.body_start AND used.__end<=f.body_end AND used.kind='identifier' AND used.text=a.name WHERE f.__path=a.__path)
+    globals_['query']="""WITH RECURSIVE referenced_names(__path,name) AS (
+      SELECT used.__path,used.text FROM nodes used
+      CROSS JOIN module_bindings a ON a.__path=used.__path AND a.name=used.text
+      CROSS JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id
+      CROSS JOIN nodes value ON value.__path=v.__path AND value.id=v.value
+      WHERE used.kind='identifier' AND value.kind IN ('dictionary','list','set')
+        AND EXISTS(SELECT 1 FROM active_functions f WHERE f.__path=used.__path AND used.__start>=f.body_start AND used.__end<=f.body_end)
+      GROUP BY used.__path,used.text),
+      immutable_walk(__path,binding,root,node) AS (
+      SELECT a.__path,a.id,v.value,v.value FROM module_bindings a JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id JOIN nodes n ON n.__path=v.__path AND n.id=v.value WHERE n.kind IN ('dictionary','list','set') AND (a.__path,a.name) IN (SELECT __path,name FROM referenced_names)
       UNION ALL SELECT w.__path,w.binding,w.root,child.id FROM immutable_walk w
       JOIN nodes n ON n.__path=w.__path AND n.id=w.node AND (n.id=w.root OR n.kind IN ('pair','tuple','unary_operator','binary_operator','parenthesized_expression'))
       JOIN nodes child ON child.__path=n.__path AND child.parent=n.id WHERE child.kind!='comment'
