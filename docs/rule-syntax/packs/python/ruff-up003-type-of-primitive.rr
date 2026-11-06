@@ -1,0 +1,41 @@
+.policy "ruff-up003-type-of-primitive" revision 2
+.description "Use the builtin type name directly instead of calling type() on a literal; the type of a literal is known in advance."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP003 (pyupgrade): `type(x)` where x is a literal: the builtin `type` called with one positional
+// argument and no keywords. The type is known, so write it: str, bytes, int, float, complex or bool.
+//   type("")        ← UP003: `str`
+//   type(0j)        ← UP003: `complex`
+//   type(-1)        not reported: a unary minus, not a literal
+//   type(arg)       not reported
+#include "python/upgrade.rr"
+//   builtin_at(e, x): e reads the builtin x, at that point of the module
+//   string_form(n, f): "str", "fstr", "bytes" or "tstr" (python/ast)
+
+.violation UP003(at: node, t: symbol) code "UP003"
+    "Replace this `type(...)` call with `{t}`; the type of a literal is known in advance."
+    suppress ruff "UP003"
+    fix safe to_type "Replace `type(...)` with `{t}`"
+UP003(c, t) :- kind(c, "call"), field(c, "function", f), builtin_at(f, "type"), field(c, "arguments", al),
+    kind(al, "argument_list"), child(al, a, 0), !child(al, _, 1), primitive(a, t).
+// Ruff's fix: the builtin's name, if nothing shadows it here, padded with a space where the call touches a
+// name or keyword (`type("")in y` becomes `str in y`).
+to_type(c, t) :- !str_shadowed(c, t), !glued_after(c) => replace(c, `$t`).
+to_type(c, t) :- !str_shadowed(c, t), glued_after(c) => replace(c, cat(t, " ")).
+.decl str_shadowed(c: node, t: symbol)  // t is bound in c's scope or one around it
+str_shadowed(c, t) :- UP003(c, t), nearest(c, s0, scope), (s = s0 ; has(s, s0, scope)), bound_in(s, t).
+.decl glued_after(c: node)  // the next token starts with a letter, digit or _ and touches the call
+glued_after(c) :- UP003(c, _), token_after(c, k), match("[A-Za-z0-9_].*", k), last_token(c, z), end_line(z, l),
+    line(k, l), col(k, ck), col(z, cz), text(z, zt), ck = cz + strlen(zt).
+// primitive(e, t): literal e has builtin type t. Adjacent strings are one literal; an f-string is not one.
+.decl primitive(e: node, t: symbol)
+primitive(e, "str") :- string_form(e, "str"), !fstring(e).
+primitive(e, "str") :- kind(e, "concatenated_string"), !fstring(e), child(e, s, 0), string_form(s, "str").
+primitive(e, "bytes") :- string_form(e, "bytes").
+primitive(e, "bytes") :- kind(e, "concatenated_string"), child(e, s, 0), string_form(s, "bytes").
+primitive(e, "int") :- kind(e, "integer"), !isuffix("j", e).
+primitive(e, "float") :- kind(e, "float"), !isuffix("j", e).
+primitive(e, "complex") :- (kind(e, "integer") ; kind(e, "float")), isuffix("j", e).
+primitive(e, "bool") :- (kind(e, "true") ; kind(e, "false")).

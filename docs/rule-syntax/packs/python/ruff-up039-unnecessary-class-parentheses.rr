@@ -1,0 +1,21 @@
+.policy "ruff-up039-unnecessary-class-parentheses" revision 2
+.description "Remove empty parentheses after a class name; they are unnecessary when the class has no base classes or keywords."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP039 (pyupgrade): a class header with an empty argument list. `class A():` is `class A:`. A comment
+// between the parentheses is no argument, so it is reported too; the finding is at the parentheses.
+//   class A():  pass           ← UP039 at `()`
+//   class A(
+//       # text
+//   ): ...                     ← UP039
+//   class A(B): pass           not reported
+
+.violation UP039(at: node) code "UP039"
+    "Write the class header without the empty parentheses (`class Name:` instead of `class Name():`); if a comment sits inside them, keep it on its own line."
+    suppress ruff "UP039"
+    fix safe drop_parens "Remove the parentheses"
+UP039(al) :- kind(c, "class_definition"), field(c, "superclasses", al),
+    count : { child(al, a, _), !kind(a, "comment") } = 0.
+drop_parens(al) :- count : { child(al, a, _), kind(a, "comment") } = 0 => delete(al).

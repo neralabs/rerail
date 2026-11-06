@@ -1,0 +1,18 @@
+.policy "ruff-up020-open-alias" revision 2
+.description "Use the builtin open instead of io.open; in Python 3 they are the same function."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP020 (pyupgrade): a call of `io.open`, however it is imported. In Python 3 it is the builtin `open`.
+// The finding is at the call.
+//   import io; io.open("f.txt")             ← UP020
+//   from io import open; open("f.txt")      ← UP020
+//   open("f.txt")                           not reported: the builtin
+#include "python/upgrade.rr"
+//   sym_at(e, q)   e denotes q where it runs, through imports (python/upgrade)
+
+.violation UP020(at: node) code "UP020"
+    "Call the builtin `open` instead of `io.open`; they are the same function in Python 3. If `open` is rebound in this scope, use `builtins.open`."
+    suppress ruff "UP020"
+UP020(c) :- kind(c, "call"), field(c, "function", f), sym_at(f, "io.open").

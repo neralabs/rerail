@@ -1,0 +1,38 @@
+.policy "ruff-up031-printf-string-formatting" revision 2
+.description "Use f-strings or str.format() instead of printf-style % formatting of string literals."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP031 (pyupgrade): `S % R` where S is a str literal (adjacent ones joined; not bytes, not an f-string)
+// that parses as a printf-style format, and R is a literal, a name, an attribute, a subscript, a call, a tuple
+// or a dict (Ruff leaves `"%s" % [x]`, `"%s" % (a + b)`, `"%s" % -1`). The finding is at the `%` expression.
+// Ruff offers a fix only for the plain cases; the others are reported with the "by hand" message: a `%d`, `%i`,
+// `%u` or `%c`; a `*` width or precision; an empty key `%()s`; `%r`/`%a` with flags, width or precision; a
+// width on `%s`.
+//   "%s %s" % (a, b)           ← UP031: "{} {}".format(a, b)
+//   "%d items" % n             ← UP031, by hand
+//   b"%s" % (x,)   "%4%" % ()  not reported (bytes; does not parse)
+#include "python/upgrade-format.rr"
+//   percent_fmt(b, s, r, v), pct_ok(v), pct_spec, pct_conv, rhs_form(e)
+
+.decl printf(b: node, v: symbol)
+printf(b, v) :- percent_fmt(b, _, r, v), pct_ok(v), rhs_form(r).
+
+.violation printf_string_formatting(at: node) code "UP031"
+    "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
+    suppress ruff "UP031"
+printf_string_formatting(b) :- printf(b, v), !by_hand(v).
+
+.violation printf_string_formatting_manual(at: node) code "UP031"
+    "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
+    suppress ruff "UP031"
+printf_string_formatting_manual(b) :- printf(b, v), by_hand(v).
+
+// by_hand(v): a placeholder of v has no `{}` equivalent Ruff writes for it.
+.decl by_hand(v: symbol)
+by_hand(v) :- pct_star(v).
+by_hand(v) :- pct_conv(v, _, _, c), (c = "d" ; c = "i" ; c = "u" ; c = "c").
+by_hand(v) :- pct_spec(v, _, "()", _, _, _).
+by_hand(v) :- pct_conv(v, i, fl, c), (c = "a" ; c = "r"), pct_spec(v, i, _, w, p, _), (fl != "" ; w != "" ; p != "").
+by_hand(v) :- pct_conv(v, i, _, "s"), pct_spec(v, i, _, w, _, _), w != "".

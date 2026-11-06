@@ -1,0 +1,24 @@
+.policy "ruff-up023-deprecated-c-element-tree" revision 2
+.description "Import the ElementTree module instead of the deprecated cElementTree one; the C accelerator is used automatically."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP023 (pyupgrade): an import of `xml.etree.cElementTree`, deprecated since 3.3 and removed in 3.9;
+// `xml.etree.ElementTree` uses the C accelerator by itself. Three forms, each where Ruff reports it:
+//   from xml.etree.cElementTree import XML        ← UP023 at the statement
+//   import xml.etree.cElementTree as ET           ← UP023 at `xml.etree.cElementTree as ET`
+//   from xml.etree import cElementTree as CET     ← UP023 at `cElementTree as CET`
+//   import xml.etree.cElementTree                 not reported: the rename would change the bound name
+//   from .xml.etree.cElementTree import XML       not reported: relative
+
+.violation UP023(at: node) code "UP023"
+    "`cElementTree` is deprecated and was removed in Python 3.9; import `xml.etree.ElementTree` instead, which uses the C accelerator automatically. Keep it only for Python 2 code."
+    suppress ruff "UP023"
+UP023(i) :- kind(i, "import_from_statement"), field(i, "module_name", m), kind(m, "dotted_name"),
+    text(m, "xml.etree.cElementTree").
+UP023(a) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", n),
+    text(n, "xml.etree.cElementTree").
+UP023(a) :- kind(i, "import_from_statement"), field(i, "module_name", m), kind(m, "dotted_name"),
+    text(m, "xml.etree"), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", n),
+    text(n, "cElementTree").

@@ -1,0 +1,24 @@
+.policy "ruff-up001-useless-metaclass-type" revision 2
+.description "Remove redundant assignments of type to __metaclass__; Python 3 classes already use type as their metaclass."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP001 (pyupgrade): `__metaclass__ = type` in a class body. Python 3 ignores `__metaclass__`, and `type`
+// is the default metaclass anyway. The assignment must have one target, the name itself, and the value the
+// name `type` (parentheses allowed, unresolved: Ruff compares the spelling).
+//   class A:
+//       __metaclass__ = type          ← UP001
+//   __metaclass__ = type              not reported: not in a class
+#include "python/ast.rr"
+//   assign_target(a, t), assign_value(a, v), unparen(e, m)
+
+.violation UP001(at: node) code "UP001"
+    "Remove this `__metaclass__ = type` line; Python 3 classes already use `type` as their metaclass. Keep it only if the code must still run on Python 2."
+    suppress ruff "UP001"
+    fix safe remove "Remove `__metaclass__ = type`"
+UP001(s) :- assign_value(s, v), unparen(v, n), text(n, "type"), kind(n, "identifier"),
+    assign_target(s, t), text(t, "__metaclass__"), kind(t, "identifier"), count : { assign_target(s, _) } = 1,
+    scope_node(s, c), kind(c, "class_definition").
+// The statement is the expression_statement around the assignment; remove_stmt leaves `pass` in an emptied body.
+remove(s) :- child(st, s, 0), kind(st, "expression_statement") => remove_stmt(st).

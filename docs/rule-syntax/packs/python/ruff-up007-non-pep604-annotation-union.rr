@@ -1,0 +1,34 @@
+.policy "ruff-up007-non-pep604-annotation-union" revision 2
+.description "Write union types as X | Y instead of Union[X, Y]; the union operator is shorter and needs no typing import."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff UP007 (pyupgrade): `Union[a, b]` (typing or typing_extensions) where `a | b` works (PEP 604): from
+// Python 3.10, in a stub always, and from 3.7 in annotations under `from __future__ import annotations`
+// (python/upgrade-typing's rewritable). `Optional[a]` is UP045, not this rule. Not reported:
+//   Union[*Ts]                         an unpacked argument has no `|` form
+//   Union[NamedTuple, int]             NamedTuple is a type constructor, not a type
+//   def f(x: Union["str", int]): ...   a quoted member (or one in a tuple) where the expression is evaluated: "str" | int fails
+//   def f(x: Union[str, int]): ...     ← UP007 at the subscript
+//   def f(): x: Union["a", "b"]        ← UP007: a local variable's annotation is never evaluated
+#include "python/upgrade-typing.rr"
+//   up_typing_sub(s, x), type_arg(s, i, a), rewritable(n, m), runtime_annotation(n)
+
+.violation UP007(at: node) code "UP007"
+    "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+    suppress ruff "UP007"
+UP007(s) :- up_typing_sub(s, "Union"), rewritable(s, 10), !unpacked(s), !constructor(s), !quoted_at_runtime(s).
+.decl unpacked(s: node)
+unpacked(s) :- type_arg(s, _, a), (kind(a, "list_splat") ; kind(a, "splat_type")).
+.decl constructor(s: node)
+constructor(s) :- type_arg(s, _, a), typing_ref(a, "NamedTuple").
+.decl quoted_at_runtime(s: node)
+quoted_at_runtime(s) :- type_arg(s, _, a), quoted(a), evaluated(s).
+.decl quoted(a: node)  // a string, or a tuple holding one: `Union[("a", "b"), c]`
+quoted(a) :- kind(a, "string").
+quoted(a) :- kind(a, "concatenated_string").
+quoted(t) :- kind(t, "tuple"), child(t, c, _), unparen(c, a), quoted(a).
+.decl evaluated(n: node)  // n runs: outside any annotation, or in one Python evaluates
+evaluated(n) :- up_typing_sub(n, _), !typing_only(n).
+evaluated(n) :- up_typing_sub(n, _), runtime_annotation(n).
