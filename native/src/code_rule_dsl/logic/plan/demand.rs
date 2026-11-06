@@ -83,6 +83,25 @@ pub(super) fn split_negations(prog: &Program) -> Option<(Program, Vec<String>)> 
     if candidates.is_empty() {
         return None;
     }
+    // A candidate whose split fails (a variable of no known type, or a cycle through a negation) is left as it was,
+    // and the rest are split again: one rule must not keep every other from its demand (in a combined program, one
+    // component closing a cycle left all 100 rules without one).
+    loop {
+        match split_with(prog, &candidates) {
+            Ok(split) => return Some(split),
+            Err(failed) => {
+                let before = candidates.len();
+                candidates.retain(|c| !failed.contains(*c));
+                if candidates.is_empty() || candidates.len() == before {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
+/// `prog` split for `candidates`, or the candidates whose split failed.
+fn split_with(prog: &Program, candidates: &BTreeSet<&str>) -> Result<(Program, Vec<String>), BTreeSet<String>> {
     // Each reader: its negations of candidates, whose variables the rest of its body binds (a safe rule's do).
     let negated = |rule: &Rule, i: usize| matches!(&rule.body[i], Literal::Atom(a) if a.neg && candidates.contains(a.rel.as_str()));
     let readers: Vec<usize> = (0..prog.rules.len()).filter(|&ri| (0..prog.rules[ri].body.len()).any(|i| negated(&prog.rules[ri], i))).collect();
@@ -109,8 +128,8 @@ pub(super) fn split_negations(prog: &Program) -> Option<(Program, Vec<String>)> 
         let vars: Vec<String> = bound.intersection(&later).cloned().collect();
         let Some(types) = vars.iter().map(|v| var_type(prog, &kept, v)).collect::<Option<Vec<String>>>() else {
             // A variable of no known type (bound by a comparison alone): nothing is split.
-            super::super::profile::decision("demand (decision 0046)", || format!("nothing demanded: a variable of a rule for {} has no known type", rule.head.rel));
-            return None;
+            super::super::profile::decision("demand (decision 0046)", || format!("not demanded: a variable of a rule for {} has no known type", rule.head.rel));
+            return Err(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).collect());
         };
         let pre = format!("pre_{ri}");
         out.decls.insert(pre.clone(), vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect());
@@ -139,11 +158,23 @@ pub(super) fn split_negations(prog: &Program) -> Option<(Program, Vec<String>)> 
     out.rules = rules;
     // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
     // leaves the program as it was.
-    if let Err(e) = super::super::front::strata(&out) {
-        super::super::profile::decision("demand (decision 0046)", || format!("nothing demanded: the split program does not stratify ({e})"));
-        return None;
+    match super::super::front::strata(&out) {
+        Ok(_) => Ok((out, demanded)),
+        Err(e) => {
+            // The candidates in the failing component (a `demand_<c>` there names `c`).
+            let failed: BTreeSet<String> = match &e {
+                super::super::front::Error::NotStratifiable { component, .. } => component
+                    .iter()
+                    .map(|r| r.strip_prefix("demand_").unwrap_or(r))
+                    .filter(|r| candidates.contains(r))
+                    .map(str::to_owned)
+                    .collect(),
+                _ => BTreeSet::new(),
+            };
+            super::super::profile::decision("demand (decision 0046)", || format!("not demanded: {} (their split closes a cycle through a negation)", failed.iter().cloned().collect::<Vec<_>>().join(", ")));
+            Err(failed)
+        }
     }
-    Some((out, demanded))
 }
 
 /// Whether `rule` already reads a demand (`demand_<r>`, made before the run).
