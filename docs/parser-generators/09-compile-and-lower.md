@@ -1,9 +1,7 @@
 # Parser generators: compiling, lowering and interpreting Bitlex
 
-Status: survey and proposed shape, 2026-11-06. Step 1 of §11 and a first interpreter (step 3, without
-its chunk-edge tests) are built in the engine:
-the stream program and its CPU interpreter, equal to the reference evaluator on every file of
-three corpora (§12). It follows
+Status: survey and proposed shape, 2026-11-06. Nothing here is built yet, apart from the
+reference evaluator (`03-bitlex.md` §5) and the operation counts in §8. It follows
 `01-branch-free-design.md` §4 (the stream transducer) and `06-block-parallel.md` (carries and
 hardware levels).
 
@@ -492,97 +490,3 @@ set.
 6. **Metal**: the interpreter kernel, then generated MSL.
 7. **The token and tree stages** to tapes (`03-bitlex.md` §6), as stream-program operations from
    the start.
-
-## 12. Built: the stream program in the engine
-
-The stream program lives in the engine, `native/src/code_rule_dsl/transducer/stream/`, beside the
-tape walker (`transducer/packed`). It is built from the engine's existing pieces wherever one fits:
-
-| piece | reused from |
-|---|---|
-| the space of files: a batch of files, one after another, a byte per node | `space::NodeSpace`, the prefilter's node space (decision 0024) |
-| operations, one value each, run one at a time over the whole space | the set program (`prefilter/sets.rs` `Op` and `evaluate`) |
-| the first operations: empty, all, or, and, and-not, within | the same operations as the Metal set steps (`metal_set_steps.rs`), so the Metal interpreter kernel extends that kernel |
-| a range of bits set or cleared a word at a time | `NodeSet::fill`, copied into the mask code |
-| CPU time per phase | `prof::process_cpu` |
-| the command line | `rerail-engine bitlex <lexer> <file list> [--batch <bytes>]`, beside `dump`, `asm` and `logic` (`tools.rs`) |
-| the parser, word operations and evaluator | copied from `tools/bitlex` (`syntax.rs`, `mask.rs`, `reference.rs`); the evaluator is the oracle |
-
-`program.rs` lowers a parsed lexer to operations:
-
-- **Blocks** become prefixed copies.
-- **Hypothesis lanes** each get a copy of the body; a `Hyp` operation walks each file's segments
-  and gives a mask per lane; every name the body defines is then selected per byte by those masks.
-- **Rounds** become a range of operations between `RoundsBegin` and `RoundsEnd`, with `Carry`
-  values that the end overwrites. The batch repeats a round while any file's carries changed.
-  A file that has settled computes the same values again, so this equals a per-file loop.
-- **Scans become masks.** A machine or a reflection gives one mask per state: the bytes after
-  which it is in that state. `in`, `on`, `final` and `reached` are logic over those masks.
-- **Equal operations are shared**, keyed by their text. Their inputs are ids, so equal text means
-  an equal value, across loops and lanes too.
-- **Values are freed** after their last reader. A value read inside a loop that it was not
-  defined in lives to that loop's end.
-
-`cpu.rs` runs the operations over a batch of about 256 KB of files. Shifts and scans are cut at
-each file's first and last byte, which are segment edges like a hypothesis's lines. Composite
-scans are word operations:
-
-- **segmented `toggle`:** the space's prefix XOR, then each segment's incoming parity removed by a
-  `fill` from the segment starts that inherit a 1;
-- **`aligned(a, k)`:** for each residue `c` mod `k`, a `fill` from the runs' starts at that residue;
-  a byte is aligned when it is at its run's residue;
-- **`after_odd_run(a)`:** the byte after a run whose last byte is aligned at 2;
-- **`line_has(a, nl)`:** a `fill` from `a` to the next line end, read at the line end.
-
-Machines and reflections walk their event bytes and fill runs. Counts, frames and lane
-selection still walk bytes; their word forms are `03-bitlex.md` §3.5.
-
-### 12.1 Results
-
-The machine was under heavy load (load average 60–100). Times are CPU, user plus sys, from
-`getrusage`, in the optimised `profiling` build:
-
-| corpus | files | MB | equal to the evaluator | evaluator | stream program |
-|---|---|---|---|---|---|
-| data-layer JSON | 14,669 | 567.7 | 14,669 | 36.7 s (15.5 MB/s) | 15.0 s (37.9 MB/s) |
-| data-layer Python | 13,088 | 171.0 | 13,088 | 62.9 s (2.7 MB/s) | 31.5 s (5.4 MB/s) |
-| CPython | 2,054 | 39.4 | 2,054 | 14.1 s (2.8 MB/s) | 8.3 s (4.8 MB/s) |
-
-"Equal" means the same tokens (kind, start, end, soft) and the same error messages, in order.
-
-The lowered programs have 188 operations for JSON, 184 of them live, and 1,275 for Python,
-1,243 of them live. Python's figure is below the evaluator's 1,410–1,780 per block (§8), even
-with three copies of the hypothesis body: shared operations and hoisting through sharing pay for
-the copies.
-
-### 12.2 Where the time goes
-
-`BITLEX_OP_TIMES=1` adds CPU time by operation kind. On CPython:
-
-| operation | CPU |
-|---|---|
-| `Reflect` (walks events) | 2.00 s |
-| `Frame` (walks bytes) | 1.06 s |
-| `Class` (a 256-entry table, 64 lookups per word) | 0.89 s |
-| `Count` (walks bytes) | 0.53 s |
-| `Prev` | 0.43 s |
-| `Aligned` | 0.39 s |
-| everything else, about 1,100 word operations | under 2 s |
-
-The token stage (`finish.rs`) takes about 1.5 s of the rest. On JSON, `Class` is 1.37 s of 3.55 s.
-
-The word operations are already cheap. The time is in the operations that still walk bytes or
-events, and in byte classification:
-
-- `Class` is the nibble-table classify of §1. One pass can fill all of a lexer's classes.
-- `Reflect`, `Count` and `Frame` need their word forms (`03-bitlex.md` §3.5).
-
-### 12.3 Next
-
-1. **Word forms** for `Reflect`, `Count`, `Frame` and lane selection, and one classify pass for
-   all classes. After that, every operation is a word operation, and the program can be compiled
-   block by block (§4.2).
-2. **Metal**: copy `metal_set_steps.metal` into a stream-steps kernel, keeping one threadgroup per
-   file and one step per operation. Add the shifts and scans: within a file, as SIMD-group scans.
-3. **Plan identity** for the program, a SHA-256 over its operations (`compilation.rs` `PlanId`),
-   so the interpreter, generated code and Metal are bindings of one plan.
