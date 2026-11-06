@@ -24,16 +24,14 @@
 // - `inside … stopBy <kind>` is the nearest enclosing node of that kind (`nearest`); `has … stopBy
 //   function_definition` is every descendant whose nearest enclosing function_definition is the node; `stopBy end`
 //   every descendant (`has`).
-// - A capture's text with white space removed (the policy's `replace \s by ""`) is `name` (the dotted text of an
-//   identifier or attribute chain); for other nodes (an attribute on a call) `node_text` as it is.
-//   APPROXIMATION: such a node's text is not stripped of white space.
+// - A capture's text with white space removed (the policy's `replace \s by ""`) is `@replace_all(t, "\\s", "")`
+//   over its `node_text` (W's `replace` transform over the capture's source text).
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: loc, s: symbol)
-.decl name(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl op(n: node, s: symbol)
@@ -134,11 +132,10 @@ asd_stub_stmt(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), no
 asd_stub_stmt(s) :- node(_, s, "raise_statement", _, _), child(s, c, _), node(_, c, "call", _, _),
     field(c, "function", g), node(_, g, "identifier", _, _), text(g, "NotImplementedError").
 
-// A capture's text with white space removed.
+// A capture's text with white space removed: W's `replace` transform (`\s` by "") over the node's source text.
 .decl asd_compact(n: node, s: symbol)
-asd_compact(n, s) :- name(n, s).
-asd_compact(n, s) :- node(_, n, "identifier", _, _), !name(n, _), node_text(n, s).
-asd_compact(n, s) :- node(_, n, "attribute", _, _), !name(n, _), node_text(n, s).
+asd_compact(n, @replace_all(t, "\\s", "")) :- wrapper_shape_thin(_, n), node_text(n, t).
+asd_compact(n, @replace_all(t, "\\s", "")) :- wrapper_shape_lazy_thin(_, n), node_text(n, t).
 
 // Children in order without arithmetic in a recursion: the first, the next after x, the last.
 .decl asd_first_child(p: node, x: node)
