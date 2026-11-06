@@ -1,0 +1,61 @@
+// data-layer-no-api-root-imports, authored clauses `imports` and `examples`. Both are `syntax: valid`.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl text(n: loc, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl tape_line(d: number, l: number, sp: span)
+.decl str(n: node, v: symbol)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, line, end_line, text, node_text, tape_line, str, syntax_error
+.output violation
+
+// ---- imports ----------------------------------------------------------------------------------------------------
+// An import_from_statement whose full text matches `^from\s+\.*api\s+import\b`, inside a module whose full text
+// matches `from api|import api` (both regexes searched over node text, comments and strings included, as W's).
+// `match` is whole-string, so the searches are written `(?s)…` with `.*` around them.
+.decl imports_module(d: number)
+imports_module(d) :- node(d, m, "module", _, _), node_text(m, s), match("(?s).*(?:from api|import api).*", s).
+
+violation("data-layer-no-api-root-imports", "imports", "NARI001", p, l) :-
+    node(d, n, "import_from_statement", _, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    node_text(n, s), match("(?s)from\\s+\\.*api\\s+import\\b.*", s),
+    imports_module(d), doc(d, p, _), line(n, l).
+
+// ---- examples ---------------------------------------------------------------------------------------------------
+// A string whose value matches `(?m)^[ \t]*(?:from api import [^\n]+|import api\s*(?:\n|$))`, one finding at each
+// match of the text regex `(?m)(?:^[ \t]*[rRuU]*["']{1,3}|^[ \t]*)(?<IMPORT>from api import [^\n]+|import api\s*(?:\n|$))`
+// (anchor capture.IMPORT, each IMPORT). A finding's key is its line, so the findings are the lines of the string
+// where a match starts. A match starts at a line start of the node's text (`(?m)^`): the text's own start, or
+// just after a `\n` in it.
+// - The text's first line starts with the literal's prefix and quotes, so only the first alternative can match
+//   there; it is tested on the node's text, anchored at its start.
+// - Every later line of the node's text is a whole line (`tape_line`, numbered as `line(n)`) up to the node's end;
+//   on its last line the closing quotes come before anything past the node, so `[^\n]+` still has a character and
+//   `import api\s*(?:\n|$)` still fails, as on the node's text: testing the whole line is exact. On such a line
+//   `import api\s*(?:\n|$)` holds when only white space follows `import api` on the line.
+// APPROXIMATION: `(?m)^` and `[^\n]` end a line at `\n` only, `tape_line` also at a lone `\r`; a string holding a
+// lone `\r` splits differently (a `\r` right after `from api import ` is a character to W, a line end here).
+// APPROXIMATION (until `value` is bound; the exact form is in the .pending.rr beside this file): the value regex
+// runs on `str`, the literal's content as written, not on its value with escapes decoded; they differ only where an
+// escape sequence makes or breaks a value-regex match on a line the text regex matched (`"from api import \n"`).
+.decl examples_string(d: number, n: node, first: number, last: number)
+examples_string(d, n, first, last) :-
+    node(d, n, "string", _, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    str(n, v), match("(?ms).*^[ \t]*(?:from api import [^\n]+|import api\\s*(?:\n|$)).*", v),
+    line(n, first), end_line(n, last).
+
+.decl examples_line(d: number, l: number)
+examples_line(d, l) :-
+    examples_string(d, n, l, _), node_text(n, s),
+    match("(?s)[rRuU]*[\"']{1,3}(?:from api import [^\n]+|import api\\s*(?:\n|$)).*", s).
+examples_line(d, l) :-
+    examples_string(d, _, first, last), tape_line(d, l, sp), l > first, l <= last, text(sp, t),
+    match("[ \t]*(?:[rRuU]*[\"']{1,3})?(?:from api import .+|import api\\s*)", t).
+
+violation("data-layer-no-api-root-imports", "examples", "NARI001", p, l) :-
+    examples_line(d, l), doc(d, p, _).
