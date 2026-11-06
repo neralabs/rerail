@@ -1,0 +1,32 @@
+// python/misc-boolean-trap: positional boolean parameters, as Ruff's flake8-boolean-trap (FBT001, FBT002) finds
+// them in a def.
+//
+// Interface
+//   trap_param(f, nm, ann, dflt)   nm names a positional parameter (positional-only or positional-or-keyword) of
+//                                  def f that the rules check, with its annotation and default (unset for none)
+//
+// Ruff background
+//   A boolean that callers pass by position reads as a bare `True` at the call site. Ruff leaves alone the
+//   places where the signature is not the author's to choose: stubs, `__post_init__` and the operator dunders
+//   (`__eq__`, `__or__`, …), property setters (`@name.setter`) and overrides (`@typing.override`).
+//     def f(flag: bool): ...                  trap_param(<f>, <flag>, <bool>, unset)
+//     def f(self, *, flag: bool): ...         no row for flag: keyword-only
+//     def __or__(self, other: bool): ...      no row: an operator
+#include "python/ruff.rr"
+
+.decl trap_param(f: node, nm: node, ann: loc, dflt: loc)
+trap_param(f, nm, a, v) :- sig_param(f, _, nm, _, k, a, v), (k = "posonly" ; k = "pos"), kind(f, "function_definition"),
+    !trap_exempt(f), docof(f, d), file_name(d, fn), !suffix(".pyi", fn).
+.decl trap_exempt(f: node)
+trap_exempt(f) :- def_name(f, x), (x = "__post_init__" ; operator_dunder(x)).
+trap_exempt(f) :- def_name(f, x), decorator(f, e), dotted_expr(e, cat(x, ".setter")).
+trap_exempt(f) :- decorator(f, e), ruff_qual(e, q), (q = "typing.override" ; q = "typing_extensions.override").
+.decl operator_dunder(x: symbol)
+operator_dunder("__contains__"). operator_dunder("__getitem__"). operator_dunder("__setitem__").
+operator_dunder("__delitem__"). operator_dunder("__pos__"). operator_dunder("__neg__"). operator_dunder("__invert__").
+operator_dunder(cat("__", cat(p, cat(o, "__")))) :- trap_op(o), (p = "" ; p = "r" ; p = "i").
+operator_dunder(cat("__", cat(o, "__"))) :- (o = "gt" ; o = "lt" ; o = "ge" ; o = "le" ; o = "eq" ; o = "ne").
+.decl trap_op(o: symbol)
+trap_op("add"). trap_op("sub"). trap_op("mul"). trap_op("truediv"). trap_op("floordiv"). trap_op("mod").
+trap_op("pow"). trap_op("lshift"). trap_op("rshift"). trap_op("matmul"). trap_op("and"). trap_op("or").
+trap_op("xor").

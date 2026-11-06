@@ -1,0 +1,19 @@
+.policy "ruff-g004-logging-f-string" revision 2
+.description "Pass values to a logging call as arguments instead of interpolating them into an f-string message; the logger then formats only records it emits."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff G004 (flake8-logging-format): a logging call whose message is an f-string, or adjacent literals one of
+// which is. Pass the values as the call's arguments instead; the logger formats them only for records it emits.
+// A t-string is not an f-string. The message is the first argument (the second for `log`) or `msg=`. Reported at
+// the message. (Ruff's fix is preview-only, so none here.)
+//   logging.info(f"Hello {name}")                    ← G004
+//   logging.info(f"no placeholders")                 ← G004
+//   info(t"{name}")                                  not reported: a template string
+#include "python/logging.rr"
+
+.violation G004(at: node) code "G004"
+    "Replace the f-string with a `%s` format string and pass its values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if the logger is not from `logging`."
+    suppress ruff "G004"
+G004(e) :- log_msg(_, e), fstring(e).

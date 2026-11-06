@@ -1,0 +1,18 @@
+.policy "ruff-log009-undocumented-warn" revision 2
+.description "Use logging.WARNING instead of logging.WARN; WARN is an undocumented alias that the logging documentation does not mention."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff LOG009 (flake8-logging): `logging.WARN`, an undocumented alias of `logging.WARNING`. Any read of it,
+// through the module or a `from logging import WARN`, in a file that imports `logging`. Reported at the name.
+// (Ruff's fix rewrites to WARNING, importing it if needed; none here.)
+//   logging.WARN                      ← LOG009
+//   from logging import WARN; WARN    ← LOG009 at the second WARN
+//   logging.WARNING                   not reported
+#include "python/logging.rr"
+
+.violation LOG009(at: node) code "LOG009"
+    "Replace this use of the undocumented `WARN` alias with `logging.WARNING` (or `WARNING` imported from `logging`); the value is identical."
+    suppress ruff "LOG009"
+LOG009(e) :- expr_ctx(e, "load"), ruff_qual(e, "logging.WARN"), docof(e, d), seen_module(d, "logging").

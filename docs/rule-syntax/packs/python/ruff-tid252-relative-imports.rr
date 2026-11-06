@@ -1,0 +1,25 @@
+.policy "ruff-tid252-relative-imports" revision 2
+.description "Prefer absolute imports over relative imports that reach into a parent package; relative imports from the same package are fine."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TID252 (flake8-tidy-imports): a relative import that climbs to a parent package, `from .. import x`.
+// Absolute imports say where a name comes from without counting dots. With option
+// `flake8-tidy-imports.ban-relative-imports` "all", a one-dot import (`from . import x`) is reported too; the
+// default, "parents", allows it. Reported at the statement. (Ruff's fix, to the absolute form, is unsafe; none
+// here.)
+//   from .. import parent              ← TID252
+//   from ...grandparent import x       ← TID252
+//   from . import sibling              not reported, by default
+#include "python/ast.rr"
+
+.violation TID252(at: node) code "TID252"
+    "Replace the relative module `$M` in this import with its absolute dotted path; keep it relative only where the package layout makes an absolute path impractical."
+    suppress ruff "TID252"
+TID252(i) :- kind(i, "import_from_statement"), field(i, "module_name", r), kind(r, "relative_import"), child(r, p, 0),
+    kind(p, "import_prefix"), text(p, dots), relative_allowed(k), strlen(dots) > k.
+// relative_allowed(k): how many dots are allowed: 1 by default ("parents"), 0 with "all".
+.decl relative_allowed(k: number)
+relative_allowed(0) :- option("flake8-tidy-imports.ban-relative-imports", "all").
+relative_allowed(1) :- !option("flake8-tidy-imports.ban-relative-imports", "all").

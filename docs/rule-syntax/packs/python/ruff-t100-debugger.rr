@@ -1,0 +1,43 @@
+.policy "ruff-t100-debugger" revision 2
+.description "Remove debugger imports and calls such as pdb.set_trace() and breakpoint() before committing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff T100 (flake8-debugger): a debugger left in the code. A call whose callee resolves to a debugger entry point
+// is reported at the call; so is an import of a debugger module or of an entry point, at the import statement.
+//   breakpoint()                          ← T100: Trace found
+//   from pdb import set_trace as st       ← T100: Import for `pdb.set_trace`
+//   import celery.contrib.rdb             ← T100: Import for `celery.contrib.rdb`
+//   from ptvsd import enable_attach       not reported: not an entry point
+//   import sys                            not reported: only `sys.breakpointhook` is
+//   from .pdb import set_trace            ← T100: Ruff ignores the dots of a relative import
+#include "python/ruff.rr"
+
+.violation T100(at: node, q: symbol) code "T100" "Remove this debugger use of `{q}` before committing."
+    suppress ruff "T100"
+T100(c, q) :- call_q(c, q), debugger_call(q).
+T100(i, m) :- import_alias(i, _, m, "", _), debugger_module(m).
+T100(i, q) :- import_alias(i, _, m, x, _), x != "", field(i, "module_name", mn), kind(mn, "dotted_name"),
+    q = @dot(m, x), debugger_call(q).
+// Ruff drops a relative import's dots: `from .pdb import set_trace` is pdb.set_trace, `from . import pdb` is pdb.
+T100(i, q) :- t100_relative(i, m, x), m != "", q = @dot(m, x), debugger_call(q).
+T100(i, x) :- t100_relative(i, "", x), debugger_module(x).
+.decl t100_rel_module(r: node, m: symbol)
+t100_rel_module(r, m) :- kind(r, "relative_import"), child(r, dn, _), kind(dn, "dotted_name"), text(dn, m).
+.decl t100_relative(i: node, m: symbol, x: symbol)  // `from .m import x` (m is "" for `from . import x`)
+t100_relative(i, m, x) :- kind(i, "import_from_statement"), field(i, "module_name", r), kind(r, "relative_import"),
+    (t100_rel_module(r, m) ; !t100_rel_module(r, _), m = ""),
+    field(i, "name", n), (kind(n, "dotted_name"), text(n, x) ; kind(n, "aliased_import"), field(n, "name", nn), text(nn, x)).
+
+.decl debugger_call(q: symbol)
+debugger_call("pdb.set_trace"). debugger_call("pudb.set_trace"). debugger_call("ipdb.set_trace").
+debugger_call("ipdb.sset_trace"). debugger_call("IPython.terminal.embed.InteractiveShellEmbed").
+debugger_call("IPython.frontend.terminal.embed.InteractiveShellEmbed"). debugger_call("celery.contrib.rdb.set_trace").
+debugger_call("builtins.breakpoint"). debugger_call("debugpy.breakpoint"). debugger_call("debugpy.listen").
+debugger_call("debugpy.wait_for_client"). debugger_call("ptvsd.break_into_debugger").
+debugger_call("ptvsd.wait_for_attach"). debugger_call("sys.breakpointhook"). debugger_call("sys.__breakpointhook__").
+.decl debugger_module(m: symbol)
+debugger_module("pdb"). debugger_module("pudb"). debugger_module("ipdb"). debugger_module("debugpy").
+debugger_module("ptvsd"). debugger_module("IPython.terminal.embed"). debugger_module("IPython.frontend.terminal.embed").
+debugger_module("celery.contrib.rdb").

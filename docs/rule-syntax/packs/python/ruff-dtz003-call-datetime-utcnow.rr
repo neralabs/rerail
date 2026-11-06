@@ -1,0 +1,17 @@
+.policy "ruff-dtz003-call-datetime-utcnow" revision 2
+.description "Use datetime.now with a timezone instead of datetime.utcnow; utcnow returns a naive datetime that carries no zone information."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff DTZ003 (flake8-datetimez): `datetime.datetime.utcnow()`, which returns a naive datetime holding UTC, so
+// other code reads it as local time. A call followed by `.astimezone()` (through any `.replace(…)`) is not
+// reported. Reported at the call. Only in a file that imports datetime.
+//   datetime.datetime.utcnow()                   ← DTZ003
+//   datetime.datetime.utcnow().astimezone()      not reported
+#include "python/datetime.rr"
+
+.violation DTZ003(at: node) code "DTZ003"
+    "Replace `utcnow()` with `now(tz=datetime.timezone.utc)` for an aware UTC datetime. Keep `utcnow()` only where the value is mixed with naive datetimes that cannot change too."
+    suppress ruff "DTZ003"
+DTZ003(c) :- dt_call(c, "datetime.datetime.utcnow"), !then_astimezone(c).

@@ -1,0 +1,17 @@
+.policy "ruff-log001-direct-logger-instantiation" revision 2
+.description "Use logging.getLogger() instead of instantiating Logger directly; a directly created logger is not part of the logger tree and bypasses logging configuration."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff LOG001 (flake8-logging): `logging.Logger(…)` called directly. A logger made this way is outside the logger
+// tree, so configuration never reaches it; `logging.getLogger(name)` returns the configured one. Only in a file
+// that imports `logging`. Reported at the callee. (Ruff's fix, to getLogger, is unsafe; none here.)
+//   logging.Logger(__name__)          ← LOG001
+//   logging.getLogger(__name__)       not reported
+#include "python/logging.rr"
+
+.violation LOG001(at: node) code "LOG001"
+    "Use `logging.getLogger(name)` instead of `Logger(...)`; a direct instance skips the logger tree and its configuration. Keep it only if a detached logger is intended."
+    suppress ruff "LOG001"
+LOG001(f) :- call_q(c, "logging.Logger"), field(c, "function", f), docof(c, d), seen_module(d, "logging").

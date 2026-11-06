@@ -1,0 +1,19 @@
+.policy "ruff-log007-exception-without-exc-info" revision 2
+.description "Use error instead of exception when a logging call sets exc_info to a falsy value; it logs the same message and states the intent plainly."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff LOG007 (flake8-logging): `exception(…, exc_info=<falsy>)` on a logger, or `logging.exception`. With no
+// traceback the call is `error(…)`; say so. Falsy is Ruff's truthiness of a literal: False, None, 0, "", [], ….
+// Reported at the call.
+//   logger.exception("foo", exc_info=False)       ← LOG007
+//   logging.exception("foo", exc_info=[])         ← LOG007
+//   logger.exception("foo", exc_info=flag)        not reported: unknown
+#include "python/logging.rr"
+#include "python/ruff-classes.rr"
+
+.violation LOG007(at: node) code "LOG007"
+    "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
+    suppress ruff "LOG007"
+LOG007(c) :- log_call(c, "exception", _, _), log_kw(c, "exc_info", _, v), truth_of(v, t), (t = "false" ; t = "none").

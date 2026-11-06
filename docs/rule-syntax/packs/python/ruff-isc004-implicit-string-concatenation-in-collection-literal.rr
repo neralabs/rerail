@@ -1,0 +1,24 @@
+.policy "ruff-isc004-implicit-string-concatenation-in-collection-literal" revision 2
+.description "Add the missing comma, or wrap the strings in parentheses, where adjacent strings concatenate inside a list, tuple or set literal; the merge usually hides a forgotten comma."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ISC004 (flake8-implicit-str-concat): an element of a list, tuple or set display that is two or more
+// adjacent string literals, not wrapped in parentheses. In a list of strings that is usually a missing comma.
+// Parentheses around the element say the joining is meant. A subscript with a tuple, `d["a" "b", 1]`, counts.
+// Reported at the element.
+//   facts = ["Lobsters have blue blood."
+//            "Honey never spoils."]      ← ISC004
+//   facts = [("a"
+//             "b")]                      not reported: parenthesized
+#include "python/ast.rr"
+
+.violation ISC004(at: node) code "ISC004"
+    "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
+    suppress ruff "ISC004"
+ISC004(s) :- kind(s, "concatenated_string"), child(c, s, _), kind(c, k),
+    (k = "list" ; k = "tuple" ; k = "set" ; k = "expression_list").
+// `d["a" "b", 1]`: a subscript of two or more items is a tuple in Ruff's tree; tree-sitter lists the items.
+ISC004(s) :- kind(s, "concatenated_string"), field(c, "subscript", s), kind(c, "subscript"),
+    count : { field(c, "subscript", _) } >= 2.

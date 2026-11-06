@@ -17,7 +17,7 @@
 //                 final_ann(t)             t is `Final` or `Final[...]`
 //                 immutable_ann(t)         Ruff's is_immutable_annotation: `int`, `tuple[...]`, `typing.Sequence[...]`,
 //                                          `Optional[str]`, `int | None`, `Annotated[str, …]`, …
-//                 truth_of(m, t)           a literal's truth: "true", "false" or "none"
+//                 truth_of(m, t)           an expression's Ruff Truthiness: "true", "false" or "none"
 //                 type_app(t, h, i, a)     annotation t is h[…] with argument a at position i (h the head node)
 //   Values:       mutable_value(e)         Ruff's is_mutable_expr: a list, dict or set display or comprehension, or a
 //                                          call of `list`, `dict`, `set` or a mutable collections type
@@ -70,17 +70,35 @@ attrs_auto_given(c, t) :- dataclass_of(c, "attrs", e), unparen(e, m), call_kwarg
 auto_of(c, t, t) :- attrs_auto_given(c, t), t != "none".
 auto_of(c, "none", "true") :- attrs_auto_given(c, "none"), class_field(c, _, _, _).
 auto_of(c, "none", "false") :- attrs_auto_given(c, "none"), !class_field(c, _, _, _).
-// truth_of(m, t): Ruff's Truthiness of a literal: "true" (True or truthy), "false" (False or falsey) or "none".
-// Values of unknown truth (names, calls) have no row.
+// truth_of(m, t): Ruff's Truthiness (ruff_python_ast's Truthiness::from_expr): "true" (True or truthy), "false"
+// (False or falsey) or "none". Values of unknown truth (names, most calls, `[*xs]`, `{**d}`) have no row.
+//   0, 0.0, 0j, "", b"", (), [], {}, set(), list(), dict([])   "false"
+//   1, 1.5, 2j, "x", b"x", ..., lambda: 0, (x for x in y), [1], list("ab")   "true"
 .decl truth_of(m: node, t: symbol)
 truth_of(m, "true") :- kind(m, "true").
 truth_of(m, "false") :- kind(m, "false").
 truth_of(m, "none") :- kind(m, "none").
+truth_of(m, "true") :- kind(m, k), (k = "ellipsis" ; k = "lambda" ; k = "generator_expression").
 truth_of(m, "false") :- empty_literal(m, _), !kind(m, "call").
-truth_of(m, "true") :- list_like(m, _), !empty_literal(m, _).
+truth_of(m, "true") :- list_like(m, _), !empty_literal(m, _), unparen(m, d), child(d, c, _), !kind(c, "comment"),
+    !kind(c, "list_splat"), !kind(c, "dictionary_splat").
 truth_of(m, "false") :- ruff_int(m, "0").
 truth_of(m, "true") :- ruff_int(m, v), v != "0".
+// A float or an imaginary literal: zero when its digits are (`0.0`, `0e5`, `0j`).
+truth_of(m, t) :- (kind(m, "float") ; kind(m, "integer"), !ruff_int(m, _)), text(m, x),
+    (match("[0_]*\\.?[0_]*(?:[eE][-+]?[0-9_]+)?[jJ]?", x), t = "false" ;
+     !match("[0_]*\\.?[0_]*(?:[eE][-+]?[0-9_]+)?[jJ]?", x), t = "true").
 truth_of(m, "true") :- plain_str(m, v), v != "".
+truth_of(m, "true") :- string_form(m, f), (f = "bytes" ; f = "tstr"), !empty_string(m).
+// A builtin list, tuple, set, dict or frozenset called by name: empty with no arguments; with one positional
+// argument, that argument's truth (unknown for a number, bool, None, `...`, t-string, lambda or generator).
+truth_of(m, "false") :- truth_ctor(m), call_nargs(m, 0), call_nkwargs(m, 0).
+truth_of(m, t) :- truth_ctor(m), call_only(m, a0), unparen(a0, a), truth_of(a, t),
+    !kind(a, "integer"), !kind(a, "float"), !kind(a, "true"), !kind(a, "false"), !kind(a, "none"), !kind(a, "ellipsis"),
+    !kind(a, "lambda"), !kind(a, "generator_expression"), !string_form(a, "tstr").
+.decl truth_ctor(m: node)
+truth_ctor(m) :- kind(m, "call"), field(m, "function", f), kind(f, "identifier"), ruff_qual(f, q),
+    (q = "builtins.list" ; q = "builtins.tuple" ; q = "builtins.set" ; q = "builtins.dict" ; q = "builtins.frozenset").
 // frozen_dataclass(c): instances are immutable: `@dataclass(frozen=…)` with a true value, `@attrs.frozen`.
 .decl frozen_dataclass(c: node)
 frozen_dataclass(c) :- dataclass_of(c, "stdlib", e), unparen(e, m), call_kwarg(m, "frozen", v), unparen(v, t),

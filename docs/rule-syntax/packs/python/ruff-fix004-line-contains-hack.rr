@@ -1,0 +1,17 @@
+.policy "ruff-fix004-line-contains-hack" revision 2
+.description "Replace the workaround a HACK comment marks with a proper solution before shipping, then remove the comment."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff FIX004 (flake8-fixme): a comment holding the task tag `HACK`, in any case, as the first word after a `#`
+// (python/misc-comments). Reported at the comment; Ruff reports at the tag, on the same line.
+//   # HACK: something           ← FIX004
+//   # a # hack                  ← FIX004: after another `#`
+//   # HACKS                     not reported: not the whole word
+#include "python/misc-comments.rr"
+
+.violation FIX004(at: node, d: symbol) code "FIX004"
+    "Replace the workaround this `{d}` comment describes with a proper solution, then remove the `{d}` note; if no better solution exists yet, leave it."
+    suppress ruff "FIX004"
+FIX004(c, d) :- fixme_tag(c, "hack", d).
