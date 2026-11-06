@@ -1,0 +1,79 @@
+# tree-sitter-json's tokens, without branches.
+#
+# Every token below is a leaf kind of tree-sitter-json 0.24.8:
+#   '{' '}' '[' ']' ',' ':' '"'  string_content  escape_sequence  number  true  false  null
+# Comments (`//`, `/* */`) are tree-sitter-json extras. Where tree-sitter attaches them depends on
+# its parse states, so for now a comment sends the file to tree-sitter.
+
+lexer json
+
+# --- Byte classes --------------------------------------------------------------------------------
+
+class quote     = '"'
+class backslash = '\\'
+class ws        = ' ' '\t' '\n' '\r'
+class lf        = '\n'
+class lbrace    = '{'
+class rbrace    = '}'
+class lbracket  = '['
+class rbracket  = ']'
+class comma     = ','
+class colon     = ':'
+class slash     = '/'
+# Bytes a number or a literal word may contain. Which word it is gets checked per token below.
+class scalar    = '-' '+' '.' '0'..'9' 'a'..'z' 'A'..'Z'
+# The letters that may follow a backslash in tree-sitter-json's escape_sequence.
+class escapable = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
+
+# --- Strings -------------------------------------------------------------------------------------
+
+# simdjson's carry trick: the byte after an odd run of backslashes is escaped.
+mask escaped    = after_odd_run(backslash)
+mask q          = quote & ~escaped
+
+# Prefix XOR of the quotes: set from each opening quote up to, not including, its closing quote.
+#   input   {"a\"b":1}
+#   q       .1....1...
+#   inside  .11111....
+mask inside     = toggle(q)
+mask opening    = q & inside
+mask closing    = q & ~inside
+mask body       = inside & ~opening              # between the quotes
+
+# An escape is a backslash in a body that is not itself escaped, and the byte after it.
+mask esc        = backslash & body & ~escaped
+mask esc_bytes  = span(esc, 2)
+mask content    = body & ~esc_bytes
+
+# --- Outside strings -----------------------------------------------------------------------------
+
+mask code       = ~inside & ~closing
+mask word       = code & scalar
+
+# --- Tokens --------------------------------------------------------------------------------------
+
+token '"'             = start q
+token string_content  = start starts(content) through content
+token escape_sequence = start esc through esc_bytes
+token '{'             = start code & lbrace
+token '}'             = start code & rbrace
+token '['             = start code & lbracket
+token ']'             = start code & rbracket
+token ','             = start code & comma
+token ':'             = start code & colon
+# A run of scalar bytes is one token: a number, or `true`, `false` or `null`.
+token number          = start starts(word) through word
+keywords number { "true" -> true  "false" -> false  "null" -> null }
+
+skip code & ws
+
+# --- Errors: the file goes to tree-sitter --------------------------------------------------------
+
+error "unterminated string"        when at_end(inside)
+error "newline in a string"        when body & lf
+error "invalid escape"             when prev(esc) & ~escapable
+error "comment"                    when code & slash
+
+# A scalar token that is not `true`, `false` or `null` must be a number as tree-sitter-json
+# defines it. The check is a 10-state automaton run over each token's bytes (§3.3 of 03-bitlex.md).
+check number matches "-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?"

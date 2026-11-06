@@ -62,57 +62,47 @@ inside comments do not open strings, `#` inside strings does not open comments, 
 four quote forms, prefixes and f-strings. simdjson's prefix XOR only works for one quote character
 with no comments.
 
-**Mode bytes.** Only a few bytes can change the mode: quotes, `#`, newlines, `{` and `}`, and `:`
-and `!` (inside f-string interpolations). Stage 1 first classifies every byte with two nibble
-lookups, as simdjson does. It then compacts the mode bytes into a short list. A deterministic
-automaton runs over that list only, and a "last value" scan spreads each mode back to the bytes
-after it.
+**The answer** is two data-parallel automata over event bytes, specified in `03-bitlex.md` §1 and
+written out in `lexers/python.bitlex`:
 
-Before compaction, each mode byte gets a symbol from local facts:
+- **`strings`** (13 states):
+  - its events are every unescaped quote, every `#`, and each newline ending a line that holds a
+    quote or `#`. That is one event per 53 bytes of the corpus;
+  - it treats an f-string as a plain string, which is exact before Python 3.12;
+  - triple quotes take two extra states each way, to consume the second and third quote.
+- **`fstrings`** (14 states):
+  - its events are braces, brackets, `:`, quotes and `#` inside f-string bodies only;
+  - it finds interpolations, `{{` and `}}`, inner strings and format specs, with bracket depth
+    bounded at 2;
+  - it sets the error bit for a Python 3.12 f-string that reuses its own quote, which `strings`
+    gets wrong, and for anything beyond its bounds.
 
-- **Quote runs.** `q & q>>1 & q>>2` marks three quotes in a row. So `''` (an empty string) and
-  `'''` (a triple-quote opener) are told apart without lookahead in the automaton.
-- **Escapes.** simdjson's odd-backslash-run mask marks escaped quotes. Raw strings need no special
-  case: in Python a backslash keeps a quote from ending even a raw string (`r"\""` is one string).
-  Raw-ness only decides whether `escape_sequence` nodes exist (§5.6).
-- **Prefixes.** The letters just before a quote (`[rRbBfFuUtT]{1,2}`, preceded by a non-identifier
-  byte) are a shifted-mask fact. The quote's symbol carries an "f" bit.
-- **Doubled braces.** `{{` and `}}` are paired-byte facts.
+Each automaton's map from start states to end states fits one 16-byte register. Applying one event
+is one table shuffle. Chunks of the event list compose independently, so the work splits across
+CPU chunks and Metal SIMD groups with no serial chain between them.
 
-**The automaton.** Its states are a bounded stack of modes:
+Before the automata run, each event byte gets its symbol from local facts:
 
-| Depth | States |
-|---|---|
-| 0 | code, comment; plain string × 4 quote forms; f-string × 4; f-string format spec × 4 |
-| 1, inside an interpolation of quote form `q` | code × inner brace depth 0–2; plain string × 4; format spec; format-spec expression |
+- **Escapes:** simdjson's odd-backslash-run mask.
+- **Triple quotes:** `q & next(q) & next(q, 2)`.
+- **Prefixes:** shifted letter masks.
+- **Doubled braces:** `{{` and `}}` as byte pairs.
 
-That is about 50 states, under 64. The inner brace depth tells a `}` that closes the
-interpolation from one that closes a dict inside it (`f"{ {'a': 1}['a'] }"`). A transition the
-bounds do not cover sets the file's error bit, and the file goes to tree-sitter. The corpus says
-that costs 1 file in 13,042: the only one with a string two levels deep.
-
-PEP 701 lets an f-string reuse its own quote inside an interpolation, which the depth-1 states
-handle:
+PEP 701 lets an f-string reuse its own quote inside an interpolation. `strings` ends this string
+at the second `"`; `fstrings` then sees that end inside an open interpolation and sends the file
+to tree-sitter:
 
 ```text
 y = f"{f"{x}"}"
   string [4..15]                  outer f-string
     string_start [4..6] "f\""
     interpolation [6..14]
-      expression: string [7..13]  same quote, nested: the automaton is at depth 1 here
+      expression: string [7..13]  same quote, nested
         string_start [7..9] "f\""
         interpolation [9..12] …
         string_end [12..13] "\""
     string_end [14..15] "\""
 ```
-
-**Lowering.**
-- **CPU:** the automaton is a table walk, `s = T[symbol][s]`. That is a dependent load with no
-  branch, about one load latency per mode byte. To break the dependency chain, split the list into
-  chunks and compose their transition maps.
-- **Metal:** each chunk's map is computed for all start states as a 64-byte vector. The maps are
-  composed by a prefix scan (`01` §4 `scan(compose)`; one table shuffle per composition). This is
-  the same primitive as open item O66.
 
 ## 3. Stage 2: tokens
 
@@ -518,7 +508,7 @@ over several closing blocks) is the first thing the differential test should che
 
 | Stage | Errors |
 |---|---|
-| 1 | an unterminated string; a nesting bound exceeded |
+| 1 | an unterminated string; an f-string beyond the `fstrings` automaton's bounds |
 | 2 | an invalid byte or number |
 | 3 | mismatched brackets; a bad dedent |
 | 4 | a token pair the binding-power table does not relate (two operands in a row, as in `a b`); a statement no rule recognises; an operand outside its slot's supertype (`a == not b`, where a comparison operand must be a `primary_expression`) |
@@ -554,6 +544,7 @@ The bounds that make this branch-free, from the corpus:
 | bracket depth | 14 | 16 | error bit |
 | block nesting | 13 | 16 | error bit |
 | string nesting in interpolations | 2 (1 file) | 1 | error bit |
+| bracket depth inside an interpolation | not measured | 2 | error bit |
 | precedence levels | about 20 | 32 | fixed by the grammar |
 | nodes at one start byte | 75 | none needed | unbounded by construction |
 

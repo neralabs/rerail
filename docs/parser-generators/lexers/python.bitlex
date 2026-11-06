@@ -1,0 +1,331 @@
+# tree-sitter-python's leaves, without branches.
+#
+# The reference is tree-sitter-python 0.25.0 as Rerail vendors it (native/grammars/tree-sitter-python).
+# Every token below is one of its leaf kinds. Layout (NEWLINE, INDENT, DEDENT) is not a token
+# here: 02-python.md §4 computes it from this lexer's masks.
+#
+# Two automata do the work no bit trick can:
+#   strings   strings and comments, over the whole file, about one event per 53 bytes
+#   fstrings  interpolations, over f-string bodies only
+# Everything else is masks.
+
+lexer python
+
+# === 1. Byte classes ==============================================================================
+
+class sqc     = "'"
+class dqc     = '"'
+class hashc   = '#'
+class lf      = '\n'
+class cr      = '\r'
+class bslash  = '\\'
+class blank   = ' ' '\t' '\f' '\r'
+class lbrace  = '{'
+class rbrace  = '}'
+class lbrack  = '(' '['
+class rbrack  = ')' ']'
+class colonc  = ':'
+class eqc     = '='
+class bangc   = '!'
+class dotc    = '.'
+class ident   = 'a'..'z' 'A'..'Z' '_' '0'..'9' 0x80..0xff
+class digit   = '0'..'9'
+class hexdig  = '0'..'9' 'a'..'f' 'A'..'F'
+class numc    = '0'..'9' 'a'..'z' 'A'..'Z' '_' '.'
+class expc    = 'e' 'E'
+class signc   = '+' '-'
+class radixc  = 'x' 'X' 'o' 'O' 'b' 'B'
+class zeroc   = '0'
+class pfx     = 'r' 'R' 'b' 'B' 'f' 'F' 'u' 'U'
+class fpfx    = 'f' 'F'
+class rpfx    = 'r' 'R'
+class lower   = 'a'..'z'
+class high    = 0x80..0xff
+class opc     = '+' '-' '*' '/' '%' '@' '&' '|' '^' '~' '<' '>' '=' '!' ':' '.' ',' ';'
+                '(' ')' '[' ']' '{' '}'
+# Letters after a backslash that make a one-letter escape_sequence (tree-sitter-python's list).
+class esc1c   = '\\' "'" '"' 'a' 'b' 'f' 'n' 'r' 't' 'v'
+class xc      = 'x'
+class uc      = 'u'
+class Uc      = 'U'
+class Nc      = 'N'
+
+# === 2. Escapes, quotes, line ends ================================================================
+
+# The byte after an odd run of backslashes is escaped. This is mode-independent: in a raw string
+# too, a backslash keeps the next quote from ending the string.
+mask escaped  = after_odd_run(bslash)
+mask sq       = sqc & ~escaped
+mask dq       = dqc & ~escaped
+mask sq3      = sq & next(sq) & next(sq, 2)          # starts three single quotes in a row
+mask dq3      = dq & next(dq) & next(dq, 2)
+
+# A newline that ends a line: not escaped, and not the '\n' of an escaped "\r\n".
+mask nl       = lf & ~escaped & ~(prev(cr) & prev(escaped))
+
+# Only these newlines can end a comment or a short string: those ending a line that holds a
+# quote or a '#'. They are 0.49% of bytes, against 2.47% for all newlines.
+mask line_end = line_has(sq | dq | hashc, nl)
+
+# === 3. Strings and comments: the `strings` automaton =============================================
+#
+# Treats an f-string like any other string. Section 5 catches the one case where that is wrong.
+#
+#   input    x = '''a'b''' # c'
+#   events       ^^^ ^ ^^^ ^   ^          one per quote byte, '#' and line end
+#   states       os2,os1,s3 ... cs2,cs1,code   comment
+
+machine strings {
+  events {
+    q3s = sq3          # listed first: a quote that starts three wins over a plain quote
+    q3d = dq3
+    qs  = sq
+    qd  = dq
+    hash = hashc
+    eol  = line_end
+  }
+  states code comment s1 d1 s3 d3 os2 os1 od2 od1 cs2 cs1 error
+  group string  = s1 d1 s3 d3 os2 os1 od2 od1   # opening quotes .. last byte before the closing quotes
+  group closing = cs2 cs1                        # inside a closing '''
+  start code
+
+  code    on hash -> comment,  on qs -> s1,  on qd -> d1,  on q3s -> os2,  on q3d -> od2
+  comment on eol -> code
+
+  s1      on qs -> code,  on q3s -> code,  on eol -> error     # closes at the first quote
+  d1      on qd -> code,  on q3d -> code,  on eol -> error
+
+  os2     on any -> os1                                        # the 2nd and 3rd opening quotes
+  os1     on any -> s3
+  od2     on any -> od1
+  od1     on any -> d3
+
+  s3      on q3s -> cs2                                        # only three quotes close it
+  d3      on q3d -> cs2
+  cs2     on any -> cs1                                        # the 2nd and 3rd closing quotes
+  cs1     on any -> code
+}
+
+mask in_str   = strings.in(string)
+mask in_cmt   = strings.in(comment)
+mask opened   = strings.on(code -> s1 | d1 | os2 | od2)        # first byte of each opening quote
+mask open3    = strings.in(os2 | os1) | prev(strings.in(os1))  # the three bytes of an opening '''
+mask closed1  = strings.on(s1 | d1 -> code)                    # a closing ' or "
+mask close3   = strings.in(closing) | prev(strings.in(cs1))    # the three bytes of a closing '''
+mask body     = in_str & ~opened & ~open3                      # between the quotes
+
+# === 4. Prefixes ==================================================================================
+#
+# One or two letters right before an opening quote, not themselves the end of a longer word:
+# `rb"…"` has a prefix, and `if"…"` has none.
+
+mask pre1     = prev(pfx) & ~prev(ident, 2)
+mask pre2     = prev(pfx) & prev(pfx, 2) & ~prev(ident, 3)
+mask has_f    = (pre1 & prev(fpfx)) | (pre2 & (prev(fpfx) | prev(fpfx, 2)))
+mask has_r    = (pre1 & prev(rpfx)) | (pre2 & (prev(rpfx) | prev(rpfx, 2)))
+
+# From each opening quote to just before its closing quote, for f-strings and for raw strings.
+mask fstr     = fill(opened & has_f, after(in_str))
+mask raw      = fill(opened & has_r, after(in_str))
+mask fbody    = body & fstr
+
+# === 5. Interpolations: the `fstrings` automaton ==================================================
+#
+# Runs over f-string bodies only, plus each f-string's closing quote (`fend`). Bracket depth
+# inside an interpolation is bounded at 2, which tells a `}` that closes the interpolation from one
+# that closes a dict or set inside it. A ':' at depth 0 starts the format spec, as Python requires:
+# a lambda or a walrus inside an interpolation must be parenthesised.
+#
+#   input    f"a{x[1]:>{w}}{{"
+#   states     L I0 I1 I0 SPEC SPECX SPEC L LSKIP L
+
+mask fend     = after(in_str) & prev(fstr)
+
+machine fstrings {
+  events {                                   # where several match, the first listed wins
+    lb2   = lbrace & next(lbrace) & fbody
+    lb    = lbrace & fbody
+    rb2   = rbrace & next(rbrace) & fbody
+    rb    = rbrace & fbody
+    open  = lbrack & fbody
+    close = rbrack & fbody
+    colon = colonc & fbody                       # f"{x:=10}" is the spec '=10', not a walrus
+    q3s   = sq3 & fbody                          # three quotes in a row
+    q3d   = dq3 & fbody
+    fqs   = sq & has_f & fbody                   # a quote right after an f: opens an f-string,
+    fqd   = dq & has_f & fbody                   #   or closes an inner string such as 'f'
+    qs    = sq & fbody
+    qd    = dq & fbody
+    hash  = hashc & fbody                        # a comment inside an interpolation
+    end   = fend
+  }
+  states lit lskip i0 i1 i2 qs0 qs1 qs2 qd0 qd1 qd2 spec specx error
+  group interp = i0 i1 i2
+  group inner  = qs0 qs1 qs2 qd0 qd1 qd2
+  start lit
+
+  # Literal text: '{{' and '}}' are escapes; a single '{' opens an interpolation.
+  lit    on lb -> i0,  on lb2 -> lskip,  on rb2 -> lskip,  on rb -> error,  on end -> lit
+  lskip  on end -> error,  on any -> lit                       # the second brace of '{{' or '}}'
+
+  # Code inside an interpolation, at bracket depth 0, 1 and 2. A triple-quoted string, an
+  # f-string or a comment inside an interpolation is beyond these states: the file falls back.
+  i0     on lb -> i1, on lb2 -> i1, on open -> i1,  on rb -> lit, on rb2 -> lit,  on close -> error,
+         on colon -> spec,  on qs -> qs0, on qd -> qd0,
+         on q3s -> error, on q3d -> error, on fqs -> error, on fqd -> error, on hash -> error,
+         on end -> error
+  i1     on lb -> i2, on lb2 -> i2, on open -> i2,  on rb -> i0, on rb2 -> i0, on close -> i0,
+         on qs -> qs1, on qd -> qd1,
+         on q3s -> error, on q3d -> error, on fqs -> error, on fqd -> error, on hash -> error,
+         on end -> error
+  i2     on lb -> error, on lb2 -> error, on open -> error,  on rb -> i1, on rb2 -> i1, on close -> i1,
+         on qs -> qs2, on qd -> qd2,
+         on q3s -> error, on q3d -> error, on fqs -> error, on fqd -> error, on hash -> error,
+         on end -> error
+
+  # A plain string inside an interpolation; its first matching quote closes it. If it uses the
+  # f-string's own quote (Python 3.12), `strings` has already ended the f-string there, so `end`
+  # arrives in one of these states and the file falls back.
+  qs0    on qs -> i0, on fqs -> i0, on q3s -> i0,  on end -> error
+  qs1    on qs -> i1, on fqs -> i1, on q3s -> i1,  on end -> error
+  qs2    on qs -> i2, on fqs -> i2, on q3s -> i2,  on end -> error
+  qd0    on qd -> i0, on fqd -> i0, on q3d -> i0,  on end -> error
+  qd1    on qd -> i1, on fqd -> i1, on q3d -> i1,  on end -> error
+  qd2    on qd -> i2, on fqd -> i2, on q3d -> i2,  on end -> error
+
+  # The format spec: literal text, with nested replacement fields such as `{w}`.
+  spec   on lb -> specx, on lb2 -> specx,  on rb -> lit, on rb2 -> lit,  on end -> error
+  specx  on rb -> spec,  on rb2 -> spec,   on lb -> error, on lb2 -> error,  on end -> error
+}
+
+mask interp_open  = fstrings.on(lit -> i0)                     # '{' of an interpolation
+mask interp_close = fstrings.on(interp | spec -> lit)          # its '}'
+mask spec_colon   = fstrings.on(i0 -> spec)
+mask specx_open   = fstrings.on(spec -> specx)
+mask specx_close  = fstrings.on(specx -> spec)
+mask spec_text    = fstrings.in(spec) & ~spec_colon & ~specx_close & ~interp_close
+mask lit_text     = fbody & fstrings.in(lit | lskip) & ~interp_close
+mask inner_open   = fstrings.on(interp -> inner)
+mask inner_close  = fstrings.on(inner -> interp)
+mask inner_body   = fstrings.in(inner) & ~inner_open
+
+# === 6. String tokens =============================================================================
+
+mask s_open   = opened | inner_open
+# The text of every string: plain bodies, f-string literal text, and strings inside interpolations.
+mask s_text   = (body & ~fstr) | lit_text | inner_body
+mask s_raw    = raw | fill(inner_open & has_r, inner_close)
+
+# Prefix letters belong to string_start.
+mask prefix   = next(s_open & (pre1 | pre2)) | next(s_open & pre2, 2)
+mask s_start  = (s_open & ~pre1 & ~pre2) | next(s_open & pre1) | next(s_open & pre2, 2)
+
+token string_start   = start s_start  through prefix | s_open | open3
+token string_end     = start closed1 | starts(close3) | inner_close  through close3
+# string_content is not split at escapes: escape_sequence and escape_interpolation are its
+# children (02-python.md §5.5).
+token string_content = start starts(s_text)  through s_text
+
+# Escape sequences in non-raw text, as tree-sitter-python's escape_sequence defines them:
+#   \x41 = 4 bytes, ሴ = 6, \U00012345 = 10, \N{NAME} through its '}', \7 \07 \007 = 2 to 4,
+#   \ + newline = 2 (3 for \r\n), and \n \t \\ \' … = 2. Any other backslash is plain content.
+mask e        = bslash & s_text & ~s_raw & ~escaped
+mask e_x      = e & next(xc) & next(hexdig, 2) & next(hexdig, 3)
+mask e_u      = e & next(uc) & next(hexdig, 2) & next(hexdig, 3) & next(hexdig, 4) & next(hexdig, 5)
+mask e_U      = e & next(Uc) & next(hexdig, 2) & next(hexdig, 3) & next(hexdig, 4) & next(hexdig, 5)
+                  & next(hexdig, 6) & next(hexdig, 7) & next(hexdig, 8) & next(hexdig, 9)
+mask e_N      = e & next(Nc) & next(lbrace, 2)
+mask e_d      = e & next(digit)
+mask e_nl     = e & (next(lf) | next(cr))
+mask e_1      = e & next(esc1c) & ~e_nl
+mask esc_bytes = span(e_x, 4) | span(e_u, 6) | span(e_U, 10)
+               | fill(e_N, prev(rbrace & s_text))                   # through the '}'
+               | span(e_d, 2) | span(e_d & next(digit, 2), 3) | span(e_d & next(digit, 2) & next(digit, 3), 4)
+               | span(e_nl, 2) | span(e_nl & next(cr) & next(lf, 2), 3)
+               | span(e_1, 2)
+
+token escape_sequence      = start e_x | e_u | e_U | e_N | e_d | e_nl | e_1  through esc_bytes
+token escape_interpolation = start fstrings.on(lit -> lskip)  through span(fstrings.on(lit -> lskip), 2)
+
+# Interpolation punctuation and the format spec.
+mask conv     = bangc & fstrings.in(i0) & next(lower)              # '!r': one named leaf
+token type_conversion      = start conv  through span(conv, 2)
+token '{'                  = start interp_open | specx_open
+token '}'                  = start interp_close | specx_close
+token ':'                  = start spec_colon
+skip spec_text                                   # spec text is no node (02-python.md §5.5)
+
+# === 7. Code ======================================================================================
+
+# Code is everything outside strings and comments, plus the code inside interpolations and
+# inside a format spec's nested fields.
+mask code     = (~in_str & ~in_cmt & ~close3 & ~closed1 & ~prefix)
+              | ((fstrings.in(interp) | fstrings.in(specx)) & ~interp_open & ~specx_open
+                 & ~inner_close & ~span(conv, 2))
+
+# tree-sitter-python's comment is '#' and then [^\r\n]*.
+token comment = start strings.on(code -> comment)  through in_cmt & ~cr
+
+# --- Numbers ---
+# A number starts at a digit, or at a '.' before a digit, that does not continue a word.
+mask num_start = code & ~prev(ident & code) & (digit | (dotc & next(digit)))
+mask num_base  = fill(num_start, ~(numc & code))
+# 1e-5: a sign continues a decimal number right after its e or E. In 0x1e+2 it does not.
+mask hexlike   = fill(num_start & zeroc & next(radixc), after(num_base))
+mask sign_cont = code & signc & prev(expc) & prev(num_base) & ~prev(hexlike)
+mask number    = num_base | fill(sign_cont, ~(numc & code) & ~sign_cont)
+# A float has a '.' or a decimal exponent somewhere in its token. `back_fill` carries that fact
+# back to the token's first byte. 1j is an integer in tree-sitter-python.
+mask floaty    = number & (dotc | (expc & ~hexlike))
+mask is_float  = num_start & back_fill(floaty, ~number)
+token integer  = start num_start & ~is_float  through number
+token float    = start is_float  through number
+check integer matches "(0[xX](_?[A-Fa-f0-9]+)+|0[oO](_?[0-7]+)+|0[bB](_?[01]+)+)[Ll]?|([0-9]+_?)+([Ll]|[jJ])?"
+check float   matches "(([0-9]+_?)+\.(([0-9]+_?)+)?([eE][+-]?([0-9]+_?)+)?|(([0-9]+_?)+)?\.([0-9]+_?)+([eE][+-]?([0-9]+_?)+)?|([0-9]+_?)+[eE][+-]?([0-9]+_?)+)[jJ]?"
+
+# --- Words: identifiers and keywords ---
+mask word      = fill(code & ident & ~digit & ~prev(ident & code) & ~number, ~(ident & code))
+token identifier = start starts(word)  through word
+keywords identifier {
+  "and" "as" "assert" "async" "await" "break" "class" "continue" "def" "del" "elif" "else"
+  "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not"
+  "or" "pass" "raise" "return" "try" "while" "with" "yield"
+  "True" -> true  "False" -> false  "None" -> none
+} soft { "match" "case" "type" "print" "exec" }
+# tree-sitter-python's identifier is [_\p{XID_Start}][_\p{XID_Continue}]*. ASCII words match it
+# by construction. Words with a byte of 0x80 or above are checked separately (§8).
+mask high_word = word & back_fill(word & high, ~word)
+
+# --- Line continuations ---
+# '\' then '\r', '\r\n' or '\n'. A node, except right before a string start, where tree-sitter's
+# external scanner skips it (02-python.md §3): walk back from each string start over blanks and
+# continuations, and drop the continuations reached.
+mask lcont       = code & bslash & (next(lf) | next(cr))
+mask lcont_bytes = span(lcont, 2) | span(lcont & next(cr) & next(lf, 2), 3)
+mask before_str  = back_fill(prev(s_start), ~(blank | lcont_bytes))
+token line_continuation = start lcont & ~before_str  through lcont_bytes
+skip lcont_bytes
+
+# --- Operators ---
+munch op over code & opc & ~number {
+  "**=" "//=" ">>=" "<<="
+  "..." -> ellipsis
+  "->" ":=" "!=" "<>" "==" "<=" ">=" "**" "//" "<<" ">>"
+  "+=" "-=" "*=" "/=" "%=" "@=" "&=" "|=" "^="
+  "+" "-" "*" "/" "%" "@" "&" "|" "^" "~" "<" ">" "=" "." "," ";" ":"
+  "(" ")" "[" "]" "{" "}"
+}
+
+skip code & (blank | lf)
+
+# === 8. Errors: the file goes to tree-sitter ======================================================
+
+error "unterminated string, or a newline in a short one"  when strings.reached(error) | ~strings.final(code | comment)
+error "an f-string beyond the automaton's bounds"         when fstrings.reached(error)
+error "a '!' that is neither '!=' nor a conversion"       when code & bangc & ~next(eqc)
+# Open: a word holding a non-ASCII byte must match [_\p{XID_Start}][_\p{XID_Continue}]*. Its DFA
+# over UTF-8 has far more than 64 states, so it cannot be a `check`. Until a table form exists,
+# any such word sends the file to tree-sitter.
+error "a non-ASCII identifier (open)"                     when high_word
+# Implicit (03-bitlex.md §2.4): overlapping tokens, bytes in no token and not skipped, a `munch`
+# whose fixed point did not settle, and a `check` that failed.
