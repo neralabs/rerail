@@ -160,6 +160,9 @@ global_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _), es_global(x).
 .decl import_binding(site: node, local: symbol, src: symbol, imported: symbol)
 import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), text(n, x),
     local_of(sp, l), source_of(sp, m).
+// `import { default as foo }`: tree-sitter writes `default` as an anonymous token, so there is no name field.
+import_binding(sp, l, m, "default") :- kind(sp, "import_specifier"), !field(sp, "name", _), op(sp, "default"),
+    local_of(sp, l), source_of(sp, m).
 // Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
 import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
     text(id, l), source_of(c, m).
