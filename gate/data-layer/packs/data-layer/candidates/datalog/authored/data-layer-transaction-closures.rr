@@ -1,0 +1,263 @@
+// data-layer-transaction-closures, hand-written (decision 0043): the six clauses of
+// gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-transaction-closures.json, with the option
+// sourceGate read from option_on (oracleAnalyzer is read by no clause). No hand-written program existed.
+//
+// The targets: a mutating method call `X.m(…)` (m in add, append, …; X an identifier) and a subscript store
+// `X[…] = …` (store-target), each in a closure handed to a transaction method (`….read(…)`, `.write(…)`, …: an
+// attribute callee whose attribute is read, read_version, versioned_read, versioned_write, write or
+// write_version) as `fn=` or, with no `fn=` keyword, as the second positional argument (nthChild 2 of the
+// arguments that are not comments, keyword arguments or `**` splats); and an identifier of a `nonlocal` or
+// `global` statement in such a closure.
+// - inline-* (inline-context): the closure is the target's nearest lambda (`inside … stopBy lambda`, the target
+//   in its body), the lambda is the call's argument (compare CLOSURE = LAMBDA by node: the same node), X is not
+//   a positional-or-keyword or splat parameter of the lambda nor assigned (`X = …`, `X := …`) in its body, outside
+//   nested lambdas, ending before the target (layout after: the target starts at or after the name's end); and X
+//   is bound around it: a parameter or any assignment of X in an enclosing def, or at module level an
+//   assignment (also chained, `a = X = …`), a def or class (decorated or not), or an import naming X.
+// - named-* (named-context, named-plain-context): the closure is a `def NAME` directly in the body of a def OUTER,
+//   enclosing the target with no lambda between them (stopBy lambda), the target in its body; OUTER's body (not
+//   inside a nested def) holds a transaction call, starting at or after the closure's end, taking NAME as `fn=`
+//   or second positional argument; OUTER's body has no later `def NAME` (starting at or after the closure's end).
+//   For mutations also: X is not a parameter of the closure, not assigned before the target in its body (outside
+//   nested lambdas), and no def there taking X as a parameter ends before the target; and OUTER binds X (a
+//   positional-or-keyword parameter, or a statement `X = …` of its body).
+// - Parameters as the policy reads them: positional-or-keyword (`identifier`, default, typed, typed default;
+//   not before a `/`, not after `*`, `*args` or `**kwargs`) whose node is X, whose name is X or which has a
+//   child identifier X (a default value `p=X` included, as the policy's `has` reads it), or `*X` / `**X`.
+//   OUTER's own parameters: positional-or-keyword only, by node, name, or a typed parameter's identifier.
+// - Metavariables compare by text (an identifier's), CLOSURE/LAMBDA, OUTER/USE_OWNER/CHECK_OUTER/VARIABLE_OWNER
+//   by node.
+// The violation is at the target (witness.span); `each: INVOKE` gives one finding per transaction call, all at the
+// target's line: one key. sourceGate (default true): the module's text contains `.read(`, `.read_version(`,
+// `.versioned_read(`, `.versioned_write(`, `.write(` or `.write_version(`; off, every module. `syntax: valid`:
+// no document with a syntax error. Helpers shared by both families are prefixed `tc_`.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl option_on(name: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+.decl tc_lam(k: symbol)
+tc_lam("lambda").
+.decl tc_def(k: symbol)
+tc_def("function_definition").
+
+// ---- documents: scope, syntax, source gate ----
+.decl tc_gate(d: number)
+tc_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, t),
+    (contains(".read(", t) ; contains(".read_version(", t) ; contains(".versioned_read(", t) ; contains(".versioned_write(", t) ;
+     contains(".write(", t) ; contains(".write_version(", t)).
+tc_gate(d) :- doc(d, _, _), !option_on("sourceGate").
+.decl tc_doc(d: number, p: symbol)
+tc_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), tc_gate(d).
+
+.decl tc_ident(n: node, s: symbol)
+tc_ident(n, s) :- node(_, n, "identifier", _, _), text(n, s).
+
+// ---- targets ----
+.decl tc_mutmeth(s: symbol)
+tc_mutmeth("add"). tc_mutmeth("append"). tc_mutmeth("clear"). tc_mutmeth("discard"). tc_mutmeth("extend"). tc_mutmeth("insert").
+tc_mutmeth("pop"). tc_mutmeth("popitem"). tc_mutmeth("remove"). tc_mutmeth("setdefault"). tc_mutmeth("update").
+// `X.m(…)`: (doc, call, X).
+.decl tc_callmut(d: number, m: node, x: symbol)
+tc_callmut(d, m, x) :- tc_doc(d, _), node(d, m, "call", _, _), field(m, "function", a), node(_, a, "attribute", _, _),
+    field(a, "object", o), tc_ident(o, x), field(a, "attribute", y), tc_ident(y, meth), tc_mutmeth(meth).
+// store-target: the left of an assignment, augmented assignment, for or for-in clause; inside a pattern list,
+// tuple or list (pattern), list splat pattern or parentheses that is one; a `with … as` target.
+.decl tc_storek(k: symbol)
+tc_storek("assignment"). tc_storek("augmented_assignment"). tc_storek("for_statement"). tc_storek("for_in_clause").
+.decl tc_packk(k: symbol)
+tc_packk("pattern_list"). tc_packk("tuple_pattern"). tc_packk("list_pattern"). tc_packk("tuple"). tc_packk("list").
+tc_packk("list_splat_pattern"). tc_packk("parenthesized_expression").
+.decl tc_subcand(n: node)
+tc_subcand(n) :- tc_doc(d, _), node(d, n, "subscript", _, _).
+.decl tc_store(n: node)
+tc_store(n) :- tc_storeq(n), field(p, "left", n), node(_, p, k, _, _), tc_storek(k).
+tc_store(n) :- tc_storeq(n), child(p, n, _), node(_, p, k, _, _), tc_packk(k), tc_store(p).
+tc_store(n) :- tc_storeq(n), child(t, n, _), node(_, t, "as_pattern_target", _, _), field(a, "alias", t), node(_, a, "as_pattern", _, _),
+    child(w, a, _), node(_, w, "with_item", _, _).
+// the nodes store-target is asked of: candidate subscripts and the containers above them.
+.decl tc_storeq(n: node)
+tc_storeq(n) :- tc_subcand(n).
+tc_storeq(p) :- tc_storeq(n), child(p, n, _), node(_, p, k, _, _), tc_packk(k).
+// `X[…]` stored to: (doc, subscript, X).
+.decl tc_submut(d: number, m: node, x: symbol)
+tc_submut(d, m, x) :- tc_subcand(m), node(d, m, _, _, _), field(m, "value", o), tc_ident(o, x), tc_store(m).
+.decl tc_mut(d: number, m: node, x: symbol)
+tc_mut(d, m, x) :- tc_callmut(d, m, x).
+tc_mut(d, m, x) :- tc_submut(d, m, x).
+
+// ---- transaction calls and their closure argument ----
+.decl tc_txmeth(s: symbol)
+tc_txmeth("read"). tc_txmeth("read_version"). tc_txmeth("versioned_read"). tc_txmeth("versioned_write"). tc_txmeth("write"). tc_txmeth("write_version").
+// (call, its arguments node).
+.decl tc_txcall(i: node, g: node)
+tc_txcall(i, g) :- node(d, i, "call", _, _), tc_doc(d, _), field(i, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", y),
+    tc_ident(y, t), tc_txmeth(t), field(i, "arguments", g).
+// a keyword argument `fn=V` of g.
+.decl tc_fnkw(g: node, v: node)
+tc_fnkw(g, v) :- tc_txcall(_, g), child(g, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", y), tc_ident(y, "fn"),
+    field(k, "value", v).
+.decl tc_hasfn(g: node)
+tc_hasfn(g) :- tc_fnkw(g, _).
+// nthChild 2 of the arguments that are not comments (child holds none), keyword arguments or `**` splats.
+.decl tc_argx(k: symbol)
+tc_argx("keyword_argument"). tc_argx("dictionary_splat").
+.decl tc_argok(g: node, c: node, i: number)
+tc_argok(g, c, i) :- tc_txcall(_, g), child(g, c, i), node(_, c, k, _, _), !tc_argx(k).
+.decl tc_argbefore(g: node, c: node, b: node)
+tc_argbefore(g, c, b) :- tc_argok(g, c, i), tc_argok(g, b, j), j < i.
+.decl tc_second(g: node, c: node)
+tc_second(g, c) :- tc_argok(g, c, _), n = count : { tc_argbefore(g, c, _) }, n = 1.
+// the closure argument of a transaction call: (call, arguments, argument node).
+.decl tc_closarg(i: node, g: node, v: node)
+tc_closarg(i, g, v) :- tc_txcall(i, g), tc_fnkw(g, v).
+tc_closarg(i, g, v) :- tc_txcall(i, g), !tc_hasfn(g), tc_second(g, v).
+
+// ---- parameters ----
+.decl tc_pkind(k: symbol)
+tc_pkind("identifier"). tc_pkind("default_parameter"). tc_pkind("typed_parameter"). tc_pkind("typed_default_parameter").
+.decl tc_splatk(k: symbol)
+tc_splatk("list_splat_pattern"). tc_splatk("dictionary_splat_pattern").
+// a parameter list's children.
+.decl tc_pchild(p: node, q: node, i: number, k: symbol)
+tc_pchild(p, q, i, k) :- field(f, "parameters", p), node(d, f, _, _, _), tc_doc(d, _), child(p, q, i), node(_, q, k, _, _).
+// `*`-like: keyword_separator, a splat, or a typed parameter holding one.
+.decl tc_star(p: node, i: number)
+tc_star(p, i) :- tc_pchild(p, _, i, "keyword_separator").
+tc_star(p, i) :- tc_pchild(p, _, i, k), tc_splatk(k).
+tc_star(p, i) :- tc_pchild(p, q, i, "typed_parameter"), child(q, s, _), node(_, s, k, _, _), tc_splatk(k).
+// positional-or-keyword: not before a positional_separator, not after a star.
+.decl tc_posonly(q: node)
+tc_posonly(q) :- tc_pchild(p, q, i, _), tc_pchild(p, _, j, "positional_separator"), j > i.
+.decl tc_kwonly(q: node)
+tc_kwonly(q) :- tc_pchild(p, q, i, _), tc_star(p, j), j < i.
+.decl tc_plain(p: node, q: node, k: symbol)
+tc_plain(p, q, k) :- tc_pchild(p, q, _, k), tc_pkind(k), !tc_posonly(q), !tc_kwonly(q).
+// the general shape (closures, enclosing defs): (parameter list, name).
+.decl tc_pab(p: node, x: symbol)
+tc_pab(p, x) :- tc_plain(p, q, "identifier"), tc_ident(q, x).
+tc_pab(p, x) :- tc_plain(p, q, _), field(q, "name", y), tc_ident(y, x).
+tc_pab(p, x) :- tc_plain(p, q, _), child(q, y, _), tc_ident(y, x).
+tc_pab(p, x) :- tc_pchild(p, q, _, k), tc_splatk(k), child(q, y, _), tc_ident(y, x).
+tc_pab(p, x) :- tc_pchild(p, q, _, "typed_parameter"), child(q, s, _), node(_, s, k, _, _), tc_splatk(k), child(s, y, _), tc_ident(y, x).
+// OUTER's own (VARIABLE_OWNER): positional-or-keyword, by node, name, or a typed parameter's identifier.
+.decl tc_pc(p: node, x: symbol)
+tc_pc(p, x) :- tc_plain(p, q, "identifier"), tc_ident(q, x).
+tc_pc(p, x) :- tc_plain(p, q, _), field(q, "name", y), tc_ident(y, x).
+tc_pc(p, x) :- tc_plain(p, q, "typed_parameter"), child(q, y, _), tc_ident(y, x).
+
+// ---- assignments of a name: (doc, node, X, start, end, end of the name) ----
+.decl tc_asgn(d: number, a: node, x: symbol, s: number, e: number, ne: number)
+tc_asgn(d, a, x, s, e, ne) :- tc_doc(d, _), node(d, a, "assignment", s, e), field(a, "left", y), node(_, y, "identifier", _, ne), text(y, x).
+tc_asgn(d, a, x, s, e, ne) :- tc_doc(d, _), node(d, a, "named_expression", s, e), field(a, "name", y), node(_, y, "identifier", _, ne), text(y, x).
+// module-assignment: `X = …`, or an assignment whose right side is one (`a = X = …`).
+.decl tc_modasg(a: node, x: symbol)
+tc_modasg(a, x) :- node(d, a, "assignment", _, _), tc_doc(d, _), field(a, "left", y), tc_ident(y, x).
+tc_modasg(a, x) :- node(d, a, "assignment", _, _), tc_doc(d, _), field(a, "right", r), tc_modasg(r, x).
+
+// ==== inline-mutation, inline-subscript (inline-context) ====
+// the target's nearest lambda, the target in its body.
+.decl inline_cand(m: node, x: symbol, l: node)
+inline_cand(m, x, l) :- tc_mut(d, m, x), nearest(m, l, tc_lam), field(l, "body", b), node(d, b, _, bs, be), node(d, m, _, ms, me),
+    bs <= ms, me <= be.
+.decl inline_invoked(l: node)
+inline_invoked(l) :- tc_closarg(_, _, l), node(_, l, "lambda", _, _).
+// X is the lambda's parameter, or assigned in its body (outside nested lambdas) before the target.
+.decl inline_shadow(l: node, x: symbol, m: node)
+inline_shadow(l, x, m) :- inline_cand(m, x, l), field(l, "parameters", p), tc_pab(p, x).
+inline_shadow(l, x, m) :- inline_cand(m, x, l), field(l, "body", b), node(d, b, _, bs, be), tc_asgn(d, a, x, as2, ae, ne), bs <= as2, ae <= be,
+    nearest(a, l, tc_lam), node(d, m, _, ms, _), ne <= ms.
+// X bound around the lambda.
+.decl inline_bound(l: node, x: symbol)
+inline_bound(l, x) :- inline_cand(_, x, l), inside(l, f, tc_def), field(f, "parameters", p), tc_pab(p, x).
+inline_bound(l, x) :- inline_cand(_, x, l), inside(l, f, tc_def), node(d, f, _, fs, fe), tc_asgn(d, _, x, as2, ae, _), fs <= as2, ae <= fe.
+inline_bound(l, x) :- inline_cand(_, x, l), node(d, l, _, _, _), tc_modbind(d, x).
+// module level: an assignment statement, a def or class (decorated or not), an import.
+.decl tc_modbind(d: number, x: symbol)
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), node(_, s, "expression_statement", _, _), child(s, a, _), tc_modasg(a, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), tc_defcls(s, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), node(_, s, "decorated_definition", _, _), child(s, t, _), tc_defcls(t, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), tc_importk(s), child(s, a, _), node(_, a, "aliased_import", _, _),
+    field(a, "alias", y), tc_ident(y, x).
+tc_modbind(d, x) :- node(d, m, "module", _, _), tc_doc(d, _), child(m, s, _), tc_importk(s), child(s, dn, _), node(_, dn, "dotted_name", _, _),
+    !field(s, "module_name", dn), child(dn, y, 0), tc_ident(y, x).
+.decl tc_defcls(s: node, x: symbol)
+tc_defcls(s, x) :- node(_, s, "function_definition", _, _), field(s, "name", y), tc_ident(y, x).
+tc_defcls(s, x) :- node(_, s, "class_definition", _, _), field(s, "name", y), tc_ident(y, x).
+.decl tc_importk(s: node)
+tc_importk(s) :- node(_, s, "import_statement", _, _).
+tc_importk(s) :- node(_, s, "import_from_statement", _, _).
+.decl inline_ok(m: node, x: symbol)
+inline_ok(m, x) :- inline_cand(m, x, l), inline_invoked(l), !inline_shadow(l, x, m), inline_bound(l, x).
+
+violation("data-layer-transaction-closures", "inline-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), inline_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "inline-subscript", "TXN004", p, l) :- tc_submut(d, m, x), inline_ok(m, x), tc_doc(d, p), line(m, l).
+
+// ==== named-* (named-context, named-plain-context) ====
+// the closure: `def NAME` in the body of the def OUTER (its parent a block, whose parent is OUTER).
+.decl named_closure0(c: node, o: node, name: symbol)
+named_closure0(c, o, name) :- node(d, c, "function_definition", _, _), tc_doc(d, _), field(c, "name", y), tc_ident(y, name), child(bk, c, _),
+    node(_, bk, "block", _, _), child(o, bk, _), node(_, o, "function_definition", _, _).
+// OUTER's body (not inside a nested def) holds a transaction call after the closure taking NAME.
+.decl named_invoked(c: node)
+named_invoked(c) :- named_closure0(c, o, name), tc_closarg(i, _, v), tc_ident(v, name), nearest(i, o, tc_def), field(o, "body", ob),
+    node(d, ob, _, bs, be), node(d, i, _, is2, ie2), bs <= is2, ie2 <= be, node(d, c, _, _, ce), ce <= is2.
+// a later `def NAME` in OUTER's body.
+.decl named_redef(c: node)
+named_redef(c) :- named_closure0(c, o, name), field(o, "body", ob), child(ob, c2, _), node(d, c2, "function_definition", s2, _),
+    field(c2, "name", y), tc_ident(y, name), node(d, c, _, _, ce), s2 >= ce.
+.decl named_closure(c: node, o: node)
+named_closure(c, o) :- named_closure0(c, o, _), named_invoked(c), !named_redef(c).
+// targets: mutations and nonlocal/global names.
+.decl named_target(d: number, m: node)
+named_target(d, m) :- tc_mut(d, m, _).
+named_target(d, n) :- tc_doc(d, _), node(d, n, "identifier", _, _), child(s, n, _), node(_, s, "nonlocal_statement", _, _).
+named_target(d, n) :- tc_doc(d, _), node(d, n, "identifier", _, _), child(s, n, _), node(_, s, "global_statement", _, _).
+// an enclosing closure, the target in its body, with no lambda between them.
+.decl named_cand0(m: node, c: node)
+named_cand0(m, c) :- named_target(d, m), inside(m, c, tc_def), named_closure(c, _), field(c, "body", b), node(d, b, _, bs, be),
+    node(d, m, _, ms, me), bs <= ms, me <= be.
+.decl named_lambetween(m: node, c: node)
+named_lambetween(m, c) :- named_cand0(m, c), inside(m, lm, tc_lam), inside(lm, c, tc_def).
+.decl named_cand(m: node, c: node)
+named_cand(m, c) :- named_cand0(m, c), !named_lambetween(m, c).
+
+// named-context's mutation conditions: (target, X, closure).
+.decl named_mcand(m: node, x: symbol, c: node)
+named_mcand(m, x, c) :- tc_mut(_, m, x), named_cand(m, c).
+// assignments of X, and defs taking X, in the closure's body before the target; then those inside a lambda there.
+.decl named_sq(m: node, x: symbol, c: node, a: node, b: node)
+named_sq(m, x, c, a, b) :- named_mcand(m, x, c), field(c, "body", b), node(d, b, _, bs, be), tc_asgn(d, a, x, as2, ae, ne), bs <= as2, ae <= be,
+    node(d, m, _, ms, _), ne <= ms.
+named_sq(m, x, c, f, b) :- named_mcand(m, x, c), field(c, "body", b), node(d, b, _, bs, be), node(d, f, "function_definition", fs, fe),
+    bs <= fs, fe <= be, node(d, m, _, ms, _), fe <= ms, field(f, "parameters", p), tc_pab(p, x).
+.decl named_lamin(a: node, b: node)
+named_lamin(a, b) :- named_sq(_, _, _, a, b), inside(a, lm, tc_lam), node(d, lm, _, ls, le), node(d, b, _, bs, be), bs <= ls, le <= be.
+.decl named_shadow(c: node, x: symbol, m: node)
+named_shadow(c, x, m) :- named_mcand(m, x, c), field(c, "parameters", p), tc_pab(p, x).
+named_shadow(c, x, m) :- named_sq(m, x, c, a, b), !named_lamin(a, b).
+// OUTER binds X: a parameter, or a statement `X = …` of its body.
+.decl named_bound(o: node, x: symbol)
+named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "parameters", p), tc_pc(p, x).
+named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "body", ob), child(ob, s, _), node(_, s, "expression_statement", _, _),
+    child(s, a, _), tc_modasg(a, x).
+named_bound(o, x) :- named_mcand(_, x, c), named_closure(c, o), field(o, "body", ob), child(ob, a, _), node(_, a, "assignment", _, _),
+    field(a, "left", y), tc_ident(y, x).
+.decl named_ok(m: node, x: symbol)
+named_ok(m, x) :- named_mcand(m, x, c), named_closure(c, o), !named_shadow(c, x, m), named_bound(o, x).
+
+violation("data-layer-transaction-closures", "named-mutation", "TXN003", p, l) :- tc_callmut(d, m, x), named_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "named-subscript", "TXN004", p, l) :- tc_submut(d, m, x), named_ok(m, x), tc_doc(d, p), line(m, l).
+violation("data-layer-transaction-closures", "named-nonlocal", "TXN001", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "nonlocal_statement", _, _),
+    tc_doc(d, p), line(n, l).
+violation("data-layer-transaction-closures", "named-global", "TXN002", p, l) :- named_cand(n, _), child(s, n, _), node(d, s, "global_statement", _, _),
+    tc_doc(d, p), line(n, l).
