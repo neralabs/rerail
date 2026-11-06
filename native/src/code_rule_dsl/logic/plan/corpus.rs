@@ -256,6 +256,11 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     statements.enter("stats");
     // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
     crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
+    // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
+    let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
+    if !demanded.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("demand (magic sets)", || format!("{} negated tests computed only for the nodes their readers bind: {}", demanded.len(), demanded.join(", ")));
+    }
     // Text tests over text relations become relations the batches fill from their vocabulary (decision 0037).
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
@@ -294,13 +299,17 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     };
     let own = t.is_none();
     crate::code_rule_dsl::logic::profile::decision("statistics", || {
-        if own { "each chunk measures its own sources' statistics; the planner prices that chunk's plans from them".into() } else { "T's corpus statistics, read once, with each chunk's sources' own".into() }
+        if own { "the first chunk measures its sources' statistics; later chunks scale them by their size (a relation first seen later is measured then); the planner prices each chunk's plans from them".into() } else { "T's corpus statistics, read once, with the first chunk's sources' own, scaled to each chunk".into() }
     });
     if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().filter(|n| n != "1") {
         crate::code_rule_dsl::logic::profile::decision("sampling", || format!("every {n}th file only (RERAIL_SAMPLE_EVERY): findings are a sample's"));
     }
     let constants = Own::constants(&lowered.program);
     let mut own_totals = Own::default();
+    // Measured once (`Own::measure` and `syntax::statistics` read every row, sorting every column): the first
+    // chunk's, with its nodes or rows, scaled to each later chunk's.
+    let mut own_once: Option<(usize, Own)> = None;
+    let mut measured_once: HashMap<String, (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
     db.execute("ATTACH ?1 AS x", [cross_path.to_string_lossy()])?;
     // Each base relation the cross-file part reads is kept in memory, across the chunks, as the columns its rules
     // name (and those decoding a finding's location reads); the others are never read. (Was: written to `x` and
@@ -422,8 +431,15 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         chunks += 1;
         let mut stats = t_stats.clone();
         if own {
-            let _measure = crate::code_rule_dsl::logic::profile::span(|| "measure constants".into());
-            let chunk = Own::measure(&sources, &constants);
+            let chunk = match &own_once {
+                Some((first, measured)) if *first > 0 => measured.scaled(chunk_nodes_built as f64 / *first as f64),
+                _ => {
+                    let _measure = crate::code_rule_dsl::logic::profile::span(|| "measure constants".into());
+                    let measured = Own::measure(&sources, &constants);
+                    own_once = Some((chunk_nodes_built, measured.clone()));
+                    measured
+                }
+            };
             chunk.apply(&mut stats);
             own_totals.add(&chunk);
         }
@@ -444,9 +460,15 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
                 }
             }
-            let measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
-            let measured = syntax::statistics(source.as_ref());
-            drop(measure);
+            let measured = match measured_once.get(&rel) {
+                Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.len()),
+                _ => {
+                    let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
+                    let measured = syntax::statistics(source.as_ref());
+                    measured_once.insert(rel.clone(), (source.len(), measured.clone()));
+                    measured
+                }
+            };
             if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
                 totals.add(&rel, source.len(), &measured);
             }
@@ -910,12 +932,36 @@ fn corpus_files(root: &Path) -> Result<(Vec<String>, Vec<String>)> {
     Ok((python, rust))
 }
 
+/// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
+/// `rows`. A key column stays a key; a column with many values (over one row in 16 distinct: node ids, strings) gains
+/// values in proportion, one with few (kinds, field names) keeps them and its postings grow. `sq` keeps the postings'
+/// sizes against the values, and `sqd` grows with the documents, whose postings keep their sizes.
+fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, rows: usize) -> Vec<(String, i64, i64, i64, i64)> {
+    let r = rows as f64 / first as f64;
+    let n = rows as i64;
+    measured
+        .iter()
+        .map(|(name, m_rows, ndv, sq, sqd)| {
+            if n == 0 {
+                return (name.clone(), 0, 0, 0, 0);
+            }
+            if ndv == m_rows {
+                return (name.clone(), n, n, n, n);
+            }
+            let ndv_scaled = if ndv * 16 > *m_rows { (*ndv as f64 * r).round() as i64 } else { *ndv }.clamp(1, n);
+            let sq_scaled = (*sq as f64 * r * r * (*ndv as f64 / ndv_scaled as f64)).round() as i64;
+            let sqd_scaled = (*sqd as f64 * r).round() as i64;
+            (name.clone(), n, ndv_scaled, sq_scaled.max(n), sqd_scaled.max(n))
+        })
+        .collect()
+}
+
 /// The base relations' statistics a chunk measures as it binds them, beyond each column's moments
 /// (`syntax::statistics`), which T's `stats.py` made at ingestion: per kind atom its nodes and summed subtree sizes
 /// (`stat_kind`), per (parent kind, child kind) its edges (`stat_edge`), the documents, and per (relation, column,
 /// constant) of the program's constants its rows (`stat_val`'s `n`). Summed over the chunks for the cross-file part:
 /// a document is in one chunk, so every count adds exactly.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Own {
     kinds: BTreeMap<i64, (i64, i64)>,
     edges: BTreeMap<(i64, i64), i64>,
@@ -991,6 +1037,18 @@ impl Own {
             own.postings.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), n)));
         }
         own
+    }
+
+    /// These counts for a chunk `r` times this one's size: every count is of nodes, edges, documents or rows, so
+    /// each scales by `r`.
+    fn scaled(&self, r: f64) -> Own {
+        let s = |n: i64| (n as f64 * r).round() as i64;
+        Own {
+            kinds: self.kinds.iter().map(|(k, (n, size))| (*k, (s(*n), s(*size)))).collect(),
+            edges: self.edges.iter().map(|(e, n)| (*e, s(*n))).collect(),
+            docs: s(self.docs).max(1),
+            postings: self.postings.iter().map(|(k, n)| (k.clone(), s(*n))).collect(),
+        }
     }
 
     fn add(&mut self, other: &Own) {
