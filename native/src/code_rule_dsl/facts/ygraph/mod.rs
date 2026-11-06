@@ -125,9 +125,19 @@ fn parity(args: &[String]) {
 }
 
 /// facts-b's `replay::rss`: resident and footprint bytes of this process (macOS).
+#[cfg(target_os = "macos")]
 pub fn rss() -> (u64, u64) {
     let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
     let r = unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V2, &mut info as *mut _ as *mut libc::rusage_info_t) };
     assert_eq!(r, 0);
     (info.ri_resident_size, info.ri_phys_footprint)
+}
+
+/// Elsewhere: the resident bytes from `/proc/self/statm`, which has no footprint, so both are resident.
+#[cfg(not(target_os = "macos"))]
+pub fn rss() -> (u64, u64) {
+    let statm = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
+    let pages: u64 = statm.split_whitespace().nth(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+    let resident = pages * unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+    (resident, resident)
 }

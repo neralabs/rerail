@@ -111,6 +111,7 @@ pub(in crate::code_rule_dsl) use compile_micro::{Emit, Frames, Micro, RootRecord
 #[cfg(test)]
 #[path = "packed/compile/matcher_tests.rs"]
 mod compile_matcher_tests;
+#[cfg(target_os = "macos")]
 mod metal_bulk_closure;
 #[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 mod metal_bulk_closure_tests;
