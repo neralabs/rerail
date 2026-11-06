@@ -9,9 +9,13 @@ def apply(stages, values):
     globals_=get('global_state')
     globals_['query']="""WITH RECURSIVE immutable_walk(__path,binding,root,node) AS (
       SELECT a.__path,a.id,v.value,v.value FROM module_bindings a JOIN binding_values v ON v.__path=a.__path AND v.binding=a.id JOIN nodes n ON n.__path=v.__path AND n.id=v.value WHERE n.kind IN ('dictionary','list','set') AND EXISTS(SELECT 1 FROM active_functions f JOIN nodes used ON used.__path=f.__path AND used.__start>=f.body_start AND used.__end<=f.body_end AND used.kind='identifier' AND used.text=a.name WHERE f.__path=a.__path)
-      UNION ALL SELECT w.__path,w.binding,w.root,child.id FROM immutable_walk w JOIN nodes n ON n.__path=w.__path AND n.id=w.node LEFT JOIN calls c ON c.__path=n.__path AND c.id=n.id
-      JOIN nodes child ON child.__path=n.__path AND (child.parent=n.id AND (n.id=w.root OR n.kind IN ('pair','tuple','unary_operator','binary_operator','parenthesized_expression'))
-        OR n.kind='call' AND c.callee IN """+immutable+""" AND c.callee NOT IN ('tuple','frozenset') AND EXISTS(SELECT 1 FROM arguments a WHERE a.__path=c.__path AND a.call=c.id AND a.id=child.id)) WHERE child.kind!='comment'),
+      UNION ALL SELECT w.__path,w.binding,w.root,child.id FROM immutable_walk w
+      JOIN nodes n ON n.__path=w.__path AND n.id=w.node AND (n.id=w.root OR n.kind IN ('pair','tuple','unary_operator','binary_operator','parenthesized_expression'))
+      JOIN nodes child ON child.__path=n.__path AND child.parent=n.id WHERE child.kind!='comment'
+      UNION ALL SELECT w.__path,w.binding,w.root,child.id FROM immutable_walk w
+      JOIN nodes n ON n.__path=w.__path AND n.id=w.node AND n.kind='call'
+      JOIN calls c ON c.__path=n.__path AND c.id=n.id AND c.callee IN """+immutable+""" AND c.callee NOT IN ('tuple','frozenset')
+      JOIN nodes child ON child.__path=n.__path AND child.id IN (SELECT a.id FROM arguments a WHERE a.__path=c.__path AND a.call=c.id) WHERE child.kind!='comment'),
       static_lookups AS (SELECT w.__path,w.binding FROM immutable_walk w JOIN nodes n ON n.__path=w.__path AND n.id=w.node LEFT JOIN calls c ON c.__path=n.__path AND c.id=n.id
         GROUP BY w.__path,w.binding HAVING sum(CASE WHEN n.id=w.root OR n.kind IN ('pair','tuple','unary_operator','binary_operator','parenthesized_expression','integer','float','true','false','none','ellipsis','concatenated_string') OR n.kind='string' AND NOT rx_matches(n.text,'(?i)^[rbu]*f') OR n.kind='call' AND c.callee IN """+immutable+""" THEN 0 ELSE 1 END)=0 AND count(*)>1)
       """+globals_['query'].replace('a.name,CASE',"a.name,CASE WHEN c.id IS NOT NULL THEN CASE WHEN c.managed THEN 'managed-memoization-cache' ELSE 'runtime-object' END WHEN m.name IS NOT NULL THEN 'mutated-cache-or-registry' WHEN static.binding IS NOT NULL THEN 'mutable-static-table' ELSE 'mutable-cache-or-registry' END category,CASE",1).replace(' WHERE m.name IS NOT NULL',' LEFT JOIN static_lookups static ON static.__path=a.__path AND static.binding=a.id WHERE m.name IS NOT NULL',1)

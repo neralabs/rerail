@@ -11,7 +11,7 @@ def apply(stages,vals):
     get=lambda name:next(stage for stage in stages if stage['name']==name)
     insertion=stages.index(get('rollups'))
     shared=[
-      S('graph_functions',"SELECT f.* FROM function_flags f WHERE NOT EXISTS(SELECT 1 FROM function_flags later WHERE later.symbol=f.symbol AND later.fact_order>f.fact_order)",('symbol',)),
+      S('graph_functions',"SELECT f.* FROM function_flags f WHERE NOT EXISTS(SELECT 1 FROM function_flags later WHERE later.symbol=f.symbol AND later.fact_order>f.fact_order)",('symbol',),('__path','id')),
       S('graph_edges',"SELECT owner.__path,owner.symbol src,target.symbol dst,e.visit_key ordinal,e.__start location FROM architecture_edges e JOIN graph_functions owner ON owner.__path=e.__path AND owner.id=e.fn JOIN graph_functions target ON target.__path=e.target_path AND target.id=e.target",('__path','src')),
       S('graph_categories',"SELECT 'plan' kind UNION ALL SELECT 'intent' UNION ALL SELECT 'native' UNION ALL SELECT 'dolt' UNION ALL SELECT 'orchestration'",('kind',)),
       S('local_graph_events',"SELECT c.kind,e.__path,e.fn,e.__start location,e.visit_key,e.channel FROM function_events e JOIN graph_categories c ON c.kind=e.category OR c.kind='orchestration' AND e.category='plan' AND e.detail NOT GLOB 'native_cursor.*'",('__path','fn','kind')),

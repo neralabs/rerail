@@ -612,6 +612,10 @@
             "indexes": [
               [
                 "symbol"
+              ],
+              [
+                "__path",
+                "id"
               ]
             ]
           },
