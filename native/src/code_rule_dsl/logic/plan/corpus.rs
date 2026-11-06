@@ -389,10 +389,10 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             let Some((facts, doc)) = core::build_with_tape(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? else {
                 return Err(Error::Plan(format!("{path} did not parse")));
             };
+            let facts = Arc::new(facts);
             if let Some(references) = &references {
                 references.add(*d as u32, path, &file.source, &facts)?;
             }
-            let facts = Arc::new(facts);
             // W's values are read off the tape, in the file's context: kept only for a program that reads them.
             let tape = keep_tapes.then(|| (doc, file));
             Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts, tape })
