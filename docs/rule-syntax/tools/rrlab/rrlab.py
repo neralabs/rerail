@@ -3,6 +3,7 @@
 
   rrlab.py run RULE.rr FILE... [--options JSON] [--lang LANG] [--root DIR] [-v]
   rrlab.py score PACK RULE-ID [RULE.rr] [--all] [--options JSON] [--data DIR] [--show N] [--column]
+  rrlab.py dl CHECK [RULE.rr] [--entry NAME] [--test TEXT]   score a data-layer rule on the port's events (dl.py)
   rrlab.py lower RULE.rr                 the Soufflé program, with its warnings
   rrlab.py pattern LANG 'PATTERN' [KIND]  the structural rule a backtick pattern compiles to
 
@@ -1268,12 +1269,17 @@ def main():
     s.add_argument("--snapshots", metavar="RUFF_SRC", help="score against Ruff's snapshot tests in a Ruff checkout")
     for x in (r, s):
         x.add_argument("--no-scope", action="store_true", help="report on every file, ignoring the rule's .scope")
+    dl = sp.add_parser("dl", help="score a data-layer rule against the data-layer port's recorded events")
+    dl.add_argument("check"); dl.add_argument("rule", nargs="?"); dl.add_argument("--fixtures")
+    dl.add_argument("--entry"); dl.add_argument("--test"); dl.add_argument("--show", type=int, default=25)
+    dl.add_argument("--jobs", type=int, default=4); dl.add_argument("--keep", action="store_true")
     lw = sp.add_parser("lower", help="print the Soufflé program"); lw.add_argument("rule")
     pt = sp.add_parser("pattern", help="compile a backtick pattern")
     pt.add_argument("lang"); pt.add_argument("pattern"); pt.add_argument("kind", nargs="?")
     args = ap.parse_args()
     try:
-        {"run": cmd_run, "score": score, "lower": cmd_lower, "pattern": cmd_pattern}[args.cmd](args)
+        {"run": cmd_run, "score": score, "lower": cmd_lower, "pattern": cmd_pattern,
+         "dl": lambda a: __import__("dl").score(a, Run, HERE)}[args.cmd](args)
     except L.LowerError as e:
         raise SystemExit(f"rrlab: {e}")
     finally:

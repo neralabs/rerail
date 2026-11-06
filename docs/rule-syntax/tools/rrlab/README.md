@@ -54,6 +54,32 @@ How `score` finds its inputs:
 Work files go to `tools/rrlab/target/work/<rule>/`: `rule.dl`, `in/*.facts` and `out/*.csv`. They are kept
 for inspection.
 
+## Data-layer rules (`rrlab dl`)
+
+```
+# Score data-layer/bootstrap-cache-health.rr on the data-layer port's recorded linter calls
+tools/rrlab/rrlab dl bootstrap_cache_health
+# Only one entry function, or the tests whose name contains a text
+tools/rrlab/rrlab dl lazy_architecture --entry scan_files --test deleted_cold
+```
+
+The events are the upstream test suite's linter calls, as the data-layer port recorded them. They come from the
+Data-layer-rule-expressivity worktree's `fixtures/host/data-layer-port`:
+- `batch-NN-recording.json` and `*probes.json`;
+- `batch-NN-complete-api.json[.gz]` for batches 9 and 10.
+
+Each event runs on its own files and is compared as a set of (path, line, code) keys.
+
+Many events call one of the linter's internal functions, and such a function reports only some of the linter's
+codes. Each event is therefore compared on the codes its entry function reports in any event of the check.
+
+Scope and options:
+- A direct call ignores `.scope`.
+- A production (plugin) event keeps `.scope` and drops the rule's `.mode log` codes.
+- An event's options are passed as `option` rows.
+
+`dl.py` has the details.
+
 ## Scores (2026-11-05)
 
 On the Data-layer-rule-expressivity recording (ESLint 10.11.0, eslint-plugin-n 18.4.1), matched on
