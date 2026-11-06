@@ -229,21 +229,20 @@ const CPYTHON_FUNCTORS: [&str; 2] = ["unparse", "ast_dump"];
 
 /// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …), or calls a functor only CPython gives: the planner would otherwise fail on its missing
-/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later).
+/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), and
+/// the relations not made yet are empty (`NOT_MADE`, O76).
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
     for rule in &prog.rules {
         for a in rule.body.iter().filter_map(front::Literal::atom) {
             let rel = a.rel.as_str();
-            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) {
+            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel) {
                 continue;
             }
             let why = match rel {
                 "str_part" => format!("it needs {cpython}"),
-                "parsed" => format!("it needs the string's contents parsed, by {cpython}, or by a sub-grammar parse the runner does not do either"),
                 "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
-                "string_annotation" => "it needs Ruff's table of the positions that hold a type (core.rr)".to_owned(),
                 _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
             };
             return Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {why}")));

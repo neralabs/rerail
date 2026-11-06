@@ -373,7 +373,7 @@ impl Lowerer {
     fn literal(&mut self, lit: &Lit, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
         Ok(match lit {
             Lit::Group { alts, neg } => {
-                if let Some(Literal::Cmp { l, op, .. }) = self.test_set(alts)? {
+                if let Some(Literal::Cmp { l, op, .. }) = self.test_set(alts, *neg)? {
                     return Ok(vec![vec![Literal::Cmp { l, op, r: Term::Int(if *neg { 0 } else { 1 }) }]]);
                 }
                 if *neg {
@@ -477,8 +477,9 @@ impl Lowerer {
         Ok(vec![out])
     }
 
-    /// `(glob("a", s) ; glob("b", s))` as one test of the set, and `(s = "a" ; s = "b")` as one membership.
-    fn test_set(&mut self, alts: &[Vec<Lit>]) -> Result<Option<Literal>, Error> {
+    /// `(glob("a", s) ; glob("b", s))` as one test of the set, and `(s = "a" ; s = "b")` as one membership. `neg`: the
+    /// disjunction is negated.
+    fn test_set(&mut self, alts: &[Vec<Lit>], neg: bool) -> Result<Option<Literal>, Error> {
         if alts.len() < 2 || alts.iter().any(|a| a.len() != 1) {
             return Ok(None);
         }
@@ -507,10 +508,11 @@ impl Lowerer {
                 _ => None,
             })
             .collect();
-        // Only a test when something else binds x: `kind(c, k), (x = "a" ; x = "b")` gives x each value.
+        // Only a test when something else binds x: `kind(c, k), (x = "a" ; x = "b")` gives x each value. Negated it
+        // binds nothing, so it is a test (`key = cat(q, s), !(key = "a" ; key = "b")`).
         if let Some(members) = members
             && members.iter().all(|(x, _)| *x == members[0].0)
-            && self.bound_beside(&members[0].0)
+            && (neg || self.bound_beside(&members[0].0))
         {
             let set = Term::Call(SET.to_owned(), members.iter().map(|(_, c)| Term::Str(c.clone())).collect());
             return Ok(Some(Literal::Cmp { l: Term::Call("equals".to_owned(), vec![Term::Var(members[0].0.clone()), set]), op: "=", r: Term::Int(1) }));
