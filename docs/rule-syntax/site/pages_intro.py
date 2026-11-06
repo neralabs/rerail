@@ -238,8 +238,9 @@ w('''  <section style="display:grid;gap:10px">
         fixed. Each rule's NOTES file lists where it still differs from the tool, and why.</li>
       <li>The rules run in <code>tools/rrlab</code>, a lab harness on Soufflé, and are scored against the tool's own
         findings on its test fixtures.</li>
-      <li>The engine reads <code>.rr</code> as its only rule format. Run through its reader, 3,890 of the libraries'
-        3,906 clauses and 5,220 of the packs' 5,264 clauses lower today. The rest are constructs it still refuses by
+      <li>The engine reads <code>.rr</code> as its only rule format. With the reader work on its branch
+        <code>final-rerail-shape-rr-align</code> (not merged yet), 3,890 of the libraries' 3,906 clauses and 5,220
+        of the packs' 5,264 clauses lower. The rest are constructs it still refuses by
         name, such as <code>ordered by</code>, a place used as a value, and recursion whose bound it cannot yet
         prove. <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code> lists every difference and who changes
         what.</li>
