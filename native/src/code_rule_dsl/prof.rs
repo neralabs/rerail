@@ -31,7 +31,7 @@ pub(in crate::code_rule_dsl) fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T
 }
 
 /// The process's CPU time so far (user + sys).
-pub(in crate::code_rule_dsl) fn process_cpu() -> Duration {
+fn process_cpu() -> Duration {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
