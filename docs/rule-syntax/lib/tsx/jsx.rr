@@ -55,7 +55,7 @@ component(@qname(m, x), f) :- kind(v, "variable_declarator"), field(v, "name", n
 .decl component_fn(e: node, f: node)
 component_fn(e, e) :- kind(e, k), (k = "arrow_function" ; k = "function_expression").
 component_fn(e, f) :- kind(e, "call_expression"), field(e, "function", c), sym_of(c, q),
-    (q = "react#memo" ; q = "react#forwardRef"), field(e, "arguments", as), child(as, a, 0), component_fn(a, f).
+    (q = "react#memo" ; q = "react#forwardRef"), field(e, "arguments", args), child(args, a, 0), component_fn(a, f).
 
 // ---- render position ---------------------------------------------------------------------------------------------
 // Forms a rendered child passes through on its way up: {…}, && and ?:, parentheses, fragments, and callbacks in child
@@ -69,8 +69,8 @@ component_fn(e, f) :- kind(e, "call_expression"), field(e, "function", c), sym_o
 // <ul>{xs.map(x => <li/>)}</ul>. Its result is rendered where the call is, so it does not end the climb.
 // A callback inside an attribute (onClick={() => <X/>}, render props) is not rendered in child position.
 .decl child_callback(f: node)
-child_callback(f) :- kind(f, "arrow_function"), nearest(f, c, "call_expression"), field(c, "arguments", as),
-    child(as, f, _), nearest(c, j, "jsx_expression"), !nearest(c, _, "jsx_attribute").
+child_callback(f) :- kind(f, "arrow_function"), nearest(f, c, "call_expression"), field(c, "arguments", args),
+    child(args, f, _), nearest(c, j, "jsx_expression"), !nearest(c, _, "jsx_attribute").
 // render_stop(n): nodes that end the upward climb.
 .decl render_stop(n: node)
 // A real element: what is below it renders under it. Fragments are skipped, so their children belong to the
