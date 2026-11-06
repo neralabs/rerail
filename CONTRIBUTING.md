@@ -319,7 +319,21 @@ Open a pull request against `main` that links its issue, if it has one. Changes 
   changed for the person upgrading, in plain language, in a sentence or two (at most 60 words), and leaves out commit
   hashes, ticket ids, pull request numbers and repository-internal maintenance; CI fails a pull request whose entry or
   summary says otherwise ([release notes](docs/release.md#release)).
-- Tests cover the behavior you changed, and docs that describe it are updated.
+- Tests cover the behavior you changed.
+- Docs are updated in the same pull request, not a later one. A change to commands, coding agents or setup updates
+  `README.md` and the pages under `docs/` that describe it, and `context7.json` where its rules or folders name what
+  changed.
+- A feature that enters, graduates from or leaves internal testing updates
+  [docs/internal-testing.md](docs/internal-testing.md), which lists exactly what is in
+  ([governance](docs/GOVERNANCE.md#internal-testing-features) says who approves a graduation or removal).
+- No internal name, customer name, internal URL or old product name (such as "Tempo") is in the code, the docs, the
+  commits or the pull request's title and description. `npm run check` catches only internal ticket IDs and a few stale
+  paths in tracked files; the rest is yours to read for, and a squash-merged commit message can't be changed afterwards.
+- A change to what a package does keeps its npm page current: its `README.md`, and `keywords` and `repository` in its
+  `package.json`, for core and for a pack.
+
+Whoever merges the Release pull request checks the same of the release as a whole
+([docs/release.md](docs/release.md#before-merging)).
 
 ## Reporting a bug
 
