@@ -78,6 +78,8 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl node_text(n: node, s: symbol)               // a node's source text, exactly (W's `regex` on a node)
 .decl value(n: node, v: symbol)                   // W's value of an expression, as Python's str(v) of a scalar
 .decl static_value(n: node, v: symbol)            // the same, names followed to their bindings (W's value.follow)
+.decl value_type_of(n: node, t: symbol)           // the type of n's value, as W's value.type names it
+.decl value_type(v: symbol, t: symbol)            // core.rr's: a value text of `value` and a type it has somewhere
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -106,3 +108,10 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   annotated assignment with a value, a walrus, or an unpacked name paired with a display's element has that value's
   (`A = "k"`, then `A`; `B = A`, then `B`); a parameter, an import, a global or builtin, and every name of a file with
   syntax errors have none. Every row of `value` is a row of `static_value`.
+- `value_type_of(n, t)` is the type W's `value.type` gives n's value, for Python `type(v).__name__`: `str`, `int`,
+  `float`, `complex`, `bool`, `NoneType`, `ellipsis`, `bytes`, `tuple`, `list`, `dict`, `set` (a container whose
+  elements are not all known has its type too; an unknown value none). It is the relation to read for a type:
+  core.rr's `value_type(v, t)` is keyed by `value`'s text, which the str `"12"` and the int `12` share (it has both
+  rows), and a container or bytes has no text. So W's `value: {type: str}` is `value_type_of(n, "str")`; its
+  `regex` and `startsWith`, which read strings only, are `value(n, v), value_type_of(n, "str"), match(re, v)` (W's
+  regex searches: `match("(?s:.*)(?:re)(?s:.*)", v)`); its `eq` on a string `value(n, "s"), value_type_of(n, "str")`.

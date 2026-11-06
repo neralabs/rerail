@@ -781,6 +781,8 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl node_text(n: node, s: sym)
 .decl value(n: node, v: sym)
 .decl static_value(n: node, v: sym)
+.decl value_type_of(n: node, t: sym)
+.decl value_type(v: sym, t: sym)
 ";
 
 const BASE_RELATIONS: [&str; 12] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error"];

@@ -98,6 +98,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "text" | "name" | "str" | "strprefix" | "node_text" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" => &["n", "v"],
+        "value_type_of" => &["n", "t"],
+        "value_type" => &["v", "t"],
         "intval" => &["n", "v"],
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],

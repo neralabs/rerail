@@ -355,7 +355,10 @@ enum View {
 /// `value(n, v)` is W's value of expression node `n` as a string (`matcher::file_values`: a clause's `value` in its
 /// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
 /// (`Document::tape`), no row where W does not know it or it is no scalar; `static_value(n, v)` the same with names
-/// followed through their file-local bindings (W's `value.follow`). Rows hold string indexes, as `Batch::build`'s do.
+/// followed through their file-local bindings (W's `value.follow`). `value_type_of(n, t)` names the type of W's value
+/// of `n` as W's `value.type` does (containers and bytes included, a JavaScript RegExp also `object`), and
+/// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
+/// (the str `"12"` and the int `12` both give `12`). Rows hold string indexes, as `Batch::build`'s do.
 #[derive(Default)]
 struct Extra {
     source: bool,
@@ -370,6 +373,8 @@ struct Extra {
     node_text: bool,
     value: bool,
     static_value: bool,
+    value_type_of: bool,
+    value_type: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
     src_lines_lf: Vec<[i64; 3]>,
@@ -381,6 +386,8 @@ struct Extra {
     node_texts: Vec<[i64; 2]>,
     values: Vec<[i64; 2]>,
     static_values: Vec<[i64; 2]>,
+    value_types_of: Vec<[i64; 2]>,
+    value_types: BTreeSet<[i64; 2]>,
 }
 
 impl Extra {
@@ -399,6 +406,8 @@ impl Extra {
             node_text: read("node_text"),
             value: read("value"),
             static_value: read("static_value"),
+            value_type_of: read("value_type_of"),
+            value_type: read("value_type"),
             ..Self::default()
         }
     }
@@ -431,19 +440,39 @@ impl Extra {
     /// Document `p`'s rows (its `Document` `d`); `splitlines`: it is Python's.
     fn document(&mut self, p: &Projected, d: &Document, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
-        if self.value || self.static_value {
+        let plain = self.value || self.value_type_of || self.value_type;
+        if plain || self.static_value {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
             if tape.transducer_len() != f.len() {
                 return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
             }
-            let (values, static_values) = (&mut self.values, &mut self.static_values);
-            crate::code_rule_dsl::matcher::file_values(tape, file, self.value, self.static_value, &mut |followed, ordinal, v, _| {
+            let (value, value_type_of, value_type) = (self.value, self.value_type_of, self.value_type);
+            let (values, static_values, types_of, types) = (&mut self.values, &mut self.static_values, &mut self.value_types_of, &mut self.value_types);
+            crate::code_rule_dsl::matcher::file_values(tape, file, plain, self.static_value, &mut |followed, ordinal, v, names| {
                 let local = p.local[ordinal as usize];
-                if let (true, Some(v)) = (local != NONE, v) {
-                    let rows = if followed { &mut *static_values } else { &mut *values };
-                    rows.push([p.global(local), string(&v) as i64]);
+                if local == NONE {
+                    return;
+                }
+                // A value's text is interned only for a relation that holds it.
+                let v = v.filter(|_| followed || value || value_type).map(|v| string(&v) as i64);
+                let n = p.global(local);
+                if followed {
+                    static_values.extend(v.map(|v| [n, v]));
+                    return;
+                }
+                if value && let Some(v) = v {
+                    values.push([n, v]);
+                }
+                for name in names {
+                    let t = string(name) as i64;
+                    if value_type_of {
+                        types_of.push([n, t]);
+                    }
+                    if value_type && let Some(v) = v {
+                        types.insert([v, t]);
+                    }
                 }
             });
         }
@@ -545,6 +574,12 @@ impl Extra {
         }
         if self.static_value {
             out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)]))));
+        }
+        if self.value_type_of {
+            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| vec![n, atom(t)]))));
+        }
+        if self.value_type {
+            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| vec![atom(v), atom(t)]))));
         }
         out
     }

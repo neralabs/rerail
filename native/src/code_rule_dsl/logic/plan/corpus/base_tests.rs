@@ -261,6 +261,11 @@ fz = f"plain"
 call(A, B, x)
 def g(A=1):
     return A
+twelve = "12"
+n12 = 12
+d = {"a": 1}
+st = {1}
+c = 1j
 "#;
 
 /// Python's type names of the scalars `value` gives (`value::python::to_str`), as W's `value.type` names them.
@@ -386,5 +391,61 @@ plain(s, e, v) :- value(n, v), node(_, n, _, s, e).
     assert_eq!(at("call(A, B, x)", 11), ["aAéb"]);
     assert_eq!(at("B = A", 4), ["k"]);
     assert_eq!(at("return A", 7), Vec::<&str>::new());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The type names W's `value.type` gives Python values, containers, bytes and complex numbers included.
+const TYPES: [&str; 12] = ["str", "int", "float", "bool", "NoneType", "ellipsis", "bytes", "complex", "tuple", "list", "dict", "set"];
+
+/// `value_type_of(n, t)` is W's `value.type` of each node, containers and bytes included; `value_type(v, t)` pairs
+/// `value`'s strings with them (the str "12" and the int 12 both `12`); and W's `value.regex`, which reads strings only,
+/// is `value`, `value_type_of(n, "str")` and `match`.
+#[test]
+fn value_types_are_ws_value_types() {
+    let dir = corpus("value-type", &[("a.py", VALUES)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl value_type(v: symbol, t: symbol)
+.input node, value, value_type_of, value_type
+.decl types(s: number, e: number, t: symbol)
+types(s, e, t) :- value_type_of(n, t), node(_, n, _, s, e).
+.decl pairs(v: symbol, t: symbol)
+pairs(v, t) :- value_type(v, t).
+.decl hits(s: number, e: number)
+hits(s, e) :- value(n, v), value_type_of(n, "str"), match("(?s:.*)(?:b)(?s:.*)", v), node(_, n, _, s, e).
+.decl vals(s: number, e: number, v: symbol)
+vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
+.output types, pairs, hits, vals
+"#;
+    let out = run(&dir, program, &["types", "pairs", "hits", "vals"]);
+    let spans = |f: &Value| (f["span"]["startByte"].as_u64().unwrap(), f["span"]["endByte"].as_u64().unwrap());
+    let mut want = Vec::new();
+    for ty in TYPES {
+        for f in w(json!({ "ast": { "language": "python", "rule": { "value": { "type": ty } } } }), "a.py", VALUES) {
+            let (s, e) = spans(&f);
+            want.push(format!("{s}\t{e}\t{ty}"));
+        }
+    }
+    assert!(want.iter().any(|r| r.ends_with("\tlist")) && want.iter().any(|r| r.ends_with("\tbytes")), "{want:?}");
+    assert_eq!(out[0], csv(want.clone()));
+    // value_type: each typed node's value text with its type.
+    let values = spans_and_values(&out[3]);
+    let pairs = want.iter().flat_map(|row| {
+        let [s, e, ty]: [&str; 3] = row.split('\t').collect::<Vec<_>>().try_into().unwrap();
+        let (s, e) = (s.parse::<u64>().unwrap(), e.parse::<u64>().unwrap());
+        values.iter().filter(move |(vs, ve, _)| (*vs, *ve) == (s, e)).map(move |(_, _, v)| format!("{v}\t{ty}"))
+    });
+    let pairs = csv(pairs);
+    assert!(pairs.contains("12\tstr\n") && pairs.contains("12\tint\n"), "{pairs}");
+    assert_eq!(out[1], pairs);
+    let regex = w(json!({ "ast": { "language": "python", "rule": { "value": { "regex": "b" } } } }), "a.py", VALUES);
+    let regex = csv(regex.iter().map(|f| {
+        let (s, e) = spans(&f);
+        format!("{s}\t{e}")
+    }));
+    assert!(!regex.is_empty());
+    assert_eq!(out[2], regex);
     let _ = std::fs::remove_dir_all(&dir);
 }
