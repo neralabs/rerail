@@ -2,7 +2,7 @@
 // captures. Built by rrlab.py (c++ -shared) and loaded with souffle -l rrlabfn. Symbols in, symbol or number out;
 // every returned string is interned here so the pointer outlives the call.
 //
-// Approximations (README, "Functors"): semver ignores prerelease tags; lower is towlower per code point; nfkc is the
+// Approximations (README, "Functors"): semver ignores prerelease tags; nfkc is the
 // identity; to_precision follows %g; tree_digest, unparse and ed25519_ok are stubs (rrlab warns when a rule uses them).
 #include <algorithm>
 #include <cctype>
@@ -15,7 +15,6 @@
 #include <locale>
 #include <map>
 #include <mutex>
-#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -29,99 +28,10 @@ static const char* intern(const string& s) {
     return pool.insert(s).first->c_str();
 }
 
-// ---- regexes: Python/Rust syntax onto std::regex (ECMAScript) -----------------------------------------------------
-// (?i) at the start sets icase; (?P<x>…) and (?<x>…) become plain groups; \A and \Z become ^ and $.
-struct Rx { std::regex re; bool ok; };
-static Rx& rx(const string& src, bool icase_extra = false) {
-    static std::map<std::pair<string, bool>, Rx> cache;
-    auto key = std::make_pair(src, icase_extra);
-    auto it = cache.find(key);
-    if (it != cache.end()) return it->second;
-    string s = src;
-    bool icase = icase_extra;
-    if (s.rfind("(?i)", 0) == 0) { icase = true; s = s.substr(4); }
-    string out;
-    for (size_t i = 0; i < s.size(); i++) {
-        if (s[i] == '\\' && i + 1 < s.size()) {
-            if (s[i + 1] == 'A') { out += '^'; i++; continue; }
-            if (s[i + 1] == 'Z' || s[i + 1] == 'z') { out += '$'; i++; continue; }
-            out += s[i]; out += s[i + 1]; i++; continue;
-        }
-        if (s.compare(i, 4, "(?P<") == 0 || (s.compare(i, 3, "(?<") == 0 && i + 3 < s.size() && s[i + 3] != '=' && s[i + 3] != '!')) {
-            size_t j = s.find('>', i);
-            if (j != string::npos) { out += '('; i = j; continue; }
-        }
-        out += s[i];
-    }
-    Rx r;
-    try {
-        auto fl = std::regex::ECMAScript | (icase ? std::regex::icase : std::regex::ECMAScript);
-        r.re = std::regex(out, fl);
-        r.ok = true;
-    } catch (...) {
-        fprintf(stderr, "rrlab: bad regex %s\n", src.c_str());
-        r.ok = false;
-    }
-    return cache.emplace(key, std::move(r)).first->second;
-}
-
-extern "C" int32_t rr_match(const char* re, const char* s) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    return r.ok && std::regex_match(string(s), r.re) ? 1 : 0;
-}
-extern "C" int32_t rr_search(const char* re, const char* s) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    return r.ok && std::regex_search(string(s), r.re) ? 1 : 0;
-}
+// Regexes, globs, word and lower are in src/rx.rs (the regex crate), linked into this library.
 // rr_cap(re, s, i): group i of re's whole match of s; rr_capok: 1 when that group took part.
-extern "C" const char* rr_cap(const char* re, const char* s, int32_t i) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    std::smatch m;
-    string str(s);
-    if (r.ok && std::regex_match(str, m, r.re) && (size_t)i < m.size() && m[i].matched) return intern(m[i].str());
-    return "";
-}
-extern "C" int32_t rr_capok(const char* re, const char* s, int32_t i) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    std::smatch m;
-    string str(s);
-    return r.ok && std::regex_match(str, m, r.re) && (size_t)i < m.size() && m[i].matched ? 1 : 0;
-}
-
 // ---- globs (core.rr, text tests) ---------------------------------------------------------------------------------
-static string glob_rx(const string& p) {
-    string o;
-    int brace = 0;
-    for (size_t i = 0; i < p.size(); i++) {
-        char c = p[i];
-        if (c == '\\' && i + 1 < p.size()) { o += '\\'; o += p[++i]; }
-        else if (c == '*' && i + 1 < p.size() && p[i + 1] == '*') { o += ".*"; i++; }
-        else if (c == '*') o += "[^/]*";
-        else if (c == '?') o += "[^/]";
-        else if (c == '[') { size_t j = p.find(']', i + 1); if (j == string::npos) { o += "\\["; } else { o += p.substr(i, j - i + 1); i = j; } }
-        else if (c == '{') { o += "(?:"; brace++; }
-        else if (c == '}' && brace) { o += ")"; brace--; }
-        else if (c == ',' && brace) o += "|";
-        else if (strchr(".^$+()|", c)) { o += '\\'; o += c; }
-        else o += c;
-    }
-    return o;
-}
 static string lower_s(const string& s);
-extern "C" int32_t rr_glob(const char* p, const char* s) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(glob_rx(p));
-    return r.ok && std::regex_match(string(s), r.re) ? 1 : 0;
-}
-extern "C" int32_t rr_iglob(const char* p, const char* s) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(glob_rx(lower_s(p)));
-    return r.ok && std::regex_match(lower_s(s), r.re) ? 1 : 0;
-}
 extern "C" int32_t rr_prefix(const char* p, const char* s) { return strncmp(p, s, strlen(p)) == 0; }
 extern "C" int32_t rr_suffix(const char* p, const char* s) {
     size_t a = strlen(p), b = strlen(s);
@@ -135,22 +45,6 @@ extern "C" int32_t rr_isuffix(const char* p, const char* s) {
 }
 extern "C" int32_t rr_icontains(const char* p, const char* s) { return lower_s(s).find(lower_s(p)) != string::npos; }
 // word(w, s): w's words occur in s as whole words, any non-word run between them.
-static int32_t word_impl(const string& w, const string& s) {
-    std::istringstream in(w);
-    string t, re = "(?:^|[^A-Za-z0-9_])";
-    bool first = true;
-    while (in >> t) {
-        if (!first) re += "[^A-Za-z0-9_]+";
-        first = false;
-        for (char c : t) { if (strchr(".^$*+?()[]{}|\\", c)) re += '\\'; re += c; }
-    }
-    re += "(?:$|[^A-Za-z0-9_])";
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    return r.ok && std::regex_search(s, r.re) ? 1 : 0;
-}
-extern "C" int32_t rr_word(const char* w, const char* s) { return word_impl(w, s); }
-extern "C" int32_t rr_iword(const char* w, const char* s) { return word_impl(lower_s(w), lower_s(s)); }
 // split_dot helpers: q = m.x at the last dot.
 extern "C" int32_t rr_has_dot(const char* q) { return strchr(q, '.') != nullptr; }
 extern "C" const char* rr_dot_init(const char* q) { string s(q); size_t i = s.rfind('.'); return intern(i == string::npos ? "" : s.substr(0, i)); }
@@ -222,26 +116,7 @@ static string lower_s(const string& s) {
     for (auto& c : u) c = (char32_t)towlower((wint_t)c);
     return u8(u);
 }
-extern "C" const char* lower(const char* s) { return intern(lower_s(s)); }
 extern "C" const char* nfkc(const char* s) { return s; }
-extern "C" const char* replace_all(const char* s, const char* re, const char* by) {
-    string b(by), fixed;
-    for (size_t i = 0; i < b.size(); i++) {  // ${1} -> $1
-        if (b[i] == '$' && i + 1 < b.size() && b[i + 1] == '{') { size_t j = b.find('}', i); fixed += '$' + b.substr(i + 2, j - i - 2); i = j; }
-        else fixed += b[i];
-    }
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    if (!r.ok) return s;
-    return intern(std::regex_replace(string(s), r.re, fixed));
-}
-extern "C" int32_t count_matches(const char* re, const char* s) {
-    std::lock_guard<std::mutex> g(mu);
-    Rx& r = rx(re);
-    if (!r.ok) return 0;
-    string str(s);
-    return (int32_t)std::distance(std::sregex_iterator(str.begin(), str.end(), r.re), std::sregex_iterator());
-}
 extern "C" const char* slice(const char* s, int32_t a, int32_t b) {
     std::u32string u = u32(s);
     int32_t n = (int32_t)u.size();

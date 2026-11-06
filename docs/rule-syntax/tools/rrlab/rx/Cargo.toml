@@ -1,0 +1,20 @@
+[package]
+name = "rrlab-rx"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "rrlab's regex functors (Rust-regex semantics), linked into functors/functors.cpp's shared library"
+
+# Its own workspace, like rrlab's.
+[workspace]
+
+[lib]
+name = "rrlab_rx"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+regex = "=1.13.1"
+
+[profile.release]
+panic = "abort"

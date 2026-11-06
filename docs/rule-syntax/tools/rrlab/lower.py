@@ -17,7 +17,7 @@ What changes (README, "Lowering"):
 import os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-RR = os.path.dirname(os.path.dirname(HERE))
+RR = os.environ.get("RRLAB_RR") or os.path.dirname(os.path.dirname(HERE))  # docs/rule-syntax
 LIB = os.path.join(RR, "lib")
 
 TEXT_TESTS = {"glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword"}
@@ -466,6 +466,7 @@ class Program:
         self.need = set()          # rr_within, rr_earlier, rr_never
         self.empties = {}          # generated empty relations -> arity types
         self.patterns = pattern_compiler
+        self.matches = {}          # k -> match spec, served by rrlab.py between souffle rounds (match_all, spans)
         self.pattern_report = []
         self.files = []
         self.load(os.path.join(LIB, "core.rr"))      # every rule's implicit base, as check_rr.py reads it
@@ -578,7 +579,15 @@ class Program:
             if (k, t) == ("id", "tag"):
                 i += 4; continue
             if (k, t) == ("id", "suppress"):
-                v["suppress"].append((toks[i + 1][1], toks[i + 2][1][1:-1])); i += 3; continue
+                # suppress TOOL "a", "b", …: every name
+                tool = toks[i + 1][1]; i += 2
+                while i < len(toks) and toks[i][0] == "str":
+                    v["suppress"].append((tool, toks[i][1][1:-1])); i += 1
+                    if i < len(toks) and toks[i] == ("op", ","):
+                        i += 1
+                    else:
+                        break
+                continue
             if (k, t) == ("id", "fix"):
                 v["fixes"].append(toks[i + 1][1]); self.fix_names.add(toks[i + 1][1]); i += 2
                 if i < len(toks) and toks[i][0] == "str":
@@ -625,10 +634,56 @@ class Program:
             hs.append(f"{name}({', '.join(pe(ctx.expr(a, [])) for a in args)})")
         pre = ctx.pre_head
         lits = ctx.conj(body)
+        if ctx.markers:
+            self.requests(pre + lits, [], ctx)
         text = ", ".join(hs)
         if lits or pre:
             text += " :-\n    " + ", ".join(pl(l) for l in pre + lits)
         return f"// {rel}:{line}\n{text}."
+
+    # -- matches served between rounds: match_all, and match whose captures are spans
+    def new_match(self, regex, kind, subject_node, groups, span_groups):
+        k = len(self.matches)
+        idx = [group_index(regex, g) for g in groups]
+        types = ["number" if g in span_groups else "symbol" for g in groups]
+        self.matches[k] = {"regex": regex, "all": kind == "match_all", "node": subject_node, "groups": groups,
+                           "index": idx, "span": [g in span_groups for g in groups]}
+        st = "number" if subject_node else "symbol"
+        # i: the match's ordinal, so that two matches with the same captured text stay two rows (count)
+        self.decls[f"rr_mres{k}"] = [("s", st), ("i", "number")] + [(f"g{i}", t) for i, t in enumerate(types)]
+        self.decls[f"rr_mreq{k}"] = [("s", st)]
+        self.inputs.append(f"rr_mres{k}")
+        self.outputs.add(f"rr_mreq{k}")
+        return k
+
+    def requests(self, conj, outer, ctx):
+        """rr_mreq{k}(subject) :- the literals around the match: its conjunction's other literals and those of
+        every enclosing conjunction, less any that use a capture."""
+        caps = ctx.capture_vars
+        def usable(l):
+            if "rr_mres" in pl(l):
+                return False
+            return not (set(lvars(l, [])) & caps)
+        for i, l in enumerate(conj):
+            around = outer + [x for j, x in enumerate(conj) if j != i and usable(x)]
+            if l[0] == "atom" and l[1] in ctx.markers:
+                k, subj = ctx.markers[l[1]]
+                around = grounded(around)
+                body = pc(around) if around else None
+                head = f"rr_mreq{k}({pe(subj)})"
+                if body is None and subj[0] == "var":
+                    self.warn(f"match_all/capture spans: cannot tell which subjects {pe(subj)} to match; no rows")
+                    continue
+                self.extra.append(f"{head} :- {body}." if body else f"{head}.")
+            elif l[0] == "not":
+                self.requests([l[1]], around, ctx)
+            elif l[0] == "or":
+                for c in l[1]:
+                    self.requests(c, around, ctx)
+            elif l[0] == "cmp":
+                for e in (l[2], l[3]):
+                    for agg in aggs_of(e):
+                        self.requests(agg[3], around, ctx)
 
     def set_id(self, key):
         if key not in self.sets:
@@ -725,6 +780,22 @@ for _t in TEXT_TESTS:
     HELPERS["rr_" + _t] = (["symbol", "symbol"], "number")
 
 
+def souffle_unescape(s):
+    """A string literal's contents as Soufflé reads them: \\ \" \n \t \r decoded, any other escape kept (so a
+    regex escape such as backslash-d stays as written), and non-ASCII characters untouched."""
+    out, i = [], 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\" and i + 1 < len(s):
+            n = s[i + 1]
+            out.append({"\\": "\\", '"': '"', "n": "\n", "t": "\t", "r": "\r"}.get(n, "\\" + n))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def group_index(rx, name):
     """The 1-based index of capture group `name` in rx, counting capturing groups left to right."""
     i, n, cls = 0, 0, False
@@ -757,6 +828,8 @@ class Ctx:
         self.vt = {}
         self.pre_head = []
         self.occ = {}
+        self.markers = {}          # rr_mres{k} -> (k, subject): matches served between rounds
+        self.capture_vars = set()
 
     # -- typing: a variable is node-ish if any column it fills is node, span or loc
     def type_body(self, body, heads):
@@ -937,6 +1010,19 @@ class Ctx:
             return [("atom", f"rr_{name}{sid}", [self.expr(x, pre) for x in args[:2]])]
         if name == "parsed" and p.language != "vue":
             p.warn("parsed is modelled for Vue files only: other files have no rows")
+        if name in ("match", "match_all") and len(args) == 2 and args[0][0] == "str":
+            raw = souffle_unescape(args[0][1][1:-1])
+            groups = re.findall(r"\(\?P?<([A-Za-z_]\w*)>", raw)
+            subj = self.expr(args[1], pre)
+            node_subj = self.nodeish(subj)
+            spans = {g for g in groups if node_subj and "node" in self.vt.get(g, ())}
+            if name == "match_all" or spans:
+                k = p.new_match(raw, name, node_subj, groups, spans)
+                rel = f"rr_mres{k}"
+                self.markers[rel] = (k, subj)
+                self.capture_vars |= set(groups)
+                cols = [subj, ("wild",)] + [("wild",) if negated else ("var", g) for g in groups]
+                return [("atom", rel, cols)]
         if name in ("dfs_first", "dfs_first_memo", "match_all", "str_part", "string_annotation", "signed_list",
                     "git_tracked", "git_rev", "git_has", "git_commit", "tsconfig", "tsconfig_for", "tsconfig_path",
                     "package_export"):
@@ -964,11 +1050,9 @@ class Ctx:
             s = self.subject(args[1], pre)
             core = [("cmp", "=", ("fun", "rr_match", [rx, s]), ("num", "1"))]
             if rx[0] == "str" and not negated:
-                raw = rx[1][1:-1].encode().decode("unicode_escape")
+                raw = souffle_unescape(rx[1][1:-1])
                 for g in re.findall(r"\(\?P?<([A-Za-z_]\w*)>", raw):
                     k = group_index(raw, g)
-                    if any(t == "node" for t in self.vt.get(g, ())):
-                        p.warn(f"capture {g} is used as a span: rrlab binds captures to text only")
                     core.append(("cmp", "=", ("fun", "rr_capok", [rx, s, ("num", str(k))]), ("num", "1")))
                     core.append(("cmp", "=", ("var", g), ("fun", "rr_cap", [rx, s, ("num", str(k))])))
             return core
@@ -1052,6 +1136,69 @@ class Ctx:
         name, vars_ = self.p.patterns(self.p, lang, tick, at)
         args = [root] + [("wild",) if negated else ("var", v) for v in vars_]
         return [("atom", name, args)]
+
+
+def free_vars(e, out):
+    """The variables of an expression, less those local to its aggregates."""
+    if e[0] == "var":
+        out.add(e[1])
+    elif e[0] in ("call", "fun"):
+        for a in e[2]:
+            free_vars(a, out)
+    elif e[0] == "bin":
+        free_vars(e[2], out); free_vars(e[3], out)
+    elif e[0] == "neg":
+        free_vars(e[1], out)
+    elif e[0] == "agg" and e[2] is not None and e[2][0] == "var":
+        pass
+    return out
+
+
+def grounded(lits):
+    """The literals whose variables the rest still bind, once some are taken away: positive atoms bind theirs,
+    `v = e` binds v when e's variables are bound; anything else must find its variables bound."""
+    lits = list(lits)
+    while True:
+        bound = set()
+        for l in lits:
+            if l[0] == "atom":
+                bound |= {a[1] for a in l[2] if a[0] == "var"}
+        changed = True
+        while changed:
+            changed = False
+            for l in lits:
+                if l[0] == "cmp" and l[1] == "=":
+                    for a, b in ((l[2], l[3]), (l[3], l[2])):
+                        if a[0] == "var" and a[1] not in bound and free_vars(b, set()) <= bound:
+                            bound.add(a[1]); changed = True
+        keep = []
+        for l in lits:
+            if l[0] == "atom":
+                need = set().union(*[free_vars(a, set()) for a in l[2] if a[0] != "var"]) if l[2] else set()
+            elif l[0] == "cmp":
+                need = free_vars(l[2], set()) | free_vars(l[3], set())
+            else:
+                need = set(lvars(l, []))
+            if need <= bound:
+                keep.append(l)
+        if len(keep) == len(lits):
+            return keep
+        lits = keep
+
+
+def aggs_of(e):
+    """The aggregates in an expression."""
+    if e[0] == "agg":
+        return [e]
+    out = []
+    if e[0] in ("call", "fun"):
+        for a in e[2]:
+            out += aggs_of(a)
+    elif e[0] == "bin":
+        out += aggs_of(e[2]) + aggs_of(e[3])
+    elif e[0] == "neg":
+        out += aggs_of(e[1])
+    return out
 
 
 def negate(l):

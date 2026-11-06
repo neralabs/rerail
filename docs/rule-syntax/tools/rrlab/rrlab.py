@@ -32,20 +32,39 @@ def log(*a):
 # ---- building the native parts -----------------------------------------------------------------------------------
 
 def ensure_built():
-    src = [os.path.join(HERE, p) for p in ("src/main.rs", "build.rs", "Cargo.toml")]
-    if not os.path.exists(FACTS_BIN) or max(map(os.path.getmtime, src)) > os.path.getmtime(FACTS_BIN):
-        log("rrlab: building rrlab-facts (cargo build --release --offline) …")
-        subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=HERE, check=True)
-    lib = os.path.join(FN_DIR, "librrlabfn.dylib" if sys.platform == "darwin" else "librrlabfn.so")
-    cpp = os.path.join(HERE, "functors", "functors.cpp")
-    if not os.path.exists(lib) or os.path.getmtime(cpp) > os.path.getmtime(lib):
-        os.makedirs(FN_DIR, exist_ok=True)
-        subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-O2", "-shared", "-fPIC", "-o", lib, cpp], check=True)
-        if sys.platform == "darwin":  # souffle looks for lib<name>.so on some builds
-            alt = os.path.join(FN_DIR, "librrlabfn.so")
-            if os.path.lexists(alt):
-                os.remove(alt)
-            os.symlink(os.path.basename(lib), alt)
+    """Build rrlab-facts, the regex crate and the functor library when their sources are newer. Several rrlab
+    processes may run at once: builds take a lock, and the functor library is installed by rename, so a running
+    souffle keeps the file it loaded."""
+    import fcntl
+    os.makedirs(os.path.join(HERE, "target"), exist_ok=True)
+    with open(os.path.join(HERE, "target", ".build-lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        newest = lambda paths: max(os.path.getmtime(p) for p in paths if os.path.exists(p))
+        src = [os.path.join(HERE, p) for p in ("src/main.rs", "build.rs", "Cargo.toml")]
+        if not os.path.exists(FACTS_BIN) or newest(src) > os.path.getmtime(FACTS_BIN):
+            log("rrlab: building rrlab-facts (cargo build --release --offline) …")
+            subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=HERE, check=True)
+        rx_dir = os.path.join(HERE, "rx")
+        rx_lib = os.path.join(rx_dir, "target", "release", "librrlab_rx.a")
+        rx_src = [os.path.join(rx_dir, p) for p in ("src/lib.rs", "Cargo.toml")]
+        if not os.path.exists(rx_lib) or newest(rx_src) > os.path.getmtime(rx_lib):
+            log("rrlab: building the regex functors (cargo build --release --offline in rx/) …")
+            subprocess.run(["cargo", "build", "--release", "--offline", "--quiet"], cwd=rx_dir, check=True)
+        lib = os.path.join(FN_DIR, "librrlabfn.dylib" if sys.platform == "darwin" else "librrlabfn.so")
+        cpp = os.path.join(HERE, "functors", "functors.cpp")
+        if not os.path.exists(lib) or newest([cpp, rx_lib]) > os.path.getmtime(lib):
+            os.makedirs(FN_DIR, exist_ok=True)
+            tmp = lib + f".{os.getpid()}.tmp"
+            # the whole archive: nothing in functors.cpp calls the Rust functors, souffle looks them up by name
+            whole = (["-Wl,-force_load," + rx_lib, "-framework", "CoreFoundation"] if sys.platform == "darwin"
+                     else ["-Wl,--whole-archive", rx_lib, "-Wl,--no-whole-archive", "-lpthread", "-ldl"])
+            subprocess.run([os.environ.get("CXX", "c++"), "-std=c++17", "-O2", "-shared", "-fPIC", "-o", tmp, cpp]
+                           + whole, check=True)
+            os.replace(tmp, lib)
+            if sys.platform == "darwin":  # souffle looks for lib<name>.so on some builds
+                alt = os.path.join(FN_DIR, "librrlabfn.so")
+                if not os.path.lexists(alt):
+                    os.symlink(os.path.basename(lib), alt)
 
 
 # ---- inputs beyond the tree --------------------------------------------------------------------------------------
@@ -181,6 +200,22 @@ def io_input(spec, root):
 _RUNS = []
 
 
+_RX = None
+
+
+def rx_lib():
+    """rr_find_all from the functor library (the Rust regex crate), through ctypes."""
+    global _RX
+    if _RX is None:
+        import ctypes
+        lib = ctypes.CDLL(os.path.join(FN_DIR, "librrlabfn.dylib" if sys.platform == "darwin" else "librrlabfn.so"))
+        f = lib.rr_find_all
+        f.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+        f.restype = ctypes.c_char_p
+        _RX = f
+    return _RX
+
+
 def cleanup():
     """Remove the work directories of this process's runs that --keep did not name."""
     for r in _RUNS:
@@ -231,7 +266,7 @@ class Run:
             f = os.path.join(self.inp, f"{name}.facts")
             if not os.path.exists(f):
                 open(f, "w").close()
-                if name in used and name not in L.FILLED and not name.endswith("__prev") and \
+                if name in used and name not in L.FILLED and not name.endswith("__prev") and not name.startswith("rr_mres") and \
                         not any(w.startswith(name + " ") for w in p.warnings):
                     p.warn(f"input {name} has no rows in rrlab")
 
@@ -256,10 +291,11 @@ class Run:
         while True:
             self.souffle()
             rounds += 1
-            if not self.prog.ordered:
+            served = self.serve_matches()
+            if not self.prog.ordered and not served:
                 break
             cur = {o: open(os.path.join(self.out, f"{o}.csv")).read() for o in self.prog.ordered}
-            if cur == prev:
+            if cur == prev and not served:
                 break
             if rounds >= max_rounds:
                 self.prog.warn(f"ordered by: no fixpoint after {rounds} rounds")
@@ -271,6 +307,78 @@ class Run:
         self.souffle_cpu = cpu_children() - c0
         self.wall = time.time() - t0
         return self.findings()
+
+    # -- match_all, and match captures that are spans: souffle asks (rr_mreq{k}), rrlab answers (rr_mres{k})
+    def serve_matches(self):
+        """Answer the match requests of the last round. Spans are new nodes with text, line, end_line, col and
+        docof rows; True if any rows were added (the program must run again)."""
+        p = self.prog
+        if not p.matches:
+            return False
+        if not hasattr(self, "_mserved"):
+            self._mserved = set()
+            self._spans = {}
+            self._fn = rx_lib()
+            self._ntext = {r[0]: r[1] for r in self.table("text")}
+            self._nline = {r[0]: int(r[1]) for r in self.table("line")}
+            self._ncol = {r[0]: int(r[1]) for r in self.table("col")}
+            self._ndoc = {r[0]: r[1] for r in self.table("docof")}
+            self._next_id = max((int(i) for i in self._ndoc if i.lstrip("-").isdigit()), default=0) + 1
+        add = collections.defaultdict(list)
+        for k, m in p.matches.items():
+            f = os.path.join(self.out, f"rr_mreq{k}.csv")
+            if not os.path.exists(f):
+                continue
+            with open(f, newline="") as fh:
+                subjects = [r[0].replace('\\"', '"') for r in csv.reader(fh, delimiter="\t", quotechar='"') if r]
+            for subj in subjects:
+                if (k, subj) in self._mserved:
+                    continue
+                self._mserved.add((k, subj))
+                text = self._ntext.get(subj, "") if m["node"] else subj
+                b = text.encode("utf-8", "surrogateescape")
+                raw = self._fn(m["regex"].encode(), b.replace(b"\0", b""), 0 if m["all"] else 1)
+                for n, ln in enumerate((raw or b"").decode().splitlines()):
+                    offs = [int(x) for x in ln.split()]
+                    row = [subj, n]
+                    for g, gi, sp in zip(m["groups"], m["index"], m["span"]):
+                        st, en = offs[2 * gi], offs[2 * gi + 1]
+                        if st < 0:
+                            row = None if sp else row + [""]
+                            if row is None:
+                                break
+                            continue
+                        row.append(self.span(subj, b, st, en, add) if sp else b[st:en].decode("utf-8", "replace"))
+                    if row is not None:
+                        add[f"rr_mres{k}"].append(row)
+        for rel, rows in add.items():
+            with open(os.path.join(self.inp, f"{rel}.facts"), "a") as fh:
+                fh.write(tsv(rows))
+        return bool(add)
+
+    def span(self, node, b, st, en, add):
+        """The id of the span b[st:en] of node's text, a node of its own (made once)."""
+        key = (node, st, en)
+        if key in self._spans:
+            return self._spans[key]
+        i = str(self._next_id); self._next_id += 1
+        self._spans[key] = i
+        def at(o):
+            pre = b[:o].replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            nl = pre.count(b"\n")
+            last = pre.rfind(b"\n")
+            return self._nline.get(node, 1) + nl, (self._ncol.get(node, 0) + len(pre) if nl == 0 else len(pre) - last - 1)
+        (l0, c0), (l1, _) = at(st), at(en)
+        d = self._ndoc.get(node)
+        t = b[st:en].decode("utf-8", "replace")
+        add["text"].append([i, t]); add["line"].append([i, l0]); add["end_line"].append([i, l1])
+        add["col"].append([i, c0])
+        if d is not None:
+            add["docof"].append([i, d])
+        self._ntext[i], self._nline[i], self._ncol[i] = t, l0, c0
+        if d is not None:
+            self._ndoc[i] = d
+        return i
 
     def table(self, rel):
         f = os.path.join(self.inp, f"{rel}.facts")
@@ -334,54 +442,166 @@ class Run:
         return re.sub(r"\{([A-Za-z_][\w.]*)\}", sub, meta["message"])
 
     def suppress(self, found):
-        """eslint-disable / eslint-disable-line / eslint-disable-next-line / eslint-enable, and `# noqa`."""
+        """Each tool's own suppression comments, applied only to findings whose violation names that tool:
+          eslint, oxlint   eslint-disable[-line|-next-line] / eslint-enable (oxlint also reads oxlint-…), rule lists
+          ruff, flake8     `# noqa[: codes]` anywhere in a comment, on the finding's line or, inside a multi-line
+                           string or a backslash continuation, on its last line; `# ruff: noqa[: codes]` and
+                           `# flake8: noqa[: codes]` for the whole file
+          sqlfluff         `-- noqa[: codes]` on the line; `-- noqa: disable=codes|all` … `enable=…`
+          clippy           #[allow(clippy::x)] / #[expect(…)] on an item covers the item and its attributes;
+                           #![allow(…)] its enclosing item or the file
+          nosec            Bandit's `# nosec`, as nosec.rs ports it (below)"""
         p = self.prog
         tools = {v: meta["suppress"] for v, meta in p.violations.items()}
         if not any(tools.values()):
             return found
+        used = {t for v in tools.values() for t, _ in v}
         line = {r[0]: int(r[1]) for r in self.table("line")}
         end = {r[0]: int(r[1]) for r in self.table("end_line")}
         docof = {r[0]: r[1] for r in self.table("docof")}
         path = {r[0]: r[1] for r in self.table("doc")}
-        directives = collections.defaultdict(list)   # path -> [(kind, line, end, rules)]
+        directives = collections.defaultdict(list)   # path -> [(tool, kind, line, end, codes)]
+        file_noqa = collections.defaultdict(list)    # path -> [codes] (empty set: every code)
         for nid, body in self.table("comment"):
-            b = body.strip()
-            m = re.match(r"(eslint-disable-next-line|eslint-disable-line|eslint-disable|eslint-enable)(?:\s+(.*))?$", b, re.S)
-            if m:
-                rules = m.group(2) or ""
-                rules = rules.split("--")[0]
+            if nid not in docof:
+                continue
+            pth, a, b = path[docof[nid]], line[nid], end[nid]
+            text = body.strip()
+            m = re.match(r"(eslint|oxlint)-(disable-next-line|disable-line|disable|enable)(?:\s+(.*))?$", text, re.S)
+            if m and used & {"eslint", "oxlint"}:
+                rules = (m.group(3) or "").split("--")[0]
                 names = {x.strip() for x in rules.replace("\n", " ").split(",") if x.strip()}
-                directives[path[docof[nid]]].append((m.group(1), line[nid], end[nid], names))
-            m = re.match(r"noqa(?::\s*(.*))?", b, re.I)
-            if m:
-                names = {x.strip() for x in re.split(r"[,\s]+", m.group(1) or "") if x.strip()}
-                directives[path[docof[nid]]].append(("noqa", line[nid], end[nid], names))
-        nosec = nosec_lines(self, path, docof, line) if any(t == "nosec" for v in tools.values() for t, _ in v) else {}
+                who = {"eslint", "oxlint"} if m.group(1) == "eslint" else {"oxlint"}
+                directives[pth].append((who, m.group(2), a, b, names))
+            if used & {"ruff", "flake8"}:
+                m = re.match(r"(?i)(?:ruff|flake8)\s*:\s*noqa(?:\s*:\s*(?P<codes>.*))?$", text)
+                if m:
+                    file_noqa[pth].append(set(re.findall(r"[A-Z]+[0-9]+", m.group("codes") or "")))
+                else:
+                    m = re.search(r"(?i)#\s*noqa(?::\s*(?P<codes>[A-Z]+[0-9]+(?:[\s,]+[A-Z]+[0-9]+)*))?", "#" + body)
+                    if m:
+                        codes = set(re.findall(r"[A-Z]+[0-9]+", m.group("codes") or ""))
+                        directives[pth].append(({"ruff", "flake8"}, "noqa", a, b, codes))
+            if "sqlfluff" in used:
+                m = re.match(r"(?i)noqa(?:\s*:\s*(?P<rest>.*))?$", text)
+                if m:
+                    rest = (m.group("rest") or "").strip()
+                    r2 = re.match(r"(disable|enable)\s*=\s*(.*)", rest)
+                    kind = r2.group(1) if r2 else "noqa"
+                    codes = {x.strip() for x in (r2.group(2) if r2 else rest).split(",") if x.strip()}
+                    if "all" in codes:
+                        codes = set()
+                    directives[pth].append(({"sqlfluff"}, kind, a, b, codes))
+        noqa_line = self.noqa_lines() if used & {"ruff", "flake8"} else {}
+        clippy = self.clippy_scopes() if "clippy" in used else {}
+        nosec = nosec_lines(self, path, docof, line) if "nosec" in used else {}
         keep = []
         for f in found:
-            names = {r for tool, r in tools[f["violation"]]}
-            codes = {r for tool, r in tools[f["violation"]] if tool == "nosec"}
+            mine = tools[f["violation"]]
+            names = lambda tool_set: {r for t, r in mine if t in tool_set}
+            codes = names({"nosec"})
             if codes and nosec_suppresses(nosec.get(f["path"], {}), codes, f["line"], line.get(f.get("at")), end.get(f.get("at"))):
                 continue
-            off = False
-            state = False
-            for kind, a, b, rules in sorted(directives.get(f["path"], []), key=lambda x: x[1]):
-                hit = not rules or rules & names
-                if not hit:
+            rn = names({"ruff", "flake8"})
+            if rn and any(not c or c & rn for c in file_noqa.get(f["path"], [])):
+                continue
+            cn = names({"clippy"})
+            if cn and any(a <= f["line"] <= b and (lint in cn or lint.split("::")[-1] in cn)
+                          for a, b, lint in clippy.get(f["path"], [])):
+                continue
+            target = noqa_line.get(f["path"], {}).get(f["line"], f["line"])
+            off = state = sql_off = False
+            for who, kind, a, b, rules in sorted(directives.get(f["path"], []), key=lambda x: x[2]):
+                own = names(who)
+                if not own or (rules and not rules & own):
                     continue
-                if kind == "eslint-disable-line" and a == f["line"]:
+                if kind == "disable-line" and a == f["line"]:
                     off = True
-                elif kind == "eslint-disable-next-line" and b + 1 == f["line"]:
+                elif kind == "disable-next-line" and b + 1 == f["line"]:
                     off = True
-                elif kind == "noqa" and a == f["line"] and any(t == "ruff" or t == "flake8" for t, _ in tools[f["violation"]]):
+                elif kind == "disable" and a <= f["line"]:
+                    if "sqlfluff" in who:
+                        sql_off = True
+                    else:
+                        state = True
+                elif kind == "enable" and a <= f["line"]:
+                    if "sqlfluff" in who:
+                        sql_off = False
+                    else:
+                        state = False
+                elif kind == "noqa" and "sqlfluff" in who and a == f["line"]:
                     off = True
-                elif kind == "eslint-disable" and a <= f["line"]:
-                    state = True
-                elif kind == "eslint-enable" and a <= f["line"]:
-                    state = False
-            if not (off or state):
+                elif kind == "noqa" and a == target:
+                    off = True
+            if not (off or state or sql_off):
                 keep.append(f)
         return keep
+
+    def noqa_lines(self):
+        """path -> {line: the line its `# noqa` sits on}: every line of a multi-line string, and every line of a
+        backslash continuation, maps to the last, as Ruff's noqa line mapping does."""
+        line = {r[0]: int(r[1]) for r in self.table("line")}
+        end = {r[0]: int(r[1]) for r in self.table("end_line")}
+        docof = {r[0]: r[1] for r in self.table("docof")}
+        path = {r[0]: r[1] for r in self.table("doc")}
+        out = collections.defaultdict(dict)
+        for nid, k in self.table("kind"):
+            if k == "string" and nid in docof and end.get(nid, 0) > line.get(nid, 0):
+                m = out[path[docof[nid]]]
+                for l in range(line[nid], end[nid] + 1):
+                    m[l] = max(m.get(l, l), end[nid])
+        cont = collections.defaultdict(list)
+        for d, l, sp in self.table("src_line"):
+            cont[d].append((int(l), sp))
+        texts = None
+        for d, rows in cont.items():
+            if texts is None:
+                ids = {sp for rs in cont.values() for _, sp in rs}
+                texts = {r[0]: r[1] for r in self.table("text") if r[0] in ids}
+            m = out[path[d]]
+            rows.sort()
+            run = []
+            for l, sp in rows:
+                run.append(l)
+                if not texts.get(sp, "").endswith("\\"):
+                    if len(run) > 1:
+                        for x in run:
+                            m[x] = max(m.get(x, x), run[-1])
+                    run = []
+        return out
+
+    def clippy_scopes(self):
+        """path -> [(first line, last line, lint)] for each clippy lint an allow/expect attribute names."""
+        kind = {r[0]: r[1] for r in self.table("kind")}
+        rel = [nid for nid, k in kind.items() if k in ("attribute_item", "inner_attribute_item")]
+        if not rel:
+            return {}
+        text = {r[0]: r[1] for r in self.table("text") if r[0] in set(rel)}
+        line = {r[0]: int(r[1]) for r in self.table("line")}
+        end = {r[0]: int(r[1]) for r in self.table("end_line")}
+        docof = {r[0]: r[1] for r in self.table("docof")}
+        path = {r[0]: r[1] for r in self.table("doc")}
+        parent = {r[0]: r[1] for r in self.table("rrlab_parent")}
+        nxt = {r[0]: r[1] for r in self.table("next_sibling")}
+        out = collections.defaultdict(list)
+        for nid in rel:
+            m = re.search(r"\b(?:allow|expect)\s*\((.*)\)", text.get(nid, ""), re.S)
+            if not m:
+                continue
+            lints = re.findall(r"clippy\s*::\s*(\w+)", m.group(1))
+            if kind[nid] == "inner_attribute_item":
+                scope = parent.get(nid)
+                a, b = (line.get(scope, 1), end.get(scope, 10 ** 9)) if scope else (1, 10 ** 9)
+            else:
+                item = nxt.get(nid)
+                while item and kind.get(item) in ("attribute_item", "line_comment", "block_comment"):
+                    item = nxt.get(item)
+                if not item:
+                    continue
+                a, b = line[nid], end[item]
+            for lint in lints:
+                out[path[docof[nid]]].append((a, b, lint))
+        return out
 
 
 # Bandit 1.9.4's `# nosec`, as native/src/code_rule_dsl/suppress/nosec.rs ports it: a comment's test list (ids or
