@@ -218,12 +218,115 @@ const NOT_MADE: [(&str, &str); 2] = [
 ];
 
 pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
-    run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
+    run_typed(&[program], root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
+}
+
+/// Every program of `programs` in one run: each file is read, parsed and batched once, and every rule runs over each
+/// chunk (`combine`).
+pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
+    run_typed(programs, root, None, out, modes, binding, chunk_nodes, &Typing::default())
+}
+
+/// The programs `programs` (`.rr` text, each with `extra` after it) as one program. One program is parsed as it is.
+/// Of several, each one's own relations (the ones it derives or declares beyond its inputs) take a prefix, `p<i>_`,
+/// so programs that name relations alike (a converter's `m650`, `exists_0`) do not meet. The base inputs and the
+/// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
+/// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
+pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+    use front::{Literal, Program};
+    let parse = |text: &str| crate::code_rule_dsl::logic::rr::parse(&if extra.is_empty() { text.to_owned() } else { format!("{text}\n{extra}") });
+    if let [one] = programs {
+        return Ok(parse(one)?);
+    }
+    let axis = crate::code_rule_dsl::logic::front::AXIS;
+    let mut all = Program::default();
+    let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
+    for (i, text) in programs.iter().enumerate() {
+        let mut prog = parse(text)?;
+        // Kind sets by their kinds: this program's name for each, and the shared one.
+        let mut set_of: BTreeMap<String, String> = BTreeMap::new();
+        for (name, kinds) in std::mem::take(&mut prog.kindsets) {
+            let n = sets.len();
+            let shared = sets.entry(kinds.clone()).or_insert_with(|| format!("ks{n}")).clone();
+            all.kindsets.insert(shared.clone(), kinds);
+            set_of.insert(name, shared);
+        }
+        let shared_outputs = ["violation"];
+        let own: BTreeSet<String> = prog
+            .decls
+            .keys()
+            .chain(prog.facts.keys())
+            .chain(prog.rules.iter().map(|r| &r.head.rel))
+            .filter(|r| !prog.inputs.contains(r) && !shared_outputs.contains(&r.as_str()))
+            .cloned()
+            .collect();
+        let rename = |rel: &str| -> String {
+            if own.contains(rel) {
+                return format!("p{i}_{rel}");
+            }
+            match rel.strip_prefix(axis).and_then(|set| set_of.get(set)) {
+                Some(shared) => format!("{axis}{shared}"),
+                None => rel.to_owned(),
+            }
+        };
+        let atom = |a: &mut front::Atom| a.rel = rename(&a.rel);
+        for rule in &mut prog.rules {
+            atom(&mut rule.head);
+            for l in &mut rule.body {
+                match l {
+                    Literal::Atom(a) => atom(a),
+                    Literal::Agg { atom: a, .. } => atom(a),
+                    Literal::Nearest { kindset, .. } => {
+                        if let Some(shared) = set_of.get(kindset) {
+                            *kindset = shared.clone();
+                        }
+                    }
+                    Literal::Cmp { .. } | Literal::Ast { .. } => {}
+                }
+            }
+        }
+        for (rel, cols) in prog.decls {
+            all.decls.entry(rename(&rel)).or_insert(cols);
+        }
+        for (rel, decl) in prog.lattice {
+            all.lattice.insert(rename(&rel), decl);
+        }
+        for (rel, rows) in prog.facts {
+            all.facts.insert(rename(&rel), rows);
+        }
+        all.rules.extend(prog.rules);
+        for list in [(&mut all.inputs, prog.inputs), (&mut all.outputs, prog.outputs), (&mut all.demand, prog.demand)] {
+            for rel in list.1 {
+                let rel = rename(&rel);
+                if !list.0.contains(&rel) {
+                    list.0.push(rel);
+                }
+            }
+        }
+        all.policies.extend(prog.policies);
+        for setting in prog.settings {
+            if !all.settings.contains(&setting) {
+                all.settings.push(setting);
+            }
+        }
+    }
+    Ok(all)
 }
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
+/// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
+/// directory; `RERAIL_TAPE_CACHE=off` keeps none.
+fn tape_cache() -> std::result::Result<Option<ContentStore>, crate::content_store::StoreError> {
+    let path = match std::env::var("RERAIL_TAPE_CACHE") {
+        Ok(v) if v == "off" => return Ok(None),
+        Ok(v) => std::path::PathBuf::from(v),
+        Err(_) => std::env::temp_dir().join("rerail-tape-cache.sqlite"),
+    };
+    ContentStore::open(&path).map(Some)
+}
+
+pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     // The main thread's CPU (the chunk builder's is its own, below) and the process's peak RSS.
     let main_usage = || { let (u, s) = thread_usage(); (u, s, usage().2) };
@@ -250,7 +353,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     }
     // Plans are kept across this run's chunks only (decision 0038).
     let _plans = super::KeepPlans::start();
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(program)?;
+    let mut prog = combine(programs, "")?;
     let t = t_facts.map(|t_facts| Connection::open_with_flags(t_facts, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)).transpose()?;
     let (docs, first, rust): (Vec<(i64, String)>, HashMap<i64, i64>, bool) = match &t {
         Some(t) => {
@@ -275,7 +378,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = crate::code_rule_dsl::logic::rr::parse(&format!("{program}\n{facts}"))?;
+            prog = combine(programs, &facts)?;
         }
         declared = d;
     }
@@ -290,6 +393,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         }
     }
     let store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
+    // The parse cache: tapes kept across runs, keyed by content (`RERAIL_TAPE_CACHE` names it, `off` parses every file).
+    let tapes = tape_cache().map_err(|e| Error::Plan(e.to_string()))?;
     let db = Connection::open(&path)?;
     let statements = Statements::on(&db);
     statements.enter("stats");
@@ -304,6 +409,11 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
+    // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
+    let pushed = crate::code_rule_dsl::typing::file_local::push_local_joins(&mut lowered.program);
+    if !pushed.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || format!("{} cross-file rules read a join made per chunk instead of its base relations (first: {})", pushed.len(), pushed.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
+    }
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
@@ -427,7 +537,11 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             drop(read);
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-            let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
+            let built = match &tapes {
+                Some(cache) => core::build_cached(&file, cache),
+                None => core::build(&file),
+            };
+            let facts = match built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
                 Built::Facts(f) => Arc::new(f),
                 Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
             };
@@ -565,6 +679,20 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
 
     // The cross-file part reads every input in place from `main`: the base relations held in memory, and the
     // exports, read from `x` once each.
+    crate::code_rule_dsl::logic::profile::decision("held for the cross-file part", || {
+        let mut held: Vec<(usize, String)> = base_rows
+            .iter()
+            .map(|(rel, (columns, values))| {
+                let n: usize = values.iter().flatten().map(Vec::len).sum();
+                let named: Vec<&str> = columns.iter().zip(values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
+                (n, format!("{rel}({})", named.join(", ")))
+            })
+            .collect();
+        held.sort_by(|a, b| b.0.cmp(&a.0));
+        let total: usize = held.iter().map(|h| h.0).sum();
+        let top: Vec<String> = held.iter().take(12).map(|(n, r)| format!("{r} {:.1} MB", *n as f64 * 8.0 / 1e6)).collect();
+        format!("{} base relations, {:.1} MB of values in memory: {}", held.len(), total as f64 * 8.0 / 1e6, top.join("; "))
+    });
     for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
         modules.bind(&db, &rel, crate::code_rule_dsl::logic::native::component::columns_source(columns, values))?;
     }
@@ -645,7 +773,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         for (name, user, sys, rss, n) in &phases {
             header.push_str(&format!("{:>9.2} s  {name:<16} rss {rss:.0} MB  {n} statements\n", user + sys));
         }
-        header.push_str(&format!("\nProgram: {} lines; rules are numbered as in the `rule #k` notes at the end.\n", program.lines().filter(|l| !l.trim().is_empty()).count()));
+        let lines: usize = programs.iter().map(|p| p.lines().filter(|l| !l.trim().is_empty()).count()).sum();
+        header.push_str(&format!("\nProgram: {} lines in {} programs; rules are numbered as in the `rule #k` notes at the end.\n", lines, programs.len()));
         crate::code_rule_dsl::logic::profile::write(&dir, &header).map_err(|e| Error::Plan(format!("profile: {e}")))?;
     }
     Ok(Report { phases, files: docs.len(), nodes, native: native.len(), rows, chunks, rounds, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu) })

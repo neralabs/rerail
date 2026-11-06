@@ -128,7 +128,6 @@ impl ContentStore {
         })
     }
 
-    #[cfg(test)]
     pub fn source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
         let connection = self
             .connection

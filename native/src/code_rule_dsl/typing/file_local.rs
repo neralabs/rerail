@@ -411,3 +411,137 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
     Programs { local: l, cross: c, exports, base }
 }
+
+/// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations
+/// and file-local relations, joined by their variables, with the comparisons over only their variables, become a
+/// file-local relation of the variables the rest of the rule uses (`fl<k>_<head>`), and the rule reads that. So do
+/// its negated reads of those relations whose variables the component binds.
+///
+/// Without this, a cross-file rule (one that negates or joins a cross-file relation) reads its base relations
+/// whole: every chunk's `within`, `node`, `child` rows are kept for the cross part, memory that grows with the
+/// corpus and with the rules run at once. With it, the chunk joins them and exports the few rows that pass.
+///
+/// A component that is one atom of only variables filters nothing and is left; so is one that reads no base
+/// relation. A made relation the split does not find file-local is undone. Returns the relations made.
+pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+    use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
+    use std::collections::{BTreeMap, BTreeSet};
+    // Per rule, how much it takes: 0 negated base and file-local reads, 1 negated base reads only, 2 nothing (the
+    // split did not find the join file-local: a negation read through no location column, say).
+    let mut level: BTreeMap<usize, u8> = BTreeMap::new();
+    loop {
+        let local = split(prog);
+        let mut next = prog.clone();
+        let mut made: Vec<(usize, String)> = Vec::new();
+        let mut helpers: Vec<Rule> = Vec::new();
+        for (i, rule) in prog.rules.iter().enumerate() {
+            let at = level.get(&i).copied().unwrap_or(0);
+            if local.contains(&rule.head.rel) || at >= 2 {
+                continue;
+            }
+            let base = |rel: &str| prog.inputs.iter().any(|r| r == rel);
+            let candidate = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && (base(&a.rel) || local.contains(&a.rel)));
+            // Components of the candidates by shared variables.
+            let idx: Vec<usize> = (0..rule.body.len()).filter(|&j| candidate(&rule.body[j])).collect();
+            let mut comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = Vec::new();
+            for &j in &idx {
+                let vars = rule.body[j].vars();
+                let (joined, rest): (Vec<_>, Vec<_>) = comps.into_iter().partition(|(_, v)| !v.is_disjoint(&vars));
+                let mut all = (BTreeSet::from([j]), vars);
+                for (l, v) in joined {
+                    all.0.extend(l);
+                    all.1.extend(v);
+                }
+                comps = rest;
+                comps.push(all);
+            }
+            let mut body = rule.body.clone();
+            let mut taken: BTreeSet<usize> = BTreeSet::new();
+            let mut replaced: Vec<(usize, Literal)> = Vec::new();
+            for (mut lits, vars) in comps {
+                let atoms: Vec<&Atom> = lits.iter().filter_map(|&j| rule.body[j].atom()).collect();
+                if !atoms.iter().any(|a| base(&a.rel)) {
+                    continue;
+                }
+                if let [a] = atoms[..] {
+                    let named: Vec<&String> = a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).collect();
+                    let distinct: BTreeSet<&String> = named.iter().copied().collect();
+                    if a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && distinct.len() == named.len() {
+                        continue;
+                    }
+                }
+                // Comparisons and negated file-local reads over only this component's variables go with it.
+                for (j, l) in rule.body.iter().enumerate() {
+                    let with = match l {
+                        Literal::Cmp { .. } => true,
+                        Literal::Atom(a) => a.neg && !a.gated && !prog.lattice.contains_key(&a.rel) && (base(&a.rel) || (at == 0 && local.contains(&a.rel))),
+                        _ => false,
+                    };
+                    if with && !l.vars().is_empty() && l.vars().is_subset(&vars) {
+                        lits.insert(j);
+                    }
+                }
+                let mut outside: BTreeSet<String> = rule.head.vars();
+                for (j, l) in rule.body.iter().enumerate() {
+                    if !lits.contains(&j) {
+                        outside.extend(l.vars());
+                    }
+                }
+                // The interface in the order the variables first appear.
+                let mut iface: Vec<String> = Vec::new();
+                for &j in &lits {
+                    for v in rule.body[j].vars() {
+                        if outside.contains(&v) && !iface.contains(&v) {
+                            iface.push(v);
+                        }
+                    }
+                }
+                if iface.is_empty() {
+                    continue;
+                }
+                let typed: Option<Vec<(String, String)>> = iface
+                    .iter()
+                    .map(|v| {
+                        atoms.iter().find_map(|a| {
+                            let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
+                            prog.decls.get(&a.rel)?.get(c).map(|(_, t)| (v.clone(), t.clone()))
+                        })
+                    })
+                    .collect();
+                let Some(typed) = typed else { continue };
+                let name = format!("fl{}_{}", next.decls.len(), rule.head.rel);
+                next.decls.insert(name.clone(), typed);
+                let head = Atom { rel: name.clone(), args: iface.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false };
+                helpers.push(Rule { head: head.clone(), body: lits.iter().map(|&j| rule.body[j].clone()).collect() });
+                replaced.push((*lits.iter().next().expect("a literal"), Literal::Atom(head)));
+                taken.extend(lits);
+                made.push((i, name));
+            }
+            if taken.is_empty() {
+                continue;
+            }
+            let mut out = Vec::new();
+            for (j, l) in body.drain(..).enumerate() {
+                if let Some((_, r)) = replaced.iter().find(|(at, _)| *at == j) {
+                    out.push(r.clone());
+                } else if !taken.contains(&j) {
+                    out.push(l);
+                }
+            }
+            next.rules[i].body = out;
+        }
+        if made.is_empty() {
+            return Vec::new();
+        }
+        next.rules.extend(helpers);
+        let now = split(&next);
+        let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
+        if failed.is_empty() {
+            *prog = next;
+            return made.into_iter().map(|(_, n)| n).collect();
+        }
+        for i in failed {
+            *level.entry(i).or_default() += 1;
+        }
+    }
+}

@@ -72,6 +72,53 @@ pub(crate) fn build(file: &FileInput) -> Result<Built, String> {
     from_tape(&doc, lines).map(Built::Facts)
 }
 
+/// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
+/// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
+/// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
+pub(crate) fn build_cached(file: &FileInput, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+    use crate::code_rule_dsl::lines::Terminators;
+    use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeImage};
+    use crate::code_rule_dsl::workspace::grammar_version;
+    use crate::content_store::HashKey;
+    let language = eval::file_language(file).ok_or_else(|| format!("{} has no grammar", file.language))?;
+    let tag = i64::from(tape_tag(language).ok_or("the dialect has no tape tag")?);
+    let (gv, fv) = (grammar_version(), i64::from(TAPE_FORMAT_VERSION));
+    let e = |e: crate::content_store::StoreError| e.to_string();
+    let bytes = file.source.as_bytes();
+    let lookup = crate::code_rule_dsl::logic::profile::span(|| "tape cache lookup".into());
+    let source_id = match cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)? {
+        Some(id) => id,
+        None => cache.put_source(bytes, &[]).map_err(e)?,
+    };
+    let stored = cache.tape_by_source(source_id, tag, gv, fv).map_err(e)?;
+    drop(lookup);
+    let grammar = tape::Grammar::new(language)?;
+    let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
+        Some((stored, _)) => {
+            let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
+            TapeImage::from_bytes(&stored, &grammar)?
+        }
+        None => {
+            let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
+            let Some(image) = TapeImage::parse(&grammar, &file.source, &|| false) else {
+                return Ok(Built::Unparsed);
+            };
+            let image = image?;
+            drop(parse);
+            let _store = crate::code_rule_dsl::logic::profile::span(|| "tape store".into());
+            cache.put_tape(source_id, tag, gv, fv, &image.primary.to_bytes()?).map_err(e)?;
+            image.primary
+        }
+    };
+    let image = FileImage { primary, derived: Vec::new() };
+    let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
+    let restore = crate::code_rule_dsl::logic::profile::span(|| "tape restore".into());
+    let doc = TapeDoc::restore_with_lines(Arc::clone(&file.source), grammar, &image, Arc::clone(&lines), &|| false)?;
+    drop(restore);
+    let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
+    from_tape(&doc, lines).map(Built::Facts)
+}
+
 pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
