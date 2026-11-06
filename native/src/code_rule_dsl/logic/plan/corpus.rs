@@ -229,15 +229,17 @@ const CPYTHON_FUNCTORS: [&str; 2] = ["unparse", "ast_dump"];
 
 /// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …), or calls a functor only CPython gives: the planner would otherwise fail on its missing
-/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), and
-/// the relations not made yet are empty (`NOT_MADE`, O76).
+/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later), so
+/// are the facts the converter gives (`convert::GIVEN`: core.rr's `option_item` among them, empty for an option of
+/// no items), and the relations not made yet are empty (`NOT_MADE`, O76).
 fn bound(prog: &front::Program) -> Result<()> {
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
     let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
+    let given = |rel: &str| crate::code_rule_dsl::logic::convert::GIVEN.contains(&rel) || NOT_MADE.iter().any(|(r, _)| *r == rel);
     for rule in &prog.rules {
         for a in rule.body.iter().filter_map(front::Literal::atom) {
             let rel = a.rel.as_str();
-            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || NOT_MADE.iter().any(|(r, _)| *r == rel) {
+            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) || given(rel) {
                 continue;
             }
             let why = match rel {
