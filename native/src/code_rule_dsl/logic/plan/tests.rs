@@ -681,3 +681,23 @@ joined(y, x) :- pair(y, x), text(_, y).
     assert_eq!(got[0], "Sequence\nSyncX\n");
     assert_eq!(got[1], "legacy\ta\nlegacy\tlegacy\nlemon\tlemon\n");
 }
+
+/// `max t : { r(d, x, t, _, _) }` groups by the variables bound outside it (`d`, `x`), not by the wildcards.
+#[test]
+fn an_aggregate_groups_by_its_bound_variables_not_its_wildcards() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.decl def(d: number, x: symbol, t: number, k: symbol, l: number)
+def(d, "f", s, "function", 1) :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign", 2) :- node(d, _, "assignment", s, _).
+.decl last(x: symbol, s: number, k: symbol)
+last(x, s, k) :- def(d, x, s, k, _), s = max t : { def(d, x, t, _, _) }.
+.decl first(x: symbol, s: number, k: symbol)
+first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
+.output last, first
+"#;
+    let got = corpus_outputs("aggregate-wildcards", &[("a.py", "def f():\n    pass\nf = 1\n")], program, &["last", "first"]);
+    assert_eq!(got[0], "f\t18\tassign\n");
+    assert_eq!(got[1], "f\t0\tfunction\n");
+}

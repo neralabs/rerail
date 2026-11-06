@@ -1612,8 +1612,14 @@ impl Model {
                             call(if *op == AggOp::Min { "min" } else { "max" }, vec![col(&al, &sql_col(&atom.rel, c))])
                         }
                     };
-                    let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);
-                    env.insert(var.clone(), Expr::Scalar(Box::new(query)));
+                    let query = Expr::Scalar(Box::new(subquery(what, self.relation(prog, &atom.rel, false), al, conds)));
+                    // A result already bound (`def(d, x, s, …), s = max t : { … }`) is compared with it, not rebound.
+                    match env.get(var) {
+                        Some(bound) => wh.push(eq(bound.clone(), query)),
+                        None => {
+                            env.insert(var.clone(), query);
+                        }
+                    }
                 }
                 Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) && self.inputs.native.contains("nearest") => {
                     // The climb is a native function over the tape: no CTE, and its result is just a column expression.
