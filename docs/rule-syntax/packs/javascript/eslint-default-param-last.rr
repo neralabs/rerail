@@ -1,0 +1,22 @@
+.policy "eslint-default-param-last" revision 3
+.description "Put JavaScript parameters with default values after the required ones; a default before a required parameter can only be used by passing undefined."
+.language javascript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+//   fn_param, default_param, rest_param, optional_param
+
+// ESLint's default-param-last: a parameter that is not required, with some required parameter after it.
+//   function f(a = 1, b) {}       → `a = 1`
+//   function f(a, b = 1) {}       fine: the default is last
+//   function f(a = 1, ...r) {}    fine: a rest parameter is not required
+// Required means no default, not a rest, and not TypeScript-optional, so `(a?: T, b: T)` reports `a?` too.
+// The scope is JavaScript only, as the JSON's; the rule reads TypeScript's parameters as well. No options.
+.violation default_param_last(at: node) code "default-param-last" "Default parameters should be last."
+    suppress eslint "default-param-last"
+    suppress oxlint "default-param-last"
+    suppress biome "lint/style/useDefaultParameterLast"
+default_param_last(p) :- fn_param(f, p, i), !required(p), fn_param(f, q, j), j > i, required(q).
+.decl required(p: node)
+required(p) :- fn_param(_, p, _), !default_param(p), !rest_param(p), !optional_param(p).

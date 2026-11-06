@@ -1,0 +1,37 @@
+.policy "eslint-no-lonely-if" revision 2
+.description "Use else if instead of an if that is the only statement inside an else block."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   body, single_statement, needs_braces, is_comment, asi_hazard
+
+// ESLint's no-lonely-if: an `if` that is the only statement of an else block, which could be an `else if`.
+//   if (a) f(); else { if (b) g(); }          → the inner if; fix: `if (a) f(); else if (b) g();`
+//   if (a) f(); else { if (b) g(); h(); }     fine: two statements
+//   if (a) {} else { if (b) g(); } else …     the braces are needed (needs_braces), so fine
+// The fix replaces the block with the if. There is none when a comment sits in the block, or when the inner if's
+// body ends without `;` and the next token would run into it (`else { if (b) x = 1 } (c)()`).
+// No options.
+.violation no_lonely_if(at: node) code "no-lonely-if"
+    "Turn this if, the only statement in its else block, into an else if."
+    suppress eslint "no-lonely-if"
+    suppress oxlint "no-lonely-if"
+    suppress biome "lint/style/useCollapsedElseIf"
+    fix collapse "Write it as else if"
+no_lonely_if(x) :- lonely(b, x), !needs_braces(b).
+.decl lonely(b: node, x: node)  // block b is an else body whose one statement is the if x
+lonely(b, x) :- body(_, b, "else"), single_statement(b, x), kind(x, "if_statement").
+
+// `else{if…}` has no space to keep after `else`, so one is added.
+collapse(x) :- lonely(b, x), !unfixable(b, x), !tight(b) => replace(b, `$x`).
+collapse(x) :- lonely(b, x), !unfixable(b, x), tight(b) => replace(b, ` $x`).
+.decl tight(b: node)  // `else{`: the brace touches the keyword
+tight(b) :- lonely(b, _), token_before(b, e), text(e, s), line(e, l), line(b, l), col(e, i), col(b, j),
+    j = i + strlen(s).
+.decl unfixable(b: node, x: node)
+unfixable(b, x) :- lonely(b, x), child(b, c, _), is_comment(c).
+// ESLint's ASI test, on the inner if's consequent c (not its else) and the token after the block.
+unfixable(b, x) :- lonely(b, x), field(x, "consequence", c), !braced(c), last_token(c, t), !text(t, ";"),
+    token_after(b, n), (line(n, l), end_line(c, l) ; asi_hazard(b) ; text(t, "++") ; text(t, "--")).

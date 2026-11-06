@@ -1,0 +1,39 @@
+.policy "eslint-max-statements" revision 4
+.description "Keep functions to 10 statements or fewer, counting nested blocks but not nested functions; split longer ones up."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   function_node, fn_name_kind, fn_start, limit
+#include "tsx/statements.rr"
+//   block_stmt, namespace_body, var_scope (functions, static blocks and the program)
+
+// ESLint's max-statements: a function whose `{ … }` blocks hold more than `max` statements in all (default 10;
+// `max`, or the number form). Nested blocks count, nested functions and switch cases do not:
+//   function f() { a(); if (x) { b(); c(); } }       4 statements: a(), the if, and the two in its block
+// A class static block counts its own statements and is never reported. `ignoreTopLevelFunctions` (the
+// second option) spares a function in no other function or static block, but only
+// when it is the file's only top-level function; with two or more, each is checked as usual.
+.violation max_statements(at: node, name: symbol, k: number, m: number) code "max-statements"
+    "{name} has too many statements ({k}). Maximum allowed is {m}."
+    suppress eslint "max-statements"
+    suppress oxlint "max-statements"
+limit_rule("max", 10).
+max_statements(at, s, k, m) :- statements(f, k), limit("max", 10, m), k > m, !spared(f),
+    fn_name_kind(f, s), fn_start(f, at).
+
+// statements(f, k): the statements of the blocks f owns. A block belongs to its nearest function or static
+// block; a TypeScript namespace body is not a block statement.
+.decl statements(f: node, k: number)
+statements(f, k) :- function_node(f), k = count : { owned(b, f), block_stmt(b, x) }.
+.decl owned(b: node, f: node)
+owned(b, f) :- kind(b, "statement_block"), !namespace_body(b), nearest(b, f, var_scope).
+
+// ignoreTopLevelFunctions: a top-level function is in no function or static block. It is spared when it is
+// the file's only one.
+.decl spared(f: node)
+spared(f) :- option("ignoreTopLevelFunctions", "true"), top_fn(f), docof(f, d),
+    count : { top_fn(g), docof(g, d) } = 1.
+.decl top_fn(f: node)
+top_fn(f) :- function_node(f), nearest(f, p, var_scope), kind(p, "program").

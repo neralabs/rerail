@@ -1,0 +1,43 @@
+.policy "eslint-max-depth" revision 3
+.description "Keep blocks nested at most 4 levels deep within a function; extract deeper logic or return early."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   frame_kind; limit (tsx/eslint-a-common)
+
+// ESLint's max-depth: a block statement (if, switch, try, while, do, with, for, for-in, for-of) nested more than
+// `max` deep (default 4) inside one function. A function, a static block and the program start the count again.
+// `else if` is part of its if, and does not count.
+//   function f() { if (a) { if (b) { if (c) { if (d) { if (e) {} } } } } }   → the fifth if, at max 4
+// Options: a number (`option`), or { max } (or the old { maximum }).
+.violation max_depth(at: node, limit: number) code "max-depth"
+    "Flatten this block with early returns or extract it into a function; nesting is limited to {limit} levels."
+    suppress eslint "max-depth"
+    suppress oxlint "max-depth"
+max_depth(n, m) :- depth(n, k), depth_limit(m), k > m.
+
+.decl block_kind(k: symbol)
+block_kind("switch_statement"). block_kind("try_statement"). block_kind("do_statement").
+block_kind("while_statement"). block_kind("with_statement"). block_kind("for_statement").
+block_kind("for_in_statement"). block_kind("if_statement").
+// block(n): a block that counts. An `else if` is part of its if and does not; `if (a) if (b) {}` nests b.
+.decl block(n: node)
+block(n) :- kind(n, k), block_kind(k), k != "if_statement".
+block(n) :- kind(n, "if_statement"), !else_if(n).
+.decl else_if(n: node)
+else_if(n) :- kind(e, "else_clause"), child(e, n, _), kind(n, "if_statement").
+// depth(n, k): n and the blocks around it in its own function. This follows ESLint 10 (the recorded tool):
+//   function f() { if (a) {} else if (b) {} if (c) { if (d) {} } }   at max 1: the `if (d)`
+//   if (a) if (b) {}                                                  at max 1: the `if (b)`
+// ESLint 9.39 reports neither: it skips any if whose parent is an if, yet pops a count on leaving every if.
+.decl depth(n: node, k: number)
+depth(n, k + 1) :- block(n), nearest(n, f, frame_kind), k = count : { within(n, b), block(b), within(b, f) }.
+
+// depth_limit(m): common's limit for `max` (or the bare number), except that the old `maximum` wins over `max`,
+// as ESLint reads `option.maximum || option.max`.
+limit_rule("max", 4).
+.decl depth_limit(m: number)
+depth_limit(m) :- option("maximum", v), m = to_number(v).
+depth_limit(m) :- !option("maximum", _), limit("max", 4, m).

@@ -1,0 +1,63 @@
+.policy "eslint-dot-notation" revision 4
+.description "Use dot notation instead of bracket access with a constant string key that is a valid identifier in JavaScript."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's dot-notation: a constant key in brackets that could be written with a dot.
+//   a["b"]    a[`b`]    a?.["b"]    a[true]     → reported; fix: a.b  a.b  a?.b  a.true
+//   a["b-c"]  a[b]      a[0]                    → not (no identifier, not constant, a number)
+// Options: `allowKeywords` ("true" by default); "false" keeps ES3's reserved words in brackets, so `a["class"]`
+// is fine and `a.class` is reported (`.class is a syntax error`, fix a["class"]). `allowPattern`, a regex: keys
+// it matches anywhere may stay in brackets (ESLint's `new RegExp(p, "u").test(key)`), e.g. "^[a-z]+(_[a-z]+)+$"
+// for snake_case.
+// No fix when a comment sits between the brackets (or the dot and the name); after a decimal integer the dot
+// gets a space (`5 .a`), so it does not read as a decimal point.
+.violation dot_notation(at: node, how: symbol) code "dot-notation" "Write {how}."
+    suppress eslint "dot-notation"
+    suppress biome "lint/complexity/useLiteralKeys"
+    fix to_dot "Use dot notation"
+    fix to_brackets "Use brackets"
+
+// key(n, i, v, shown): n is o[i], whose index is a string, a boolean, null or a template without ${…}, of value v;
+// shown is the key as ESLint's message writes it (JSON.stringify for a literal, backquotes for a template).
+.decl key(n: node, i: node, v: symbol, shown: symbol)
+key(n, i, v, cat("\"", cat(v, "\""))) :- kind(n, "subscript_expression"), field(n, "index", x), deparen(x, i),
+    kind(i, "string"), value(i, v).
+key(n, i, v, v) :- kind(n, "subscript_expression"), field(n, "index", x), deparen(x, i),
+    (kind(i, "true") ; kind(i, "false") ; kind(i, "null")), text(i, v).
+key(n, i, v, cat("`", cat(v, "`"))) :- kind(n, "subscript_expression"), field(n, "index", x), deparen(x, i),
+    kind(i, "template_string"), static_string(i, v).
+.decl allowed(v: symbol)  // keys the options keep in brackets
+allowed(v) :- key(_, _, v, _), option("allowKeywords", "false"), es3_reserved(v).
+allowed(v) :- key(_, _, v, _), option("allowPattern", p), p != "", match(cat(".*(?:", cat(p, ").*")), v).
+
+dot_notation(i, cat(dot, cat(v, cat(" instead of [", cat(s, "]"))))) :- key(n, i, v, s), ident_name(v), !allowed(v),
+    (field(n, "optional_chain", _), dot = "?." ; !field(n, "optional_chain", _), dot = ".").
+dot_notation(p, cat("[\"", cat(x, cat("\"] instead of .", cat(x, ", a syntax error in ES3"))))) :-
+    option("allowKeywords", "false"), dotted_member(_, _, p), text(p, x), es3_reserved(x).
+
+// to_dot: `[` … `]` become `.v` (`?.` already has its dot). The edits are the three pieces of that range.
+// A name that would run into the next token gets a space: `a['b']in c` becomes `a.b in c`.
+to_dot(i, _) :- key(n, i, v, _), !commented(n), field(n, "index", x), token_before(x, lb), last_token(n, rb),
+    dot_for(n, d), !glued(rb) => replace(lb, `$d$v`), replace(x, ``), replace(rb, ``).
+to_dot(i, _) :- key(n, i, v, _), !commented(n), field(n, "index", x), token_before(x, lb), last_token(n, rb),
+    dot_for(n, d), glued(rb) => replace(lb, `$d$v`), replace(x, ``), replace(rb, ` `).
+.decl glued(rb: span)  // ESLint: the next token starts right after `]` with a name character
+glued(rb) :- key(n, _, _, _), last_token(n, rb), token_after(rb, t), line(rb, l), line(t, l), col(rb, c), col(t, c + 1),
+    match("([A-Za-z0-9_$\\\\]|[^\\x00-\\x7f]).*", t).
+.decl dot_for(n: node, d: symbol)
+dot_for(n, "") :- field(n, "optional_chain", _).
+dot_for(n, " .") :- kind(n, "subscript_expression"), !field(n, "optional_chain", _), decimal_object(n).
+dot_for(n, ".") :- kind(n, "subscript_expression"), !field(n, "optional_chain", _), !decimal_object(n).
+.decl decimal_object(n: node)  // ESLint's isDecimalInteger: 5["a"] must become 5 .a, as 5.a is a syntax error
+decimal_object(n) :- field(n, "object", o), kind(o, "number"), match("0|0[0-7]*[89][0-9]*|[1-9](_?[0-9])*", o).
+// to_brackets: `.class` becomes `["class"]`; not after `let` (`let["x"]` would declare), nor across a comment.
+to_brackets(p, _) :- dotted_member(n, o, p), text(p, x), !commented(n), !field(n, "optional_chain", _),
+    !text(o, "let"), token_before(p, dot) => delete(dot), replace(p, `["$x"]`).
+to_brackets(p, _) :- dotted_member(n, _, p), text(p, x), !commented(n), field(n, "optional_chain", _)
+    => replace(p, `["$x"]`).
+.decl commented(n: node)  // a comment after n's object: between the brackets, or between the dot and the name
+commented(n) :- (kind(n, "subscript_expression") ; kind(n, "member_expression")), kind(c, "comment"), within(c, n),
+    field(n, "object", o), !within(c, o).

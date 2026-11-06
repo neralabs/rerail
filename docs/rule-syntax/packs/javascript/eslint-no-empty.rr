@@ -1,0 +1,43 @@
+.policy "eslint-no-empty" revision 5
+.description "Avoid empty blocks and switch statements in JavaScript; add the missing code or a comment explaining why it is empty."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
+#include "tsx/eslint-a-functions.rr"   // empty_block: a trailing `} // note` comment is not inside
+
+// ESLint's no-empty: a block with nothing in it, not even a comment, and a switch with no cases.
+//   if (a) {}                    → Empty block; suggestion: `{ /* empty */ }`
+//   try { f(); } catch (e) {}    → reported, unless allowEmptyCatch is true
+//   switch (a) {}                → Empty switch statement.
+//   if (a) { /* nothing */ }     fine: the comment says why
+//   function f() {}              fine: functions may be empty (no-empty-function's concern)
+// Static blocks and TypeScript namespace bodies are not blocks to ESLint, so they are not checked.
+.violation no_empty(at: node, msg: symbol) code "no-empty" "{msg}"
+    suppress eslint "no-empty"
+    suppress oxlint "no-empty"
+    suppress biome "lint/suspicious/noEmptyBlockStatements"
+    fix add_comment "Add comment inside empty block statement."
+no_empty(b, "Add the missing code to this empty block, or add a comment saying why it is intentionally empty.") :-
+    empty_block(b), child(p, b, _), kind(p, k), !not_a_block(k), !allowed(k).
+// A switch with no cases and no comment between its braces. The finding is at its `{`.
+//   switch (a) {}   → Empty switch statement.      switch (a) { /* later */ }   fine
+// A comment after the `}` on the same line is hung inside the body by tree-sitter, so it does not count.
+no_empty(b, "Empty switch statement.") :- kind(s, "switch_statement"), field(s, "body", b),
+    count : { inside_braces(b, x) } = 0.
+.decl inside_braces(b: node, x: node)  // x, a case or comment, starts before switch body b's `}`
+inside_braces(b, x) :- kind(b, "switch_body"), child(b, x, _), last_token(b, t), line(t, l), col(t, c),
+    line(x, lx), col(x, cx), (lx < l ; lx = l, cx < c).
+
+// not_a_block(k): a statement_block under these is a function body, a static block or a namespace body.
+.decl not_a_block(k: symbol)
+not_a_block("function_declaration"). not_a_block("function_expression"). not_a_block("arrow_function").
+not_a_block("generator_function_declaration"). not_a_block("generator_function").
+not_a_block("method_definition"). not_a_block("class_static_block"). not_a_block("internal_module").
+not_a_block("module"). not_a_block("ambient_declaration").
+
+.decl allowed(k: symbol)
+allowed("catch_clause") :- option("allowEmptyCatch", "true").
+
+// The suggestion fills the braces, as ESLint's does.
+add_comment(b, _) => replace(b, `{ /* empty */ }`).

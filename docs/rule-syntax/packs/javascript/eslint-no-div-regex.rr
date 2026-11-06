@@ -1,0 +1,17 @@
+.policy "eslint-no-div-regex" revision 5
+.description "Avoid starting a regular expression literal with an equals sign; it reads like the division-assignment operator."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-div-regex: a regex literal whose first character is `=`, as in `/=foo/`, which a reader can take
+// for the `/=` operator. The fix writes the `=` as a character class:  /=foo/  →  /[=]foo/
+.violation no_div_regex(at: node) code "no-div-regex"
+    "Write the leading '=' as '[=]' so this regex literal can't be misread as the '/=' operator."
+    suppress eslint "no-div-regex"
+    suppress oxlint "no-div-regex"
+    suppress biome "lint/complexity/noDivRegex"
+    fix bracket "Write '=' as '[=]'"
+no_div_regex(n) :- kind(n, "regex"), prefix("/=", n).
+// EQ is the span of the `=` right after the opening slash.
+bracket(n) :- match("/(?<EQ>=).*", n) => replace(EQ, `[=]`).

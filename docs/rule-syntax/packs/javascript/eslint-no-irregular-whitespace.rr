@@ -1,0 +1,47 @@
+.policy "eslint-no-irregular-whitespace" revision 15
+.description "Remove irregular whitespace such as non-breaking, zero-width or line-separator characters outside strings; they are invisible and can break parsing."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-text.rr"
+//   end_col(n, c): the column just past n's last character
+
+// ESLint's no-irregular-whitespace: every run of irregular whitespace (no-break space U+00A0, zero-width space
+// U+200B, the U+2000 spaces, BOM U+FEFF, \v, \f, …) and every U+2028 / U+2029 line separator, on any line,
+// unless it is inside a node the options skip:
+//   skipStrings   (default true)    "a b"  in a string literal is allowed
+//   skipComments, skipRegExps, skipTemplates, skipJSXText  (default false)
+//   var a = 1;   ← reported: a no-break space before `=`        // a b   ← reported, unless skipComments
+// A BOM that starts the file is not part of its text, as in ESLint.
+.violation no_irregular_whitespace(at: span) code "no-irregular-whitespace" "Irregular whitespace not allowed."
+    suppress eslint "no-irregular-whitespace"
+    suppress oxlint "no-irregular-whitespace"
+    suppress biome "lint/suspicious/noIrregularWhitespace"
+no_irregular_whitespace(W) :- found(W), !skipped(W).
+
+// found(W): W is a run of irregular whitespace, or one line separator, on a physical line. match_all gives one row
+// per run, reading each line once, left to right; W is the run itself, so the finding is at its first character.
+// The two classes are ESLint's IRREGULAR_WHITESPACE and IRREGULAR_LINE_TERMINATORS, the JSON's 24 code points
+// (eslint-no-irregular-whitespace.chars.rr lists them; check-eslint-no-irregular-whitespace.py checks this regex
+// against it). The group name must be in the literal, so the regex is written out.
+.decl run(w: span)
+run(W) :- src_line(_, _, sp), match_all(
+    "(?<W>[\\x{0B}\\x{0C}\\x{85}\\x{FEFF}\\x{A0}\\x{1680}\\x{180E}\\x{2000}-\\x{200B}\\x{202F}\\x{205F}\\x{3000}]+|[\\x{2028}\\x{2029}])",
+    sp).
+.decl found(w: span)
+found(W) :- run(W), !bom(W).
+// A byte order mark that starts the file is not part of its text, as in ESLint. (A run that only starts with
+// one is still reported; ESLint's columns on that line are one less, as it never sees the mark.)
+.decl bom(w: span)
+bom(W) :- run(W), line(W, 1), col(W, 0), match("\\x{FEFF}", W).
+
+// skipped(W): W starts inside a node the options skip.
+.decl skipped(w: span)
+skipped(W) :- found(W), docof(W, d), line(W, l), col(W, c), skip(n), docof(n, d), line(n, a), end_line(n, b),
+    a <= l, l <= b, (a < l ; col(n, x), x <= c), (l < b ; end_col(n, y), c < y).
+.decl skip(n: node)
+skip(n) :- kind(n, "string"), !option("skipStrings", "false").
+skip(n) :- kind(n, "comment"), option("skipComments", "true").
+skip(n) :- kind(n, "regex"), option("skipRegExps", "true").
+skip(n) :- kind(n, "string_fragment"), child(t, n, _), kind(t, "template_string"), option("skipTemplates", "true").
+skip(n) :- kind(n, "jsx_text"), option("skipJSXText", "true").

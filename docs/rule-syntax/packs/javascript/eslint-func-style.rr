@@ -1,0 +1,66 @@
+.policy "eslint-func-style" revision 4
+.description "Use function expressions assigned to variables instead of function declarations, except for default exports and TypeScript overloads."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-functions.rr"
+//   own_fn, deparen
+
+// ESLint's func-style: functions are declared one way. `option`:
+//   "expression" (the default)   function foo() {}          → Expected a function expression.
+//   "declaration"                const foo = function () {} → Expected a function declaration.
+// "declaration" also reports `const foo = () => {}`, unless allowArrowFunctions, or the arrow uses `this`
+// or `super` (a declaration cannot keep them). Never reported: `export default function`, and a function
+// with TypeScript overload signatures beside it. allowTypeAnnotation: `const foo: F = () => {}` is fine.
+// overrides.namedExports ("declaration", "expression" or "ignore") sets the style for `export` forms.
+.violation func_style(at: node, id: symbol, msg: symbol) code "func-style" "{msg}"
+    suppress eslint "func-style"
+    suppress oxlint "func-style"
+func_style(f, "expression", "Expected a function expression.") :- declared(f, e), !overloaded(f),
+    (e = 0, !style("declaration") ; e = 1, exports_as("expression")).
+func_style(v, "declaration", "Expected a function declaration.") :- assigned(v, f, e), !annotated(v), !kept(f),
+    (e = 0, style("declaration") ; e = 1, exports_as("declaration")).
+
+// kept(f): an arrow that stays: allowArrowFunctions, or it uses `this` or `super` as its own (not inside a
+// nested function), which a declaration would lose.
+.decl kept(f: node)
+kept(f) :- kind(f, "arrow_function"), option("allowArrowFunctions", "true").
+kept(f) :- kind(f, "arrow_function"), (kind(t, "this") ; kind(t, "super")), own_fn(t, f).
+
+// The options. exports_as(s): what overrides.namedExports asks of exported functions ("ignore" asks nothing);
+// unset, exports follow the main style.
+.decl style(s: symbol)
+style(s) :- option("option", s).
+.decl exports_as(s: symbol)
+exports_as(s) :- (option("overrides.namedExports", s) ; option("overrides/namedExports", s)).
+exports_as(s) :- !named_override(), style(s).
+exports_as("expression") :- !named_override(), !option("option", _).
+.decl named_override()
+named_override() :- (option("overrides.namedExports", _) ; option("overrides/namedExports", _)).
+
+// declared(f, e): f is a function declaration; e = 1 under `export`, 0 elsewhere. `export default` is skipped.
+.decl declared(f: node, e: number)
+declared(f, 0) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")),
+    !export_parent(f).
+declared(f, 1) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")),
+    child(x, f, _), kind(x, "export_statement"), !op(x, "default").
+// assigned(v, f, e): declarator v's value is function expression or arrow f; e = 1 under `export`.
+.decl assigned(v: node, f: node, e: number)
+assigned(v, f, e) :- kind(v, "variable_declarator"), field(v, "value", x), deparen(x, f),
+    (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")),
+    child(d, v, _), (export_parent(d), e = 1 ; !export_parent(d), e = 0).
+.decl export_parent(d: node)  // d stands directly under `export`
+export_parent(d) :- child(x, d, _), kind(x, "export_statement").
+.decl annotated(v: node)  // allowTypeAnnotation and `const foo: F = …`
+annotated(v) :- option("allowTypeAnnotation", "true"), field(v, "type", _).
+// overloaded(f): a TypeScript signature `function f(…): T;` with f's name is in the same statement list,
+// (a switch's cases count as one list), or, for an exported f, exported in the same list.
+.decl overloaded(f: node)
+overloaded(f) :- declared(f, 0), field(f, "name", n), text(n, x), child(l, f, _), child(l, s, _),
+    kind(s, "function_signature"), field(s, "name", m), text(m, x).
+overloaded(f) :- declared(f, 0), field(f, "name", n), text(n, x), child(c, f, _), kind(c, "switch_case"),
+    child(w, c, _), child(w, c2, _), child(c2, s, _), kind(s, "function_signature"), field(s, "name", m), text(m, x).
+overloaded(f) :- declared(f, 1), field(f, "name", n), text(n, x), child(e, f, _), child(l, e, _),
+    child(l, e2, _), kind(e2, "export_statement"), child(e2, s, _), kind(s, "function_signature"),
+    field(s, "name", m), text(m, x).

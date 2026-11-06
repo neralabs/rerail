@@ -1,0 +1,34 @@
+.policy "eslint-no-extra-label" revision 3
+.description "Remove labels from break and continue when they target the nearest enclosing loop or switch anyway."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/eslint-a-control.rr"
+//   jump, jump_label, breakable
+
+// ESLint's no-extra-label: `break x` or `continue x` where x labels the nearest loop or switch around the jump,
+// which the jump would reach without the label anyway.
+//   a: while (c) { break a; }                       → the label `a` is reported; fix: `break;`
+//   a: while (c) { switch (d) { case 1: break a; } }   fine: without `a` it would leave the switch
+//   a: { break a; }                                 fine: a block is no loop
+// The finding is at the label. The fix drops it; there is none when a comment sits inside the jump.
+.violation no_extra_label(at: node, w: symbol, x: symbol, does: symbol) code "no-extra-label"
+    "Write {w} without the label '{x}': it already {does}."
+    suppress eslint "no-extra-label"
+    suppress oxlint "no-extra-label"
+    suppress biome "lint/complexity/noUselessLabel"
+    fix drop_label "Remove the label"
+no_extra_label(n, w, x, d) :- extra(j, w, x), field(j, "label", n), does(w, d).
+.decl does(w: symbol, d: symbol)
+does("break", "leaves the nearest enclosing loop or switch"). does("continue", "continues the nearest enclosing loop").
+
+// extra(j, w, x): j's nearest breakable statement is the one labelled x.
+.decl extra(j: node, w: symbol, x: symbol)
+extra(j, w, x) :- jump(j, w), jump_label(j, x, l), nearest(j, s, breakable_kind), field(l, "body", s).
+
+// `break a;` becomes `break;`, `continue a` (no `;`, ASI) becomes `continue`.
+drop_label(n, w, _, _) :- field(j, "label", n), !has(j, _, comment_kind), last_token(j, t), text(t, ";")
+    => replace(j, `$w;`).
+drop_label(n, w, _, _) :- field(j, "label", n), !has(j, _, comment_kind), last_token(j, t), !text(t, ";")
+    => replace(j, `$w`).

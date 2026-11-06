@@ -1,0 +1,13 @@
+.policy "eslint-no-iterator" revision 4
+.description "Don't use the obsolete __iterator__ property; use Symbol.iterator and standard iteration instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-iterator: any member access named __iterator__, SpiderMonkey's old iteration hook.
+//   Foo.prototype.__iterator__ = f;    a["__iterator__"];    a[`__iterator__`]   → reported
+.violation no_iterator(at: node) code "no-iterator" "Replace '__iterator__' with a [Symbol.iterator]() method."
+    suppress eslint "no-iterator"
+    suppress oxlint "no-iterator"
+no_iterator(n) :- static_prop(n, _, "__iterator__").

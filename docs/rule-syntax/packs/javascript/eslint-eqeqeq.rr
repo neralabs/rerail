@@ -1,0 +1,51 @@
+.policy "eslint-eqeqeq" revision 5
+.description "Use === and !== instead of == and !=; loose equality applies surprising type coercion."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's eqeqeq. `option` (the first option):
+//   "always" (the default)  every == and != is reported:   a == b    → Expected '===' and instead saw '=='.
+//   "smart"                 except typeof comparisons, two literals of one type, and null checks
+//   "allow-null"            (deprecated) "always", but null checks are fine:   a == null
+// `null` (with "always"): "always" (the default) reports null checks too, "ignore" does not, and "never"
+// asks for the loose form:   a === null   → Expected '==' and instead saw '==='.
+// The finding is on the operator. Where the change cannot alter behaviour (a typeof comparison, two literals
+// of one type) the fix is ESLint's autofix; elsewhere it is ESLint's suggestion.
+.decl config(c: symbol)  // the first option; "always" when unset
+config(c) :- option("option", c).
+config("always") :- !option("option", _).
+.decl nulls(m: symbol)   // what to do with null checks: "always", "ignore" or "never"
+nulls(m) :- config("always"), option("null", m).
+nulls("always") :- config("always"), !option("null", _).
+nulls("ignore") :- !config("always").
+
+// check(n, want): n is to be written with operator want.
+.decl check(n: node, want: symbol)
+check(n, cat(o, "=")) :- binop(n, o, _, _), equality(o, "false"), !excused(n).
+check(n, @slice(o, 0, -1)) :- binop(n, o, _, _), equality(o, "true"), null_check(n), nulls("never").
+// excused(n): a loose n that the options allow.
+.decl excused(n: node)
+excused(n) :- config("smart"), (typeof_binary(n) ; same_literals(n) ; null_check(n)).
+excused(n) :- null_check(n), !nulls("always").
+
+.decl null_check(n: node)  // `x == null`, either side
+null_check(n) :- binop(n, _, l, r), (null_lit(l) ; null_lit(r)).
+.decl typeof_binary(n: node)  // `typeof x == "string"`, either side
+typeof_binary(n) :- binop(n, _, l, r), (kind(l, "unary_expression"), op(l, "typeof") ;
+    kind(r, "unary_expression"), op(r, "typeof")).
+.decl same_literals(n: node)  // `"a" == "b"`: two Literals whose values have one typeof
+same_literals(n) :- binop(n, _, l, r), literal_type(l, t), literal_type(r, t).
+.decl harmless(n: node)
+harmless(n) :- (typeof_binary(n) ; same_literals(n)).
+
+.violation eqeqeq(at: span, want: symbol, saw: symbol) code "eqeqeq" "Expected '{want}' and instead saw '{saw}'."
+    suppress eslint "eqeqeq"
+    suppress oxlint "eqeqeq"
+    suppress biome "lint/suspicious/noDoubleEquals"
+    fix autofix "Use '{want}' instead of '{saw}'."
+    fix suggest "Use '{want}' instead of '{saw}'."
+eqeqeq(t, w, o) :- check(n, w), op_token(n, t), text(t, o).
+autofix(t, w, _) :- op_token(n, t), check(n, w), harmless(n) => replace(t, `$w`).
+suggest(t, w, _) :- op_token(n, t), check(n, w), !harmless(n) => replace(t, `$w`).

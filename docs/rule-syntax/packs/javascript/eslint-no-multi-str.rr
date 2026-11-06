@@ -1,0 +1,20 @@
+.policy "eslint-no-multi-str" revision 4
+.description "Avoid multiline strings built with backslash line continuations; use a template literal or concatenation instead."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+
+// ESLint's no-multi-str: a string literal whose source spans lines, which only a backslash before the line
+// break allows ('a \⏎ b'). Template literals are not string literals. A string that is JSX's own, an attribute
+// value or the whole of a {…} container, is left alone (ESLint skips a literal whose parent is a JSX node).
+//   var x = 'Line 1 \⏎ Line 2';     → reported;   <a title="x⏎ y"/>   `a⏎ b`   → not
+.violation no_multi_str(at: node) code "no-multi-str"
+    "Replace this backslash-continued string with a template literal or string concatenation."
+    suppress eslint "no-multi-str"
+    suppress oxlint "no-multi-str"
+    suppress biome "lint/style/noMultilineString"
+// ESLint's LINEBREAK_MATCHER: \r, \n, U+2028, U+2029 in the raw text.
+no_multi_str(n) :- kind(n, "string"), match("[\\s\\S]*[\\r\\n\\u2028\\u2029][\\s\\S]*", n), !jsx_parent(n).
+.decl jsx_parent(n: node)
+jsx_parent(n) :- estree_parent(n, p), kind(p, k), prefix("jsx_", k).
