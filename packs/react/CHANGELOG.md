@@ -4,6 +4,14 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.8 (2026-11-06)
+
+40 rules, 21 of them on by default.
+
+### Changed
+
+- The pack's npm page lists keywords: Rerail, its language and the tools it ports, so a search on npm finds it. Its rules are unchanged.
+
 ## 0.1.7 (2026-11-04)
 
 40 rules, 21 of them on by default. No change to its rules.

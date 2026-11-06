@@ -4,6 +4,18 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.7 (2026-11-06)
+
+21 rules, all on by default.
+
+### Changed
+
+- The pack's npm page lists keywords: Rerail, its language and the tools it ports, so a search on npm finds it. Its rules are unchanged.
+
+### Fixed
+
+- `next-no-assign-module-variable` now reports `module` declared in the head of a `for…of` or `for…in` loop, such as `for (const module of mods)`, as `@next/eslint-plugin-next` does. It reports at the `const`, `let` or `var` keyword.
+
 ## 0.1.6 (2026-11-04)
 
 21 rules, all on by default. No change to its rules.

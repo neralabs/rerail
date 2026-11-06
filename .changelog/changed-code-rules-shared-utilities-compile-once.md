@@ -1,1 +1,0 @@
-Code rules whose `define` shares utilities with many queries compile faster and in less memory, and report the same. A utility's `all` item that reads a capture an earlier item binds through another utility is no longer refused as reading it before it is bound.

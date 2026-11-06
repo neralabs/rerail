@@ -1,1 +1,0 @@
-In the dashboard's History by session, a window 901 to 1180px wide no longer squeezes the transcript into a sliver that splits every word: the session list folds into the Session picker, as in a narrower window, and messages wrap between words, breaking only a token too long for its line, such as a file path.

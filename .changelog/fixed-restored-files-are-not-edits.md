@@ -1,1 +1,0 @@
-Rerail no longer steers an agent for files it restored from another branch. `git show origin/main:path > path`, `git checkout main -- path` or `git restore --source main path` counted as the agent writing every line that differed from the checked-out commit, so restoring files to `main` drew findings on code `main` already had.

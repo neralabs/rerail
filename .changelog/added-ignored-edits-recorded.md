@@ -1,1 +1,0 @@
-While a repository follows `.gitignore`, a tool edit of a file Git ignores is recorded on the session as unchecked, with the ignore file, line and pattern. So is a change that makes Git's ignore rules ignore more, in a `.gitignore` or in `.git/info/exclude`, which no diff shows. The dashboard timeline counts both.

@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-rust",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Rerail rule pack: Clippy rules ported to Rerail code rules.",
   "keywords": [
     "rerail",

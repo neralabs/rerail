@@ -4,9 +4,29 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
-## Unreleased
+## 0.1.3 (2026-11-06)
 
 0.1.3 audits your agent's edits in every worktree of a started repository, not only the one its session started in, and stops counting files it restored from another branch as its own work. While a repository follows `.gitignore`, edits of files Git ignores, and changes that make Git ignore more, are recorded on the session as unchecked. The daemon starts again after a crash left its socket behind, the Claude Code, OMP and Pi footer is gone where Rerail is stopped, and code rules whose `define` shares utilities compile faster and in less memory. Before you update: if your own code imports `createPiConversationRulesExtension`, import it from `@neralabs/rerail/pi`; Pi itself needs no change.
+
+### Added
+
+- While a repository follows `.gitignore`, a tool edit of a file Git ignores is recorded on the session as unchecked, with the ignore file, line and pattern. So is a change that makes Git's ignore rules ignore more, in a `.gitignore` or in `.git/info/exclude`, which no diff shows. The dashboard timeline counts both.
+
+### Changed
+
+- Code rules whose `define` shares utilities with many queries compile faster and in less memory, and report the same. A utility's `all` item that reads a capture an earlier item binds through another utility is no longer refused as reading it before it is bound.
+- `createPiConversationRulesExtension` is now imported from `@neralabs/rerail/pi`, not `@neralabs/rerail`, so the main entry no longer needs `typebox`, which Pi supplies. `typebox` is an optional peer dependency. Pi itself loads Rerail's extension as before.
+
+### Fixed
+
+- `rerail daemon start` no longer fails with `EADDRINUSE` after a daemon was killed (`kill -9`, a crash): the engine socket it left behind is removed when no process answers on it, and the start goes on. When a running daemon does answer there, the error says so instead.
+- In the dashboard's History by session, a window 901 to 1180px wide no longer squeezes the transcript into a sliver that splits every word: the session list folds into the Session picker, as in a narrower window, and messages wrap between words, breaking only a token too long for its line, such as a file path.
+- The Claude Code, OMP and Pi footer is gone where Rerail is stopped, or was never started: a new session there no longer shows `R E R A I L ○ not on here`. `/rerail` and `rerail status` still say Rerail is not on here, and how to start it.
+- At session start, including after `/clear`, the footer says `R E R A I L ● starting` until Rerail has recorded the new session, rather than `session unavailable`, which now means only that the session could not be read.
+- An agent's edits in a worktree of a started repository are audited and show on the repository's dashboard, whichever folder its session started in. The agent is steered on its file-tool edits and on shell writes in its own folder; a shell write in another worktree is recorded but steers no session. A worktree stopped on its own stays stopped.
+- In Pi, a steer sent as its own message opens with a line saying it is an automated note from Rerail, not from you, and advice rather than a new task, so the agent fixes it and goes back to your request instead of treating it as new instructions.
+- Pi no longer warns at start-up that Rerail's extension package declares `typebox` in `dependencies`. Rerail now uses the copy Pi provides.
+- Rerail no longer steers an agent for files it restored from another branch. `git show origin/main:path > path`, `git checkout main -- path` or `git restore --source main path` counted as the agent writing every line that differed from the checked-out commit, so restoring files to `main` drew findings on code `main` already had.
 
 ## 0.1.2 (2026-11-04)
 

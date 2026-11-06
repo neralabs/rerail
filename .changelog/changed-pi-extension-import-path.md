@@ -1,1 +1,0 @@
-`createPiConversationRulesExtension` is now imported from `@neralabs/rerail/pi`, not `@neralabs/rerail`, so the main entry no longer needs `typebox`, which Pi supplies. `typebox` is an optional peer dependency. Pi itself loads Rerail's extension as before.

@@ -1,1 +1,0 @@
-`rerail daemon start` no longer fails with `EADDRINUSE` after a daemon was killed (`kill -9`, a crash): the engine socket it left behind is removed when no process answers on it, and the start goes on. When a running daemon does answer there, the error says so instead.

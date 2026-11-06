@@ -1,1 +1,0 @@
-In Pi, a steer sent as its own message opens with a line saying it is an automated note from Rerail, not from you, and advice rather than a new task, so the agent fixes it and goes back to your request instead of treating it as new instructions.

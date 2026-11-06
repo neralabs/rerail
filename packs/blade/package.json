@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-blade",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Rerail rule pack: Bladestan, tlint and stillat/blade-parser rules ported to Rerail code rules.",
   "keywords": [
     "rerail",
