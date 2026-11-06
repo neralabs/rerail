@@ -1,6 +1,0 @@
-// PENDING (awaiting `value(n, v)`: W's semantic value of a string, escapes decoded, a concatenated_string's pieces
-// joined). Not read by the converter. When value is bound, replace the main file's authority_plain_value rule
-// (the `str` approximation) with this one and add `value` to its `.input` line:
-.decl value(n: node, v: symbol)
-.input value
-authority_plain_value(s, v) :- authority_setattr(_, a), child(a, s, _), authority_plain_prefix(s), value(s, v).
