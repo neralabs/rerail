@@ -292,6 +292,14 @@ fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
         inputs.update(variable.as_bytes());
         inputs.update(std::env::var(variable).unwrap_or_default().as_bytes());
     }
+    // Python's scanner frees and reallocates its indent and delimiter stacks each time the parser restores its state
+    // (`deserialize`); through the system allocator that was 6% of a parse (macOS's `free` reads the clock). With
+    // this define its arrays use the allocator the parser has (`install_tree_sitter_allocator`: jemalloc). Python's
+    // scanner allocates nothing else through `array.h` that it frees with `free`.
+    let reuse_allocator = name == "python";
+    if reuse_allocator {
+        inputs.update(b"TREE_SITTER_REUSE_ALLOCATOR");
+    }
     let mut headers = Vec::new();
     collect_sources(Path::new(grammar.headers), &mut headers);
     headers.sort();
@@ -308,12 +316,11 @@ fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
         println!("cargo:rustc-link-lib=static={library}");
         return;
     }
-    cc::Build::new()
-        .include(grammar.headers)
-        .file(parser_path)
-        .file(scanner)
-        .warnings(false)
-        .compile(&library);
+    let mut build = cc::Build::new();
+    if reuse_allocator {
+        build.define("TREE_SITTER_REUSE_ALLOCATOR", None);
+    }
+    build.include(grammar.headers).file(parser_path).file(scanner).warnings(false).compile(&library);
     std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
 }
 

@@ -223,18 +223,44 @@ pub(crate) fn digest(f: &Facts) -> [u8; 32] {
     hash.update((f.source.len() as u64).to_le_bytes());
     hash.update(f.source.as_bytes());
     hash.update((f.len() as u64).to_le_bytes());
+    // Each column as one run of little-endian bytes (what one `update` per value fed, at a fraction of the calls).
     for column in [&f.kind, &f.parent, &f.start, &f.end, &f.class_keys, &f.class_offsets, &f.class_nodes] {
         hash.update((column.len() as u64).to_le_bytes());
-        for value in column.iter() {
-            hash.update(value.to_le_bytes());
-        }
+        update_le(&mut hash, column);
     }
     hash.update(&f.flags);
-    for field in &f.field {
-        hash.update(field.to_le_bytes());
-    }
+    update_le(&mut hash, &f.field);
     hash.update([u8::from(f.syntax_errors)]);
     hash.finalize().into()
+}
+
+/// Feeds `values` to `hash` as their little-endian bytes, in order.
+fn update_le<T: Copy + LeBytes>(hash: &mut sha2::Sha256, values: &[T]) {
+    use sha2::Digest as _;
+    if cfg!(target_endian = "little") {
+        // SAFETY: `T` is a primitive integer (`LeBytes`), so `values` is `size_of_val(values)` initialized bytes with
+        // no padding, in memory order, which is little-endian here.
+        hash.update(unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values)) });
+    } else {
+        for value in values {
+            value.feed(hash);
+        }
+    }
+}
+
+/// An integer type with no padding whose bytes `update_le` may read in place.
+trait LeBytes {
+    fn feed(&self, hash: &mut sha2::Sha256);
+}
+impl LeBytes for u32 {
+    fn feed(&self, hash: &mut sha2::Sha256) {
+        sha2::Digest::update(hash, self.to_le_bytes());
+    }
+}
+impl LeBytes for u16 {
+    fn feed(&self, hash: &mut sha2::Sha256) {
+        sha2::Digest::update(hash, self.to_le_bytes());
+    }
 }
 
 #[cfg(test)]

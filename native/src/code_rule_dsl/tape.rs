@@ -1336,7 +1336,8 @@ impl TapeImage {
         let mut memberships = supertypes.iter().peekable();
         let mut kind_aliases = Vec::<(String, bool)>::new();
         let mut codes = Vec::<Code>::new();
-        let mut code_ids = std::collections::HashMap::<Code, u16>::new();
+        // One lookup per node: FxHash, not SipHash (4% of a parse).
+        let mut code_ids = rustc_hash::FxHashMap::<Code, u16>::default();
         let mut code = Vec::with_capacity(count * 2);
         for (index, node) in nodes.iter().enumerate() {
             if index % 256 == 0 {
