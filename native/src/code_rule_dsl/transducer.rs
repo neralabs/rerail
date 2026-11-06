@@ -17,10 +17,6 @@ pub(super) mod packed;
 // N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
 #[cfg_attr(not(test), allow(dead_code))]
 pub(super) mod semantic_facts;
-// Bitlex lexers as stream programs over 64-byte blocks, in simdjson's structure
-// (`docs/parser-generators/09-compile-and-lower.md` §12).
-#[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::code_rule_dsl) mod stream;
 
 #[cfg(test)]
 const STOP: u8 = 0x00;

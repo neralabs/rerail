@@ -1,15 +1,7 @@
 # Parser generators: compiling, lowering and interpreting Bitlex
 
 Status: survey and proposed shape, 2026-11-06. Nothing here is built yet, apart from the
-reference evaluator (`03-bitlex.md` §5) and the operation counts in §8.
-
-Two builds of the stream program were reverted because they did not follow this document. The
-first walked bytes and events. The second wrote every lane kernel as a scalar loop over the 64
-bytes of a block. Work now goes through the gates of §12, in order: the structural guards first,
-then the primitive layer, then the JSON lexer in simdjson's structure. Each gate passes before
-the next one starts.
-
-It follows
+reference evaluator (`03-bitlex.md` §5) and the operation counts in §8. It follows
 `01-branch-free-design.md` §4 (the stream transducer) and `06-block-parallel.md` (carries and
 hardware levels).
 
@@ -68,7 +60,7 @@ From simdjson's sources (`generic/stage1/*.h` and `arm64.cpp`, `haswell.cpp`, `i
 | scanners | small structs with one carried field each (`next_is_escaped`, `prev_in_string`, `prev_scalar`), composed in `json_scanner::next` | one generated struct per lexer, one field per carry, one `next(&block)` per pass |
 | `classify` | two nibble lookups (`vqtbl1q_u8`) and an AND | `class` statements packed into nibble tables by the compiler, up to 8 classes per table pair |
 | delayed write | the indexer writes the previous block's structurals, so every mask can see one block ahead | `next(a, k)` reads one block ahead in the same way |
-| `fallback` | a separate scalar loop, byte by byte | later, at simdjson's path (§12.2). First comes arm64 |
+| `fallback` | a separate scalar loop, byte by byte | not needed: the portable target is `u64` SWAR with the same code, so every target runs the same algorithm |
 
 Two simdjson habits matter more than any single operation:
 
@@ -487,10 +479,6 @@ set.
 
 ## 11. Proposed sequence
 
-The gates of §12 come before every step below: first the structural guards (G0), then the
-primitive layer (G1), then the JSON lexer in simdjson's structure (G2). The steps below start
-after G2.
-
 1. **The IR and its expansion** from the AST, with a printer. Check: the IR run whole-file equals
    the evaluator on all corpora.
 2. **CSE, hoisting and slot allocation.** Report operations per block before and after.
@@ -502,165 +490,3 @@ after G2.
 6. **Metal**: the interpreter kernel, then generated MSL.
 7. **The token and tree stages** to tapes (`03-bitlex.md` §6), as stream-program operations from
    the start.
-
-## 12. Gates
-
-### 12.1 Why gates
-
-Two builds of the stream program passed the corpus check against the reference evaluator and
-still had the wrong shape. The second one's lane kernels looped over a block's 64 bytes in
-scalar code. Such a loop processes the bytes one at a time, just under another name. Its source
-guard banned `for i in`, so the kernels' `for l in` passed.
-
-Matching the evaluator says the output is right. It says nothing about the shape. So the shape gets
-its own checks, and they come first:
-
-- **Structural guards.** These tests read the source with `syn`, not with text search. They check:
-  - the file layout;
-  - the API against simdjson's;
-  - where loops, branches and intrinsics may appear.
-
-  They are written before the code they guard.
-- **The primitive layer**: a Rust copy of simdjson's arm64 `simd.h`, `bitmask.h` and
-  `bitmanipulation.h`. It is built test first. Every kernel above it uses only this layer.
-- **The JSON lexer in simdjson's structure.** It has the same files and structs as simdjson's
-  stage 1, and its output is in simdjson's form, compared with simdjson's own output.
-
-Only then come the interpreter, Python, Cranelift and Metal (§11).
-
-Each gate is closed by a table. It maps every item of the gate to the `file:line` that does it,
-and marks it done, changed or missing. The corpus check is reported separately, after that table.
-
-### 12.2 The layout: simdjson's, file for file
-
-The Rust tree under `native/src/code_rule_dsl/transducer/stream/` copies simdjson's. A simdjson
-path maps to a Rust path by these rules:
-
-- drop the `include/simdjson/` or `src/` prefix;
-- change `.h` or `.cpp` to `.rs`.
-
-| simdjson | Rust | gate |
-|---|---|---|
-| `include/simdjson/arm64/simd.h` | `stream/arm64/simd.rs` | G1 |
-| `include/simdjson/arm64/bitmask.h` | `stream/arm64/bitmask.rs` | G1 |
-| `include/simdjson/arm64/bitmanipulation.h` | `stream/arm64/bitmanipulation.rs` | G1 |
-| `include/simdjson/internal/simdprune_tables.h` and `src/internal/simdprune_tables.cpp` | `stream/internal/simdprune_tables.rs` | G1 |
-| `src/generic/json_character_block.h` | `stream/generic/json_character_block.rs` | G2 |
-| `src/arm64.cpp` (`classify`, `is_ascii`, `must_be_2_3_continuation`) | `stream/arm64.rs` | G2 |
-| `src/generic/stage1/buf_block_reader.h` | `stream/generic/stage1/buf_block_reader.rs` | G2 |
-| `src/generic/stage1/json_escape_scanner.h` | `stream/generic/stage1/json_escape_scanner.rs` | G2 |
-| `src/generic/stage1/json_string_scanner.h` | `stream/generic/stage1/json_string_scanner.rs` | G2 |
-| `src/generic/stage1/json_scanner.h` | `stream/generic/stage1/json_scanner.rs` | G2 |
-| `src/generic/stage1/json_structural_indexer.h` | `stream/generic/stage1/json_structural_indexer.rs` | G2 |
-
-The haswell, icelake and fallback trees come later, at the same paths. Each is its own gate.
-
-### 12.3 G0: the structural guards
-
-All guards live in `stream/guards.rs` and run as one test filter, `stream::guards`. Each guard
-below must fail when its rule is broken. The test suite proves this by running each guard on a
-small source snippet that breaks the rule.
-
-| guard | rule |
-|---|---|
-| G0.1 layout | every Rust path of §12.2 for a gate already claimed exists |
-| G0.2 API | each Rust type has the methods of its simdjson type, under the names of §12.4 |
-| G0.3 intrinsics | `core::arch` and `std::arch` appear only under `stream/arm64/` |
-| G0.4 the layer has no loops or branches | `arm64/simd.rs` and `arm64/bitmask.rs` have no `for`, `while`, `loop`, `if` or runtime `match`, and no index expression outside an allow-list. The allow-list holds `compress` and `compress_halves` (table reads, as in simdjson) and `prev` (a `match` on a const generic that the compiler resolves) |
-| G0.5 no lane code above the layer | outside `stream/arm64/`, `stream/internal/` and test files: no array type of bytes, no index expression into one, and no loop except in an allow-list of named functions. Each allowed function gives its reason. The first ones are simdjson's: the block loop of `json_structural_indexer::index` and `bit_indexer::write`'s tail |
-| G0.6 registers | `Simd8x64` checks `NUM_CHUNKS == 4` with a compile-time assertion, as simdjson's `static_assert` |
-| G0.7 inlining | every method of the layer is `#[inline(always)]`, simdjson's `simdjson_inline` |
-| G0.8 no copies | `Simd8x64` derives neither `Clone` nor `Copy`, as simdjson deletes its copy constructor |
-
-### 12.4 G1: the primitive layer, test first
-
-Names follow simdjson's. Where C++ uses an operator, Rust has two cases:
-
-- when the result type allows it, Rust implements the operator trait (`|`, `&`, `^`, `!`, `+`,
-  `-` and their assignment forms);
-- otherwise Rust uses a method. `==` becomes `eq`, `<=` becomes `le`, `>=` `ge`, `<` `lt` and `>`
-  `gt`, because Rust's `PartialEq` and `PartialOrd` must return `bool`.
-
-`base_u8<T>` becomes a macro that gives `Simd8<bool>` and `Simd8<u8>` the same methods.
-
-| simdjson | Rust |
-|---|---|
-| `simd8<bool>`: `splat`, `to_bitmask`, `to_bitmask64`, `any`, `~` | `Simd8<bool>`: the same names, `!` |
-| `base_u8`: `\| & ^`, `bit_andnot`, `~`, `\|= &= ^=`, `==`, `prev<N>` | the same, `eq`, `prev::<N>` |
-| `simd8<uint8_t>`: `splat`, `zero`, `load`, the 16-byte constructor, `repeat_16`, `store`, `saturating_add`, `saturating_sub`, `+ - += -=`, `max_val`, `min_val` (both forms), `<= >= < >`, `gt_bits`, `lt_bits`, `any_bits_set`, `any_bits_set_anywhere` (both forms), `shr<N>`, `shl<N>`, `lookup_16` (both forms), `to_bitmask64`, `compress`, `compress_halves`, `apply_lookup_16_to` | `Simd8<u8>`: the same names. The constructor is `new([u8; 16])`. The forms that take a value are `max_val_with` and `min_val_with`. The 16-value forms are `lookup_16_values` and `any_bits_set_anywhere_in` |
-| `simd8<int8_t>`: `splat`, `zero`, `load`, constructor, `repeat_16`, `store`, conversion to and from `uint8_t`, `+ - += -=`, `max_val`, `min_val`, `> < ==`, `prev<N>`, `lookup_16` (both forms), `apply_lookup_16_to` | `Simd8<i8>`: the same, `from_u8`, `to_u8` |
-| `simd8x64<T>`: `NUM_CHUNKS`, `chunks`, `get<idx>`, the 4-chunk constructor, `load`, `store`, `reduce_or`, `compress`, `to_bitmask`, `eq`, `lteq` | `Simd8x64<T>`: the same; the load is `load(&[T; 64])` |
-| `bitmask.h`: `prefix_xor` | `bitmask::prefix_xor` |
-| `bitmanipulation.h`: `trailing_zeroes`, `clear_lowest_bit`, `leading_zeroes`, `count_ones`, `reverse_bits`, `zero_leading_bit` | `bitmanipulation::` the same names |
-| `simdprune_tables`: `thintable_epi8`, `BitsSetTable256mul2`, `pshufb_combine_table` | `THINTABLE_EPI8`, `BITS_SET_TABLE_256_MUL2`, `PSHUFB_COMBINE_TABLE`, computed by `const fn` and tested against simdjson's definitions |
-
-Every method is one intrinsic or a short fixed sequence of intrinsics, the same ones simdjson uses.
-
-**Test first.** `stream/arm64/simd_tests.rs` is written before `simd.rs`. For each method it
-compares the method with a scalar oracle, written in the test file and nowhere else, on:
-
-- edge values (0, 0x7f, 0x80, 0xff);
-- every value where a method has 256 or fewer;
-- 10,000 seeded random registers.
-
-`compress` is tested against simdjson's definition: the bytes whose mask bit is clear, in order.
-
-The gate closes when:
-
-- G0 and G1's tests pass;
-- the table of §12.1 lists every row of the table above.
-
-### 12.5 G2: the JSON lexer in simdjson's structure
-
-The first lexer is JSON, written in the structure of simdjson's stage 1:
-
-- `json_character_block::classify` with the nibble tables of `arm64.cpp`;
-- `json_escape_scanner`, `json_string_scanner` and `json_scanner`, each owning its carry;
-- `json_structural_indexer` with `buf_block_reader<STEP_SIZE>` and `bit_indexer`.
-
-Its output has simdjson's form: the structural index array, then the tape. A differential test
-compares it with simdjson's own output on the data-layer JSON corpus.
-
-`json.bitlex` lowers to this structure. The gate also checks that the code generated from the
-lexer has the same structs, with the same carries, as the hand-written structure.
-The details of G2 are written when G1 closes.
-
-### 12.6 Status of G0 and G1
-
-G0 and G1 are closed (2026-11-06). The filter `stream::` runs 29 tests: the 8 guards on snippets
-that break their rules, the guards on the tree, and 20 tests of the layer against scalar oracles.
-All pass.
-
-The paths below are under `native/src/code_rule_dsl/transducer/stream/`.
-
-| item | where | status |
-|---|---|---|
-| G0.1–G0.8 | `guards.rs` | done; each guard also checked on snippets that break it |
-| macros | `guards.rs` (`visit_macro`) | added. `syn` does not expand macros, so G0.4 and G0.5 report every macro but `assert!` (and, above the layer, the panic forms) |
-| `simd8<bool>` | `arm64/simd.rs:223` | done |
-| `base_u8<T>` | `arm64/simd.rs:102–221`, a generic impl over `BaseU8` (`bool`, `u8`) | done |
-| `simd8<uint8_t>` | `arm64/simd.rs:270–547` | done |
-| `simd8<int8_t>` | `arm64/simd.rs:551–741` | done |
-| `simd8x64<T>` | `arm64/simd.rs:746–839`; `NUM_CHUNKS` checked at `:751` | done |
-| `prefix_xor` | `arm64/bitmask.rs:8` | done |
-| `bitmanipulation.h` | `arm64/bitmanipulation.rs` | done |
-| `simdprune_tables` | `internal/simdprune_tables.rs` | done |
-| tests first | `arm64/simd_tests.rs`, compiled against empty files first (73 errors), then the layer | done |
-
-Where the Rust differs from simdjson:
-
-- **`unsafe` in every body.** Rust asks for `unsafe` around NEON calls unless the function has
-  `#[target_feature]`, and that attribute cannot be combined with `#[inline(always)]`. Each body is
-  one `unsafe` block; the module's note says why that is sound.
-- **`get::<IDX>`** checks `IDX < 4` at compile time. simdjson returns zero past `NUM_CHUNKS`,
-  which matters only on one-register targets.
-- **`compress_halves`** is an `unsafe fn` taking raw pointers, because simdjson's two writes may
-  overlap.
-- **`lookup_16` and `apply_lookup_16_to`.** `lookup_16` is generic over a `Lookup16` table, which
-  is `Simd8<u8>` or `Simd8<i8>`. `lookup_16_values` takes values of the register's own lane type.
-- **`Simd8x64::load` and `store`** exist for `u8`, the only lane type stage 1 loads.
-- **Tables** are computed by `const fn` from their definitions. The tests check them entry by
-  entry, and against values copied from simdjson's listing.
-- **Not checked yet:** the generated instructions. The guards prove there are no loops, branches or
-  byte reads in the source. They do not prove that, for example, `to_bitmask` compiles to four
-  `addp`. A disassembly check belongs to G2, where the kernels are compiled in context.
