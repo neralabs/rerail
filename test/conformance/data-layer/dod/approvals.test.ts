@@ -2,11 +2,22 @@ import { readFileSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { gunzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { runDataLayerAudit } from "../../../../src/cli/index.js";
+import { decodePythonBase64 } from "../../../../src/cli/data-layer/base64.js";
 const oracle = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-dod-contracts.json", "utf8"));
 type Case = { id: string; entries: string[]; signature: string; trustedPublicKey: string; files: { path: string; source: string; language: string }[]; expected: unknown[] };
 const canonical = (value: unknown[]) => value.map(row => JSON.stringify(row)).sort();
+it("matches original Python Base64 decoding for malformed and padded approval signatures", () => {
+  const fixture = JSON.parse(gunzipSync(readFileSync("fixtures/host/data-layer-port/batch-10-base64-decoding.json.gz")).toString("utf8"));
+  expect(fixture.cases).toHaveLength(68008);
+  for (const row of fixture.cases as { text: string; expected: string | null }[]) {
+    let actual = null;
+    try { actual = decodePythonBase64(row.text).toString("hex"); } catch { /* Preserve original decoding failures. */ }
+    expect(actual, JSON.stringify(row.text)).toBe(row.expected);
+  }
+});
 for (const record of oracle.approvalCases as Case[]) for (const mode of ["snapshot", "workspace"] as const)
   it(`preserves original approval ${record.id} through ${mode}`, async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-approval-contract-"));

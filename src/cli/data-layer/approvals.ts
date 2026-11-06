@@ -3,6 +3,7 @@ import { createPublicKey, verify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { decodePythonBase64 } from "./base64.js";
 
 export const schemaApprovalsSchema = z.object({ entries: z.array(z.string()), signature: z.string() }).strict();
 export type SchemaApprovals = z.infer<typeof schemaApprovalsSchema>;
@@ -32,7 +33,7 @@ export function schemaApprovalFacts(configuration: SchemaApprovals, packDirector
       const key = createPublicKey({ format: "der", type: "spki", key: Buffer.concat([
         Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(trust.publicKeyHex, "hex"),
       ]) });
-      signatureVerified = verify(null, schemaApprovalMessage(entries), key, Buffer.from(signature, "base64"));
+      signatureVerified = verify(null, schemaApprovalMessage(entries), key, decodePythonBase64(signature));
     } catch { signatureVerified = false; }
   }
   return { entries: [...entries].sort(compareCodePoints), signatureVerified };

@@ -3,8 +3,10 @@
 import argparse
 from dataclasses import asdict
 import hashlib
+import gzip
 import importlib
 import inspect
+import itertools
 import json
 from pathlib import Path
 import sys
@@ -58,6 +60,19 @@ def record(source, output):
         ('encoding-trailing-data', encoded + 'AAAA'),
         ('encoding-discontinuous-padding', encoded[:-1] + '!' + encoded[-1:]),
     ])
+    alphabet = 'AB/+=! -é'
+    values = {''.join(chars) for length in range(6) for chars in itertools.product(alphabet, repeat=length)}
+    for index in range(len(encoded) + 1):
+        for char in alphabet:
+            values.add(encoded[:index] + char + encoded[index:])
+            values.add(encoded[:index] + char + encoded[index + 1:])
+    decoding = []
+    for text_value in sorted(values):
+        try: expected = base64.b64decode(text_value).hex()
+        except Exception: expected = None
+        decoding.append(dict(text=text_value, expected=expected))
+    output.with_name('batch-10-base64-decoding.json.gz').write_bytes(gzip.compress(
+        json.dumps(dict(format='rerail.python-base64-contract/v1', cases=decoding), separators=(',', ':')).encode(), mtime=0))
     cases = []
     old_root, old_entries, old_signature, old_key = schema.ROOT, schema.APPROVED_USER_SCHEMA_CHECK_CALLSITES, schema.APPROVED_USER_SCHEMA_CHECK_CALLSITES_SIGNATURE, signing.PUBLIC_KEY_HEX
     try:
