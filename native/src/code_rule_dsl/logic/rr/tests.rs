@@ -362,3 +362,58 @@ fn hand_written_rules_lowering_report() {
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
 }
+
+// ---- tree axes and node sets ----
+
+/// `has(a, n, set)` is the descendant axis, the set tested on n; a set of nodes is read as rules over `child`,
+/// not a kind set; the forms print as themselves.
+#[test]
+fn axes_lower_and_print_as_themselves() {
+    let p = parse(
+        r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl docof(n: node, d: number)
+.decl next_sibling(a: node, b: node)
+.input node, child, docof, next_sibling
+.decl fn(kind: symbol)
+fn("function_definition").
+.decl blk(n: node)
+blk(n) :- node(_, n, "block", _, _), child(n, _, 0).
+.decl r(a: node, n: node)
+r(a, n) :- has(a, n, fn).
+r(a, n) :- node(_, a, _, _, _), !has(a, _, fn), nearest(n, a, blk).
+r(a, n) :- node(_, a, _, _, _), node(_, n, _, _, _), !nearest(n, a, fn), !within_stop(n, a, blk), !earlier(a, n), precedes_stop(a, n, blk), next_sibling(a, n).
+.decl s(q: symbol)
+s(q) :- s(x), split_dot(x, q, _), !split_dot(x, q, "y").
+"#,
+    )
+    .unwrap();
+    let rules: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "r").collect();
+    let v = |s: &str| Term::Var(s.to_owned());
+    assert_eq!(rules[0].body, [Literal::Atom(front::Atom { rel: "inside_rr_has_fn".to_owned(), args: vec![v("n"), v("a")], neg: false, gated: false })]);
+    assert!(!p.kindsets.contains_key("blk") && p.kindsets.contains_key("fn"));
+    // The nearest block: down from each member of blk to the next, reading blk negated.
+    let near: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "rr_near_blk").map(ToString::to_string).collect();
+    assert_eq!(near, ["rr_near_blk($n, $a) :- child($a, $n, _), blk($a)", "rr_near_blk($n, $a) :- child($p, $n, _), !blk($p), rr_near_blk($p, $a)"]);
+    assert!(rules[1].body.iter().any(|l| l.to_string() == "rr_near_blk($n, $a)"), "{}", rules[1]);
+    assert!(p.rules.iter().any(|r| r.head.rel == "next_sibling") && !p.inputs.contains(&"next_sibling".to_owned()));
+    let again = parse(&print(&p).unwrap()).unwrap();
+    assert_eq!(difference(&p, &again), None);
+}
+
+/// What the axes still refuse says so by name.
+#[test]
+fn axes_refuse_by_name() {
+    let decls = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl tape(n: number, par: number, size: number, depth: number)\n.input node, tape\n.decl a(n: node, m: node)\n.decl q(s: symbol)\n.decl fn(kind: symbol)\nfn(\"f\").\n";
+    for (body, what) in [
+        ("a(n, n) :- a(n, _), !within(n, _).", "`!within` with its ancestor unnamed"),
+        ("a(n, n) :- a(n, _), !within_stop(n, _, fn).", "`!within_stop` with its ancestor unnamed"),
+        ("a(n, n) :- a(n, _), !earlier(n, _).", "`!earlier` with a node unnamed"),
+        ("q(s) :- q(s), !split_dot(s, _, \"x\").", "`!split_dot` with a column unnamed"),
+        ("a(n, n) :- a(n, _), !precedes_stop(n, _, fn).", "`!precedes_stop` with a node unnamed"),
+    ] {
+        let e = parse(&format!("{decls}{body}")).unwrap_err().to_string();
+        assert!(e.contains("not lowered yet") && e.contains(what), "{body}: {e}");
+    }
+}

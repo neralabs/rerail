@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use super::syntax::quote;
 use super::translate::{relation, var};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, Error, Literal, Program, Term, Value};
+use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Term, Value, axis};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};
 
 fn ty(t: &str) -> &str {
@@ -72,11 +72,11 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
 
 fn atom(a: &Atom, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
     let bang = if a.neg { "!" } else { "" };
-    if let Some(set) = a.rel.strip_prefix(AXIS)
+    if let Some((set, has)) = axis(&a.rel)
         && kindsets.contains(&set.to_owned())
         && let [n, x] = a.args.as_slice()
     {
-        return Ok(format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?));
+        return Ok(if has { format!("{bang}has({}, {}, {set})", term(x)?, term(n)?) } else { format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?) });
     }
     Ok(format!("{bang}{}({})", relation(&a.rel), terms(&a.args)?))
 }
@@ -120,10 +120,10 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
         writeln!(out, "{}", kinds.iter().map(|k| format!("{name}({}).", quote(k))).collect::<Vec<_>>().join(" ")).expect("a string");
     }
     let mut lattices = BTreeSet::new();
-    // The tree axes' relations are made again from `inside(n, a, set)` (`front::finish`).
-    let axis = |rel: &str| rel.strip_prefix(AXIS).is_some_and(|set| prog.kindsets.contains_key(set));
+    // The tree axes' relations are made again from `inside(n, a, set)` and `has(a, n, set)` (`front::finish`).
+    let made = |rel: &str| axis(rel).is_some_and(|(set, _)| prog.kindsets.contains_key(set));
     for (name, cols) in &prog.decls {
-        if axis(name) {
+        if made(name) {
             continue;
         }
         let lattice = prog.lattice.get(name);
@@ -153,7 +153,7 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     }
     // An input with parameters is printed with them, as a setting (`.input r(IO=…)`).
     let with_params: BTreeSet<&str> = prog.settings.iter().filter(|(k, _)| k == "input").filter_map(|(_, t)| t.split('(').next()).collect();
-    let inputs: Vec<String> = prog.inputs.iter().filter(|i| !axis(i) && !with_params.contains(i.as_str())).map(|i| relation(i)).collect();
+    let inputs: Vec<String> = prog.inputs.iter().filter(|i| !made(i) && !with_params.contains(i.as_str())).map(|i| relation(i)).collect();
     if !inputs.is_empty() {
         writeln!(out, ".input {}", inputs.join(", ")).expect("a string");
     }

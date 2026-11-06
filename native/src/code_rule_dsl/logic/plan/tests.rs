@@ -565,7 +565,7 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` is the same pairs read from the ancestor; both negate.
+/// only the nearest; `has(a, n, set)` every `n` below `a` whose kind is in the set (the set tested on `n`); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
@@ -578,6 +578,8 @@ fn rules_read_inside_and_has_as_tape_relations() {
 .input node, field, text
 .decl fn(kind: symbol)
 fn("function_definition").
+.decl call(kind: symbol)
+call("call").
 .decl callee(c: node, s: symbol)
 callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
 .decl fname(f: node, s: symbol)
@@ -587,17 +589,24 @@ fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), tex
 call_in(c, f) :- callee(n, c), inside(n, a, fn), fname(a, f).
 // Functions that have a call to g somewhere below them.
 .decl calls_g(f: symbol)
-calls_g(f) :- fname(a, f), has(a, n, fn), callee(n, "g").
+calls_g(f) :- fname(a, f), has(a, n, call), callee(n, "g").
+// Functions with a function below them, and those with none.
+.decl nests(f: symbol)
+nests(f) :- fname(a, f), has(a, _, fn).
+.decl leaf(f: symbol)
+leaf(f) :- fname(a, f), !has(a, _, fn).
 // Calls inside no function.
 .decl top(c: symbol)
 top(c) :- callee(n, c), !inside(n, _, fn).
-.output call_in, calls_g, top
+.output call_in, calls_g, nests, leaf, top
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
     assert_eq!(read("calls_g"), "inner\nouter\n");
+    assert_eq!(read("nests"), "outer\n");
+    assert_eq!(read("leaf"), "inner\n");
     assert_eq!(read("top"), "h\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -638,4 +647,135 @@ fn("function_definition").
         println!("  {name:<16} {:.2} s CPU  rss {rss:.0} MB  {statements} statements", user + sys);
     }
     let _ = std::fs::remove_dir_all(&out);
+}
+
+// ---- tree axes and node sets ----
+
+/// The axes over a set of nodes (`fnode`) or of kinds rules derive (`fk`), read as rules; `!nearest` with the
+/// ancestor named, `!within_stop`, `!earlier` and `!split_dot`; `precedes_stop` and `next_sibling` over `child`.
+#[test]
+fn axes_read_node_sets_and_negate() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("node-sets");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def a():\n    pass\ndef b():\n    def inner():\n        g()\n    f()\ndef skip():\n    def deep():\n        k()\nh()\nx = 1\n").unwrap();
+    std::fs::write(dir.join("b.py"), "z()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl child(p: node, c: node, i: number)
+.decl next_sibling(a: node, b: node)
+.decl docof(n: node, d: number)
+.input node, field, text, child, next_sibling, docof
+.decl fn(kind: symbol)
+fn("function_definition").
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+.decl stmt_call(e: node, c: symbol)
+stmt_call(e, c) :- node(_, e, "expression_statement", _, _), child(e, x, 0), field(x, "function", y), text(y, c).
+.decl label(n: node, s: symbol)
+label(n, s) :- fname(n, s).
+label(n, s) :- stmt_call(n, s).
+.decl top_fn(f: node, s: symbol)
+top_fn(f, s) :- fname(f, s), !nearest(f, _, fn).
+// A set of nodes: the functions but inner; and a set of kinds that a rule derives.
+.decl fnode(n: node)
+fnode(n) :- fname(n, x), x != "inner".
+.decl fk(k: symbol)
+fk(k) :- node(_, f, k, _, _), field(f, "name", _).
+.decl skipnode(n: node)
+skipnode(n) :- fname(n, "skip").
+.decl near_d(c: symbol, f: symbol)
+near_d(c, f) :- stmt_call(e, c), nearest(e, a, fnode), fname(a, f).
+.decl in_d(c: symbol, f: symbol)
+in_d(c, f) :- stmt_call(e, c), inside(e, a, fnode), fname(a, f).
+.decl any_d(c: symbol)
+any_d(c) :- stmt_call(e, c), inside(e, _, fnode).
+.decl top_d(c: symbol)
+top_d(c) :- stmt_call(e, c), !nearest(e, _, fnode).
+.decl has_d(f: symbol, g: symbol)
+has_d(f, g) :- fname(a, f), has(a, n, fnode), fname(n, g).
+.decl hasany_d(f: symbol)
+hasany_d(f) :- fname(a, f), has(a, _, fnode).
+.decl nohas_d(f: symbol)
+nohas_d(f) :- fname(a, f), !has(a, _, fnode).
+.decl near_k(c: symbol, f: symbol)
+near_k(c, f) :- stmt_call(e, c), nearest(e, a, fk), fname(a, f).
+.decl has_k(f: symbol)
+has_k(f) :- fname(a, f), has(a, _, fk).
+.decl has_s(f: symbol, g: symbol)
+has_s(f, g) :- fname(a, f), has(a, n, fn), fname(n, g).
+.decl stmts_in(f: symbol, c: symbol)
+stmts_in(f, c) :- top_fn(a, f), has(a, n, "expression_statement"), stmt_call(n, c).
+.decl not_near_b(c: symbol)
+not_near_b(c) :- stmt_call(e, c), top_fn(a, "b"), !nearest(e, a, fn).
+.decl not_near_b_d(c: symbol)
+not_near_b_d(c) :- stmt_call(e, c), top_fn(a, "b"), !nearest(e, a, fnode).
+.decl not_own_b(c: symbol)
+not_own_b(c) :- stmt_call(e, c), top_fn(a, "b"), !within_stop(e, a, fn).
+.decl not_own_b_d(c: symbol)
+not_own_b_d(c) :- stmt_call(e, c), top_fn(a, "b"), !within_stop(e, a, fnode).
+.decl after_a(s: symbol)
+after_a(s) :- top_fn(m, "a"), precedes_stop(m, n, fn), label(n, s).
+.decl after_a_skip(s: symbol)
+after_a_skip(s) :- top_fn(m, "a"), precedes_stop(m, n, skipnode), label(n, s).
+.decl after_b(s: symbol)
+after_b(s) :- top_fn(m, "b"), precedes_stop(m, n, "expression_statement"), label(n, s).
+.decl not_after_a(s: symbol)
+not_after_a(s) :- top_fn(m, "a"), label(n, s), !precedes_stop(m, n, fn).
+.decl nxt(x: symbol, y: symbol)
+nxt(x, y) :- next_sibling(m, n), label(m, x), label(n, y).
+.decl not_before(x: symbol, y: symbol)
+not_before(x, y) :- stmt_call(m, x), stmt_call(n, y), !earlier(m, n).
+.decl q(s: symbol)
+q("os.path"). q("os.path.join").
+.decl parts(m: symbol, x: symbol)
+parts(m, x) :- q(s), split_dot(s, m, x).
+.decl in_os(x: symbol)
+in_os(x) :- q(s), split_dot(s, "os", x).
+.decl of_join(m: symbol)
+of_join(m) :- q(s), split_dot(s, m, "join").
+.decl not_split(s: symbol)
+not_split(s) :- q(s), !split_dot(s, "os", "path").
+.decl not_split2(s: symbol)
+not_split2(s) :- q(s), !split_dot(s, "os", "path.join").
+.output near_d, in_d, any_d, top_d, has_d, hasany_d, nohas_d, near_k, has_k, has_s, stmts_in, not_near_b, not_near_b_d
+.output not_own_b, not_own_b_d, after_a, after_a_skip, after_b, not_after_a, nxt, not_before, parts, in_os, of_join, not_split, not_split2
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let expected = [
+        // g's nearest function is inner, which fnode leaves out.
+        ("near_d", "f\tb\ng\tb\nk\tdeep\n"),
+        ("in_d", "f\tb\ng\tb\nk\tdeep\nk\tskip\n"),
+        ("any_d", "f\ng\nk\n"),
+        ("top_d", "h\nz\n"),
+        // `has` tests the set on the node below: b has only inner below it.
+        ("has_d", "skip\tdeep\n"),
+        ("hasany_d", "skip\n"),
+        ("nohas_d", "a\nb\ndeep\ninner\n"),
+        ("near_k", "f\tb\ng\tinner\nk\tdeep\n"),
+        ("has_k", "b\nskip\n"),
+        ("has_s", "b\tinner\nskip\tdeep\n"),
+        ("stmts_in", "b\tf\nb\tg\nskip\tk\n"),
+        ("not_near_b", "g\nh\nk\nz\n"),
+        ("not_near_b_d", "h\nk\nz\n"),
+        ("not_own_b", "g\nh\nk\nz\n"),
+        ("not_own_b_d", "h\nk\nz\n"),
+        ("after_a", "b\n"),
+        ("after_a_skip", "b\nskip\n"),
+        ("after_b", "h\nskip\n"),
+        ("not_after_a", "a\ndeep\nf\ng\nh\ninner\nk\nskip\nz\n"),
+        ("nxt", "a\tb\nb\tskip\ninner\tf\nskip\th\n"),
+        ("not_before", "f\tf\nf\tg\nf\tz\ng\tg\ng\tz\nh\tf\nh\tg\nh\th\nh\tk\nh\tz\nk\tf\nk\tg\nk\tk\nk\tz\nz\tf\nz\tg\nz\th\nz\tk\nz\tz\n"),
+        ("parts", "os\tpath\nos.path\tjoin\n"),
+        ("in_os", "path\n"),
+        ("of_join", "os.path\n"),
+        ("not_split", "os.path.join\n"),
+        ("not_split2", "os.path\nos.path.join\n"),
+    ];
+    let wrong: Vec<String> = expected.iter().filter(|(rel, rows)| read(rel) != *rows).map(|(rel, rows)| format!("{rel}: {:?}, expected {rows:?}", read(rel))).collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
