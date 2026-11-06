@@ -40,6 +40,36 @@ pub(crate) fn batch(documents: &[Document]) -> Result<Vec<Vec<Row>>, Error> {
     Ok(batch_with_metrics(documents)?.documents)
 }
 pub(crate) fn batch_with_metrics(documents: &[Document]) -> Result<Response, Error> {
+    // Capacity partitions are transport batches, not independent rule scopes.
+    // Keep documents intact so every module is parsed once and retain demand order.
+    let mut response = Response {
+        version: [3, 13],
+        documents: Vec::new(),
+        parses: 0,
+        module_walks: 0,
+    };
+    let mut start = 0;
+    while start < documents.len() {
+        let mut end = start;
+        let mut bytes = 0usize;
+        while end < documents.len() && bytes + documents[end].source.len() <= 8 * 1024 * 1024 {
+            bytes += documents[end].source.len();
+            end += 1;
+        }
+        if end == start {
+            return Err(Error(
+                "Python AST document exceeds its source capacity".into(),
+            ));
+        }
+        let part = batch_part_with_metrics(&documents[start..end])?;
+        response.documents.extend(part.documents);
+        response.parses += part.parses;
+        response.module_walks += part.module_walks;
+        start = end;
+    }
+    Ok(response)
+}
+fn batch_part_with_metrics(documents: &[Document]) -> Result<Response, Error> {
     if documents.is_empty() {
         return Ok(Response {
             version: [3, 13],

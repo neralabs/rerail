@@ -87,15 +87,13 @@ pub(super) fn demand(
     if spec.source {
         let mut paths = Vec::new();
         let mut sources = Vec::new();
-        let mut bytes = 0usize;
         let mut statement = db.prepare_cached(&spec.roots).map_err(super::sql_error)?;
         let mut rows = statement.query([]).map_err(super::sql_error)?;
         while let Some(row) = rows.next().map_err(super::sql_error)? {
             let path: String = row.get(0).map_err(super::sql_error)?;
             let text: String = row.get(1).map_err(super::sql_error)?;
-            bytes = bytes.saturating_add(text.len());
-            if bytes > 8 * 1024 * 1024 {
-                return Err(invalid("Python source batch capacity"));
+            if text.len() > 8 * 1024 * 1024 {
+                return Err(invalid("Python source document capacity"));
             }
             source::charge(&work, 1 + text.len().div_ceil(256))?;
             paths.push(path);
@@ -299,11 +297,14 @@ pub(super) fn execute(
                                 use sha2::{Digest, Sha256};
                                 let text = &sources[root.file as usize];
                                 if spans.iter().any(|&(start, end)| {
-                                    start > end || end as usize > text.len()
+                                    start > end
+                                        || end as usize > text.len()
                                         || !text.is_char_boundary(start as usize)
                                         || !text.is_char_boundary(end as usize)
                                 }) {
-                                    return Err(invalid("canonical Python span exceeds its source"));
+                                    return Err(invalid(
+                                        "canonical Python span exceeds its source",
+                                    ));
                                 }
                                 output.spans.insert(
                                     demand.paths[root.file as usize].clone(),
@@ -313,7 +314,9 @@ pub(super) fn execute(
                                     },
                                 );
                             } else {
-                                demand.trees[root.file as usize].facts.register_python_spans(spans)?;
+                                demand.trees[root.file as usize]
+                                    .facts
+                                    .register_python_spans(spans)?;
                             }
                         }
                         source::charge(&demand.work, len)?;

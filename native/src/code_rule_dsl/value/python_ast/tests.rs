@@ -2,10 +2,22 @@ use super::*;
 
 #[test]
 fn coalesced_python_demand_crosses_capacity_without_losing_rows_or_reparsing() {
-    let documents: Vec<_> = ["pass\n", "if True:\n"].into_iter().map(|ending| {
-        let source = format!("#{}\n{ending}", "x".repeat(5 * 1024 * 1024));
-        Document { requests: vec![Request { start: 0, end: source.len(), kind: "module".into(), fields: vec!["syntax_error".into()], columns: None }], source }
-    }).collect();
+    let documents: Vec<_> = ["pass\n", "if True:\n"]
+        .into_iter()
+        .map(|ending| {
+            let source = format!("#{}\n{ending}", "x".repeat(5 * 1024 * 1024));
+            Document {
+                requests: vec![Request {
+                    start: 0,
+                    end: source.len(),
+                    kind: "module".into(),
+                    fields: vec!["syntax_error".into()],
+                    columns: None,
+                }],
+                source,
+            }
+        })
+        .collect();
     let response = batch_with_metrics(&documents).unwrap_or_else(|error| panic!("{}", error.0));
     assert_eq!(response.parses, 2);
     assert_eq!(response.module_walks, 0);
