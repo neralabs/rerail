@@ -510,8 +510,11 @@ pub(in crate::code_rule_dsl) fn run_source(
 ) -> Result<(Vec<Vec<u64>>, f64), Error> {
     let rounds = native.insts.iter().filter(|i| i.carried()).count();
     let pipelines: Vec<metal::ComputePipelineState> = (0..rounds)
-        .map(|j| pipeline_named(source, &format!("tempo_round_{j}")))
-        .chain(std::iter::once(pipeline_named(source, "tempo_block")))
+        .map(|j| format!("tempo_round_{j}"))
+        .chain(std::iter::once("tempo_block".to_owned()))
+        .map(|name| {
+            pipeline_named(source, &name).inspect_err(|e| eprintln!("block program: pipeline {name}: {e:?}"))
+        })
         .collect::<Result<_, _>>()?;
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let stream = Stream::new(bytes, width, native.outputs.len())?;
@@ -585,6 +588,27 @@ struct Pass<'a> {
     threads: usize,
 }
 
+/// A failed command buffer's error, described (`error.localizedDescription`).
+fn command_error(command: &metal::CommandBufferRef) -> String {
+    unsafe extern "C" {
+        fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn objc_msgSend();
+    }
+    type Send = unsafe extern "C" fn(*const std::ffi::c_void, *mut std::ffi::c_void) -> *const std::ffi::c_void;
+    // SAFETY: `error`, `localizedDescription` and `UTF8String` take no arguments and return
+    // objects (or a C string); each result is checked for null before use.
+    unsafe {
+        let send: Send = std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        let error = send(metal::foreign_types::ForeignTypeRef::as_ptr(command).cast(), sel_registerName(c"error".as_ptr()));
+        if error.is_null() {
+            return "no error".into();
+        }
+        let text = send(error, sel_registerName(c"localizedDescription".as_ptr()));
+        let utf8 = send(text, sel_registerName(c"UTF8String".as_ptr())).cast::<std::ffi::c_char>();
+        if utf8.is_null() { "?".into() } else { std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned() }
+    }
+}
+
 fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
     // SAFETY: `T` is a plain `repr(C)` value or an integer array; its bytes are read only.
     unsafe { std::slice::from_raw_parts(std::ptr::from_ref(value).cast::<u8>(), std::mem::size_of::<T>()) }.to_vec()
@@ -594,7 +618,14 @@ fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
 fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let _scope = super::metal_backend::launch::LaunchScope::enter();
-    let queue = device.new_command_queue();
+    // One queue for every block program run: a queue per run exhausts the GPU's memory when many
+    // run at once ("Insufficient Memory").
+    static QUEUE: std::sync::OnceLock<std::sync::Mutex<metal::CommandQueue>> = std::sync::OnceLock::new();
+    let queue = QUEUE
+        .get_or_init(|| std::sync::Mutex::new(device.new_command_queue()))
+        .lock()
+        .map_err(|_| Error::BackendFailure)?
+        .clone();
     let command = queue.new_command_buffer();
     command.set_label("Rerail block program");
     for pass in passes {
@@ -615,7 +646,7 @@ fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
         encoder.end_encoding();
     }
     commit_checked(command)?;
-    wait_checked(command)?;
+    wait_checked(command).inspect_err(|_| eprintln!("block program: command buffer {:?}: {}", command.status(), command_error(command)))?;
     Ok(super::metal_backend::launch::gpu_seconds(command))
 }
 

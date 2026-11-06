@@ -649,3 +649,124 @@ fn carried_lower_to_straight_bit_operations() {
         &program("  block 0 %0 = eq 0x5c\n  block 0 %1 = after_odd_run %0\n  block 0 %2 = toggle %1\n  block 0 %3 = prev %2, 1\n  block 0 output %3\n"),
     );
 }
+
+// --- simdjson's stage 1 ----------------------------------------------------------------------
+
+/// Stage 1, written by hand in `rir` (`fixtures/simdjson-stage1/stage1.rir`).
+const STAGE1: &str = include_str!("../../../../../fixtures/simdjson-stage1/stage1.rir");
+
+/// simdjson's own stage 1 on each file (`fixtures/simdjson-stage1/stage1_indexes.cpp`): path,
+/// length, number of structural indexes, FNV-1a of the indexes as little-endian u32s.
+const STAGE1_EXPECTED: &str = include_str!("../../../../../fixtures/simdjson-stage1/expected.txt");
+
+fn repo_file(path: &str) -> Vec<u8> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    std::fs::read(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"))
+}
+
+/// The set bits of a mask over `len` bytes, as byte indexes.
+fn indexes(words: &[u64]) -> Vec<u32> {
+    let mut out = Vec::new();
+    for (i, &w) in words.iter().enumerate() {
+        let mut w = w;
+        while w != 0 {
+            out.push(i as u32 * 64 + w.trailing_zeros());
+            w &= w - 1;
+        }
+    }
+    out
+}
+
+fn fnv(indexes: &[u32]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for v in indexes {
+        for b in v.to_le_bytes() {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    hash
+}
+
+/// Stage 1's three outputs on `bytes` are simdjson's: the same structural indexes, no control
+/// character inside a string, and no unclosed string.
+fn check_stage1(name: &str, bytes: &[u8], outputs: &[Vec<u64>], want: (usize, u64)) {
+    let found = indexes(&outputs[0]);
+    assert_eq!((found.len(), fnv(&found)), want, "{name}: structural indexes differ from simdjson's");
+    assert!(outputs[1].iter().all(|&w| w == 0), "{name}: a control character inside a string");
+    let last = bytes.len() - 1;
+    assert_eq!(outputs[2][last / 64] >> (last % 64) & 1, 0, "{name}: an unclosed string");
+}
+
+fn stage1_files() -> Vec<(String, usize, (usize, u64))> {
+    STAGE1_EXPECTED
+        .lines()
+        .map(|line| {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            (f[0].to_owned(), f[1].parse().unwrap(), (f[2].parse().unwrap(), u64::from_str_radix(f[3], 16).unwrap()))
+        })
+        .collect()
+}
+
+/// Every executor finds simdjson's structural indexes. Files up to 200 KB run on all of them;
+/// the 3.8 MB file on Cranelift and generated MSL.
+#[test]
+fn stage1_equals_simdjson_on_every_executor() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    for (path, len, want) in stage1_files() {
+        let bytes = repo_file(&path);
+        assert_eq!(bytes.len(), len, "{path} changed since simdjson's indexes were recorded");
+        if len < 200_000 {
+            for (name, got) in executors(&p, &bytes) {
+                check_stage1(&format!("{path}, {name}"), &bytes, &got, want);
+            }
+        } else {
+            check_stage1(&format!("{path}, cranelift"), &bytes, &compiled.run(&bytes), want);
+            #[cfg(target_os = "macos")]
+            {
+                use metal_program_backend::block_program::{LaneWidth, run_generated};
+                let got = run_generated(&native, &bytes, LaneWidth::W64).expect("runs");
+                check_stage1(&format!("{path}, generated msl"), &bytes, &got, want);
+            }
+        }
+    }
+}
+
+#[test]
+fn stage1_lowers_to_straight_bit_operations() {
+    check_lowering("stage 1", &rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}")));
+}
+
+/// Stage 1's cost per 64-byte block: the JIT's CPU time and machine instructions per block, and
+/// generated MSL's GPU time per lane width, on the 3.8 MB file. simdjson's time on the same file
+/// comes from `stage1_indexes --time`. Run by name: a measurement, not a check.
+#[test]
+#[ignore = "a measurement; run by name"]
+fn stage1_cost_per_block() {
+    let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    let (path, _, _) = stage1_files().into_iter().last().expect("the large file");
+    let bytes = repo_file(&path);
+    let blocks = bytes.len().div_ceil(64) as f64;
+    let body: Vec<&str> = compiled.disassembly.lines().collect();
+    let start = body.iter().position(|l| l.trim_start().starts_with("block1:")).unwrap_or(0);
+    let end = body.iter().rposition(|l| l.contains("b.") || l.contains("b.lo") || l.contains("b.hs")).unwrap_or(body.len());
+    let per_block = body[start..=end.min(body.len() - 1)].iter().filter(|l| l.starts_with("  ")).count();
+    println!("{path}: {} bytes, {blocks} blocks", bytes.len());
+    println!("cranelift: {per_block} machine instructions in the loop body (one block)");
+    let s = compiled.cpu_seconds(&bytes, 20);
+    println!("cranelift: {:.3} ns per block (CPU time, best of 20)", s / blocks * 1e9);
+    #[cfg(target_os = "macos")]
+    {
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
+        for width in LaneWidth::ALL {
+            let s = (0..5)
+                .map(|_| run_generated_with(&native, &bytes, width, ClassStrategy::Planes).expect("runs").1)
+                .fold(f64::MAX, f64::min);
+            println!("generated msl, {:2}-byte lanes: {:.3} ns per block (GPU time, all rounds, best of 5)", width.bytes(), s / blocks * 1e9);
+        }
+    }
+}

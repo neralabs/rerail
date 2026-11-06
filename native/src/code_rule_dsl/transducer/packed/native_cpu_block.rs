@@ -51,6 +51,31 @@ impl CompiledBlock {
     }
 }
 
+impl CompiledBlock {
+    /// The function's CPU time over `bytes` (thread user + system time), best of `runs`, the
+    /// input already in blocks: the cost of the compiled code alone.
+    #[cfg(test)]
+    pub(super) fn cpu_seconds(&self, bytes: &[u8], runs: usize) -> f64 {
+        let blocks = padded(bytes);
+        let flat: Vec<u8> = blocks.iter().flatten().copied().collect();
+        let mut out = vec![0u64; self.outputs * blocks.len()];
+        let now = || {
+            let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            // SAFETY: `t` is a valid timespec to write.
+            unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+            t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+        };
+        (0..runs)
+            .map(|_| {
+                let start = now();
+                // SAFETY: as in `run`.
+                unsafe { (self.entry)(flat.as_ptr(), blocks.len() as u64, out.as_mut_ptr()) };
+                now() - start
+            })
+            .fold(f64::MAX, f64::min)
+    }
+}
+
 /// Compile a block program's native IR.
 pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;

@@ -59,8 +59,10 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
   device const uint4* mine = bytes + lane * chunks;
   for (uint at = p.from; at < p.to; at++) {
     const BlockStep s = steps[at];
-    const M a = values[s.a * p.lanes + lane];
-    const M b = values[s.b * p.lanes + lane];
+    // Operands are earlier values. Steps without one hold other things in a and b (const's
+    // pattern), so the reads are clamped to slots already defined.
+    const M a = values[min(s.a, at) * p.lanes + lane];
+    const M b = values[min(s.b, at) * p.lanes + lane];
     // A carried step's round is in b; its state array holds each group's inclusive prefix.
     device atomic_uint* state = states + s.b * groups;
     M out;

@@ -303,7 +303,7 @@ block boundary carries a small state from block to block:
 | `& \| ^ ~` | scalar or vector logic | logic | nothing |
 | `prev(a, k)` | shift in from the previous block | read the lane `k` before, from threadgroup memory | the last `k` bits |
 | `next(a, k)` | shift in from the next block (the pipeline runs one block ahead) | read the lane `k` after | the first `k` bits of the next block |
-| `toggle` | carry-less multiply by all ones (`vmull_p64`) | `simd_prefix_exclusive_xor`, then a threadgroup scan | one parity bit |
+| `toggle` | carry-less multiply by all ones (`vmull_p64`) | the popcount of a ballot below the lane (Metal has no `simd_prefix_exclusive_xor`), then a scan between groups | one parity bit |
 | `fill(s, e)` | `((e − s − borrow) & ~e) \| s`: the borrow runs from each start to the next end | the same, per 64-bit word, with the borrow passed by a scan | one borrow bit |
 | `back_fill(s, e)` | `fill` on bit-reversed words (`rbit`), blocks taken last to first | the same, scanning the other way | one borrow bit, passed backwards |
 | `after_odd_run` | simdjson's add-with-carry over odd and even run starts | the same per word, with the carry passed by a scan | one carry bit |
