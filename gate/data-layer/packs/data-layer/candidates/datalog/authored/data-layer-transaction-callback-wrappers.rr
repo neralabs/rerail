@@ -1,5 +1,7 @@
-// data-layer-transaction-callback-wrappers: both clauses by hand (the converter's gap: a regex on a
-// function_definition's text, which is its full source, strings and comments included: `node_text` here).
+// data-layer-transaction-callback-wrappers: both clauses by hand, exact under the default options. The converter
+// gaps each clause on a regex over a function_definition's text (its full source, strings and comments included:
+// `node_text` here); inline-reentrant also on `compare` (`$CHECK_OWNER` eq `$OWNER` as nodes) and on `nthChild`
+// with `ofRule`.
 //
 // W's semantics kept:
 // - `has` with `stopBy: {kind: function_definition}` from a body: the body's descendants, not entering a nested
@@ -9,7 +11,8 @@
 //   a comment" needs no test.
 // - Relational rules take their first match and do not backtrack (ast-grep's `all`): in inline-reentrant's first
 //   branch, $CALLBACK_NAME is bound by the first qualifying call of the body in pre-order (least start, then the
-//   greatest end: an ancestor before its descendants), and the nested def must carry that name.
+//   greatest end: an ancestor before its descendants), and the nested def must carry that name. Within that call,
+//   the `fn=` branch binds the first `fn=` keyword argument (by position) whose value is an identifier.
 // Options: `sourceGate` (default true) gates on the module's text matching `\.read|\.write|Callable|Transaction|
 // versioned_`, or `^` when false. Both clauses already require the function's own text (inside the module's) to
 // contain `Callable` (callback-helper) or `versioned_` (inline-reentrant), so the gate holds whenever the rest
@@ -116,9 +119,13 @@ tcw_ir_uncounted(y) :- node(_, y, "dictionary_splat", _, _).
 tcw_ir_before(al, y, z) :- tcw_ir_counted(al, y, i), tcw_ir_counted(al, z, j), j < i.
 .decl tcw_ir_second(al: node, y: node)
 tcw_ir_second(al, y) :- tcw_ir_counted(al, y, _), k = count : { tcw_ir_before(al, y, _) }, k = 1.
-// The callback an argument list names: `fn=NAME`, or (no `fn=` at all) the second positional argument NAME.
+// The callback an argument list names: `fn=NAME` (the first such keyword argument whose value is an identifier, as
+// `has` binds it), or (no `fn=` at all) the second positional argument NAME.
+.decl tcw_ir_kwfn_id(al: node, v: node, i: number)
+tcw_ir_kwfn_id(al, v, i) :- child(al, kw, i), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm),
+    node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v), node(_, v, "identifier", _, _).
 .decl tcw_ir_callback(al: node, cb: node)
-tcw_ir_callback(al, v) :- tcw_ir_kwfn(al, v), node(_, v, "identifier", _, _).
+tcw_ir_callback(al, v) :- tcw_ir_kwfn_id(al, v, i), i = min j : { tcw_ir_kwfn_id(al, _, j) }.
 tcw_ir_callback(al, y) :- tcw_ir_second(al, y), node(_, y, "identifier", _, _), !tcw_ir_has_kwfn(al).
 
 // A versioned call: `x.versioned_*(…)`, or `getattr(…, "versioned_*")` with the string not the first argument.
