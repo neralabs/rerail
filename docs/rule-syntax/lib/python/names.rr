@@ -61,7 +61,8 @@ modnode(d, m) :- node(d, m, "module", _, _).
 modname(m, q) :- modnode(d, m), doc(d, _, q).
 
 // ---- names read, and the scope that binds them ----------------------------------------------------------------
-// nameref(n, x): identifier n reads the name x. Excludes the attribute part of `a.b` (b is not a name lookup) and
+// nameref(n, x): identifier n names x and is looked up: a read, or the target of a binding (`x = 1`, `except E
+// as x`). ref_site keeps only reads (bind_only below). Excludes the attribute part of `a.b` (b is not a name lookup) and
 // any `name` field (the name of a def/class or the keyword in `f(k=1)`), which are not reads.
 .decl nameref(n: node, x: symbol)
 nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n),
@@ -331,7 +332,20 @@ site_form(site, form) :- binding(_, _, site, form).
 // ref_site(r, site): reference r reads binding site `site` (every site of the scope LEGB lands on: may-precise).
 // e.g. `x = 1; if c: x = 2; print(x)`: the x in print has two ref_site rows. No flow pruning is done here.
 .decl ref_site(r: node, site: node)
-ref_site(r, site) :- look(r, x, s), binding(s, x, site, _).
+ref_site(r, site) :- look(r, x, s), binding(s, x, site, _), !bind_only(r).
+// bind_only(n): identifier n binds a name and does not read it, so it is no reference to any site: the targets of
+// `x = 1`, `for x in`, `with … as x`, `except E as x`, match captures and `(x := v)`, a parameter's name, and the
+// names in import, global and nonlocal statements. `x += 1` reads x as well as binding it, so it is not here.
+// e.g. in `except E as e: pass`, e is bind_only, and the handler never reads its exception.
+.decl bind_only(n: node)
+bind_only(l) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier").
+bind_only(t) :- tgt(t), kind(t, "identifier"), !aug_target(t).
+bind_only(id) :- field(f, "parameters", ps), child(ps, p, _), (id = p ; child(p, id, 0)), kind(id, "identifier").
+bind_only(n) :- (kind(i, "import_statement") ; kind(i, "import_from_statement") ; kind(i, "future_import_statement")),
+    within(n, i), kind(n, "identifier").
+bind_only(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _), kind(n, "identifier").
+.decl aug_target(t: node)
+aug_target(l) :- kind(a, "augmented_assignment"), field(a, "left", l).
 // binding_value(site, v): the value expression a site stores, for `x = v` and `(x := v)`.
 .decl binding_value(site: node, v: node)
 binding_value(a, v) :- kind(a, "assignment"), field(a, "right", v).

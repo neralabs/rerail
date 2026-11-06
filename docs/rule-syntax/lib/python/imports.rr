@@ -167,7 +167,9 @@ exported(m, x) :- star_from(m, m2), exported(m2, x), public_name(m2, x).
 // (an external module, or x defined nowhere we can see), r = q unchanged. split_dot(q, m, x) splits q at its
 // last dot.
 .decl resolve_export(q: symbol, r: symbol)  // follow re-exports to the definition; outside the workspace, q itself
-resolve_export(@dot(m, x), r) :- exports(m, x, r), r != @dot(m, x).
+// A name defined in m itself resolves to its own qualname (r = q): `from impl.q import read` where impl/q.py
+// defines read gives resolve_export("impl.q.read", "impl.q.read").
+resolve_export(@dot(m, x), r) :- exports(m, x, r).
 resolve_export(q, q) :- export_query(q), count : { split_dot(q, m, x), exported(m, x) } = 0.
 // export_query(q): the names resolve_export is asked about. Rule 2 above needs them: a q that only appears under
 // `!` would not be bound. Each comes from a qualified name in the code or a from-import.
