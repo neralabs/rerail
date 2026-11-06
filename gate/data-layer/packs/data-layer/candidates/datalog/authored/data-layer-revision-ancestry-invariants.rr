@@ -1,0 +1,154 @@
+// data-layer-revision-ancestry-invariants: every clause is a `forbid.regex` over `file.content` (W: eval/query.rs,
+// query/mod.rs `regex_query_matches`): the file must match each `content.include` regex, its path the clause's
+// `paths`, and each match of the pattern (`find_iter`, non-overlapping) is a finding at the anchor's start line.
+//
+// Options: written for the policy's defaults, `oracleAnalyzer = false`: `content.include` is
+// `revision|ancestry|stmt_ancestry_chain` (case-sensitive, anywhere in the file) and the descriptor and
+// removed-surface anchors are their captures' lines. With `oracleAnalyzer = true` (the replay's non-production
+// events) W gates on nothing and anchors those clauses at line 1: not followed here. A `path_skip_override` (the
+// replay dropping `paths`) is not followed either.
+//
+// The file text is read line by line (`src_line_lf`: split at "\n" only, "\r" kept, so a line starts exactly where
+// W's `(?m:^)` matches) and, where a match may cross lines, through a window: a line joined by "\n" to the 31 lines
+// after it (fewer at the file's end), the file's own bytes from that line on. It is built by doubling
+// (`revision_ancestry_w1` … `_w16`, `_full`; the engine rejects a recursive string-growing relation the tree does not
+// bound). Approximations, each named where it is used:
+//   [lines]   findings are numbered by "\n"; W numbers lines at "\r\n", "\r" and "\n" (Ruff's), so in a file with
+//             a lone "\r" (one not before "\n") the findings after it are at lines fewer than W's.
+//   [window]  a match that runs past the 31st line after its first line is missed (it needs over 31 line breaks
+//             inside the clause's bounded gaps and whitespace runs).
+//   [overlap] the cast clauses report every line on which some match starts; W's `find_iter` skips a start that an
+//             earlier line's match already covered (a greedy `[\s\S]{0,80}` can run into the next line), so where
+//             two casts sit within one match's reach on consecutive lines W reports only the first line.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl src_line_lf(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, src_line_lf, text
+.output violation
+
+// ---- shared: the files every clause reads, their lines, the content gate, the windows ----------------------------
+
+// In scope and in every clause's `paths`: include `**/*.py`, exclude `**/tests/**`, `**/test_*.py`.
+.decl revision_ancestry_file(d: number, p: symbol)
+revision_ancestry_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), glob("**/*.py", p), !glob("**/tests/**", p), !glob("**/test_*.py", p).
+
+.decl revision_ancestry_line(d: number, l: number, t: symbol)
+revision_ancestry_line(d, l, t) :- revision_ancestry_file(d, _), src_line_lf(d, l, sp), text(sp, t).
+
+// `content.include` at the default: `revision|ancestry|stmt_ancestry_chain` somewhere in the file. The words hold no
+// line terminator, so a line holding one is exactly a file matching (stmt_ancestry_chain holds "ancestry").
+.decl revision_ancestry_content(d: number)
+revision_ancestry_content(d) :- revision_ancestry_line(d, _, t), (contains("revision", t) ; contains("ancestry", t)).
+
+// Lines a window starts at: those where a multi-line match may start.
+.decl revision_ancestry_start(d: number, l: number)
+revision_ancestry_start(d, l) :- descriptor_candidate(d, l).
+revision_ancestry_start(d, l) :- stored_text_cast_0_candidate(d, l).
+revision_ancestry_start(d, l) :- stored_text_cast_1_candidate(d, l).
+
+// Windows by doubling: revision_ancestry_wK(d, l, s), s lines l..l+K-1 joined by "\n" (to the file's end if it
+// comes first), computed only for the lines a wider window needs (revision_ancestry_needK).
+.decl revision_ancestry_need32(d: number, l: number)
+.decl revision_ancestry_need16(d: number, l: number)
+.decl revision_ancestry_need8(d: number, l: number)
+.decl revision_ancestry_need4(d: number, l: number)
+.decl revision_ancestry_need2(d: number, l: number)
+.decl revision_ancestry_need1(d: number, l: number)
+revision_ancestry_need32(d, l) :- revision_ancestry_start(d, l).
+revision_ancestry_need16(d, l) :- revision_ancestry_need32(d, l).
+revision_ancestry_need16(d, l + 16) :- revision_ancestry_need32(d, l), revision_ancestry_line(d, l + 16, _).
+revision_ancestry_need8(d, l) :- revision_ancestry_need16(d, l).
+revision_ancestry_need8(d, l + 8) :- revision_ancestry_need16(d, l), revision_ancestry_line(d, l + 8, _).
+revision_ancestry_need4(d, l) :- revision_ancestry_need8(d, l).
+revision_ancestry_need4(d, l + 4) :- revision_ancestry_need8(d, l), revision_ancestry_line(d, l + 4, _).
+revision_ancestry_need2(d, l) :- revision_ancestry_need4(d, l).
+revision_ancestry_need2(d, l + 2) :- revision_ancestry_need4(d, l), revision_ancestry_line(d, l + 2, _).
+revision_ancestry_need1(d, l) :- revision_ancestry_need2(d, l).
+revision_ancestry_need1(d, l + 1) :- revision_ancestry_need2(d, l), revision_ancestry_line(d, l + 1, _).
+
+.decl revision_ancestry_w1(d: number, l: number, s: symbol)
+.decl revision_ancestry_w2(d: number, l: number, s: symbol)
+.decl revision_ancestry_w4(d: number, l: number, s: symbol)
+.decl revision_ancestry_w8(d: number, l: number, s: symbol)
+.decl revision_ancestry_w16(d: number, l: number, s: symbol)
+.decl revision_ancestry_full(d: number, l: number, s: symbol)
+revision_ancestry_w1(d, l, t) :- revision_ancestry_need1(d, l), revision_ancestry_line(d, l, t).
+revision_ancestry_w2(d, l, cat(cat(a, "\n"), b)) :- revision_ancestry_need2(d, l), revision_ancestry_w1(d, l, a), revision_ancestry_w1(d, l + 1, b).
+revision_ancestry_w2(d, l, a) :- revision_ancestry_need2(d, l), revision_ancestry_w1(d, l, a), !revision_ancestry_line(d, l + 1, _).
+revision_ancestry_w4(d, l, cat(cat(a, "\n"), b)) :- revision_ancestry_need4(d, l), revision_ancestry_w2(d, l, a), revision_ancestry_w2(d, l + 2, b).
+revision_ancestry_w4(d, l, a) :- revision_ancestry_need4(d, l), revision_ancestry_w2(d, l, a), !revision_ancestry_line(d, l + 2, _).
+revision_ancestry_w8(d, l, cat(cat(a, "\n"), b)) :- revision_ancestry_need8(d, l), revision_ancestry_w4(d, l, a), revision_ancestry_w4(d, l + 4, b).
+revision_ancestry_w8(d, l, a) :- revision_ancestry_need8(d, l), revision_ancestry_w4(d, l, a), !revision_ancestry_line(d, l + 4, _).
+revision_ancestry_w16(d, l, cat(cat(a, "\n"), b)) :- revision_ancestry_need16(d, l), revision_ancestry_w8(d, l, a), revision_ancestry_w8(d, l + 8, b).
+revision_ancestry_w16(d, l, a) :- revision_ancestry_need16(d, l), revision_ancestry_w8(d, l, a), !revision_ancestry_line(d, l + 8, _).
+// The window a clause tests: 32 lines from l [window].
+revision_ancestry_full(d, l, cat(cat(a, "\n"), b)) :- revision_ancestry_need32(d, l), revision_ancestry_w16(d, l, a), revision_ancestry_w16(d, l + 16, b).
+revision_ancestry_full(d, l, a) :- revision_ancestry_need32(d, l), revision_ancestry_w16(d, l, a), !revision_ancestry_line(d, l + 16, _).
+
+// ---- descriptor-*: `\A[\s\S]*?(?P<DESCRIPTOR>(?m:^class\s+NAME\b))`, one finding at the first such line ------------
+
+// A line `class` starts, then whitespace or the line's end (`\s+` may take the terminator).
+.decl descriptor_candidate(d: number, l: number)
+descriptor_candidate(d, l) :- revision_ancestry_line(d, l, t), match("class(?:\\s[\\s\\S]*)?", t).
+
+// descriptor_hit(d, name, l): line l starts `class\s+name\b`.
+.decl descriptor_hit(d: number, c: symbol, l: number)
+descriptor_hit(d, "SqlAncestryChainCte", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlAncestryChainCte\\b[\\s\\S]*", s).
+descriptor_hit(d, "SqlNativeRevisionValue", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlNativeRevisionValue\\b[\\s\\S]*", s).
+descriptor_hit(d, "SqlRevisionAncestryDefinition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlRevisionAncestryDefinition\\b[\\s\\S]*", s).
+descriptor_hit(d, "SqlRevisionInAncestryCondition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlRevisionInAncestryCondition\\b[\\s\\S]*", s).
+descriptor_hit(d, "_SparseRowVisibleAtRevisionCondition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+_SparseRowVisibleAtRevisionCondition\\b[\\s\\S]*", s).
+descriptor_hit(d, "_SqlCopyVisibleSparseAncestors", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+_SqlCopyVisibleSparseAncestors\\b[\\s\\S]*", s).
+descriptor_hit(d, "_SqlVisibleAncestorsDefinition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+_SqlVisibleAncestorsDefinition\\b[\\s\\S]*", s).
+
+// The lazy `\A[\s\S]*?` makes the first line the only match.
+.decl descriptor_first(d: number, c: symbol, l: number)
+descriptor_first(d, c, l) :- descriptor_hit(d, c, _), revision_ancestry_content(d), l = min k : { descriptor_hit(d, c, k) }.
+
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlAncestryChainCte", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "SqlAncestryChainCte", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlNativeRevisionValue", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "SqlNativeRevisionValue", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionAncestryDefinition", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "SqlRevisionAncestryDefinition", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionInAncestryCondition", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "SqlRevisionInAncestryCondition", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SparseRowVisibleAtRevisionCondition", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "_SparseRowVisibleAtRevisionCondition", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlCopyVisibleSparseAncestors", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "_SqlCopyVisibleSparseAncestors", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlVisibleAncestorsDefinition", "forbidden_descriptor", p, l) :-
+  descriptor_first(d, "_SqlVisibleAncestorsDefinition", l), revision_ancestry_file(d, p).
+
+// ---- removed-surface: `\A[\s\S]*?(?P<SURFACE>stmt_ancestry_chain)`, one finding at the first line holding it -------
+// The literal holds no terminator, so this is exact; the content gate holds wherever it does.
+.decl removed_surface_hit(d: number, l: number)
+removed_surface_hit(d, l) :- revision_ancestry_line(d, l, t), contains("stmt_ancestry_chain", t).
+
+violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed_surface", p, l) :-
+  removed_surface_hit(d, _), l = min k : { removed_surface_hit(d, k) }, revision_ancestry_file(d, p).
+
+// ---- stored-text-cast-0: `(?i)(?:COLUMN)["'`]?[\s\S]{0,80}::\s*text`, a finding at each match's start line ---------
+// Every column name holds `revision_sys_id` or `sys_valid_`, which a match's start line holds.
+.decl stored_text_cast_0_candidate(d: number, l: number)
+stored_text_cast_0_candidate(d, l) :- revision_ancestry_line(d, l, t), match("[\\s\\S]*(?i:revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\s\\S]*", t).
+
+// A match starts on line l: `[^\n]*` keeps the column name on the window's first line [overlap].
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-0", "stored_revision_text_cast", p, l) :-
+  stored_text_cast_0_candidate(d, l), revision_ancestry_content(d), revision_ancestry_full(d, l, s),
+  match("[^\n]*(?i:(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\"'`]?[\\s\\S]{0,80}::\\s*text)[\\s\\S]*", s),
+  revision_ancestry_file(d, p).
+
+// ---- stored-text-cast-1: `(?i)CAST\([\s\S]{0,160}?COLUMN["'`]?[\s\S]{0,80}?\s+AS\s+(?:TEXT|CHAR(…)?)\s*\)` ---------
+.decl stored_text_cast_1_candidate(d: number, l: number)
+stored_text_cast_1_candidate(d, l) :- revision_ancestry_line(d, l, t), match("[\\s\\S]*(?i:cast\\()[\\s\\S]*", t).
+
+// A match starts on line l: `[^\n]*` keeps `CAST(` on the window's first line [overlap].
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-1", "stored_revision_text_cast", p, l) :-
+  stored_text_cast_1_candidate(d, l), revision_ancestry_content(d), revision_ancestry_full(d, l, s),
+  match("[^\n]*(?i:CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\))[\\s\\S]*", s),
+  revision_ancestry_file(d, p).
