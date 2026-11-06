@@ -342,3 +342,60 @@ fn nfkc_identifier_parity() {
         }
     }
 }
+
+/// `literal_json` (`cpython::literal`) against CPython: at each expression of each file that parses (the oracle's
+/// `literals` mode, f-strings' own pieces left out), its `json.dumps(ast.literal_eval(node), sort_keys=True,
+/// separators=(",", ":"))`, or none where either raises, against the engine's, by span and class. The expressions with a
+/// value are counted apart.
+#[test]
+#[ignore]
+fn literal_json_parity() {
+    use super::literal::{Class, literals};
+    for python in pythons() {
+        println!("CPython {} ({python})", version(&python));
+        for corpus in corpora() {
+            let want = oracle(&python, "literals", &corpus.files);
+            let texts = sources(&corpus.files);
+            let got: Vec<Option<Vec<super::literal::Literal>>> = texts.par_iter().map(|s| s.as_deref().map(literals)).collect();
+            let (mut all, mut valued) = (Tally::default(), Tally::default());
+            for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
+                let (Some(source), Some(got), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };
+                let Some(rows) = row["n"].as_array() else { continue };
+                let engine: BTreeMap<(u32, u32, Class), &str> = got.iter().map(|l| ((l.start, l.end, l.class), l.json.as_str())).collect();
+                let mut seen = BTreeSet::new();
+                for r in rows {
+                    let class = match r[2].as_str().unwrap() {
+                        "Constant" => Class::Constant,
+                        "Tuple" => Class::Tuple,
+                        "List" => Class::List,
+                        "Dict" => Class::Dict,
+                        "UnaryOp" => Class::UnaryOp,
+                        other => {
+                            // No other class has a value (a set, a complex sum, `set()` are no JSON).
+                            if let Some(v) = r[3].as_str() {
+                                valued.add(false, || format!("{shown}: CPython {v:?} for a {other}"));
+                            }
+                            continue;
+                        }
+                    };
+                    let key = (r[0].as_u64().unwrap() as u32, r[1].as_u64().unwrap() as u32, class);
+                    seen.insert(key);
+                    let cpython = r[3].as_str();
+                    let engine = engine.get(&key).copied();
+                    let text = || source.get(key.0 as usize..key.1 as usize).unwrap_or("?").chars().take(160).collect::<String>();
+                    let difference = || format!("{shown}@{}: {:?}: CPython {cpython:?}, engine {engine:?}", key.0, text());
+                    all.add(cpython == engine, difference);
+                    if cpython.is_some() || engine.is_some() {
+                        valued.add(cpython == engine, difference);
+                    }
+                }
+                for (key, v) in engine.iter().filter(|(k, _)| !seen.contains(k)) {
+                    valued.add(false, || format!("{shown}@{}: engine {v:?} at no CPython expression of its class", key.0));
+                }
+            }
+            println!(" {}: {} files", corpus.name, want.len());
+            all.report("expressions of a class with values: literal_json or none");
+            valued.report("those with a value on either side");
+        }
+    }
+}

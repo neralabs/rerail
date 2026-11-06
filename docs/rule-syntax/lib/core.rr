@@ -411,8 +411,14 @@
 // run between interpolations, and spec = 1 for a piece inside a format spec. v is decoded (escapes applied).
 // at is the source piece it starts in. Bytes literals give no row. Native: it is CPython's decoder.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
+// literal_json(n, "{\"a\":[1,2.5]}") for `{'a': [1, 2.5]}`: CPython 3.13's json.dumps(ast.literal_eval(node),
+// sort_keys=True, separators=(",", ":")) of the `ast` node at n's span (W's pythonAst `literal_json`): a constant, a
+// tuple, list or dict of them, or `-n`. No row where literal_eval raises (a name, a call, an f-string, an unhashable
+// key) or json.dumps does (bytes, a set, a complex number, `...`, keys of different kinds, more than 4300 digits).
+// Native over Ruff's tree of the file; no Python runs. Cost: one parse per file and a pass over its expressions.
+.decl literal_json(n: node, v: symbol)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, string_annotation, option
-.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part
+.input signed_list, git_tracked, git_rev, git_has, git_commit, str_part, literal_json
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no

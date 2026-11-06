@@ -10,6 +10,8 @@ runs the files. Modes:
   literal_json `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` (null where either raises),
   names the def's [body_sha256, signature_sha256] as W's python_ast worker hashed them (null but for a def).
 - `names`: {"p", "n"}: each Name id, Attribute attr, def/class name and arg, [start, end, text].
+- `literals`: {"p", "n"}: each expression but an f-string's own pieces, [start, end, type, literal_json] (literal_json as
+  in `ast`, null where literal_eval or json.dumps raises).
 - `annotations`: {"p", "n"}: each str Constant, [start, end, parsed, names, annotation]: parsed whether
   `ast.parse(value, mode="eval")` accepts it, names the sorted Name ids and Attribute attrs of its tree, annotation
   whether it stands at an annotation (field annotation or returns, or anywhere below one).
@@ -99,6 +101,13 @@ def one(path):
             lit = literal_json(node) if isinstance(node, ast.expr) else None
             names = def_hashes(node) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
             out.append([s, e, type(node).__name__, text, digest, lit, names])
+    elif MODE == "literals":
+        pieces = {id(c) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for c in n.values}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.expr) or id(node) in pieces:
+                continue
+            s, e = span(node, offsets)
+            out.append([s, e, type(node).__name__, literal_json(node)])
     elif MODE == "names":
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):

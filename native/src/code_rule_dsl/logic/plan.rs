@@ -1287,6 +1287,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "cpython_syntax_error" => &[&["d"]],
         "string_annotation" => &[&["s"]],
         "parsed" => &[&["s"], &["root"]],
+        "literal_json" => &[&["n"], &["v", "n"]],
         "intval" | "op" | "tape" | "line" | "end_line" | "col" | "reference_open" => &[&["n"]],
         "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],

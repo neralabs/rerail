@@ -4,9 +4,12 @@
 //! and nera-data-layer's `.python-version` names:
 //!
 //! - `syntax`: `ast.parse`'s verdict, the line and message of its `SyntaxError` (core.rr's `syntax_error(d, l, msg)`).
+//! - `literal`: `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` of each expression, W's
+//!   pythonAst `literal_json` (core.rr's `literal_json(n, v)`).
 //!
 //! Real CPython runs only as the test oracle of `parity` (ignored tests, on the boxes).
 
+pub(crate) mod literal;
 pub(crate) mod syntax;
 
 #[cfg(test)]

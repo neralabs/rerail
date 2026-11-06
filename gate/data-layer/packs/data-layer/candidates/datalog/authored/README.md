@@ -109,6 +109,7 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl string_annotation(s: node)                  // a string Ruff's semantic model reads as a type definition
 .decl parsed(s: node, grammar: symbol, root: node)
                                                   // grammar "annotation": root is the tree of string annotation s
+.decl literal_json(n: node, v: symbol)            // W's pythonAst literal_json: json.dumps(ast.literal_eval(n))
 // built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
 // match_all(re: symbol, sp: span, m: span)
 // built-in, not declared: gsp is the span of named group g in match m (of match_all("re", sp, m)), where g takes part
@@ -218,6 +219,14 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   outer tree, and has its own. A string Ruff's parser refuses (CPython's `ast.parse(value, mode="eval")` refuses it
   too) has `string_annotation` and no `parsed` row. A rule over `node(d, n, …)` that is not joined to `doc(d, …)` or
   `in_scope(d)` also reads the trees' nodes, where the program reads `parsed` or `string_annotation`.
+- `literal_json(n, v)` (`facts::vtab::syntax::cpython`, `cpython::literal`) is W's pythonAst `literal_json` field:
+  CPython 3.13's `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` of the `ast` node at
+  n's span whose class n's kind is (W's worker's `KINDS`: a `string` or `concatenated_string` (not its parts), an
+  `integer`, `float`, `true`, `false`, `none`, a `tuple`, `list` or `dictionary`, a `unary_operator` (`-1`), a
+  `type`). `{'b': 1, 'a': (1, 2.5)}` is `{"a":[1,2.5],"b":1}`, `'é'` is `"\u00e9"`, `1e16` is `1e+16`. No row
+  where either raises: a name, a call, an f-string, bytes, a set, a complex number, `...`, an unhashable or
+  non-scalar key, str and number keys together. A dict's later equal key keeps the first key and the later value
+  (`{1: 'a', True: 'b'}` is `{"1":"b"}`).
 
 The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` with `Extra`):
 

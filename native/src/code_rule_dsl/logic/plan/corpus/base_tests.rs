@@ -1506,3 +1506,43 @@ files(p) :- doc(_, p, _).
     assert_eq!(got[3], "a.py\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `literal_json(n, v)` is W's pythonAst `literal_json`: CPython's `json.dumps(ast.literal_eval(node), sort_keys=True,
+/// separators=(",", ":"))` at the nodes W's worker reads as the `ast` node of their span (a `type` node too), none
+/// where it raises; an implicitly concatenated string's parts are no `ast` node.
+#[test]
+fn literal_json_is_ws_python_ast_field() {
+    let source = "x = {'b': 1, 'a': (1, 2.5)}\ny = -1\nz = [f(), 1e16]\nw = 'é' 'x'\na: [None] = {1, 2}\nb = {'k': b'v'}\n";
+    let dir = corpus("literal-json", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl vals(k: symbol, t: symbol, v: symbol)
+vals(k, t, v) :- literal_json(n, v), node(_, n, k, _, _), node_text(n, t).
+.output vals
+"#;
+    let got = run(&dir, program, &["vals"]);
+    assert_eq!(
+        got[0],
+        csv([
+            "dictionary\t{'b': 1, 'a': (1, 2.5)}\t{\"a\":[1,2.5],\"b\":1}",
+            "float\t1e16\t1e+16",
+            "float\t2.5\t2.5",
+            "integer\t1\t1",
+            "integer\t1\t1",
+            "integer\t1\t1",
+            "integer\t2\t2",
+            "none\tNone\tnull",
+            "concatenated_string\t'é' 'x'\t\"\\u00e9x\"",
+            "string\t'a'\t\"a\"",
+            "string\t'b'\t\"b\"",
+            "string\t'k'\t\"k\"",
+            "tuple\t(1, 2.5)\t[1,2.5]",
+            "type\t[None]\t[null]",
+            "list\t[None]\t[null]",
+            "unary_operator\t-1\t-1",
+        ]
+        .map(str::to_owned))
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

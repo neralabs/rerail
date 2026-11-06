@@ -906,7 +906,7 @@ impl Batch {
             extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut rows.text, &mut string)?;
             tree.document(&p, dialect, &d.path, python == Some(tag), &mut string);
             fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
-            cpython.document(&p, python == Some(tag), &mut string);
+            cpython.document(&p, dialect, python == Some(tag), &mut string);
             parsed.extend(annotations.document(&p, d, dialect, python == Some(tag), &mut string)?);
             docs.push(p);
         }
