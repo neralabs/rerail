@@ -1,0 +1,156 @@
+// data-layer-raw-execute-regression: the clauses the converter cannot say, at the default options only:
+// entryPoint "all" (every clause on), oracleAnalyzer false (code RER001), compatibilityStubFiles the policy's
+// default list. data-layer-raw-execute-regression.pending.rr is the whole rule gated on the option facts
+// (`option_on`/`option_item`/`option_value`); it replaces this file once the converter gives them.
+// mixed-marker-0..4: W tests a `module` node's full text (comments, docstrings and strings included) against a
+// plain phrase, so `contains` over `node_text` is the regex exactly. The converter's own form for 0..2 ("some
+// name in the file contains the phrase") misses the phrase in strings, comments and docstrings (the recorded
+// test_flags_mixed_helper_text has it in a string); these replace it.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl node_text(n: node, s: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl nearest(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- removed-definitions ----------------------------------------------------------------------------------------
+// A function_definition ($OWNER) named one of the removed helpers, unless the file is a compatibility stub whose
+// body raises (a `raise`, or a call of `x._raise_…`) in $OWNER itself and calls no removed helper in $OWNER itself.
+// "In $OWNER itself": the node's nearest enclosing function_definition (W: `inside` that function_definition,
+// `stopBy` function_definition, then `compare` OWNER = SAME_OWNER as the same node) is $OWNER. The node is a strict
+// descendant of $OWNER's body block (W: `has` field body, then `has` stopBy end), checked by byte span.
+
+.decl removed_definitions_fdef(kind: symbol)
+removed_definitions_fdef("function_definition").
+
+// The names a removed definition has (the clause's `^(?:…)$` over the name identifier).
+.decl removed_definitions_name(s: symbol)
+removed_definitions_name("_execute_grammar").
+removed_definitions_name("_execute_grammar_async").
+removed_definitions_name("_execute_sql_or_schema_statement").
+removed_definitions_name("_execute_sql_or_schema_statement_async").
+removed_definitions_name("_execute_template_with_params").
+removed_definitions_name("_execute_template_with_params_async").
+removed_definitions_name("_is_schema_ddl_statement").
+removed_definitions_name("execute_grammar").
+removed_definitions_name("execute_sql").
+removed_definitions_name("fetchall_grammar").
+removed_definitions_name("fetchall_raw").
+removed_definitions_name("fetchall_raw_async").
+removed_definitions_name("fetchone_grammar").
+removed_definitions_name("fetchone_raw").
+removed_definitions_name("fetchone_raw_async").
+removed_definitions_name("nonportably_execute_sql").
+removed_definitions_name("raw_execute").
+removed_definitions_name("raw_execute_async").
+removed_definitions_name("raw_execute_fetch").
+removed_definitions_name("raw_execute_fetch_async").
+
+// The removed helpers a stub must not call (the inner call's `^(?:…)$`, as removed-calls').
+.decl removed_definitions_call_name(s: symbol)
+removed_definitions_call_name("_execute_grammar").
+removed_definitions_call_name("_execute_sql_or_schema_statement").
+removed_definitions_call_name("_execute_sql_or_schema_statement_async").
+removed_definitions_call_name("_execute_template_with_params").
+removed_definitions_call_name("_execute_template_with_params_async").
+removed_definitions_call_name("execute_grammar").
+removed_definitions_call_name("execute_sql").
+removed_definitions_call_name("fetchall_grammar").
+removed_definitions_call_name("fetchall_raw").
+removed_definitions_call_name("fetchall_raw_async").
+removed_definitions_call_name("fetchone_grammar").
+removed_definitions_call_name("fetchone_raw").
+removed_definitions_call_name("fetchone_raw_async").
+removed_definitions_call_name("nonportably_execute_sql").
+removed_definitions_call_name("raw_execute").
+removed_definitions_call_name("raw_execute_async").
+removed_definitions_call_name("raw_execute_fetch").
+removed_definitions_call_name("raw_execute_fetch_async").
+
+// compatibilityStubFiles' default: the filePath regex `^(?:a|b|…)$` of the escaped paths, an exact path match.
+.decl removed_definitions_stub(p: symbol)
+removed_definitions_stub("impl/common/l2200_sql_dialect/sql_connection.py").
+removed_definitions_stub("impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_transaction.py").
+removed_definitions_stub("impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py").
+removed_definitions_stub("impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py").
+removed_definitions_stub("impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py").
+removed_definitions_stub("impl/doltdb/connection.py").
+removed_definitions_stub("impl/doltdb/versioned_write_transaction.py").
+removed_definitions_stub("impl/mariadb/connection.py").
+removed_definitions_stub("impl/mongodb/connection.py").
+removed_definitions_stub("impl/mongodb/transaction.py").
+removed_definitions_stub("impl/mongodb/versioned_read_transaction_sparse.py").
+removed_definitions_stub("impl/neo4j/connection.py").
+removed_definitions_stub("impl/neo4j/transaction.py").
+removed_definitions_stub("impl/neo4j/versioned_read_transaction_sparse.py").
+removed_definitions_stub("impl/postgres/connection.py").
+removed_definitions_stub("impl/read_through/connection.py").
+removed_definitions_stub("impl/read_through/transaction.py").
+removed_definitions_stub("impl/sqlite/connection.py").
+removed_definitions_stub("impl/sqlite/transaction.py").
+removed_definitions_stub("l2000_connection/connection.py").
+removed_definitions_stub("l2050_transaction/transaction.py").
+removed_definitions_stub("l7200_versioned_transactions/versioned_transactions.py").
+
+// The function definitions named a removed helper.
+.decl removed_definitions_owner(d: number, f: node)
+removed_definitions_owner(d, f) :-
+    node(d, f, "function_definition", _, _), field(f, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, s), removed_definitions_name(s).
+
+// x is a strict descendant of owner f's body block whose nearest enclosing function_definition is f.
+.decl removed_definitions_own(f: node, x: node)
+removed_definitions_own(f, x) :-
+    removed_definitions_owner(d, f), field(f, "body", b), node(d, b, _, bs, be),
+    node(d, x, _, xs, xe), x != b, bs <= xs, xe <= be, nearest(x, f, removed_definitions_fdef).
+
+// The raising nodes: a raise_statement, or a call whose function is an attribute `…._raise_…`.
+.decl removed_definitions_raise(x: node)
+removed_definitions_raise(x) :- node(_, x, "raise_statement", _, _).
+removed_definitions_raise(x) :-
+    node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", at), text(at, s), prefix("_raise_", s).
+
+// The calls of a removed helper: a call whose function is an attribute `….<name>`.
+.decl removed_definitions_call(x: node)
+removed_definitions_call(x) :-
+    node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", at), node(_, at, "identifier", _, _), text(at, s), removed_definitions_call_name(s).
+
+.decl removed_definitions_raises(f: node)
+removed_definitions_raises(f) :- removed_definitions_own(f, x), removed_definitions_raise(x).
+.decl removed_definitions_calls(f: node)
+removed_definitions_calls(f) :- removed_definitions_own(f, x), removed_definitions_call(x).
+
+// The excused definitions: in a compatibility stub, raising, calling no removed helper.
+.decl removed_definitions_stubbed(f: node)
+removed_definitions_stubbed(f) :-
+    removed_definitions_owner(d, f), doc(d, p, _), removed_definitions_stub(p),
+    removed_definitions_raises(f), !removed_definitions_calls(f).
+
+violation("data-layer-raw-execute-regression", "removed-definitions", "RER001", p, l) :-
+    removed_definitions_owner(d, f), !removed_definitions_stubbed(f),
+    in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+
+// ---- mixed-marker-0..4 ------------------------------------------------------------------------------------------
+// A module in scope, its path and full text. Anchor file.start: line 1.
+.decl mixed_marker_module(p: symbol, s: symbol)
+mixed_marker_module(p, s) :-
+    node(d, n, "module", _, _), node_text(n, s), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+
+violation("data-layer-raw-execute-regression", "mixed-marker-0", "RER001", p, 1) :-
+    mixed_marker_module(p, s), contains("_execute_sql_or_schema_statement", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-1", "RER001", p, 1) :-
+    mixed_marker_module(p, s), contains("_execute_sql_or_schema_statement_async", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-2", "RER001", p, 1) :-
+    mixed_marker_module(p, s), contains("_is_schema_ddl_statement", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-3", "RER001", p, 1) :-
+    mixed_marker_module(p, s), contains("arbitrary grammar router", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-4", "RER001", p, 1) :-
+    mixed_marker_module(p, s), contains("compatibility router", s).
