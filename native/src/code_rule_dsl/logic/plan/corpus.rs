@@ -916,10 +916,15 @@ impl crate::code_rule_dsl::facts::vtab::Source for Rows {
 }
 
 
-/// Whether the corpus runner reads the file at `path` as text only (core.rr's `.scope text`): no dialect has its
-/// suffix (`.md`, `.rst`, `.txt`, `.toml`, …), so it has `doc` and the source text's relations and no tree.
+/// The suffixes of the files the corpus runner reads as text only (core.rr's `.scope text`): documentation and
+/// configuration, never a run's own outputs (`.csv`, `.sqlite`, which may lie under the root) or binaries.
+const TEXT_SUFFIXES: [&str; 9] = ["md", "markdown", "rst", "txt", "toml", "cfg", "ini", "yaml", "yml"];
+
+/// Whether the corpus runner reads the file at `path` as text only: no dialect has its suffix and it is one of
+/// `TEXT_SUFFIXES`, so it has `doc` and the source text's relations and no tree.
 fn text_document(path: &str) -> bool {
     crate::code_rule_dsl::language::label_of_path(path).is_none()
+        && Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| TEXT_SUFFIXES.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and the text-only
