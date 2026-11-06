@@ -132,7 +132,7 @@ mask has_b    = (pre1 & prev(bpfx)) | (pre2 & (prev(bpfx) | prev(bpfx, 2)))
 # confirms it, and a compiler can skip the confirming round when §5 finds no interpolation that
 # ends open.
 
-rounds 8 {
+rounds 8 until settled {
   carry icode   = empty                          # interpolation code, from the previous round
 
   mask q1       = sq & ~icode
@@ -143,7 +143,7 @@ rounds 8 {
 
   # A newline inside interpolation code does not end a line (Python 3.12).
   hypotheses line split nl & ~icode lanes out s3 d3 {
-    rounds 6 {
+    rounds 6 until settled {
       carry hidden = empty                       # triple candidates inside a short string or comment
       carry cend   = empty                       # escaped newlines that end a comment: `# C:\`
       mask live    = (t1 | t2) & ~hidden
@@ -200,13 +200,13 @@ rounds 8 {
   block fstrings(body, end, raw, triple) {
     mask lbr      = lbrace & body
     mask rbr      = rbrace & body
-    rounds 8 {
+    rounds 8 until settled {
       carry up      = lbr & next(after_odd_run(lbr))
       carry down    = rbr & next(after_odd_run(rbr))
       carry fopen   = up
       carry colon   = empty
 
-      scan depth    = count(up, down) reset ~body
+      scan depth    = count(up, down) reset ~body max 8
       mask d0       = ~prev(depth.ge(1))                         # literal text
       mask atf      = depth.frame(fopen)                         # directly inside a replacement field
       mask stext    = atf & depth.since(colon)                   # its format spec: only braces count

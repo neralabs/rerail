@@ -208,7 +208,7 @@ impl<'a> Ev<'a> {
                 }
                 self.vars.insert(name.clone(), Val::S(Scan { names, groups: vec![], st, pre, ev: evm, end: x }));
             }
-            Stmt::Count { name, up, down, reset } => {
+            Stmt::Count { name, up, down, reset, max } => {
                 let (u, d) = (self.mask(up)?, self.mask(down)?);
                 let reset = match reset {
                     Some(r) => self.mask(r)?,
@@ -224,11 +224,18 @@ impl<'a> Ev<'a> {
                     if reset.get(i) {
                         x = 0
                     } else if u.get(i) {
-                        x += 1
+                        x = (x + 1).min(*max as i32 + 1)
                     } else if d.get(i) && x > 0 {
                         x -= 1
                     }
                     v[i] = x;
+                }
+                let over = Mask::from_fn(self.n, |i| v[i] > *max as i32);
+                let msg = format!("{name} exceeds max {max}");
+                if self.seg.is_some() {
+                    self.lane_rejects.push((msg, over));
+                } else {
+                    self.err(&msg, &over);
                 }
                 self.vars.insert(name.clone(), Val::C(v));
             }
@@ -249,7 +256,7 @@ impl<'a> Ev<'a> {
                 self.lane_rejects.push((msg.clone(), m));
             }
             Stmt::Exit(name) => self.lane_exit = Some(name.clone()),
-            Stmt::Rounds { n, body } => self.rounds(*n, body)?,
+            Stmt::Rounds { n, body, .. } => self.rounds(*n, body)?,
             Stmt::Carry(..) | Stmt::Next(..) => return Err("carry or next outside rounds".into()),
             Stmt::Ucode { over, classes } => {
                 let over = self.mask(over)?;

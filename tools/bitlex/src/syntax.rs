@@ -58,14 +58,18 @@ pub enum Stmt {
     Class(String, Vec<(u32, u32)>),
     Mask(String, Expr),
     Reflect { name: String, a: Expr, an: String, b: Expr, bn: String, reset: Option<Expr>, start_lane: bool },
-    Count { name: String, up: Expr, down: Expr, reset: Option<Expr> },
+    /// A count with a floor at 0 and a declared bound: above `max`, an error (a rejection
+    /// inside `hypotheses`), and the count stays at `max + 1`.
+    Count { name: String, up: Expr, down: Expr, reset: Option<Expr>, max: u32 },
     Machine(String, MachineDef),
     Block { name: String, params: Vec<String>, body: Vec<Stmt> },
     Inst { name: String, template: String, args: Vec<Expr> },
     Hyp { name: String, split: Expr, lanes: Vec<String>, body: Vec<Stmt> },
     Reject(String, Expr),
     Exit(String),
-    Rounds { n: usize, body: Vec<Stmt> },
+    /// At most `n` rounds. `until settled`: a backend may stop once a round changes no carry;
+    /// without it, every round runs. Either way the values are the same.
+    Rounds { n: usize, settle: bool, body: Vec<Stmt> },
     Carry(String, Expr),
     Next(String, Expr),
     Ucode { over: Expr, classes: Vec<(String, UClass)> },
@@ -506,8 +510,18 @@ impl P {
                     self.want_p(",")?;
                     let down = self.expr()?;
                     self.want_p(")")?;
-                    let reset = if self.eat_kw("reset") { Some(self.expr()?) } else { None };
-                    Stmt::Count { name, up, down, reset }
+                    let (mut reset, mut max) = (None, None);
+                    loop {
+                        if self.eat_kw("reset") {
+                            reset = Some(self.expr()?)
+                        } else if self.eat_kw("max") {
+                            max = Some(self.int()? as u32)
+                        } else {
+                            break;
+                        }
+                    }
+                    let Some(max) = max else { return self.err("`max N`: a count's bound") };
+                    Stmt::Count { name, up, down, reset, max }
                 } else {
                     return self.err("reflect or count");
                 };
@@ -547,7 +561,11 @@ impl P {
             }
             "rounds" => {
                 let n = self.int()? as usize;
-                Stmt::Rounds { n, body: self.block()? }
+                let settle = self.eat_kw("until");
+                if settle {
+                    self.want_kw("settled")?;
+                }
+                Stmt::Rounds { n, settle, body: self.block()? }
             }
             "reject" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();

@@ -80,9 +80,9 @@ directed acyclic graph of mask operations.
 | `mask NAME = EXPR` | A named mask. |
 | `machine NAME { … }` | A data-parallel automaton over chosen event bytes (§2.3). |
 | `scan NAME = reflect(A -> S, B -> T) [reset R] [start lane]` | The reflection scan: states `out`, `S`, `T` (§2.7). |
-| `scan NAME = count(UP, DOWN) [reset R]` | A count that never goes below 0 (§2.7). |
+| `scan NAME = count(UP, DOWN) [reset R] max D` | A count that never goes below 0 and is bounded by `D` (§2.7). |
 | `hypotheses NAME split E lanes L … { … }` | Statements evaluated once per lane on every segment; the segment ends pick the lane (§2.7). |
-| `rounds N { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
+| `rounds N [until settled] { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
 | `block NAME(P, …) { … }`, `block NAME = TEMPLATE(E, …)` | A family of statements with mask parameters, and an instance of it (§2.5). |
 | `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
@@ -224,10 +224,10 @@ ucode over code & high {
 
 ```text
 scan qq    = reflect(sq -> s, dq -> d) reset tstr      # states out, s, d
-scan depth = count(up, down) reset ~body               # +1, -1, never below 0
+scan depth = count(up, down) reset ~body max 8         # +1, -1, never below 0, at most 8
 
 hypotheses line split nl & ~icode lanes out s3 d3 {
-  rounds 6 {
+  rounds 6 until settled {
     carry hidden = empty
     scan tq      = reflect(t1 & ~hidden -> s3, t2 & ~hidden -> d3) start lane
     …
@@ -247,7 +247,11 @@ reflection's fixed point, so a `"` inside `'…'` changes nothing.
 - **Tests:** `in()` and `on()`, as for a machine. `on(out -> s | d)` holds at an opening quote.
 
 **`count(UP, DOWN)`** adds 1 at each byte of `UP` and subtracts 1 at each byte of `DOWN`, except at
-0. With `reset R` it is 0 at the bytes of `R`. Besides `eq` and `ge`, it answers two questions
+0. With `reset R` it is 0 at the bytes of `R`.
+
+- **`max D` is required.** A count above `D` is an error (inside `hypotheses`, a rejection), and
+  the count stays at `D + 1` from there. The bound sets the width of the count's lanes, and
+  `frame`, `since` and `head(a, C)` lower to one fill or shift per level up to `D`. Besides `eq` and `ge`, it answers two questions
 about the bracket frames it counts:
 
 - `C.frame(a)`: whether the frame around byte `i` was opened by a byte of `a`. The f-string lexer
@@ -278,6 +282,9 @@ carry unchanged, it has reached the fixed point, and the names keep that round's
 - Inside `hypotheses`, the segments whose carries still change after `N` rounds reject their
   lane. Elsewhere, not settling is an error.
 - Errors reported during a round count only in the last one.
+- **`until settled`** lets a backend stop as soon as a round leaves every carry unchanged. That
+  is a test per chunk of input per round, not per byte. Without it every round runs, so the cost
+  is fixed. The values are the same either way: a settled round repeats itself.
 
 The lexers use rounds only where the fixed point is unique: every role is decided from bytes
 before it, so by induction from the left there is one self-consistent answer
