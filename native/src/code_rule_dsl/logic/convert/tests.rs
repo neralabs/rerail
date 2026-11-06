@@ -26,6 +26,9 @@ struct Converted {
     /// Whether the run's options differ from the policy's own (its config, else its defaults), or its clauses were
     /// edited: what an authored file, written for the policy as it is, does not follow.
     configured: bool,
+    /// The clauses whose Python matchers carry `when` (an option condition), with those conditions: what they
+    /// convert to holds for this run's options only.
+    when: BTreeMap<String, Vec<String>>,
 }
 
 /// Why a rule did not convert: the run's configuration does not apply to it, or its authored file is wrong.
@@ -55,6 +58,23 @@ struct Adjust {
     scope: Option<(Vec<String>, Vec<String>)>,
     keep: Option<Box<dyn Fn(&str) -> bool>>,
     policy: Option<Box<dyn Fn(&mut serde_json::Value) -> Result<bool, String>>>,
+}
+
+/// The leaves of a JSON value, each at its JSON pointer (RFC 6901: `/a/0`, `~` and `/` in keys as `~0`, `~1`).
+fn json_leaves(value: &Json, pointer: String, out: &mut Vec<(String, Json)>) {
+    match value {
+        Json::Object(members) => {
+            for (key, member) in members {
+                json_leaves(member, format!("{pointer}/{}", key.replace('~', "~0").replace('/', "~1")), out);
+            }
+        }
+        Json::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                json_leaves(item, format!("{pointer}/{i}"), out);
+            }
+        }
+        leaf => out.push((pointer, leaf.clone())),
+    }
 }
 
 /// A policy's option values, clause by clause: its config's, else the option's default.
@@ -133,6 +153,50 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     if let Some(k) = report_when_gt {
         e.facts.push(format!("report_when_gt({k})."));
     }
+    // The options as this run resolves them, for the authored file (`GIVEN`): booleans that hold, array items,
+    // other values as text, and the leaves of JSON values (an object or array, or a string holding one, as
+    // `parameters` does) by JSON pointer, as W's `json_extract` reads them.
+    e.decls.insert("option_on".into(), "name: sym".into());
+    e.decls.insert("option_item".into(), "name: sym, v: sym".into());
+    e.decls.insert("option_value".into(), "name: sym, v: sym".into());
+    e.decls.insert("option_json".into(), "name: sym, pointer: sym, v: sym".into());
+    let as_text = |v: &Json| v.as_str().map_or_else(|| v.to_string(), str::to_owned);
+    let mut option_facts = BTreeSet::new();
+    for (_, name, value) in option_values(&document) {
+        match &value {
+            Json::Bool(true) => {
+                option_facts.insert(format!("option_on({}).", quote(&name)));
+            }
+            Json::Bool(false) | Json::Null => {}
+            Json::Array(items) => option_facts.extend(items.iter().map(|item| format!("option_item({}, {}).", quote(&name), quote(&as_text(item))))),
+            other => {
+                option_facts.insert(format!("option_value({}, {}).", quote(&name), quote(&as_text(other))));
+            }
+        }
+        let json = match &value {
+            Json::String(s) => serde_json::from_str::<Json>(s).ok().filter(|j| j.is_object() || j.is_array()),
+            Json::Object(_) | Json::Array(_) => Some(value.clone()),
+            _ => None,
+        };
+        let mut leaves = Vec::new();
+        if let Some(json) = &json {
+            json_leaves(json, String::new(), &mut leaves);
+        }
+        option_facts.extend(leaves.into_iter().map(|(pointer, leaf)| format!("option_json({}, {}, {}).", quote(&name), quote(&pointer), quote(&as_text(&leaf)))));
+    }
+    e.facts.extend(option_facts);
+    // The clauses whose Python matchers carry `when`: their conversion follows this run's options only.
+    let when: BTreeMap<String, Vec<String>> = document["clauses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| {
+            let ast = &c["forbid"]["ast"];
+            let matchers: Vec<&Json> = ast.as_array().map_or_else(|| vec![ast], |a| a.iter().collect());
+            let conditions: Vec<String> = matchers.iter().filter(|m| m["language"] == "python").filter_map(|m| m.get("when")).map(Json::to_string).collect();
+            (!conditions.is_empty()).then(|| (c["id"].as_str().unwrap_or_default().to_owned(), conditions))
+        })
+        .collect();
     let mut clauses: Vec<(String, Result<Origin, Gap>)> = relational
         .into_iter()
         .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
@@ -152,7 +216,12 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
                 ClauseKind::Budget { .. } => return gap("budget"),
                 _ => return gap("another clause kind"),
             };
-            let Some(grammar) = matchers.iter().find(|m| m.language == GrammarDialect::Python) else { return gap("no Python matcher") };
+            let mut pythons = matchers.iter().filter(|m| m.language == GrammarDialect::Python);
+            let Some(grammar) = pythons.next() else { return gap("no Python matcher") };
+            // W reads a file with the first matcher whose `when` and file condition hold (`eval::query::grammar_matcher`).
+            if pythons.next().is_some() {
+                return gap("several Python matchers (the first that applies to a file)");
+            }
             if !grammar.applies {
                 return Ok(());
             }
@@ -224,7 +293,7 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         reachable(prog)
     };
     let program = crate::code_rule_dsl::logic::rr::print(&prog).map_err(|e| Failure::Authored(format!("{id}: the merged program does not print: {e:?}")))?;
-    Ok(Converted { program, clauses, approx: e.approx.clone(), configured })
+    Ok(Converted { program, clauses, approx: e.approx.clone(), configured, when })
 }
 
 /// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
@@ -256,7 +325,7 @@ fn rule_file(check: &str) -> Option<PathBuf> {
 fn convert_the_data_layer_pack() {
     let out = pack().join("datalog");
     std::fs::create_dir_all(&out).unwrap();
-    let (mut total, mut converted, mut authored) = (0, 0, 0);
+    let (mut total, mut converted, mut authored, mut by_options) = (0, 0, 0, 0);
     let mut gaps = BTreeMap::<String, usize>::new();
     let mut approx = BTreeMap::<String, usize>::new();
     let mut per_rule = Vec::new();
@@ -282,13 +351,24 @@ fn convert_the_data_layer_pack() {
         }
         per_rule.push(format!("{id}: {ok}/{} (authored {by_hand})", c.clauses.len()));
         for (clause, r) in &c.clauses {
-            if let Err(Gap(g)) = r {
-                let g: String = g.chars().take(160).collect();
-                per_rule.push(format!("    {clause}: {}", g.replace('\n', " ")));
+            match r {
+                Err(Gap(g)) => {
+                    let g: String = g.chars().take(160).collect();
+                    per_rule.push(format!("    {clause}: {}", g.replace('\n', " ")));
+                }
+                // Converted for the default options: under others the clause says something else.
+                Ok(Origin::Converted) if c.when.contains_key(clause) => {
+                    by_options += 1;
+                    per_rule.push(format!("    {clause}: converted for the default options only (when {}): author it on option_on/option_item", c.when[clause].join(", ")));
+                }
+                _ => {}
             }
         }
     }
-    let mut report = format!("{}/{total} clauses converted or authored ({converted} converted, {authored} authored)\n\ngaps (clauses):\n", converted + authored);
+    let mut report = format!(
+        "{}/{total} clauses converted or authored ({converted} converted, {by_options} of them for the default options only; {authored} authored)\n\ngaps (clauses):\n",
+        converted + authored
+    );
     let mut by_count: Vec<_> = gaps.into_iter().collect();
     by_count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     for (g, n) in by_count {
@@ -322,6 +402,7 @@ fn convert_one_policy() {
     println!("{ok}/{} clauses converted or authored (authored {authored})", c.clauses.len());
     for (clause, r) in &c.clauses {
         match r {
+            Ok(Origin::Converted) if c.when.contains_key(clause) => println!("  {clause}: converted for the default options only (when {})", c.when[clause].join(", ")),
             Ok(Origin::Converted) => println!("  {clause}: converted"),
             Ok(Origin::Authored) => println!("  {clause}: authored"),
             Err(Gap(g)) => println!("  {clause}: gap: {}", g.chars().take(160).collect::<String>()),
@@ -1085,6 +1166,72 @@ violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !us
     let mut got = findings(&open.program, &run).unwrap();
     got.sort();
     assert_eq!(got, ["impl/a.py:1:escape_hatch", "impl/a.py:2:escape_hatch"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The options, as the run resolves them, are given to the authored file (`option_on`, `option_item`), and a clause
+/// whose matcher is under `when: {option: …}` is marked: `data-layer-transaction-patterns`' `category-1` is only
+/// for `oracleAnalyzer` on (off at the defaults), and lists its names in `category-LEGITIMATE`.
+#[test]
+fn the_options_are_given() {
+    const ID: &str = "data-layer-transaction-patterns";
+    let rule = rule_file("transaction_patterns").unwrap();
+    let plain = convert_over(&rule, &Adjust::default(), None).unwrap();
+    assert_eq!(plain.clauses.iter().find(|(c, _)| c == "category-1").map(|(_, r)| r.clone()), Some(Ok(Origin::Converted)));
+    assert_eq!(plain.when.get("category-1").map(Vec::as_slice), Some(&[r#"{"option":{"oracleAnalyzer":true}}"#.to_owned()][..]));
+    let authored = format!(
+        r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl in_scope(d: number)
+.decl option_on(name: symbol)
+.decl option_item(name: symbol, v: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl category_1_def(n: node, s: symbol)
+category_1_def(n, s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
+violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
+"#
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("options");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
+    let everywhere = || Some((vec!["**/*".to_owned()], Vec::new()));
+    // Each run in a directory of its own: a second corpus run over one output directory in a process decodes
+    // its symbols with the first run's atoms.
+    let tests = |program: &str, name: &str| {
+        let run = dir.join(name);
+        write_files(&run, [("impl/a.py", "def __enter__(self):\n    pass\ndef __exit__(self):\n    pass\n")]);
+        findings(program, &run).unwrap().into_iter().filter(|f| f.ends_with(":TEST")).collect::<Vec<_>>()
+    };
+    // The defaults: `oracleAnalyzer` off, `category-LEGITIMATE` its default list.
+    let defaults = convert_over(&rule, &Adjust { scope: everywhere(), ..Adjust::default() }, Some(&dir)).unwrap();
+    assert!(defaults.program.contains(r#"option_item("category-LEGITIMATE", "__enter__")."#), "{}", defaults.program);
+    assert!(!defaults.program.contains(r#"option_on("oracleAnalyzer")."#), "{}", defaults.program);
+    assert_eq!(tests(&defaults.program, "defaults"), Vec::<String>::new());
+    // As an analyzer event configures it: `oracleAnalyzer` on, the category one name.
+    let configure: Box<dyn Fn(&mut Json) -> Result<bool, String>> = Box::new(|document| {
+        for clause in document["clauses"].as_array_mut().unwrap() {
+            let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) else { continue };
+            if define.get("options").is_some_and(|o| o.get("oracleAnalyzer").is_some()) {
+                define.insert("config".into(), serde_json::json!({"oracleAnalyzer": true, "category-LEGITIMATE": ["__exit__"]}));
+            }
+        }
+        Ok(false)
+    });
+    let analyzer = convert_over(&rule, &Adjust { scope: everywhere(), policy: Some(configure), ..Adjust::default() }, Some(&dir)).unwrap();
+    assert!(analyzer.configured);
+    assert!(analyzer.program.contains(r#"option_on("oracleAnalyzer")."#) && !analyzer.program.contains(r#"option_item("category-LEGITIMATE", "__enter__")"#), "{}", analyzer.program);
+    assert_eq!(tests(&analyzer.program, "analyzer"), ["impl/a.py:3:TEST"]);
+    // JSON options, by pointer, as W's `json_extract` reads `parameters`.
+    let mut leaves = Vec::new();
+    json_leaves(&serde_json::json!({"connectionPath": "a", "lineCounts": {"x/y.py": 3}, "probe": [true]}), String::new(), &mut leaves);
+    let leaves: Vec<(String, String)> = leaves.into_iter().map(|(p, v)| (p, v.as_str().map_or_else(|| v.to_string(), str::to_owned))).collect();
+    let want = [("/connectionPath", "a"), ("/lineCounts/x~1y.py", "3"), ("/probe/0", "true")].map(|(p, v)| (p.to_owned(), v.to_owned()));
+    assert_eq!(leaves, want);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

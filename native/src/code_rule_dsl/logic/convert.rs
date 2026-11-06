@@ -36,12 +36,22 @@
 //!   clauses together, number more than `k`; no row where it has none. The tree: `inside(n, a, set)` and
 //!   `has(a, n, set)` (`a` a strict ancestor of `n` of a kind in `set`), `nearest(n, a, set)` (the nearest one),
 //!   `set` a relation of kind facts the file declares (`.decl calls(kind: symbol)`, `calls("call").`). The
-//!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give;
+//!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
+//!   The options, as the run resolves them (the policy's config, else each option's default; the replay's per
+//!   event), are given too, read, never derived: `option_on(name: symbol)`, a row per boolean option that is true;
+//!   `option_item(name: symbol, v: symbol)`, a row per item of an array option (strings as they are, others as
+//!   JSON); `option_value(name: symbol, v: symbol)`, a row per string, number or object option, as text;
+//!   `option_json(name: symbol, pointer: symbol, v: symbol)`, a row per leaf of a JSON option (an object or array,
+//!   or a string holding one, as `parameters` does) at its JSON pointer (`/lineCounts/a~1b.py`), as W's
+//!   `json_extract` reads it, the leaf as `option_value` renders it. A clause
+//!   whose matchers carry `when: {option: …}` converts for the run's options only (its matchers that do not apply
+//!   give nothing); coverage marks it: an authored clause, gated on these facts, follows every configuration;
 //! - each clause it gives derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, declared
 //!   `.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)`, the rule and clause
 //!   constant and the clause one of the policy's;
 //! - its helper relations and kind sets start with a prefix of their clause's. A name the converter makes is an
-//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`;
+//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
+//!   `option_on`, `option_item`, `option_value`, `option_json`;
 //!   `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name
 //!   declared with other columns;
 //! - a clause it derives is authored, whatever the converter made of it: its rules replace the converter's. A
@@ -833,8 +843,20 @@ pub(in crate::code_rule_dsl) enum Origin {
 /// The columns of `violation(rule, clause, code, path, line)`.
 const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
 
-/// What the converter gives an authored file to read, each one `number` column: the scope and the report gate.
-pub(in crate::code_rule_dsl) const GIVEN: [&str; 3] = ["in_scope", "out_scope", "report_when_gt"];
+/// What the converter gives an authored file to read: the scope, the report gate and the options.
+pub(in crate::code_rule_dsl) const GIVEN: [&str; 7] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json"];
+
+/// The column types of what the converter gives (`GIVEN`), where `rel` is one.
+fn given_types(rel: &str) -> Option<Vec<String>> {
+    let types: &[&str] = match rel {
+        "in_scope" | "out_scope" | "report_when_gt" => &["int"],
+        "option_on" => &["sym"],
+        "option_item" | "option_value" => &["sym", "sym"],
+        "option_json" => &["sym", "sym", "sym"],
+        _ => return None,
+    };
+    Some(types.iter().map(|t| (*t).to_owned()).collect())
+}
 
 /// A base relation's column types (`BASE`), where `rel` is one.
 fn base_types(rel: &str) -> Option<Vec<String>> {
@@ -903,8 +925,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
         }
         let want = match name.as_str() {
             "violation" => Some(VIOLATION.map(str::to_owned).to_vec()),
-            _ if GIVEN.contains(&name.as_str()) => Some(vec!["int".to_owned()]),
-            _ => base_types(name),
+            _ => given_types(name).or_else(|| base_types(name)),
         };
         match want {
             Some(want) if types(columns) != want => {

@@ -24,6 +24,10 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   .decl in_scope(d: number)                       // the policy's scope, given by the converter
   .decl out_scope(d: number)
   .decl report_when_gt(k: number)                 // the report gate, given by the converter
+  .decl option_on(name: symbol)                   // the options, given by the converter
+  .decl option_item(name: symbol, v: symbol)
+  .decl option_value(name: symbol, v: symbol)
+  .decl option_json(name: symbol, pointer: symbol, v: symbol)
   .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
   ```
 
@@ -46,12 +50,24 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   usage_0_quiet(k) :- report_when_gt(k), c = count : { usage_0_witness(_, _) }, c <= k.
   violation("data-layer-sql-grammar-escape-hatches", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !usage_0_quiet(_).
   ```
+- The options are given by the converter too, read, never derived, as the run resolves them (the policy's config,
+  else each option's default; in the replay, the event's): `option_on(name)` for each boolean option that is true,
+  `option_item(name, v)` for each item of an array option (`category-LEGITIMATE`'s names; strings as they are,
+  others as JSON), `option_value(name, v)` for a string, number or object option (`entryPoint`, as text), and
+  `option_json(name, pointer, v)` for each leaf of a JSON option (an object or array, or a string holding one, as
+  `parameters` does) at its JSON pointer, as W's `json_extract(parameters, '$.lineCounts."a/b.py"')` reads it:
+  `option_json("parameters", "/lineCounts/a~1b.py", "3")` (`~` and `/` in keys as `~0`, `~1`). A clause
+  whose matchers carry `when: {option: …}` converts only for the run's options (at the defaults
+  `oracleAnalyzer` is off, so `when: {option: {oracleAnalyzer: true}}` matchers give nothing); coverage marks such
+  clauses. Author them gated on these facts so they follow every configuration, e.g.
+  `… :- option_on("oracleAnalyzer"), …` and `… :- !option_on("oracleAnalyzer"), …`, or
+  `option_item("category-LEGITIMATE", name)` for a category list.
 - Each clause derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, the rule and clause constants and
   the clause one of the policy's.
 - Name helper relations and kind sets after their clause (`lazy_loop_…`). Names the converter makes are errors:
-  `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope`, `report_when_gt` (other
-  than as read); `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`. So are a relation both programs derive
-  and one name declared with other column types.
+  `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
+  `option_on`, `option_item`, `option_value`, `option_json` (other than as read); `strtest_*`, `magic_*`, `done_*`, `inside_*`,
+  `nearest_*`. So are a relation both programs derive and one name declared with other column types.
 - A clause the file derives counts as authored, whatever the converter made of it: its rules replace the
   converter's. A clause the replay leaves out for an event is dropped from both.
 
