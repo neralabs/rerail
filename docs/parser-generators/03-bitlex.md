@@ -90,6 +90,8 @@ directed acyclic graph of mask operations.
 | `class NAME = ITEMS` | A set of bytes, such as `'"'`, `'\n'`, `'a'..'z'` or `0x80..0xff`. Its mask has a bit at each byte in the set. |
 | `mask NAME = EXPR` | A named mask. |
 | `machine NAME { … }` | A data-parallel automaton over chosen event bytes (§2.3). |
+| `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
+| `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
 | `munch KIND over EXPR { "…" … }` | Longest-match operator tokens over a run of operator bytes (§2.4). |
 | `keywords KIND { "…" … } [soft { "…" … }]` | Retypes tokens of `KIND` whose text is a keyword. |
@@ -119,6 +121,7 @@ Bit `i` is byte `i`. "Earlier" means a smaller `i`.
 | `M.in(S)` | machine `M`'s state at byte `i` is `S` or a member of group `S` (§2.3) |
 | `M.on(A -> B)` | `i` is an event of `M` that moves it from a state in `A` to a state in `B` |
 | `M.final(S)`, `M.reached(S)` | (file-level) `M` ends in `S`; `M` is ever in `S` |
+| `T*.in(S)`, `T*.on(A -> B)`, … | the OR of the same test over every instance of the machine template `T` (§2.5) |
 | `at_end(a)` | (file-level) `a` is set at the last byte |
 
 Overlap between a start and an end in `fill(s, e)`: a start that is also an end covers only its
@@ -129,13 +132,20 @@ own byte. The lexers below never write one.
 ```text
 machine NAME {
   events { SYMBOL = EXPR … }      # event bytes; where several match, the first listed wins
-  states S1 S2 …                  # at most 16 (one register); up to 64 allowed (four)
-  group G = S1 S2 …               # names for sets of states, for in() and on()
+  states S1 S2 i[0..4] …          # i[0..4] declares i0 … i4
+  group G = S1 S2 i[*] …          # names for sets of states, for in() and on()
   start S
+  final S …                       # states the input may end in; the default is the start state
   S on SYMBOL -> T, on SYMBOL -> T, …
+  S on A | B -> T                 # the same transition for several symbols
   S on any -> T                   # every symbol not listed for S
+  i[d] on SYMBOL -> i[d+1]        # one rule per index; a target out of range is `error`
+  i0 on SYMBOL -> T               # a rule on a named state replaces the indexed one for that symbol
 }
 ```
+
+- **Size.** Up to 16 states is one table lookup per event; up to 64 is four. Larger machines, and
+  ways to avoid them, are in `05-many-states.md`.
 
 - **Event bytes.** Only bytes of the event masks are events. Every other byte keeps the state of
   the last event before it.
@@ -155,7 +165,7 @@ A token is a start byte and the bytes after it that belong to it.
 - `munch` makes operator tokens by longest match, as Python's tokenizer does: `**=` is one token
   and `=-` is two.
 - `keywords` retypes word tokens by their text. Soft keywords (`match`, `case`, `type`, `print`,
-  `exec`) keep a soft bit for the grammar layer to decide (`02-python.md` §5.1).
+  `exec`, `__future__`, `_`) keep a soft bit for the grammar layer to decide (`02-python.md` §5.1).
 
 The lexer's output is the token stream, in byte order: each token's kind, start and end.
 
@@ -163,7 +173,49 @@ The lexer's output is the token stream, in byte order: each token's kind, start 
 
 - two tokens overlap;
 - a byte is in no token and not in a `skip` mask;
-- a machine ever reaches `error`, or does not end in its start state.
+- a machine ever reaches `error`, or does not end in one of its `final` states.
+
+### 2.5 Families of machines
+
+A machine may take masks as parameters. Each instance is a separate machine, with its own
+events and its own state:
+
+```text
+machine fstrings(body, end) { events { lb = lbrace & body … end = end } … }
+machine f1 = fstrings(fbody, fend)            # f-strings
+machine f2 = fstrings(f2_body, f2_end)        # f-strings inside f1's interpolations
+```
+
+- **Where an instance holds.** An instance's `in()` and `on()` hold only on bytes of its events'
+  masks and between them. Outside its input it is in no state.
+- **`fstrings*`** is the OR over the instances, so later masks need not name each one.
+- **Cascades.** A later instance may take as input masks computed from an earlier one. This is
+  the cascade of `05-many-states.md` §2.3: each nesting level is one more instance, and a fixed
+  number of levels is a fallback bound.
+
+**Per-file variants.** A lexer may describe two ways to compute the same masks, and choose one
+per file by a test that is exact for that file. `lexers/json.bitlex` does this: a file with no
+`/` outside `toggle(q)`'s strings has no comments, so its strings are `toggle(q)` and the `lex`
+machine does not run. The choice is one decision per file, like fallback.
+
+### 2.6 Unicode classes
+
+```text
+ucode over code & high {
+  class xid_start    = table "parser.c" sym_identifier_character_set_1
+  class xid_continue = table "parser.c" sym_identifier_character_set_2
+  class uspace       = U+FEFF U+2060 U+200B
+}
+```
+
+- **The classes are masks.** Each class is set on every byte of each character in it, and is
+  used like any `class` after that.
+- **Decoding is gated.** Only characters whose lead byte is in the `over` mask are decoded. That
+  mask is built from ASCII facts, which are exact on UTF-8.
+- **Fidelity.** A class is a table from the grammar's generated `parser.c`, a list of code
+  points, or a Unicode property.
+
+`04-unicode-and-numbers.md` gives the design, the lowering and the measured cost.
 
 ## 3. Lowering
 
@@ -240,11 +292,13 @@ runs at once. On the CPU the carry passes from one block to the next in a regist
 
 ## 4. The examples
 
-- `lexers/json.bitlex`: tree-sitter-json's tokens.
-  - Masks only, no machine.
-  - Comments set the error bit for now (`01-branch-free-design.md` §5).
+- `lexers/json.bitlex`: tree-sitter-json's tokens, comments included.
+  - Masks only, for a file without comments.
+  - The 7-state `lex` machine otherwise.
 - `lexers/python.bitlex`: tree-sitter-python's leaves.
-  - The `strings` and `fstrings` automata;
+  - The `strings` automaton, and `fstrings` in two instances (interpolation depth up to 4,
+    comments inside interpolations, f-strings nested two deep);
+  - Unicode identifiers and the three non-ASCII whitespace characters, by `ucode`;
   - prefixes, raw strings and escape sequences;
   - numbers, words and keywords;
   - operators by `munch`;
@@ -262,4 +316,8 @@ runs at once. On the CPU the carry passes from one block to the next in a regist
    - all 14,669 JSON files;
    - the 13,042 Python files;
    - CPython's standard library.
-3. **NEON and Metal lowerings** of the same mask graph, checked against the evaluator.
+3. **NEON and Metal lowerings** of the same mask graph, checked against the evaluator, in the
+   block-parallel form of `06-block-parallel.md`.
+
+What the lexers leave to fallback, and which node kinds each stage produces, is measured in
+`07-viability.md`.

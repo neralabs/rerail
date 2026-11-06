@@ -160,9 +160,14 @@ three nodes at one byte: `pair`, `string` and `"`.
 - two values with no separator between them;
 - a bad escape.
 
-A set bit routes the file to tree-sitter. So does a comment, at first: where tree-sitter attaches
-a comment depends on its LR states (`00-problem.md` §5.3). The routing rule is measured as the
-share of files the fast path takes.
+A set bit routes the file to tree-sitter. The routing rule is measured as the share of files the
+fast path takes (`07-viability.md`).
+
+**Comments.** tree-sitter-json's comments are extras. Tested on its parser, a comment's parent is
+the lowest common ancestor of the tokens before and after it, or `document` at either end of the
+file. So a comment between a key and its `:` is in the `pair`, and one after a value and before
+`,` is in the `object` or `array`. Its rank and parent follow from the extents like any token's.
+`lexers/json.bitlex` lexes comments.
 
 **Unknowns the differential test settles:** where tree-sitter's `document` node starts and ends
 around leading and trailing whitespace, and the exact cursor memberships.

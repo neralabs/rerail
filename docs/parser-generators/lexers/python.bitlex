@@ -103,6 +103,7 @@ machine strings {
   group string  = s1 d1 s3 d3 os2 os1 od2 od1   # opening quotes .. last byte before the closing quotes
   group closing = cs2 cs1                        # inside a closing '''
   start code
+  final code comment
 
   code    on hash -> comment,  on qs -> s1,  on qd -> d1,  on q3s -> os2,  on q3d -> od2
   comment on eol -> code

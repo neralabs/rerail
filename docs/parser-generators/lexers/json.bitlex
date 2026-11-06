@@ -67,6 +67,7 @@ machine lex {
   states code str s1 line blk bend error
   group cmt = s1 line blk bend
   start code
+  final code line
 
   code  on q -> str,  on sl -> s1,  on st -> error,  on sc -> error
   str   on q -> code                             # '/', '*' and newlines in a string are text
