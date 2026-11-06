@@ -8,7 +8,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
 | O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | closed for the observers (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot with editor buffers over it, or a Git `HEAD` (W's `git_workspace` discovery); the anchor lab's corpus capture moves to Phase 3's check |
-| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open: bulk appends tuned (2026-11-06); fewer commits remain |
+| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open: bulk appends tuned (2026-11-06); fewer commits designed in decision 0045 (proposed) |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
@@ -195,6 +195,8 @@ That needs:
 - every store write transaction appending the pending atoms first, so no durable row refers to an
   unwritten atom.
 - an in-process reader of `atoms` by value (vocabulary SQL) flushing first.
+
+**Designed (2026-11-06):** decision 0045 (proposed) adds a lease for other processes and sorted flushes.
 
 ## O4. Spill files after a crash
 
