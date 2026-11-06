@@ -18,13 +18,10 @@
 // The regexes are the policy's, verbatim (W's value.regex reads Rust `regex` syntax, as `match` does). W's regexes
 // search; `match` is whole-string, so each is `(?s:.*)(?:R)(?s:.*)` (the `(?s:…)` groups keep R's own `.` as written).
 //
-// GAP (A2, f-strings with an interpolation): W's pythonFString template is no relation yet (fstring_template, not
-// bound), and building it here needs string-building recursion over the pieces (UnboundedValueCycle) or an ordered
-// `join` (not lowered). An f-string host with no interpolation has W's value, which is exactly its template (the same
-// decoding, `{{`/`}}` halved in f parts only, no marker), so A2 is exact there and given below; an f-string host
-// with an interpolation matches nothing here. That rule waits in data-layer-regex-sql-parsing.pending.rr.
-// A format_specifier host is unreachable: x is a call's first argument or a parenthesized_expression's child,
-// which a format_specifier never is, so leaving it out is exact.
+// A2 reads fstring_template(x, "{...}", v), W's pythonFString root value with that marker; it has no row where
+// W's parse gives no tree, as W's parse stage then fails. A format_specifier host is unreachable: x is a call's
+// first argument or a parenthesized_expression's child, which a format_specifier never is, so leaving it out is
+// exact.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -41,6 +38,7 @@
 .decl node_text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
+.decl fstring_template(n: node, marker: symbol, v: symbol)
 
 // ---- the string a candidate is tested on ----
 // A `string` whose node text matches `(?i)^[rub]*f`: its prefix letters (lowercased in strprefix) are r, u, b, f,
@@ -57,11 +55,12 @@ rsp_fparts(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), rsp_fs
 // A1: a str literal's value (W's `value: {type: str}`, then `value.regex` over it).
 rsp_text(x, v) :- node(_, x, "string", _, _), !rsp_fstr(x), !rsp_part(x), value(x, v), value_type_of(x, "str").
 rsp_text(x, v) :- node(_, x, "concatenated_string", _, _), !rsp_fparts(x), !rsp_part(x), value(x, v), value_type_of(x, "str").
-// A2: an f-string host's template; exact only where it has no interpolation (GAP above), its value then.
+// A2: an f-string host's template (W's `parse: {grammar: pythonFString, interpolation: "{...}"}`, then
+// `value.regex` over the root's value).
 .decl rsp_fhost(x: node)
 rsp_fhost(x) :- rsp_fstr(x), !rsp_part(x).
 rsp_fhost(x) :- rsp_fparts(x).
-rsp_text(x, v) :- rsp_fhost(x), value(x, v), value_type_of(x, "str").
+rsp_text(x, v) :- rsp_fhost(x), fstring_template(x, "{...}", v).
 // B: through parentheses.
 .decl rsp_str(x: node, v: symbol)
 rsp_str(x, v) :- rsp_text(x, v).
