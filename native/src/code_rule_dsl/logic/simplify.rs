@@ -72,14 +72,17 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
     // `node`'s columns as declared: the node and its kind.
     let Some(cols) = decls.get("node") else { return 0 };
     let (Some(n), Some(k)) = (cols.iter().position(|(c, _)| c == "n"), cols.iter().position(|(c, _)| c == "kind")) else { return 0 };
-    // The ancestors of a single-kind set, by variable.
+    // The members of a single-kind set, by variable: `nearest`'s and `inside`'s ancestor, `has`'s descendant.
     let mut member: HashMap<String, &str> = HashMap::new();
     for l in &rule.body {
         let (a, set) = match l {
             Literal::Nearest { a, kindset, .. } => (a.clone(), kindset.as_str()),
-            Literal::Atom(x) if !x.neg && x.args.len() == 2 => match (x.rel.strip_prefix(super::front::AXIS), &x.args[1]) {
-                (Some(set), Term::Var(a)) => (a.clone(), set),
-                _ => continue,
+            Literal::Atom(x) if !x.neg && x.args.len() == 2 => match super::front::axis(&x.rel) {
+                Some((set, has)) => match &x.args[if has { 0 } else { 1 }] {
+                    Term::Var(a) => (a.clone(), set),
+                    _ => continue,
+                },
+                None => continue,
             },
             _ => continue,
         };

@@ -741,6 +741,17 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
 /// The prefix of a tree axis's relation: `inside_<set>(n, a)` (decision 0036).
 pub(in crate::code_rule_dsl) const AXIS: &str = "inside_";
 
+/// The prefix of the descendant axis's relation, under `AXIS` (so it is read as a tree axis everywhere):
+/// `inside_rr_has_<set>(n, a)`, n of a kind in the set and strictly below a, which is `has(a, n, set)` (decision
+/// 0036; `rr_` names are the lowering's own).
+pub(in crate::code_rule_dsl) const HAS: &str = "inside_rr_has_";
+
+/// A tree axis relation's set, and whether it is `has`'s (the set tested on its first column, the descendant)
+/// rather than `inside`'s (on its second, the ancestor).
+pub(in crate::code_rule_dsl) fn axis(rel: &str) -> Option<(&str, bool)> {
+    rel.strip_prefix(HAS).map(|set| (set, true)).or_else(|| rel.strip_prefix(AXIS).map(|set| (set, false)))
+}
+
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
 pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;
 

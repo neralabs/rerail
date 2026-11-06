@@ -30,7 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, Term as STerm, quote};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, Error, HAS, LatticeDecl, Literal, Program, Rule, Term, Value, axis};
 use crate::code_rule_dsl::logic::strings::SET;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -67,6 +67,21 @@ fn not_yet<T>(what: impl std::fmt::Display) -> Result<T, Error> {
     Err(Error::Syntax(format!("not lowered yet: {what}")))
 }
 
+/// What a set given to an axis holds (`Lowerer::members`).
+enum Members {
+    /// Kinds known when the program is read: a kind set, which the transducer answers.
+    Kinds(Vec<String>),
+    /// Nodes (`block_node(n)`).
+    Nodes,
+    /// Kinds that rules derive from the tree (`doc_code_kind(k) :- kind(_, k), k != "comment"`).
+    Derived,
+}
+
+/// The set of one kind written as a string: `rr_kind_<kind>`.
+fn kind_set(kind: &str) -> String {
+    format!("rr_kind_{}", kind.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>())
+}
+
 /// A column type in the engine's names.
 fn ty(t: &str) -> String {
     match t {
@@ -84,6 +99,8 @@ struct Lowerer {
     lattices: BTreeMap<String, (String, String)>,
     /// Relations given as a kind set.
     sets: BTreeSet<String>,
+    /// The sets `precedes_stop` reads, each with its kinds when written as one kind (`next_stops`).
+    stops: BTreeMap<String, Option<Vec<String>>>,
     /// `.violation`s, as `findings` makes their findings.
     violations: Vec<Violation>,
     /// The columns declared `span` or `loc` (both are `node` to the engine), and which: what `origins` reads of
@@ -228,7 +245,7 @@ impl Lowerer {
     }
 
     /// `core.rr`'s `kind(n, k)` and `docof(n, d)` are projections of `node`, as T's programs write them: rules, which
-    /// the planner reads from `node` in place, not inputs; `precedes` is a rule over `child`.
+    /// the planner reads from `node` in place, not inputs; `precedes` and `next_sibling` are rules over `child`.
     fn projections(&mut self) {
         let v = |s: &str| Term::Var(s.to_owned());
         for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
@@ -242,13 +259,17 @@ impl Lowerer {
                 body: vec![Literal::Atom(Atom { rel: "node".to_owned(), args: args.to_vec(), neg: false, gated: false })],
             });
         }
-        // `precedes(a, b)`: a comes before b among one parent's children.
-        if self.prog.inputs.iter().any(|i| i == "precedes") && self.prog.decls.contains_key("child") {
-            self.prog.inputs.retain(|i| i != "precedes");
+        // `precedes(a, b)`: a comes before b among one parent's children; `next_sibling(a, b)`: b right after a.
+        let next = Term::Call("add".to_owned(), vec![v("i"), Term::Int(1)]);
+        for (rel, order) in [("precedes", Literal::Cmp { l: v("i"), op: "<", r: v("j") }), ("next_sibling", Literal::Cmp { l: v("j"), op: "=", r: next })] {
+            if !self.prog.inputs.iter().any(|i| i == rel) || !self.prog.decls.contains_key("child") {
+                continue;
+            }
+            self.prog.inputs.retain(|i| i != rel);
             let child = |c: &str, i: &str| Literal::Atom(Atom { rel: "child".to_owned(), args: vec![v("p"), v(c), v(i)], neg: false, gated: false });
             self.prog.rules.push(Rule {
-                head: Atom { rel: "precedes".to_owned(), args: vec![v("a"), v("b")], neg: false, gated: false },
-                body: vec![child("a", "i"), child("b", "j"), Literal::Cmp { l: v("i"), op: "<", r: v("j") }],
+                head: Atom { rel: rel.to_owned(), args: vec![v("a"), v("b")], neg: false, gated: false },
+                body: vec![child("a", "i"), child("b", "j"), order],
             });
         }
     }
@@ -457,6 +478,9 @@ impl Lowerer {
             Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within(rel, args, *neg)?,
             Lit::Atom { rel, args, neg } if rel == "earlier" => self.earlier(args, *neg)?,
+            Lit::Atom { rel, args, neg: true } if rel == "nearest" && matches!(args.as_slice(), [_, a, _] if *a != STerm::Wild) => self.not_nearest(args)?,
+            Lit::Atom { rel, args, neg } if rel == "precedes_stop" => self.precedes_stop(args, *neg)?,
+            Lit::Atom { rel, args, neg } if rel == "split_dot" => self.split_dot(args, *neg)?,
             Lit::Atom { rel, args, neg: false } if rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) => self.captures(args)?,
             Lit::Atom { rel, args, neg } => {
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
@@ -482,24 +506,32 @@ impl Lowerer {
     /// `a + 1 ..= a + size` (`facts::vtab::syntax`'s `tape`), so it is a range over ids: `tape(a, _, z, _),
     /// n > a, n <= a + z`, which the tape's lookups answer for a bound `a`. `within_stop(n, a, stop)`: also no
     /// node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
-    /// ancestor in `stop`, or its nearest one is a or above it.
+    /// ancestor in `stop`, or its nearest one is a or above it. Negated (a named): n is outside a's range, or
+    /// (`!within_stop`) inside it with its nearest ancestor in `stop` below a.
     fn within(&mut self, rel: &str, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
         let (n, a, stop) = match args {
             [n, a] if rel == "within" => (n, a, None),
-            [n, a, stop] if rel == "within_stop" && !neg => (n, a, Some(stop)),
+            [n, a, stop] if rel == "within_stop" => (n, a, Some(stop)),
             _ => return not_yet(format!("{}{rel}/{}", if neg { "!" } else { "" }, args.len())),
         };
-        let (n, a) = (self.term(n)?, self.term(a)?);
-        self.prog.decls.entry("tape".to_owned()).or_insert_with(|| ["n", "par", "size", "depth"].iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
-        if !self.prog.inputs.iter().any(|i| i == "tape") {
-            self.prog.inputs.push("tape".to_owned());
+        if neg && *a == STerm::Wild {
+            return not_yet(format!("`!{rel}` with its ancestor unnamed"));
         }
+        let (n, a) = (self.term(n)?, self.term(a)?);
+        self.base("tape");
         let z = Term::Var(self.fresh("size"));
         let tape = Literal::Atom(Atom { rel: "tape".to_owned(), args: vec![a.clone(), Term::Wild, z.clone(), Term::Wild], neg: false, gated: false });
         let end = Term::Call("add".to_owned(), vec![a.clone(), z]);
         let cmp = |l: &Term, op: &'static str, r: &Term| Literal::Cmp { l: l.clone(), op, r: r.clone() };
         if neg {
-            return Ok(vec![vec![tape.clone(), cmp(&n, "<=", &a)], vec![tape, cmp(&n, ">", &end)]]);
+            let mut out = vec![vec![tape.clone(), cmp(&n, "<=", &a)], vec![tape.clone(), cmp(&n, ">", &end)]];
+            if let Some(stop) = stop {
+                let set = self.set_name("within_stop", stop)?;
+                let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
+                let s = self.fresh("stop");
+                out.push(vec![tape, cmp(&n, ">", &a), cmp(&n, "<=", &end), Literal::Nearest { n: nv.clone(), a: s.clone(), kindset: set }, cmp(&Term::Var(s), ">", &a)]);
+            }
+            return Ok(out);
         }
         let below = match (&n, &a) {
             // Nothing else gives n: the nodes below a are listed, following `child` down from the a's the rule
@@ -534,15 +566,20 @@ impl Lowerer {
     /// `earlier(m, n)`: m comes before n in one document. A node is `d << 32 | its preorder index`, so that is
     /// `docof(m, d), docof(n, d), m < n`: document order. CPython's visit order differs from it for a few
     /// children (a def's decorators and return annotation after its body, `core.rr`); that is not followed yet.
+    /// Negated: m is not before n, or it is (by id) in another document, or it is no node.
     fn earlier(&mut self, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
         let [m, n] = args else { return not_yet(format!("earlier/{}", args.len())) };
-        if neg {
-            return not_yet("!earlier");
+        if neg && args.contains(&STerm::Wild) {
+            return not_yet("`!earlier` with a node unnamed");
         }
         let (m, n) = (self.term(m)?, self.term(n)?);
         let d = Term::Var(self.fresh("doc"));
-        let docof = |x: &Term| Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![x.clone(), d.clone()], neg: false, gated: false });
-        Ok(vec![vec![docof(&m), docof(&n), Literal::Cmp { l: m.clone(), op: "<", r: n.clone() }]])
+        let docof = |x: &Term, d: &Term, neg: bool| Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![x.clone(), d.clone()], neg, gated: false });
+        let cmp = |op: &'static str| Literal::Cmp { l: m.clone(), op, r: n.clone() };
+        if neg {
+            return Ok(vec![vec![cmp(">=")], vec![cmp("<"), docof(&m, &d, false), docof(&n, &d, true)], vec![cmp("<"), docof(&m, &Term::Wild, true)]]);
+        }
+        Ok(vec![vec![docof(&m, &d, false), docof(&n, &d, false), cmp("<")]])
     }
 
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
@@ -599,6 +636,7 @@ impl Lowerer {
         Ok(None)
     }
 
+    /// A set argument's relation: a relation's name (kinds or nodes, `kind_sets` tells), or one kind as its own set.
     fn set_name(&mut self, rel: &str, arg: &STerm) -> Result<String, Error> {
         match arg {
             STerm::Var(name) => {
@@ -606,12 +644,117 @@ impl Lowerer {
                 Ok(name.clone())
             }
             STerm::Str(kind) => {
-                let name = format!("rr_kind_{}", kind.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>());
+                let name = kind_set(kind);
                 self.prog.kindsets.insert(name.clone(), vec![kind.clone()]);
                 Ok(name)
             }
-            _ => Err(Error::Syntax(format!("{rel}: the set is a relation of kinds or one kind"))),
+            _ => Err(Error::Syntax(format!("{rel}: the set is a relation of kinds or of nodes, or one kind"))),
         }
+    }
+
+    /// A base relation lowering reads (`tape`, `child`, `node`), declared, and an input, when the program has not.
+    fn base(&mut self, rel: &str) {
+        let cols: &[(&str, &str)] = match rel {
+            "tape" => &[("n", "int"), ("par", "int"), ("size", "int"), ("depth", "int")],
+            "child" => &[("p", "node"), ("c", "node"), ("i", "int")],
+            "node" => &[("d", "int"), ("n", "node"), ("kind", "sym"), ("start", "int"), ("end", "int")],
+            other => unreachable!("no base relation {other}"),
+        };
+        self.prog.decls.entry(rel.to_owned()).or_insert_with(|| cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
+        if !self.prog.inputs.iter().any(|i| i == rel) && !self.prog.rules.iter().any(|r| r.head.rel == rel) {
+            self.prog.inputs.push(rel.to_owned());
+        }
+    }
+
+    /// `!nearest(n, a, set)` with a named: a is not n's nearest ancestor in the set, so n has none, or another.
+    fn not_nearest(&mut self, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
+        let [STerm::Var(n), a, set] = args else { return Err(Error::Syntax("nearest: the node is a variable".to_owned())) };
+        let set = self.set_name("nearest", set)?;
+        let a = self.term(a)?;
+        let s = self.fresh("near");
+        Ok(vec![
+            vec![Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![Term::Var(n.clone()), Term::Wild], neg: true, gated: false })],
+            vec![Literal::Nearest { n: n.clone(), a: s.clone(), kindset: set }, Literal::Cmp { l: Term::Var(s), op: "!=", r: a }],
+        ])
+    }
+
+    /// `split_dot(q, m, x)`: q is m.x split at its last dot, so x has no dot: `q = @cat(m, x), !contains(".", x)`
+    /// (a bound q splits at every dot, `@cat` run backwards, which takes variables: a constant is bound to one
+    /// first). Negated, every column named: q is not m.x, or x has a dot.
+    fn split_dot(&mut self, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        if args.len() != 3 {
+            return not_yet(format!("split_dot/{}", args.len()));
+        }
+        if neg && args.contains(&STerm::Wild) {
+            return not_yet("`!split_dot` with a column unnamed");
+        }
+        let (mut out, mut terms) = (Vec::new(), Vec::new());
+        for a in args {
+            let t = self.term(a)?;
+            terms.push(match t {
+                Term::Var(_) => t,
+                _ if neg => t,
+                Term::Wild => Term::Var(self.fresh("part")),
+                constant => {
+                    let v = Term::Var(self.fresh("part"));
+                    out.push(Literal::Cmp { l: v.clone(), op: "=", r: constant });
+                    v
+                }
+            });
+        }
+        let [q, m, x] = <[Term; 3]>::try_from(terms).expect("three columns");
+        let dotted = |b: i64| Literal::Cmp { l: Term::Call("contains".to_owned(), vec![x.clone(), Term::Str(".".to_owned())]), op: "=", r: Term::Int(b) };
+        let cat = Term::Call("cat".to_owned(), vec![m, x.clone()]);
+        if neg {
+            return Ok(vec![vec![Literal::Cmp { l: q, op: "!=", r: cat }], vec![dotted(1)]]);
+        }
+        out.extend([Literal::Cmp { l: q, op: "=", r: cat }, dotted(0)]);
+        Ok(vec![out])
+    }
+
+    /// `precedes_stop(a, b, stop)`: a comes before b among one parent's children (`precedes`), and no child of
+    /// `stop` is strictly between them. `rr_next_stop_<stop>(a, k)` is the index of the first child of `stop`
+    /// after a (`next_stops`), so that is: there is none, or b is at or before it. Negated (a and b named): a is
+    /// no child, b is not a's sibling or not after it, or a child of `stop` is between them.
+    fn precedes_stop(&mut self, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let [a, b, stop] = args else { return not_yet(format!("precedes_stop/{}", args.len())) };
+        if neg && (*a == STerm::Wild || *b == STerm::Wild) {
+            return not_yet("`!precedes_stop` with a node unnamed");
+        }
+        let set = match stop {
+            STerm::Var(name) => {
+                self.stops.entry(name.clone()).or_insert(None);
+                name.clone()
+            }
+            STerm::Str(kind) => {
+                let name = kind_set(kind);
+                self.stops.insert(name.clone(), Some(vec![kind.clone()]));
+                name
+            }
+            _ => return Err(Error::Syntax("precedes_stop: the set is a relation of kinds or of nodes, or one kind".to_owned())),
+        };
+        let node = |t: &STerm, l: &mut Self| if *t == STerm::Wild { Ok(Term::Var(l.fresh("sib"))) } else { l.term(t) };
+        let (a, b) = (node(a, self)?, node(b, self)?);
+        self.base("child");
+        let next = format!("rr_next_stop_{set}");
+        self.prog.decls.entry(next.clone()).or_insert_with(|| vec![("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())]);
+        let [p, i, j, k] = ["p", "i", "j", "k"].map(|s| Term::Var(self.fresh(s)));
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let cmp = |l: &Term, op: &'static str, r: &Term| Literal::Cmp { l: l.clone(), op, r: r.clone() };
+        let pair = [atom("child", vec![p.clone(), a.clone(), i.clone()], false), atom("child", vec![p.clone(), b.clone(), j.clone()], false)];
+        let with = |more: Vec<Literal>| pair.iter().cloned().chain(more).collect::<Vec<_>>();
+        if neg {
+            return Ok(vec![
+                vec![atom("child", vec![Term::Wild, a.clone(), Term::Wild], true)],
+                vec![atom("child", vec![p.clone(), a.clone(), Term::Wild], false), atom("child", vec![p.clone(), b.clone(), Term::Wild], true)],
+                with(vec![cmp(&i, ">=", &j)]),
+                with(vec![cmp(&i, "<", &j), atom(&next, vec![a.clone(), k.clone()], false), cmp(&k, "<", &j)]),
+            ]);
+        }
+        Ok(vec![
+            with(vec![cmp(&i, "<", &j), atom(&next, vec![a.clone(), Term::Wild], true)]),
+            with(vec![cmp(&i, "<", &j), atom(&next, vec![a.clone(), k.clone()], false), cmp(&j, "<=", &k)]),
+        ])
     }
 
     fn atom(&mut self, rel: &str, args: &[STerm], neg: bool) -> Result<Literal, Error> {
@@ -641,14 +784,14 @@ impl Lowerer {
                 let kindset = self.set_name(rel, set)?;
                 return Ok(Literal::Nearest { n: var(n)?, a: var(a)?, kindset });
             }
-            ("inside" | "has", [x, y, set]) => {
+            ("inside", [n, a, set]) => {
                 let set = self.set_name(rel, set)?;
-                let (x, y) = (self.term(x)?, self.term(y)?);
-                let args = if rel == "inside" { vec![x, y] } else { vec![y, x] };
-                return Ok(Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args, neg, gated: false }));
+                return Ok(Literal::Atom(Atom { rel: format!("{AXIS}{set}"), args: vec![self.term(n)?, self.term(a)?], neg, gated: false }));
             }
-            ("split_dot", [q, m, x]) if !neg => {
-                return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![self.term(m)?, self.term(x)?]) });
+            // `has(a, n, set)`: n, of the set, is strictly below a (the set is tested on n, decision 0036).
+            ("has", [a, n, set]) => {
+                let set = self.set_name(rel, set)?;
+                return Ok(Literal::Atom(Atom { rel: format!("{HAS}{set}"), args: vec![self.term(n)?, self.term(a)?], neg, gated: false }));
             }
             ("ast", _) if !neg => return self.ast(args),
             _ => {}
@@ -992,14 +1135,21 @@ impl Lowerer {
     }
 
     /// Kind sets: the relations of facts given to `nearest`, `inside` and `has`. One read nowhere else is only a set.
+    /// A set of nodes, or of kinds that rules derive, is no kind set: its axes are rules (`derived_axes`). And
+    /// `precedes_stop`'s sets give `rr_next_stop_<set>` (`next_stops`).
     fn kind_sets(&mut self) -> Result<(), Error> {
+        let mut derived = BTreeMap::new();
         for set in std::mem::take(&mut self.sets) {
             if self.prog.kindsets.contains_key(&set) {
                 continue;
             }
-            let kinds = self
-                .kinds_of(&set, &mut BTreeSet::new())
-                .ok_or_else(|| Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")))?;
+            let kinds = match self.members(&set)? {
+                Members::Kinds(kinds) => kinds,
+                other => {
+                    derived.insert(set, other);
+                    continue;
+                }
+            };
             self.prog.kindsets.insert(set.clone(), kinds);
             // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`)
             // stays one as well.
@@ -1009,6 +1159,134 @@ impl Lowerer {
                 self.prog.decls.remove(&set);
                 self.prog.rules.retain(|r| r.head.rel != set);
             }
+        }
+        self.derived_axes(&derived);
+        self.next_stops()
+    }
+
+    /// What a set holds: its kinds when they are known now (a kind set), else nodes or kinds its rules derive.
+    fn members(&self, set: &str) -> Result<Members, Error> {
+        if let Some(kinds) = self.prog.kindsets.get(set) {
+            return Ok(Members::Kinds(kinds.clone()));
+        }
+        let column = match self.prog.decls.get(set).map(Vec::as_slice) {
+            Some([(_, t)]) => Some(t.as_str()),
+            _ => None,
+        };
+        if column == Some("node") {
+            return Ok(Members::Nodes);
+        }
+        if let Some(kinds) = self.kinds_of(set, &mut BTreeSet::new()) {
+            return Ok(Members::Kinds(kinds));
+        }
+        if column == Some("sym") {
+            return Ok(Members::Derived);
+        }
+        Err(Error::Syntax(format!("the set {set} is not a relation of kinds or of nodes (one column of kinds, or of nodes)")))
+    }
+
+    /// The unary relation of nodes in `set`: the set itself when it holds nodes, else `rr_in_<set>` over `node`.
+    fn member_relation(&mut self, set: &str, members: &Members) -> String {
+        if let Members::Nodes = members {
+            return set.to_owned();
+        }
+        let rel = format!("rr_in_{set}");
+        if self.prog.decls.contains_key(&rel) {
+            return rel;
+        }
+        self.base("node");
+        self.prog.decls.insert(rel.clone(), vec![("x".to_owned(), "node".to_owned())]);
+        let v = |s: &str| Term::Var(s.to_owned());
+        let node = |k: Term| Literal::Atom(Atom { rel: "node".to_owned(), args: vec![Term::Wild, v("x"), k, Term::Wild, Term::Wild], neg: false, gated: false });
+        let head = Atom { rel: rel.clone(), args: vec![v("x")], neg: false, gated: false };
+        let bodies = match members {
+            Members::Kinds(kinds) => kinds.iter().map(|k| vec![node(Term::Str(k.clone()))]).collect(),
+            _ => vec![vec![node(v("k")), Literal::Atom(Atom { rel: set.to_owned(), args: vec![v("k")], neg: false, gated: false })]],
+        };
+        for body in bodies {
+            self.prog.rules.push(Rule { head: head.clone(), body });
+        }
+        rel
+    }
+
+    /// The axes over sets of nodes, or of kinds rules derive, which the transducer cannot read from a node's kind:
+    /// rules over `child`, in which each node's membership is read once. A helper reads its set negated, so the
+    /// set is complete before it (a lower stratum; a set that depends on its own axis is refused by the strata).
+    /// - `rr_near_<s>(n, a)`, a is n's nearest strict ancestor in s (`nearest`, and `inside(n, _, s)`): down from each
+    ///   member to the next, a row per node below one;
+    /// - `rr_inside_<s>(n, a)`, every strict ancestor a of n in s (`inside`): the chain of nearest ones;
+    /// - `rr_has_<s>(n, a)`, n in s and a any strict ancestor of it (`has`): up from each member;
+    /// - `rr_above_<s>(a)`, a has a member strictly below it (`has(a, _, s)`).
+    fn derived_axes(&mut self, derived: &BTreeMap<String, Members>) {
+        let mut need = BTreeSet::new();
+        for rule in &mut self.prog.rules {
+            for l in &mut rule.body {
+                let (set, helper, args, neg) = match l {
+                    Literal::Nearest { n, a, kindset } if derived.contains_key(kindset) => (kindset.clone(), "near", vec![Term::Var(n.clone()), Term::Var(a.clone())], false),
+                    Literal::Atom(x) => match axis(&x.rel) {
+                        Some((set, has)) if derived.contains_key(set) => {
+                            let (helper, args) = match (has, x.args.as_slice()) {
+                                (false, [_, Term::Wild]) => ("near", x.args.clone()),
+                                (false, _) => ("inside", x.args.clone()),
+                                (true, [Term::Wild, a]) => ("above", vec![a.clone()]),
+                                (true, _) => ("has", x.args.clone()),
+                            };
+                            (set.to_owned(), helper, args, x.neg)
+                        }
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                *l = Literal::Atom(Atom { rel: format!("rr_{helper}_{set}"), args, neg, gated: false });
+                if helper == "inside" {
+                    need.insert((set.clone(), "near"));
+                }
+                need.insert((set, helper));
+            }
+        }
+        if need.is_empty() {
+            return;
+        }
+        self.base("child");
+        let v = |s: &str| Term::Var(s.to_owned());
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let child = |p: &str, c: &str| atom("child", vec![v(p), v(c), Term::Wild], false);
+        for (set, helper) in need {
+            let member = self.member_relation(&set, &derived[&set]);
+            let is = |x: &str, neg: bool| atom(&member, vec![v(x)], neg);
+            let rel = format!("rr_{helper}_{set}");
+            let me = |args: &[&str]| atom(&rel, args.iter().map(|a| v(a)).collect(), false);
+            let (cols, bodies): (&[&str], Vec<Vec<Literal>>) = match helper {
+                "near" => (&["n", "a"], vec![vec![child("a", "n"), is("a", false)], vec![child("p", "n"), is("p", true), me(&["p", "a"])]]),
+                "inside" => (&["n", "a"], vec![vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("a")], false)], vec![atom(&format!("rr_near_{set}"), vec![v("n"), v("b")], false), me(&["b", "a"])]]),
+                "has" => (&["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["n", "p"]), child("a", "p")]]),
+                _ => (&["a"], vec![vec![is("n", false), child("a", "n")], vec![me(&["p"]), child("a", "p")]]),
+            };
+            self.prog.decls.insert(rel.clone(), cols.iter().map(|c| ((*c).to_owned(), "node".to_owned())).collect());
+            let head = Atom { rel: rel.clone(), args: cols.iter().map(|c| v(c)).collect(), neg: false, gated: false };
+            for body in bodies {
+                self.prog.rules.push(Rule { head: head.clone(), body });
+            }
+        }
+    }
+
+    /// `rr_next_stop_<s>(a, k)` for each set `precedes_stop` reads: k is the index of the first child of s after
+    /// a among its siblings, a walk to the right from each node (a row per node with a member after it).
+    fn next_stops(&mut self) -> Result<(), Error> {
+        let v = |s: &str| Term::Var(s.to_owned());
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let after = |j: &str| Literal::Cmp { l: v(j), op: "=", r: Term::Call("add".to_owned(), vec![v("i"), Term::Int(1)]) };
+        for (set, kinds) in std::mem::take(&mut self.stops) {
+            let members = match kinds {
+                Some(kinds) => Members::Kinds(kinds),
+                None => self.members(&set)?,
+            };
+            let member = self.member_relation(&set, &members);
+            let rel = format!("rr_next_stop_{set}");
+            let head = Atom { rel: rel.clone(), args: vec![v("a"), v("k")], neg: false, gated: false };
+            let child = |c: &str, i: &str| atom("child", vec![v("p"), v(c), v(i)], false);
+            self.prog.rules.push(Rule { head: head.clone(), body: vec![child("a", "i"), after("k"), child("s", "k"), atom(&member, vec![v("s")], false)] });
+            self.prog.rules.push(Rule { head, body: vec![child("a", "i"), after("j"), child("s", "j"), atom(&member, vec![v("s")], true), atom(&rel, vec![v("s"), v("k")], false)] });
         }
         Ok(())
     }
