@@ -13,6 +13,13 @@
 //!   bound `$t`, a probe of `k`, not a relation of every node less `k`'s. Such a relation has one rule, over its one
 //!   node variable alone and not recursive, and no negated or aggregated reader; kept relations (below) stay. (One
 //!   rule: a relation of several would copy each reader once per rule, its whole join run again.)
+//! - **A variable named once is `_`.** In a positive atom, `text($v122, $s)` where `$v122` appears nowhere else is
+//!   `text(_, $s)`; it is then implied by any `text($n, $s)` beside it and goes.
+//! - **Two atoms of one keyed row are one.** `node($d, $n, _, _, _), node(_, $n, "call", _, _)` is
+//!   `node($d, $n, "call", _, _)`: a node's row is one (`KEYS`), so atoms with the same key term read the same row.
+//!   Columns merge where one is `_` or both are the same; two variables in one column are one variable.
+//! - **Relations no output reads go.** A derived relation that no output, demanded or kept relation reads,
+//!   directly or through others, is not computed.
 //! - **Identical relations merge.** Derived relations whose rules are equal once their heads and variables are
 //!   renamed in order are one relation; readers read the first. Repeated to a fixpoint, so relations over merged
 //!   ones merge too. Outputs, inputs, lattices, relations with facts and demanded relations are kept as they are.
@@ -31,6 +38,12 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) merged: Vec<(String, String)>,
     /// Relations inlined into their readers.
     pub(in crate::code_rule_dsl) inlined: Vec<String>,
+    /// Variables named once, made `_`.
+    pub(in crate::code_rule_dsl) singletons: usize,
+    /// Atoms merged into another of the same keyed row.
+    pub(in crate::code_rule_dsl) keyed: usize,
+    /// Relations nothing kept reads, dropped.
+    pub(in crate::code_rule_dsl) unread: Vec<String>,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
@@ -38,6 +51,8 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     report.inlined = inline_node_tests(prog);
     for rule in &mut prog.rules {
         report.constants += fold_constants(rule);
+        report.keyed += merge_keyed(rule);
+        report.singletons += wild_singletons(rule);
         report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
         report.implied += drop_implied(rule);
     }
@@ -47,10 +62,12 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
             report.implied += drop_implied(rule);
         }
     }
+    report.unread = drop_unread(prog);
     if super::profile::on() {
         let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
+        let (w, y, u) = (report.singletons, report.keyed, report.unread.len());
         super::profile::decision("simplified bodies (decision 0038)", || {
-            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one")
+            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one; {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {u} relations no output reads dropped")
         });
     }
     report
@@ -253,6 +270,155 @@ fn join_complements(prog: &mut Program) {
         prog.rules.push(Rule { head: atom(&rel, false), body: vec![Literal::Atom(node), Literal::Atom(atom(&all, true))] });
         prog.decls.insert(all, vec![("n".to_owned(), "node".to_owned())]);
     }
+}
+
+/// The base relations whose rows are keyed: (relation, arity, key column). A node has one row of `node` (its
+/// document, kind and span), one kind, text, name, start line and document; a document one row of `doc`.
+const KEYS: &[(&str, usize, usize)] =
+    &[("node", 5, 1), ("doc", 3, 0), ("kind", 2, 0), ("text", 2, 0), ("name", 2, 0), ("line", 2, 0), ("docof", 2, 0)];
+
+/// How many times each variable appears in `rule`, head included.
+fn occurrences(rule: &Rule) -> HashMap<String, usize> {
+    fn term(t: &Term, n: &mut HashMap<String, usize>) {
+        match t {
+            Term::Var(v) => *n.entry(v.clone()).or_default() += 1,
+            Term::Call(_, args) => args.iter().for_each(|a| term(a, n)),
+            _ => {}
+        }
+    }
+    let mut n = HashMap::new();
+    rule.head.args.iter().for_each(|t| term(t, &mut n));
+    for l in &rule.body {
+        match l {
+            Literal::Atom(a) => a.args.iter().for_each(|t| term(t, &mut n)),
+            Literal::Cmp { l, r, .. } => {
+                term(l, &mut n);
+                term(r, &mut n);
+            }
+            Literal::Agg { var, over, atom, .. } => {
+                atom.args.iter().for_each(|t| term(t, &mut n));
+                *n.entry(var.clone()).or_default() += 1;
+                if let Some(o) = over {
+                    *n.entry(o.clone()).or_default() += 1;
+                }
+            }
+            Literal::Nearest { n: x, a, .. } => {
+                *n.entry(x.clone()).or_default() += 1;
+                *n.entry(a.clone()).or_default() += 1;
+            }
+            Literal::Ast { document, node, captures, .. } => {
+                for v in [document, node].into_iter().chain(captures.iter().map(|(_, v)| v)) {
+                    *n.entry(v.clone()).or_default() += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
+/// Makes `_` each variable of a positive atom that appears nowhere else in `rule`; returns how many.
+fn wild_singletons(rule: &mut Rule) -> usize {
+    let once: BTreeSet<String> = occurrences(rule).into_iter().filter(|(_, k)| *k == 1).map(|(v, _)| v).collect();
+    let mut made = 0;
+    for l in &mut rule.body {
+        if let Literal::Atom(a) = l
+            && !a.neg
+        {
+            for t in &mut a.args {
+                if matches!(t, Term::Var(v) if once.contains(v)) {
+                    *t = Term::Wild;
+                    made += 1;
+                }
+            }
+        }
+    }
+    made
+}
+
+/// Merges positive atoms of a keyed relation (`KEYS`) with the same key term into one; returns how many went.
+/// Two columns merge where they are equal or one is `_`; two different variables merge by renaming the later one
+/// (one the head, atoms and comparisons name, so `rename_var` reaches every use). Anything else stays two atoms.
+fn merge_keyed(rule: &mut Rule) -> usize {
+    let mut merged = 0;
+    'again: loop {
+        let special: BTreeSet<String> = rule
+            .body
+            .iter()
+            .filter(|l| matches!(l, Literal::Agg { .. } | Literal::Nearest { .. } | Literal::Ast { .. }))
+            .flat_map(|l| l.vars())
+            .collect();
+        fn keyed(l: &Literal) -> Option<(&Atom, usize)> {
+            match l {
+                Literal::Atom(a) if !a.neg && !a.gated => KEYS.iter().find(|(r, arity, _)| *r == a.rel && *arity == a.args.len()).map(|&(_, _, k)| (a, k)),
+                _ => None,
+            }
+        }
+        for i in 0..rule.body.len() {
+            let Some((a, k)) = keyed(&rule.body[i]) else { continue };
+            if matches!(a.args[k], Term::Wild | Term::Call(..)) {
+                continue;
+            }
+            for j in i + 1..rule.body.len() {
+                let Some((b, _)) = keyed(&rule.body[j]) else { continue };
+                if b.rel != a.rel || b.args[k] != a.args[k] {
+                    continue;
+                }
+                let mut args = Vec::with_capacity(a.args.len());
+                let mut renames = Vec::new();
+                for (x, y) in a.args.iter().zip(&b.args) {
+                    match (x, y) {
+                        _ if x == y => args.push(x.clone()),
+                        (Term::Wild, y) => args.push(y.clone()),
+                        (x, Term::Wild) => args.push(x.clone()),
+                        (Term::Var(x), Term::Var(y)) if !special.contains(y) => {
+                            args.push(Term::Var(x.clone()));
+                            renames.push((y.clone(), x.clone()));
+                        }
+                        _ => {
+                            args.clear();
+                            break;
+                        }
+                    }
+                }
+                if args.is_empty() {
+                    continue;
+                }
+                let one = Literal::Atom(Atom { args, ..a.clone() });
+                rule.body[i] = one;
+                rule.body.remove(j);
+                for (from, to) in renames {
+                    rule.body = rule.body.iter().map(|l| rename_var(l, &from, &to)).collect();
+                    for t in &mut rule.head.args {
+                        if matches!(t, Term::Var(v) if *v == from) {
+                            *t = Term::Var(to.clone());
+                        }
+                    }
+                }
+                merged += 1;
+                continue 'again;
+            }
+        }
+        return merged;
+    }
+}
+
+/// Drops the rules of derived relations that no kept relation (`kept`: outputs, demanded relations, gates, …)
+/// reads, directly or through others; returns those relations.
+fn drop_unread(prog: &mut Program) -> Vec<String> {
+    let mut reads: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for rule in &prog.rules {
+        reads.entry(rule.head.rel.as_str()).or_default().extend(rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()));
+    }
+    let mut live: BTreeSet<&str> = BTreeSet::new();
+    let mut todo: Vec<&str> = reads.keys().copied().filter(|r| kept(prog, r)).collect();
+    while let Some(r) = todo.pop() {
+        if live.insert(r) {
+            todo.extend(reads.get(r).into_iter().flatten().copied());
+        }
+    }
+    let unread: Vec<String> = reads.keys().filter(|r| !live.contains(**r)).map(|r| (*r).to_owned()).collect::<BTreeSet<_>>().into_iter().collect();
+    prog.rules.retain(|r| !unread.contains(&r.head.rel));
+    unread
 }
 
 /// `l` with the variable `from` renamed `to`.
@@ -460,15 +626,17 @@ mod tests {
         )
         .unwrap();
         let report = simplify(&mut prog);
-        // `doc($d, $p, _)`, and the second `!m1($n)` the merge made.
-        assert_eq!(report.implied, 2);
+        // The second `!m1($n)` the merge made. `doc($d, $p, _)` beside `doc($d, $p, $m)` is one row of `doc` (its key
+        // `$d`): merged, and `$m`, named once, is `_`.
+        assert_eq!(report.implied, 1);
+        assert_eq!(report.keyed, 1);
         // The kind test on a member of k0 = {function_definition}, in b1 and b2.
         assert_eq!(report.kind_tests, 2);
         // b2 merges into b1, then m2 (now equal to m1) into m1.
         assert_eq!(report.merged, vec![("b1".to_owned(), "b2".to_owned()), ("m1".to_owned(), "m2".to_owned())]);
         let out: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
         assert_eq!(out.len(), 1);
-        assert!(out[0].contains("!m1($n), doc") && !out[0].contains("m2") && !out[0].contains("doc($d, $p, _)"), "{}", out[0]);
+        assert!(out[0].contains("!m1($n), doc($d, $p, _)") && !out[0].contains("m2") && out[0].matches("doc(").count() == 1, "{}", out[0]);
         assert!(!prog.decls.contains_key("b2") && !prog.decls.contains_key("m2"));
     }
 
@@ -487,6 +655,7 @@ mod tests {
             .decl t(s: sym)
             .decl doc(d: int, path: sym, module: sym)
             .input doc
+            .output t
             t($s) :- doc(_, $s, _), $s = "a.py".
             "#,
         )
@@ -498,6 +667,41 @@ mod tests {
         assert!(rules[1].contains(r#"text($n, "set")"#) && !rules[1].contains("$v"), "{}", rules[1]);
         // A head variable stays: the head is filled from a text column.
         assert!(rules[2].contains(r#"doc(_, $s, _), $s = "a.py""#), "{}", rules[2]);
+    }
+
+    #[test]
+    fn singletons_keyed_rows_and_unread_relations() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .decl text(n: node, s: sym)
+            .input node
+            .input text
+            .decl named(n: node)
+            .output named
+            named($n) :- node($d, $n, _, _, _), node(_, $n, "identifier", $s, _), text($n, $v), text($w, $v), $s > 3.
+            .decl two(n: node, m: node)
+            .output two
+            two($n, $m) :- node(_, $n, "call", _, _), node(_, $m, "call", _, _), node(_, $n, _, $a, _), node(_, $m, _, $a, _).
+            .decl dead(n: node)
+            .decl deader(n: node)
+            dead($n) :- node(_, $n, "call", _, _), !deader($n).
+            deader($n) :- node(_, $n, "name", _, _).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        let rule = |head: &str| prog.rules.iter().find(|r| r.head.rel == head).map(|r| r.to_string()).unwrap_or_default();
+        // One row of `node` for `$n` (its key), `$d` named once; `text($w, $v)`, `$w` named once, is implied.
+        let named = rule("named");
+        assert!(named.contains(r#"node(_, $n, "identifier", $s, _)"#) && named.matches("node(").count() == 1, "{named}");
+        assert!(named.matches("text(").count() == 1, "{named}");
+        // Atoms with different keys stay apart: `$n` and `$m` are two nodes with one start (each its two atoms merged).
+        assert_eq!(rule("two").matches("node(").count(), 2, "{}", rule("two"));
+        // `dead`, a test of one node that nothing reads, is inlined into its (no) readers; `deader`, read only by it,
+        // is then read by nothing.
+        assert_eq!(report.unread, vec!["deader".to_owned()]);
+        assert!(prog.rules.iter().all(|r| r.head.rel != "dead" && r.head.rel != "deader"));
     }
 
     #[test]

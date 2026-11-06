@@ -704,6 +704,25 @@ impl Model {
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(&a.rel) {
                 rows = rows.min(1.0);
+                // A text test (decision 0037) probed by a string an input binds keeps the share of that column's
+                // distinct strings it holds: both are measured per chunk. Priced at 1, a test of every identifier's
+                // text looked free after the scan, and the planner never started from the test (notes T10, P6).
+                if a.rel.starts_with(super::strings::RELATION)
+                    && let [Term::Var(v)] = a.args.as_slice()
+                {
+                    let domain = body
+                        .iter()
+                        .filter_map(|l| match l {
+                            Literal::Atom(b) if !b.neg && b.rel != a.rel && prog.inputs.contains(&b.rel) => {
+                                b.args.iter().position(|t| matches!(t, Term::Var(x) if x == v)).map(|c| self.ndv_or_1(&b.rel, c))
+                            }
+                            _ => None,
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    if domain.is_finite() {
+                        rows = rows.min(self.card(&a.rel) / domain);
+                    }
+                }
             }
             rows.max(0.01)
         };
