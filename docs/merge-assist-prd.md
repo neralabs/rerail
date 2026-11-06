@@ -357,6 +357,32 @@ tasks. The stopping rule fired for success at look 1 (3 trials per task and arm,
 - The amendment did its job: with the old dates decision, delivered dates were broken 10 times in 64 even at the
   ceiling; with the amendment, 3 in 24.
 
+#### 6.3.5 Telling an agent its edits would conflict with an open pull request
+
+The simplest in-flight mechanism was tested on real history: 14 pairs of open-source pull requests (13 repositories,
+TypeScript, JavaScript, Python, Go and Rust) where a second pull request clashed with the design of an earlier one
+that was already public, curated by agents that never saw the mechanism. Each run replays the second pull request's
+task from its base, with every pull request open at the time visible, on Codex 0.158 with `openai.gpt-6-luna` on
+Amazon Bedrock; a blind grader judges whether the result conflicts with the first pull request's design.
+Pre-registered, three looks, 252 runs; 17 excluded by the leak guard (agents searching system folders for a Go
+toolchain), with the same direction when they are included.
+
+| Arm | Conflicts with the first pull request | Effect (95% CI) | Holm p | Tokens | Time |
+| --- | --- | --- | --- | --- | --- |
+| Nothing | 48/77 | — | — | — | — |
+| **Push**: after each edit, overlapping hunks with another open pull request are injected with its hunk and intent, and "make your code compatible with theirs unless that is contrary to your task" | **36/80** | **−0.18 (−0.37, −0.01)** | **0.0016** | ×1.33 | ×1.27 |
+| Pull: one line says a conflict exists; the agent reads `git conflicts` when it wants | 40/78 | −0.10 (−0.32, +0.09) | 0.044 | ×1.60 | ×1.42 |
+
+- Identifying overlapping hunks, nothing more, is enough to change outcomes significantly when pushed. The gain sits
+  where the clash is on the same lines: `fd` went from 6/6 conflicting runs to 0/6, a pytest option contract from 6/6
+  to 2/6. Clashes of design in different code (two session designs in Starlette, duplicate features in chi and Task)
+  did not move: the agents never touched the other side's lines, so nothing was identified.
+- Agents given the pull interface looked (74 of 78 runs ran `git conflicts`) and cut textual conflicts with the first
+  pull request (−0.3 files per run, nominal p 0.0007), but resolved few of the design conflicts and spent more.
+- The push arm sent a median of 2 injections per run; done was not worse (+0.05).
+- This is the floor the alignment units (hand-offs, positions, contracts, artefacts) must beat: they exist for the
+  clashes this one cannot see.
+
 The same lookup drives comparison: a peer decision is compared with this branch's only when an agent here works in
 its scope. A branch nobody's work touches costs nothing.
 
