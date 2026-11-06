@@ -1168,6 +1168,15 @@ with k = 2 they stop 8 rows short. `RERAIL_CROSS_ROUNDS=<n>` overrides k as a di
 - **Also:** each round reruns the whole cross-file part. The digest cutoff should be per document
   (rerun only the dependents of documents whose interface rows changed), as `typing::rounds` does.
 - **Test:** `own_ingestion_derives_what_t_facts_do` prints both and asserts them.
+- **A false negative on the runtime oracle (2026-11-06).** `typing::oracle_tests` scores calls.rr against
+  `fixtures/python/calls`. `pkg.exported_helper(2)` in `main.py` reaches `pkg/util.py`'s `helper` through
+  `pkg/__init__.py`'s `from .util import helper as exported_helper`: three files. At k = 2 the rounds stop
+  unconverged (488 → 576 → 595 hop rows) and the call gets **no edge**, where CPython ran `helper`. That is not
+  unknown, so a rule reads it as "calls nothing". With k = 6 the rounds converge after round 4 (596 rows) and
+  the call agrees (84 agree, 9 depart, as the spike scored).
+  - **Why the program cannot mark it itself.** Its opens are three-valued through negation. For example,
+    `vopen(c) :- callee(c, e), !pv(e, _, _), …` and `attr_open(c, a) :- …, !found(c, a, _)` read the absence of
+    a hop relation's row as "no value". Under a bounded round, that absence is not final.
 
 ## O42. Terms, declarations and dependency summaries are not yet wired in
 

@@ -114,3 +114,16 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 - **O81** (step 0): the planner gives a derived relation named as a base relation a private name
   (`plan::private_derived_inputs`), so T's programs' `docof` no longer reads named columns from a positional
   table.
+- **Scoring** (step 0): `typing::oracle_tests` runs a typing program through the corpus runner over an oracle
+  project and compares its `call_target`/`call_open` with the recording.
+
+  | Program | Oracle | Agree | Depart | Wrong |
+  |---|---|---|---|---|
+  | `calls.rr` | CPython runtime (`fixtures/python/calls`) | 83 | 10 | 0 |
+  | native resolver, for comparison | the same | about 76 | 17 | 0 |
+  | `calls_rust.rr` | rust-analyzer 1.99.0 (`fixtures/rust/calls`) | 37 | 7 | 0 (1 is a convention: a local `fn` pointer, followed to its function) |
+
+  Each departure is pinned with its reason. One Python departure is a silent no-edge caused by O41: a
+  re-export three files deep, which the k = 2 rounds cut. With k = 6 the rounds converge and it agrees, so O41
+  is an accuracy bug, not only a report.
+
