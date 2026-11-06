@@ -513,11 +513,16 @@ function reportBestEffort(report: () => void): void {
     process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
   }
 }
-/** Whether the file at `absolute` changed after `startedAt`, on the filesystem's clock; false when it cannot be read. */
-async function writtenSince(absolute: string, startedAt: number): Promise<boolean> {
+/**
+ * Whether the session folder's walk first sees `path` already written since the session started, on the filesystem's
+ * clock: it may be the session's own write, so it is no baseline. A worktree's first walk never says so, since
+ * `git worktree add` writes every file as the worktree appears; nor does a file that cannot be read.
+ */
+async function writtenThisSession(discovery: SourceDiscovery, walk: WalkStart, path: string): Promise<boolean> {
+  if (!walk.inSession) return false;
   try {
-    const info = await lstat(absolute);
-    return Math.max(info.mtimeMs, info.ctimeMs) >= startedAt;
+    const info = await lstat(resolve(discovery.root, path));
+    return Math.max(info.mtimeMs, info.ctimeMs) >= discovery.startedAt;
   } catch {
     return false;
   }
@@ -1179,9 +1184,9 @@ export class CodeRuleBridge {
     const first: string[] = [];
     for (const path of new Set([...walk.previous.keys(), ...current.keys()])) {
       const seen = this.#walkedIgnoreFile(discovery, walk, current, path);
-      // One first seen but written since the session started may be the session's own write: it is compared from empty.
-      if (seen === "first" && !(await writtenSince(resolve(discovery.root, path), discovery.startedAt))) first.push(path);
-      else if (seen !== undefined) this.#walkedIgnoreChanges.add(path);
+      if (seen === undefined) continue;
+      if (seen === "first" && !(await writtenThisSession(discovery, walk, path))) first.push(path);
+      else this.#walkedIgnoreChanges.add(path);
     }
     await this.#rememberIgnoreFiles(first);
   }
