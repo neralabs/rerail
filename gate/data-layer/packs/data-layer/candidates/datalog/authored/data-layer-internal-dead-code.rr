@@ -7,19 +7,19 @@
 // oracleAnalyzer is `option_on("oracleAnalyzer")`.
 //
 // A SQL row keyed by (__path, __start) is a node here. Ids and qualified names are built with `cat`: id
-// module::name or module::Class.name, fqname module.name or module.Class.name, module the path's dotted module
-// (`doc`'s module: the SQL's replace(rx_replace(path, '/__init__\.py$|\.py$', ''), '/', '.')).
+// module::name or module::Class.name, fqname module.name or module.Class.name, module the SQL's
+// replace(rx_replace(path, '/__init__\.py$|\.py$', ''), '/', '.'), with `@rx_replace`.
 // Exact: a decorator's name is `^@\s*([^\s(]+)`'s group read on the decorator's line (`match_group`, the match at
 // the decorator's column); a base's name is the SQL's trim(rx_replace(rx_replace(text, '(?s)\[.*$', ''), '^.*\.',
-// '')), tested per row as a pattern over the base's text for each identifier in it; an `__all__` entry is W's
-// `value` of the string or concatenation; the dynamic imports are the regex's matches over the module's source,
-// from the module's first token on, and their `module`/`attr` groups (`match_group`, whose `m` is the match).
+// '')), with `@rx_replace`; an `__all__` entry is W's `value` of the string or concatenation; the dynamic imports
+// are the regex's matches over the module's source, from the module's first token on, and their `module`/`attr`
+// groups (`match_group`, whose `m` is the match); a relative import climbs one package per dot past the first, as
+// the SQL's rx_replace(prefix, '\.?[^.]+$', '') does, at any depth; the hierarchy's least depth is found at any
+// depth.
 // Approximations (noted):
 // - an import item's original name is the dotted name's text without spaces (the SQL: the first word of the
 //   comma-split, comment-stripped item text, which differs for a backslash continuation or a dotted name written
-//   with spaces); the SQL's string splitting is a recursion building strings, which does not lower;
-// - the relative import climb (one package per dot) and the hierarchy's depth are unrolled, to 8 dots and 24 hops: a
-//   counter in a recursion does not lower (UnboundedValueCycle);
+//   with spaces);
 // - among several bases at the least depth holding a public method, the one first by route is found greedily
 //   (exact for routes, which are the bases' start offsets in order).
 
@@ -52,9 +52,10 @@ unreachable_cdef("class_definition").
 .decl unreachable_imports_k(kind: symbol)
 unreachable_imports_k("import_statement"). unreachable_imports_k("import_from_statement").
 
-// The documents the inputs read: in scope, parsed (`syntax: valid`).
+// The documents the inputs read: in scope, parsed (`syntax: valid`); the module the SQL names from the path.
 .decl unreachable_doc(d: number, p: symbol, m: symbol)
-unreachable_doc(d, p, m) :- doc(d, p, m), in_scope(d), !out_scope(d), !syntax_error(d).
+unreachable_doc(d, p, m) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
 
 // ---- inputs ----
 // raw_functions: a def in no def; its nearest class (CLASS) if any.
@@ -146,40 +147,33 @@ unreachable_alias(x, a) :- unreachable_item(_, _, _, x), node(_, x, "aliased_imp
 .decl unreachable_abs_base(i: node, b: symbol)
 unreachable_abs_base(i, b) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", m), node(_, m, "dotted_name", _, _), name(m, b).
 .decl unreachable_rel_base(i: node, k: number, rest: symbol)
-unreachable_rel_base(i, k, rest) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _),
-    child(r, ip, _), node(_, ip, "import_prefix", _, _), node_text(ip, dots), k = strlen(dots), unreachable_rel_rest(r, rest).
+unreachable_rel_base(i, k, rest) :- unreachable_dots(i, dots), k = strlen(dots), field(i, "module_name", r), unreachable_rel_rest(r, rest).
+.decl unreachable_dots(i: node, dots: symbol)
+unreachable_dots(i, dots) :- node(_, i, "import_from_statement", _, _), field(i, "module_name", r), node(_, r, "relative_import", _, _),
+    child(r, ip, _), node(_, ip, "import_prefix", _, _), node_text(ip, dots).
 .decl unreachable_rel_rest(r: node, rest: symbol)
 unreachable_rel_rest(r, rest) :- node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _), name(m, rest).
 unreachable_rel_rest(r, "") :- node(_, r, "relative_import", _, _), !unreachable_rel_dotted(r).
 .decl unreachable_rel_dotted(r: node)
 unreachable_rel_dotted(r) :- node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _).
-// The package a relative import starts from: the module for a package's __init__.py, else its parent; then one
-// package up per dot past the first.
-// unreachable_parent(q, p): p is q less its last dotted component ("" for none), for every module and its prefixes.
-.decl unreachable_mod_prefix(q: symbol)
-unreachable_mod_prefix(m) :- unreachable_doc(_, _, m).
-unreachable_mod_prefix(q) :- unreachable_doc(_, _, m), split_dot(m, q, rest), rest != "".
-.decl unreachable_parent(q: symbol, p: symbol)
-unreachable_parent(q, p) :- unreachable_mod_prefix(q), split_dot(q, p, x), !contains(".", x).
-unreachable_parent(q, "") :- unreachable_mod_prefix(q), !contains(".", q).
-unreachable_parent("", "").
-// The start (one dot): the package. Each further dot climbs one package, unrolled to eight dots (a counter in the
-// recursion does not lower); APPROXIMATION: deeper relative imports resolve nowhere.
+// The package a relative import starts from: the module for a package's __init__.py (the SQL's `path LIKE
+// '%/__init__.py'`: ASCII case folded, `_` any one character), else the module less its last part; then one package
+// up per dot past the first, each the SQL's rx_replace(prefix, '\.?[^.]+$', ''), written as the prefix of that
+// length (a `substr` of the package: a part of a value, which bounds the recursion), the dots left counted down
+// the same way.
+.decl unreachable_init(p: symbol)
+unreachable_init(p) :- unreachable_doc(_, p, _), match("(?s).*/..[iI][nN][iI][tT]..\\.[pP][yY]", p).
 .decl unreachable_pkg0(i: node, p: symbol)
-unreachable_pkg0(i, m) :- unreachable_rel_base(i, _, _), node(d, i, _, _, _), unreachable_doc(d, p, m), match(".*/__init__\\.py", p).
-unreachable_pkg0(i, q) :- unreachable_rel_base(i, _, _), node(d, i, _, _, _), unreachable_doc(d, p, m), !match(".*/__init__\\.py", p),
-    unreachable_parent(m, q).
-.decl unreachable_up(i: node, k: number, p: symbol)
-unreachable_up(i, 1, p) :- unreachable_pkg0(i, p).
-unreachable_up(i, 2, q) :- unreachable_up(i, 1, p), unreachable_parent(p, q).
-unreachable_up(i, 3, q) :- unreachable_up(i, 2, p), unreachable_parent(p, q).
-unreachable_up(i, 4, q) :- unreachable_up(i, 3, p), unreachable_parent(p, q).
-unreachable_up(i, 5, q) :- unreachable_up(i, 4, p), unreachable_parent(p, q).
-unreachable_up(i, 6, q) :- unreachable_up(i, 5, p), unreachable_parent(p, q).
-unreachable_up(i, 7, q) :- unreachable_up(i, 6, p), unreachable_parent(p, q).
-unreachable_up(i, 8, q) :- unreachable_up(i, 7, p), unreachable_parent(p, q).
+unreachable_pkg0(i, m) :- unreachable_rel_base(i, _, _), node(d, i, _, _, _), unreachable_doc(d, p, m), unreachable_init(p).
+unreachable_pkg0(i, q) :- unreachable_rel_base(i, _, _), node(d, i, _, _, _), unreachable_doc(d, p, m), !unreachable_init(p),
+    q = @rx_replace(m, "\\.?[^.]+$", "").
+// unreachable_up(i, left, p): package p, with the dots `left` still to climb.
+.decl unreachable_up(i: node, left: symbol, p: symbol)
+unreachable_up(i, left, p) :- unreachable_pkg0(i, p), unreachable_dots(i, dots), left = substr(dots, 1, strlen(dots) - 1).
+unreachable_up(i, left2, q) :- unreachable_up(i, left, p), left != "", left2 = substr(left, 1, strlen(left) - 1),
+    q = substr(p, 0, strlen(@rx_replace(p, "\\.?[^.]+$", ""))).
 .decl unreachable_prefix(i: node, p: symbol)
-unreachable_prefix(i, p) :- unreachable_rel_base(i, k, _), unreachable_up(i, k, p).
+unreachable_prefix(i, p) :- unreachable_up(i, "", p).
 // The resolved candidate: (statement, document, module, name, target, kind).
 .decl unreachable_imp_c(i: node, d: number, m: symbol, n: symbol, t: symbol, k: symbol)
 unreachable_imp_c(i, d, m, a, o, "module") :- node(_, i, "import_statement", _, _), unreachable_item(i, d, o, x), unreachable_doc(d, _, m), unreachable_alias(x, a).
@@ -228,19 +222,11 @@ unreachable_base_k("identifier"). unreachable_base_k("attribute"). unreachable_b
 unreachable_raw_base(c, b) :- unreachable_cls(c, _, _), field(c, "superclasses", al), child(al, b, _), node(_, b, k, _, _), unreachable_base_k(k).
 .decl unreachable_base_text(c: node, s: symbol)
 unreachable_base_text(c, s) :- unreachable_raw_base(c, b), node_text(b, s).
-// The base's name, the SQL's trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')): its text up to the
-// first `[`, less everything through the last `.` of its first line, less spaces around. Where that is a name it is
-// an identifier of the base (or the base itself); each one is tested: the text is [<first-line text>.] name
-// [`[`…], spaces around the name.
-.decl unreachable_leaf(b: node, x: symbol)
-unreachable_leaf(b, x) :- unreachable_raw_base(_, b), node(_, b, "identifier", _, _), text(b, x).
-unreachable_leaf(b, x) :- unreachable_raw_base(_, b), inside(i, b, unreachable_base_in_k), node(_, i, "identifier", _, _), text(i, x).
-.decl unreachable_base_in_k(kind: symbol)
-unreachable_base_in_k("identifier"). unreachable_base_in_k("attribute"). unreachable_base_in_k("generic_type").
-unreachable_base_in_k("subscript").
+// The base's name, the SQL's trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')) (SQLite's trim takes
+// spaces off both ends).
 .decl unreachable_base_name_of(b: node, x: symbol)
-unreachable_base_name_of(b, x) :- unreachable_leaf(b, x), node_text(b, s),
-    match(cat("(?:[^\\n\\[]*\\.)? *", cat(x, " *(?:\\[(?s:.*))?")), s).
+unreachable_base_name_of(b, x) :- unreachable_raw_base(_, b), node_text(b, s),
+    x = @rx_replace(@rx_replace(@rx_replace(s, "(?s)\\[.*$", ""), "^.*\\.", ""), "^ +| +$", "").
 // base_edges(owner id, base id, ordinal): the base's name, by an import of the owner's module naming a class,
 // else a class of the owner's module, else the one class of that name.
 .decl unreachable_bname(owner: symbol, m: symbol, bn: symbol, ord: number)
@@ -263,35 +249,18 @@ unreachable_base_edge(id, b, s) :- unreachable_bname(id, m, bn, s), !unreachable
 unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable_has_bi(id, bn), !unreachable_has_bm(id, bn), unreachable_unique_class(bn, b).
 
 // ---- hierarchy: every base of a class, at its least depth ----
-// (shortest path per pair)
-// Layer by layer, unrolled to depth 24 (a counter in the recursion does not lower); APPROXIMATION: a base deeper
-// than 24 hops is not seen.
+// (shortest path per pair: the SQL's walk never revisits a class, so its least depth is the least walk's)
+// Layer by layer: a layer's depth is one of o's hop numbers, 1 … the number of classes o reaches (a least walk
+// from o visits each at most once), so the recursion makes no number.
+.decl unreachable_reach(owner: symbol, base: symbol)
+unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
+unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
+.decl unreachable_hops(owner: symbol, k: number)
+unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b),
+    k = count : { unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x }.
 .decl unreachable_hier_l(owner: symbol, base: symbol, depth: number)
 unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
-unreachable_hier_l(o, b, 1) :- unreachable_hier_l(o, x, 0), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 2) :- unreachable_hier_l(o, x, 1), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 3) :- unreachable_hier_l(o, x, 2), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 4) :- unreachable_hier_l(o, x, 3), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 5) :- unreachable_hier_l(o, x, 4), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 6) :- unreachable_hier_l(o, x, 5), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 7) :- unreachable_hier_l(o, x, 6), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 8) :- unreachable_hier_l(o, x, 7), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 9) :- unreachable_hier_l(o, x, 8), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 10) :- unreachable_hier_l(o, x, 9), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 11) :- unreachable_hier_l(o, x, 10), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 12) :- unreachable_hier_l(o, x, 11), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 13) :- unreachable_hier_l(o, x, 12), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 14) :- unreachable_hier_l(o, x, 13), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 15) :- unreachable_hier_l(o, x, 14), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 16) :- unreachable_hier_l(o, x, 15), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 17) :- unreachable_hier_l(o, x, 16), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 18) :- unreachable_hier_l(o, x, 17), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 19) :- unreachable_hier_l(o, x, 18), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 20) :- unreachable_hier_l(o, x, 19), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 21) :- unreachable_hier_l(o, x, 20), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 22) :- unreachable_hier_l(o, x, 21), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 23) :- unreachable_hier_l(o, x, 22), unreachable_base_edge(x, b, _).
-unreachable_hier_l(o, b, 24) :- unreachable_hier_l(o, x, 23), unreachable_base_edge(x, b, _).
+unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = i + 1.
 .decl unreachable_hier_d(owner: symbol, base: symbol, depth: number)
 unreachable_hier_d(o, b, k) :- unreachable_hier_l(o, b, _), k = min j : { unreachable_hier_l(o, b, j) }.
 
