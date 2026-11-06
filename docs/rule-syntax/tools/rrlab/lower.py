@@ -36,7 +36,8 @@ FILLED = {"doc", "pkg", "path_part", "file_name", "node", "kind", "field", "chil
           "line", "end_line", "col", "unset", "value", "str", "strprefix", "name", "comment", "value_type", "source",
           "src_line", "line_count", "syntax_error", "first_token", "last_token", "token_before", "token_after",
           "next_sibling", "precedes", "spread", "visit_index", "ast_depth", "rrlab_parent", "rrlab_lang",
-          "static_value", "file", "package", "package_field", "package_for", "option", "option_item", "input_error"}
+          "static_value", "file", "package", "package_field", "package_for", "option", "option_item", "input_error",
+          "parsed"}
 APPROX = {"static_value": "static_value is value (no constant following)",
           "visit_index": "visit order is start order (preorder), not CPython's ast order",
           "syntax_error": "syntax_error comes from tree-sitter ERROR/MISSING nodes",
@@ -584,7 +585,7 @@ class Program:
                     i += 1
                 continue
             if k == "str" and not v["message"]:
-                v["message"] = toks[i][1][1:-1]
+                v["message"] = re.sub(r'\\(["\\])', r'\1', toks[i][1][1:-1])  # \" and \\ as written
             i += 1
         self.violations[name] = v
 
@@ -934,7 +935,9 @@ class Ctx:
             sid = p.set_id(key)
             p.axes.add((name, sid))
             return [("atom", f"rr_{name}{sid}", [self.expr(x, pre) for x in args[:2]])]
-        if name in ("dfs_first", "dfs_first_memo", "parsed", "match_all", "str_part", "string_annotation", "signed_list",
+        if name == "parsed" and p.language != "vue":
+            p.warn("parsed is modelled for Vue files only: other files have no rows")
+        if name in ("dfs_first", "dfs_first_memo", "match_all", "str_part", "string_annotation", "signed_list",
                     "git_tracked", "git_rev", "git_has", "git_commit", "tsconfig", "tsconfig_for", "tsconfig_path",
                     "package_export"):
             p.warn(f"{name} is not modelled: it has no rows")

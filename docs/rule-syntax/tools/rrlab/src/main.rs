@@ -94,7 +94,7 @@ const RELATIONS: &[&str] = &[
     "doc", "pkg", "path_part", "file_name", "node", "kind", "field", "child", "text", "op", "op_at", "docof", "line",
     "end_line", "col", "unset", "list_len", "value", "str", "strprefix", "name", "comment", "value_type", "source",
     "src_line", "line_count", "syntax_error", "first_token", "last_token", "token_before", "token_after",
-    "next_sibling", "precedes", "spread", "visit_index", "ast_depth", "rrlab_parent", "rrlab_lang",
+    "next_sibling", "precedes", "spread", "visit_index", "ast_depth", "rrlab_parent", "rrlab_lang", "parsed",
 ];
 
 // ---- one document ---------------------------------------------------------------------------------------------
@@ -109,6 +109,7 @@ struct Doc<'a> {
     nodes: Vec<(u64, usize, usize)>,    // named nodes
     visit: u64,
     first_error: Option<(usize, String)>,
+    ts_ids: HashMap<usize, u64>,        // tree-sitter node id -> fact id (a Vue host's guests look them up)
 }
 
 fn is_comment_kind(k: &str) -> bool {
@@ -156,6 +157,7 @@ impl<'a> Doc<'a> {
             self.out.row("rrlab_parent", &[&id, &p]);
         }
         self.nodes.push((id, a, b));
+        self.ts_ids.insert(n.id(), id);
         if (n.is_error() || n.is_missing()) && self.first_error.is_none() {
             let msg = if n.is_missing() { format!("missing {k}") } else { "syntax error".to_string() };
             self.first_error = Some((n.start_position().row + 1, msg));
@@ -481,12 +483,267 @@ fn document(out: &mut Out, next_id: &mut u64, d: u32, path: &str, lang: Option<&
     let mut parser = Parser::new();
     parser.set_language(&language(lang).unwrap()).unwrap();
     let tree = parser.parse(src, None).expect("parse");
-    let mut doc = Doc { d, src, lang, out, next_id, tokens: vec![], nodes: vec![], visit: 0, first_error: None };
+    let mut doc = Doc { d, src, lang, out, next_id, tokens: vec![], nodes: vec![], visit: 0, first_error: None,
+        ts_ids: HashMap::new() };
     doc.walk(tree.root_node(), None, 0);
     if let Some((l, msg)) = doc.first_error.take() {
         doc.out.row("syntax_error", &[&d, &l, &msg]);
     }
-    // Tokens: first/last per node, before/after per node and per token (binary search over the sorted tokens).
+    token_facts(&mut doc);
+    if lang != "vue" {
+        return;
+    }
+    // A Vue component's code: each <script> block, and each template expression, is a guest tree in the same
+    // document, at the component's own positions, and core's parsed(host, grammar, root) names it.
+    let guests = vue_guests(tree.root_node(), src);
+    let mut visit = doc.visit;
+    let ids = std::mem::take(&mut doc.ts_ids);
+    let (out, next_id) = (doc.out, doc.next_id);
+    for g in guests {
+        let Some(&host) = ids.get(&g.host) else { continue };
+        let buf = g.buffer(src);
+        let mut parser = Parser::new();
+        parser.set_language(&language(g.lang).unwrap()).unwrap();
+        let Some(tree) = parser.parse(&buf, None) else { continue };
+        let mut gd = Doc { d, src: &buf, lang: g.lang, out: &mut *out, next_id: &mut *next_id, tokens: vec![],
+            nodes: vec![], visit, first_error: None, ts_ids: HashMap::new() };
+        let root = gd.walk(tree.root_node(), None, 0);
+        gd.out.row("parsed", &[&host, &g.grammar, &root]);
+        token_facts(&mut gd);
+        visit = gd.visit;
+    }
+}
+
+/// One piece of a Vue component's code, parsed on its own: the host node it is read from (a tree-sitter id), its
+/// grammar label for `parsed`, the dialect it is parsed with, its byte range, and the text written around it.
+struct VueGuest {
+    host: usize,
+    grammar: &'static str,
+    lang: &'static str,
+    lo: usize,
+    hi: usize,
+    wrap: Vec<(usize, &'static str)>,
+}
+
+impl VueGuest {
+    /// The component's text with everything outside [lo, hi) blanked (line breaks kept, so rows and columns are
+    /// the component's), and the wrapper written into the blanks: `(` … `)` makes an expression of `{ a: 1 }`,
+    /// `(` … `)=>0` makes parameters of a slot's `{ item }`.
+    fn buffer(&self, src: &str) -> String {
+        let b = src.as_bytes();
+        let mut buf: Vec<u8> = b.iter().enumerate()
+            .map(|(i, &c)| if (self.lo..self.hi).contains(&i) || c == b'\n' || c == b'\r' { c } else { b' ' })
+            .collect();
+        buf.extend_from_slice(b"        ");
+        for &(at, t) in &self.wrap {
+            for (j, c) in t.bytes().enumerate() {
+                buf[at + j] = c;
+            }
+        }
+        String::from_utf8(buf).unwrap_or_default()
+    }
+}
+
+/// The guests of a Vue file: its scripts (as their `lang` says) and its template's expressions, read the way
+/// vue-eslint-parser reads them. Grammar labels:
+///   "javascript" | "typescript" | "tsx"   a <script> block's raw text
+///   "vue-expression"   a directive's value or a {{ }}'s contents, as one expression: program > ( … )
+///   "vue-statements"   a v-on value, as statements: @click="a = 1; go()"
+///   "vue-params"       v-slot, #name, slot-scope, scope: parameters, program > (…)=>0
+///   "vue-for-alias"    v-for's `(item, , i)`, as an array pattern: program > let [item, , i]=0, holes kept as
+///                      vue-eslint-parser keeps them;  "vue-for-source": its `in items`, an expression
+fn vue_guests(root: Node, src: &str) -> Vec<VueGuest> {
+    let text = |n: Node| &src[n.start_byte()..n.end_byte()];
+    // before(lo): a blank before lo that is not a line break, for an opening wrapper
+    let bytes = src.as_bytes();
+    let before = |lo: usize| -> usize {
+        let mut p = lo.saturating_sub(1);
+        while p > 0 && matches!(bytes[p], b'\n' | b'\r') {
+            p -= 1;
+        }
+        p
+    };
+    // run_before(lo, k): the start of k bytes before lo with no line break in them, for a wrapper written there
+    let run_before = |lo: usize, k: usize| -> usize {
+        let mut p = lo.saturating_sub(k);
+        while p > 0 && bytes[p..p + k].iter().any(|&c| c == b'\n' || c == b'\r') {
+            p -= 1;
+        }
+        p
+    };
+    let mut scripts = Vec::new();
+    let mut all = Vec::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        all.push(n);
+        for c in kids(n).into_iter().rev() {
+            stack.push(c);
+        }
+    }
+    let mut ts = "javascript";
+    for &n in &all {
+        if n.kind() != "script_element" {
+            continue;
+        }
+        let mut lang = "javascript";
+        for c in kids(n) {
+            if c.kind() != "start_tag" {
+                continue;
+            }
+            for a in kids(c) {
+                let name = kids(a).into_iter().find(|x| x.kind() == "attribute_name").map(text);
+                if a.kind() == "attribute" && name == Some("lang") {
+                    lang = match value_of(a).map(text) {
+                        Some("ts") => "typescript",
+                        Some("tsx") => "tsx",
+                        _ => "javascript",
+                    };
+                }
+            }
+        }
+        if lang != "javascript" {
+            ts = "typescript";
+        }
+        if let Some(raw) = kids(n).into_iter().find(|c| c.kind() == "raw_text") {
+            scripts.push(VueGuest { host: raw.id(), grammar: lang, lang, lo: raw.start_byte(), hi: raw.end_byte(), wrap: vec![] });
+        }
+    }
+    let mut out = scripts;
+    let expr = |v: Node, grammar: &'static str| VueGuest {
+        host: v.id(), grammar, lang: ts, lo: v.start_byte(), hi: v.end_byte(),
+        wrap: vec![(before(v.start_byte()), "("), (v.end_byte(), ")")],
+    };
+    let params = |v: Node, grammar: &'static str, lo: usize, hi: usize| VueGuest {
+        host: v.id(), grammar, lang: ts, lo, hi, wrap: vec![(before(lo), "("), (hi, ")=>0")],
+    };
+    for &n in &all {
+        match n.kind() {
+            "interpolation" => {
+                if let Some(raw) = kids(n).into_iter().find(|c| c.kind() == "raw_text") {
+                    if !text(raw).trim().is_empty() {
+                        out.push(expr(raw, "vue-expression"));
+                    }
+                }
+            }
+            "attribute" => {
+                let name = kids(n).into_iter().find(|x| x.kind() == "attribute_name").map(text);
+                if let (Some("slot-scope" | "scope"), Some(v)) = (name, value_of(n)) {
+                    if !text(v).trim().is_empty() {
+                        out.push(params(v, "vue-params", v.start_byte(), v.end_byte()));
+                    }
+                }
+            }
+            "directive_attribute" => {
+                // a dynamic argument, :[key]="…", is an expression too
+                for c in kids(n).into_iter().filter(|c| c.kind() == "dynamic_directive_value") {
+                    if let Some(iv) = kids(c).into_iter().find(|x| x.kind() == "dynamic_directive_inner_value") {
+                        out.push(expr(iv, "vue-expression"));
+                    }
+                }
+                let Some(v) = value_of(n) else { continue };
+                let body = text(v);
+                if body.trim().is_empty() {
+                    continue;
+                }
+                let cs = kids(n);
+                let name = match cs.iter().find(|c| c.kind() == "directive_name").map(|c| text(*c)) {
+                    Some(x) => x,
+                    None => match cs.first().map(|c| c.kind()) {
+                        Some("@") => "v-on",
+                        Some("#") => "v-slot",
+                        _ => "v-bind",
+                    },
+                };
+                match name {
+                    "v-on" => out.push(VueGuest { host: v.id(), grammar: "vue-statements", lang: ts,
+                        lo: v.start_byte(), hi: v.end_byte(), wrap: vec![] }),
+                    "v-slot" => out.push(params(v, "vue-params", v.start_byte(), v.end_byte())),
+                    "v-for" => {
+                        let Some((alias, source)) = vue_for_split(body) else {
+                            out.push(expr(v, "vue-expression"));
+                            continue;
+                        };
+                        let base = v.start_byte();
+                        let (mut alo, mut ahi) = (base + alias.0, base + alias.1);
+                        if alo < ahi && bytes[alo] == b'(' && bytes[ahi - 1] == b')' {
+                            alo += 1;
+                            ahi -= 1;
+                        }
+                        if alo < ahi {
+                            out.push(VueGuest { host: v.id(), grammar: "vue-for-alias", lang: ts, lo: alo, hi: ahi,
+                                wrap: vec![(run_before(alo, 5), "let ["), (ahi, "]=0")] });
+                        }
+                        let (slo, shi) = (base + source.0, base + source.1);
+                        out.push(VueGuest { host: v.id(), grammar: "vue-for-source", lang: ts, lo: slo, hi: shi,
+                            wrap: vec![(before(slo), "("), (shi, ")")] });
+                    }
+                    _ => out.push(expr(v, "vue-expression")),
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn kids<'t>(n: Node<'t>) -> Vec<Node<'t>> {
+    (0..n.child_count() as u32).filter_map(|i| n.child(i)).collect()
+}
+
+/// An attribute's value node: `x` of `a="x"` or of `a=x`.
+fn value_of<'t>(n: Node<'t>) -> Option<Node<'t>> {
+    for c in kids(n) {
+        if c.kind() == "attribute_value" {
+            return Some(c);
+        }
+        if c.kind() == "quoted_attribute_value" {
+            return kids(c).into_iter().find(|v| v.kind() == "attribute_value");
+        }
+    }
+    None
+}
+
+/// v-for's value split as Vue's forAliasRE does, /([\s\S]*?)\s+(?:in|of)\s+(\S[\s\S]*)/: the alias range
+/// (trimmed) and the source range (trimmed), as offsets into the value.
+fn vue_for_split(v: &str) -> Option<((usize, usize), (usize, usize))> {
+    let b = v.as_bytes();
+    let ws = |c: u8| c.is_ascii_whitespace();
+    for i in 0..b.len() {
+        if !ws(b[i]) {
+            continue;
+        }
+        let mut j = i;
+        while j < b.len() && ws(b[j]) {
+            j += 1;
+        }
+        if j + 2 > b.len() || !(&b[j..j + 2] == b"in" || &b[j..j + 2] == b"of") {
+            continue;
+        }
+        let mut k = j + 2;
+        if k >= b.len() || !ws(b[k]) {
+            continue;
+        }
+        while k < b.len() && ws(b[k]) {
+            k += 1;
+        }
+        if k >= b.len() {
+            continue;
+        }
+        let mut alo = 0;
+        while alo < i && ws(b[alo]) {
+            alo += 1;
+        }
+        let mut shi = b.len();
+        while shi > k && ws(b[shi - 1]) {
+            shi -= 1;
+        }
+        return Some(((alo, i), (k, shi)));
+    }
+    None
+}
+
+/// Tokens: first/last per node, before/after per node and per token (binary search over the sorted tokens).
+fn token_facts(doc: &mut Doc) {
     let mut toks = std::mem::take(&mut doc.tokens);
     toks.sort_by_key(|t| (t.1, t.2));
     let starts: Vec<usize> = toks.iter().map(|t| t.1).collect();

@@ -1,0 +1,116 @@
+.policy "eslint-plugin-vue-no-setup-props-reactivity-loss" revision 2
+.description "Don't destructure Vue props or read their values at the top of setup() or <script setup>; the copies stop updating when the props change."
+.language vue
+.mode steer
+.scope include "**/*.vue"
+#include "vue/component.rr"
+//   vcomp(o), vsetup(o, f), vprops_call(c), vin_setup(n), ref_site(r, s), deparen(e, x), call_arg(c, a, i)
+
+// eslint-plugin-vue's no-setup-props-reactivity-loss. No options. The props come in as setup()'s first parameter,
+// or as what `defineProps()` (or `withDefaults(defineProps(), …)`) is assigned to in <script setup>.
+// Destructuring them there is reported at the pattern:
+//   setup({ count }) {}         const [a] = defineProps(…)         const { a: { b } } = defineProps(…)
+// Reading a value out of them is reported only when the props reference is in the root scope (not in a nested
+// function, block, loop or catch): in a call, in an array or object literal assigned, as the base of an assigned
+// member chain, in a template literal or a conditional assigned, or when the props are destructured:
+//   const x = props.x        foo(props.x)        const o = { x: props.x }        const { x } = props
+//   const c = computed(() => props.x)            not reported: read in a nested function
+// A name destructured from defineProps (`const { x } = defineProps()`) counts as a read wherever it is used so.
+.violation lost(at: node, msg: symbol) code "vue/no-setup-props-reactivity-loss" "{msg}"
+    suppress eslint "vue/no-setup-props-reactivity-loss"
+lost(p, "Destructuring the `props` will cause the value to lose reactivity.") :- destructured(p).
+lost(c, m) :- kind(c, "call_expression"), nearest(c, sc, fn_scope), accessed(c, sc), msg(sc, m).
+lost(at, m) :- assigned(l, r, sc), verify(l, r, sc, at), msg(sc, m).
+.decl msg(sc: node, m: symbol)
+msg(sc, cat("Getting a value from the `props` in root scope of `", y, "` will cause the value to lose reactivity.")) :-
+    src(sc, _, _), (kind(sc, "program"), y = "<script setup>" ; !kind(sc, "program"), y = "setup()").
+
+// ---- where the props come from (processPropId) ----------------------------------------------------------------------
+// src(sc, id, k): identifier id holds the props (k "props") or one destructured prop (k "prop"); sc is the scope
+// whose own references count: the setup function, or <script setup>'s program.
+.decl src(sc: node, id: node, k: symbol)
+.decl destructured(p: node)
+.decl held(sc: node, p: node, k: symbol)  // p receives props, before its default is skipped
+held(f, p, "props") :- vcomp(o), vsetup(o, f), (field(f, "parameter", p) ; field(f, "parameters", ps), child(ps, q, 0),
+    (field(q, "pattern", p) ; !field(q, "pattern", _), p = q)).
+held(sc, p, "props") :- vprops_call(c), (t = c ; call_arg(t, w, 0), deparen(w, c), field(t, "function", f),
+    text(f, "withDefaults")), nearest(c, sc, "program"),
+    kind(d, "variable_declarator"), field(d, "value", v), deparen(v, t), field(d, "name", p), !kind(p, "object_pattern").
+held(sc, q, "prop") :- top_object(sc, o), child(o, e, _),
+    (kind(e, "pair_pattern"), field(e, "value", q) ; kind(e, "shorthand_property_identifier_pattern"), q = e ;
+     kind(e, "object_assignment_pattern"), q = e).
+held(sc, q, "props") :- top_object(sc, o), child(o, e, _), kind(e, "rest_pattern"), child(e, q, _).
+.decl top_object(sc: node, o: node)
+top_object(sc, o) :- vprops_call(c), (t = c ; call_arg(t, w, 0), deparen(w, c), field(t, "function", f),
+    text(f, "withDefaults")), nearest(c, sc, "program"),
+    kind(d, "variable_declarator"), field(d, "value", v), deparen(v, t), field(d, "name", o), kind(o, "object_pattern").
+.decl unwrapped(sc: node, p: node, k: symbol)  // skipDefaultParamValue, unwrapAssignment
+unwrapped(sc, p, k) :- held(sc, h, k), (kind(h, "assignment_pattern") ; kind(h, "object_assignment_pattern")),
+    field(h, "left", p).
+unwrapped(sc, p, k) :- held(sc, p, k), !kind(p, "assignment_pattern"), !kind(p, "object_assignment_pattern").
+destructured(p) :- unwrapped(_, p, _), (kind(p, "object_pattern") ; kind(p, "array_pattern")).
+src(sc, p, k) :- unwrapped(sc, p, k),
+    (kind(p, "identifier") ; kind(p, "shorthand_property_identifier_pattern")).
+
+// pref(sc, r, k): a read of such a variable, from sc's own scope.
+.decl pref(sc: node, r: node, k: symbol)
+pref(sc, r, k) :- src(sc, id, k), (s = id ; field(s, "name", id), kind(s, "variable_declarator") ;
+    ref_site(id, s)), ref_site(r, s), r != id, own_scope(r, sc), !written(r).
+.decl written(r: node)  // only written: the left of a plain `=`
+written(r) :- estree_parent(r, a), kind(a, "assignment_expression"), field(a, "left", r).
+.decl own_scope(r: node, sc: node)
+own_scope(r, sc) :- scope_up(r, b), !loose_for(b), (fn_scope(k), kind(b, k), sc = b ;
+    kind(b, "statement_block"), field(sc, "body", b), kind(sc, k), fn_scope(k)).
+// scope_up(r, b): the candidate scopes around r, innermost first, climbing past a `for` that is no scope.
+.decl scope_up(r: node, b: node)
+scope_up(r, b) :- ref_site(r, _), nearest(r, b, scope_kind).
+scope_up(r, b) :- scope_up(r, f), loose_for(f), nearest(f, b, scope_kind).
+.decl scope_kind(k: symbol)
+scope_kind(k) :- fn_scope(k).
+scope_kind("statement_block"). scope_kind("for_statement"). scope_kind("for_in_statement").
+scope_kind("catch_clause"). scope_kind("switch_body"). scope_kind("class_body").
+// loose_for(f): eslint-scope gives a for its own scope only when it declares with let or const.
+.decl loose_for(f: node)
+loose_for(f) :- (kind(f, "for_statement") ; kind(f, "for_in_statement")), !lexical_for(f).
+.decl lexical_for(f: node)
+lexical_for(f) :- kind(f, "for_statement"), field(f, "initializer", i), kind(i, "lexical_declaration").
+lexical_for(f) :- kind(f, "for_in_statement"), field(f, "left", l), token_before(l, k), (text(k, "let") ; text(k, "const")).
+// accessed(n, sc): isPropsMemberAccessed: within n, a props read that is a member access's object, or a prop read.
+.decl accessed(n: node, sc: node)
+accessed(n, sc) :- pref(sc, r, "props"), estree_parent(r, m), field(m, "object", w), deparen(w, r),
+    (kind(m, "member_expression") ; kind(m, "subscript_expression")), (n = r ; within(r, n)), acc_ask(n).
+accessed(n, sc) :- pref(sc, r, "prop"), (n = r ; within(r, n)), acc_ask(n).
+.decl acc_ask(n: node)
+acc_ask(c) :- kind(c, "call_expression").
+acc_ask(x) :- assigned(_, r, _), base(r, b), part(b, x).
+acc_ask(r) :- assigned(_, r, _).
+
+// ---- verify(left, right) --------------------------------------------------------------------------------------------
+.decl assigned(l: node, r: node, sc: node)
+assigned(l, r, sc) :- kind(d, "variable_declarator"), field(d, "name", l), field(d, "value", w), deparen(w, r),
+    nearest(d, sc, fn_scope), src(sc, _, _).
+assigned(l, r, sc) :- (kind(d, "assignment_expression") ; kind(d, "augmented_assignment_expression")),
+    field(d, "left", w0), deparen(w0, l), field(d, "right", w), deparen(w, r), nearest(d, sc, fn_scope), src(sc, _, _).
+// base(r, b): the expression under r's member chain; part(b, x): the parts verify looks at.
+.decl base(r: node, b: node)
+base(r, r) :- assigned(_, r, _).
+base(r, o) :- base(r, m), (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", w),
+    deparen(w, o).
+.decl part(b: node, x: node)
+part(b, x) :- base(_, b), kind(b, "template_string"), child(b, s, _), kind(s, "template_substitution"),
+    child(s, w, 0), deparen(w, x).
+part(b, x) :- base(_, b), kind(b, "ternary_expression"), (field(b, "condition", w) ; field(b, "consequence", w) ;
+    field(b, "alternative", w)), deparen(w, x).
+part(b, b) :- base(_, b), kind(b, "identifier").
+.decl verify(l: node, r: node, sc: node, at: node)
+verify(l, r, sc, r) :- assigned(l, r, sc), (kind(r, "array") ; kind(r, "object")), accessed(r, sc).
+verify(l, r, sc, l) :- pattern_hit(l, r, sc).
+verify(l, r, sc, x) :- assigned(l, r, sc), !wrapper_hit(r, sc), !pattern_hit(l, r, sc), base(r, b), part(b, x),
+    accessed(x, sc), !earlier_hit(b, x, sc).
+.decl earlier_hit(b: node, x: node, sc: node)  // Array.find: an earlier part also holds an access
+earlier_hit(b, x, sc) :- part(b, x), part(b, y), earlier(y, x), accessed(y, sc), accessed(x, sc).
+.decl wrapper_hit(r: node, sc: node)
+wrapper_hit(r, sc) :- assigned(_, r, sc), (kind(r, "array") ; kind(r, "object")), accessed(r, sc).
+.decl pattern_hit(l: node, r: node, sc: node)
+pattern_hit(l, r, sc) :- assigned(l, r, sc), !wrapper_hit(r, sc), (kind(l, "array_pattern") ;
+    kind(l, "object_pattern")), base(r, b), part(b, x), pref(sc, x, "props").

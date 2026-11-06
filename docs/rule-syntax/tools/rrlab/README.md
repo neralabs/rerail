@@ -99,7 +99,15 @@ Notes on the rows that are not clean:
 
 - `--lang` forces a grammar. Any other file is read as text only (`source`, `src_line`, no tree).
 - **Blade:** no grammar is vendored or in the cargo registry, so it is skipped.
-- **Vue:** the SFC grammar only. `<script>` and `<template>` expressions are not re-parsed as JavaScript.
+- **Vue:** the SFC grammar, and its code parsed again as guest trees of the same document, at the file's own lines
+  and columns (everything outside the code is blanked, newlines kept). Each guest has a core `parsed(host, grammar,
+  root)` row; a guest root has no parent edge to its host, and a guest's syntax errors are not reported:
+  - a `<script>` block's raw_text: "javascript", or "typescript" / "tsx" by its `lang`;
+  - a directive's value, a `{{ }}`'s text and a dynamic argument `:[x]`: "vue-expression", wrapped as `( … )`;
+  - a v-on value: "vue-statements", as written;
+  - v-slot, `#x`, slot-scope and scope: "vue-params", wrapped as `( … )=>0`;
+  - v-for: its alias as "vue-for-alias", wrapped as `let [ … ]=0` (holes kept), and its list as "vue-for-source",
+    wrapped as `( … )`; the split is Vue's forAliasRE.
 
 ### Facts (`rrlab-facts facts OUTDIR --root DIR FILE…`)
 
@@ -129,7 +137,8 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
 - **Policy-file inputs:** `.input r(IO=json|lines|file, filename=…)` is read from `--root`. `IO=json` takes
   `path` but not `*` steps or `records`.
 - **Empty, with a warning when a rule uses them:**
-  - parsed, dfs_first, dfs_first_memo, match_all, str_part, string_annotation.
+  - dfs_first, dfs_first_memo, match_all, str_part, string_annotation; parsed outside Vue files (a rule whose
+    `.language` is not vue gets the warning).
   - signed_list and the git_* relations.
   - tsconfig, tsconfig_for, tsconfig_path, package_export.
   - input_error, list_len.

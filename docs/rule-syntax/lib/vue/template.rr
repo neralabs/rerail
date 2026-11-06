@@ -1,0 +1,159 @@
+// vue/template: a Vue single-file component's template, read as eslint-plugin-vue reads vue-eslint-parser's
+// VElement, VAttribute and VDirective, over tree-sitter-vue's tree.
+//
+// Interface:
+//   vel(e)                  an element of the template body: under the file's first top-level <template>
+//   vel_name(e, x)          its raw tag name: "my-comp", "MyComp", "div"
+//   vel_tag(e, t)           its start_tag or self_closing_tag;  vel_closed(e): it has an end tag
+//   vel_parent(e, p)        p is e's parent element
+//   vattr(e, a)             a is an attribute or a directive of e
+//   vplain(e, a, x)         a is the plain attribute x (raw name): class="a" gives x = "class"
+//   vdir(e, a, d, arg)      a is directive d with static argument arg ("" for none):
+//                             v-bind:foo, :foo, .foo   d = "bind", arg = "foo"     @click, v-on:click  "on", "click"
+//                             v-for                    "for", ""                  #item, v-slot:item  "slot", "item"
+//                             :[name]                  "bind", "" and vdyn(a)     v-my-dir:x          "my-dir", "x"
+//   vdyn(a)                 a's argument is dynamic: v-bind:[name]
+//   vmod(a, m)              a has modifier m: @click.native gives m = "native";  vmods(a, first): the first one
+//   vval(a, v)              a's value node (attribute_value): `items` of v-for="items"
+//   vhas_dir(e, d, arg)     e has directive d with argument arg (utils.hasDirective)
+//   vhas_attr(e, x)         e has the plain attribute x, case-insensitively, as HTML names compare
+//   vns(e, n)               the element's namespace, "html", "svg" or "math", as an HTML parser assigns it
+//   vcustom(e)              utils.isCustomComponent(e): an `is` attribute, or a name that is no well-known element
+//                           of its namespace;  vcustom_any_ns(e): the same with ignoreElementNamespaces
+//   vlower(x, l)            l is @lower(x), for the names of vel_name and of attributes
+//
+// <template>
+//   <my-comp v-bind:MyProp="p" />     vel_name "my-comp"; vdir(e, a, "bind", "MyProp"); vcustom(e)
+//   <svg><circle :r="1" /></svg>      vns(circle, "svg"); not vcustom: circle is a well-known SVG element
+//   <button @click.native="go" />     vdir(e, a, "on", "click"), vmod(a, "native")
+// </template>
+#include "vue/elements.rr"
+//   vhtml_name(x), vsvg_name(x), vmath_name(x), vsvg_weird_attr(x)
+
+// ---- elements ------------------------------------------------------------------------------------------------------
+.decl vel_kind(k: symbol)
+vel_kind("element"). vel_kind("template_element").
+// The template body: the first top-level <template>, its descendants included. Other top-level templates are custom
+// blocks to vue-eslint-parser and are not linted.
+.decl vroot(t: node)
+vroot(t) :- kind(t, "template_element"), child(doc_root, t, i), kind(doc_root, "document"),
+    !earlier_template(doc_root, i).
+.decl earlier_template(r: node, i: number)
+earlier_template(r, i) :- child(r, t, i), child(r, u, j), j < i, kind(u, "template_element"), kind(t, "template_element").
+.decl vel(e: node)
+vel(e) :- vroot(e).
+vel(e) :- vroot(t), has(t, e, vel_kind).
+.decl vel_tag(e: node, t: node)
+vel_tag(e, t) :- vel(e), child(e, t, 0), (kind(t, "start_tag") ; kind(t, "self_closing_tag")).
+.decl vel_name(e: node, x: symbol)
+// The name runs to the first blank, `/` or `>`: tree-sitter-vue ends tag_name at a dot and reads `<Foo.Bar>` as
+// tag Foo with a directive `.Bar` glued on (vglued), which is no attribute.
+vel_name(e, x) :- vel_tag(e, t), text(t, s), match("<(?<x>[^\\s/>]+)[\\s\\S]*", s).
+.decl vel_closed(e: node)
+vel_closed(e) :- vel(e), child(e, c, _), kind(c, "end_tag").
+.decl vel_parent(e: node, p: node)
+vel_parent(e, p) :- vel(e), nearest(e, p, vel_kind), vel(p).
+
+// ---- attributes and directives -------------------------------------------------------------------------------------
+.decl vattr(e: node, a: node)
+vattr(e, a) :- vel_tag(e, t), child(t, a, _), (kind(a, "attribute") ; kind(a, "directive_attribute")), !vglued(a).
+.decl vglued(a: node)
+vglued(a) :- kind(a, "directive_attribute"), next_sibling(n, a), kind(n, "tag_name"), node(_, n, _, _, end),
+    node(_, a, _, end, _).
+.decl vplain(e: node, a: node, x: symbol)
+vplain(e, a, x) :- vattr(e, a), kind(a, "attribute"), child(a, n, 0), kind(n, "attribute_name"), text(n, x).
+.decl vhas_attr(e: node, x: symbol)
+vhas_attr(e, l) :- vplain(e, _, x), vlower(x, l).
+// The directive's name: `v-bind` is "bind"; the shorthands `:`, `.`, `@` and `#` stand for bind, bind, on and slot.
+.decl vdir_name(a: node, d: symbol)
+vdir_name(a, d) :- kind(a, "directive_attribute"), child(a, n, 0), kind(n, "directive_name"), text(n, t),
+    match("v-(?<d>.*)", t).
+vdir_name(a, d) :- kind(a, "directive_attribute"), !has_directive_name(a), first_token(a, t), text(t, s), shorthand(s, d).
+.decl shorthand(s: symbol, d: symbol)
+shorthand(":", "bind"). shorthand(".", "bind"). shorthand("@", "on"). shorthand("#", "slot").
+.decl has_directive_name(a: node)
+has_directive_name(a) :- child(a, n, 0), kind(n, "directive_name").
+.decl vdir(e: node, a: node, d: symbol, arg: symbol)
+// The argument runs from the name to the first modifier: `@update:modelValue.once` has "update:modelValue", which
+// tree-sitter-vue splits into two directive_value nodes. A dynamic argument is "" (and vdyn).
+vdir(e, a, d, arg) :- vattr(e, a), vdir_name(a, d), !vdyn(a), vkey_text(a, k),
+    match("(?:v-[^:.]+:|[:@#.])(?<arg>[^.]*)(?:\\.[\\s\\S]*)?", k).
+vdir(e, a, d, "") :- vattr(e, a), vdir_name(a, d), !vdyn(a), vkey_text(a, k), match("v-[^:.]+(?:\\.[\\s\\S]*)?", k).
+vdir(e, a, d, "") :- vattr(e, a), vdir_name(a, d), vdyn(a).
+.decl vdyn(a: node)
+vdyn(a) :- kind(a, "directive_attribute"), child(a, c, _), kind(c, "dynamic_directive_value").
+.decl vmod(a: node, m: symbol)
+vmod(a, m) :- child(a, ms, _), kind(ms, "directive_modifiers"), child(ms, x, _), text(x, m).
+.decl vmods(a: node, first: node)
+vmods(a, x) :- child(a, ms, _), kind(ms, "directive_modifiers"), child(ms, x, 0).
+.decl vval(a: node, v: node)
+vval(a, v) :- vattr(_, a), child(a, v, _), kind(v, "attribute_value").
+vval(a, v) :- vattr(_, a), child(a, q, _), kind(q, "quoted_attribute_value"), child(q, v, _), kind(v, "attribute_value").
+.decl vhas_dir(e: node, d: symbol, arg: symbol)
+vhas_dir(e, d, arg) :- vdir(e, a, d, arg), !vdyn(a).
+
+.decl vlower(x: symbol, l: symbol)
+vlower(x, @lower(x)) :- vel_name(_, x).
+vlower(x, @lower(x)) :- vplain(_, _, x).
+
+// ---- namespaces ----------------------------------------------------------------------------------------------------
+// The HTML parser's tree construction: <svg> and <math> open their namespace; inside SVG, foreignObject, desc and
+// title hold HTML again; inside MathML, the text points mi, mo, mn, ms and mtext hold HTML (except mglyph and
+// malignmark), and so does annotation-xml with encoding text/html or application/xhtml+xml.
+//   <svg><foreignObject><div/></foreignObject></svg>       div is HTML
+.decl vns(e: node, n: symbol)
+vns(e, "html") :- vroot(e).
+vns(e, n) :- vel_parent(e, p), vns_in(p, c), vel_name(e, x), vns_step(c, x, n).
+// vns_in(p, c): the insertion context p gives its children: "html", "svg", "math", "math-text" or "math-annotation".
+.decl vns_in(p: node, c: symbol)
+vns_in(p, "html") :- vns(p, "html").
+vns_in(p, c) :- vns(p, "svg"), vel_name(p, x), (vsvg_html_point(x), c = "html" ; !vsvg_html_point(x), c = "svg").
+vns_in(p, "math-text") :- vns(p, "math"), vel_name(p, x), vmath_text_point(x).
+vns_in(p, "html") :- vns(p, "math"), vel_name(p, "annotation-xml"), vannotation_html(p).
+vns_in(p, "math-annotation") :- vns(p, "math"), vel_name(p, "annotation-xml"), !vannotation_html(p).
+vns_in(p, "math") :- vns(p, "math"), vel_name(p, x), !vmath_text_point(x), x != "annotation-xml".
+.decl vns_step(c: symbol, x: symbol, n: symbol)
+vns_step(c, x, n) :- vns_ctx(c), vel_name(_, x), vns_rule(c, x, n).
+.decl vns_ctx(c: symbol)
+vns_ctx("html"). vns_ctx("svg"). vns_ctx("math"). vns_ctx("math-text"). vns_ctx("math-annotation").
+.decl vns_rule(c: symbol, x: symbol, n: symbol)
+vns_rule(c, x, n) :- (c = "html" ; c = "math-text", x != "mglyph", x != "malignmark"), vel_name(_, x),
+    (x = "svg", n = "svg" ; x = "math", n = "math" ; x != "svg", x != "math", n = "html").
+vns_rule("math-text", x, "math") :- vel_name(_, x), (x = "mglyph" ; x = "malignmark").
+vns_rule("svg", x, "svg") :- vel_name(_, x).
+vns_rule("math", x, "math") :- vel_name(_, x).
+vns_rule("math-annotation", x, n) :- vel_name(_, x), (x = "svg", n = "svg" ; x != "svg", n = "math").
+.decl vsvg_html_point(x: symbol)
+vsvg_html_point("foreignObject"). vsvg_html_point("desc"). vsvg_html_point("title").
+.decl vmath_text_point(x: symbol)
+vmath_text_point("mi"). vmath_text_point("mo"). vmath_text_point("mn"). vmath_text_point("ms"). vmath_text_point("mtext").
+.decl vannotation_html(e: node)
+vannotation_html(e) :- vplain(e, a, x), vlower(x, "encoding"), vval(a, v), text(v, t),
+    (t = "text/html" ; t = "application/xhtml+xml").
+
+// ---- components ------------------------------------------------------------------------------------------------------
+// utils.isCustomComponent: `is`, `:is` or `v-is` makes any element a component; otherwise a name that its own
+// namespace does not know: <my-comp>, <Foo.Bar>, <circle> outside <svg>.
+.decl vcustom(e: node)
+vcustom(e) :- vis_component(e).
+vcustom(e) :- vns(e, "html"), vel_name(e, x), !vhtml_name(x).
+vcustom(e) :- vns(e, "svg"), vel_name(e, x), !vsvg_name(x).
+vcustom(e) :- vns(e, "math"), vel_name(e, x), !vmath_name(x).
+.decl vcustom_any_ns(e: node)
+vcustom_any_ns(e) :- vis_component(e).
+vcustom_any_ns(e) :- vel_name(e, x), !vhtml_name(x), !vsvg_name(x), !vmath_name(x).
+.decl vis_component(e: node)
+vis_component(e) :- vhas_attr(e, "is").
+vis_component(e) :- vhas_dir(e, "bind", "is").
+vis_component(e) :- vhas_dir(e, "is", _).
+
+// ---- options shared by rules -----------------------------------------------------------------------------------------
+// vtag_ignored(e): option ignoreTags names e's tag (toRegExpGroupMatcher): an item is a name, or "/re/flags".
+//   ignoreTags: ["custom-input", "/^Base/"]      <custom-input> and <BaseButton> are left alone
+.decl vtag_ignored(e: node)
+vtag_ignored(e) :- option_item("ignoreTags", _, x), vel_name(e, x).
+vtag_ignored(e) :- option_item("ignoreTags", _, p), match("/(?<re>.*)/[a-z]*", p), vel_name(e, x),
+    match(cat(".*(?:", re, ").*"), x).
+// vkey_text(a, k): the attribute's key as written: `v-bind:fooBar` of v-bind:fooBar="x", `fooBar` of fooBar="x".
+.decl vkey_text(a: node, k: symbol)
+vkey_text(a, k) :- vattr(_, a), text(a, s), match("(?<k>[^=\\s]+)[\\s\\S]*", s).
