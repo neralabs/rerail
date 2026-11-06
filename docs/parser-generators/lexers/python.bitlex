@@ -333,7 +333,9 @@ keywords identifier {
   "except" "finally" "for" "from" "global" "if" "import" "in" "is" "lambda" "nonlocal" "not"
   "or" "pass" "raise" "return" "try" "while" "with" "yield"
   "True" -> true  "False" -> false  "None" -> none
-} soft { "match" "case" "type" "print" "exec" }
+} soft { "match" "case" "type" "print" "exec" "__future__" "_" }
+# Soft keywords are keywords only in some positions: `__future__` after `from`, `_` as a case
+# pattern. Which one a word is gets decided with the tree (02-python.md §5.1).
 # Keywords are ASCII, so a word with a non-ASCII character is always an identifier.
 
 # --- Line continuations ---
@@ -363,6 +365,9 @@ skip code & (blank | lf | uspace)
 error "unterminated string, or a newline in a short one"  when strings.reached(error) | ~strings.final(code | comment)
 error "an f-string beyond the automaton's bounds"         when fstrings*.reached(error)
 error "a '!' that is neither '!=' nor a conversion"       when code & bangc & ~next(eqc)
+# tree-sitter emits an anonymous '\' leaf for a backslash before '{{' or '}}' in f-string text
+# (9 in CPython, all in test_fstring.py). Not modelled.
+error "a backslash before an escaped brace"                when bslash & lit_text & (next(lbrace) | next(rbrace))
 error "an f-string nested three deep"                     when f2.on(interp -> inner) & has_f
 error "a non-ASCII character tree-sitter rejects in code"   when code & high & ~xid_continue & ~uspace
 error "an identifier that starts with a non-start character" when code & high & ~prev(idc) & ~xid_start & ~uspace
