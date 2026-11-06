@@ -508,7 +508,7 @@ impl WorkspaceIndexTask {
             let module = repository_module(repository, &file.repository_path, &file.language);
             let package =
                 repository_package(manifests, repository, &file.repository_path, &file.language);
-            let input = FileInput::new(
+            let mut input = FileInput::new(
                 file.path.clone(),
                 file.language.clone(),
                 Arc::new(String::new()),
@@ -516,6 +516,7 @@ impl WorkspaceIndexTask {
                 package,
                 &file.path,
             )?;
+            input.source_bytes = usize::try_from(*length).map_err(|_| invalid("stored source length exceeds this platform"))?;
             let key = (stored.source_hash, file_context(&input));
             prepared.push((file, input, stored, *length, key));
         }

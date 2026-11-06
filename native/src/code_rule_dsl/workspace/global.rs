@@ -19,8 +19,17 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(super) type QueryPlan = query::select_when::Plan<ClauseId>;
 
 fn relational_scope_budget(source_bytes: usize) -> u64 {
-    let _ = source_bytes;
-    super::CLAUSE_WORK_BUDGET
+    super::clause_work_budget(source_bytes)
+}
+
+fn relational_scope_inputs<'a>(scope: &crate::code_rule_dsl::model::CodeRuleScope, files: impl Iterator<Item=&'a crate::code_rule_dsl::model::FileInput>) -> (Vec<crate::code_rule_dsl::model::FileInput>, usize) {
+    let empty=std::sync::Arc::new(String::new());
+    let mut bytes=0usize;
+    let inputs=files.filter(|file| scope.matches(&file.path)).map(|file| {
+        bytes=bytes.saturating_add(file.source_bytes);
+        let mut input=file.clone(); input.source=std::sync::Arc::clone(&empty); input
+    }).collect();
+    (inputs,bytes)
 }
 
 #[cfg(test)]
@@ -30,6 +39,16 @@ mod scope_budget_tests {
     fn repository_relations_receive_the_same_linear_source_allowance_as_files() {
         assert_eq!(relational_scope_budget(8*1024*1024), super::super::clause_work_budget(8*1024*1024));
         assert!(relational_scope_budget(138_077_148)>relational_scope_budget(8*1024*1024));
+    }
+    #[test]
+    fn scope_allowance_survives_source_release_and_excludes_unrelated_files() {
+        use crate::code_rule_dsl::{CodeRuleDslRuntime,model::FileInput};
+        let rule=CodeRuleDslRuntime::compile(serde_json::json!({"format":"rerail.policy/v1","id":"scope-budget","revision":1,"mode":"steer","scope":{"include":["app/**/*.py"],"exclude":[]},"clauses":[{"id":"noop","forbid":{"regex":{"source":"file.content","pattern":"never"}},"violation":{"code":"N","message":"never","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../capabilities.json").into()).unwrap();
+        let mut files=[("app/a.py","é".to_owned()),("other/b.py","x".repeat(1024))].map(|(path,source)| FileInput::new(path.into(),"python".into(),std::sync::Arc::new(source),None,None,path).unwrap());
+        let (inputs,resident_bytes)=relational_scope_inputs(&rule.inner.scope,files.iter());
+        assert_eq!(resident_bytes,2); assert_eq!(inputs.len(),1); assert!(inputs[0].source.is_empty()); assert_eq!(inputs[0].source_bytes,2);
+        for file in &mut files { file.source=std::sync::Arc::new(String::new()); }
+        assert_eq!(relational_scope_inputs(&rule.inner.scope,files.iter()).1,resident_bytes);
     }
 }
 
@@ -709,7 +728,7 @@ pub(super) fn evaluate_batched_relations(
                         .map(|f| f.input.clone())
                         .or_else(|| state.evicted_inputs.get(&path).cloned())
                         .ok_or_else(|| invalid("relational source removed"))?;
-                    let budget = Context::work(closed, super::file_work_budget(input.source.len()));
+                    let budget = Context::work(closed, super::file_work_budget(input.source_bytes));
                     jobs.push(Job {
                         code_rule,
                         clause,
@@ -730,19 +749,11 @@ pub(super) fn evaluate_batched_relations(
                 }
             } else {
                 // Queue file identities only; admission precedes source hydration.
-                let empty = std::sync::Arc::new(String::new());
-                let files = state
+                let (files,source_bytes) = relational_scope_inputs(&code_rule.scope, state
                     .files
                     .values()
                     .map(|file| &file.input)
-                    .chain(state.evicted_inputs.values())
-                    .filter(|file| code_rule.scope.matches(&file.path))
-                    .map(|file| {
-                        let mut input = file.clone();
-                        input.source = std::sync::Arc::clone(&empty);
-                        input
-                    })
-                    .collect();
+                    .chain(state.evicted_inputs.values()));
                 jobs.push(Job {
                     code_rule,
                     clause,
@@ -757,7 +768,7 @@ pub(super) fn evaluate_batched_relations(
                             files,
                         },
                     },
-                    budget: Context::work(closed, relational_scope_budget(0)),
+                    budget: Context::work(closed, relational_scope_budget(source_bytes)),
                 });
                 keys.push((index, clause.id.clone(), None));
             }

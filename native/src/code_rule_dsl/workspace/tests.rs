@@ -168,6 +168,7 @@ fn close_releases_idle_workspace_files() {
         let input = FileInput {
             path: "example.py".into(),
             language: "python".into(),
+            source_bytes: "print('secret')\n".len(),
             source: Arc::new("print('secret')\n".into()),
             module: None,
             package: None,
@@ -259,7 +260,8 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
                 FileInput {
                     path: "resident.py".into(),
                     language: "python".into(),
-                    source: Arc::clone(&source),
+                    source_bytes: source.len(),
+            source: Arc::clone(&source),
                     module: None,
                     package: None,
                 },
@@ -458,6 +460,7 @@ fn close_cancels_busy_owner_without_waiting_for_its_lock() {
         let input = FileInput {
             path: "busy.py".into(),
             language: "python".into(),
+            source_bytes: "print('x')\n".len(),
             source: Arc::new("print('x')\n".into()),
             module: None,
             package: None,
@@ -499,7 +502,8 @@ fn close_and_lease_release_handoff_drops_resident_sources() {
                 FileInput {
                     path: "resident.py".into(),
                     language: "python".into(),
-                    source: Arc::clone(&source),
+                    source_bytes: source.len(),
+            source: Arc::clone(&source),
                     module: None,
                     package: None,
                 },
@@ -655,6 +659,17 @@ fn tape_test_apply(workspace: &CodeRuleDslWorkspace, revision: u32, files: Vec<V
         request_direct: None,
     };
     serde_json::from_str(&task.compute().unwrap()).unwrap()
+}
+
+#[test]
+fn quiet_applies_expose_failures_before_result_collection() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let compiled=compile_clauses(vec![json!({"id":"overflow","relational":{"partitionBy":"repository","inputs":{"files":{"evidence":{"as":"f","query":{"regex":{"source":"file.content","pattern":"(?s)\\A.*\\z"}},"project":{"path":"file.path"}}}},"query":"SELECT __path path,0 start_byte,0 end_byte FROM files WHERE abs(-9223372036854775808)>0"},"violation":{"code":"X","message":"overflow","anchor":"witness.span"}})]);
+    let mut workspace=CodeRuleDslWorkspace::new();workspace.add_code_rule(&compiled,None).unwrap();
+    let mut task=WorkspaceApplyTask { state:Arc::clone(&workspace.state),closed:Arc::clone(&workspace.closed),request_json:json!({"revision":1,"files":[{"path":"probe.py","language":"python","source":"pass\n"}],"removed":[],"quiet":true}).to_string(),request_buffer:None,request_direct:None };
+    let result:Value=serde_json::from_str(&task.compute().unwrap()).unwrap();
+    assert_eq!(result["hasEvaluationFailures"],true);
+    workspace.close();
 }
 
 #[test]
@@ -1269,7 +1284,8 @@ fn cached_tape_rejects_revision_source_and_grammar_mismatch_without_stale_violat
                 FileInput {
                     path: "active.py".into(),
                     language: "python".into(),
-                    source: Arc::new(source.into()),
+                    source_bytes: source.len(),
+            source: Arc::new(source.into()),
                     module: None,
                     package: None,
                 },

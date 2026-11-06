@@ -2503,6 +2503,7 @@ fn an_evaluation_whose_deadline_passes_between_clauses_is_known_cut_short() {
         FileInput {
             path: "late.py".into(),
             language: "python".into(),
+            source_bytes: "print(1)\n".len(),
             source: StdArc::new("print(1)\n".to_owned()),
             module: None,
             package: None,
@@ -2566,6 +2567,7 @@ fn a_clause_with_nothing_to_match_answers_past_the_file_budget() {
         FileInput {
             path: "late.py".into(),
             language: "python".into(),
+            source_bytes: "print(1)\n".len(),
             source: StdArc::new("print(1)\n".to_owned()),
             module: None,
             package: None,

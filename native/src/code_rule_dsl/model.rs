@@ -747,6 +747,8 @@ pub(super) struct FileInput {
     pub(super) path: String,
     pub(super) language: String,
     pub(super) source: Arc<String>,
+    /// Exact input byte length, retained when the source buffer is released or evicted.
+    pub(super) source_bytes: usize,
     /// A Python file's module path: the host's (`module`), else the file's stem.
     pub(super) module: Option<Arc<ModulePath>>,
     /// An ECMA file's nearest `package.json` (`package`); `None` without one.
@@ -782,6 +784,7 @@ impl FileInput {
         Ok(Self {
             path,
             language,
+            source_bytes: source.len(),
             source,
             module: module.map(Arc::new),
             package,
