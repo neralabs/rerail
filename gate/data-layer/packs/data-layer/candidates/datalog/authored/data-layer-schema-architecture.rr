@@ -1,14 +1,17 @@
-// data-layer-schema-architecture: the three relational clauses, by hand.
+// data-layer-schema-architecture: the three relational clauses and source-syntax, by hand.
 //
 // The clauses' SQL runs over CPython `ast` rows (`pythonAst` stages); the script they port is
 // nera-data-layer scripts/lint_schema_architecture_plugin.py (and lint_schema_architecture.py for
 // schema-planning). Here the same questions are asked of tree-sitter's tree, read the way `ast` reads it:
 // parentheses are transparent, a def's decorators belong to it (python/ast.rr's view, written over the base
-// relations).
-// Options: the defaults, entryPoint "all" and parameters "{}".
-//
-// The entryPoint cases other than the default are in data-layer-schema-architecture.pending.rr, awaiting the
-// converter's option facts.
+// relations: including the library would bring python/names.rr and its frames for four small helpers).
+// Options: every `entryPoint` case, read from `option_value("entryPoint", v)`; `parameters` is read by no clause.
+//   schema-planning   query: lint_file/standalone; every other value `… WHERE 0` (nothing).
+//   schema-lifecycle  gate: "all" the three directories and the trigger text, any other value any valid module;
+//                     query: all/scan_source/_extract_facts, every other value `… WHERE 0`.
+//   source-syntax     scan_source only (the converter converts it at the default, "all", as never).
+//   reported-parser-error  "all" only.
+.decl option_value(name: symbol, v: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -16,30 +19,74 @@
 .decl text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl node_text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- schema-planning ------------------------------------------------------------------------------------------
-// Under the default entryPoint ("all") the clause's query is its `default` case, `SELECT * FROM (…) WHERE 0`:
-// it reports nothing (its `lint_file`/`standalone` cases are other entry points). The rule below is that: it
-// never holds.
-.decl schema_planning_off(d: number)
-schema_planning_off(d) :- doc(d, _, _), 1 = 0.
-violation("data-layer-schema-architecture", "schema-planning", "architecture", p, 1) :-
-    schema_planning_off(d), doc(d, p, _).
+// lint_schema_architecture.py, under entryPoint lint_file or standalone (every other value's query is
+// `SELECT * FROM (…) WHERE 0`): every valid module of the scope whose text (W's `regex` on the module: comments
+// and strings included) has enqueue_post_, materialize_schema_operation_records or planning_callback. The code is
+// the row's `issue` column.
+.decl schema_planning_entry(v: symbol)
+schema_planning_entry("lint_file"). schema_planning_entry("standalone").
+.decl schema_planning_trigger(s: symbol)
+schema_planning_trigger("enqueue_post_"). schema_planning_trigger("materialize_schema_operation_records").
+schema_planning_trigger("planning_callback").
+.decl schema_planning_doc(d: number, p: symbol)
+schema_planning_doc(d, p) :- option_value("entryPoint", v), schema_planning_entry(v), node(d, m, "module", _, _),
+    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), node_text(m, s), schema_planning_trigger(x),
+    contains(x, s).
+// An AnnAssign whose target is the Name or Attribute `planning_callback`.
+violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-planning-callback-field", p, l) :-
+    node(d, a, "assignment", _, _), schema_planning_doc(d, p), field(a, "type", _), field(a, "left", t),
+    node(_, t, "identifier", _, _), text(t, "planning_callback"), line(a, l).
+violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-planning-callback-field", p, l) :-
+    node(d, a, "assignment", _, _), schema_planning_doc(d, p), field(a, "type", _), field(a, "left", t),
+    node(_, t, "attribute", _, _), field(t, "attribute", at), text(at, "planning_callback"), line(a, l).
+// A call of a callback queue (calls.callee: the func's Name id or Attribute attr).
+.decl schema_planning_queue(x: symbol)
+schema_planning_queue("enqueue_post_ddl"). schema_planning_queue("enqueue_post_schema_ddl_flush").
+schema_planning_queue("enqueue_post_commit_schema_exit"). schema_planning_queue("planning_callback").
+violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-callback-queues", p, l) :-
+    lifecycle_callee(c, x), schema_planning_queue(x), node(d, c, _, _, _), schema_planning_doc(d, p), line(c, l).
+// In a def whose name holds materialize_schema_operation_records (the call's `fn`: its innermost def, the def's
+// decorators its own, lambdas transparent; mirrors python/ast.rr def_frame), a call that mutates or flushes the
+// plan.
+.decl schema_planning_mutation(x: symbol)
+schema_planning_mutation("add_operation"). schema_planning_mutation("_materialize_schema_operation_records").
+schema_planning_mutation("_materialize_schema_operation_records_async"). schema_planning_mutation("flush_schema_plan").
+schema_planning_mutation("flush_schema_plan_async").
+.decl schema_planning_frame_mark(kind: symbol)
+schema_planning_frame_mark("function_definition"). schema_planning_frame_mark("decorator").
+.decl schema_planning_frame(n: node, f: node)
+schema_planning_frame(n, f) :- nearest(n, f, schema_planning_frame_mark), node(_, f, "function_definition", _, _).
+schema_planning_frame(n, f) :- nearest(n, dc, schema_planning_frame_mark), node(_, dc, "decorator", _, _),
+    child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+violation("data-layer-schema-architecture", "schema-planning", "forbid-materialization-plan-mutation", p, l) :-
+    lifecycle_callee(c, x), schema_planning_mutation(x), node(d, c, _, _, _), schema_planning_doc(d, p),
+    schema_planning_frame(c, f), field(f, "name", nm), text(nm, y), contains("materialize_schema_operation_records", y),
+    line(c, l).
 
 // ---- schema-lifecycle -----------------------------------------------------------------------------------------
-// The gate: a valid Python module under one of the three directories, whose text has SchemaTransaction,
-// Callable or _schema_operation_plan. SAP001, SAP002, SAP003 and SAP005 each need a Name/Attribute spelled
-// `Callable` or ending in `SchemaTransaction` in the file, so their findings imply the text test; SAP004 does
-// not and is pending (see the header). The violation's code is the row's `issue` column.
+// The gate: under entryPoint "all", a valid Python module under one of the three directories whose text (W's
+// `regex` on the module: comments and strings included) has SchemaTransaction, Callable or
+// _schema_operation_plan; under any other value, any valid module of the scope. The query runs for "all",
+// "scan_source" and "_extract_facts" (every other value's is `… WHERE 0`). The violation's code is the row's
+// `issue` column.
+.decl lifecycle_dir(s: symbol)
+lifecycle_dir("l2000_connection/"). lifecycle_dir("l3200_metadata/"). lifecycle_dir("impl/common/l7245_versioned_backends/").
+.decl lifecycle_query(v: symbol)
+lifecycle_query("all"). lifecycle_query("scan_source"). lifecycle_query("_extract_facts").
+.decl lifecycle_gate(d: number, p: symbol)
+lifecycle_gate(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
+    !syntax_error(d), doc(d, p, _), lifecycle_dir(x), prefix(x, p), lifecycle_text_doc(d).
+lifecycle_gate(d, p) :- option_value("entryPoint", v), v != "all", node(d, _, "module", _, _), in_scope(d),
+    !out_scope(d), !syntax_error(d), doc(d, p, _).
 .decl lifecycle_doc(d: number, p: symbol)
-lifecycle_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), prefix("l2000_connection/", p).
-lifecycle_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), prefix("l3200_metadata/", p).
-lifecycle_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
-    prefix("impl/common/l7245_versioned_backends/", p).
+lifecycle_doc(d, p) :- lifecycle_gate(d, p), option_value("entryPoint", v), lifecycle_query(v).
 
 .decl lifecycle_fdef(kind: symbol)
 lifecycle_fdef("function_definition").
@@ -82,10 +129,16 @@ lifecycle_walk(r, o) :- lifecycle_walk(r, e), node(_, e, "attribute", _, _), fie
 lifecycle_root(r, x) :- lifecycle_walk(r, e), node(_, e, "identifier", _, _), text(e, x).
 
 // lifecycle_ann_name(t, x): x is in _annotation_names(t): an identifier below annotation t (`type` node) that is
-// an ast Name or an Attribute's attr. A keyword argument's name is neither (ast keeps it as a string).
-// Approximation: a lambda's parameter names inside an annotation would count (none in any real annotation).
+// an ast Name or an Attribute's attr. A keyword argument's name and a lambda's parameter names are neither (ast
+// keeps them as strings, the latter in `arg` nodes).
 .decl lifecycle_kwname(i: node)
 lifecycle_kwname(i) :- node(_, k, "keyword_argument", _, _), field(k, "name", i).
+lifecycle_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, i, _), node(_, i, "identifier", _, _).
+lifecycle_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), field(q, "name", i).
+lifecycle_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), node(_, q, "list_splat_pattern", _, _),
+    child(q, i, 0), node(_, i, "identifier", _, _).
+lifecycle_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _),
+    node(_, q, "dictionary_splat_pattern", _, _), child(q, i, 0), node(_, i, "identifier", _, _).
 .decl lifecycle_ann_name(t: node, x: symbol)
 lifecycle_ann_name(t, x) :- node(_, i, "identifier", _, _), inside(i, t, lifecycle_type), text(i, x),
     !lifecycle_kwname(i).
@@ -114,12 +167,17 @@ lifecycle_unparen(e, m) :- lifecycle_unparen(e, x), node(_, x, "parenthesized_ex
 .decl lifecycle_up(a: node, z: node)
 lifecycle_up(a, a) :- lifecycle_plan_value(a, _).
 lifecycle_up(a, z) :- lifecycle_up(a, y), node(_, z, "assignment", _, _), field(z, "right", y).
-// lifecycle_alias(f, x): plan_aliases: a Name target of such an assignment in f, its value rooted at a schema
+// lifecycle_alias(f, x): plan_aliases: a Name target of such an assignment in f (parentheses taken off: tree-sitter
+// writes `(x) = …`, the Name x in ast, as a tuple_pattern of one element and no comma), its value rooted at a schema
 // parameter of f.
+.decl lifecycle_target(z: node, t: node)
+lifecycle_target(z, t) :- lifecycle_up(_, z), field(z, "left", t).
+lifecycle_target(z, i) :- lifecycle_target(z, t), node(_, t, "tuple_pattern", _, _), child(t, i, 0), !child(t, _, 1),
+    !token(t, _, ",", _, _).
 .decl lifecycle_alias(f: node, x: symbol)
 lifecycle_alias(f, x) :- lifecycle_plan_value(a, v),
     lifecycle_in_fn(a, f), lifecycle_root(v, r), lifecycle_schema_param(f, r), lifecycle_up(a, z),
-    field(z, "left", t), node(_, t, "identifier", _, _), text(t, x).
+    lifecycle_target(z, t), node(_, t, "identifier", _, _), text(t, x).
 
 // The calls of `ast.walk(f)`, and the executing functions (a call of an execution terminal).
 .decl lifecycle_terminal(x: symbol)
@@ -177,8 +235,8 @@ violation("data-layer-schema-architecture", "schema-lifecycle", "SAP003", p, l) 
     lifecycle_fn(f, p), lifecycle_in_fn(c, f), lifecycle_attr_call(c, _, r), lifecycle_root(r, x),
     lifecycle_schema_param(f, x), lifecycle_lambda_arg(c), line(c, l).
 
-// The gate's text test for SAP004 (and reported-parser-error's): the module's text (comments and strings
-// included, as W's `regex` sees it) has one of the three triggers.
+// The text test of the lifecycle gate's "all" case and of reported-parser-error's input: the module's text
+// (comments and strings included, as W's `regex` sees it) has one of the three triggers.
 .decl lifecycle_trigger(s: symbol)
 lifecycle_trigger("SchemaTransaction"). lifecycle_trigger("Callable"). lifecycle_trigger("_schema_operation_plan").
 .decl lifecycle_text_doc(d: number)
@@ -187,18 +245,25 @@ lifecycle_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), lifecycle_
 // SAP004: an executing def f that calls itself by Name (`f(…)`, anywhere in ast.walk(f)), at the def's line
 // (CPython's FunctionDef.lineno: the `def` line, decorators excluded).
 violation("data-layer-schema-architecture", "schema-lifecycle", "SAP004", p, l) :-
-    lifecycle_executing(f), lifecycle_fn(f, p), node(d, f, _, _, _), lifecycle_text_doc(d),
-    field(f, "name", nm), text(nm, x), lifecycle_in_fn(c, f), lifecycle_name_call(c, x), line(f, l).
+    lifecycle_executing(f), lifecycle_fn(f, p), field(f, "name", nm), text(nm, x), lifecycle_in_fn(c, f),
+    lifecycle_name_call(c, x), line(f, l).
+
+// ---- source-syntax --------------------------------------------------------------------------------------------
+// Under entryPoint scan_source (every other value matches no path): an invalid Python module of the scope, at the
+// module's line. The converter's form, gated on the option.
+violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :-
+    option_value("entryPoint", "scan_source"), node(d, n, "module", _, _), in_scope(d), !out_scope(d),
+    syntax_error(d), doc(d, p, _), line(n, l).
 
 // ---- reported-parser-error ------------------------------------------------------------------------------------
-// An invalid Python module (`syntax: invalid`) under the three directories, with a trigger in its text, that
-// CPython cannot parse either: SAP000 at line 1 (the message carries CPython's error, which the key omits).
-// Approximation: tree-sitter's verdict (`syntax_error(d)`) stands for CPython's; a file tree-sitter rejects and
-// CPython accepts would be reported here and not by W. core.rr's CPython `syntax_error(d, l, msg)` removes it.
+// Under entryPoint "all" (every other value matches no path): an invalid Python module (`syntax: invalid`) under
+// the three directories, with a trigger in its text, that CPython cannot parse either: SAP000 at line 1 (the
+// message carries CPython's error, which the key omits).
+// Approximation: tree-sitter's verdict (`syntax_error(d)`) stands for CPython's (the `parsed` stage's
+// `syntax_error`), which the corpus runner does not bind; a file tree-sitter rejects and CPython accepts would be
+// reported here and not by W.
 .decl parser_error_doc(d: number, p: symbol)
-parser_error_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), prefix("l2000_connection/", p).
-parser_error_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), prefix("l3200_metadata/", p).
-parser_error_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d),
-    prefix("impl/common/l7245_versioned_backends/", p).
+parser_error_doc(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
+    syntax_error(d), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
 violation("data-layer-schema-architecture", "reported-parser-error", "SAP000", p, 1) :-
     parser_error_doc(d, p), lifecycle_text_doc(d).
