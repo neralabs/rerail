@@ -2,8 +2,17 @@
 #
 # Every token below is a leaf kind of tree-sitter-json 0.24.8:
 #   '{' '}' '[' ']' ',' ':' '"'  string_content  escape_sequence  number  true  false  null
-# Comments (`//`, `/* */`) are tree-sitter-json extras. Where tree-sitter attaches them depends on
-# its parse states, so for now a comment sends the file to tree-sitter.
+#   comment (an extra: `//` to the end of the line, or `/* … */`)
+#
+# Observed facts this file relies on (tree-sitter-json 0.24.8, checked with its parser):
+#   - `\s` in the extras is ASCII: space, \t \n \v \f \r. U+00A0, U+2028, U+3000 and U+FEFF are
+#     errors. Outside strings, any byte of 0x80 or above is an error.
+#   - `//.*` ends before '\n' and keeps a '\r': `//x\r\n` is the comment "//x\r".
+#   - `/*/ */` is one comment: the '*' of `/*` cannot start the `*/`. `/**/` is a comment.
+#   - escape_sequence is two bytes, even for \u: "\u00e9" is escape_sequence "\u" and then
+#     string_content "00e9". A raw tab or control byte is string_content; '\n' is an error.
+#   - A comment's parent is the lowest common ancestor of the tokens before and after it, or the
+#     document at either end of the file (01-branch-free-design.md §5). Nothing here depends on it.
 
 lexer json
 
@@ -11,7 +20,7 @@ lexer json
 
 class quote     = '"'
 class backslash = '\\'
-class ws        = ' ' '\t' '\n' '\r'
+class ws        = ' ' '\t' '\n' '\r' 0x0b 0x0c
 class lf        = '\n'
 class lbrace    = '{'
 class rbrace    = '}'
@@ -20,6 +29,8 @@ class rbracket  = ']'
 class comma     = ','
 class colon     = ':'
 class slash     = '/'
+class star      = '*'
+class high      = 0x80..0xff
 # Bytes a number or a literal word may contain. Which word it is gets checked per token below.
 class scalar    = '-' '+' '.' '0'..'9' 'a'..'z' 'A'..'Z'
 # The letters that may follow a backslash in tree-sitter-json's escape_sequence.
@@ -29,25 +40,53 @@ class escapable = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
 
 # simdjson's carry trick: the byte after an odd run of backslashes is escaped.
 mask escaped    = after_odd_run(backslash)
-mask q          = quote & ~escaped
 
-# Prefix XOR of the quotes: set from each opening quote up to, not including, its closing quote.
-#   input   {"a\"b":1}
-#   q       .1....1...
-#   inside  .11111....
-mask inside     = toggle(q)
-mask opening    = q & inside
-mask closing    = q & ~inside
+# Strings and comments hide each other: a quote in a comment opens nothing, and `//` in a string
+# is text. One automaton over the quotes, slashes, stars and newlines settles both.
+#
+#   input    {"a//b": 1 /* x */}
+#   states    .ssssss.....bbbbbe.          s = str, b = blk or bend, e = the comment's last byte
+#
+# Its events are 8.9% of bytes on the data-layer JSON (quotes 8.4%, '/' 0.41%, newlines 0.13%,
+# '*' almost none), and none of those files has a comment. So a file runs one of two variants,
+# chosen once per file as fallback is:
+#   - no '/' outside toggle(q)'s strings: strings are toggle(q), as in simdjson, and there are no
+#     comments. `lex` does not run. The choice is exact: toggle(q) is right up to the first
+#     comment, and a file with none has no such byte.
+#   - otherwise: `lex` runs over all its events.
+# The masks below are written for the second variant; in the first, lex.in(str) is toggle(q).
+
+machine lex {
+  events {
+    q   = quote & ~escaped
+    sc  = star & next(slash)          # listed before star: a '*' that may close a block comment
+    st  = star
+    sl  = slash
+    eol = lf
+  }
+  states code str s1 line blk bend error
+  group cmt = s1 line blk bend
+  start code
+
+  code  on q -> str,  on sl -> s1,  on st -> error,  on sc -> error
+  str   on q -> code                             # '/', '*' and newlines in a string are text
+  s1    on sl -> line,  on st -> blk,  on sc -> blk   # `/*/`: the '*' of the opener is not a closer
+  line  on eol -> code
+  blk   on sc -> bend
+  bend  on sl -> code                            # the '/' of `*/`, always the next byte
+}
+
+mask q          = lex.on(code -> str) | lex.on(str -> code)
+mask inside     = lex.in(str)                    # the opening quote, not the closing one
+mask opening    = lex.on(code -> str)
+mask closing    = lex.on(str -> code)
 mask body       = inside & ~opening              # between the quotes
-
-# An escape is a backslash in a body that is not itself escaped, and the byte after it.
-mask esc        = backslash & body & ~escaped
-mask esc_bytes  = span(esc, 2)
-mask content    = body & ~esc_bytes
 
 # --- Outside strings -----------------------------------------------------------------------------
 
-mask code       = ~inside & ~closing
+mask cmt_start  = lex.on(code -> s1)
+mask in_cmt     = lex.in(cmt) | lex.on(bend -> code)
+mask code       = ~inside & ~closing & ~in_cmt
 mask word       = code & scalar
 
 # --- Tokens --------------------------------------------------------------------------------------
@@ -65,14 +104,19 @@ token ':'             = start code & colon
 token number          = start starts(word) through word
 keywords number { "true" -> true  "false" -> false  "null" -> null }
 
+# `//` through the byte before '\n' (whose event returns to code); `/*` through '/'.
+token comment         = start cmt_start through in_cmt
+
 skip code & ws
 
 # --- Errors: the file goes to tree-sitter --------------------------------------------------------
 
-error "unterminated string"        when at_end(inside)
+error "unterminated string"        when lex.final(str)
 error "newline in a string"        when body & lf
 error "invalid escape"             when prev(esc) & ~escapable
-error "comment"                    when code & slash
+error "a lone '/' or '*'"           when lex.reached(error) | (cmt_start & ~next(slash | star))
+error "unterminated comment"       when ~lex.final(code | line)
+error "non-ASCII outside a string" when code & high
 
 # A scalar token that is not `true`, `false` or `null` must be a number as tree-sitter-json
 # defines it. The check is a 10-state automaton run over each token's bytes (§3.3 of 03-bitlex.md).
