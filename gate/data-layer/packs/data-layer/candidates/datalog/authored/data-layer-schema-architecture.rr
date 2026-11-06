@@ -21,15 +21,17 @@
 .decl node_text(n: node, s: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- schema-planning ------------------------------------------------------------------------------------------
 // lint_schema_architecture.py, under entryPoint lint_file or standalone (every other value's query is
-// `SELECT * FROM (…) WHERE 0`): every valid module of the scope whose text (W's `regex` on the module: comments
-// and strings included) has enqueue_post_, materialize_schema_operation_records or planning_callback. The code is
-// the row's `issue` column.
+// `SELECT * FROM (…) WHERE 0`): every valid module of the scope (the gate's `syntax: valid`, tree-sitter's verdict,
+// and the `pythonAst` stage's, CPython's: a file `ast.parse` rejects fails the stage) whose text (W's `regex` on the
+// module: comments and strings included) has enqueue_post_, materialize_schema_operation_records or
+// planning_callback. The code is the row's `issue` column.
 .decl schema_planning_entry(v: symbol)
 schema_planning_entry("lint_file"). schema_planning_entry("standalone").
 .decl schema_planning_trigger(s: symbol)
@@ -37,8 +39,8 @@ schema_planning_trigger("enqueue_post_"). schema_planning_trigger("materialize_s
 schema_planning_trigger("planning_callback").
 .decl schema_planning_doc(d: number, p: symbol)
 schema_planning_doc(d, p) :- option_value("entryPoint", v), schema_planning_entry(v), node(d, m, "module", _, _),
-    in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), node_text(m, s), schema_planning_trigger(x),
-    contains(x, s).
+    in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), node_text(m, s),
+    schema_planning_trigger(x), contains(x, s).
 // An AnnAssign whose target is the Name or Attribute `planning_callback`.
 violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-planning-callback-field", p, l) :-
     node(d, a, "assignment", _, _), schema_planning_doc(d, p), field(a, "type", _), field(a, "left", t),
@@ -73,18 +75,20 @@ violation("data-layer-schema-architecture", "schema-planning", "forbid-materiali
 // ---- schema-lifecycle -----------------------------------------------------------------------------------------
 // The gate: under entryPoint "all", a valid Python module under one of the three directories whose text (W's
 // `regex` on the module: comments and strings included) has SchemaTransaction, Callable or
-// _schema_operation_plan; under any other value, any valid module of the scope. The query runs for "all",
-// "scan_source" and "_extract_facts" (every other value's is `… WHERE 0`). The violation's code is the row's
-// `issue` column.
+// _schema_operation_plan; under any other value, any valid module of the scope. Valid is the gate's `syntax: valid`
+// (tree-sitter's verdict) and the `pythonAst` stage's (CPython's: a file `ast.parse` rejects fails the stage). The
+// query runs for "all", "scan_source" and "_extract_facts" (every other value's is `… WHERE 0`). The violation's
+// code is the row's `issue` column.
 .decl lifecycle_dir(s: symbol)
 lifecycle_dir("l2000_connection/"). lifecycle_dir("l3200_metadata/"). lifecycle_dir("impl/common/l7245_versioned_backends/").
 .decl lifecycle_query(v: symbol)
 lifecycle_query("all"). lifecycle_query("scan_source"). lifecycle_query("_extract_facts").
 .decl lifecycle_gate(d: number, p: symbol)
 lifecycle_gate(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
-    !syntax_error(d), doc(d, p, _), lifecycle_dir(x), prefix(x, p), lifecycle_text_doc(d).
+    !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p),
+    lifecycle_text_doc(d).
 lifecycle_gate(d, p) :- option_value("entryPoint", v), v != "all", node(d, _, "module", _, _), in_scope(d),
-    !out_scope(d), !syntax_error(d), doc(d, p, _).
+    !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _).
 .decl lifecycle_doc(d: number, p: symbol)
 lifecycle_doc(d, p) :- lifecycle_gate(d, p), option_value("entryPoint", v), lifecycle_query(v).
 
@@ -256,15 +260,12 @@ violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p,
     syntax_error(d), doc(d, p, _), line(n, l).
 
 // ---- reported-parser-error ------------------------------------------------------------------------------------
-// Under entryPoint "all" (every other value matches no path): an invalid Python module (`syntax: invalid`) under
-// the three directories, with a trigger in its text, that CPython cannot parse either: SAP000 at line 1 (the
-// message carries CPython's error, which the key omits).
-// Approximation, blocked on CPython's syntax verdict (the `parsed` stage's `syntax_error`, core.rr's
-// `syntax_error(d, l, msg)`: it needs core.rr's isolated `ast.parse` worker, which the corpus runner does not run):
-// tree-sitter's verdict (`syntax_error(d)`) stands for it, so a file tree-sitter rejects and CPython accepts would be
-// reported here and not by W.
+// Under entryPoint "all" (every other value matches no path): an invalid Python module (the input's
+// `syntax: invalid`, tree-sitter's verdict) under the three directories, with a trigger in its text, that CPython
+// cannot parse either (the `parsed` stage's `syntax_error`): SAP000 at line 1 (the message carries CPython's
+// error, which the key omits).
 .decl parser_error_doc(d: number, p: symbol)
 parser_error_doc(d, p) :- option_value("entryPoint", "all"), node(d, _, "module", _, _), in_scope(d), !out_scope(d),
-    syntax_error(d), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
+    syntax_error(d), cpython_syntax_error(d, _, _), doc(d, p, _), lifecycle_dir(x), prefix(x, p).
 violation("data-layer-schema-architecture", "reported-parser-error", "SAP000", p, 1) :-
     parser_error_doc(d, p), lifecycle_text_doc(d).
