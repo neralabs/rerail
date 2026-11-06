@@ -1,6 +1,6 @@
 # 0044: A run starts from seeded facts; everything else is derived
 
-Status: proposed (user agreed to the draft, 2026-11-06)
+Status: accepted (user agreed, 2026-11-06); step 1 built for library files
 
 ## Intro
 
@@ -124,6 +124,11 @@ like the push path. The replay and the measurements then exercise the code that 
 ## Steps
 
 1. `library_file` and `config_file` as seeded facts; the program cached by them (§4).
+   *Library files done:* `rr::read_file` returns each file a program read, with the sha256 of its
+   bytes, and each place an `#include` looked and found nothing. The lowered program is kept while
+   all of them hash the same (`programs_are_kept_by_the_hashes_of_what_they_read`). The cache is
+   per process; it goes into the store with step 2. *`config_file` waits for O76:* the runner
+   refuses to read `.input` files today, so there is nothing to hash yet.
 2. The corpus runner seeds `file` facts and reads through the store (§6).
 3. L2 path facts as `.rr` rules; `Batch::build` keeps only the content half (§3).
 4. Local ids in L1 with `doc_tape` (§2): measure the join cost of the mapping on the 9,010-file
