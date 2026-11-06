@@ -1357,35 +1357,40 @@ since reading it is not written. **Closure:** these relations are built natively
   no new values; this extends O11's bound.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
-## O78. Where the copied `.rr` library and rules differ from the recorded findings
+## O78. Where the `.rr` library and rules differ from the recorded findings
 
-In `docs/rule-syntax/lib/python/imports.rr` (a copy of More-ergonomic-rule-syntax), `resolve_export(q, r)`
-has no row when `q` names a function defined in a workspace module: the first rule excludes `r = q`, and the
-second requires that the module not export the name. So `from impl.common.query import read` in
-`data_layer/__init__.py` exports nothing, and public-api-triples finds nothing on 20 of its events. One added
-rule, `resolve_export(q, q) :- export_query(q), split_dot(q, m, x), exports(m, x, q).`, takes it from 15 to 28
-of 37 events exact (tried with the replay's `RERAIL_REPLAY_EXTRA`; the copy is unchanged).
+The library (`docs/rule-syntax/lib`) and the data-layer rules now live here; More-ergonomic-rule-syntax gets the
+same changes. Hand-written rules on the recorded events: 93 of 98 exact (was 64), after these fixes:
+- `resolve_export` (imports.rr) had no row for a name defined in its own module; its first rule now keeps r = q.
+- `public_name` read `__all__ = []` as no `__all__` (`has_all`); public-api-triples' roots are public names only,
+  and module roots are functions only.
+- `ref_site` (names.rr) counted a binding target as a read of itself (`except E as e`): `bind_target` excludes
+  them, except `x += 1`.
+- An unimported `contextlib.suppress(…)` or `suppress(…)` (swallowed-exceptions) and a bare `TYPE_CHECKING`
+  (names.rr) are matched by their text, as the Python linters do.
+- POSTOPDISPATCH001 asks for an `earlier` comparison, not a `precedes` sibling; `earlier` lowers to document
+  order (`rr::lower`), which is CPython's visit order except a def's decorators and return annotation.
+- `cmp` reads `op_at(c, 0, o)` (O79).
+- The engine: a nested glob alternative (`{{versioned,}x,y}`) is expanded (globset refuses it), a disjunction that
+  binds its variable (`(x = "a" ; x = "b")`) is no set test, and an aggregate's context leaves out comparisons it
+  cannot bind.
 
-The other hand-written rules' misses that the engine computes as written:
-- `nameref` (names.rr) counts every identifier as a read, binding targets too (`except E as e`, `x = 1`): a
-  handler that binds `e` and never reads it is a WARNING, not CRITICAL (swallowed-exceptions, 1 event).
-- A name is matched only once it resolves through an import: `contextlib.suppress(…)` and `suppress(…)` without
-  `import contextlib`, and `if TYPE_CHECKING:` without importing it, are not recognized, where the Python
-  linters match the dotted text (swallowed-exceptions 2 events, layer-violations 1).
-- post-op-no-internal-dispatch's POSTOPDISPATCH001 asks for an earlier comparison with `precedes`, which
-  `core.rr` defines among one parent's children; two `if`s' comparisons are not siblings (1 event).
+Left:
+- public-api-triples' chainable-builder reads `text` of a return annotation; the engine's `text` is T's
+  (identifiers only), `core.rr`'s is any node's source (1 event).
+- public-api-triples' property-override-inherits-public: the linter reports the base's `read_lazy` when the
+  exported child overrides it with a property; `mro_method` takes the child's own (1 event).
 - missing-async-pairs compares keyword-only and positional-only parameters by design ("improves on the Python
   linter"), so 2 events the linter passes are reported.
 - One probe (`nested-handler:analyzer`) records a finding inside a nested def that the plugin's recording of the
   same source does not.
-**Closure:** the user decides whether the copies are corrected here or in their own branch.
+**Closure:** `text` of any node in the engine (with T's parity kept for identifiers), and a decision on the
+property-override case; the other two stay as recorded differences.
 
-## O79. `op` of a comparison: `core.rr` has it, T's facts do not
+## O79. `op` of a comparison: closed
 
-`core.rr`'s `op(n, s)` is every operator token (`op(binary, "+")`), and the library's `cmp` reads a comparison's
-operator from it (`op(c, "in")`). The engine's `op` is T's: binary, boolean and unary operators and augmented
-assignments, not comparisons (tree-sitter's `operators` field). Recording comparisons too takes
-post-op-no-internal-dispatch from 5 to 9 of its 10 runnable events, and breaks five tests that hold the engine's
-rows and T programs' outputs to T's (`relations_hold_t_exporters_rows`, `t_programs_*`). Not done.
-**Closure:** the user decides: `op` follows `core.rr` and the T parity tests (copies) change, or comparisons get a
-relation of their own and the library (a copy) reads it.
+`op` stays T's: one row per node, binary, boolean and unary operators, augmented assignments and `async`, so T's
+parity tests hold. A comparison has several operators in order (`a < b <= c`), so it has its own relation, the one
+`core.rr` already declares: `op_at(n, i, s)`, n's operator tokens (the `operator` and `operators` fields) from 0.
+The library's `cmp` reads `op_at(c, 0, o)`. Not yet: Rust's `&&` in a `let` chain (`complexity/rust.rr`), whose
+tokens have no field.

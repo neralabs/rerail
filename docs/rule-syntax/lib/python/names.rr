@@ -274,11 +274,11 @@ qn(n, q) :- look(n, x, s), ibind(s, x, q).
 qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q).
 
 // ---- comparisons ---------------------------------------------------------------------------------------------------
-// cmp(c, op, l, r): c is a comparison with exactly one operator. op is the operator's text, two-token operators
-// ("not in", "is not") joined by op/2. Chained comparisons (a < b < c) have no row.
+// cmp(c, op, l, r): c is a comparison with exactly one operator. op is the operator's text, two-word operators
+// ("not in", "is not") one token. Chained comparisons (a < b < c) have no row; cmp_pair (ast) has their links.
 // e.g. `x is None` gives cmp(c, "is", <x>, <None>).
 .decl cmp(c: node, op: symbol, l: node, r: node)
-cmp(c, o, l, r) :- kind(c, "comparison_operator"), child(c, l, 0), child(c, r, 1), !child(c, _, 2), op(c, o).
+cmp(c, o, l, r) :- kind(c, "comparison_operator"), child(c, l, 0), child(c, r, 1), !child(c, _, 2), op_at(c, 0, o).
 
 // ==== interface ===================================================================================================
 // scope_node(n, s): s is the innermost scope (module, def, class or lambda) containing n.
@@ -331,7 +331,14 @@ site_form(site, form) :- binding(_, _, site, form).
 // ref_site(r, site): reference r reads binding site `site` (every site of the scope LEGB lands on: may-precise).
 // e.g. `x = 1; if c: x = 2; print(x)`: the x in print has two ref_site rows. No flow pruning is done here.
 .decl ref_site(r: node, site: node)
-ref_site(r, site) :- look(r, x, s), binding(s, x, site, _).
+ref_site(r, site) :- look(r, x, s), binding(s, x, site, _), !bind_target(r).
+// bind_target(n): identifier n is where a name is bound, not a read of it: `e` in `except E as e`, `x` in `x = 1`,
+// a parameter's name, an imported name. `x += 1` reads x as well, so it is not one.
+.decl bind_target(n: node)
+bind_target(n) :- binding(_, _, n, f), kind(n, "identifier"), f != "augassign".
+bind_target(n) :- binding(_, _, p, "param"), child(p, n, 0), kind(n, "identifier").
+bind_target(n) :- kind(a, "assignment"), field(a, "left", n), kind(n, "identifier").   // its site is the assignment
+bind_target(n) :- binding(_, _, i, "import"), within(n, i), kind(n, "identifier").
 // binding_value(site, v): the value expression a site stores, for `x = v` and `(x := v)`.
 .decl binding_value(site: node, v: node)
 binding_value(a, v) :- kind(a, "assignment"), field(a, "right", v).
@@ -388,6 +395,10 @@ literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), w
 // re-exported through another module is therefore not recognised.
 type_checking_block(b) :- kind(i, "if_statement"), field(i, "condition", c), qn(c, q),
     (q = "typing.TYPE_CHECKING" ; q = "typing_extensions.TYPE_CHECKING"), field(i, "consequence", b).
+// A bare `TYPE_CHECKING` that resolves to nothing (no import of it in sight) counts too, as in the Python linter;
+// `typing.TYPE_CHECKING` with no `import typing` does not.
+type_checking_block(b) :- kind(i, "if_statement"), field(i, "condition", c), kind(c, "identifier"), !qn(c, _),
+    text(c, "TYPE_CHECKING"), field(i, "consequence", b).
 // catches(x, q): except clause x catches exception class q. A bare `except:` (no child other than the body block)
 // catches everything, modelled as builtins.BaseException.
 .decl catches(x: node, q: symbol)
