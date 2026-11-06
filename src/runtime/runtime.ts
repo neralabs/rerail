@@ -531,6 +531,12 @@ interface RestoredRegistry {
   ruleSync?: LiveConversationRules | undefined;
 }
 
+/** A steer now among the pending steers. */
+interface PlacedSteer {
+  /** Its background delivery, when the native boundary that waits for the edit's check waits for it too. */
+  readonly boundaryDelivery: Promise<unknown> | undefined;
+}
+
 /** What a session's initial state is built from. */
 interface SessionStart {
   readonly session: AdapterSession;
@@ -1249,8 +1255,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
           scope: metadata?.scope ?? [],
         };
         const placed = await this.#placeSteer(activeState, pending, content, metadata, () => retired);
-        if (placed !== undefined) return placed;
-        await this.#deliverInBackground(activeState, pending, metadata);
+        if (typeof placed === "string") return placed;
+        if (placed.boundaryDelivery !== undefined) await placed.boundaryDelivery;
         return "queued";
       },
       revised: (sessionId, revision, paths) => {
@@ -1771,12 +1777,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Where a steer waits: for its rollback, in the pending steers (undefined, for the caller to deliver in the
-   * background), or with the findings held for the digest. A steer a newer revision has overtaken is discarded.
+   * Where a steer waits: for its rollback, in the pending steers, or with the findings held for the digest. A steer a
+   * newer revision has overtaken is discarded.
    */
   async #placeSteer(
     state: RuntimeSessionState, pending: PendingSteer, content: string, metadata: SteerMetadata | undefined, isRetired: () => boolean,
-  ): Promise<"discarded" | "queued" | undefined> {
+  ): Promise<"discarded" | "queued" | PlacedSteer> {
     if (!this.#isCurrentSteer(state, pending)) {
       this.#recordUndelivered(state, pending);
       return "discarded";
@@ -1784,8 +1790,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const window = this.#ownResultWindow(state, pending, content, metadata);
     if (state.steerStrategy === "rewind" && window !== undefined) return await this.#rewindSteer(state, window, pending, metadata!, isRetired);
     if (this.#holdForDigest(state, pending, metadata)) return "queued";
+    return this.#pendSteer(state, pending, metadata);
+  }
+
+  /**
+   * Pends the steer and starts its background delivery in the same step. With a wait between the two, a boundary that
+   * collects the pending steers meanwhile takes the steer into its own reply, not the background.
+   */
+  #pendSteer(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): PlacedSteer {
     state.pendingSteers.push(pending);
-    return undefined;
+    return { boundaryDelivery: this.#deliverInBackground(state, pending, metadata) };
   }
 
   /** Sets how the steer goes out; the result window it comes back with is the one it rides, if it is the check of that very edit. */
@@ -1804,7 +1818,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Rolls the edit back, then pends the steer; queued before the result answers, so the steer goes out with the edit it rolled back. */
   async #rewindSteer(
     state: RuntimeSessionState, window: ResultWindow, pending: PendingSteer, metadata: SteerMetadata, isRetired: () => boolean,
-  ): Promise<"discarded" | undefined> {
+  ): Promise<"discarded" | PlacedSteer> {
     const queued = Promise.withResolvers<void>();
     window.steers.push(queued.promise);
     try {
@@ -1814,8 +1828,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#recordUndelivered(state, pending);
         return "discarded";
       }
-      state.pendingSteers.push(pending);
-      return undefined;
+      return this.#pendSteer(state, pending, metadata);
     } finally {
       queued.resolve();
     }
@@ -1847,12 +1860,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  async #deliverInBackground(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): Promise<void> {
-    if (!state.codeRuleReady || metadata?.background !== true || this.#deliverBackground === undefined) return;
+  /** Starts the steer's background delivery, where it has one; returns it when the native boundary waits for it. */
+  #deliverInBackground(state: RuntimeSessionState, pending: PendingSteer, metadata: SteerMetadata | undefined): Promise<unknown> | undefined {
+    if (!state.codeRuleReady || metadata?.background !== true || this.#deliverBackground === undefined) return undefined;
     const inFlight = this.#deliverSteer(state, pending, true);
     const waitsForNativeBoundary = metadata.generatedEdit !== undefined
       && ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native";
-    if (waitsForNativeBoundary) await inFlight;
+    return waitsForNativeBoundary ? inFlight : undefined;
   }
 
   /** Marks the sources whose newer revision keeps a steer, or a held finding, from the agent (`undeliveredSources`). */

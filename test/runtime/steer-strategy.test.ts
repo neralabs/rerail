@@ -45,6 +45,7 @@ async function strategySession(options: {
   host: RerailHost;
   files?: Readonly<Record<string, string>>;
   createAuditor?: RerailRuntimeOptions["createAuditor"];
+  deliverBackground?: RerailRuntimeOptions["deliverBackground"];
   experimental?: boolean;
 }) {
   vi.stubEnv("RERAIL_EXPERIMENTAL_STEER_STRATEGIES", options.experimental === false ? "" : "1");
@@ -63,6 +64,7 @@ async function strategySession(options: {
   const runtime = new RerailRuntime({
     storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
     createAuditor: options.createAuditor ?? (auditorOptions => new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions)),
+    ...(options.deliverBackground === undefined ? {} : { deliverBackground: options.deliverBackground }),
   });
   const sessionId = "strategy";
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: options.host, sessionId, cwd: root } });
@@ -324,6 +326,37 @@ describe("The rewind steer strategy", () => {
         await session.runtime.dispose();
       }
     });
+  });
+
+  it("delivers the steer in the background, not in a result's reply, when the rollback outlasts the edit check's cap", async () => {
+    const background: AdapterDelivery[] = [];
+    const delivered = Promise.withResolvers<void>();
+    const session = await strategySession({
+      strategy: "rewind",
+      host: "claude-code",
+      deliverBackground: delivery => {
+        background.push(delivery);
+        delivered.resolve();
+      },
+      createAuditor: auditorOptions => {
+        const auditor = new NativeCodeRuleEnforcer(needleCatalog(), auditorOptions);
+        const audit = auditor.auditGeneratedEdits.bind(auditor);
+        // The rollback's own audit (`log` mode) runs past a hook host's one-second cap on the edit's check, so the
+        // result is already waiting for the steer when the rollback ends.
+        auditor.auditGeneratedEdits = async (sessionId, batch) => {
+          if (batch.mode === "log") await new Promise(resolve => setTimeout(resolve, 1_300));
+          return await audit(sessionId, batch);
+        };
+        return auditor;
+      },
+    });
+    try {
+      expect(await session.edit("w1", "created.py", "NEEDLE = 1\n")).toEqual([]);
+      await delivered.promise;
+      expect(background).toEqual([expect.objectContaining({ strategy: "rewind", toolCallId: "w1", rewound: ["created.py"] })]);
+    } finally {
+      await session.runtime.dispose();
+    }
   });
 });
 
