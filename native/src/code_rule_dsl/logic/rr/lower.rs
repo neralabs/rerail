@@ -493,8 +493,10 @@ impl Lowerer {
             match &mut lit {
                 Lit::Atom { args, .. } => args.iter_mut().for_each(|a| self.hoist(a, &mut hoisted, true)),
                 Lit::Cmp { l, r, .. } => {
+                    // `count : { … } = count : { … }`: the right one gets a variable.
+                    let both = matches!((&*l, &*r), (STerm::Agg { .. }, STerm::Agg { .. }));
                     self.hoist(l, &mut hoisted, false);
-                    self.hoist(r, &mut hoisted, false);
+                    self.hoist(r, &mut hoisted, both);
                 }
                 Lit::Pattern { .. } | Lit::Group { .. } => {}
             }
@@ -932,6 +934,13 @@ impl Lowerer {
             ("nearest", [n, a, set]) if !neg => {
                 let kindset = self.set_name(rel, set)?;
                 return Ok(Literal::Nearest { n: var(n)?, a: var(a)?, kindset });
+            }
+            // `!nearest(n, s, set)` with s named: not that nearest, through a helper relation over (n, s).
+            ("nearest", [n, a, set]) => {
+                let kindset = self.set_name(rel, set)?;
+                let (n, a) = (var(n)?, var(a)?);
+                let shared = [n.clone(), a.clone()];
+                return self.negate(vec![vec![Literal::Nearest { n, a, kindset }]], &shared);
             }
             // `inside(n, a, set)`: a is an ancestor of n in the set; `has(a, n, set)`: n is a descendant of a in the
             // set. Both are `(n, a)` rows the transducer makes.
