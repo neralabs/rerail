@@ -65,6 +65,17 @@ def main():
             if len(v) > 1 or k in core:
                 bad += 1
                 print(f"{lang}: {k} declared in {', '.join(v + (['lib/core.rr'] if k in core else []))}")
+    # Soufflé accepts only \\" \\\\ \\n \\t \\r \\' in a string, so a regex's `\\.` or `\\d` must be written `\\\\.`, `\\\\d`.
+    # (The engine's reader keeps an unknown escape as written, so only Soufflé would catch it.)
+    for f in sorted(glob.glob("**/*.rr", recursive=True)):
+        if f.startswith("site/"):
+            continue
+        for i, line in enumerate(open(f), 1):
+            code = re.sub(r"//.*", "", line) if '"' not in line.split("//")[0] else line
+            for lit in re.findall(r'"(?:[^"\\]|\\.)*"', code):
+                if any(c not in '"\\ntr\'' for c in re.findall(r"\\(.)", lit[1:-1])):
+                    bad += 1
+                    print(f"{f}:{i}: unknown escape in a string (write \\\\ for a regex backslash): {lit[:60]}")
     print("ok" if not bad else f"{bad} problems")
     return 1 if bad else 0
 
