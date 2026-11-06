@@ -9,11 +9,15 @@
 //   - fn: the nearest enclosing FunctionDef/AsyncFunctionDef, lambdas transparent; a def's decorators, parameter
 //     defaults and annotations are in that def; a class's decorators are in the class's fn (graphql_authority_fn).
 //   - authority_words: the words of ast.unparse(annotation), scanned by `\A[^A-Za-z_]*([A-Za-z_][\p{L}\p{N}_]*)`.
-//     Here: each identifier's text and each string literal's content in the annotation, tested by one regex that
-//     says the same scan holds a matching word (graphql_authority_word). APPROXIMATION (blocked: ast.unparse is
-//     @unparse, which needs CPython; `value` is the decoded string, not its repr): unparse writes a string as its
-//     repr, so content holding characters repr escapes (`\n`, `\x..`, quotes, backslashes) or implicitly
-//     concatenated pieces are scanned here as written, not as repr'd.
+//     Here: piece by piece (graphql_authority_piece), each piece one unparse writes between non-word characters, so
+//     its words are the output's there: each identifier, and each string constant's text as unparse writes it, up
+//     to the scan: W's decoded value (escapes decoded, adjacent literals joined) for a str, an f-string's literal
+//     pieces (fstring_piece) for a JoinedStr, each character str.isprintable() rejects (which repr writes as `\n`,
+//     `\xhh`, `\uhhhh`: a backslash and a word) as " x". One regex says the scan holds a matching word
+//     (graphql_authority_word). GAP (blocked: ast.unparse is @unparse, which needs CPython): an identifier is read as
+//     written, not NFKC-normalized as ast's Name id is; a bytes constant is read as written, piece by piece (W's value
+//     has no bytes text), not as repr writes the bytes; f-string pieces are as 3.12's unparse writes them (`\n`, `\t`
+//     escaped); \p{C}/\p{Z} are the regex crate's Unicode tables, not CPython's unicodedata.
 //   - authority_seeds: positional-or-keyword, positional-only and keyword-only parameters of a def (not *args,
 //     **kwargs) whose annotation has a word in {ServerPlan, BaseServerPlan, _GraphQLServerPlan, LazyResult} or
 //     ending in Transaction or PlanScope.
@@ -28,9 +32,11 @@
 // reported-parser-error. Input: every file in scope; parsed: for entryPoint "scan_source" every one, else those whose
 // source matches `ServerPlan|PlanScope|Transaction|LazyResult`; a row (GPO000, line 1) where CPython's parse fails.
 // The message differs by branch; the (path, line, code) key does not.
-// APPROXIMATION (blocked: CPython's syntax verdict is not bound): the verdict here (reported_parser_error_invalid,
-// also graphql-authority's syntax gate) is the corpus's `syntax_error(d)` or a block with no statement, not
-// CPython's `ast.parse`.
+// GAP (blocked: CPython's syntax verdict, core.rr's syntax_error(d, l, msg), needs core.rr's isolated ast.parse
+// worker, which the corpus runner does not run): the verdict here (reported_parser_error_invalid, also
+// graphql-authority's syntax gate) is the tape's `syntax_error(d)` (an ERROR node) or a block with no statement,
+// not ast.parse's; an ast.parse rejection that leaves the tape with no ERROR node and every block a statement is
+// not seen.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -39,6 +45,9 @@
 .decl text(n: loc, s: symbol)
 .decl node_text(n: node, s: symbol)
 .decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl source(d: number, sp: span)
@@ -72,11 +81,25 @@ graphql_authority_fn(n, f) :- nearest(n, dc, graphql_authority_frame), node(_, d
 graphql_authority_fn(n, f) :- nearest(n, dc, graphql_authority_frame), node(_, dc, "decorator", _, _), child(dd, dc, _),
     field(dd, "definition", c), node(_, c, "class_definition", _, _), graphql_authority_fn(c, f).
 
+// The pieces of ast.unparse's text the word scan reads (see the header): identifiers; string constants (a string
+// not part of a concatenated_string, or a concatenated_string) by W's value or their f-string literal pieces, and
+// format specs' literal pieces, each non-printable character as " x"; bytes as written.
+.decl graphql_authority_strhost(n: node)
+graphql_authority_strhost(n) :- node(_, n, "string", _, _), !graphql_authority_strpart(n).
+graphql_authority_strhost(n) :- node(_, n, "concatenated_string", _, _).
+.decl graphql_authority_strpart(n: node)
+graphql_authority_strpart(n) :- node(_, p, "concatenated_string", _, _), child(p, n, _).
+.decl graphql_authority_strtext(n: node, v: symbol)
+graphql_authority_strtext(n, v) :- graphql_authority_strhost(n), value(n, v), value_type_of(n, "str").
+graphql_authority_strtext(n, v) :- graphql_authority_strhost(n), fstring_piece(n, _, "literal", v).
+graphql_authority_strtext(n, v) :- node(_, n, "format_specifier", _, _), fstring_piece(n, _, "literal", v).
+.decl graphql_authority_piece(i: node, s: symbol)
+graphql_authority_piece(i, s) :- node(_, i, "identifier", _, _), text(i, s).
+graphql_authority_piece(n, s) :- graphql_authority_strtext(n, v), s = @rx_replace(v, "[\\p{C}\\p{Z}--\\x20]", " x").
+graphql_authority_piece(n, s) :- node(_, n, "string", _, _), value_type_of(n, "bytes"), str(n, s).
 // An annotation (a `type` node) with an authority word.
 .decl graphql_authority_word(ty: node)
-graphql_authority_word(ty) :- node(_, i, "identifier", _, _), text(i, s), inside(i, ty, graphql_authority_type),
-    match("(?s)(?:[^A-Za-z_]*[A-Za-z_][\\p{L}\\p{N}_]*[^\\p{L}\\p{N}_])*[^A-Za-z_]*(?:ServerPlan|BaseServerPlan|_GraphQLServerPlan|LazyResult|(?:[A-Za-z_][\\p{L}\\p{N}_]*)?(?:Transaction|PlanScope))(?:[^\\p{L}\\p{N}_].*)?", s).
-graphql_authority_word(ty) :- str(i, s), inside(i, ty, graphql_authority_type),
+graphql_authority_word(ty) :- graphql_authority_piece(i, s), inside(i, ty, graphql_authority_type),
     match("(?s)(?:[^A-Za-z_]*[A-Za-z_][\\p{L}\\p{N}_]*[^\\p{L}\\p{N}_])*[^A-Za-z_]*(?:ServerPlan|BaseServerPlan|_GraphQLServerPlan|LazyResult|(?:[A-Za-z_][\\p{L}\\p{N}_]*)?(?:Transaction|PlanScope))(?:[^\\p{L}\\p{N}_].*)?", s).
 
 // authority_seeds: (def, parameter name).
@@ -158,9 +181,8 @@ violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO004", p,
     field(a, "type", ty), graphql_authority_word(ty), graphql_authority_file(d, p), line(a, l).
 
 // ---- reported-parser-error -------------------------------------------------------------------------------------
-// The parse fails: the corpus's syntax_error(d) (tree-sitter's ERROR/MISSING nodes), or (APPROXIMATION of CPython's
-// verdict) a block with no statement, which tree-sitter accepts for `if True:` or `def f():` with no body and CPython
-// rejects (comments are not in node).
+// The parse fails: the tape's syntax_error(d) (an ERROR node), or (GAP, see the header) a block with no statement,
+// which tree-sitter accepts for `if True:` or `def f():` with no body and CPython rejects (comments are not in node).
 .decl reported_parser_error_stmt(b: node)
 reported_parser_error_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
 .decl reported_parser_error_invalid(d: number)
@@ -168,11 +190,7 @@ reported_parser_error_invalid(d) :- syntax_error(d).
 reported_parser_error_invalid(d) :- node(d, b, "block", _, _), !reported_parser_error_stmt(b).
 violation("data-layer-graphql-plan-ownership", "reported-parser-error", "GPO000", p, 1) :-
     option_value("entryPoint", "scan_source"), reported_parser_error_invalid(d), in_scope(d), !out_scope(d), doc(d, p, _).
-// W's rx_matches(source_text, 'ServerPlan|PlanScope|Transaction|LazyResult') searches literal alternatives: contains
-// on the whole file's text is the same test. (`source(d, sp), match_all("…", sp, _)` is the documented form; at
-// 1499d0c4c any authored match_all panics the planner, plan.rs:2274, reported.)
+// W's rx_matches(source_text, 'ServerPlan|PlanScope|Transaction|LazyResult') searches the file's text.
 violation("data-layer-graphql-plan-ownership", "reported-parser-error", "GPO000", p, 1) :-
     !option_value("entryPoint", "scan_source"), reported_parser_error_invalid(d), in_scope(d), !out_scope(d),
-    source(d, sp), text(sp, s),
-    (contains("ServerPlan", s) ; contains("PlanScope", s) ; contains("Transaction", s) ; contains("LazyResult", s)),
-    doc(d, p, _).
+    source(d, sp), match_all("ServerPlan|PlanScope|Transaction|LazyResult", sp, _), doc(d, p, _).
