@@ -1,7 +1,19 @@
+.decl callback_call_quarantine_kind(kind: symbol)
+callback_call_quarantine_kind("decorated_definition").
 .decl k0(kind: symbol)
 k0("decorated_definition"). k0("function_definition").
 .decl k1(kind: symbol)
 k1("class_definition").
+.decl callback_call_decorator(n: node)
+.decl callback_call_decorator_name(s: symbol)
+.decl callback_call_file_content(x: number)
+.decl callback_call_method(s: symbol)
+.decl callback_call_path_ok(p: symbol)
+.decl callback_call_quarantine(w: node)
+.decl callback_call_quarantined(c: node)
+.decl callback_call_receiver(n: node)
+.decl callback_call_receiver_name(n: node)
+.decl callback_call_site(c: node)
 .decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
@@ -26,6 +38,7 @@ k1("class_definition").
 .decl m80(n: node)
 .decl m81(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
 .decl t3(s: symbol)
@@ -38,6 +51,23 @@ k1("class_definition").
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, child, field, text, line, syntax_error
 .output violation
+callback_call_decorator_name("direct_legacy_async").
+callback_call_decorator_name("direct_legacy_module_async").
+callback_call_decorator_name("direct_legacy_module_sync").
+callback_call_decorator_name("direct_legacy_sync").
+callback_call_decorator_name("legacy_async").
+callback_call_decorator_name("legacy_module_async").
+callback_call_decorator_name("legacy_module_sync").
+callback_call_decorator_name("legacy_sync").
+callback_call_method("read").
+callback_call_method("read_async").
+callback_call_method("read_version").
+callback_call_method("read_version_async").
+callback_call_method("write").
+callback_call_method("write_async").
+callback_call_method("write_version").
+callback_call_method("write_version_async").
+option_value("entryPoint", "scan_repo").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l*/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
@@ -105,3 +135,20 @@ m101(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v94), node(_, v9
 m101(n) :- node(_, n, "call", _, _), field(n, "function", v96), m100(v96).
 m102(n) :- inside(n, v90, k1), node(_, v90, "class_definition", _, _), field(v90, "superclasses", v91), child(v91, v92, _), m101(v92).
 violation("data-layer-legacy-callback-quarantine", "connection-definition", "LCB-030", p, l) :- node(v82, n, _, _, _), doc(v82, v83, _), !t84(v83), node(_, n, "function_definition", _, _), field(n, "name", v85), node(_, v85, "identifier", _, _), text(v85, v86), (v86 = "commit_branch" ; v86 = "commit_branch_async"), nearest(n, v87, k1), node(_, v87, "class_definition", _, _), field(v87, "name", v88), node(_, v88, "identifier", _, _), text(v88, v89), (suffix("Connection", v89) ; suffix("ConnectionCore", v89) ; suffix("DatabaseConnection", v89)), !m102(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+callback_call_receiver_name(n) :- node(_, n, "identifier", _, _), text(n, s), (iglob("conn", s) ; iglob("session_handle", s) ; iglob("version_handle", s) ; iglob("*session", s) ; iglob("*connection", s) ; iglob("*version", s)).
+callback_call_receiver(n) :- callback_call_receiver_name(n).
+callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), callback_call_receiver_name(a).
+callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "object", o), callback_call_receiver(o).
+callback_call_receiver(n) :- node(_, n, "call", _, _), field(n, "function", f), callback_call_receiver(f).
+callback_call_receiver(n) :- node(_, n, "subscript", _, _), field(n, "value", v), callback_call_receiver(v).
+callback_call_receiver(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), callback_call_receiver(c).
+callback_call_decorator(n) :- node(_, n, "identifier", _, _), text(n, s), callback_call_decorator_name(s).
+callback_call_decorator(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), callback_call_decorator_name(s).
+callback_call_decorator(n) :- node(_, n, "call", _, _), field(n, "function", f), callback_call_decorator(f).
+callback_call_quarantine(w) :- node(_, w, "decorated_definition", _, _), child(w, f, _), node(_, f, "function_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, x, _), callback_call_decorator(x).
+callback_call_site(c) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", m), node(_, m, "identifier", _, _), text(m, s), callback_call_method(s), field(a, "object", o), callback_call_receiver(o), field(c, "arguments", g), child(g, _, _).
+callback_call_quarantined(c) :- callback_call_site(c), inside(c, w, callback_call_quarantine_kind), callback_call_quarantine(w).
+callback_call_file_content(0) :- option_value("entryPoint", "scan_file_content").
+callback_call_path_ok(p) :- doc(_, p, _), callback_call_file_content(0), match("(impl/|l|data_layer/|services/).*", p), !match("(.*/)?(tests|conform)(/.*)?", p).
+callback_call_path_ok(p) :- doc(_, p, _), !callback_call_file_content(0), !match("(.*/)?(\\.git|\\.mypy_cache|\\.pytest_cache|\\.ruff_cache|\\.venv|__pycache__|tmp)(/.*)?", p).
+violation("data-layer-legacy-callback-quarantine", "callback-call", "LCB-020", p, l) :- callback_call_site(c), !callback_call_quarantined(c), node(d, c, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), callback_call_path_ok(p), line(c, l).

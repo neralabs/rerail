@@ -1,13 +1,72 @@
+.decl lifecycle_deco(kind: symbol)
+lifecycle_deco("decorator").
+.decl lifecycle_fdef(kind: symbol)
+lifecycle_fdef("function_definition").
+.decl lifecycle_type(kind: symbol)
+lifecycle_type("type").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl lifecycle_alias(f: node, x: symbol)
+.decl lifecycle_ann_name(t: node, x: symbol)
+.decl lifecycle_arg_peel(a: node, u: node)
+.decl lifecycle_attr_call(c: node, x: symbol, r: node)
+.decl lifecycle_callee(c: node, x: symbol)
+.decl lifecycle_doc(d: number, p: symbol)
+.decl lifecycle_executing(f: node)
+.decl lifecycle_field(cls: node, a: node, t: node)
+.decl lifecycle_fn(f: node, p: symbol)
+.decl lifecycle_func(c: node, u: node)
+.decl lifecycle_in_fn(x: node, f: node)
+.decl lifecycle_kind_class(cls: node)
+.decl lifecycle_kwname(i: node)
+.decl lifecycle_lambda_arg(c: node)
+.decl lifecycle_mutation(x: symbol)
+.decl lifecycle_name_call(c: node, x: symbol)
+.decl lifecycle_param(f: node, x: symbol, t: node)
+.decl lifecycle_peel(c: node, e: node)
+.decl lifecycle_plan_attr(r: node)
+.decl lifecycle_plan_value(a: node, v: node)
+.decl lifecycle_root(r: node, x: symbol)
+.decl lifecycle_schema_param(f: node, x: symbol)
+.decl lifecycle_terminal(x: symbol)
+.decl lifecycle_text_doc(d: number)
+.decl lifecycle_trigger(s: symbol)
+.decl lifecycle_unparen(e: node, m: node)
+.decl lifecycle_up(a: node, z: node)
+.decl lifecycle_walk(r: node, e: node)
 .decl line(n: node, l: number)
 .decl never(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl parser_error_doc(d: number, p: symbol)
+.decl schema_planning_off(d: number)
 .decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error
+.input doc, node, line, syntax_error, field, child, text, node_text
 .output violation
+lifecycle_mutation("add").
+lifecycle_mutation("add_operation").
+lifecycle_mutation("append").
+lifecycle_mutation("clear").
+lifecycle_mutation("extend").
+lifecycle_mutation("insert").
+lifecycle_mutation("pop").
+lifecycle_mutation("remove").
+lifecycle_terminal("execute").
+lifecycle_terminal("execute_async").
+lifecycle_terminal("execute_server_plan_async").
+lifecycle_terminal("execute_server_plan_now").
+lifecycle_terminal("resolve").
+lifecycle_terminal("resolve_async").
+lifecycle_terminal("resolve_terminal_async").
+lifecycle_terminal("resolve_terminal_sync").
+lifecycle_trigger("SchemaTransaction").
+lifecycle_trigger("Callable").
+lifecycle_trigger("_schema_operation_plan").
 in_scope(d) :- doc(d, p, _), glob("l2000_connection/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l3200_metadata/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/**/*.py", p).
@@ -25,3 +84,52 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 violation("data-layer-schema-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(v1, n, _, _, _), doc(v1, v2, _), never(_), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+schema_planning_off(d) :- doc(d, _, _), 1 = 0.
+violation("data-layer-schema-architecture", "schema-planning", "architecture", p, 1) :- schema_planning_off(d), doc(d, p, _).
+lifecycle_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), prefix("l2000_connection/", p).
+lifecycle_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), prefix("l3200_metadata/", p).
+lifecycle_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), prefix("impl/common/l7245_versioned_backends/", p).
+lifecycle_in_fn(x, f) :- inside(x, f, lifecycle_fdef).
+lifecycle_in_fn(x, f) :- node(_, f, "function_definition", _, _), field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _), inside(x, dc, lifecycle_deco).
+lifecycle_peel(c, f) :- node(_, c, "call", _, _), field(c, "function", f).
+lifecycle_peel(c, i) :- lifecycle_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+lifecycle_func(c, u) :- lifecycle_peel(c, u), !node(_, u, "parenthesized_expression", _, _).
+lifecycle_name_call(c, x) :- lifecycle_func(c, u), node(_, u, "identifier", _, _), text(u, x).
+lifecycle_attr_call(c, x, r) :- lifecycle_func(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a), text(a, x), field(u, "object", r).
+lifecycle_callee(c, x) :- lifecycle_name_call(c, x).
+lifecycle_callee(c, x) :- lifecycle_attr_call(c, x, _).
+lifecycle_walk(r, r) :- lifecycle_attr_call(_, _, r).
+lifecycle_walk(r, r) :- lifecycle_plan_value(_, r).
+lifecycle_walk(r, i) :- lifecycle_walk(r, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+lifecycle_walk(r, o) :- lifecycle_walk(r, e), node(_, e, "attribute", _, _), field(e, "object", o).
+lifecycle_root(r, x) :- lifecycle_walk(r, e), node(_, e, "identifier", _, _), text(e, x).
+lifecycle_kwname(i) :- node(_, k, "keyword_argument", _, _), field(k, "name", i).
+lifecycle_ann_name(t, x) :- node(_, i, "identifier", _, _), inside(i, t, lifecycle_type), text(i, x), !lifecycle_kwname(i).
+lifecycle_param(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, nm, 0), node(_, nm, "identifier", _, _), text(nm, x), field(p, "type", t).
+lifecycle_param(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_default_parameter", _, _), field(p, "name", nm), text(nm, x), field(p, "type", t).
+lifecycle_schema_param(f, x) :- node(d, f, "function_definition", _, _), lifecycle_doc(d, _), lifecycle_param(f, x, t), lifecycle_ann_name(t, s), suffix("SchemaTransaction", s).
+lifecycle_plan_value(a, v) :- node(_, a, "assignment", _, _), field(a, "right", v0), lifecycle_unparen(v0, v), node(_, v, "attribute", _, _), field(v, "attribute", at), text(at, "_schema_operation_plan").
+lifecycle_unparen(e, e) :- node(_, a, "assignment", _, _), field(a, "right", e).
+lifecycle_unparen(e, m) :- lifecycle_unparen(e, x), node(_, x, "parenthesized_expression", _, _), child(x, m, 0).
+lifecycle_up(a, a) :- lifecycle_plan_value(a, _).
+lifecycle_up(a, z) :- lifecycle_up(a, y), node(_, z, "assignment", _, _), field(z, "right", y).
+lifecycle_alias(f, x) :- lifecycle_plan_value(a, v), lifecycle_in_fn(a, f), lifecycle_root(v, r), lifecycle_schema_param(f, r), lifecycle_up(a, z), field(z, "left", t), node(_, t, "identifier", _, _), text(t, x).
+lifecycle_fn(f, p) :- node(d, f, "function_definition", _, _), lifecycle_doc(d, p).
+lifecycle_executing(f) :- lifecycle_fn(f, _), lifecycle_in_fn(c, f), lifecycle_callee(c, x), lifecycle_terminal(x).
+lifecycle_plan_attr(r) :- lifecycle_attr_call(_, _, r), node(d, r, _, s0, e0), node(d, a, "attribute", s1, e1), s0 <= s1, e1 <= e0, field(a, "attribute", at), text(at, "_schema_operation_plan").
+lifecycle_field(cls, a, t) :- node(d, cls, "class_definition", _, _), lifecycle_doc(d, _), field(cls, "body", b), child(b, st, _), node(_, st, "expression_statement", _, _), child(st, a, 0), node(_, a, "assignment", _, _), field(a, "type", t).
+lifecycle_kind_class(cls) :- lifecycle_field(cls, _, t), lifecycle_ann_name(t, "SchemaOperationKind").
+violation("data-layer-schema-architecture", "schema-lifecycle", "SAP001", p, l) :- lifecycle_kind_class(cls), lifecycle_field(cls, a, t), lifecycle_ann_name(t, "Callable"), node(d, a, _, _, _), doc(d, p, _), line(a, l).
+violation("data-layer-schema-architecture", "schema-lifecycle", "SAP002", p, l) :- lifecycle_executing(f), lifecycle_fn(f, p), lifecycle_in_fn(c, f), lifecycle_attr_call(c, m, r), lifecycle_mutation(m), lifecycle_root(r, x), lifecycle_alias(f, x), line(c, l).
+violation("data-layer-schema-architecture", "schema-lifecycle", "SAP002", p, l) :- lifecycle_executing(f), lifecycle_fn(f, p), lifecycle_in_fn(c, f), lifecycle_attr_call(c, m, r), lifecycle_mutation(m), lifecycle_root(r, x), lifecycle_schema_param(f, x), lifecycle_plan_attr(r), line(c, l).
+violation("data-layer-schema-architecture", "schema-lifecycle", "SAP005", p, l) :- lifecycle_executing(f), lifecycle_fn(f, p), lifecycle_in_fn(c, f), lifecycle_attr_call(c, m, r), suffix("_lazy", m), lifecycle_root(r, x), lifecycle_schema_param(f, x), line(c, l).
+lifecycle_lambda_arg(c) :- lifecycle_attr_call(c, _, _), field(c, "arguments", al), node(_, al, "argument_list", _, _), child(al, a, _), lifecycle_arg_peel(a, u), node(_, u, "lambda", _, _).
+lifecycle_arg_peel(a, a) :- lifecycle_attr_call(c, _, _), field(c, "arguments", al), child(al, a, _).
+lifecycle_arg_peel(a, u) :- lifecycle_arg_peel(a, e), node(_, e, "parenthesized_expression", _, _), child(e, u, 0).
+violation("data-layer-schema-architecture", "schema-lifecycle", "SAP003", p, l) :- lifecycle_fn(f, p), lifecycle_in_fn(c, f), lifecycle_attr_call(c, _, r), lifecycle_root(r, x), lifecycle_schema_param(f, x), lifecycle_lambda_arg(c), line(c, l).
+lifecycle_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), lifecycle_trigger(x), contains(x, s).
+violation("data-layer-schema-architecture", "schema-lifecycle", "SAP004", p, l) :- lifecycle_executing(f), lifecycle_fn(f, p), node(d, f, _, _, _), lifecycle_text_doc(d), field(f, "name", nm), text(nm, x), lifecycle_in_fn(c, f), lifecycle_name_call(c, x), line(f, l).
+parser_error_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), prefix("l2000_connection/", p).
+parser_error_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), prefix("l3200_metadata/", p).
+parser_error_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), prefix("impl/common/l7245_versioned_backends/", p).
+violation("data-layer-schema-architecture", "reported-parser-error", "SAP000", p, 1) :- parser_error_doc(d, p), lifecycle_text_doc(d).

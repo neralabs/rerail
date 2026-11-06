@@ -1,2 +1,66 @@
+.decl child(p: node, c: node, i: number)
+.decl contract_attribute_name(s: symbol)
+.decl contract_attribute_str_prefix(p: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl out_scope(d: number)
+.decl override_identity_ascii(n: node, s: symbol, ns: number)
+.decl override_identity_other_op(n: node)
+.decl override_identity_self_args(g: node)
+.decl override_identity_sep(n: node, x: symbol)
+.decl override_identity_type_attr(a: node)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, text, child, strprefix, str, syntax_error, line, node_text
 .output violation
+contract_attribute_name("auxiliary_query").
+contract_attribute_name("column_type_hints").
+contract_attribute_name("creates_indexes").
+contract_attribute_name("ddl_effect_scope").
+contract_attribute_name("declared_column_type_hints").
+contract_attribute_name("declared_columns").
+contract_attribute_name("defines").
+contract_attribute_name("effects_known").
+contract_attribute_name("ephemeral").
+contract_attribute_name("guarded_creates").
+contract_attribute_name("guarded_indexes").
+contract_attribute_name("modifies_rows").
+contract_attribute_name("reads_outside_itself").
+contract_attribute_name("relation_role").
+contract_attribute_name("relation_scope").
+contract_attribute_name("source_tables").
+contract_attribute_str_prefix("").
+contract_attribute_str_prefix("r").
+contract_attribute_str_prefix("u").
+contract_attribute_str_prefix("f").
+contract_attribute_str_prefix("fr").
+contract_attribute_str_prefix("rf").
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+violation("data-layer-declared-fact-interrogation", "contract-attribute", "CONTRACT_ATTR_PROBE", p, l) :- node(d, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, x), (x = "getattr" ; x = "hasattr"), field(n, "arguments", a), child(a, s, 1), node(_, s, "string", _, _), strprefix(s, q), contract_attribute_str_prefix(q), str(s, v), contract_attribute_name(v), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+override_identity_ascii(n, s, ns) :- node(_, n, "comparison_operator", ns, ne), node_text(n, s), @strlen(s) = @sub(ne, ns).
+override_identity_sep(n, x) :- override_identity_ascii(n, s, ns), child(n, c, i), node(_, c, _, _, e), j = @add(i, 1), child(n, c2, j), node(_, c2, _, b, _), x = @substr(s, @sub(e, ns), @sub(b, e)).
+override_identity_other_op(n) :- override_identity_sep(n, x), !match("(?:\\s|\\\\|#[^\n]*)*is(?:(?:\\s|\\\\|#[^\n]*)+not)?(?:\\s|\\\\|#[^\n]*)*", x).
+override_identity_self_args(g) :- node(_, g, "argument_list", _, _), node_text(g, s), match("\\(\\s*self(?:\\s*,)?\\s*\\)", s).
+override_identity_type_attr(a) :- node(_, a, "attribute", _, _), field(a, "object", c), node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "type"), field(c, "arguments", g), node(_, g, "argument_list", _, _), !override_identity_self_args(g).
+violation("data-layer-declared-fact-interrogation", "override-identity", "OVERRIDE_IDENTITY_PROBE", p, l) :- node(d, n, "comparison_operator", _, _), !override_identity_other_op(n), child(n, a, 0), node(_, a, "attribute", _, _), child(n, b, j), j > 0, node(_, b, "attribute", _, _), field(a, "attribute", x), field(b, "attribute", y), text(x, s), text(y, s), override_identity_type_attr(a), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-declared-fact-interrogation", "override-identity", "OVERRIDE_IDENTITY_PROBE", p, l) :- node(d, n, "comparison_operator", _, _), !override_identity_other_op(n), child(n, a, 0), node(_, a, "attribute", _, _), child(n, b, j), j > 0, node(_, b, "attribute", _, _), field(a, "attribute", x), field(b, "attribute", y), text(x, s), text(y, s), override_identity_type_attr(b), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

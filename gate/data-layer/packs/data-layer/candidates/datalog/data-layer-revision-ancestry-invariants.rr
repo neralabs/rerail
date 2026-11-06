@@ -1,2 +1,92 @@
+.decl descriptor_candidate(d: number, l: number)
+.decl descriptor_first(d: number, c: symbol, l: number)
+.decl descriptor_hit(d: number, c: symbol, l: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl removed_surface_hit(d: number, l: number)
+.decl revision_ancestry_content(d: number)
+.decl revision_ancestry_file(d: number, p: symbol)
+.decl revision_ancestry_full(d: number, l: number, s: symbol)
+.decl revision_ancestry_line(d: number, l: number, t: symbol)
+.decl revision_ancestry_need1(d: number, l: number)
+.decl revision_ancestry_need16(d: number, l: number)
+.decl revision_ancestry_need2(d: number, l: number)
+.decl revision_ancestry_need32(d: number, l: number)
+.decl revision_ancestry_need4(d: number, l: number)
+.decl revision_ancestry_need8(d: number, l: number)
+.decl revision_ancestry_start(d: number, l: number)
+.decl revision_ancestry_w1(d: number, l: number, s: symbol)
+.decl revision_ancestry_w16(d: number, l: number, s: symbol)
+.decl revision_ancestry_w2(d: number, l: number, s: symbol)
+.decl revision_ancestry_w4(d: number, l: number, s: symbol)
+.decl revision_ancestry_w8(d: number, l: number, s: symbol)
+.decl src_line_lf(d: number, l: number, sp: node)
+.decl stored_text_cast_0_candidate(d: number, l: number)
+.decl stored_text_cast_1_candidate(d: number, l: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, src_line_lf, text
 .output violation
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/domain/versioning/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+revision_ancestry_file(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), glob("**/*.py", p), !glob("**/tests/**", p), !glob("**/test_*.py", p).
+revision_ancestry_line(d, l, t) :- revision_ancestry_file(d, _), src_line_lf(d, l, sp), text(sp, t).
+revision_ancestry_content(d) :- revision_ancestry_line(d, _, t), (contains("revision", t) ; contains("ancestry", t)).
+revision_ancestry_start(d, l) :- descriptor_candidate(d, l).
+revision_ancestry_start(d, l) :- stored_text_cast_0_candidate(d, l).
+revision_ancestry_start(d, l) :- stored_text_cast_1_candidate(d, l).
+revision_ancestry_need32(d, l) :- revision_ancestry_start(d, l).
+revision_ancestry_need16(d, l) :- revision_ancestry_need32(d, l).
+revision_ancestry_need16(d, @add(l, 16)) :- revision_ancestry_need32(d, l), rr_t1 = @add(l, 16), revision_ancestry_line(d, rr_t1, _).
+revision_ancestry_need8(d, l) :- revision_ancestry_need16(d, l).
+revision_ancestry_need8(d, @add(l, 8)) :- revision_ancestry_need16(d, l), rr_t2 = @add(l, 8), revision_ancestry_line(d, rr_t2, _).
+revision_ancestry_need4(d, l) :- revision_ancestry_need8(d, l).
+revision_ancestry_need4(d, @add(l, 4)) :- revision_ancestry_need8(d, l), rr_t3 = @add(l, 4), revision_ancestry_line(d, rr_t3, _).
+revision_ancestry_need2(d, l) :- revision_ancestry_need4(d, l).
+revision_ancestry_need2(d, @add(l, 2)) :- revision_ancestry_need4(d, l), rr_t4 = @add(l, 2), revision_ancestry_line(d, rr_t4, _).
+revision_ancestry_need1(d, l) :- revision_ancestry_need2(d, l).
+revision_ancestry_need1(d, @add(l, 1)) :- revision_ancestry_need2(d, l), rr_t5 = @add(l, 1), revision_ancestry_line(d, rr_t5, _).
+revision_ancestry_w1(d, l, t) :- revision_ancestry_need1(d, l), revision_ancestry_line(d, l, t).
+revision_ancestry_w2(d, l, @concat(@concat(a, "\n"), b)) :- revision_ancestry_need2(d, l), revision_ancestry_w1(d, l, a), rr_t6 = @add(l, 1), revision_ancestry_w1(d, rr_t6, b).
+revision_ancestry_w2(d, l, a) :- revision_ancestry_need2(d, l), revision_ancestry_w1(d, l, a), rr_t7 = @add(l, 1), !revision_ancestry_line(d, rr_t7, _).
+revision_ancestry_w4(d, l, @concat(@concat(a, "\n"), b)) :- revision_ancestry_need4(d, l), revision_ancestry_w2(d, l, a), rr_t8 = @add(l, 2), revision_ancestry_w2(d, rr_t8, b).
+revision_ancestry_w4(d, l, a) :- revision_ancestry_need4(d, l), revision_ancestry_w2(d, l, a), rr_t9 = @add(l, 2), !revision_ancestry_line(d, rr_t9, _).
+revision_ancestry_w8(d, l, @concat(@concat(a, "\n"), b)) :- revision_ancestry_need8(d, l), revision_ancestry_w4(d, l, a), rr_t10 = @add(l, 4), revision_ancestry_w4(d, rr_t10, b).
+revision_ancestry_w8(d, l, a) :- revision_ancestry_need8(d, l), revision_ancestry_w4(d, l, a), rr_t11 = @add(l, 4), !revision_ancestry_line(d, rr_t11, _).
+revision_ancestry_w16(d, l, @concat(@concat(a, "\n"), b)) :- revision_ancestry_need16(d, l), revision_ancestry_w8(d, l, a), rr_t12 = @add(l, 8), revision_ancestry_w8(d, rr_t12, b).
+revision_ancestry_w16(d, l, a) :- revision_ancestry_need16(d, l), revision_ancestry_w8(d, l, a), rr_t13 = @add(l, 8), !revision_ancestry_line(d, rr_t13, _).
+revision_ancestry_full(d, l, @concat(@concat(a, "\n"), b)) :- revision_ancestry_need32(d, l), revision_ancestry_w16(d, l, a), rr_t14 = @add(l, 16), revision_ancestry_w16(d, rr_t14, b).
+revision_ancestry_full(d, l, a) :- revision_ancestry_need32(d, l), revision_ancestry_w16(d, l, a), rr_t15 = @add(l, 16), !revision_ancestry_line(d, rr_t15, _).
+descriptor_candidate(d, l) :- revision_ancestry_line(d, l, t), match("class(?:\\s[\\s\\S]*)?", t).
+descriptor_hit(d, "SqlAncestryChainCte", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlAncestryChainCte\\b[\\s\\S]*", s).
+descriptor_hit(d, "SqlNativeRevisionValue", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlNativeRevisionValue\\b[\\s\\S]*", s).
+descriptor_hit(d, "SqlRevisionAncestryDefinition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlRevisionAncestryDefinition\\b[\\s\\S]*", s).
+descriptor_hit(d, "SqlRevisionInAncestryCondition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+SqlRevisionInAncestryCondition\\b[\\s\\S]*", s).
+descriptor_hit(d, "_SparseRowVisibleAtRevisionCondition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+_SparseRowVisibleAtRevisionCondition\\b[\\s\\S]*", s).
+descriptor_hit(d, "_SqlCopyVisibleSparseAncestors", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+_SqlCopyVisibleSparseAncestors\\b[\\s\\S]*", s).
+descriptor_hit(d, "_SqlVisibleAncestorsDefinition", l) :- descriptor_candidate(d, l), revision_ancestry_full(d, l, s), match("class\\s+_SqlVisibleAncestorsDefinition\\b[\\s\\S]*", s).
+descriptor_first(d, c, l) :- descriptor_hit(d, c, _), revision_ancestry_content(d), l = min k : { descriptor_hit(d, c, k) }.
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlAncestryChainCte", "forbidden_descriptor", p, l) :- descriptor_first(d, "SqlAncestryChainCte", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlNativeRevisionValue", "forbidden_descriptor", p, l) :- descriptor_first(d, "SqlNativeRevisionValue", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionAncestryDefinition", "forbidden_descriptor", p, l) :- descriptor_first(d, "SqlRevisionAncestryDefinition", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlRevisionInAncestryCondition", "forbidden_descriptor", p, l) :- descriptor_first(d, "SqlRevisionInAncestryCondition", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SparseRowVisibleAtRevisionCondition", "forbidden_descriptor", p, l) :- descriptor_first(d, "_SparseRowVisibleAtRevisionCondition", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlCopyVisibleSparseAncestors", "forbidden_descriptor", p, l) :- descriptor_first(d, "_SqlCopyVisibleSparseAncestors", l), revision_ancestry_file(d, p).
+violation("data-layer-revision-ancestry-invariants", "descriptor-SqlVisibleAncestorsDefinition", "forbidden_descriptor", p, l) :- descriptor_first(d, "_SqlVisibleAncestorsDefinition", l), revision_ancestry_file(d, p).
+removed_surface_hit(d, l) :- revision_ancestry_line(d, l, t), contains("stmt_ancestry_chain", t).
+violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed_surface", p, l) :- removed_surface_hit(d, _), l = min k : { removed_surface_hit(d, k) }, revision_ancestry_file(d, p).
+stored_text_cast_0_candidate(d, l) :- revision_ancestry_line(d, l, t), match("[\\s\\S]*(?i:revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\s\\S]*", t).
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-0", "stored_revision_text_cast", p, l) :- stored_text_cast_0_candidate(d, l), revision_ancestry_content(d), revision_ancestry_full(d, l, s), match("[^\n]*(?i:(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\"'`]?[\\s\\S]{0,80}::\\s*text)[\\s\\S]*", s), revision_ancestry_file(d, p).
+stored_text_cast_1_candidate(d, l) :- revision_ancestry_line(d, l, t), match("[\\s\\S]*(?i:cast\\()[\\s\\S]*", t).
+violation("data-layer-revision-ancestry-invariants", "stored-text-cast-1", "stored_revision_text_cast", p, l) :- stored_text_cast_1_candidate(d, l), revision_ancestry_content(d), revision_ancestry_full(d, l, s), match("[^\n]*(?i:CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\))[\\s\\S]*", s), revision_ancestry_file(d, p).

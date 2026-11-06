@@ -1,2 +1,196 @@
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl helpers_allow(m: symbol, c: symbol, f: symbol)
+.decl helpers_allowed(n: node)
+.decl helpers_best(d: number, n: node, at: number, seg: number)
+.decl helpers_bind_expr(d: number, name: symbol, at: number, expr: node)
+.decl helpers_bind_helper(d: number, name: symbol, at: number, helper: symbol)
+.decl helpers_chosen(d: number, n: node, at: number, helper: symbol)
+.decl helpers_class_region(d: number, c: node, name: symbol, s: number, e: number)
+.decl helpers_decorated(f: node)
+.decl helpers_direct(d: number, n: node, at: number, helper: symbol)
+.decl helpers_doc(d: number)
+.decl helpers_dotted(d: number, s: symbol)
+.decl helpers_eager(l: symbol)
+.decl helpers_fn_region(d: number, f: node, name: symbol, s: number, e: number)
+.decl helpers_forbidden(k: symbol, h: symbol)
+.decl helpers_from(n: node, module: symbol)
+.decl helpers_impl_module(m: symbol)
+.decl helpers_impl_or_api(d: number)
+.decl helpers_import(d: number, n: node, x: node, name: symbol, local: symbol)
+.decl helpers_import_kind(k: symbol)
+.decl helpers_in_class(n: node, c: node, name: symbol)
+.decl helpers_in_fn(n: node, f: node, name: symbol)
+.decl helpers_known(x: symbol)
+.decl helpers_l_module(m: symbol)
+.decl helpers_legacy_alias(k: symbol, h: symbol)
+.decl helpers_legacy_or_via(h: symbol)
+.decl helpers_module(d: number, m: symbol)
+.decl helpers_module_alias(d: number, at: number, name: symbol)
+.decl helpers_name(x: symbol, public: number, lazy: number, legacy: number)
+.decl helpers_option(d: number, n: node, at: number, seg: number)
+.decl helpers_pattern_kind(k: symbol)
+.decl helpers_ph_import(d: number, n: node, x: node, name: symbol, local: symbol)
+.decl helpers_raw(d: number, n: node, kind: symbol, helper: symbol, local: symbol)
+.decl helpers_reason(d: number, n: node, reason: symbol)
+.decl helpers_request(d: number, r: node, expr: node, at: number)
+.decl helpers_resolved(d: number, r: node, helper: symbol)
+.decl helpers_resolves(d: number, n: node, at: number)
+.decl helpers_self_call(d: number, h: symbol)
+.decl helpers_some_class(n: node)
+.decl helpers_state(d: number, n: node, at: number)
+.decl helpers_target(a: node, t: node)
+.decl helpers_target_name(d: number, a: node, t: node, name: symbol)
+.decl helpers_two_classes(n: node)
+.decl helpers_two_fns(n: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, line, syntax_error
 .output violation
+helpers_allow("impl.common.l2070_server_plan.plan_helpers", "", "ddl_via_plan").
+helpers_allow("impl.common.l2070_server_plan.plan_helpers", "", "ddl_via_plan_async").
+helpers_allow("impl.common.l2070_server_plan.plan_helpers", "", "scalar_via_plan").
+helpers_allow("impl.common.l2200_sql_dialect.sql_connection", "SqlConnection", "execute_grammar_with_params").
+helpers_allow("impl.common.l2200_sql_dialect.sql_connection", "SqlConnection", "raw_execute").
+helpers_allow("impl.common.l2200_sql_dialect.sql_connection", "SqlConnection", "raw_execute_async").
+helpers_allow("impl.doltdb.versioned_operations_read", "", "check_doltdb_branch_exists").
+helpers_allow("l8000_admin.tools.sql_execution", "", "execute_sql_command").
+helpers_allow("l8000_admin.tools.sql_execution", "", "execute_sql_query").
+helpers_allow("l8000_admin.tools.sql_execution", "", "explain_query").
+helpers_allow("l8000_admin.tools.versioning_tools", "", "_fetch_plan_rows").
+helpers_impl_module("impl.common.l2070_server_plan.plan_helpers").
+helpers_impl_module("impl.common.l2200_sql_dialect.sql_connection").
+helpers_impl_module("impl.doltdb.versioned_operations_read").
+helpers_import_kind("import_statement").
+helpers_import_kind("import_from_statement").
+helpers_l_module("l8000_admin.tools.sql_execution").
+helpers_l_module("l8000_admin.tools.versioning_tools").
+helpers_name("_ddl_effect_lazy_impl_async", 0, 0, 1).
+helpers_name("_ddl_effect_lazy_now", 0, 0, 1).
+helpers_name("_ddl_via_plan_impl_async", 0, 0, 0).
+helpers_name("_ddl_via_plan_now", 0, 0, 0).
+helpers_name("_execute_via_plan_impl_async", 0, 0, 0).
+helpers_name("_execute_via_plan_now", 0, 0, 0).
+helpers_name("_fetchall_via_plan_impl_async", 0, 0, 0).
+helpers_name("_fetchall_via_plan_now", 0, 0, 0).
+helpers_name("_fetchone_via_plan_impl_async", 0, 0, 0).
+helpers_name("_fetchone_via_plan_now", 0, 0, 0).
+helpers_name("_grammar_effect_lazy_impl_async", 0, 0, 1).
+helpers_name("_grammar_effect_lazy_now", 0, 0, 1).
+helpers_name("_grammar_row_lazy_impl_async", 0, 0, 1).
+helpers_name("_grammar_row_lazy_now", 0, 0, 1).
+helpers_name("_grammar_rows_lazy_impl_async", 0, 0, 1).
+helpers_name("_grammar_rows_lazy_now", 0, 0, 1).
+helpers_name("_grammar_value_lazy_now", 0, 0, 1).
+helpers_name("_scalar_via_plan_impl_async", 0, 0, 0).
+helpers_name("_scalar_via_plan_now", 0, 0, 0).
+helpers_name("ddl_effect_lazy", 0, 1, 0).
+helpers_name("ddl_effect_lazy_async", 0, 1, 0).
+helpers_name("ddl_via_plan", 1, 0, 0).
+helpers_name("ddl_via_plan_async", 1, 0, 0).
+helpers_name("execute_via_plan", 1, 0, 0).
+helpers_name("execute_via_plan_async", 1, 0, 0).
+helpers_name("fetchall_via_plan", 1, 0, 0).
+helpers_name("fetchall_via_plan_async", 1, 0, 0).
+helpers_name("fetchone_via_plan", 1, 0, 0).
+helpers_name("fetchone_via_plan_async", 1, 0, 0).
+helpers_name("grammar_effect_lazy", 0, 1, 0).
+helpers_name("grammar_effect_lazy_async", 0, 1, 0).
+helpers_name("grammar_row_lazy", 0, 1, 0).
+helpers_name("grammar_row_lazy_async", 0, 1, 0).
+helpers_name("grammar_rows_lazy", 0, 1, 0).
+helpers_name("grammar_rows_lazy_async", 0, 1, 0).
+helpers_name("grammar_value_lazy", 0, 1, 0).
+helpers_name("scalar_via_plan", 1, 0, 0).
+helpers_pattern_kind("pattern_list").
+helpers_pattern_kind("tuple_pattern").
+helpers_pattern_kind("list_pattern").
+helpers_pattern_kind("tuple").
+helpers_pattern_kind("list").
+in_scope(d) :- doc(d, p, _), glob("**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+helpers_doc(d) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), suffix(".py", p), !match("(?:.*/)?\\.py", p), match(".*(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_).*", p), !match(".*(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$).*", p).
+helpers_known(x) :- helpers_name(x, _, _, _).
+helpers_dotted(d, s) :- helpers_doc(d), doc(d, p, m), suffix("/__init__.py", p), s = @concat(m, ".__init__").
+helpers_dotted(d, m) :- helpers_doc(d), doc(d, p, m), !suffix("/__init__.py", p).
+helpers_module(d, m) :- helpers_impl_module(m), helpers_dotted(d, m).
+helpers_module(d, m) :- helpers_impl_module(m), helpers_dotted(d, s), x = @concat("*.", m), glob(x, s), i1 = @concat("impl.", m), s != i1, i2 = @concat("impl.*.", m), !glob(i2, s), i3 = @concat("*.impl.", m), !glob(i3, s), i4 = @concat("*.impl.*.", m), !glob(i4, s).
+helpers_impl_or_api(d) :- helpers_dotted(d, s), match("(?:.*\\.)?(?:impl|api)(?:\\..*)?", s).
+helpers_module(d, m) :- helpers_l_module(m), helpers_dotted(d, m), !helpers_impl_or_api(d).
+helpers_module(d, m) :- helpers_l_module(m), helpers_dotted(d, s), !helpers_impl_or_api(d), x = @concat("*.", m), glob(x, s), l1 = @concat("l[0-9][0-9][0-9][0-9]_*.", m), !glob(l1, s), l2 = @concat("*.l[0-9][0-9][0-9][0-9]_*.", m), !glob(l2, s).
+helpers_import(d, n, x, name, local) :- helpers_doc(d), node(d, n, k, _, _), helpers_import_kind(k), child(n, x, _), !field(n, "module_name", x), node(_, x, "dotted_name", _, _), text(x, name), local = name.
+helpers_import(d, n, x, name, local) :- helpers_doc(d), node(d, n, k, _, _), helpers_import_kind(k), child(n, x, _), !field(n, "module_name", x), node(_, x, "aliased_import", _, _), field(x, "name", y), text(y, name), field(x, "alias", z), text(z, local).
+helpers_from(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", y), node(_, y, "dotted_name", _, _), text(y, m).
+helpers_module_alias(d, at, local) :- helpers_import(d, n, _, "plan_helpers", local), helpers_from(n, "impl.common.l2070_server_plan"), node(d, n, _, at, _).
+helpers_module_alias(d, at, "plan_helpers") :- helpers_import(d, n, _, "impl.common.l2070_server_plan.plan_helpers", "impl.common.l2070_server_plan.plan_helpers"), node(d, n, "import_statement", at, _).
+helpers_module_alias(d, at, local) :- helpers_import(d, n, _, "impl.common.l2070_server_plan.plan_helpers", local), node(d, n, "import_statement", at, _), local != "impl.common.l2070_server_plan.plan_helpers".
+helpers_ph_import(d, n, x, name, local) :- helpers_import(d, n, x, name, local), helpers_from(n, "impl.common.l2070_server_plan.plan_helpers").
+helpers_target(a, t) :- helpers_doc(d), node(d, a, "assignment", _, _), field(a, "left", t).
+helpers_target(a, c) :- helpers_target(a, t), node(_, t, k, _, _), helpers_pattern_kind(k), child(t, c, _).
+helpers_target_name(d, a, t, name) :- helpers_target(a, t), node(d, t, "identifier", _, _), text(t, name).
+helpers_bind_helper(d, local, at, name) :- helpers_ph_import(d, n, _, name, local), helpers_known(name), node(d, n, _, at, _).
+helpers_bind_helper(d, local, at, name) :- helpers_ph_import(d, n, _, name, local), prefix("_", name), contains("via_plan", name), node(d, n, _, at, _).
+helpers_bind_expr(d, name, at, v) :- helpers_target_name(d, a, _, name), field(a, "right", v), node(d, a, _, at, _).
+helpers_request(d, c, f, at) :- helpers_doc(d), node(d, c, "call", at, _), field(c, "function", f).
+helpers_request(d, a, v, at) :- helpers_doc(d), node(d, a, "assignment", at, _), field(a, "right", v).
+helpers_state(d, e, at) :- helpers_request(d, _, e, at).
+helpers_state(d, v, b) :- helpers_state(d, n, at), node(_, n, "identifier", _, _), text(n, t), helpers_bind_expr(d, t, b, v), b < at.
+helpers_direct(d, n, at, t) :- helpers_state(d, n, at), node(_, n, "identifier", _, _), text(n, t), helpers_known(t).
+helpers_direct(d, n, at, x) :- helpers_state(d, n, at), node(_, n, "attribute", _, _), field(n, "attribute", y), text(y, x), helpers_known(x).
+helpers_direct(d, n, at, x) :- helpers_state(d, n, at), node(_, n, "attribute", _, _), field(n, "attribute", y), text(y, x), prefix("_", x), contains("via_plan", x), field(n, "object", o), node(_, o, "identifier", _, _), text(o, ot), helpers_module_alias(d, ms, ot), ms < at.
+helpers_resolves(d, n, at) :- helpers_direct(d, n, at, _).
+helpers_resolves(d, n, at) :- helpers_state(d, n, at), node(_, n, "identifier", _, _), text(n, t), helpers_bind_helper(d, t, b, _), b < at.
+helpers_resolves(d, n, at) :- helpers_state(d, n, at), node(_, n, "identifier", _, _), text(n, t), helpers_bind_expr(d, t, b, v), b < at, helpers_resolves(d, v, b).
+helpers_option(d, n, at, 0) :- helpers_direct(d, n, at, _).
+helpers_option(d, n, at, s) :- helpers_state(d, n, at), node(_, n, "identifier", _, _), text(n, t), helpers_bind_helper(d, t, b, _), b < at, s = @add(b, 1).
+helpers_option(d, n, at, s) :- helpers_state(d, n, at), node(_, n, "identifier", _, _), text(n, t), helpers_bind_expr(d, t, b, v), b < at, helpers_resolves(d, v, b), s = @add(b, 1).
+helpers_best(d, n, at, s) :- helpers_resolves(d, n, at), s = max k : { helpers_option(d, n, at, k) }.
+helpers_chosen(d, n, at, h) :- helpers_best(d, n, at, 0), helpers_direct(d, n, at, h).
+helpers_chosen(d, n, at, h) :- helpers_best(d, n, at, s), s > 0, b = @sub(s, 1), node(_, n, "identifier", _, _), text(n, t), helpers_bind_helper(d, t, b, h).
+helpers_chosen(d, n, at, h) :- helpers_best(d, n, at, s), s > 0, b = @sub(s, 1), node(_, n, "identifier", _, _), text(n, t), helpers_bind_expr(d, t, b, v), helpers_chosen(d, v, b, h).
+helpers_resolved(d, r, h) :- helpers_request(d, r, e, at), helpers_chosen(d, e, at, h).
+helpers_raw(d, n, "import", name, local) :- helpers_ph_import(d, n, _, name, local), helpers_name(name, 1, _, _).
+helpers_raw(d, n, "import", name, local) :- helpers_ph_import(d, n, _, name, local), helpers_name(name, _, 1, _).
+helpers_raw(d, n, "import", name, local) :- helpers_ph_import(d, n, _, name, local), helpers_name(name, _, _, 1).
+helpers_raw(d, n, "import", name, local) :- helpers_ph_import(d, n, _, name, local), prefix("_", name), contains("via_plan", name).
+helpers_raw(d, t, "alias", h, name) :- helpers_target_name(d, a, t, name), helpers_resolved(d, a, h).
+helpers_raw(d, c, "call", h, "") :- node(d, c, "call", _, _), helpers_resolved(d, c, h).
+helpers_legacy_or_via(h) :- helpers_name(h, _, _, 1).
+helpers_legacy_or_via(h) :- helpers_raw(_, _, _, h, _), prefix("_", h), contains("via_plan", h).
+helpers_reason(d, n, r) :- helpers_raw(d, n, "call", h, _), r = @concat(@concat("old or private ", h), "() call is forbidden"), !helpers_self_call(d, h).
+helpers_reason(d, n, r) :- helpers_raw(d, n, k, h, _), k != "call", helpers_forbidden(k, h), r = @concat(@concat(@concat(@concat("old or private ", h), " "), k), " is forbidden"), !helpers_legacy_alias(k, h).
+helpers_reason(d, n, r) :- helpers_raw(d, n, "import", h, l), !helpers_forbidden("import", h), helpers_name(h, _, 1, _), helpers_eager(l), r = @concat(@concat("lazy terminal ", h), " imported under eager alias").
+helpers_reason(d, n, r) :- helpers_raw(d, n, "alias", h, l), !helpers_forbidden("alias", h), helpers_name(h, _, 1, _), helpers_eager(l), r = @concat(@concat("lazy terminal ", h), " assigned to eager alias"), !helpers_legacy_alias("alias", h).
+helpers_forbidden(k, h) :- helpers_raw(_, _, k, h, _), helpers_name(h, 1, _, _).
+helpers_forbidden(k, h) :- helpers_raw(_, _, k, h, _), prefix("_", h), contains("via_plan", h).
+helpers_forbidden("import", h) :- helpers_raw(_, _, "import", h, _), helpers_name(h, _, _, 1).
+helpers_eager(l) :- helpers_raw(_, _, _, _, l), (icontains("execute", l) ; icontains("fetch", l) ; icontains("scalar", l) ; icontains("ddl", l)).
+helpers_legacy_alias("alias", h) :- helpers_raw(_, _, "alias", h, _), helpers_name(h, _, _, 1).
+helpers_self_call(d, h) :- helpers_raw(d, _, "call", h, _), helpers_module(d, "impl.common.l2070_server_plan.plan_helpers"), helpers_legacy_or_via(h).
+helpers_class_region(d, c, x, s, e) :- helpers_doc(d), node(d, c, "class_definition", s, e), field(c, "name", y), text(y, x).
+helpers_fn_region(d, f, x, s, e) :- helpers_doc(d), node(d, f, "function_definition", s0, e), field(f, "name", y), text(y, x), child(p, f, _), node(_, p, "decorated_definition", s, _), s0 >= s.
+helpers_fn_region(d, f, x, s, e) :- helpers_doc(d), node(d, f, "function_definition", s, e), field(f, "name", y), text(y, x), !helpers_decorated(f).
+helpers_decorated(f) :- node(_, f, "function_definition", _, _), child(p, f, _), node(_, p, "decorated_definition", _, _).
+helpers_in_class(n, c, x) :- helpers_reason(d, n, _), node(d, n, _, s, e), helpers_class_region(d, c, x, cs, ce), cs <= s, ce >= e.
+helpers_in_fn(n, f, x) :- helpers_reason(d, n, _), node(d, n, _, s, e), helpers_fn_region(d, f, x, fs, fe), fs <= s, fe >= e.
+helpers_two_classes(n) :- helpers_in_class(n, c1, _), helpers_in_class(n, c2, _), c1 != c2.
+helpers_two_fns(n) :- helpers_in_fn(n, f1, _), helpers_in_fn(n, f2, _), f1 != f2.
+helpers_some_class(n) :- helpers_in_class(n, _, _).
+helpers_allowed(n) :- helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, "", f), !helpers_some_class(n), helpers_in_fn(n, _, f), !helpers_two_fns(n).
+helpers_allowed(n) :- helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, c, f), c != "", helpers_in_class(n, _, c), !helpers_two_classes(n), helpers_in_fn(n, _, f), !helpers_two_fns(n).
+violation("data-layer-plan-helpers-allowlist", "plan-helper-aliases", r, p, l) :- helpers_reason(d, n, r), !helpers_allowed(n), doc(d, p, _), line(n, l).
