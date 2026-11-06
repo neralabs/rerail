@@ -18,6 +18,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) type QueryPlan = query::select_when::Plan<ClauseId>;
 
+fn relational_scope_budget(source_bytes: usize) -> u64 {
+    let _ = source_bytes;
+    super::CLAUSE_WORK_BUDGET
+}
+
+#[cfg(test)]
+mod scope_budget_tests {
+    use super::*;
+    #[test]
+    fn repository_relations_receive_the_same_linear_source_allowance_as_files() {
+        assert_eq!(relational_scope_budget(8*1024*1024), super::super::clause_work_budget(8*1024*1024));
+        assert!(relational_scope_budget(138_077_148)>relational_scope_budget(8*1024*1024));
+    }
+}
+
 /// A global `forbid` query's plan; each regex or AST leaf becomes a synthetic clause whose
 /// witnesses are recorded as evidence. A leaf under an `exists` side only answers whether it has a
 /// witness: reporting configuration is dropped from it, and its evaluation in a file stops at the
@@ -742,7 +757,7 @@ pub(super) fn evaluate_batched_relations(
                             files,
                         },
                     },
-                    budget: Context::work(closed, super::CLAUSE_WORK_BUDGET),
+                    budget: Context::work(closed, relational_scope_budget(0)),
                 });
                 keys.push((index, clause.id.clone(), None));
             }
