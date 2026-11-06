@@ -10,10 +10,11 @@
 // externalIoBoundaries, where it has items, is the approved symbols, else the signed allowlist.
 //
 // Notes against W:
-// - approved_external, externalIoBoundaries null: the signed allowlist's symbols, taken as signed (APPROX: W
-//   keeps an entry only where `verify_ed25519` passes; @ed25519_ok is not lowered). All 34 are listed below.
-// - externalIoBoundaries `[]` (no symbol) gives no option facts, as null does, so it reads as null here (W: no
-//   approved symbol). No recorded event configures `[]`.
+// - approved_external, externalIoBoundaries null: the signed allowlist's 34 symbols, each kept where its
+//   signature verifies (@ed25519_ok over W's canonical message), as W's verify_ed25519 filter.
+// - externalIoBoundaries `[]` (no symbol) gives no option fact (option_item has no item, option_json no leaf,
+//   option_value no array), as null does, so it reads as null here (W: no approved symbol). GAP: needs a converter
+//   fact for an empty array option. No recorded event configures `[]`.
 // - raw_strings (`strings`): a string's (or a concatenation's) decoded value is `value` (W's `substring` with
 //   `value: true`); one W cannot decode (an interpolation) has no row, as its NULL joins nothing in the SQL.
 // - source_lines: the module regex's `LINE` captures, as match_group gives them over the file's source (a
@@ -226,46 +227,50 @@ eager_decorator(f, nm) :- eager_dwalk(f, x), eager_attr(x, nm).
 eager_external_io(f) :- eager_func(f, _), eager_decorator(f, "external_io_boundary_eager_async").
 
 // ---- approved_external: externalIoBoundaries' symbols where it has items, else (null) the signed allowlist ----
+// W keeps a signed entry only where verify_ed25519 passes on json_object('allowlist', json_array(symbol), 'linter',
+// 'lint_eager_resolve:external_io_boundary', 'version', 1), SQLite's compact form, the signature taken as it is.
 .decl eager_approved_configured(x: number)
 eager_approved_configured(1) :- option_item("externalIoBoundaries", _).
 .decl eager_approved(s: symbol)
 eager_approved(s) :- option_item("externalIoBoundaries", s).
-eager_approved(s) :- eager_signed(s), !eager_approved_configured(1).
-.decl eager_signed(s: symbol)
-eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external").
-eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external_async").
-eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal").
-eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal_async").
-eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch").
-eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch_async").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob").
-eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async").
-eager_signed("l6500_evidence.sas_http.handle_sas_download").
-eager_signed("l6500_evidence.sas_http.handle_sas_download_async").
-eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob").
-eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async").
-eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob").
-eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async").
-eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob").
-eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async").
-eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access").
-eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access_async").
-eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve").
-eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async").
-eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve").
-eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async").
-eager_signed("l6530_managed_secrets.service._resolve_managed_secret_candidate").
-eager_signed("l6530_managed_secrets.service.create_managed_secret_async").
-eager_signed("l6530_managed_secrets.service.delete_managed_secret_async").
-eager_signed("l6530_managed_secrets.service.rotate_managed_secret_async").
+eager_approved(s) :- eager_signed(s, sig), !eager_approved_configured(1),
+  m = cat("{\"allowlist\":[", cat(@json_str(s), "],\"linter\":\"lint_eager_resolve:external_io_boundary\",\"version\":1}")),
+  @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", m, sig) = 1.
+.decl eager_signed(s: symbol, sig: symbol)
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external", "SxVBqPVb9KxkaYdUj/l97y+Rpx7uyR7kQrlNMnCxmlqEV6rWn7k1TawVXskANwmi3z6K8A1oKmVitQVRo0V/DQ==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external_async", "ZijivhYt9hPMIzRAPBVZdFUirXyY5rVlqQPN62XQ3E+/FaJTlZp8M/HKsboWYvnWeJNlW7IS/Wcpet8+4csxBw==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal", "x2BpGG1GHDMP8Nm+VzYXI9uk1t7r4H6dmchXWRsHO43fwxw/ViwXHrldNzfUR+ujYpzXXlXSyiE+sawIOHKYAQ==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal_async", "FFyel3rEwEppb6RV378cyla4xTjPIpUeU9hFWWWdnfOOcHqR3kRtrKQEU+mB0HhylaalrNW8BjRalknjOgViDA==").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch", "ReAFoGUDI8BFAeJroSsY/2fcX9njavvwOPDLZdR6ePlF01CJ+UAPcnfLae4PlZCkA8pii/ZPlWz5TVQ1oS3oCA==").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch_async", "9PdwDGHbMp4SvHIODp0Ue/HfA+qGwocDtzqVXUbBIFdIunB/kFpNvI1Fg8y6btjOj7BNFWvRDgZx2iQqHAyyCw==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob", "8PbZXPairL4eX0ShonEI9QRzz2NDxjJjv71ezKEqMJEDjgDsj0FOqIeX9jlCEdrhmekub3IAIm+0mY3adx7MCg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async", "dXES+mySa6cTtDJRLdXjyEcKcMQ9aHoWUjaDJQDWpyCRQ4sFZWTewv5GoTGPTmXt5MAf27ODB01JHGYiYyddCQ==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key", "OAQRMC57tWGD3TVnK7c4SoNMzWGBuXAVWaAoG9gKBwUxQo3WZIWo2QdW9SEKWAZF8NUmug2aoUayE/oWptigCg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async", "bFwGkxEX8VWMjn9TK3U7gTz6CxLLT3Oen+PCfxzk0bJfvQkxJtgey7fP2G3AFeXuDqcl9kJlwGa+z1XcO/jHDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob", "8bedG9GYmwKQurZvg8xkGsvSyqK6rtK2FNtDVsEHw5DIxRH8kjjWGACD198QfvZlPUlOvzNKzoaC3E7/pTOmBg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async", "Sps4LNefn4qNGle93W+WSj2Db/gu9KdlFmVrJ8dGM9MDGY2dQQRYWIJRLfNLgyQO4zJ8LxhXoMGQYTRf/aiGDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob", "iaaqVCxgFsPXe7hjci5k9m5wwxajavmOLqpnB8atS/rXZCfMbKH5V4CNTq+pqNv5JetiHsMIxFy+EmRCRQKqAg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async", "0xre2ed+OMC+n+zyS2l/WwF7szoPTUdkLS9n9plkSPFs3POuusXTiwIk/bhJoQDmOfDhVHnfMXlYhsi1P3N8Cw==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob", "95XWP+nq9n+Wh8a2FyjcotT6aMUq/v/5syUgjh7IZTRNek9pmvgX/V+oPeJP5t5xwD1ikDQKyuzpIVIeKECkDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async", "bzrXSkqU9391El5po6H4F57AAplUb5l0whRLYZIEQrViMA84TVzsfyHL+9+q1nOGRpvQoDcJzk/1bOdEfciDAA==").
+eager_signed("l6500_evidence.sas_http.handle_sas_download", "N/erEChqtYJafCH8ZlIn3YHQb69WLbiXkbSj1yyyCndkxJNcHOlsybGyK3r6MK0D94Fn5wrlY1OfhSQxzINGBw==").
+eager_signed("l6500_evidence.sas_http.handle_sas_download_async", "beXjaIVGVQ+YeffcQexHq2m1k5G9qx7Az+TE8LwXZU3YUkCe3LIaXnhfegL1fWPF6S+ag984muFlG3vaOV6SDg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob", "wh78V3IwKiUjGA+MLGRQ+OtusQzuJxr18qxjSYKv64vKLWod6YTv8JL6Q95bk4X3gaF1fmDxvoSBKagj3+NwAA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async", "kbzUVWiTCLB0ZI/HAHlA64ICBS60eFyh45dYJiL7BKHBAOAxoMgRq6DqEfTEMDgWDNXrEr+jgkR13/p547LhBg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob", "IIUH3stpPr/HdGlUXMGhht8nSmVE5okrXKrYIecNKEqLZ1CJn3I0nc/treF0/fZ7rgx8Jw8+LJYjxoH5VDRjAg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async", "BMjtTQxGUyK0FTnSrdt3Lr41/HIZGf8rH1OYF0IhJNocU6zQfVTXUyv8hp6VfPuuD/5PZ2Z3Zta5Fyig22EgAg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob", "GQSgzK6hQ/rZIhOSroWjZCpH6yQBWmC0dspVZNZWWlyyG6JKEITgHwVz8nfF7Y0aTQVTBAKdywhhJYZdAngRBA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async", "3W/o1vc9dJsEY56KMth/UfpzDr4f/pq3/ioP9zQKx+TMos9knFH88meh9VU/3ZsRj9vRXJryOayYjTZMq2tGBw==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access", "X1dLOHxDnX3PwdTArn8hgGes2Kpku2lsLsGOh+lFbk1A1rfqaGB/+c/zdzZiyllnhobyrpC3KIYG3yY5jqraCA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access_async", "OA6q+NrjCc2h0vzUC93gkvxs8Edr2z4cMUsisWxxt1Lg2HXcrQ5UV2AAKrgT4dwFSSaaR0r06w+aTMMCaFsvCg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve", "GjQ0RwiUr6aLWiBBoxEuDZ+C3HInHoEuxgZKaIewVJ1x4wJ7hcmbTxiXd2j45PDU24K6jtmZKu+pgR/JJZP/CQ==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async", "ijb8tgNmebcvTQZg1u0j2J2ScNqiTYYZu1ebSBhgSZ59RMAauIbdLLOYOuMtUlqyQRMJpOOpU3zntUy2C2SxBg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve", "wYzZYNSb+CsK658aYDbgnZxQUZuFtceuOLRwguGzxC+mWoIHsC7Df1WPhx7qNNKmcIcBQhPVcVK4GEt8KfrgCw==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async", "oAYmZ/jJcMb+/5kFW57Q0EC6vMEFpBub2OXFUnOiE/wgCOkXfG1ypN5uOmS8GESKj386tH5I4HWcFCpIiMRQCQ==").
+eager_signed("l6530_managed_secrets.service._resolve_managed_secret_candidate", "5JjmhYeHUK7c6EFlODoRZitt7jDcBKrDYiF/gpXa7UxbGZccmLLXx77z4MUXudVqC8nrY3O6fidjqfeUQyo/AQ==").
+eager_signed("l6530_managed_secrets.service.create_managed_secret_async", "NiWtDaqhmV+co/9GQP96AkgDAHPJA1dgC0jwUzJBLsiuY/moDaLKMM46sXsJNXDhhVBFv3Y/JaXRd9tT3cxNAw==").
+eager_signed("l6530_managed_secrets.service.delete_managed_secret_async", "ZGPbLZxGELL3JbHbkIDaccknMm1yroIn9LPDh/QErOSwXxwKW+CVsBKoyPMN1s7Kk1UhUJbmfnb5S/6gVg1HCA==").
+eager_signed("l6530_managed_secrets.service.rotate_managed_secret_async", "KW677DkqIRmanQeWsxMP9o6a4oK0EmZQmXanKf+JsE7AwjAm7B6l5STi665WSRHcYqC4ySQAiWu32N74enwmAA==").
 
 // ---- eager_edges: `self.m()` to a sibling method, `g()` to a top-level function ----
 .decl eager_edge(caller: node, target: node)
