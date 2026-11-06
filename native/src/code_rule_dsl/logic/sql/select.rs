@@ -103,6 +103,8 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],
         "fstring_template" => &["n", "marker", "v"],
+        // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
+        "cpython_syntax_error" => &["d", "l", "msg"],
         "intval" => &["n", "v"],
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],

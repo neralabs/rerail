@@ -104,6 +104,8 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
                                                   // W's `parse: {grammar: pythonFString}` root children, in order
 .decl fstring_template(n: node, marker: symbol, v: symbol)
                                                   // its root value with `interpolation: marker` (a constant)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+                                                  // CPython 3.13's verdict: ast.parse rejects d, at line l, with msg
 // built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
 // match_all(re: symbol, sp: span, m: span)
 // built-in, not declared: gsp is the span of named group g in match m (of match_all("re", sp, m)), where g takes part
@@ -190,6 +192,17 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
     `SELECT {...} FROM t`, `rf'SELECT {{name}} {x}'` is `SELECT {name} {...}`, `f'{SELECT = } FROM t'` is
     `SELECT = {...} FROM t`, `(f'SELECT {x}' ' FROM t')`'s concatenated_string `SELECT {...} FROM t`. The marker is a
     constant: the runner parses each host once per marker the program's `fstring_template` atoms hold.
+- `cpython_syntax_error(d, l, msg)` is core.rr's `syntax_error(d, l, msg)` under the name the runner binds it by
+  (the converter declares `syntax_error(d: number)`, the tape's verdict, so a file here cannot read core.rr's under
+  that name): `d` a Python document `ast.parse` (CPython 3.13) rejects, `l` its `SyntaxError`'s `lineno` (1 for a
+  null byte, where CPython gives none) and `msg` its `msg`, computed natively (`cpython::syntax`, Ruff's parser; no
+  Python runs). It is stricter than `syntax_error(d)`: an empty block (`if x:` then a comment or nothing), an
+  invalid target (`f() = 1`, `del f()`), a stray indent, `except A, B:` (3.14 syntax) and a t-string are rejected
+  there and parse in tree-sitter; `return` outside a function, a repeated keyword argument or parameter and
+  `nonlocal` at module level parse in both (only `compile` rejects them). W's `syntax: valid` gate over the
+  `pythonAst` stage (a file `ast.parse` rejects fails the stage) is `!cpython_syntax_error(d, _, _)`; a policy's
+  `parsed` stage `syntax_error` (`reported-parser-error`) is `cpython_syntax_error(d, _, _)`. A program outside this
+  overlay that declares no `syntax_error` reads core.rr's three columns by that name (`rr::lower::core`).
 
 The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` with `Extra`):
 

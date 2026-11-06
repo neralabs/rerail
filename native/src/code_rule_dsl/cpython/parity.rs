@@ -1,0 +1,224 @@
+//! Parity with real CPython (ignored tests; run on a box): CPython (`oracle.py`, `python -I -S`, which never imports or
+//! runs a file) and the engine each give a fact for every file of a corpus; the test prints, per corpus, how many
+//! agree and the first differences. CPython runs nowhere else.
+//!
+//! - `RERAIL_PARITY_PYTHON`: the interpreters, `:`-separated (default `python3`); each is one oracle.
+//! - `RERAIL_PARITY_ROOTS`: the corpora, `:`-separated directories (their `.py` files, `.git`, `node_modules` and
+//!   virtualenvs left out), and `fixtures`: the files of every recorded event (`fixtures/host/data-layer-port`).
+//! - `RERAIL_PARITY_SHOW`: how many differences to print per fact (default 20).
+//!
+//! `cargo test --profile profiling --lib -- cpython::parity --ignored --nocapture`
+
+use rayon::prelude::*;
+use serde_json::Value as Json;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+const ORACLE: &str = include_str!("oracle.py");
+
+/// A corpus: its name and its files (absolute path, path to show).
+pub(super) struct Corpus {
+    pub(super) name: String,
+    pub(super) files: Vec<(PathBuf, String)>,
+}
+
+fn env_list(key: &str, default: &str) -> Vec<String> {
+    std::env::var(key).unwrap_or_else(|_| default.to_owned()).split(':').filter(|s| !s.is_empty()).map(str::to_owned).collect()
+}
+
+pub(super) fn show() -> usize {
+    std::env::var("RERAIL_PARITY_SHOW").ok().and_then(|s| s.parse().ok()).unwrap_or(20)
+}
+
+pub(super) fn pythons() -> Vec<String> {
+    env_list("RERAIL_PARITY_PYTHON", "python3")
+}
+
+pub(super) fn corpora() -> Vec<Corpus> {
+    env_list("RERAIL_PARITY_ROOTS", "fixtures")
+        .into_iter()
+        .map(|root| if root == "fixtures" { fixtures() } else { directory(Path::new(&root)) })
+        .collect()
+}
+
+/// A directory's Python files.
+fn directory(root: &Path) -> Corpus {
+    const SKIP: [&str; 8] = [".git", "node_modules", ".venv", "venv", "__pycache__", "target", ".tox", ".mypy_cache"];
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let Ok(t) = e.file_type() else { continue };
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if t.is_dir() && !SKIP.contains(&name.as_str()) {
+                stack.push(p);
+            } else if t.is_file() && (name.ends_with(".py") || name.ends_with(".pyi")) {
+                let shown = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().into_owned();
+                files.push((p, shown));
+            }
+        }
+    }
+    files.sort();
+    Corpus { name: root.display().to_string(), files }
+}
+
+/// The Python files of every recorded event, each distinct (path, source) once, written under a temporary directory.
+fn fixtures() -> Corpus {
+    let port = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port");
+    let mut sources: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut names: Vec<PathBuf> = std::fs::read_dir(&port).unwrap().flatten().map(|e| e.path()).collect();
+    names.sort();
+    for p in names {
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        let bytes = if name.ends_with(".json.gz") {
+            let out = Command::new("gzip").arg("-dc").arg(&p).output().unwrap();
+            out.stdout
+        } else if name.ends_with(".json") {
+            std::fs::read(&p).unwrap()
+        } else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_slice::<Json>(&bytes) else { continue };
+        let by_sha = json.get("sources").cloned().unwrap_or(Json::Null);
+        walk(&json, &by_sha, &mut sources);
+    }
+    let dir = std::env::temp_dir().join(format!("rerail-parity-fixtures-{}", std::process::id()));
+    let mut files = Vec::new();
+    for (i, (path, source)) in sources.iter().enumerate() {
+        let file = dir.join(format!("{i:05}")).join(path.trim_start_matches('/'));
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, source).unwrap();
+        files.push((file, format!("{i:05}/{path}")));
+    }
+    Corpus { name: "fixtures".into(), files }
+}
+
+fn walk(v: &Json, by_sha: &Json, out: &mut BTreeSet<(String, String)>) {
+    match v {
+        Json::Object(o) => {
+            if let Some(path) = o.get("path").and_then(Json::as_str).filter(|p| p.ends_with(".py") || p.ends_with(".pyi")) {
+                let source = o.get("source").and_then(Json::as_str).or_else(|| o.get("sourceSha256").and_then(Json::as_str).and_then(|s| by_sha[s].as_str()));
+                if let Some(source) = source {
+                    out.insert((path.to_owned(), source.to_owned()));
+                }
+            }
+            o.values().for_each(|c| walk(c, by_sha, out));
+        }
+        Json::Array(a) => a.iter().for_each(|c| walk(c, by_sha, out)),
+        _ => {}
+    }
+}
+
+/// The interpreter's version line.
+pub(super) fn version(python: &str) -> String {
+    let out = Command::new(python).args(["-I", "-S", "-c", "import sys; print(sys.version.split()[0])"]).output().expect("the oracle's python runs");
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// The oracle's rows for `files` in `mode`, by path (the absolute path it was given).
+pub(super) fn oracle(python: &str, mode: &str, files: &[(PathBuf, String)]) -> BTreeMap<String, Json> {
+    let mut child = Command::new(python)
+        .args(["-I", "-S", "-c", ORACLE, mode])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("the oracle's python runs");
+    let mut stdin = child.stdin.take().unwrap();
+    let list: String = files.iter().map(|(p, _)| format!("{}\n", p.display())).collect();
+    let writer = std::thread::spawn(move || stdin.write_all(list.as_bytes()).unwrap());
+    let out = child.wait_with_output().unwrap();
+    writer.join().unwrap();
+    assert!(out.status.success(), "the oracle failed");
+    let mut rows = BTreeMap::new();
+    for line in String::from_utf8(out.stdout).unwrap().lines() {
+        let row: Json = serde_json::from_str(line).unwrap();
+        rows.insert(row["p"].as_str().unwrap().to_owned(), row);
+    }
+    rows
+}
+
+/// The files the engine reads (UTF-8) and their text, in parallel.
+pub(super) fn sources(files: &[(PathBuf, String)]) -> Vec<Option<String>> {
+    files.par_iter().map(|(p, _)| std::fs::read(p).ok().and_then(|b| String::from_utf8(b).ok())).collect()
+}
+
+/// One count of agreement and its first differences.
+#[derive(Default)]
+pub(super) struct Tally {
+    pub(super) equal: usize,
+    pub(super) total: usize,
+    pub(super) differences: Vec<String>,
+}
+
+impl Tally {
+    pub(super) fn add(&mut self, equal: bool, difference: impl FnOnce() -> String) {
+        self.total += 1;
+        if equal {
+            self.equal += 1;
+        } else if self.differences.len() < show() {
+            self.differences.push(difference());
+        }
+    }
+
+    pub(super) fn report(&self, what: &str) {
+        println!("  {what}: {} / {} equal", self.equal, self.total);
+        for d in &self.differences {
+            println!("    {d}");
+        }
+    }
+}
+
+/// A short excerpt of `source` around line `line`.
+pub(super) fn excerpt(source: &str, line: usize) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    let from = line.saturating_sub(2);
+    let to = (line + 1).min(lines.len());
+    let text: Vec<String> = (from..to).map(|i| format!("{}| {}", i + 1, lines[i].chars().take(100).collect::<String>())).collect();
+    format!("{:?}", text.join("\n"))
+}
+
+/// tree-sitter's verdict, the tape's (`syntax_error(d)`): the tree has an error or a missing node.
+fn tree_sitter_error(source: &str) -> bool {
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(crate::code_rule_dsl::literal::annotation::python()).unwrap();
+    parser.parse(source, None).is_none_or(|t| t.root_node().has_error())
+}
+
+/// `syntax_error(d, l, msg)`: the verdict, the line and the message against `ast.parse`'s; and tree-sitter's verdict
+/// (the tape's `syntax_error(d)`) against it, for the choice between the two.
+#[test]
+#[ignore]
+fn syntax_error_parity() {
+    for python in pythons() {
+        println!("CPython {} ({python})", version(&python));
+        for corpus in corpora() {
+            let want = oracle(&python, "syntax", &corpus.files);
+            let texts = sources(&corpus.files);
+            let got: Vec<Option<(Option<super::syntax::SyntaxError>, bool)>> =
+                texts.par_iter().map(|s| s.as_ref().map(|s| (super::syntax::syntax_error(s), tree_sitter_error(s)))).collect();
+            let (mut verdict, mut line, mut msg, mut tree) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
+            for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
+                let (Some(source), Some((got, ts)), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };
+                let cpython = row["e"].as_array().map(|e| (e[0].as_u64().map_or(1, |l| l as usize), e[1].as_str().unwrap_or_default().to_owned()));
+                let show_both = || format!("{shown}: CPython {cpython:?}, engine {got:?} [Ruff: {}]", super::syntax::explain(source));
+                verdict.add(cpython.is_some() == got.is_some(), || format!("{} {}", show_both(), excerpt(source, cpython.as_ref().or(got.as_ref().map(|g| (g.line, String::new())).as_ref()).map_or(1, |c| c.0))));
+                tree.add(cpython.is_some() == *ts, || format!("{shown}: CPython {cpython:?}, tree-sitter error {ts}"));
+                if let (Some((l, m)), Some(g)) = (&cpython, got) {
+                    line.add(*l == g.line, || format!("{} {}", show_both(), excerpt(source, *l)));
+                    msg.add(*m == g.msg, || format!("{} {}", show_both(), excerpt(source, *l)));
+                }
+            }
+            let rejected = want.values().filter(|r| r["e"].is_array()).count();
+            println!(" {}: {} files, {} CPython rejects", corpus.name, want.len(), rejected);
+            verdict.report("verdict (Ruff)");
+            line.report("line, where both reject");
+            msg.report("message, where both reject");
+            tree.report("verdict (tree-sitter's ERROR/MISSING)");
+        }
+    }
+}

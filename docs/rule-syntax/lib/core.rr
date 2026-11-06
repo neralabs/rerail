@@ -148,9 +148,13 @@
 // `follows` reads at a neighbour, from either side.
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
 // syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
-// For Python the verdict, line and message are CPython's: `ast.parse` in an isolated worker (`python -I -S`),
-// which never imports or runs the file. That worker also gives @unparse, @ast_dump and str_part; without it those
-// facts are an incomplete input (Unknown), never empty. Other languages use tree-sitter's ERROR and MISSING
+// For Python the verdict, line and message are CPython 3.13's `ast.parse`, computed natively (no Python runs: Ruff's
+// parser reads CPython's grammar, the engine's `cpython::syntax`): an empty block, an invalid target, a bracket never
+// closed are errors; what only compile rejects (`return` outside a function, a repeated keyword) is not. The
+// message is CPython's where CPython names the error (indentation, brackets, strings, targets), else "invalid
+// syntax"; a null byte's line, which CPython does not give, is 1. The corpus binds it as cpython_syntax_error(d, l,
+// msg); a program that declares syntax_error(d: number) reads the tape's verdict (tree-sitter's ERROR and MISSING
+// nodes) under that name instead, as the converter's do. Other languages use tree-sitter's ERROR and MISSING
 // nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
@@ -360,7 +364,7 @@
 // @unparse(n): the reference printer's text of n (Python: ast.unparse). Comments go, quotes and spacing are
 // normalised. Native because it is the reference implementation's printer, not a property of the tree.
 .functor unparse(n: node): symbol
-// Cost (@ast_dump, @unparse, str_part, syntax_error's message): the isolated CPython worker, one batch per wave.
+// Cost (@ast_dump, @unparse, str_part): the isolated CPython worker, one batch per wave.
 // Put cheap atoms first so only the nodes that need them are sent.
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
