@@ -1,6 +1,6 @@
 # 0051: The store collects in the background, keeping recent runs and a bounded history
 
-Status: proposed (2026-11-06; designed, not built; revised the same day: bounded by size, not by age)
+Status: accepted (2026-11-06; bounded by size, not by age; built and measured, apart from the atom epoch in §7)
 
 ## Intro
 
@@ -54,34 +54,43 @@ are rare but large. Atoms matter for RAM more than for disk.
 ### 1. Each run records what it used, as a manifest
 
 A corpus root is a canonical directory (`corpus_roots`). The store keeps a run counter, and each run of a root takes
-the next number. The run records its **manifest**: the set of tapes it read or wrote, and its memo plan (§2).
+the next number. The run records its **manifest**: the sources it read, the grammar version and tape format of their
+tapes, and its memo plan (§2). The manifest records sources, not tapes, because a file read from the memo is never
+parsed, so the run knows its source but not its tape.
 
 ```sql
--- Additive. A manifest's tapes are delta-varint tape ids, sorted: about 2 bytes a file.
-CREATE TABLE IF NOT EXISTS corpus_roots (
-    root_id INTEGER PRIMARY KEY,
-    path TEXT NOT NULL UNIQUE
-) STRICT;
+-- Additive (content_store/schema.rs). The sources are delta-varint ids, sorted: about 2 bytes a file.
 CREATE TABLE IF NOT EXISTS corpus_manifests (
     manifest_id INTEGER PRIMARY KEY,
     root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
-    last_run INTEGER NOT NULL,      -- the store's run counter at the last run that used this manifest
-    last_time INTEGER NOT NULL,     -- unix seconds of that run (only for the backstop, §3)
-    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
-    digest BLOB NOT NULL CHECK(length(digest) = 32),   -- of the tape ids and the plan
-    tapes BLOB NOT NULL,
+    last_run INTEGER NOT NULL,        -- the store's run counter at the last run that used it
+    last_time INTEGER NOT NULL,       -- unix seconds of that run (only for the backstop, §3)
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL,
+    digest BLOB NOT NULL,             -- of the sources, the tape version and the plan
+    sources BLOB NOT NULL,
     UNIQUE (root_id, digest)
 ) STRICT;
-CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+-- What the kept manifests name: (source, grammar version, tape format).
+CREATE TABLE IF NOT EXISTS corpus_live (
+    source_id INTEGER NOT NULL, grammar_version INTEGER NOT NULL, tape_format INTEGER NOT NULL,
+    PRIMARY KEY (source_id, grammar_version, tape_format)
+) STRICT, WITHOUT ROWID;
 ```
 
-A run whose tapes and plan are the same as an earlier manifest of its root only updates that manifest's `last_run`
-and `last_time`: one row. This is the usual warm run. A run with edited files writes a new manifest, about 20 KB on
-the full corpus. Either way it's one statement at the end of the run, not one per file.
+A run whose sources and plan are the same as an earlier manifest of its root only updates that manifest's
+`last_run` and `last_time`: one row. This is the usual warm run. A run with edited files writes a new manifest,
+about 20 KB on the full corpus, and adds to `corpus_live` only the sources the root's previous manifest didn't
+have. Either way it happens once, at the end of the run.
 
-A tape is reachable while a kept manifest names it. The collector's tape query gets one more `NOT EXISTS`, over a
-temporary table of the kept manifests' tape ids, filled at the start of each pass. A kept tape keeps its source, and
-a source keeps its memo rows (they cascade from it).
+The collector honours `corpus_live`:
+
+- its tape query keeps a tape whose source, grammar version and format are live;
+- its source queries keep a live source.
+
+The table is durable, so every collector of this build respects corpus runs, the workspace server's included. A
+source keeps its memo rows: they cascade from it.
 
 ### 2. A memo plan belongs to its runs
 
@@ -96,8 +105,8 @@ plans no kept manifest names. A new index finds them without a scan:
 CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
 ```
 
-Only plans that some manifest has named are ever collected this way. The facts engine's own memo rows register no
-manifest and are left alone.
+Only plans that some manifest has named are ever collected this way (`corpus_plans`: `live` is 0 for a plan no kept
+manifest names). The facts engine's own memo rows register no manifest and are left alone.
 
 ### 3. What is kept: each root's last runs, and a history up to a high-water mark
 
@@ -105,13 +114,13 @@ A pass decides which manifests to keep, newest first by `last_run`:
 
 1. **Protected:** the manifests of each root's last 2 runs. Switching branches and back never misses.
 2. **History:** older manifests, kept while the history stays under a byte budget.
-3. **Redundant:** a manifest whose tapes all appear in newer kept manifests holds nothing of its own, and goes.
+3. **Redundant:** a manifest whose sources all appear in newer kept manifests (with their tape version) holds nothing of its own, and goes.
 4. **Backstop:** a manifest whose root hasn't run for 30 days goes, protected or not. That covers checkouts that
    are gone.
 
 The history is measured as the bytes each manifest holds alone: the tapes and sources in it that no newer kept
-manifest names. Walking newest to oldest, a manifest's own bytes are those of its tape ids not seen yet. The sizes
-come from `length(frame)` of the tape and source rows, read once per pass.
+manifest names. Walking newest to oldest, a manifest's own bytes are those of its sources not seen yet, with
+their tapes. The sizes come from `length(frame)` of the tape and source rows, read once per decision.
 
 The budget has two marks, so passes don't run on every write:
 
@@ -146,12 +155,16 @@ Every store examined reports 0, so the collector's `PRAGMA incremental_vacuum(12
 reused, but the file never shrinks. The fix has two parts:
 
 - **New stores:** set `auto_vacuum` on the empty file before `journal_mode`.
-- **Existing stores:** convert once with `PRAGMA auto_vacuum = INCREMENTAL; VACUUM`. This rewrites the file, about
-  1–2 s for 135 MB, and needs room for a copy. It runs in maintenance when no other connection is open: the atoms
-  lease (decision 0047 §5) shows that.
+- **Existing stores:** convert once with `PRAGMA auto_vacuum = INCREMENTAL; VACUUM`. This rewrites the file and
+  needs room for a copy: 3.75 s for the full corpus's 135 MB. `rerail-engine gc` does it. The server doesn't, since
+  it can't tell that no other process holds the store.
 
 After a pass, `incremental_vacuum` returns up to 4,096 pages (16 MB), not 128 (0.5 MB). At 128 pages per 30 s wake,
 a grammar change's 63 MB would take over an hour to return.
+
+The pragma also has to be stepped to the end. It frees a page per step, and the collector ran it in
+`execute_batch`, which freed none. With `auto_vacuum` on, the s200 churn below still held 505 free pages (2 MB) in a
+9.5 MB file. The same pragma in the `sqlite3` shell freed all of them.
 
 ### 5. Collection runs in the background, in bounded passes
 
@@ -159,22 +172,28 @@ A pass is the existing `collect`: at most 256 rows per table, in one `IMMEDIATE`
 step. Sections 1–3 add the manifests and the memo plans to it. Choosing the manifests to keep reads only manifests and
 frame lengths, so it runs before the write transaction. Three places run passes:
 
-- **The workspace server's maintenance thread** (`storage.rs`, which wakes every 30 s) runs a pass when any of these
-  hold:
-  - the store is above its soft limit (as today);
-  - the corpus history is above the high-water mark;
-  - a run has marked collection due.
+- **The workspace server's maintenance thread** (`storage.rs`, which wakes every 30 s) runs passes for up to a
+  second of each wake when either of these hold:
+  - the store is above its soft limit (as before);
+  - corpus collection is due.
+- **A corpus run** marks collection due when it writes a new manifest. A thread of its own then runs passes while
+  the cross-file part runs, until two in a row find nothing or 200 ms have gone, and the run joins it before it
+  returns. The manifest is written first, so the run's own sources are live before any pass. `RERAIL_CORPUS_GC=off`
+  skips the passes. `RERAIL_CORPUS_HISTORY_MB` sets the high-water mark; the low-water mark is three quarters of it.
+- **`rerail-engine gc <store> [--history-mb n]`** converts an old store (§4), decides, and runs passes until two in a
+  row find nothing.
 
-  It takes the write lock without waiting (`immediate_transaction_no_wait`), and skips the pass when the lock is
-  held.
-- **A corpus run** marks collection due when it writes a new manifest. On a background thread it then runs passes
-  until one deletes nothing or 200 ms have gone. They start after the run's manifest is written, so the run's own
-  tapes are protected before any pass.
-- **`rerail-engine gc <store>`** runs passes until the store has nothing to collect.
+Two in a row, because a pass keeps the rows created in its own generation. Its successor deletes them.
 
-The store's state row records the run counter, the corpus history's bytes at the last pass and whether collection
-is due. These are three new columns, added additively. A store under the high-water mark with nothing due runs no
-pass at all, so an idle store costs nothing.
+`corpus_state` records the run counter, the history's bytes at the last decision and `due`:
+
+| `due` | Meaning |
+|---|---|
+| 0 | nothing to do |
+| 1 | a new manifest: a decision is due |
+| 2 | decided: passes go on until one finds nothing |
+
+A store with nothing due, under the soft limit, runs no pass at all, so an idle store costs nothing.
 
 ### 6. Races cost a cache miss, never a wrong result
 
@@ -216,26 +235,38 @@ blob that names an atom would have to be rewritten under an exclusive lock.
 - "Incremental indexing allows no corpus-wide statistic" (design index, top findings item 10; S124). Collection removes rows whose
   roots lapsed. The cross-file statistics of later runs are rebuilt from the rows that remain, as in decision 0050.
 
-## Order of work
+## Built and measured (2026-11-06)
 
-1. Fix `auto_vacuum` for new stores, and convert existing ones in maintenance. Test: a fresh store reports 2; a pass
-   that deletes tapes shrinks the file.
-2. Manifests from corpus runs (§1). Test: after `collect`, a run's tapes and memo rows remain; a warm run writes one
-   row; an edited file's old tape stays while its manifest is kept.
-3. Memo plans per run (§2). Bump the memo's `SCHEMA` to 3. Test: a plan only an evicted manifest named is
-   collected; the current one isn't.
-4. Keeping and eviction (§3), with the marks as parameters. Test, on a small corpus with marks of a few hundred KB:
-   - churn every file 20 times; the history stays under the high-water mark after each pass;
-   - each root's last 2 runs never miss;
-   - a root idle past the backstop is collected.
-5. Background passes in the corpus run, the CLI command and the server's wake (§5). Measure on `tapes-full.sqlite`:
-   the pass time with one evicted manifest, and the run's cost of writing its manifest (it should stay under 50 ms
-   of a 0.93 s warm run).
-6. The atom epoch (§7), when an arena first approaches its limit. Until then, an open item.
+| Step | Where | Tests |
+|---|---|---|
+| `auto_vacuum` before WAL; `incremental_vacuum` stepped; conversion | `content_store/connection.rs`, `reclamation.rs`, `corpus_runs.rs` | a new store reports 2; an old one converts |
+| manifests, `corpus_live`, the decision, passes | `content_store/corpus_runs.rs` | decision rules on synthetic manifests; 20 churns of 8 files under a 64 KB mark: history under the mark after every pass, the last 2 runs never miss, the first version collected, fewer than 64 free pages |
+| memo plan per run, key in the entry (memo schema 3) | `logic/plan/corpus/memo.rs` | `an_entry_round_trips_and_keys_are_stable`; the replay |
+| the run's manifest and background passes | `logic/plan/corpus.rs` | the measurements below |
+| `rerail-engine gc` | `bin/rerail-engine.rs` | on `tapes-full.sqlite` |
+| the server's wake | `workspace/storage.rs` | the storage tests |
+
+Measured (load 50–60):
+
+- **s200 copy, every file edited before each of 6 runs, 3 MB high-water mark** (one version is about 2 MB). The
+  store holds at 3 manifests (2 protected, 1.7 MB of history), 600 tapes and 7.5 MB, with no free pages. There
+  were 4 findings each run.
+- **Full corpus, 100 rules, a warm run:** 12.32e9 instructions with collection, 12.28e9 with `RERAIL_CORPUS_GC=off`.
+  Recording the manifest costs under 0.4%.
+- **The full-corpus store, made before 0051 (135 MB):** `gc` converted it in 3.75 s. The run's 8,957 tapes and memo
+  rows were kept.
+- **A rebuilt engine** makes a new plan, so its first run is cold and writes a new manifest. The previous plan stays
+  live while its manifest is among the root's last 2 runs.
+
+The replay is unchanged (3988 273 266 0), and the `content_store` tests pass (105).
 
 ## Open
 
-- The marks (512 and 384 MB) and the protected count (2 runs) are starting values. They should be revisited with a
+- **The atom epoch (§7) isn't built.** It waits until an arena first approaches 64 MB. The full corpus holds 26 MB.
+- **Memo rows from before 0051** (memo schema 2, 18,020 rows and about 2 MB on the full-corpus store) were never
+  named by a manifest. So they stay until their sources go.
+- **An older binary's collector** (one built before 0051) ignores `corpus_live`, so it would collect corpus tapes.
+  That costs a cold run, never a wrong result.
+- **The marks** (512 and 384 MB) and the protected count (2 runs) are starting values. They should be revisited with a
   measured development workflow.
 - The bound covers what corpus runs keep. The workspace server's snapshots keep their own roots, as before.
-- Atoms are outside the byte budget (§7 bounds them separately), and so are the memo rows of other facts-memo users.
