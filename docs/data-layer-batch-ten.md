@@ -4,6 +4,9 @@ Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
 There are 100 authored ports out of 142 checks. Thirty documents ship in the private pack.
 The cumulative repository result still covers 80 rules.
 
+The [latest completion review](data-layer-batch-ten-dod-audit.md) finds remaining optimizer false negatives and missing production configuration contracts.
+Those gaps remain open. The passing assertion receipts below cover their recorded cases, rather than the full completion criteria.
+
 ## Completion repair
 
 The earlier completion claim was wrong. Nine audit inputs exposed failures in four ports.

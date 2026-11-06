@@ -3,6 +3,7 @@
 The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a`.
 This audit covers the ten batch-ten detectors and their shipped reporters.
 It does not extend the cumulative repository benchmark beyond 80 rules.
+The [later completion review](data-layer-batch-ten-dod-audit.md) records additional optimizer and production-configuration gaps that remain unfixed.
 
 ## Translation contracts
 

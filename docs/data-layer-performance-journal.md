@@ -7135,3 +7135,29 @@ Typecheck, boundaries, CI YAML, and CI shell syntax pass.
 Both the transfer fixture and existing helper observations reproduce byte for byte.
 The structure check has 24 passing metrics and the same three directory-size findings.
 A temporary duplicate fixture-root resolver was removed in favor of the shared Python resolver.
+
+## 2026-11-06 — Recheck batch ten against the completion criteria
++
++The review targets `9ceb4c8ef` and the pinned source.
++It uses the restart plan's per-batch and migration criteria.
++The [review](data-layer-batch-ten-dod-audit.md) and [record](../fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json) retain the findings.
++
++Six original scenarios run through both public native APIs in bounded commands.
++Two default scenarios expose missing optimizer findings: malformed verifier syntax suppresses document checks.
++The original reporter emits PV2-050 for a missing document and PV2-051 for a stale document code.
++Both native modes return no finding and no engine failure.
++A valid verifier and an absent verifier provide passing controls.
++
++Two further scenarios identify unsupported production configuration.
++Explicit matching consumer roots produce MA010 in the original but cannot enter the current public Rerail scope.
++Invalid schema-approval entries produce SIDP000 in the original but have no production Rerail input or reporter branch.
++These cases compare explicitly configured original contracts with missing Rerail configuration support.
++They do not establish a default-discovery mismatch or an active approval failure with the pin's empty approval list.
++
++The review also identifies missing persistent-workspace rule transitions and the cumulative 100-rule repository gate.
++The existing 75 transferred assertion sites remain covered; that coverage does not complete every rule interface.
++No production code, engine capacity, or Linear issue changed during this review.
++No full repository cold execution occurred.
++The original modules were checked against Git source blobs. The native addon hash remains unchanged.
++All four default-control evaluations match. Eight evaluations expose the stated defect or configuration gaps.
++EOF

@@ -10,6 +10,7 @@ All 67 rule-relevant retained helper cases now execute native contracts, with 10
 The other 57 cases contain 75 transferable assertion sites across 47 cases, now covered by Rerail counterparts.
 The receipt identifies the 16 remaining Python-specific sites individually.
 The current batch-ten environment uses CPython 3.13.18 with Unicode 15.1.
+The [latest completion review](data-layer-batch-ten-dod-audit.md) leaves batch ten incomplete because of optimizer false negatives and missing production configuration contracts.
 See [its report](data-layer-batch-ten.md). The cumulative repository result still covers 80 rules.
 
 The recovery survey below describes the original 60-rule restart point.
