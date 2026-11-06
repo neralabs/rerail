@@ -14,7 +14,7 @@ import type {
   CodeRuleSourceLanguage,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { gitHead, headMovedOnlyByCommits, readGitBlobs } from "../git.js";
+import { gitBranchTips, gitCommitsBetween, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -115,15 +115,20 @@ function uncapturedPrior(edit: CodeRuleEdit, preimage: Preimage | undefined, bef
   if (edit.generatedText === undefined) return undefined;
   return preimage === undefined ? before : preimage.withheld?.sha256;
 }
-/** What Git decided about a change: it was Git's (`conflicted` when a stopped merge wrote it), or the text Git's move proves it was changed from. */
+/**
+ * What Git decided about a change: it was Git's (`keepText` when the text it left is held by neither the index nor `HEAD`:
+ * a stopped merge wrote it, or it was restored from a branch), or the text Git's move proves it was changed from.
+ */
 interface GitVerdict {
   readonly previousText?: string;
-  readonly conflicted?: boolean;
+  readonly keepText?: boolean;
 }
 /** What Git holds for a walk's changes in one checkout, read once (`#gitVerdicts`). */
 interface GitBlobs {
   /** Each change's index blob, its conflict stages, its `HEAD` blob and, when `HEAD` moved, its blob at `before`. */
   readonly blobs: ReadonlyMap<string, Buffer>;
+  /** `HEAD` now. */
+  readonly head: string;
   /** `HEAD` moved since the last walk... */
   readonly moved: boolean;
   /** ...only by commits, which write no file. */
@@ -145,7 +150,13 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const before = from === head ? undefined : from;
   // A blob larger than a source could never match its digest: it is skipped, never read into memory.
   const blobs = await readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES });
-  return { blobs, moved, committed, before };
+  return { blobs, head, moved, committed, before };
+}
+/** The commits that moved `HEAD` since the last walk: none when something else moved it, undefined when Git cannot list them. */
+async function commitsMade(checkout: string, view: GitBlobs): Promise<string[] | undefined> {
+  if (!view.committed) return [];
+  const commits = view.before === undefined ? [view.head] : await gitCommitsBetween(checkout, view.before, view.head);
+  return commits.length === 0 ? undefined : commits;
 }
 function gitRevisions(path: string, before: string | undefined): string[] {
   const revisions = [`:./${path}`, `:2:./${path}`, `:3:./${path}`, `HEAD:./${path}`];
@@ -1310,12 +1321,12 @@ export class CodeRuleBridge {
     return { own, gitWritten };
   }
 
-  /** A Git write is audited only for a source this session had changed; a conflicted one's text is kept for its next edit. */
+  /** A Git write is audited only for a source this session had changed; text no blob holds is kept for its next edit. */
   #sortGitWrite(edit: CodeRuleEdit, verdict: GitVerdict, gitWritten: CodeRuleEdit[]): void {
     if (this.#texts.has(edit.path))
       gitWritten.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
-    // The next shell edit of a conflicted file measures from the text Git left, which no blob holds.
-    else if (verdict.conflicted === true && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText);
+    // The next shell edit measures from the text Git left, which neither the index nor `HEAD` holds.
+    else if (verdict.keepText === true && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText);
   }
 
   /**
@@ -1327,6 +1338,7 @@ export class CodeRuleBridge {
    * committed (`git restore`, `git stash`). A file a move left absent from `HEAD` was removed by it. A merge, rebase or
    * cherry-pick stopped on a conflict has not moved `HEAD` for its work so far: an unmerged file it just wrote is Git's, and
    * in the same walk so is one that holds its index blob or that the index no longer has. Bytes Git's filters change (`autocrlf`) never match, and stay the session's.
+   * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
@@ -1343,11 +1355,19 @@ export class CodeRuleBridge {
       const verdict = edit.readError === undefined ? this.#gitVerdict(view, edit, path, prior) : undefined;
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
+    await this.#addRestoredVerdicts(checkout, view, named, verdicts);
     return verdicts;
   }
 
+  /** Of the changes Git has not explained, those restored from a branch are Git's, their text kept for the next edit. */
+  async #addRestoredVerdicts(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>, verdicts: Map<string, GitVerdict>): Promise<void> {
+    const unexplained = named.filter(({ edit }) => !verdicts.has(edit.path) && edit.readError === undefined && edit.generatedText !== undefined);
+    if (unexplained.length === 0) return;
+    for (const path of await this.#restoredFromBranches(checkout, view, unexplained)) verdicts.set(path, { keepText: true });
+  }
+
   #gitVerdict(view: GitView, edit: CodeRuleEdit, path: string, prior: string | undefined): GitVerdict | undefined {
-    if (conflictedByGit(view, path, prior)) return { conflicted: true };
+    if (conflictedByGit(view, path, prior)) return { keepText: true };
     if (this.#heldByGit(view, edit, path)) return {};
     return movedFromText(view, path, prior);
   }
@@ -1356,6 +1376,36 @@ export class CodeRuleBridge {
     if (edit.deleted === true) return removedByGit(view, path);
     const after = this.#observed.get(edit.path)?.digest;
     return after !== undefined && holdsGitBlob(view, path, after);
+  }
+
+  /**
+   * The changes that now hold exactly the blob a branch or remote-tracking branch has at their path: restored from it
+   * (`git show origin/main:f > f`, `git checkout main -- f`, `git restore --source main f`), not written. A branch whose
+   * tip is one of the commits made since the last walk (`commitsMade`) is left out, so a file written, committed and pushed
+   * in one command stays an edit; when Git cannot list them, nothing is restored. Text that is not valid UTF-8 never matches, and
+   * stays the session's.
+   *
+   * Each file's blob id is computed here, and only text the repository already holds as an object is looked for in the
+   * branches: new text, which most edits write, costs one `cat-file --batch-check` and no branch is read.
+   */
+  async #restoredFromBranches(checkout: string, view: GitBlobs, named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>): Promise<string[]> {
+    // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
+    const algorithm = view.head.length === 64 ? "sha256" : "sha1";
+    const ids = new Map(named.map(({ edit }) => {
+      const bytes = Buffer.from(edit.generatedText!, "utf8");
+      return [edit.path, createHash(algorithm).update(`blob ${bytes.length}\0`).update(bytes).digest("hex")];
+    }));
+    const known = await readGitBlobIds(checkout, [...new Set(ids.values())]);
+    const candidates = named.filter(({ edit }) => known.has(ids.get(edit.path)!));
+    if (candidates.length === 0) return [];
+    const excluded = await commitsMade(checkout, view);
+    if (excluded === undefined) return [];
+    const tips = (await gitBranchTips(checkout)).filter(tip => !excluded.includes(tip));
+    if (tips.length === 0) return [];
+    const held = await readGitBlobIds(checkout, candidates.flatMap(({ path }) => tips.map(tip => `${tip}:./${path}`)));
+    return candidates
+      .filter(({ edit, path }) => tips.some(tip => held.get(`${tip}:./${path}`) === ids.get(edit.path)))
+      .map(({ edit }) => edit.path);
   }
 
   #discoveredEdit(

@@ -1,5 +1,5 @@
 [project]
-name = "nera-rule-validation-python-toolkit"
+name = "rerail-validation-python-toolkit"
 version = "0"
 description = "The CPython (reference implementation) and libcst (independent parser) the validation gates read Python with."
 requires-python = "==3.14.*"

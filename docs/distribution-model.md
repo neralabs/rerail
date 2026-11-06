@@ -88,7 +88,7 @@ Core (`0.1.0`, `0.1.1`, …) and rule packs publish plain versions straight to `
 2. Merging it is the release: the workflow tags core's new version.
 3. `release.yml` builds and publishes core; `release-packs.yml` publishes packs. Each publish waits for a reviewer to approve the `release` environment. Each run then checks `latest` is the version it published ([release](release.md#release), [pack-format.md](pack-format.md#release)).
 
-**GitHub Releases:** every released version, core's and each pack's, gets one on its tag. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases ([release](release.md#release)).
+**GitHub Releases:** every released version, core's and each pack's, gets one on its tag, which comes first: neither the tag nor the Release waits on npm, and a failed publish is re-run for the same tagged version. Its notes are that version's section of its `CHANGELOG.md`: notes are written once, in the changelog, for the people who upgrade. Core's `latest` release is the repository's latest; its `next` and `beta` releases are pre-releases ([release](release.md#release)).
 
 </details>
 

@@ -29,7 +29,8 @@ def run(source, name):
     src = work / "main.rs"
     exe = work / "main"
     src.write_text(source)
-    p = subprocess.run(["rustc", "+" + TC, "--edition", "2024", str(src), "-o", str(exe)], text=True, capture_output=True)
+    # rustc runs in the case's directory on a relative path, so a diagnostic names `main.rs`, not the checkout.
+    p = subprocess.run(["rustc", "+" + TC, "--edition", "2024", "main.rs", "-o", "main"], cwd=work, text=True, capture_output=True)
     if p.returncode:
         return False, p.stderr.splitlines(), {}
     q = subprocess.run([str(exe)], text=True, capture_output=True)

@@ -1,56 +1,25 @@
 #!/usr/bin/env node
-// Publishes the tarballs packs-pack.ts wrote to <dir>, each public and under `latest` (under `next` for a pack
-// named in $HELD, space-separated ids that packs-plan.mjs found held at an older `latest`), checks that an anonymous
-// reader gets the version, points `next` at a version published under `latest` unless `next` is already at a newer
-// one (so `next` never trails `latest`), and tags the released commit `<name>@<version>` on GitHub. Any failed run
-// can be run again, with the same tarballs or fresh ones: a version already tagged is skipped, and one already on the
-// registry without its tag is checked, has its `next` raised and is tagged, not published again (releasePacks in
-// packs.mjs).
+// Publishes the tarballs packs-pack.ts wrote to <dir>, tagged already by packs-tag.mjs, each public and under
+// `latest` (under `next` for a pack named in $HELD, space-separated ids that packs-plan.mjs found held at an older
+// `latest`), and points `next` at a version published under `latest` unless `next` is already at a newer one (so
+// `next` never trails `latest`). It waits on nothing npm does after a publish: the release workflow's dist-tag check
+// reads the result back. Any failed run can be run again, with the same tarballs or fresh ones: a version already on
+// the registry has its `next` raised, not published again (releasePacks in packs.mjs). A version older than its
+// pack's `latest` (an old run run again after a newer version shipped) is not published, since that would move
+// `latest` back; the others go on, and the run fails naming it.
 //
 // In the release workflow npm authenticates through trusted publishing (`npm dist-tag` over it needs npm 11.21.0 or
-// newer), publishes with `--provenance` (failing when npm cannot attach an attestation), and the commit is
-// $GITHUB_SHA. By hand (a pack's first publish), npm uses your login and publishes without provenance, which only CI
-// can generate; gh uses your GitHub login with write access, and the commit is HEAD, which must be clean and pushed.
-// Both are checked before anything is published. Writes `released` (each `<name>@<version>:<dist-tag>` it released,
-// space-separated, for dist-tags-check.mjs) to $GITHUB_OUTPUT when it is set.
+// newer) and publishes with `--provenance` (failing when npm cannot attach an attestation). By hand (a pack's first
+// publish), npm uses your login and publishes without provenance, which only CI can generate. Writes `released` (each
+// `<name>@<version>:<dist-tag>` it released, space-separated, for dist-tags-check.mjs) to $GITHUB_OUTPUT when it is
+// set.
 //
 //   [HELD="<id> ..."] node scripts/release/packs-publish.mjs <dir>
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { addDistTag, readNextTag } from "./dist-tags.mjs";
-import { assertCommitOnGitHub, createReleaseTag, listPacks, REGISTRY, releasePacks, releaseTags, ROOT } from "./packs.mjs";
-
-const git = (args) => execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
-
-/** The commit the tags name: the workflow's, or a clean HEAD. */
-function releasedCommit() {
-  if (process.env.GITHUB_SHA !== undefined) return process.env.GITHUB_SHA;
-  if (git(["status", "--porcelain"]) !== "") throw new Error("the checkout has changes; publish from a clean checkout of the commit to tag");
-  return git(["rev-parse", "HEAD"]);
-}
-
-/**
- * How long an anonymous reader may take to see a version just published: npm says a publish "may take a few minutes to
- * become available", and packs often took longer than the 25 seconds this once waited, failing the run after each
- * publish.
- */
-const VISIBLE_WITHIN_MS = 3 * 60_000;
-const VISIBLE_POLL_MS = 10_000;
-
-/** Fails unless an anonymous reader gets `name@version` within VISIBLE_WITHIN_MS, retrying while the registry's cache catches up. */
-async function assertPublic(name, version) {
-  const url = `${REGISTRY}/${name.replace("/", "%2f")}/${version}`;
-  const deadline = Date.now() + VISIBLE_WITHIN_MS;
-  let status;
-  for (;;) {
-    status = (await fetch(url, { headers: { accept: "application/json" } })).status;
-    if (status === 200 || Date.now() >= deadline) break;
-    await new Promise((done) => setTimeout(done, VISIBLE_POLL_MS));
-  }
-  if (status === 200) return;
-  throw new Error(`${name}@${version} answers an anonymous request with ${status} ${VISIBLE_WITHIN_MS / 60_000} minutes after its publish: it is not public. Run npm access set status=public ${name}`);
-}
+import { addDistTag, readLatestTag, readNextTag } from "./dist-tags.mjs";
+import { heldPackNames, REGISTRY, releasePacks, releaseTag } from "./packs.mjs";
 
 /**
  * Runs npm publish for one tarball; whether it succeeded, and its error output. stdin and stdout stay the terminal:
@@ -69,25 +38,22 @@ const [directory] = process.argv.slice(2);
 if (directory === undefined) throw new Error("usage: packs-publish.mjs <dir written by packs-pack.ts>");
 const out = resolve(directory);
 const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8"));
-const commit = releasedCommit();
-assertCommitOnGitHub(commit);
 
-const heldIds = (process.env.HELD ?? "").split(/\s+/u).filter((id) => id !== "");
-const held = listPacks().filter((pack) => heldIds.includes(pack.id)).map((pack) => pack.name);
-
-const released = await releasePacks(
+const { released, superseded } = await releasePacks(
   manifest,
-  releaseTags(),
   {
     publish: (file, distTag) => publish(join(out, file), distTag),
-    assertPublic,
+    readLatest: readLatestTag,
     readNext: readNextTag,
     distTag: addDistTag,
-    tag: (tag) => createReleaseTag(tag, commit),
     log: (line) => console.log(line),
   },
-  held,
+  heldPackNames(process.env.HELD),
 );
 if (process.env.GITHUB_OUTPUT !== undefined) {
   appendFileSync(process.env.GITHUB_OUTPUT, `released=${released.map(({ name, version, distTag }) => `${name}@${version}:${distTag}`).join(" ")}\n`);
 }
+for (const { name, version, latest } of superseded) {
+  console.log(`::error title=Superseded::${releaseTag(name, version)} is older than latest ${latest}, so it was not published; ${latest} supersedes it.`);
+}
+if (superseded.length > 0) process.exitCode = 1;

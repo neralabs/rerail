@@ -275,6 +275,56 @@ export async function headMovedOnlyByCommits(cwd: string, from: string | undefin
   return moves > 0 && entries.slice(0, moves).every(entry => COMMIT_SUBJECT.test(entry.slice(entry.indexOf(" ") + 1)));
 }
 
+/** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */
+export async function gitBranchTips(cwd: string): Promise<string[]> {
+  const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"]);
+  return tips === undefined || tips === "" ? [] : [...new Set(tips.split("\n"))];
+}
+
+/** The commits reachable from `to` but not from `from` (`git rev-list from..to`); empty when Git cannot say. */
+export async function gitCommitsBetween(cwd: string, from: string, to: string): Promise<string[]> {
+  const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`]);
+  return commits === undefined || commits === "" ? [] : commits.split("\n");
+}
+
+/**
+ * The object id of each of `revisions` (as for {@link readGitBlobs}) that names a blob, by one `git cat-file
+ * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
+ * without Git, outside a repository, or past the timeout; one containing a newline cannot be asked for and is skipped.
+ */
+export async function readGitBlobIds(cwd: string, revisions: readonly string[]): Promise<Map<string, string>> {
+  const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
+  const ids = new Map<string, string>();
+  if (asked.length === 0) return ids;
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return ids;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<void>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+    timeout: DEFAULT_TIMEOUT_MS,
+  });
+  const chunks: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+  child.on("error", () => settle());
+  child.on("close", () => settle());
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
+  await promise;
+  // One line per revision, in order: `<oid> <type>`, or `<revision> missing` (or `ambiguous`), which repeats the
+  // revision and so may hold any text, spaces included; only a whole line of an object id and `blob` names one.
+  const lines = Buffer.concat(chunks).toString("utf8").split("\n");
+  asked.forEach((revision, index) => {
+    const id = /^([0-9a-f]{40}|[0-9a-f]{64}) blob$/u.exec(lines[index] ?? "")?.[1];
+    if (id !== undefined) ids.set(revision, id);
+  });
+  return ids;
+}
+
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */
 interface BatchBody {
   readonly revision: string;

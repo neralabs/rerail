@@ -35,7 +35,7 @@ union JemallocConf {
 }
 
 // Freed pages stay for a second so an apply reuses them instead of mapping new ones (immediate
-// decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
+// decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
 #[cfg(not(windows))]

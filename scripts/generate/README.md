@@ -17,7 +17,8 @@ The convention:
   and are not listed here.
 
 `<tools>` below is a directory with the pinned npm packages installed (`npm install --prefix <tools> <package>@<version>`),
-and `<landing>` a checkout of nera-landing, whose design tokens the UI files project.
+and `<design-source>` a checkout of Nera's design-system source, whose design tokens (`web/src/index.css`, `fonts.css`)
+the UI files project.
 
 ## Engine data (`native/src/code_rule_dsl/`)
 
@@ -42,8 +43,8 @@ and `<landing>` a checkout of nera-landing, whose design tokens the UI files pro
 | `src/engine/catalog/pack-list.generated.ts` (packs without `"private": true`) | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
 | `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
 | `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |
-| `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <landing>` |
-| `ui/tokens.generated.css` | `scripts/generate/ui/tokens.mjs` | `node scripts/generate/ui/tokens.mjs <landing>`; `npm run check:ui-tokens` checks what the page references |
+| `src/presentation/terminal-brand.generated.ts` | `scripts/generate/ui/terminal-brand.mjs` | `node scripts/generate/ui/terminal-brand.mjs <design-source>` |
+| `ui/tokens.generated.css` | `scripts/generate/ui/tokens.mjs` | `node scripts/generate/ui/tokens.mjs <design-source>`; `npm run check:ui-tokens` checks what the page references |
 
 ## Documentation
 

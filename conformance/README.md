@@ -28,8 +28,8 @@ a rule, written for Rerail or ported, and a port's way from candidate to shipped
 `npm run test:conformance` (`conformance/languages/cli.ts --check`) is the one gate a ported rule passes to ship. It
 sits on top of the [pack validation contract](../docs/pack-format.md#the-validation-contract) and reads only pinned
 data: the test data (`test-data.lock`) and the samples (`samples.lock`), with any `publish/` laid over them. It never
-runs upstream. It descends from the V1 validation gates nera-rule-validation ran by hand (its ADR 0006), adapted to
-rerail's layout.
+runs upstream. It descends from the V1 validation gates maintainers ran by hand before Rerail, adapted to rerail's
+layout.
 
 It first scores every pack's fixtures and samples, then judges every rule of each gated tool-pack (one with a
 `packs/<id>/upstream/<tool>/gates.yaml`), shipped (`packs/<id>/rules/`) or candidate (`packs/<id>/candidates/`). A

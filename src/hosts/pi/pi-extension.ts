@@ -25,6 +25,7 @@ import { ConversationRuleRegistry, type RuleMatch } from "../../engine/catalog/r
 import { openCheckoutConversationRules } from "../../engine/code-rule/code-rule-dsl-catalog.js";
 import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
 import { RerailRuntime } from "../../runtime/runtime.js";
+import { messageSteer } from "../../engine/code-rule/rerail-steer.js";
 import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
 export interface PiConversationRulesOptions extends SessionDatabaseOptions {
@@ -170,7 +171,9 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         fixToolRegistered = true;
         registerPiFixTool(pi);
       }
-      await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd), (message, options_) => pi.sendMessage(message, options_),
+      // Pi hands the model an extension's message as the user's, so a steer sent as one says it is Rerail's.
+      await sendNativeDeliveries(await linkDeliveries(deliveries, (native.context() ?? currentContext)?.cwd),
+        (message, options_) => pi.sendMessage(message.content.trim() === "" ? message : { ...message, content: messageSteer(message.content) }, options_),
         (sessionId, receiptId, ruleIds) => current.recordSteer(sessionId, receiptId, ruleIds),
         (toolCallId, delivery) => {
           const placed = openResults.get(toolCallId);
