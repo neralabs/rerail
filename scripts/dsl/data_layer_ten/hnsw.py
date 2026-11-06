@@ -33,4 +33,6 @@ def candidate(root):
     files={'evidence':{'as':'file','query':{'regex':{'source':'file.content','pattern':r'(?s)\A(?P<TEXT>.*)\z'}},'project':{'path':'file.path'}}}
     query="SELECT * FROM (SELECT __path path,0 start_byte,0 end_byte,1 line,'HNSW006' issue,'forbidden HNSW module exists' message,__path identity,0 phase,0 ordering,'' symbol,'' sort_name FROM files) hnsw_result WHERE "+inventory
     inventory_clause={'id':'hnsw-forbidden-files','relational':{'inputs':{'files':files},'stages':[parameters],'query':select_entry('SELECT * FROM ('+query+') WHERE 0',{'find_hnsw_architecture_findings':query}),'key':['identity'],'code':'issue','message':'message'},'violation':{'code':'HNSW006','message':'Forbidden HNSW module','anchor':'witness.span'}}
-    return make_document('hnsw_architecture',[clause_,inventory_clause],['impl/common/**/*.py','l5200_vector_index/**/*.py','vector_types.py'])
+    # FactEngine walks directory entries, including the entry named vector_types.py.
+    # A regular file with that name is only scanned by the standalone API.
+    return make_document('hnsw_architecture',[clause_,inventory_clause],['impl/common/**/*.py','l5200_vector_index/**/*.py','vector_types.py/**/*.py'])

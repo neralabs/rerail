@@ -8,7 +8,7 @@
     "include": [
       "impl/common/**/*.py",
       "l5200_vector_index/**/*.py",
-      "vector_types.py"
+      "vector_types.py/**/*.py"
     ],
     "exclude": [
       "**/.git/**",
