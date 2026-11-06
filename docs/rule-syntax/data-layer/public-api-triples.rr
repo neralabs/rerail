@@ -141,48 +141,26 @@ data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\.py", p).
 root(m, f) :- data_layer_module(m), exports(m, x, q), public_name(m, x), qualname(f, q), kind(f, "function_definition"),
     !nearest(f, _, nonmod),
     def_name(f, n), !prefix("_", n), count : { docof(f, d), doc(d, p, _), prefix("_internal/", p) } = 0.
-// A public method of an exported class, own or inherited (pub_method, below, across files).
+// A public method of an exported class, own or inherited (pub_member follows the bases, across files).
 // Skipped as in the Python linter: private classes, Protocol classes (by name or by a base), classes named Async…,
-// and private-decorated methods.
+// _-prefixed methods, the method_skip names, private-decorated methods, and properties (getter, setter, deleter).
 root(cq, f) :- data_layer_module(m), exports(m, y, cq), public_name(m, y), class_def(c, cq), def_name(c, x), !private(c),
     !match(".*(?:Protocol$|^Async).*", x), count : { class_base(c, b), contains("Protocol", b) } = 0,
-    pub_method(cq, _, f), !private(f).
-
-// ---- a class's public methods, in the Python linter's order (SymbolGraph.public_methods_of_class) ------------
-// The linter walks the class, then its bases breadth-first (each once), and keeps for each name the first method
-// that is public: not _-prefixed, not a method_skip name, not a property (getter, setter or deleter). A property
-// does not claim its name, so `class Child(Base)` whose read_lazy is a property has Base's read_lazy.
-// base_at(q, i, b): class q's base at position i of its base list, resolved.
-.decl base_at(q: symbol, i: number, b: symbol)
-base_at(q, i, b) :- class_def(c, q), field(c, "superclasses", al), child(al, e, i), !kind(e, "keyword_argument"),
-    sym_of(e, b).
-// class_walk(q, b, k): b is q or an ancestor of q, and k orders the walk: q is 0, and the i-th base of a class at key j
-// is j * 64 + i + 1. A class's key has one base-64 digit per level, so keys sort by depth and then by the order the
-// queue meets them: breadth-first. Written out level by level, five levels deep (recursion that makes new keys is
-// refused, and workspace hierarchies are shallower); an ancestor further up is not walked.
-.decl class_walk(q: symbol, b: symbol, k: number)
-class_walk(q, q, 0) :- class_def(_, q).
-class_walk(q, b, k) :- walk1(q, b, k).
-class_walk(q, b, k) :- walk2(q, b, k).
-class_walk(q, b, k) :- walk3(q, b, k).
-class_walk(q, b, k) :- walk4(q, b, k).
-class_walk(q, b, k) :- walk4(q, m, j), base_at(m, i, b), k = j * 64 + i + 1.
-.decl walk1(q: symbol, b: symbol, k: number)
-walk1(q, b, k) :- base_at(q, i, b), k = i + 1.
-.decl walk2(q: symbol, b: symbol, k: number)
-walk2(q, b, k) :- walk1(q, m, j), base_at(m, i, b), k = j * 64 + i + 1.
-.decl walk3(q: symbol, b: symbol, k: number)
-walk3(q, b, k) :- walk2(q, m, j), base_at(m, i, b), k = j * 64 + i + 1.
-.decl walk4(q: symbol, b: symbol, k: number)
-walk4(q, b, k) :- walk3(q, m, j), base_at(m, i, b), k = j * 64 + i + 1.
+    pub_member(cq, n, f), !method_skip(n), !private(f).
+// pub_member(cq, n, f): the linter's public_methods_of_class: walking cq and then its bases, the first method named n
+// that is public (no leading _, not a method_skip name) and no property. A skipped member does not hide a base's:
+// when Child overrides Base.read_lazy with a property, Child's read_lazy is Base's (the recording reports
+// Base.read_lazy). Bases are taken as mro_method takes them (any ancestor), less any with a nearer counterpart.
+.decl pub_member(cq: symbol, n: symbol, f: node)
+pub_member(cq, n, f) :- method(cq, n, f), pub_method(n, f).
+pub_member(cq, n, f) :- class_def(_, cq), subclass(cq, b), method(b, n, f), pub_method(n, f),
+    count : { method(cq, n, g), pub_method(n, g) } = 0,
+    count : { subclass(cq, b2), subclass(b2, b), method(b2, n, g2), pub_method(n, g2) } = 0.
+.decl pub_method(n: symbol, f: node)
+pub_method(n, f) :- method(_, n, f), !prefix("_", n), !method_skip(n), !is_property(f).
+// is_property(f): a decorator ending in property, .setter or .deleter (the linter's SymbolInfo.is_property).
 .decl is_property(f: node)
 is_property(f) :- deco(f, q), glob("**{property,.setter,.deleter}", q).
-// pub_candidate(q, x, k, f): f, a public method x of the class at key k of q's walk.
-.decl pub_candidate(q: symbol, x: symbol, k: number, f: node)
-pub_candidate(q, x, k, f) :- class_walk(q, b, k), method(b, x, f), !prefix("_", x), !method_skip(x), !is_property(f).
-// pub_method(q, x, f): q's public method x is f, the first in the walk.
-.decl pub_method(q: symbol, x: symbol, f: node)
-pub_method(q, x, f) :- pub_candidate(q, x, k, f), k = min j : { pub_candidate(q, x, j, _) }.
 // mixed(f): the name contains "lazy" and also "sync" or "async" (case-insensitive; "async" contains "sync").
 // Mixed names are not grouped; they are reported by invalid_mixed_lazy_execution_name.
 .decl mixed(f: node)
