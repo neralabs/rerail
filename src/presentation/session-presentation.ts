@@ -419,45 +419,72 @@ export async function readSummaryState(
   }
 }
 
-/** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
-export async function readPresentation({ sessionId, host, cwd, onDemand = false, startState }: PresentationRequest): Promise<SessionPresentation> {
-  let presence: PresentationPresence = "compact";
-  if (!Object.hasOwn(ADAPTER_CAPABILITIES, host) || typeof sessionId !== "string" || !sessionId.trim()
-      || typeof cwd !== "string" || !isAbsolute(cwd)) {
-    return unavailable("unavailable", "session unavailable", presence);
+function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknown): boolean {
+  return Object.hasOwn(ADAPTER_CAPABILITIES, host) && typeof sessionId === "string" && sessionId.trim() !== ""
+    && typeof cwd === "string" && isAbsolute(cwd);
+}
+
+type PresentationResponse = z.infer<typeof presentationResponseSchema>;
+type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
+/** A live daemon of this checkout, and what it answered for the session. */
+type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
+
+/** The daemon's answer for the session; undefined when no live daemon of this checkout answers as itself. */
+async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<LiveResponse | undefined> {
+  // The `/api/presentation` response proves liveness; it must not pay for a second probe.
+  const daemon = await verifyDaemon(cwd);
+  if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return undefined;
+  const response = await get(daemon, `/api/presentation?${new URLSearchParams({
+    repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
+  })}`, presentationResponseSchema);
+  const context = response.context;
+  return context === undefined || context.daemon.pid !== daemon.state.pid ? undefined : { daemon, response };
+}
+
+/** A recorded session as the footer presents it, once it is known to be this session. */
+async function answeredSessionPresentation(
+  answered: AnsweredSession, native: boolean, { daemon, response }: LiveResponse, { sessionId, host }: PresentationRequest,
+): Promise<SessionPresentation> {
+  const { session } = answered;
+  // The host may sit below its launch root; the session's canonical cwd stays the identity.
+  const root = await realpath(session.cwd);
+  if (session.sessionId !== sessionId || session.host !== host || !withinCheckout(root, daemon.workspace)) {
+    return unavailable("unavailable", "session unavailable", response.presence, "started");
   }
-  let answered = false;
+  // History failure must not discard already verified session counters.
+  const health = await healthItems(answered, native, root);
+  return onPresentation(daemon.origin, answered, response.scope ?? null, response.presence, health);
+}
+
+/** What the daemon's answer comes to for this request. */
+async function answeredPresentation(answer: LiveResponse, request: PresentationRequest): Promise<SessionPresentation> {
+  const { daemon, response } = answer;
+  const { presence } = response;
+  if (presence === "silent" && request.onDemand !== true) return silent(presence, response.repositoryState);
+  // A session in a repository where Rerail is not started is never recorded, so this comes first.
+  if (response.repositoryState === "stopped") return notOnHere(presence, request.onDemand === true);
+  // A started checkout that is not set up records its sessions, but no rules run there until it is set up.
+  if (response.repositoryState === "not-set-up") return notSetUpPresentation(daemon.origin, response.scope ?? null, presence);
+  const context = response.context!;
+  // The session-start hook records the session; until it has, Rerail is still starting, not failing (#302).
+  if (context.session === null) return unavailable("starting", STARTING, presence, "started");
+  return await answeredSessionPresentation(context.session, context.daemon.native.ok, answer, request);
+}
+
+/** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
+export async function readPresentation(request: PresentationRequest): Promise<SessionPresentation> {
+  const { sessionId, host, cwd, startState } = request;
+  const onDemand = request.onDemand === true;
+  if (!isPresentationRequest(sessionId, host, cwd)) return unavailable("unavailable", "session unavailable", "compact");
+  let presence: PresentationPresence | undefined;
   try {
-    // The `/api/presentation` response proves liveness; it must not pay for a second probe.
-    const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return await withoutDaemon(startState, presence, onDemand);
-    const { workspace, state, origin } = daemon;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({
-      repository: workspace, host, sessionId, onDemand: String(onDemand),
-    })}`, presentationResponseSchema);
-    const context = response.context;
-    if (context === undefined || context.daemon.pid !== state.pid) return await withoutDaemon(startState, presence, onDemand);
-    answered = true;
-    presence = response.presence;
-    if (presence === "silent" && !onDemand) return silent(presence, response.repositoryState);
-    // A session in a repository where Rerail is not started is never recorded, so this comes first.
-    if (response.repositoryState === "stopped") return notOnHere(presence, onDemand);
-    // A started checkout that is not set up records its sessions, but no rules run there until it is set up.
-    if (response.repositoryState === "not-set-up") return notSetUpPresentation(origin, response.scope ?? null, presence);
-    // The session-start hook records the session; until it has, Rerail is still starting, not failing (#302).
-    if (context.session === null) return unavailable("starting", STARTING, presence, "started");
-    const { session } = context.session;
-    // The host may sit below its launch root; the session's canonical cwd stays the identity.
-    const root = await realpath(session.cwd);
-    if (session.sessionId !== sessionId || session.host !== host || !withinCheckout(root, workspace)) {
-      return unavailable("unavailable", "session unavailable", presence, "started");
-    }
-    // History failure must not discard already verified session counters.
-    const health = await healthItems(context.session, context.daemon.native.ok, root);
-    return onPresentation(origin, context.session, response.scope ?? null, presence, health);
+    const answer = await readLiveResponse(request);
+    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand);
+    presence = answer.response.presence;
+    return await answeredPresentation(answer, request);
   } catch {
     // The locator named a live process, but nothing answered as the daemon.
-    return answered ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, presence, onDemand);
+    return presence !== undefined ? unavailable("not-running", NOT_RUNNING, presence) : await withoutDaemon(startState, "compact", onDemand);
   }
 }
 

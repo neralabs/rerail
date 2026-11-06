@@ -267,6 +267,59 @@ export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 /** A boundary answered while a source walk was still running: its shell writes are checked later, or never for `close`. */
 export type DiscoveryPendingBoundary = "turn" | "final" | "command" | "close";
 
+/** One file a rollback puts back: where it is, what it held before the edit, and what it holds now. */
+interface RollbackTarget {
+  readonly location: SourceLocation;
+  readonly preimage: Preimage;
+  readonly current: Source;
+}
+
+/** The file opened without following a final symlink; undefined when it is one. */
+async function openWithoutFollowing(location: SourceLocation): Promise<FileHandle | undefined> {
+  try {
+    return await open(location.absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ELOOP") return undefined;
+    throw error;
+  }
+}
+
+/** The opened file as a source, or why it cannot be one; an unlisted path that is binary is no source. */
+async function readOpenSource(handle: FileHandle, location: SourceLocation, info: Stats): Promise<Source | undefined> {
+  if (location.unlisted && await binaryPrefix(handle)) return undefined;
+  if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
+  return sourceOfBytes(location, await handle.readFile(), info);
+}
+
+function sourceOfBytes(location: SourceLocation, source: Buffer, info: Stats): Source | undefined {
+  if (location.unlisted && source.includes(0)) return undefined;
+  if (source.length > MAX_SOURCE_BYTES || source.includes(0))
+    return { path: location.path, language: location.language, readError: "Source exceeds its byte budget or contains binary data" };
+  return {
+    path: location.path, language: location.language, text: source.toString("utf8"),
+    stamp: `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`,
+    digest: createHash("sha256").update(source).digest("hex"),
+  };
+}
+
+/** Whether the file was read, and still holds what the edit left there. */
+function isAsEditLeft(current: Source | undefined, digest: string | undefined): current is Source {
+  return current !== undefined && current.readError === undefined && current.digest === digest;
+}
+
+/** Whether there is a preimage for every path of `scope`, and every preimage was read. */
+function hasReadPreimagesFor(preimages: RewindableEdit["preimages"], scope: readonly string[]): boolean {
+  if (scope.length === 0 || scope.some(path => !preimages.has(path))) return false;
+  return ![...preimages.values()].some(preimage => preimage.readError !== undefined);
+}
+
+/** Throws when a preimage was withheld for secrets: there is no copy of that file to put back. */
+function assertNoneWithheld(preimages: RewindableEdit["preimages"]): void {
+  const secret = [...preimages].find(([, preimage]) => preimage.withheld !== undefined);
+  if (secret !== undefined)
+    throw new Error(`${secret[0]} holds secrets, by its name or its text, so Rerail kept no copy of it to put back; the edit stays as it is`);
+}
+
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
 export class CodeRuleBridge {
   readonly #cwd: string;
@@ -420,72 +473,103 @@ export class CodeRuleBridge {
     const rewindable = this.#rewindable.get(toolCallId);
     if (rewindable === undefined || rewindable.revision !== revision) return undefined;
     this.#rewindable.delete(toolCallId);
-    const { preimages, after } = rewindable;
-    if (scope.length === 0 || scope.some(path => !preimages.has(path))) return undefined;
-    if ([...preimages.values()].some(preimage => preimage.readError !== undefined)) return undefined;
-    const secret = [...preimages].find(([, preimage]) => preimage.withheld !== undefined);
-    if (secret !== undefined)
-      throw new Error(`${secret[0]} holds secrets, by its name or its text, so Rerail kept no copy of it to put back; the edit stays as it is`);
+    if (!hasReadPreimagesFor(rewindable.preimages, scope)) return undefined;
+    assertNoneWithheld(rewindable.preimages);
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return undefined;
-    return await this.#enqueue(async () => {
-      if (this.#discovery !== discovery || discovery.cancelled) return undefined;
-      if (this.#shared(toolCallId, preimages.keys())) return undefined;
-      const root = await realpath(this.#cwd);
-      const targets: Array<{ location: SourceLocation; preimage: Preimage; current: Source }> = [];
-      for (const [path, preimage] of preimages) {
-        const location = this.#sourceLocation(root, path);
-        const current = await this.#readSource(root, path);
-        if (location === undefined || current === undefined || current.readError !== undefined) return undefined;
-        if (current.digest !== after.get(path)) return undefined;
-        if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
-        targets.push({ location, preimage, current });
+    return await this.#enqueue(() => this.#rollBack(toolCallId, rewindable, discovery));
+  }
+
+  async #rollBack(toolCallId: string, { preimages, after }: RewindableEdit, discovery: SourceDiscovery): Promise<RewoundEdit | undefined> {
+    if (this.#discovery !== discovery || discovery.cancelled) return undefined;
+    if (this.#shared(toolCallId, preimages.keys())) return undefined;
+    const root = await realpath(this.#cwd);
+    const targets = await this.#rollbackTargets(root, preimages, after);
+    if (targets === undefined) return undefined;
+    const written = await this.#writeRollback(toolCallId, targets);
+    if (written === undefined) return undefined;
+    await this.#auditRollback(toolCallId, root, discovery, written);
+    return {
+      revision: this.#revision,
+      restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
+      deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
+    };
+  }
+
+  /** Every file the rollback puts back, undefined unless each is as the edit left it and may be put back. */
+  async #rollbackTargets(root: string, preimages: RewindableEdit["preimages"], after: RewindableEdit["after"]): Promise<RollbackTarget[] | undefined> {
+    const targets: RollbackTarget[] = [];
+    for (const [path, preimage] of preimages) {
+      const target = await this.#rollbackTarget(root, path, preimage, after.get(path));
+      if (target === undefined) return undefined;
+      targets.push(target);
+    }
+    return targets;
+  }
+
+  async #rollbackTarget(root: string, path: string, preimage: Preimage, digest: string | undefined): Promise<RollbackTarget | undefined> {
+    const location = this.#sourceLocation(root, path);
+    const current = await this.#readSource(root, path);
+    if (location === undefined || !isAsEditLeft(current, digest)) return undefined;
+    // A deleted file comes back only into a folder this checkout owns. Only such a file waits to learn that.
+    if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
+    return { location, preimage, current };
+  }
+
+  /** Puts the preimages back: what was written, or undefined when nothing stays rolled back after a failure. */
+  async #writeRollback(toolCallId: string, targets: readonly RollbackTarget[]): Promise<RollbackTarget[] | undefined> {
+    const written: RollbackTarget[] = [];
+    try {
+      for (const target of targets) {
+        if (target.current.text === target.preimage.text) continue;
+        await this.#writeSource(target.location, target.preimage.text);
+        written.push(target);
       }
-      let written: typeof targets = [];
-      try {
-        for (const target of targets) {
-          if (target.current.text === target.preimage.text) continue;
-          await this.#writeSource(target.location, target.preimage.text);
-          written.push(target);
-        }
-      } catch (error) {
-        // Every file or none: what was already put back takes the edit's text again.
-        const stuck: typeof targets = [];
-        let undoError: unknown;
-        for (const target of written) {
-          await this.#writeSource(target.location, target.current.text).catch((failure: unknown) => {
-            stuck.push(target);
-            undoError ??= failure;
-          });
-        }
-        const kept = stuck.length === 0
-          ? ""
-          : `; ${stuck.map(target => target.location.path).join(", ")} stay rolled back: ${errorMessage(undoError)}`;
-        process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${errorMessage(error)}${kept}\n`);
-        if (stuck.length === 0) return undefined;
-        written = stuck;
-      }
-      try {
-        const edits: CodeRuleEdit[] = [];
-        for (const { location, current } of written) {
-          const source = await this.#readSource(root, location.path);
-          this.#touchSource(discovery, location.path);
-          if (source === undefined) continue;
-          this.#updateObservedSource(source);
-          const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
-          if (edit !== undefined) edits.push(edit);
-        }
-        // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
-        if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
-      } catch (error) {
-        process.stderr.write(`rerail: could not audit the rollback of tool call ${toolCallId}: ${errorMessage(error)}\n`);
-      }
-      return {
-        revision: this.#revision,
-        restored: written.filter(target => target.preimage.text !== undefined).map(target => target.location.path),
-        deleted: written.filter(target => target.preimage.text === undefined).map(target => target.location.path),
-      };
-    });
+    } catch (error) {
+      return await this.#undoRollback(toolCallId, written, error);
+    }
+    return written;
+  }
+
+  /** Every file or none: what was already put back takes the edit's text again. Returns the files that stay rolled back, if any. */
+  async #undoRollback(toolCallId: string, written: readonly RollbackTarget[], error: unknown): Promise<RollbackTarget[] | undefined> {
+    const stuck: RollbackTarget[] = [];
+    let undoError: unknown;
+    for (const target of written) {
+      await this.#writeSource(target.location, target.current.text).catch((failure: unknown) => {
+        stuck.push(target);
+        undoError ??= failure;
+      });
+    }
+    const kept = stuck.length === 0
+      ? ""
+      : `; ${stuck.map(target => target.location.path).join(", ")} stay rolled back: ${errorMessage(undoError)}`;
+    process.stderr.write(`rerail: could not roll back tool call ${toolCallId}: ${errorMessage(error)}${kept}\n`);
+    return stuck.length === 0 ? undefined : stuck;
+  }
+
+  /** The rollback's writes as Rerail's own, audited in `log` mode; a failure is logged, never a reason to lose what was rolled back. */
+  async #auditRollback(toolCallId: string, root: string, discovery: SourceDiscovery, written: readonly RollbackTarget[]): Promise<void> {
+    try {
+      const edits = await this.#rollbackEdits(root, discovery, written);
+      // Every rolled-back file has its preimage (the edit's text), so nothing is left to recover.
+      if (edits.length > 0) await this.#auditEdits(discovery, edits, ["edit", "function"], new Map(), "log");
+    } catch (error) {
+      process.stderr.write(`rerail: could not audit the rollback of tool call ${toolCallId}: ${errorMessage(error)}\n`);
+    }
+  }
+
+  async #rollbackEdits(root: string, discovery: SourceDiscovery, written: readonly RollbackTarget[]): Promise<CodeRuleEdit[]> {
+    const edits: CodeRuleEdit[] = [];
+    for (const { location, current } of written) {
+      const source = await this.#readSource(root, location.path);
+      this.#touchSource(discovery, location.path);
+      if (source === undefined) continue;
+      this.#updateObservedSource(source);
+      const edit = this.#editFromToolSource(source, current.text === undefined ? {} : { text: current.text });
+      if (edit !== undefined) edits.push(edit);
+    }
+    return edits;
   }
 
   /** Whether a call other than `toolCallId`, begun and unfinished or still rewindable, covers any of `paths`. */
@@ -1089,36 +1173,26 @@ export class CodeRuleBridge {
    * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
-    let handle: FileHandle;
-    try {
-      handle = await open(location.absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
-    } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ELOOP") return undefined;
-      throw error;
-    }
+    const handle = await openWithoutFollowing(location);
+    if (handle === undefined) return undefined;
     try {
       const info = await handle.stat();
       if (!info.isFile()) return location.unlisted ? undefined : { path: location.path, language: location.language, readError: "Source is not a regular file" };
-      const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
-      if (owner === undefined) return undefined;
-      const canonical = await realpath(location.absolute);
-      if (canonical !== owner && !canonical.startsWith(`${owner}${sep}`)) return undefined;
-      const named = await lstat(canonical);
-      if (named.dev !== info.dev || named.ino !== info.ino) return undefined;
-      if (location.unlisted && await binaryPrefix(handle)) return undefined;
-      if (info.size > MAX_SOURCE_BYTES) return { path: location.path, language: location.language, readError: OVERSIZE_ERROR };
-      const source = await handle.readFile();
-      if (location.unlisted && source.includes(0)) return undefined;
-      if (source.length > MAX_SOURCE_BYTES || source.includes(0))
-        return { path: location.path, language: location.language, readError: "Source exceeds its byte budget or contains binary data" };
-      return {
-        path: location.path, language: location.language, text: source.toString("utf8"),
-        stamp: `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`,
-        digest: createHash("sha256").update(source).digest("hex"),
-      };
+      if (!await this.#staysInOwner(root, location, info)) return undefined;
+      return await readOpenSource(handle, location, info);
     } finally {
       await handle.close();
     }
+  }
+
+  /** Whether the opened file's real path is inside the checkout that owns it, and still names the file that was opened. */
+  async #staysInOwner(root: string, location: SourceLocation, info: Stats): Promise<boolean> {
+    const owner = this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(location.path);
+    if (owner === undefined) return false;
+    const canonical = await realpath(location.absolute);
+    if (canonical !== owner && !canonical.startsWith(`${owner}${sep}`)) return false;
+    const named = await lstat(canonical);
+    return named.dev === info.dev && named.ino === info.ino;
   }
 
   #failedSourceRead(location: SourceLocation, error: unknown): Source {

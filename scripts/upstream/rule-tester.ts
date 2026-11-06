@@ -266,21 +266,26 @@ class Evaluator {
       const args = this.args(node.arguments, env);
       return args === UNRESOLVED ? UNRESOLVED : this.call(this.ev(callee, env), args);
     }
-    const method = callee.property.name;
+    return this.methodCall(node, callee, callee.property.name, env);
+  }
+
+  private methodCall(node: t.CallExpression, callee: t.MemberExpression, method: string, env: Env | null): Value {
     if (/RuleTester$/u.test(this.text(callee.object)) && method === "only") return this.ev(node.arguments[0], env);
     const args = this.args(node.arguments, env);
     if (args === UNRESOLVED) return UNRESOLVED;
-    if (this.text(callee) === "Object.assign") {
-      if (!args.every(isObjectValue)) return UNRESOLVED;
-      const merged: ObjectValue = { type: "object", props: new Map(), unresolvedSpread: args.some((arg) => arg.unresolvedSpread) };
-      for (const arg of args) for (const [key, entry] of arg.props) merged.props.set(key, entry);
-      return merged;
-    }
+    if (this.text(callee) === "Object.assign") return objectAssign(args);
     const target = this.ev(callee.object, env);
     if (target === UNRESOLVED) return UNRESOLVED;
+    return this.callOn(target, method, args);
+  }
+
+  private callOn(target: Value, method: string, args: Value[]): Value {
     if (typeof target === "string") return stringMethod(target, method, args);
     const array = this.materialize(target);
-    if (array === null) return UNRESOLVED;
+    return array === null ? UNRESOLVED : this.arrayMethod(array, method, args);
+  }
+
+  private arrayMethod(array: Value[], method: string, args: Value[]): Value {
     switch (method) {
       case "join":
         return array.every((item) => typeof item === "string" || typeof item === "number") ? array.join(typeof args[0] === "string" ? args[0] : ",") : UNRESOLVED;
@@ -331,6 +336,14 @@ class Evaluator {
     const entry = object.props.get(key);
     return entry === undefined ? "" : this.text(entry.node);
   }
+}
+
+/** `Object.assign` of object values read statically: a later object's keys replace an earlier one's. */
+function objectAssign(args: Value[]): Value {
+  if (!args.every(isObjectValue)) return UNRESOLVED;
+  const merged: ObjectValue = { type: "object", props: new Map(), unresolvedSpread: args.some((arg) => arg.unresolvedSpread) };
+  for (const arg of args) for (const [key, entry] of arg.props) merged.props.set(key, entry);
+  return merged;
 }
 
 /** `target.<method>(...args)` for the string methods test files build code with. */

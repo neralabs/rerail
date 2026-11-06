@@ -253,6 +253,49 @@ class Exclusions {
   }
 }
 
+/** One remote's sync, once it holds the lock. */
+interface RemoteSync {
+  readonly state: Database.Database;
+  readonly remote: RemoteEntry;
+  readonly exclusions: readonly RepositoryExclusion[];
+  readonly options: SyncOptions;
+  readonly key: string;
+  readonly token: string;
+  readonly configHash: string;
+}
+
+/** A sync sending batches: what it has sent so far, and how large the next batch may be. */
+interface BatchSending extends RemoteSync {
+  readonly rerail: Database.Database | undefined;
+  readonly rules: RuleDocuments;
+  batches: number;
+  records: number;
+  maxSendable: number;
+  skipped: number;
+}
+
+type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | { kind: "unauthorized"; error: string } | { kind: "retry"; error: string };
+
+const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 0 && batch.oversized.length === 0;
+
+const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** What the remote's answer to a batch means: `detail` is its status, and the start of its body when it sent one. */
+function postOutcome(status: number, detail: string): PostOutcome {
+  switch (status) {
+    case 200:
+      return { kind: "accepted" };
+    case 401:
+    case 403:
+      return { kind: "unauthorized", error: `unauthorized (${detail})` };
+    case 400:
+    case 413:
+      return { kind: "rejected", error: `rejected (${detail})` };
+    default:
+      return { kind: "retry", error: `HTTP ${detail}` };
+  }
+}
+
 export class RemoteOutbox {
   readonly #home: string;
   readonly #fetch: typeof fetch;
@@ -379,71 +422,99 @@ export class RemoteOutbox {
     const state = openState(this.#home);
     try {
       const configHash = hashOf([remote, exclusions]);
-      const row = state.prepare("SELECT next_attempt_at, config_hash FROM status WHERE remote = ?").get(key) as { next_attempt_at: number | null; config_hash: string | null } | undefined;
-      // A changed configuration (a new token, a URL) is tried at once.
-      const backingOff = row?.next_attempt_at != null && row.next_attempt_at > this.#now() && row.config_hash === configHash;
-      if (backingOff && options.force !== true) return { remote: remote.name, batches: 0, records: 0, skipped: "backoff" };
+      if (this.#isBackingOff(state, key, configHash) && options.force !== true) return { remote: remote.name, batches: 0, records: 0, skipped: "backoff" };
       if (!this.#lock(state, key)) return { remote: remote.name, batches: 0, records: 0, skipped: "locked" };
       try {
-        let batches = 0;
-        let records = 0;
-        const rerail = this.#openRerail();
-        try {
-          const rules = new RuleDocuments(rerail);
-          const budget = options.batchBytes ?? MAX_BATCH_BYTES;
-          let maxSendable = Number.POSITIVE_INFINITY;
-          let skipped = 0;
-          for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
-            if (options.signal?.aborted === true) break;
-            const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, maxSendable);
-            if (batch.records.length === 0 && batch.oversized.length === 0) break;
-            const sendable = batch.records.filter(item => item.line !== "").length;
-            if (sendable === 0) {
-              // Only opted-out events and records too large to send: nothing goes out, the cursor moves past them.
-              this.#acknowledge(state, key, batch.records, batch.oversized, undefined);
-              continue;
-            }
-            const outcome = await this.#post(remote, token, batch.records, options.signal);
-            if (!this.#lock(state, key)) return { remote: remote.name, batches, records, skipped: "locked" };
-            // Removed (or removed and added again) while the batch was out: nothing more is sent or recorded for it.
-            if (!this.#configured(key)) return { remote: remote.name, batches, records, skipped: "removed" };
-            if (outcome.kind === "rejected" && sendable > 1) {
-              // Find the record the remote refuses before giving anything up: halve the batch and send again.
-              maxSendable = Math.max(1, Math.floor(sendable / 2));
-              continue;
-            }
-            if (outcome.kind === "accepted" || outcome.kind === "rejected") {
-              this.#acknowledge(state, key, batch.records, batch.oversized, outcome.kind === "rejected" ? outcome.error : undefined);
-              batches += 1;
-              records += batch.records.length;
-              maxSendable = Number.POSITIVE_INFINITY;
-              if (outcome.kind === "rejected") {
-                skipped += 1;
-                // A remote that refuses record after record is broken, not this data: stop, and try again later.
-                if (skipped >= MAX_SKIPPED_RECORDS_PER_SYNC) {
-                  this.#recordFailure(state, key, configHash, outcome.error, false);
-                  return { remote: remote.name, batches, records, error: outcome.error };
-                }
-              }
-              this.#recordSuccess(state, key, configHash, batch.records.length, outcome.kind === "rejected" ? outcome.error : null);
-              continue;
-            }
-            this.#recordFailure(state, key, configHash, outcome.error, outcome.kind === "unauthorized");
-            return { remote: remote.name, batches, records, error: outcome.error };
-          }
-          if (batches === 0) this.#recordSuccess(state, key, configHash, 0, null);
-          return { remote: remote.name, batches, records };
-        } finally {
-          rerail?.close();
-        }
+        return await this.#sendBatches({ state, remote, exclusions, options, key, token, configHash });
       } finally {
         state.prepare("DELETE FROM locks WHERE remote = ? AND holder = ?").run(key, this.#holder);
       }
     } catch (error) {
-      return { remote: remote.name, batches: 0, records: 0, error: error instanceof Error ? error.message : String(error) };
+      return { remote: remote.name, batches: 0, records: 0, error: errorMessage(error) };
     } finally {
       state.close();
     }
+  }
+
+  /** Waiting out a failure; a changed configuration (a new token, a URL) is tried at once. */
+  #isBackingOff(state: Database.Database, key: string, configHash: string): boolean {
+    const row = state.prepare("SELECT next_attempt_at, config_hash FROM status WHERE remote = ?").get(key) as { next_attempt_at: number | null; config_hash: string | null } | undefined;
+    return row?.next_attempt_at != null && row.next_attempt_at > this.#now() && row.config_hash === configHash;
+  }
+
+  /** Sends batches until nothing is left, the sync's limit, or one that ends the sync. */
+  async #sendBatches(sync: RemoteSync): Promise<SyncResult> {
+    const { state, remote, options, key, configHash } = sync;
+    const rerail = this.#openRerail();
+    try {
+      const sending: BatchSending = { ...sync, rerail, rules: new RuleDocuments(rerail), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0 };
+      for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
+        if (options.signal?.aborted === true) break;
+        const step = await this.#sendBatch(sending);
+        if (step === "done") break;
+        if (step !== "next") return step;
+      }
+      if (sending.batches === 0) this.#recordSuccess(state, key, configHash, 0, null);
+      return { remote: remote.name, batches: sending.batches, records: sending.records };
+    } finally {
+      rerail?.close();
+    }
+  }
+
+  /** One batch collected and sent: what comes next, or the result that ends the sync. */
+  async #sendBatch(sending: BatchSending): Promise<SyncResult | "done" | "next"> {
+    const { state, rerail, rules, remote, exclusions, options, key, token } = sending;
+    const budget = options.batchBytes ?? MAX_BATCH_BYTES;
+    const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, sending.maxSendable);
+    if (isEmptyBatch(batch)) return "done";
+    const sendable = batch.records.filter(item => item.line !== "").length;
+    if (sendable === 0) {
+      // Only opted-out events and records too large to send: nothing goes out, the cursor moves past them.
+      this.#acknowledge(state, key, batch.records, batch.oversized, undefined);
+      return "next";
+    }
+    const outcome = await this.#post(remote, token, batch.records, options.signal);
+    const stopped = this.#stoppedWhileOut(sending);
+    if (stopped !== undefined) return stopped;
+    if (outcome.kind === "rejected" && sendable > 1) {
+      // Find the record the remote refuses before giving anything up: halve the batch and send again.
+      sending.maxSendable = Math.max(1, Math.floor(sendable / 2));
+      return "next";
+    }
+    return this.#settleBatch(sending, batch, outcome);
+  }
+
+  /** The result that ends the sync when the lock is lost or the remote is removed (or removed and added again) while a batch was out: nothing more is sent or recorded for it. */
+  #stoppedWhileOut({ state, key, remote, batches, records }: BatchSending): SyncResult | undefined {
+    if (!this.#lock(state, key)) return { remote: remote.name, batches, records, skipped: "locked" };
+    return this.#configured(key) ? undefined : { remote: remote.name, batches, records, skipped: "removed" };
+  }
+
+  #settleBatch(sending: BatchSending, batch: BatchBuilder, outcome: PostOutcome): SyncResult | "next" {
+    const { state, key, configHash, remote, batches, records } = sending;
+    if (outcome.kind === "accepted") return this.#settleTaken(sending, batch, undefined);
+    if (outcome.kind === "rejected") return this.#settleTaken(sending, batch, outcome.error);
+    this.#recordFailure(state, key, configHash, outcome.error, outcome.kind === "unauthorized");
+    return { remote: remote.name, batches, records, error: outcome.error };
+  }
+
+  /** The remote took the batch (`refused`: all but the record it refused), so the cursor moves past it. */
+  #settleTaken(sending: BatchSending, batch: BatchBuilder, refused: string | undefined): SyncResult | "next" {
+    const { state, key, configHash, remote } = sending;
+    this.#acknowledge(state, key, batch.records, batch.oversized, refused);
+    sending.batches += 1;
+    sending.records += batch.records.length;
+    sending.maxSendable = Number.POSITIVE_INFINITY;
+    if (refused !== undefined) {
+      sending.skipped += 1;
+      // A remote that refuses record after record is broken, not this data: stop, and try again later.
+      if (sending.skipped >= MAX_SKIPPED_RECORDS_PER_SYNC) {
+        this.#recordFailure(state, key, configHash, refused, false);
+        return { remote: remote.name, batches: sending.batches, records: sending.records, error: refused };
+      }
+    }
+    this.#recordSuccess(state, key, configHash, batch.records.length, refused ?? null);
+    return "next";
   }
 
   /** One sender per remote across processes (the daemon, `rerail remote push`); a lock left by a dead one expires. */
@@ -595,9 +666,7 @@ export class RemoteOutbox {
     return batch.add(record("rule", provenance.payloadHash, { ruleId: provenance.ruleId, kind: document.kind, mode, document: document.rule }, { hash: provenance.payloadHash }));
   }
 
-  async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<
-    { kind: "accepted" } | { kind: "rejected"; error: string } | { kind: "unauthorized"; error: string } | { kind: "retry"; error: string }
-  > {
+  async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<PostOutcome> {
     const header = {
       type: "batch",
       protocol: SINK_PROTOCOL,
@@ -617,14 +686,10 @@ export class RemoteOutbox {
         signal: stop === undefined ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), stop]),
       });
     } catch (error) {
-      return { kind: "retry", error: error instanceof Error ? error.message : String(error) };
+      return { kind: "retry", error: errorMessage(error) };
     }
     const body = await response.text().catch(() => "");
-    const detail = `${response.status}${body === "" ? "" : ` ${body.slice(0, 200)}`}`;
-    if (response.status === 200) return { kind: "accepted" };
-    if (response.status === 401 || response.status === 403) return { kind: "unauthorized", error: `unauthorized (${detail})` };
-    if (response.status === 400 || response.status === 413) return { kind: "rejected", error: `rejected (${detail})` };
-    return { kind: "retry", error: `HTTP ${detail}` };
+    return postOutcome(response.status, `${response.status}${body === "" ? "" : ` ${body.slice(0, 200)}`}`);
   }
 
   /** The remote holds `records` (or refused them for good, `rejected`): cursors and hashes move past them. */
@@ -796,7 +861,7 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
         else if (result.skipped === undefined) lastErrors.delete(result.remote);
       }
     }, (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       if (lastErrors.get("") !== message) log(`rerail daemon: remote sink: ${message}\n`);
       lastErrors.set("", message);
     }).finally(() => { running = undefined; });

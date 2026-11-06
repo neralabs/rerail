@@ -569,57 +569,92 @@ async function repairLauncherPath(context: SetupContext): Promise<string | undef
   return describeLauncherPath(change, binDir, "add");
 }
 
-export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
-  const { flags, options } = parseArguments(
-    args,
-    { flags: ["--dry-run", "--remove", "--refresh", "--delete-data"], options: ["--root", "--agents"] },
-    argument => `Unknown install option: ${argument}`,
-  );
-  if (flags.has("--refresh")) {
-    if (flags.size > 1 || options.size > 0) throw new Error("install --refresh takes no other options");
-    return await runRefresh(context);
-  }
-  const parsed = registrationArguments(options, flags);
+/** What one `rerail install` is to do, checked before anything changes. */
+interface InstallPlan {
+  readonly parsed: ReturnType<typeof registrationArguments>;
+  /** The root `--root` names. */
+  readonly explicitRoot: string | undefined;
+  readonly root: string;
+  readonly remove: boolean;
+  readonly deleteData: boolean;
+  /** The managed install: `current`, or before any set-up the running package, which is what Pi's gallery entry stands in for. A checkout registered with `--root` never wrote it. */
+  readonly managed: boolean;
+  /** Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a checkout registered with `--root`, leaves the shared rules and history in place. */
+  readonly uninstall: boolean;
+}
+
+async function installRoot(options: ReadonlyMap<string, string>, context: SetupContext, remove: boolean, dryRun: boolean): Promise<Pick<InstallPlan, "explicitRoot" | "root" | "managed">> {
   const rootArgument = options.get("--root");
   const explicitRoot = rootArgument === undefined ? undefined : resolve(rootArgument);
+  const root = explicitRoot === undefined
+    ? registrationRoot(context)
+    : await activateExplicitRoot(context, explicitRoot, remove, dryRun);
+  return { explicitRoot, root, managed: explicitRoot === undefined || root === context.updater.currentLink };
+}
+
+async function planInstall(flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, context: SetupContext): Promise<InstallPlan> {
+  const parsed = registrationArguments(options, flags);
   const remove = flags.has("--remove");
   const deleteData = flags.has("--delete-data");
   if (deleteData && !remove) throw new Error("install --delete-data goes with --remove");
-  const root = explicitRoot === undefined
-    ? registrationRoot(context)
-    : await activateExplicitRoot(context, explicitRoot, remove, parsed.dryRun);
-  // Removing every coding agent from the managed install is the uninstall. Removing one coding agent, or a
-  // checkout registered with `--root`, leaves the shared rules and history in place.
-  const uninstall = remove && parsed.hosts === undefined && (explicitRoot === undefined || root === context.updater.currentLink);
+  const located = await installRoot(options, context, remove, parsed.dryRun);
+  const uninstall = isUninstall(remove, parsed.hosts, located.managed);
   // Checked before anything changes: the data is everyone's, so only the whole uninstall deletes it.
   if (deleteData && !uninstall) throw new Error("install --delete-data deletes every repository's history, so it only goes with removing Rerail from every coding agent: drop --agents, and --root unless it names the active install");
+  return { parsed, remove, deleteData, uninstall, ...located };
+}
+
+/** The whole uninstall: the managed install removed from every coding agent, with no `--agents` list narrowing it. */
+const isUninstall = (remove: boolean, hosts: readonly Harness[] | undefined, managed: boolean): boolean => remove && hosts === undefined && managed;
+
+/** Registers with or unregisters from the coding agents, and records the agents it saw. */
+async function applyInstallPlan({ parsed, root, remove, managed }: InstallPlan, context: SetupContext): Promise<void> {
   process.stdout.write(`${remove ? "Removing Rerail from" : "Connecting Rerail to"} coding agents for ${root}${parsed.dryRun ? " (dry run)" : ""}\n`);
-  // The managed install: `current`, or before any set-up the running package, which is what Pi's gallery entry stands
-  // in for, so its removal takes that entry out too. A checkout registered with `--root` never wrote it.
-  const managed = explicitRoot === undefined || root === context.updater.currentLink;
+  // Pi's gallery entry goes with the managed install, so its removal takes that entry out too.
   const report = remove
     ? await unregisterHarnesses({ ...registrationOptions(root, codingAgentHome(), parsed), managed })
     : await registerHarnesses(registrationOptions(root, codingAgentHome(), parsed));
   printReport(report, parsed.dryRun);
   // What `rerail install` found or was named is seen, so set-up run again connects no agent behind this choice.
   if (!parsed.dryRun) await recordSeenCodingAgents(context.home, [...detectHarnesses(codingAgentHome()), ...(parsed.hosts ?? [])]);
+}
 
-  if (uninstall) {
-    if (deleteData) await deleteRulesAndHistory(context.home, parsed.dryRun);
-    else await backUpRulesAndHistory(context.home, parsed.dryRun);
-    const binDir = dirname(context.updater.launcherPath);
-    const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
-    if (removed !== undefined) process.stdout.write(`${removed}\n`);
-    if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
-    await removeInstallation(context, parsed.dryRun);
-  }
-  if (explicitRoot !== undefined && !remove) {
-    const binDir = dirname(context.updater.launcherPath);
-    const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
-    await recordLauncherPath(context.home, change, parsed.dryRun);
-    const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
-    process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
-  }
+/** What only the uninstall takes out: the data (or a backup of it), the launcher on PATH and the installation. */
+async function finishUninstall({ parsed, deleteData }: InstallPlan, context: SetupContext): Promise<void> {
+  if (deleteData) await deleteRulesAndHistory(context.home, parsed.dryRun);
+  else await backUpRulesAndHistory(context.home, parsed.dryRun);
+  const binDir = dirname(context.updater.launcherPath);
+  const removed = describeLauncherPath(await removeLauncherFromPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun }), binDir, "remove", parsed.dryRun);
+  if (removed !== undefined) process.stdout.write(`${removed}\n`);
+  if (!parsed.dryRun) await rm(launcherPathMarker(context.home), { force: true });
+  await removeInstallation(context, parsed.dryRun);
+}
+
+/** A checkout registered with `--root` gets the launcher on PATH too, and says what to do next. */
+async function finishExplicitRoot({ parsed }: InstallPlan, context: SetupContext): Promise<void> {
+  const binDir = dirname(context.updater.launcherPath);
+  const change = await addLauncherToPath({ binDir, home: codingAgentHome(), dryRun: parsed.dryRun });
+  await recordLauncherPath(context.home, change, parsed.dryRun);
+  const pathLine = describeLauncherPath(change, binDir, "add", parsed.dryRun);
+  process.stdout.write(["", ...(pathLine === undefined ? [] : [pathLine]), "Next:", "  restart Cursor, Claude Code, Codex, OMP, or Pi so they load the new hooks", ""].join("\n"));
+}
+
+async function runRefreshAlone(flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, context: SetupContext): Promise<number> {
+  if (flags.size > 1 || options.size > 0) throw new Error("install --refresh takes no other options");
+  return await runRefresh(context);
+}
+
+export async function runInstallCommand(args: readonly string[], context: SetupContext): Promise<number> {
+  const { flags, options } = parseArguments(
+    args,
+    { flags: ["--dry-run", "--remove", "--refresh", "--delete-data"], options: ["--root", "--agents"] },
+    argument => `Unknown install option: ${argument}`,
+  );
+  if (flags.has("--refresh")) return await runRefreshAlone(flags, options, context);
+  const plan = await planInstall(flags, options, context);
+  await applyInstallPlan(plan, context);
+  if (plan.uninstall) await finishUninstall(plan, context);
+  if (plan.explicitRoot !== undefined && !plan.remove) await finishExplicitRoot(plan, context);
   return 0;
 }
 
