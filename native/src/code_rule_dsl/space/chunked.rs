@@ -589,6 +589,35 @@ impl NodeSet {
             // words, so those cost more than the words): each run toggles the bit at its start
             // and the bit after its end; a prefix xor over the words turns the toggles into the
             // runs' mask, and-ed with the bitmap and counted in the same pass.
+            // Long runs (whole files, `within_files`): the inner words are copied and only the
+            // edges masked, then one vectorized count.
+            (Op::And, Bitmap(x), Runs(r)) | (Op::And, Runs(r), Bitmap(x))
+                if r.iter().map(|&(s, l)| usize::from(l - s) + 1).sum::<usize>() >= 512 * r.len() =>
+            {
+                let at = self.words.len();
+                let len = x.len().min(r.last().map_or(0, |&(_, l)| words_to(l)));
+                self.words.resize(at + len, 0);
+                let out = &mut self.words[at..];
+                for &(s, l) in r {
+                    let ws = usize::from(s) / 64;
+                    if ws >= len {
+                        break;
+                    }
+                    let wl = usize::from(l) / 64;
+                    let lo = !0u64 << (s % 64);
+                    let hi = if wl < len { !0u64 >> (63 - l % 64) } else { !0 };
+                    let wl = wl.min(len - 1);
+                    if ws == wl {
+                        out[ws] |= x[ws] & lo & hi;
+                        continue;
+                    }
+                    out[ws] |= x[ws] & lo;
+                    out[ws + 1..wl].copy_from_slice(&x[ws + 1..wl]);
+                    out[wl] |= x[wl] & hi;
+                }
+                let n = count(out);
+                self.seal_counted(k, at, n)
+            }
             (Op::And, Bitmap(x), Runs(r)) | (Op::And, Runs(r), Bitmap(x)) => {
                 let at = self.words.len();
                 let len = x.len().min(r.last().map_or(0, |&(_, l)| words_to(l)));
@@ -684,10 +713,12 @@ impl NodeSet {
 
     /// `op` with `other`, chunk by chunk; `keep_left`/`keep_right` copy chunks present on one side.
     fn apply(&self, other: &Self, op: Op) -> Self {
-        // The result's buffers reserved once: an intersection is at most the smaller side, and the
-        // others at most both.
+        // The result's buffers reserved once: an intersection's directory is at most the smaller
+        // side's, and the others at most both.
         let (d, v, w) = match op {
-            Op::And => (self.directory.len().min(other.directory.len()), self.values.len().min(other.values.len()), self.words.len().min(other.words.len())),
+            // An intersection's bitmaps come from either side's (a bitmap within runs keeps the
+            // bitmap's words), so the larger side bounds them.
+            Op::And => (self.directory.len().min(other.directory.len()), self.values.len().max(other.values.len()), self.words.len().max(other.words.len())),
             Op::AndNot => (self.directory.len(), self.values.len(), self.words.len()),
             Op::Or => (self.directory.len() + other.directory.len(), self.values.len() + other.values.len(), self.words.len() + other.words.len()),
         };
@@ -801,57 +832,87 @@ impl NodeSet {
     /// Keeps the set's nodes in files where each of `tests` has a node.
     pub(in crate::code_rule_dsl) fn within_files(&mut self, space: &NodeSpace, tests: &[&Self]) {
         let Some((first, rest)) = tests.split_first() else { return };
-        let mut kept = Builder::default();
-        let mut open: Option<std::ops::Range<u32>> = None;
-        // The first test's files, kept where every other test has a node too.
+        // The first test's files, kept where every other test has a node too, as ranges: files
+        // next to each other are one range.
+        let mut kept: Vec<std::ops::Range<u32>> = Vec::new();
         for file in first.files(space) {
             let range = space.range(file);
             if rest.iter().all(|test| test.any_in(range.clone())) {
-                match &mut open {
+                match kept.last_mut() {
                     Some(r) if r.end == range.start => r.end = range.end,
-                    _ => {
-                        if let Some(r) = open.replace(range) {
-                            kept.run(r.start, r.end);
+                    _ => kept.push(range),
+                }
+            }
+        }
+        *self = self.intersection(&Self::from_ranges(&kept));
+    }
+
+    /// The set of node ranges `ranges` (sorted, apart): runs containers, written directly.
+    fn from_ranges(ranges: &[std::ops::Range<u32>]) -> Self {
+        let mut set = Self::default();
+        let mut open: Option<(u64, usize)> = None;
+        for r in ranges {
+            let mut s = r.start;
+            while s < r.end {
+                let e = r.end.min((s | 0xffff) + 1);
+                let (k, a) = key(s);
+                if open.is_none_or(|(ok, _)| ok != k) {
+                    if let Some((ok, from)) = open.take() {
+                        set.seal_runs(ok, from);
+                    }
+                    open = Some((k, set.values.len()));
+                }
+                set.values.extend([a, (e - 1) as u16]);
+                s = e;
+            }
+        }
+        if let Some((ok, from)) = open {
+            set.seal_runs(ok, from);
+        }
+        set
+    }
+
+    /// The files holding a member, ascending, each once. A sparse chunk's members are walked with
+    /// a cursor over the files; a dense one asks once per file it overlaps.
+    fn files(&self, space: &NodeSpace) -> Vec<usize> {
+        let mut out: Vec<usize> = Vec::new();
+        let files = space.files();
+        let mut file = 0usize;
+        for e in &self.directory {
+            let base = (e.key as u32) << 16;
+            match self.view(e) {
+                View::Array(a) => {
+                    for &v in a {
+                        let node = base | u32::from(v);
+                        while space.range(file).end <= node {
+                            file += 1;
+                        }
+                        if out.last() != Some(&file) {
+                            out.push(file);
                         }
                     }
                 }
-            }
-        }
-        if let Some(r) = open {
-            kept.run(r.start, r.end);
-        }
-        *self = self.intersection(&kept.finish());
-    }
-
-    /// The files holding a member, ascending, each once.
-    fn files<'a>(&'a self, space: &'a NodeSpace) -> impl Iterator<Item = usize> + 'a {
-        let mut last = None;
-        self.files_by_chunk(space).filter(move |&f| last.replace(f) != Some(f))
-    }
-
-    /// Per chunk, the files with a member in it: a file across chunks may come twice.
-    fn files_by_chunk<'a>(&'a self, space: &'a NodeSpace) -> impl Iterator<Item = usize> + 'a {
-        let mut file = 0usize;
-        self.directory.iter().flat_map(move |e| {
-            let base = (e.key as u32) << 16;
-            let view = self.view(e);
-            let mut held = Vec::new();
-            // Files are ranges: per file overlapping the chunk, one range query.
-            while file < space.files() && space.base(file) < base + 65_536 {
-                let range = space.range(file);
-                if range.end > base && range.start < range.end {
-                    let (a, b) = (range.start.max(base) - base, (range.end - 1).min(base + 65_535) - base);
-                    if view.any_between(a as u16, b as u16) {
-                        held.push(file);
+                view => {
+                    while file < files && space.range(file).end <= base {
+                        file += 1;
+                    }
+                    while file < files && space.base(file) < base + 65_536 {
+                        let range = space.range(file);
+                        if !range.is_empty() {
+                            let (a, b) = (range.start.max(base) - base, (range.end - 1).min(base + 65_535) - base);
+                            if out.last() != Some(&file) && view.any_between(a as u16, b as u16) {
+                                out.push(file);
+                            }
+                        }
+                        if range.end > base + 65_536 {
+                            break;
+                        }
+                        file += 1;
                     }
                 }
-                if range.end > base + 65_536 {
-                    break;
-                }
-                file += 1;
             }
-            held
-        })
+        }
+        out
     }
 
     /// Whether a member is in `range` (of nodes).

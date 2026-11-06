@@ -265,8 +265,8 @@ aligned to words or chunks). Thread CPU per operation; load 34-57:
 | decorator ∩ call | 0.14 | 0.24 | 0.04 |
 | call ∪ await | 0.12 | 0.42 | 0.26 |
 | inside function ∪ inside class | 0.11 | 0.63 | 0.52 |
-| call within files of raise | 0.21 | 0.51 | 0.97 |
-| identifier within files of await | 0.27 | 0.39 | 0.65 |
+| call within files of raise | 0.21 | 0.51 | 0.97, then 0.22 (below) |
+| identifier within files of await | 0.27 | 0.39 | 0.65, then 0.14 (below) |
 | clone call | 0.08 | 0.07 | 0.05 |
 
 The per-file column is from the step 2 run (load 78), with that step's code. `set_profile`, with
@@ -295,9 +295,30 @@ What it shows:
 - **Large sets are still 2 to 6 times slower than dense.** They are compute-bound, as the
   previous section shows. What is left is the runs mask (about 15 instructions per word) and the
   count.
-- **`within` is slower: 0.97 ms against 0.51 ms.** With per-file chunks a held file's chunks
-  were copied whole. Now it is an intersection with the held files' ranges, a pass over the
-  dense side's words. A file-range mask that copies whole words would recover it.
+- **`within` was slower at first: 0.97 ms against 0.51 ms per file.** A profile of `call within
+  files of raise` (648 µs, 12.4 M instructions; dense 121 µs, 1.7 M; the benchmark's clone of
+  `call` included on both sides) showed three costs:
+  - 41%: building the kept files' ranges through `Builder`. Its seal scanned all 1,024 words of
+    each chunk to count members and find runs that were already known.
+  - 32%: intersecting with those ranges by the toggle-and-prefix-xor mask, about 15
+    instructions on each of `call`'s 287 K words, though a kept range is whole files (32 words
+    or more).
+  - 12%: finding the test's files. That was a `Vec` per chunk and one range query per file of the
+    space, even for a sparse test.
+
+  Now:
+  - the ranges are written directly as runs containers;
+  - a bitmap within runs averaging 8 words or more copies the inner words and masks only the
+    edges, then counts in one vectorized pass;
+  - a sparse chunk's files are found by walking its members with a cursor over the files.
+
+  `call within files of raise`: 199 µs and 3.7 M instructions (dense 128 µs). In
+  `set_operations` at load 18:
+  - call within files of raise: 0.22 ms (dense 0.14, per-file chunks 0.51 at load 78);
+  - identifier within files of await: 0.14 ms (dense 0.17, per-file 0.39).
+
+  What is left is mostly the benchmark's clone, the copy and the count, and turning sparse
+  results into arrays.
 - **Reading postings doubles**, from 66 to 135 ms over the whole repository. It is still faster
   than delta-varint, and it is paid once per batch.
 

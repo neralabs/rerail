@@ -572,6 +572,7 @@ fn set_profile() {
         ("identifier ∩ inside class (runs)", "identifier", "inside:class_definition", false),
         ("raise ∩ inside except (sparse)", "raise_statement", "inside:except_clause", false),
         ("await ∩ call (sparse ∩ dense-ish)", "await", "call", false),
+        ("call within files of raise", "call", "raise_statement", false),
     ]
     .iter()
     .map(|&(label, a, b, bitmaps)| {
@@ -595,10 +596,20 @@ fn set_profile() {
         while start.elapsed().as_secs_f64() < seconds {
             if side == "dense" {
                 let mut x = da.clone();
-                x.intersect_with(db);
+                if label.contains("within") {
+                    x.within_files(&space, &[db]);
+                } else {
+                    x.intersect_with(db);
+                }
                 std::hint::black_box(x);
             } else {
-                std::hint::black_box(ca.intersection(cb));
+                if label.contains("within") {
+                    let mut x = ca.clone();
+                    x.within_files(&space, &[cb]);
+                    std::hint::black_box(x);
+                } else {
+                    std::hint::black_box(ca.intersection(cb));
+                }
             }
             n += 1;
         }
@@ -610,7 +621,18 @@ fn set_profile() {
     println!("\ncase\tform\tregime\tµs/op\tinstr/op (M)\tcycles/op (M)\tIPC\tbytes in+out (MB)\tGB/s\tinstr/byte");
     for (label, (da, ca), (db, cb)) in &cases {
         let dense_bytes = 3 * space.words() * 8;
-        let chunk_bytes = ca.bytes() + cb.bytes() + ca.intersection(cb).bytes();
+        let within = label.contains("within");
+        let result = if within {
+            let mut x = ca.clone();
+            x.within_files(&space, &[cb]);
+            let mut d = da.clone();
+            d.within_files(&space, &[db]);
+            assert_eq!(NodeSet::from_words(&space, d.words()), x, "{label}");
+            x
+        } else {
+            ca.intersection(cb)
+        };
+        let chunk_bytes = ca.bytes() + cb.bytes() + result.bytes();
         for (side, set) in [("a", ca), ("b", cb), ("a∩b", &ca.intersection(cb))] {
             let [arrays, bitmaps, runs] = set.census();
             println!("# {label} {side}: arrays {arrays:?} bitmaps {bitmaps:?} runs {runs:?} (chunks, elements)");
@@ -635,10 +657,20 @@ fn set_profile() {
                     let k = r % copies;
                     if form == "dense" {
                         let mut x = dense_a[k].clone();
-                        x.intersect_with(&dense_b[k]);
+                        if within {
+                            x.within_files(&space, &[&dense_b[k]]);
+                        } else {
+                            x.intersect_with(&dense_b[k]);
+                        }
                         std::hint::black_box(x);
                     } else {
-                        std::hint::black_box(chunk_a[k].intersection(&chunk_b[k]));
+                        if within {
+                            let mut x = chunk_a[k].clone();
+                            x.within_files(&space, &[&chunk_b[k]]);
+                            std::hint::black_box(x);
+                        } else {
+                            std::hint::black_box(chunk_a[k].intersection(&chunk_b[k]));
+                        }
                     }
                 }
                 let (spent, (i1, c1)) = (thread_cpu() - t, counters());
