@@ -1,0 +1,22 @@
+.policy "n-no-unsupported-features-es-builtins" revision 4
+.description "Use only the ECMAScript built-ins that every Node.js version in the package's engines.node range provides, or raise that range."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-unsupported-features/es-builtins: ECMAScript built-in globals (and their static members)
+// that a release in the configured Node.js range lacks. The table is generated
+// (n-no-unsupported-features-es-builtins.facts.rr); this file is the check.
+//   engines.node ">=18.0.0":   Object.groupBy(xs, f)    Promise.withResolvers()    reported (21.0.0, 22.0.0)
+//                              Array.from(xs)    const Promise = P; Promise.withResolvers()    not
+// A global is followed as values.rr follows it: unshadowed, through globalThis, aliases and destructuring.
+// ignores lists names to skip: "Object.groupBy". The range: the version option, else engines.node.
+
+#include "tsx/node.rr"   // node_runs_on; values.rr's api_use
+#include "../packs/node/n-no-unsupported-features-es-builtins.facts.rr"   // es_since
+
+.violation es_unsupported(at: node, name: symbol, since: symbol, cfg: symbol)
+    code "n/no-unsupported-features/es-builtins"
+    "The '{name}' is still an experimental feature and is not supported until Node.js {since}. The configured version range is '{cfg}'."
+    suppress eslint "n/no-unsupported-features/es-builtins"
+es_unsupported(at, a, v, r) :- api_use(at, a, "read"), es_since(a, v), !option_item("ignores", _, a), docof(at, d),
+    node_runs_on(d, r), @semver_subset(r, cat(">=", v)) = 0.

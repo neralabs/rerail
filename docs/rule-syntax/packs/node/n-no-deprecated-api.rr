@@ -1,0 +1,65 @@
+.policy "n-no-deprecated-api" revision 5
+.description "Avoid deprecated Node.js APIs, such as new Buffer() or the domain module; they may be removed and usually have safer replacements."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-deprecated-api: uses of Node.js APIs that are deprecated (or removed), whatever release
+// the package runs on. The APIs are a generated table (n-no-deprecated-api.facts.rr); this file is the check.
+//   new Buffer(8)    require("domain")    fs.exists(p, cb)    import { exists } from "node:fs"    process.binding
+//                                                                    each reported, with what replaces it
+//   Buffer.alloc(8)    const Buffer = f(); new Buffer(8)                                   not
+// Module APIs follow require(), process.getBuiltinModule(), imports and aliases (tsx/node-trace); globals follow
+// the global (unshadowed) or globalThis. A replacement list keeps the ones every configured release has (the
+// version option, else the package's engines.node). ignoreModuleItems and ignoreGlobalItems name what to skip as
+// the message names it, without quotes: "fs.exists", "new buffer.Buffer()", "domain", "process.binding".
+
+#include "tsx/node-trace.rr"                               // module_use; values.rr's api_use
+#include "../packs/node/n-no-deprecated-api.facts.rr"      // dep, dep_hint, dep_alt
+
+// base(at, api, how, list, b): at uses deprecated api as how; b is its name, unprefixed ("fs.exists"), and list
+// the option that can ignore it.
+.decl base(at: node, api: symbol, how: symbol, list: symbol, b: symbol)
+base(at, m, "load", "ignoreModuleItems", @replace_all(m, "^node:", "")) :- module_use(at, m, "", f),
+    (f = "require" ; f = "esm"), dep(m, "load", _, _).
+base(at, a, how, "ignoreModuleItems", @replace_all(cat(cat(m, "."), mx), "^node:", "")) :- module_use(at, m, mx, f),
+    mx != "", form_how(f, how), a = @qname(m, mx), dep(a, how, _, _).
+base(at, g, how, "ignoreGlobalItems", g) :- api_use(at, g, how), how != "load", !contains("#", g), dep(g, how, _, _).
+// GLOBAL, root and COUNTER_*: no environment declares them, so ReferenceTracker sees them only where a
+// `/* global GLOBAL */` comment does. (values.rr's env_global asks node_global for those too.)
+base(r, g, "read", "ignoreGlobalItems", g) :- dep(g, "read", _, _), !contains("#", g), !node_global(g),
+    ref(r, g, "value"), !ref_site(r, _), docof(r, d), directive_global(d, g).
+.decl form_how(f: symbol, how: symbol)
+form_how("call", "call"). form_how("new", "new"). form_how("member", "read"). form_how("destructured", "read").
+form_how("specifier", "read"). form_how("export_all", "read").
+// use(at, api, how, name): the uses the options keep; name as the plugin shows it: "fs.exists()", "new Buffer()",
+// "'domain' module".
+.decl use(at: node, api: symbol, how: symbol, name: symbol)
+use(at, a, how, nm) :- base(at, a, how, l, b), how = "read", nm = cat(cat("'", b), "'"), !option_item(l, _, b).
+use(at, a, how, nm) :- base(at, a, how, l, b), how = "load", nm = cat(cat("'", b), "' module"), !option_item(l, _, b).
+use(at, a, how, nm) :- base(at, a, how, l, b), how = "call", c = cat(b, "()"), nm = cat(cat("'", c), "'"),
+    !option_item(l, _, c).
+use(at, a, how, nm) :- base(at, a, how, l, b), how = "new", c = cat(cat("new ", b), "()"), nm = cat(cat("'", c), "'"),
+    !option_item(l, _, c).
+
+// instead(d, api, how, t): ". Use … instead", or "". A list keeps the replacements whose `supported` release
+// precedes every release d may run on: the configured range does not meet "<supported".
+.decl used(d: number, api: symbol, how: symbol)
+used(d, a, how) :- use(at, a, how, _), docof(at, d).
+.decl kept(d: number, api: symbol, how: symbol, i: number, nm: symbol)
+kept(d, a, how, i, nm) :- used(d, a, how), dep_alt(a, how, i, nm, v), node_runs_on(d, r),
+    @semver_subset(r, cat(">=", v)) = 1.
+.decl replacement(d: number, api: symbol, how: symbol, t: symbol)
+replacement(d, a, how, t) :- used(d, a, how), dep_hint(a, how, t).
+replacement(d, a, how, t) :- kept(d, a, how, _, _), t = join nm by i sep " or " : { kept(d, a, how, i, nm) }.
+.decl instead(d: number, api: symbol, how: symbol, t: symbol)
+instead(d, a, how, cat(cat(". Use ", t), " instead")) :- replacement(d, a, how, t).
+instead(d, a, how, "") :- used(d, a, how), !replacement(d, a, how, _).
+
+.violation deprecated(at: node, name: symbol, since: symbol, use: symbol) code "n/no-deprecated-api"
+    "{name} was deprecated since v{since}{use}."
+    suppress eslint "n/no-deprecated-api"
+deprecated(at, nm, v, t) :- use(at, a, how, nm), dep(a, how, v, ""), docof(at, d), instead(d, a, how, t).
+.violation removed(at: node, name: symbol, since: symbol, gone: symbol) code "n/no-deprecated-api"
+    "{name} was deprecated since v{since}, and removed in v{gone}."
+    suppress eslint "n/no-deprecated-api"
+removed(at, nm, v, g) :- use(at, a, how, nm), dep(a, how, v, g), g != "".

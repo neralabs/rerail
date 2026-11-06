@@ -1,0 +1,17 @@
+.policy "n-no-new-require" revision 3
+.description "Don't use new directly on a require() call; require the module into a variable first, then construct it, for readability."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-n's n/no-new-require: `new` whose callee is the identifier `require`, by name, with no scope check:
+//   new require("app-header")       reported, also new (require)("x") (ESTree has no parentheses)
+//   const H = require("x"); new H()  not
+//   new require.cache.x()           not: the callee is a member expression
+
+#include "tsx/eslint-a-common.rr"   // deparen
+
+.violation new_require(at: node) code "n/no-new-require"
+    "Require the module into a variable first, then call new on that variable."
+    suppress eslint "n/no-new-require"
+new_require(n) :- kind(n, "new_expression"), field(n, "constructor", c0), deparen(c0, c), kind(c, "identifier"),
+    text(c, "require").
