@@ -669,6 +669,9 @@ struct Row {
     /// options: their mismatches are listed apart.
     config_authored: usize,
     config_authored_exact: usize,
+    /// Run events whose oracle (or program) gave one key more than once: findings are a set of keys (J1), so they
+    /// count once.
+    collapsed: usize,
     /// Why the other events were not run, by reason.
     not_run: BTreeMap<String, usize>,
 }
@@ -683,6 +686,7 @@ impl Row {
         self.errors += o.errors;
         self.config_authored += o.config_authored;
         self.config_authored_exact += o.config_authored_exact;
+        self.collapsed += o.collapsed;
         for (reason, n) in &o.not_run {
             *self.not_run.entry(reason.clone()).or_default() += n;
         }
@@ -690,8 +694,8 @@ impl Row {
 
     fn line(&self) -> String {
         let mut line = format!(
-            "events {}, replayable {}, run {}, exact {} (keys only {}), errors {}, config+authored {} (exact {})",
-            self.events, self.replayable, self.run, self.exact, self.keys_only, self.errors, self.config_authored, self.config_authored_exact
+            "events {}, replayable {}, run {}, exact {} (keys only {}), errors {}, config+authored {} (exact {}), duplicates collapsed {}",
+            self.events, self.replayable, self.run, self.exact, self.keys_only, self.errors, self.config_authored, self.config_authored_exact, self.collapsed
         );
         if !self.not_run.is_empty() {
             let reasons: Vec<String> = self.not_run.iter().map(|(r, n)| format!("{r} {n}")).collect();
@@ -703,8 +707,9 @@ impl Row {
 
 /// The converted rules, with their authored files, on every event of the oracle (`events`), each configured as its
 /// oracle ran (`recorded_adjust`, `api_adjust`). Per group and check: the events, those it can replay, those whose
-/// kept clauses are all converted or authored (run), how many give the oracle's findings exactly as (path, line,
-/// code) keys, and why the rest were not run; then per check the clauses still gapped, the first misses, and the
+/// kept clauses are all converted or authored (run), how many give the oracle's findings exactly as a set of (path,
+/// line, code) keys (J1: a key found twice is one; the events where that collapsed some are counted), and why the
+/// rest were not run; then per check the clauses still gapped, the first misses, and the
 /// mismatches of configured events with authored clauses. `RERAIL_REPLAY_CHECK` (check names) and
 /// `RERAIL_REPLAY_RULE` (rule ids), comma-separated, select; `RERAIL_REPLAY_MISSES` is how many misses are printed
 /// (40).
@@ -791,8 +796,13 @@ fn converted_rules_give_the_recorded_findings() {
         };
         let mut want: Vec<String> = want.iter().map(|(p, l, c)| key(p, *l, c.as_deref())).collect();
         let mut got: Vec<String> = got.iter().map(|(p, l, c)| key(p, *l, Some(c))).collect();
-        got.sort();
+        // Findings are a set of keys (J1): several of one clause on one line are one.
+        let n = (want.len(), got.len());
         want.sort();
+        want.dedup();
+        got.sort();
+        got.dedup();
+        row.collapsed += usize::from(n != (want.len(), got.len()));
         if got == want {
             row.exact += 1;
             row.keys_only += usize::from(event.keys_only || codeless);
