@@ -1,5 +1,26 @@
 use super::*;
 
+/// Source spans are locations but are not tree nodes. Their explicit document column must
+/// survive the local split, so locating their rows never adds `node(d, span, ...)`.
+#[test]
+fn source_relations_keep_their_document_location() {
+    use crate::code_rule_dsl::logic::rr::parse;
+    for (relation, columns, arguments) in [
+        ("source", "d: number, sp: loc", "d, sp"),
+        ("src_line", "d: number, l: number, sp: loc", "d, l, sp"),
+        ("line_count", "d: number, k: number", "d, k"),
+        ("docof", "sp: loc, d: number", "sp, d"),
+    ] {
+        let text = format!(".decl {relation}({columns})\n.input {relation}\n.decl selected(d: number)\nselected(d) :- {relation}({arguments}).\n.output selected\n");
+        let program = parse(&text).unwrap();
+        let (_, locations) = split_located(&program);
+        assert_eq!(locations["selected"], [0], "{relation}: {locations:?}");
+        let mut located = program;
+        locate(&mut located).unwrap();
+        assert!(!located.rules.iter().any(|rule| rule.body.iter().filter_map(|lit| lit.atom()).any(|atom| atom.rel == "node")), "{relation}: a span acquired a tree-node constraint");
+    }
+}
+
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
 ///
 /// ```text
