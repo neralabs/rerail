@@ -4,10 +4,10 @@
 // adds a path filter to the final query; any other entry point runs the default query, without it.
 // W's syntax table `nodes` is the tape less comments and string pieces; `parent` is `child`, `X_id`/`X_source` are
 // `field` and `text`. A finding is (issue, path, line of start_byte): the issue (the reason text) is the code.
-// APPROXIMATION (blocked: SQL's choice among tied rows is not a function of the data): the lookup's
-// `row_number() … ORDER BY priority DESC` is the lexicographic maximum over paths of fixed-width segments, chosen
-// greedily hop by hop; two bindings of one name at the same start (one statement, `from m import a as x, b as x`)
-// tie in SQL (one arbitrary row) and give both helpers here.
+// The lookup's `row_number() … ORDER BY priority DESC` is the lexicographic maximum over paths of fixed-width
+// segments, chosen greedily hop by hop. GAP (W's result is unspecified there, so no relation can give it): two
+// bindings of one name at the same start (only one statement, `from m import a as x, b as x`) tie in SQL, which keeps
+// one arbitrary row (SQLite's sort order, not the data); here both helpers are chosen.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -25,14 +25,14 @@
 // ---- documents: the syntax gate and, for scan_repo, the final query's path filter ----
 // `substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_')
 // AND NOT rx_matches(__path,'(?:^|/)(?:\.git|\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')`;
-// rx_matches searches, so each is `match` with `.*` around it. The syntax table's documents are the Python ones.
+// rx_matches searches, so each is `match("(?s:.*)(?:RE)(?s:.*)", p)`. The syntax table's documents are the Python ones.
 .decl helpers_doc(d: number)
 helpers_doc(d) :-
     doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _),
     option_value("entryPoint", "scan_repo"),
-    suffix(".py", p), !match("(?:.*/)?\\.py", p),
-    match(".*(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_).*", p),
-    !match(".*(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$).*", p).
+    suffix(".py", p), !match("(?s:.*)(?:(?:^|/)\\.py$)(?s:.*)", p),
+    match("(?s:.*)(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_)(?s:.*)", p),
+    !match("(?s:.*)(?:(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$))(?s:.*)", p).
 helpers_doc(d) :-
     doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _),
     option_value("entryPoint", e), e != "scan_repo".
@@ -55,41 +55,26 @@ helpers_name("scalar_via_plan", 1, 0, 0).
 .decl helpers_known(x: symbol)
 helpers_known(x) :- helpers_name(x, _, _, _).
 
-// ---- module_names: the name the query compares, for the names it compares with ----
-// The SQL: D = __path with `\` as `/`, runs of `/` as one, `/` trimmed from both ends, a final `.py` dropped, `/` as
-// `.`; the name is D from its first `impl` component (D's components split at `.`), else D after its first `api`
-// component, else D from its first component starting `l[0-9]{4}_`, else D. Without rx_replace the name is not
-// built; helpers_module(d, M) instead tests the path against each M the query compares with (the callsite allowlist
-// and plan_helpers itself) by a regex that says exactly that, a component of D being a run of characters other than
-// `.`, `/` and `\` in the path, and a separator `.` or a run of `/` and `\` (checked against the SQL's expression on
-// 300,000 generated paths). "impl": [/\\]*, components other than `impl`, then M's components, `.py`, [/\\]*;
-// "api": the same through the first `api` component (D has no `impl` one); "l": components not starting
-// `l[0-9]{4}_`, then M's (D has no `impl` or `api` one).
-.decl helpers_name_re(m: symbol, how: symbol, re: symbol)
-helpers_name_re("impl.common.l2070_server_plan.plan_helpers", "impl",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,3}|[^./\\\\]{5,}|[^i./\\\\][^./\\\\]{3}|i[^m./\\\\][^./\\\\]{2}|im[^p./\\\\][^./\\\\]|imp[^l./\\\\])(?:[/\\\\]+|\\.))*impl(?:[/\\\\]+|\\.)common(?:[/\\\\]+|\\.)l2070_server_plan(?:[/\\\\]+|\\.)plan_helpers(?:\\.py)?[/\\\\]*").
-helpers_name_re("impl.common.l2200_sql_dialect.sql_connection", "impl",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,3}|[^./\\\\]{5,}|[^i./\\\\][^./\\\\]{3}|i[^m./\\\\][^./\\\\]{2}|im[^p./\\\\][^./\\\\]|imp[^l./\\\\])(?:[/\\\\]+|\\.))*impl(?:[/\\\\]+|\\.)common(?:[/\\\\]+|\\.)l2200_sql_dialect(?:[/\\\\]+|\\.)sql_connection(?:\\.py)?[/\\\\]*").
-helpers_name_re("impl.doltdb.versioned_operations_read", "impl",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,3}|[^./\\\\]{5,}|[^i./\\\\][^./\\\\]{3}|i[^m./\\\\][^./\\\\]{2}|im[^p./\\\\][^./\\\\]|imp[^l./\\\\])(?:[/\\\\]+|\\.))*impl(?:[/\\\\]+|\\.)doltdb(?:[/\\\\]+|\\.)versioned_operations_read(?:\\.py)?[/\\\\]*").
-helpers_name_re("l8000_admin.tools.sql_execution", "api",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,2}|[^./\\\\]{4,}|[^a./\\\\][^./\\\\]{2}|a[^p./\\\\][^./\\\\]|ap[^i./\\\\])(?:[/\\\\]+|\\.))*api(?:[/\\\\]+|\\.)l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)sql_execution(?:\\.py)?[/\\\\]*").
-helpers_name_re("l8000_admin.tools.sql_execution", "l",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,5}|[^l./\\\\][^./\\\\]*|l[^0-9./\\\\][^./\\\\]*|l[0-9]{1}[^0-9./\\\\][^./\\\\]*|l[0-9]{2}[^0-9./\\\\][^./\\\\]*|l[0-9]{3}[^0-9./\\\\][^./\\\\]*|l[0-9]{4}[^_./\\\\][^./\\\\]*)(?:[/\\\\]+|\\.))*l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)sql_execution(?:\\.py)?[/\\\\]*").
-helpers_name_re("l8000_admin.tools.versioning_tools", "api",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,2}|[^./\\\\]{4,}|[^a./\\\\][^./\\\\]{2}|a[^p./\\\\][^./\\\\]|ap[^i./\\\\])(?:[/\\\\]+|\\.))*api(?:[/\\\\]+|\\.)l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)versioning_tools(?:\\.py)?[/\\\\]*").
-helpers_name_re("l8000_admin.tools.versioning_tools", "l",
-    "[/\\\\]*(?:(?:[^./\\\\]{0,5}|[^l./\\\\][^./\\\\]*|l[^0-9./\\\\][^./\\\\]*|l[0-9]{1}[^0-9./\\\\][^./\\\\]*|l[0-9]{2}[^0-9./\\\\][^./\\\\]*|l[0-9]{3}[^0-9./\\\\][^./\\\\]*|l[0-9]{4}[^_./\\\\][^./\\\\]*)(?:[/\\\\]+|\\.))*l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)versioning_tools(?:\\.py)?[/\\\\]*").
-.decl helpers_has_impl(d: number)
-helpers_has_impl(d) :- helpers_doc(d), doc(d, p, _), match("(?:.*[./\\\\])?impl(?:[./\\\\].*)?", p).
-.decl helpers_has_api(d: number)
-helpers_has_api(d) :- helpers_doc(d), doc(d, p, _), match("(?:.*[./\\\\])?api(?:[./\\\\].*)?", p).
+// ---- module_names: the name of each document ----
+// The SQL: D = __path with `\` as `/`, runs of `/` as one (`rx_replace(…,'/+','/')`), `/` trimmed from both ends, a
+// final `.py` dropped, `/` as `.`; the name is D from its first `impl` component (`instr('.'||D||'.','.impl.')`),
+// else D after its first `api` component and its dot (empty when `api` is last), else
+// `coalesce(rx_extract(D,'(?:^|\.)(l[0-9]{4}_.*)$',1),D)`. Each is an @rx_replace over the whole of D: a lazy
+// prefix finds the first such component, as `instr` and rx_extract's leftmost match do, and no match leaves D.
+.decl helpers_dotted(d: number, dd: symbol)
+helpers_dotted(d, dd) :-
+    helpers_doc(d), doc(d, p, _), s1 = @rx_replace(p, "[/\\\\]+", "/"), s2 = @rx_replace(s1, "^/|/$", ""),
+    s3 = @rx_replace(s2, "\\.py$", ""), dd = @rx_replace(s3, "/", ".").
 .decl helpers_module(d: number, m: symbol)
-helpers_module(d, m) :- helpers_doc(d), doc(d, p, _), helpers_name_re(m, "impl", re), match(re, p).
 helpers_module(d, m) :-
-    helpers_doc(d), doc(d, p, _), !helpers_has_impl(d), helpers_name_re(m, "api", re), match(re, p).
+    helpers_dotted(d, dd), match("(?s)(?:.*\\.)?impl(?:\\..*)?", dd),
+    m = @rx_replace(dd, "(?s)^.*?(?:^|\\.)(impl(?:\\..*)?)$", "${1}").
 helpers_module(d, m) :-
-    helpers_doc(d), doc(d, p, _), !helpers_has_impl(d), !helpers_has_api(d), helpers_name_re(m, "l", re), match(re, p).
+    helpers_dotted(d, dd), !match("(?s)(?:.*\\.)?impl(?:\\..*)?", dd), match("(?s)(?:.*\\.)?api(?:\\..*)?", dd),
+    m = @rx_replace(dd, "(?s)^.*?(?:^|\\.)api(?:\\.(.*))?$", "${1}").
+helpers_module(d, m) :-
+    helpers_dotted(d, dd), !match("(?s)(?:.*\\.)?impl(?:\\..*)?", dd), !match("(?s)(?:.*\\.)?api(?:\\..*)?", dd),
+    m = @rx_replace(dd, "^(?s:.*?)(?:^|\\.)(l[0-9]{4}_.*)$", "${1}").
 
 // ---- imports (statement n, name node x, its name and local name; `module` for a from-import) ----
 .decl helpers_import_kind(k: symbol)
