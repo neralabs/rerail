@@ -67,11 +67,11 @@ fn words_are_whole_and_phrases_in_order() {
 
 #[test]
 fn tests_on_text_relations_become_relations() {
-    let mut prog = crate::code_rule_dsl::logic::front::parse(
-        ".decl name(n: node, s: sym)\n.input name\n.decl a(n: node)\n.decl b(n: node)\n.decl c(s: sym)\n\
-         a($n) :- name($n, $s), @glob($s, {\"_*\", \"x*\"}), !@suffix($s, \"_async\").\n\
-         b($n) :- name($n, $s), $s in {\"conn\", \"db\"}, @glob($s, {\"x*\", \"_*\"}).\n\
-         c($s) :- name(_, $t), $s = @cat($t, \"x\"), @prefix($s, \"_\").\n.output a, b, c\n",
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(
+        ".decl name(n: node, s: symbol)\n.input name\n.decl a(n: node)\n.decl b(n: node)\n.decl c(s: symbol)\n\
+         a(n) :- name(n, s), (glob(\"_*\", s) ; glob(\"x*\", s)), !suffix(\"_async\", s).\n\
+         b(n) :- name(n, s), (s = \"conn\" ; s = \"db\"), (glob(\"x*\", s) ; glob(\"_*\", s)).\n\
+         c(s) :- name(_, t), s = @dot(t, \"x\"), prefix(\"_\", s).\n.output a, b, c\n",
     )
     .unwrap();
     let v = as_relations(&mut prog).unwrap();
@@ -96,4 +96,24 @@ fn regexes_and_their_rewrites_agree() {
     for (s, glob, rx) in [("impl/a/b.py", "impl/**/*.py", r"^impl/(?:.*/)?[^/]*\.py$"), ("fetch_async", "*_async", "_async$")] {
         assert_eq!(test("glob", s, glob), test("rx", s, rx), "{s} {glob} {rx}");
     }
+}
+
+/// `core.rr`'s text functors give the values its comments give as examples.
+#[test]
+fn text_functors_follow_core_rr() {
+    use super::functions::*;
+    assert_eq!(pkg_up("a.b.c", 1), "a.b");
+    assert_eq!(pkg_up("a.b.c", 0), "a.b.c");
+    assert_eq!(pkg_up("a", 5), "");
+    assert_eq!(pkg_up("", 1), "");
+    assert_eq!(join("src/a", "../c"), "src/c");
+    assert_eq!(join("src/a", "./b/../c.ts"), "src/a/c.ts");
+    assert_eq!(glob_sub("@/*", "src/*", "@/lib/x"), "src/lib/x");
+    assert_eq!(glob_sub("@/*", "src/*", "lib/x"), "");
+    assert_eq!(slice("_name", 1, 5), "name");
+    assert_eq!(slice("_name", -4, 5), "name");
+    assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
+    assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
+    assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
+    assert_eq!(json_str("a\"b\u{e9}\u{1f600}"), "\"a\\\"b\\u00e9\\ud83d\\ude00\"");
 }

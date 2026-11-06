@@ -1,0 +1,22 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl line(n: node, l: number)
+.input doc, node, text, name, line
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("l8000_admin/tools/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/*test_*", p).
+violation("data-layer-admin-async-purity", "pattern-0", "AAP001", p, l) :- node(_, n, "attribute", _, _), name(n, v1), (glob("*.asyncio.to_thread", v1) ; glob("asyncio.to_thread", v1)), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-admin-async-purity", "pattern-1", "AAP001", p, l) :- node(_, n, "identifier", _, _), text(n, v2), v2 = "run_in_executor", node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-admin-async-purity", "pattern-2", "AAP001", p, l) :- node(_, n, "identifier", _, _), text(n, v3), v3 = "disable_sync_in_async_check", node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+.output violation

@@ -316,9 +316,15 @@ impl Batch {
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
         let (mut doc, mut pkg, mut text, mut intval, mut op) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        // `path_part(d, s)`: each directory of a document's path and its file name; `file_name(d, s)`: the last.
+        let (mut path_part, mut file_name): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
         // Text relations (decision 0037): `name(n, s)` (an identifier's text, an attribute's dotted text),
         // `str(n, s)` (a string literal's content, between its quotes) and `strprefix(n, p)` (its prefix, lowercased).
         let (mut name, mut strs, mut strprefix) = (Vec::new(), Vec::new(), Vec::new());
+        // `value(n, v)`: a literal's static value (`core.rr`): a Python string decoded (`value::python::str_value`),
+        // an integer in decimal.
+        let mut value: Vec<[i64; 2]> = Vec::new();
+        let python_tag = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
         let mut docs = Vec::with_capacity(documents.len());
@@ -332,6 +338,16 @@ impl Batch {
             let key = i64::from(d.key);
             doc.push([key, string(&d.path) as i64, string(&module(&d.path)) as i64]);
             pkg.push([key, string(&package(&d.path)) as i64]);
+            let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
+            if let Some(last) = parts.last() {
+                file_name.push([key, string(last) as i64]);
+            }
+            let mut seen = std::collections::HashSet::new();
+            for part in parts {
+                if seen.insert(part) {
+                    path_part.push([key, string(part) as i64]);
+                }
+            }
             if d.facts.syntax_errors {
                 errors.push(key);
             }
@@ -357,11 +373,17 @@ impl Batch {
                             if let Some(content) = content {
                                 strs.push([n, string(content) as i64]);
                             }
+                            if Some(tag) == python_tag
+                                && let Some(v) = crate::code_rule_dsl::value::python::str_value(f.text(id))
+                            {
+                                value.push([n, string(&v) as i64]);
+                            }
                         }
                     }
                     Class::Integer => {
                         if let Ok(v) = f.text(id).replace('_', "").parse::<i64>() {
                             intval.push([n, v]);
+                            value.push([n, string(&v.to_string()) as i64]);
                         }
                     }
                     Class::Operator => {
@@ -406,6 +428,9 @@ impl Batch {
         let relations = vec![
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", relation(&["d", "p"], &mut pkg.iter().map(|&[d, p]| vec![d, atom(p)]))),
+            ("path_part", relation(&["d", "s"], &mut path_part.iter().map(|&[d, s]| vec![d, atom(s)]))),
+            ("file_name", relation(&["d", "s"], &mut file_name.iter().map(|&[d, s]| vec![d, atom(s)]))),
+            ("value", relation(&["n", "s"], &mut value.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("syntax_error", relation(&["d"], &mut errors.iter().map(|&d| vec![d]))),
             ("text", relation(&["n", "s"], &mut text.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("intval", relation(&["n", "v"], &mut intval.iter().map(|&[n, v]| vec![n, v]))),

@@ -1,17 +1,17 @@
 use super::*;
 use crate::code_rule_dsl::language::dialect_by_label;
-use crate::code_rule_dsl::logic::front::parse;
+use crate::code_rule_dsl::logic::rr::parse;
 
-const BASE: &str = ".decl node(d: int, n: node, kind: sym, start: int, end: int)\n.decl field(p: node, f: sym, c: node)\n\
-                    .decl text(n: node, s: sym)\n.input node, field, text\n";
+const BASE: &str = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl field(p: node, f: symbol, c: node)\n\
+                    .decl text(n: node, s: symbol)\n.input node, field, text\n";
 
 /// A kind flows from `node.kind` through a derived relation into facts joined with it; text stays a name.
 #[test]
 fn kinds_flow_through_derived_columns_and_facts() {
     let p = parse(&format!(
-        "{BASE}.decl kind(n: node, k: sym)\n.decl lit(k: sym, t: sym)\n.decl typed(n: node, t: sym)\n.output typed\n\
-         kind($n, $k) :- node(_, $n, $k, _, _).\nlit(\"integer\", \"int\").\n\
-         typed($n, $t) :- kind($n, $k), lit($k, $t), field($p, \"left\", $n), text($p, \"x\").\n"
+        "{BASE}.decl kind(n: node, k: symbol)\n.decl lit(k: symbol, t: symbol)\n.decl typed(n: node, t: symbol)\n.output typed\n\
+         kind(n, k) :- node(_, n, k, _, _).\nlit(\"integer\", \"int\").\n\
+         typed(n, t) :- kind(n, k), lit(k, t), field(p, \"left\", n), text(p, \"x\").\n"
     ))
     .unwrap();
     let d = domains(&p).unwrap();
@@ -44,7 +44,7 @@ fn kinds_flow_through_derived_columns_and_facts() {
 /// A variable that is a kind in one atom and a name in another cannot be lowered.
 #[test]
 fn a_variable_in_two_symbol_domains_is_refused() {
-    let p = parse(&format!("{BASE}.decl bad(n: node)\n.output bad\nbad($n) :- node(_, $n, $k, _, _), text($n, $k).\n")).unwrap();
+    let p = parse(&format!("{BASE}.decl bad(n: node)\n.output bad\nbad(n) :- node(_, n, k, _, _), text(n, k).\n")).unwrap();
     let e = domains(&p).err().expect("a domain conflict").to_string();
     assert!(e.contains("$k is a Kind and a Name") || e.contains("$k is a Name and a Kind"), "{e}");
 }

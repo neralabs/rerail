@@ -1,6 +1,0 @@
-.decl doc(d: int, path: sym, module: sym)
-.input doc
-.decl in_scope(d: int)
-.decl violation(rule: sym, clause: sym, code: sym, path: sym, line: int)
-in_scope($d) :- doc($d, $p, _), @glob($p, "rust/nera_compiler_sql/src/**/*.rs").
-.output violation

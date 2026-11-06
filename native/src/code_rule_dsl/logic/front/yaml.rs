@@ -4,7 +4,7 @@
 //! Each `forbid` clause's matcher becomes a rule whose body is the matcher atom,
 //!
 //! ```text
-//! violation("<policy>", "<clause>", $D, $N) :- ast($D, $N, {"language": …, "rule": …}).
+//! violation("<policy>", "<clause>", D, N) :- ast(D, N, {"language": …, "rule": …}).
 //! ```
 //!
 //! and the rest of the document (its header, `define` clauses, each clause's `violation` block) is kept as a
@@ -85,23 +85,10 @@ pub(in crate::code_rule_dsl) fn documents(prog: &Program) -> Result<Vec<Value>, 
     Ok(out)
 }
 
-/// The Datalog text of a program of policies: its declarations, outputs, `.policy` documents and rules.
+/// The `.rr` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
 pub(in crate::code_rule_dsl) fn text(prog: &Program) -> String {
-    let mut out = String::new();
-    for (rel, cols) in &prog.decls {
-        let cols: Vec<String> = cols.iter().map(|(c, t)| format!("{c}: {t}")).collect();
-        out += &format!(".decl {rel}({})\n", cols.join(", "));
-    }
-    if !prog.outputs.is_empty() {
-        out += &format!(".output {}\n", prog.outputs.join(", "));
-    }
-    for p in &prog.policies {
-        out += &format!(".policy {p}\n");
-    }
-    for r in &prog.rules {
-        out += &format!("{r}.\n");
-    }
-    out
+    let printed = Program { decls: prog.decls.clone(), outputs: prog.outputs.clone(), policies: prog.policies.clone(), rules: prog.rules.clone(), ..Program::default() };
+    crate::code_rule_dsl::logic::rr::print(&printed).expect("matcher rules print as .rr")
 }
 
 #[cfg(test)]

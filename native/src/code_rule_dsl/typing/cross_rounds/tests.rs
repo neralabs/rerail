@@ -3,14 +3,14 @@ use crate::code_rule_dsl::logic::front;
 
 const PROGRAM: &str = r#"
 .decl base(c: node, b: node)
-.decl bound_in(c: node, a: sym)
+.decl bound_in(c: node, a: symbol)
 .input base, bound_in
-.decl found(c: node, a: sym, at: node)
-found($c, $a, $c) :- bound_in($c, $a).
-found($c, $a, $x) :- base($c, $b), !bound_in($c, $a), found($b, $a, $x).
+.decl found(c: node, a: symbol, at: node)
+found(c, a, c) :- bound_in(c, a).
+found(c, a, x) :- base(c, b), !bound_in(c, a), found(b, a, x).
 .decl reach(c: node, x: node)
-reach($c, $x) :- found($c, _, $x).
-reach($c, $y) :- reach($c, $x), reach($x, $y).
+reach(c, x) :- found(c, _, x).
+reach(c, y) :- reach(c, x), reach(x, y).
 .output found, reach
 "#;
 
@@ -18,7 +18,7 @@ reach($c, $y) :- reach($c, $x), reach($x, $y).
 /// recursive atoms are hops too (the second's node is `$x`), and the first is tied to the head.
 #[test]
 fn hops_read_the_previous_round_across_documents() {
-    let prog = front::parse(PROGRAM).unwrap();
+    let prog = crate::code_rule_dsl::logic::rr::parse(PROGRAM).unwrap();
     let b = bound(&prog).unwrap();
     assert_eq!(b.hops, BTreeSet::from(["found".to_owned(), "reach".to_owned()]));
     let rules: Vec<String> = b.program.rules.iter().map(ToString::to_string).collect();

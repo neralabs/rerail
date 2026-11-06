@@ -265,7 +265,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
     let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<BTreeMap<_, _>>();
     let mut matches = vec![vec![BTreeSet::new(); documents.len()]; clauses.len()];
     let rows: Vec<(i64, i64, i64)> = lease
-        .prepare("SELECT c0, c1, c2 FROM match")
+        .prepare("SELECT c0, c1, c2 FROM matched")
         .unwrap()
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
         .unwrap()
@@ -307,7 +307,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
         }
     }
     for name in clauses.iter().map(|clause| &clause.name) {
-        let family = family_name(WS, PROGRAM, &format!("match:{name}"));
+        let family = family_name(WS, PROGRAM, &format!("matched:{name}"));
         assert!(store.derivation_valid(&family).unwrap(), "{family}");
     }
     let estimate: i64 = lease.query_row("SELECT rows FROM fact_stats WHERE tbl = 'rerail_terminal_match'", [], |row| row.get(0)).unwrap();

@@ -1,13 +1,14 @@
-//! The data-layer rules in Rerail logic (t17): the hand-written programs go through the front end.
+//! The data-layer rules in Rerail logic (t17): the hand-written programs, in `.rr`, go through the front end.
 
 use super::*;
+use crate::code_rule_dsl::logic::rr::parse;
 use std::path::{Path, PathBuf};
 
 fn programs() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/programs/data_layer")
 }
 
-/// The rules with recursion (E0's eight, t17), each with a program `<rule>.rdl` (`_` for `-`).
+/// The rules with recursion (E0's eight, t17), each with a program `<rule>.rr` (`_` for `-`).
 const RECURSIVE: [&str; 8] = [
     "execution_authority_bypass",
     "internal_dead_code",
@@ -30,17 +31,17 @@ fn error_name(e: &Error) -> &'static str {
     }
 }
 
-/// Each program, after `prelude.rdl`, parses and stratifies; or, if its first line is `// expect: <Error>`, fails with
+/// Each program, after `prelude.rr`, parses and stratifies; or, if its first line is `// expect: <Error>`, fails with
 /// that named error. Every relation, in rules and facts, is declared with its arity, every matcher atom holds JSON,
 /// and every program's failure is reported. Each recursive rule has a program.
 #[test]
 fn data_layer_programs_parse() {
-    let prelude = std::fs::read_to_string(programs().join("prelude.rdl")).unwrap();
+    let prelude = std::fs::read_to_string(programs().join("prelude.rr")).unwrap();
     let (mut names, mut failures) = (Vec::new(), Vec::new());
     for entry in std::fs::read_dir(programs()).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        if !name.ends_with(".rdl") || name == "prelude.rdl" {
+        if !name.ends_with(".rr") || name == "prelude.rr" {
             continue;
         }
         let text = std::fs::read_to_string(&path).unwrap();
@@ -67,7 +68,7 @@ fn data_layer_programs_parse() {
         names.push(name);
     }
     for rule in RECURSIVE {
-        assert!(names.contains(&format!("{rule}.rdl")), "no program for {rule}");
+        assert!(names.contains(&format!("{rule}.rr")), "no program for {rule}");
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

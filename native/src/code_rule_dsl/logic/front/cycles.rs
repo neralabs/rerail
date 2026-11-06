@@ -15,7 +15,8 @@
 //! Tree edges are the base relations' (`child(p, c, _)`, `field(p, _, c)`, `tape(n, par, …)`), `nearest`,
 //! and what a derived relation of lower strata guarantees between its node columns in every one of its rules
 //! (`attr_of(n, o, a)`: `o` is below `n`). Nothing else bounds a cycle: a relation over a graph (imports,
-//! calls) may itself be cyclic. Decided 2026-11-03 (open-items O11).
+//! calls) may itself be cyclic. Decided 2026-11-03 (open-items O11). A builtin that gives part of its argument
+//! (`shrinks`: `@pkg_up`, `substr`) makes no new value, so a cycle through it alone is bounded too.
 
 use super::{Error, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -105,6 +106,13 @@ fn creates(rule: &Rule) -> bool {
         || rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Call(..) } if head.contains(v)))
 }
 
+/// A builtin whose value is a part of its first argument (`@pkg_up(q, k)` a prefix of q, `substr` a substring):
+/// a cycle through it alone gives only parts of values that entered it, finitely many, so it makes no new
+/// value. (An extension of O11 for `.rr`'s Python library, `pkg_above` and `loads`: decision 0043.)
+fn shrinks(f: &str) -> bool {
+    matches!(f, "pkg_up" | "substr")
+}
+
 /// A column of a relation.
 type Column = (String, usize);
 
@@ -132,7 +140,7 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
         let sources = |t: &Term, from: &BTreeMap<String, BTreeSet<(Column, bool)>>| -> BTreeSet<(Column, bool)> {
             let mut vars = BTreeSet::new();
             t.vars(&mut vars);
-            let made = matches!(t, Term::Call(..));
+            let made = matches!(t, Term::Call(f, _) if !shrinks(f));
             vars.iter().flat_map(|v| from.get(v).into_iter().flatten().map(move |(c, m)| (c.clone(), *m || made))).collect()
         };
         // Assignments in order, until nothing more flows (an assignment may read another's variable).

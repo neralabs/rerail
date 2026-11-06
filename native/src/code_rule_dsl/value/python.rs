@@ -338,6 +338,15 @@ fn concatenated<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
+/// A string literal's value from its source text (`core.rr`'s `value`): its body decoded, escapes and all; none for
+/// bytes, templates, or a literal Python refuses.
+pub(crate) fn str_value(text: &str) -> Option<String> {
+    match piece(text)? {
+        Piece::Str(s) => Some(s),
+        Piece::Bytes(_) => None,
+    }
+}
+
 /// Decodes one literal's source text: prefix, quotes, body. A template (`t`) string is no `str`.
 fn piece(text: &str) -> Option<Piece> {
     let quote_at = text.find(['\'', '"'])?;

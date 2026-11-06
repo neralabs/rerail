@@ -458,7 +458,14 @@ struct Census {
 
 fn derive() -> Census {
     let dir = gate().join("packs/data-layer/candidates/rules");
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    // The 60 rules of Pulling-it-all-together's rewrite (`candidates/rules-ast`); the 10 candidates copied later
+    // from Data-layer-rule-expressivity (`require_each` and other new forms) are outside the census (O72).
+    let converted = gate().join("packs/data-layer/candidates/rules-ast");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.file_name().is_some_and(|s| converted.join(s).exists()))
+        .collect();
     files.sort();
     let mut census = Census { clauses: BTreeMap::new(), recursions: Vec::new() };
     for path in files {

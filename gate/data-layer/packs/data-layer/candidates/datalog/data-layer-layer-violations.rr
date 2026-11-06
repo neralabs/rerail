@@ -1,0 +1,49 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.input doc, node, field, text, name
+.decl k0(kind: symbol)
+k0("if_statement").
+.decl in_scope(d: number)
+.decl m13(n: node)
+.decl m18(n: node)
+.decl m26(n: node)
+.decl m28(n: node)
+.decl m33(n: node)
+.decl m41(n: node)
+.decl m43(n: node)
+.decl m48(n: node)
+.decl m5(n: node)
+.decl m56(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("conform/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+m5(n) :- inside(n, v2, k0), node(_, v2, "if_statement", _, _), field(v2, "condition", v3), node(_, v3, "identifier", _, _), text(v3, v4), v4 = "TYPE_CHECKING".
+m13(n) :- field(n, "module_name", v6), name(v6, v8), prefix("impl.", v8).
+m13(n) :- field(n, "name", v9), name(v9, v11), prefix("impl.", v11).
+m13(n) :- node(_, n, "dotted_name", _, _), text(n, v12), prefix("impl.", v12).
+m18(n) :- inside(n, v15, k0), node(_, v15, "if_statement", _, _), field(v15, "condition", v16), node(_, v16, "identifier", _, _), text(v16, v17), v17 = "TYPE_CHECKING".
+m26(n) :- field(n, "module_name", v19), name(v19, v21), prefix("impl.", v21).
+m26(n) :- field(n, "name", v22), name(v22, v24), prefix("impl.", v24).
+m26(n) :- node(_, n, "dotted_name", _, _), text(n, v25), prefix("impl.", v25).
+m28(n) :- node(_, n, "dotted_name", _, _).
+m28(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v27).
+m33(n) :- inside(n, v30, k0), node(_, v30, "if_statement", _, _), field(v30, "condition", v31), node(_, v31, "identifier", _, _), text(v31, v32), v32 = "TYPE_CHECKING".
+m41(n) :- field(n, "module_name", v34), name(v34, v36), prefix("impl.", v36).
+m41(n) :- field(n, "name", v37), name(v37, v39), prefix("impl.", v39).
+m41(n) :- node(_, n, "dotted_name", _, _), text(n, v40), prefix("impl.", v40).
+m43(n) :- node(_, n, "dotted_name", _, _).
+m43(n) :- node(_, n, "aliased_import", _, _), field(n, "name", v42).
+m48(n) :- inside(n, v45, k0), node(_, v45, "if_statement", _, _), field(v45, "condition", v46), node(_, v46, "identifier", _, _), text(v46, v47), v47 = "TYPE_CHECKING".
+m56(n) :- field(n, "module_name", v49), name(v49, v51), prefix("impl.", v51).
+m56(n) :- field(n, "name", v52), name(v52, v54), prefix("impl.", v54).
+m56(n) :- node(_, n, "dotted_name", _, _), text(n, v55), prefix("impl.", v55).
+.output violation

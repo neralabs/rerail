@@ -1,0 +1,44 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl name(n: node, s: symbol)
+.input doc, node, field, name
+.decl k0(kind: symbol)
+k0("class_definition"). k0("function_definition").
+.decl in_scope(d: number)
+.decl m1(n: node)
+.decl m12(n: node)
+.decl m13(n: node)
+.decl m17(n: node)
+.decl m22(n: node)
+.decl m24(n: node)
+.decl m3(n: node)
+.decl m4(n: node)
+.decl m9(n: node)
+.decl out_scope(d: number)
+.decl u19(n: node)
+.decl u20(n: node)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+m1(n) :- node(_, n, "import_statement", _, _).
+m1(n) :- node(_, n, "import_from_statement", _, _).
+m3(n) :- node(_, n, "function_definition", _, _).
+m3(n) :- node(_, n, "class_definition", _, _).
+m4(n) :- inside(n, v2, k0), m3(v2).
+m9(n) :- name(n, v8), prefix("_", v8).
+m12(n) :- node(_, n, "function_definition", _, _).
+m12(n) :- node(_, n, "class_definition", _, _).
+m13(n) :- inside(n, v11, k0), m12(v11).
+m17(n) :- name(n, v16), prefix("_", v16).
+m22(n) :- node(_, n, "identifier", _, _).
+m22(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v21), node(_, v21, "identifier", _, _).
+u20(n) :- m22(n).
+m24(n) :- u20(n).
+m24(n) :- node(_, n, "assignment", _, _), field(n, "right", v23), u19(v23).
+u19(n) :- m24(n).
+.output violation

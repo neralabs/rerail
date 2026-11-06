@@ -1,0 +1,47 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, child, field, text, line, syntax_error
+.decl k0(kind: symbol)
+k0("global_statement"). k0("import_from_statement"). k0("import_statement"). k0("nonlocal_statement").
+.decl k1(kind: symbol)
+k1("import_from_statement").
+.decl in_scope(d: number)
+.decl m11(n: node)
+.decl m21(n: node)
+.decl m30(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+violation("data-layer-serverplan-grammar-surface", "helper-definitions", "SPG-helper_definition", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v1), node(_, v1, "identifier", _, _), text(v1, v2), (v2 = "grammar_execute" ; v2 = "grammar_execute_async" ; v2 = "grammar_execute_lazy" ; v2 = "grammar_exists" ; v2 = "grammar_exists_async" ; v2 = "grammar_exists_lazy" ; v2 = "grammar_fetchall" ; v2 = "grammar_fetchall_async" ; v2 = "grammar_fetchall_lazy" ; v2 = "grammar_fetchone" ; v2 = "grammar_fetchone_async" ; v2 = "grammar_fetchone_lazy" ; v2 = "grammar_scalar" ; v2 = "grammar_scalar_async" ; v2 = "grammar_scalar_lazy" ; v2 = "grammar_validate" ; v2 = "grammar_validate_async" ; v2 = "grammar_validate_lazy"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-grammar-surface", "direct-helper-definitions", "SPG-direct_helper_definition", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v3), node(_, v3, "identifier", _, _), text(v3, v4), (v4 = "execute_grammar_direct" ; v4 = "execute_grammar_direct_async" ; v4 = "execute_grammar_direct_lazy" ; v4 = "execute_grammar_fetchall_direct" ; v4 = "execute_grammar_fetchall_direct_async" ; v4 = "execute_grammar_fetchall_direct_lazy" ; v4 = "execute_grammar_fetchall_with_params_direct" ; v4 = "execute_grammar_fetchall_with_params_direct_async" ; v4 = "execute_grammar_fetchall_with_params_direct_lazy" ; v4 = "execute_grammar_fetchone_direct" ; v4 = "execute_grammar_fetchone_direct_async" ; v4 = "execute_grammar_fetchone_direct_lazy" ; v4 = "execute_grammar_fetchone_with_params_direct" ; v4 = "execute_grammar_fetchone_with_params_direct_async" ; v4 = "execute_grammar_fetchone_with_params_direct_lazy" ; v4 = "execute_grammar_with_params_direct" ; v4 = "execute_grammar_with_params_direct_async" ; v4 = "execute_grammar_with_params_direct_lazy"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-grammar-surface", "helper-attributes", "SPG-helper_attribute", p, l) :- node(_, n, "attribute", _, _), field(n, "attribute", v5), node(_, v5, "identifier", _, _), text(v5, v6), (v6 = "grammar_execute" ; v6 = "grammar_execute_async" ; v6 = "grammar_execute_lazy" ; v6 = "grammar_exists" ; v6 = "grammar_exists_async" ; v6 = "grammar_exists_lazy" ; v6 = "grammar_fetchall" ; v6 = "grammar_fetchall_async" ; v6 = "grammar_fetchall_lazy" ; v6 = "grammar_fetchone" ; v6 = "grammar_fetchone_async" ; v6 = "grammar_fetchone_lazy" ; v6 = "grammar_scalar" ; v6 = "grammar_scalar_async" ; v6 = "grammar_scalar_lazy" ; v6 = "grammar_validate" ; v6 = "grammar_validate_async" ; v6 = "grammar_validate_lazy"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-grammar-surface", "direct-helper-attributes", "SPG-direct_helper_attribute", p, l) :- node(_, n, "attribute", _, _), field(n, "attribute", v7), node(_, v7, "identifier", _, _), text(v7, v8), (v8 = "execute_grammar_direct" ; v8 = "execute_grammar_direct_async" ; v8 = "execute_grammar_direct_lazy" ; v8 = "execute_grammar_fetchall_direct" ; v8 = "execute_grammar_fetchall_direct_async" ; v8 = "execute_grammar_fetchall_direct_lazy" ; v8 = "execute_grammar_fetchall_with_params_direct" ; v8 = "execute_grammar_fetchall_with_params_direct_async" ; v8 = "execute_grammar_fetchall_with_params_direct_lazy" ; v8 = "execute_grammar_fetchone_direct" ; v8 = "execute_grammar_fetchone_direct_async" ; v8 = "execute_grammar_fetchone_direct_lazy" ; v8 = "execute_grammar_fetchone_with_params_direct" ; v8 = "execute_grammar_fetchone_with_params_direct_async" ; v8 = "execute_grammar_fetchone_with_params_direct_lazy" ; v8 = "execute_grammar_with_params_direct" ; v8 = "execute_grammar_with_params_direct_async" ; v8 = "execute_grammar_with_params_direct_lazy"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m11(n) :- node(_, n, "import_statement", _, _).
+m11(n) :- node(_, n, "import_from_statement", _, _).
+m11(n) :- node(_, n, "global_statement", _, _).
+m11(n) :- node(_, n, "nonlocal_statement", _, _).
+m21(n) :- inside(n, v10, k0), m11(v10).
+m21(n) :- field(v12, "name", n), node(_, v12, "function_definition", _, _).
+m21(n) :- field(v13, "name", n), node(_, v13, "class_definition", _, _).
+m21(n) :- field(v14, "name", n), node(_, v14, "keyword_argument", _, _).
+m21(n) :- field(v15, "attribute", n), node(_, v15, "attribute", _, _).
+m21(n) :- child(v16, n, _), node(_, v16, "parameters", _, _).
+m21(n) :- child(v17, n, _), node(_, v17, "lambda_parameters", _, _).
+m21(n) :- field(v18, "name", n), node(_, v18, "default_parameter", _, _).
+m21(n) :- field(v19, "name", n), node(_, v19, "typed_default_parameter", _, _).
+m21(n) :- child(v20, n, _), node(_, v20, "typed_parameter", _, _).
+violation("data-layer-serverplan-grammar-surface", "ddl-escapes", "SPG-ddl_escape", p, l) :- node(_, n, "identifier", _, _), text(n, v9), (v9 = "SqlPreRenderedDdlFragment" ; v9 = "SqlPrerenderedDdl"), !m21(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+m30(n) :- inside(n, v23, k1), field(v23, "module_name", v24), node(v25, n, _, v26, v27), node(v25, v24, _, v28, v29), v28 <= v26, v27 <= v29, node(_, v23, "import_from_statement", _, _).
+violation("data-layer-serverplan-grammar-surface", "ddl-imports", "SPG-ddl_import", p, l) :- node(_, n, "dotted_name", _, _), text(n, v22), (v22 = "SqlPreRenderedDdlFragment" ; v22 = "SqlPrerenderedDdl"), !m30(n), inside(n, v31, k1), node(_, v31, "import_from_statement", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-grammar-surface", "syntax", "SPG-SYNTAX", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
+.output violation

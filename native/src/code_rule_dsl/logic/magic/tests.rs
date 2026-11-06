@@ -1,5 +1,6 @@
 use super::*;
-use crate::code_rule_dsl::logic::front::{parse, prune};
+use crate::code_rule_dsl::logic::front::prune;
+use crate::code_rule_dsl::logic::rr::parse;
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
@@ -55,14 +56,18 @@ fn golden_text(p: &Program) -> String {
 #[test]
 fn t_programs_transform_like_t() {
     let mut failures = Vec::new();
+    let renamed = regex::Regex::new(r"(^|[^A-Za-z0-9])glob(_[bf]+\b|\b)").unwrap();
     for name in ["calls", "calls_rust", "workload", "workload_demand", "workload_perdoc"] {
-        let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rdl"))).unwrap();
+        let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
         let p = prune(parse(&src).unwrap());
         for mode in ["demand", "adorn", "gate"] {
             let options = Options { gate: mode == "gate", ..Options::default() };
             let got = if mode == "demand" { magic_sets(p.clone(), &options) } else { magic_adorn(p.clone(), &options) };
             let got = golden_text(&prune(got.unwrap_or_else(|e| panic!("{name} {mode}: {e}"))));
             let expected = std::fs::read_to_string(root().join(format!("magic/golden/{name}.{mode}.txt"))).unwrap();
+            // `glob` is a `.rr` built-in, so the program's relation of that name reads as `glob_` (the goldens are
+            // copies, kept as written).
+            let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
             if got != expected {
                 let line = got.lines().zip(expected.lines()).position(|(a, b)| a != b);
                 let at = line.map_or_else(
@@ -82,8 +87,8 @@ fn t_programs_transform_like_t() {
 fn a_negative_cycle_through_demand_drops_the_demand() {
     let p = parse(
         ".decl start(x: node)\n.decl e(x: node, y: node)\n.decl wall(x: node)\n.decl reach(x: node)\n.decl blocked(x: node)\n\
-         .input start, e, wall\n.output reach\n.demand blocked\n\
-         reach($x) :- start($x).\nreach($y) :- reach($x), e($x, $y), !blocked($y).\nblocked($y) :- wall($y).\n",
+         .input start, e, wall\n.output reach\n.pragma \"magic-transform\" \"blocked\"\n\
+         reach(x) :- start(x).\nreach(y) :- reach(x), e(x, y), !blocked(y).\nblocked(y) :- wall(y).\n",
     )
     .unwrap();
     assert!(strata(&p).is_ok());

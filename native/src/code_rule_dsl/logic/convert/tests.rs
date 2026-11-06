@@ -35,9 +35,26 @@ struct Adjust {
 /// `violation(rule, clause, code, path, line)`.
 fn convert(path: &Path, adjust: &Adjust) -> Converted {
     let text = std::fs::read_to_string(path).unwrap();
-    let document: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut document: serde_json::Value = serde_json::from_str(&text).unwrap();
     let id = document["id"].as_str().unwrap().to_owned();
-    let compiled = CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{id}: {e:?}"));
+    // A relational clause is SQL stages: it is not converted but written by hand in `.rr` (list step 30). It is
+    // taken out before the rest compiles, since the newer rules' stages use forms (`escape: sql`, `message`,
+    // `line`) only their SQL engine reads.
+    let mut relational = Vec::new();
+    let order: Vec<String> = document["clauses"].as_array().into_iter().flatten().map(|c| c["id"].as_str().unwrap_or_default().to_owned()).collect();
+    if let Some(list) = document["clauses"].as_array_mut() {
+        list.retain(|c| {
+            let sql = c.get("relational").is_some();
+            if sql {
+                relational.push(c["id"].as_str().unwrap_or_default().to_owned());
+            }
+            !sql
+        });
+    }
+    let text = if relational.is_empty() { text } else { document.to_string() };
+    // Only relational clauses report: nothing is left to compile.
+    let reports = document["clauses"].as_array().into_iter().flatten().any(|c| c.get("define").is_none());
+    let compiled = reports.then(|| CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{id}: {e:?}")));
     let mut e = Emitter::new(GrammarDialect::Python);
     let (include, exclude) = adjust.scope.clone().unwrap_or_else(|| (scope_globs(&document, "include"), scope_globs(&document, "exclude")));
     // The scope: a document in an include glob and in no exclude glob.
@@ -52,8 +69,12 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
     }
     let excludes = !exclude.is_empty();
     e.decls.insert("violation".into(), "rule: sym, clause: sym, code: sym, path: sym, line: int".into());
-    let mut clauses = Vec::new();
-    for clause in &compiled.inner.clauses {
+    let mut clauses: Vec<(String, Result<(), Gap>)> = relational
+        .into_iter()
+        .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
+        .map(|c| (c, Err(Gap("relational (SQL stages)".into()))))
+        .collect();
+    for clause in compiled.iter().flat_map(|c| &c.inner.clauses) {
         if adjust.keep.as_ref().is_some_and(|keep| !keep(&clause.id)) {
             continue;
         }
@@ -116,16 +137,51 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
         })();
         clauses.push((clause.id.clone(), result));
     }
-    Converted { program: e.program(&["violation"]), clauses, approx: e.approx.clone() }
+    clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
+    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
+    let program = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    Converted { program, clauses, approx: e.approx.clone() }
 }
 
+/// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
+/// newer rules of Data-layer-rule-expressivity (its candidates in `rules`, its certified rules in the pack's
+/// `rules`), each rule once, the first source winning.
 fn rule_files() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(pack().join(RULES)).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
-    files.sort();
-    files
+    let mut by_id = BTreeMap::<String, PathBuf>::new();
+    for dir in [pack().join(RULES), pack().join("rules"), pack().join("../rules")] {
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().is_some_and(|x| x == "json") {
+                by_id.entry(p.file_stem().unwrap().to_string_lossy().into_owned()).or_insert(p);
+            }
+        }
+    }
+    by_id.into_values().collect()
 }
 
-/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rdl`, and the
+/// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
+/// it lowers. `RERAIL_REPLAY_CONVERTED` replays the converted JSON instead.
+fn hand_written(check: &str) -> Option<String> {
+    if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
+        return None;
+    }
+    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let program = crate::code_rule_dsl::logic::rr::parse_file(&path).ok()?;
+    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
+    // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
+    if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {
+        std::fs::write(PathBuf::from(dir).join(format!("{check}.rr")), &text).unwrap();
+    }
+    Some(text)
+}
+
+/// The rule file of a recorded check (`async_sync_boundary` → `data-layer-async-sync-boundary`).
+fn rule_file(check: &str) -> Option<PathBuf> {
+    let name = format!("data-layer-{}", check.replace('_', "-"));
+    rule_files().into_iter().find(|p| p.file_stem().is_some_and(|s| s.to_string_lossy() == name))
+}
+
+/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rr`, and the
 /// coverage (`coverage.txt`): clauses converted, the gaps by kind, the approximations.
 #[test]
 #[ignore = "writes the converted rules into the pack"]
@@ -139,8 +195,8 @@ fn convert_the_data_layer_pack() {
     for path in rule_files() {
         let id = path.file_stem().unwrap().to_string_lossy().into_owned();
         let c = convert(&path, &Adjust::default());
-        crate::code_rule_dsl::logic::front::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
-        std::fs::write(out.join(format!("{id}.rdl")), &c.program).unwrap();
+        crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
+        std::fs::write(out.join(format!("{id}.rr")), &c.program).unwrap();
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
         total += c.clauses.len();
         done += ok;
@@ -277,14 +333,23 @@ fn regexes_become_exact_globs() {
     }
 }
 
-/// The recorded events (the upstream linters' tests, `fixtures/host/data-layer-port`), as `replay.ts` reads them.
+/// The recorded events (the upstream linters' tests, `fixtures/host/data-layer-port`), as `replay.ts` reads them:
+/// every batch's recording and probes. Each event carries its group in `_group`: `recordings 1-6` (the baseline
+/// the 60 rules were converted against) or `batches 7-8 and probes`.
 fn events() -> Vec<serde_json::Value> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port");
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    let first = |name: &str| (1..=6).any(|b| name == format!("batch-{b:02}-recording.json"));
+    let events = |name: &str| name.starts_with("batch-") && (name.ends_with("-recording.json") || name.ends_with("probes.json"));
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(events))
+        .collect();
     paths.sort();
     let mut out = Vec::new();
     for p in paths {
         let recording: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let group = if first(&p.file_name().unwrap().to_string_lossy()) { "recordings 1-6" } else { "batches 7-8 and probes" };
         for mut event in recording["events"].as_array().cloned().unwrap_or_default() {
             if event.get("retained_reason").is_some() || event["upstream_passed"] != serde_json::Value::Bool(true) {
                 continue;
@@ -292,6 +357,7 @@ fn events() -> Vec<serde_json::Value> {
             if event.get("files").is_none_or(serde_json::Value::is_null) {
                 event["files"] = recording["files"].clone();
             }
+            event["_group"] = group.into();
             out.push(event);
         }
     }
@@ -325,7 +391,7 @@ fn keep(check: &str, entry: &str, production: bool) -> Option<Box<dyn Fn(&str) -
 #[ignore = "runs every recorded event through the corpus runner"]
 fn converted_rules_give_the_recorded_findings() {
     let only: Option<Vec<String>> = std::env::var("RERAIL_REPLAY_CHECK").ok().map(|s| s.split(',').map(str::to_owned).collect());
-    let mut per_check = BTreeMap::<String, [usize; 4]>::new();
+    let mut per_check = BTreeMap::<(String, String), [usize; 4]>::new();
     let mut misses = Vec::new();
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay");
     for (k, event) in events().into_iter().enumerate() {
@@ -333,20 +399,38 @@ fn converted_rules_give_the_recorded_findings() {
         if only.as_ref().is_some_and(|o| !o.contains(&check)) {
             continue;
         }
-        let row = per_check.entry(check.clone()).or_default();
+        let row = per_check.entry((event["_group"].as_str().unwrap().to_owned(), check.clone())).or_default();
         row[0] += 1;
-        if event.get("oracle_config").is_some_and(|c| !c.is_null()) || event.get("path_skip_override").is_some_and(|v| v == true) {
+        // Configured oracles, path-skip overrides, and comparisons of the message or of oracle metadata (which
+        // the findings here do not carry) are not replayed.
+        let unread = ["compare_message", "compare_fields"].iter().any(|k| event.get(*k).is_some_and(|v| !v.is_null() && v != false && v.as_array().is_none_or(|a| !a.is_empty())));
+        // `source_gate` is a prefilter of the JSON rules (a file mentioning `except`, say): it changes no finding,
+        // so a hand-written rule, which has none, replays its events.
+        let written = hand_written(&check);
+        let config = event.get("oracle_config").filter(|c| !c.is_null());
+        let gate_only = config.and_then(|c| c.as_object()).is_some_and(|c| c.keys().all(|k| k == "source_gate"));
+        if unread || (config.is_some() && !(written.is_some() && gate_only)) || event.get("path_skip_override").is_some_and(|v| v == true) {
             continue;
         }
         let production = event.get("production_scope").is_some_and(|v| v == true);
         let globs = |key: &str| event["scope"][key].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect::<Vec<_>>();
         let scope = (!production).then(|| if globs("include").is_empty() { (vec![], vec![]) } else { (globs("include"), globs("exclude")) });
         let adjust = Adjust { scope, keep: keep(&check, event["entry"].as_str().unwrap_or(""), production) };
-        let rule = pack().join(RULES).join(format!("data-layer-{}.json", check.replace('_', "-")));
-        let c = convert(&rule, &adjust);
-        if c.clauses.iter().any(|(_, r)| r.is_err()) {
+        let Some(rule) = rule_file(&check) else {
+            misses.push(format!("{check}: no rule file"));
             continue;
-        }
+        };
+        // A hand-written `.rr` that lowers wins over the converted JSON.
+        let program = match written {
+            Some(program) => program,
+            None => {
+                let c = convert(&rule, &adjust);
+                if c.clauses.iter().any(|(_, r)| r.is_err()) {
+                    continue;
+                }
+                c.program
+            }
+        };
         row[1] += 1;
         let dir = root.join(format!("e{k}"));
         for f in event["files"].as_array().unwrap() {
@@ -355,7 +439,7 @@ fn converted_rules_give_the_recorded_findings() {
             std::fs::write(&p, f["source"].as_str().unwrap()).unwrap();
         }
         let out = dir.join(".out");
-        let mut got: Vec<String> = match super::super::plan::corpus::run(&c.program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
+        let mut got: Vec<String> = match super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
             Ok(_) => std::fs::read_to_string(out.join("violation.csv"))
                 .unwrap_or_default()
                 .lines()
@@ -381,14 +465,20 @@ fn converted_rules_give_the_recorded_findings() {
     }
     let _ = std::fs::remove_dir_all(&root);
     let mut report = String::from("check: events, all clauses converted, exact, errors\n");
-    let mut sum = [0; 4];
-    for (check, row) in &per_check {
-        report.push_str(&format!("  {check}: {} {} {} {}\n", row[0], row[1], row[2], row[3]));
-        for i in 0..4 {
-            sum[i] += row[i];
+    let mut sums = BTreeMap::<&str, [usize; 4]>::new();
+    for ((group, check), row) in &per_check {
+        report.push_str(&format!("  {group} {check}: {} {} {} {}\n", row[0], row[1], row[2], row[3]));
+        for key in [group.as_str(), "all"] {
+            let sum = sums.entry(key).or_default();
+            for i in 0..4 {
+                sum[i] += row[i];
+            }
         }
     }
-    report.push_str(&format!("total: {} {} {} {}\n", sum[0], sum[1], sum[2], sum[3]));
+    for (group, sum) in &sums {
+        let name = if *group == "recordings 1-6" { "total".to_owned() } else { format!("total ({group})") };
+        report.push_str(&format!("{name}: {} {} {} {}\n", sum[0], sum[1], sum[2], sum[3]));
+    }
     println!("{report}");
     for m in misses.iter().take(40) {
         println!("{m}");
@@ -404,9 +494,9 @@ fn measure_converted_rules() {
     let corpus = PathBuf::from(std::env::var("RERAIL_MEASURE_CORPUS").expect("RERAIL_MEASURE_CORPUS"));
     let rules = std::env::var("RERAIL_MEASURE_RULES").expect("RERAIL_MEASURE_RULES");
     for id in rules.split(',') {
-        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rdl"))).unwrap();
+        let program = std::fs::read_to_string(pack().join("datalog").join(format!("{id}.rr"))).unwrap();
         // The relations the cross-file part derives, and the base relations it reads.
-        let mut parsed = crate::code_rule_dsl::logic::front::parse(&program).unwrap();
+        let mut parsed = crate::code_rule_dsl::logic::rr::parse(&program).unwrap();
         crate::code_rule_dsl::logic::strings::as_relations(&mut parsed).unwrap();
         let split = crate::code_rule_dsl::typing::file_local::programs(&parsed);
         let cross: BTreeSet<&str> = split.cross.rules.iter().map(|r| r.head.rel.as_str()).collect();

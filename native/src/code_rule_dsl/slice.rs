@@ -300,7 +300,7 @@ fn remember(lease: &Lease<'_>, scope: &str, digest: &[u8; 32], documents: &[Docu
             insert.execute(rusqlite::params![scope, d.path, d.key, &d.digest[..]])?;
         }
     }
-    lease.execute("INSERT INTO slice_match SELECT ?1, c0, c1, c2 FROM match", [scope])?;
+    lease.execute("INSERT INTO slice_match SELECT ?1, c0, c1, c2 FROM matched", [scope])?;
     lease.execute("INSERT INTO slice_span SELECT ?1, c0, c1, c2, c3 FROM span", [scope])?;
     merge_facts(lease, &KEPT_FACTS, fresh, 1)?;
     write_stat1(

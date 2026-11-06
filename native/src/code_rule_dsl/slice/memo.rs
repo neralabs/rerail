@@ -55,7 +55,7 @@ pub(super) fn lookup(store: &ContentStore, scope: &str, rules: &[u8; 32], docume
 
 /// Memoises the rows the wave left in `match` and `span` for each of `documents`.
 pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, scope: &str, rules: &[u8; 32], documents: &[Document]) -> StoreResult<()> {
-    let mut matches = lease.prepare("SELECT c0, c2 FROM match WHERE c1 = ?1")?;
+    let mut matches = lease.prepare("SELECT c0, c2 FROM matched WHERE c1 = ?1")?;
     let mut spans = lease.prepare("SELECT c1, c2, c3 FROM span WHERE c0 = ?1")?;
     for document in documents {
         let Some(source) = source(store, scope, document)? else { continue };

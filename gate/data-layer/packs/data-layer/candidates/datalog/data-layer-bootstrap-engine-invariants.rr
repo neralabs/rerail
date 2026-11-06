@@ -1,0 +1,19 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("l3200_metadata/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/schema_transaction.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2055_lazy_result/purity.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2200_sql_dialect/{sql_connection,sql_core_support_free_functions,sql_core_support_mixin,sql_execution_mixin,sql_schema_services,sql_bootstrap_metadata_services}.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/bootstrap_interrogation.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/{generic_sparse,staged_table_triggers}.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/read_through/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("data_layer_testing/helpers/{bootstrap,bootstrap_manifest}.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+.output violation

@@ -107,7 +107,7 @@ pub(crate) fn facts(typing: &Typing, root: &Path, files: &[String], report: &mut
     for (q, callable) in merged {
         let Some(rets) = ret_names(&terms, callable, &text) else { continue };
         for t in &rets {
-            out.push_str(&format!("declared_ret({}, {}).\n", serde_json::to_string(&q).expect("a string"), serde_json::to_string(t).expect("a string")));
+            out.push_str(&format!("declared_ret({}, {}).\n", crate::code_rule_dsl::logic::rr::quote(&q), crate::code_rule_dsl::logic::rr::quote(t)));
             report.declared += 1;
         }
         declared.insert(q, rets);

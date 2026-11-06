@@ -1,0 +1,263 @@
+// data-layer-serverplan-steps in Rerail logic: clause `step-contracts-2` (24 stages, partitionBy file), a part file
+// of serverplan_steps.rdl. Options at their defaults: entryPoint "all" (the matchers' `$option` file filter passes
+// every file; the query is the `all` case, every check's branch), strictModulesOnly true (`relaxed` matches no file).
+// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+//
+// One relation per SQL stage, under the stage's name; a nullable or boolean column is a side relation
+// `<stage>_<column>` that holds where the column is not NULL (true). A SQL row's id (kind:start:end) is a node; the
+// clause is per file, so a join on a name keeps the document (`docof`). Inputs are matcher atoms with the rule's
+// matchers verbatim (their `$option` cases included).
+//
+// Builtins: @depth (tape: the node's depth), @rx_matches, @substr, @trim(s, chars) (SQL two-argument trim: strip
+// those characters at both ends), @within (tape: strict descendant). A builtin with no value (SQL NULL) binds nothing.
+// recursion: ownership (E0 #52) and descendants (#53) are tape forms (`nearest`, `@within`); no Datalog recursion.
+// findings layer (§8): the rows' `entry` column (the Python check a row reproduces) and the identity text; the
+// finding is (issue, node).
+// OUTSIDE: none. missing fact: none. LIMIT/choice: none.
+// ties: none. The ordinal and position columns are exact; callback_links' newest function and STEP-026's
+// first bad node per keyword are NOT EXISTS tests (negation), not picks.
+
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl cdef(kind: symbol)
+cdef("class_definition").
+
+// ---- inputs (evidence) ----
+// raw_nodes: the selected nodes. Its captures are read by tree relations: PARENT is the tree parent (`child`), a field
+// capture (NAME, BODY, VALUE, …) the node's `field` child, ANCESTOR the nearest selected strict ancestor (below).
+.decl raw_nodes(n: node)
+raw_nodes(n) :- ast(d, n, {"language": "python", "syntax": "valid", "rule": {"all": [{"$option": "entryPoint", "cases": {"all": {"filePath": {"regex": "(?s).*"}}, "check_compile_callbacks_no_runtime_authority": {"filePath": {"regex": "(?s).*"}}, "check_postop_no_resolved_data_manipulation": {"filePath": {"regex": "(?s).*"}}, "_scan_source": {"filePath": {"regex": "(?s).*"}}, "_scan_file": {"filePath": {"regex": "(?s).*"}}}, "default": {"filePath": {"regex": "\\b\\B"}}}, {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end", "field": "parameters"}}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"regex": "ReadTransaction|WriteTransaction|SqlConnection|DatabaseConnection", "stopBy": "neighbor", "field": "return_type"}}], "stopBy": "end", "field": "return_type"}}, {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "keyword_argument"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"all": [{"kind": "assignment"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}, {"has": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "stopBy": "neighbor", "field": "left"}}]}, {"inside": {"all": [{"kind": "assignment"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}, {"has": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "stopBy": "neighbor", "field": "left"}}], "stopBy": "neighbor"}}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|sql_conn|txn)$"}], "stopBy": "neighbor", "field": "attribute"}}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}]}, {"any": [{"inside": {"all": [{"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end", "field": "parameters"}}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"regex": "ReadTransaction|WriteTransaction|SqlConnection|DatabaseConnection", "stopBy": "neighbor", "field": "return_type"}}], "stopBy": "end", "field": "return_type"}}, {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "keyword_argument"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"all": [{"kind": "assignment"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}, {"has": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "stopBy": "neighbor", "field": "left"}}]}, {"inside": {"all": [{"kind": "assignment"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}, {"has": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "stopBy": "neighbor", "field": "left"}}], "stopBy": "neighbor"}}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|sql_conn|txn)$"}], "stopBy": "neighbor", "field": "attribute"}}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}]}, {"pattern": "$ANCESTOR"}], "stopBy": {"any": [{"any": [{"kind": "module"}, {"all": [{"kind": "expression_statement"}, {"any": [{"inside": {"kind": "module", "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "block"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}]}, {"kind": "class_definition"}, {"kind": "function_definition"}, {"kind": "decorated_definition"}, {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"kind": "class_definition", "stopBy": "neighbor"}}], "stopBy": "neighbor"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end", "field": "parameters"}}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"regex": "ReadTransaction|WriteTransaction|SqlConnection|DatabaseConnection", "stopBy": "neighbor", "field": "return_type"}}], "stopBy": "end", "field": "return_type"}}, {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}]}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"inside": {"all": [{"kind": "keyword_argument"}, {"inside": {"all": [{"kind": "argument_list"}, {"inside": {"any": [{"all": [{"kind": "call"}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}, {"all": [{"all": [{"kind": "call"}, {"has": {"any": [{"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}]}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:CompiledStep)$"}], "stopBy": "neighbor", "field": "attribute"}}]}], "stopBy": "neighbor", "field": "function"}}]}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}]}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}], "stopBy": "neighbor"}}, {"all": [{"kind": "assignment"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}, {"has": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "stopBy": "neighbor", "field": "left"}}]}, {"inside": {"all": [{"kind": "assignment"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}, {"has": {"any": [{"kind": "identifier"}, {"kind": "attribute"}], "stopBy": "neighbor", "field": "left"}}], "stopBy": "neighbor"}}, {"all": [{"kind": "attribute"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:_conn|_serverplan_runtime_txn|_serverplan_sql_conn|_txn|conn|sql_conn|txn)$"}], "stopBy": "neighbor", "field": "attribute"}}, {"inside": {"all": [{"kind": "function_definition"}, {"inside": {"all": [{"kind": "function_definition"}, {"has": {"all": [{"kind": "identifier"}, {"regex": "^(?:compile)$"}], "stopBy": "neighbor", "field": "name"}}], "stopBy": "end"}}], "stopBy": "end"}}]}]}}}, {"pattern": "$_"}]}, {"pattern": "$NODE"}, {"any": [{"inside": {"pattern": "$PARENT", "stopBy": "neighbor"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$NAME", "stopBy": "neighbor", "field": "name"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$LEFT", "stopBy": "neighbor", "field": "left"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RIGHT", "stopBy": "neighbor", "field": "right"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$VALUE", "stopBy": "neighbor", "field": "value"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$TYPE", "stopBy": "neighbor", "field": "type"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$FUNCTION", "stopBy": "neighbor", "field": "function"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ARGUMENTS", "stopBy": "neighbor", "field": "arguments"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$OBJECT", "stopBy": "neighbor", "field": "object"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$ATTRIBUTE", "stopBy": "neighbor", "field": "attribute"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$BODY", "stopBy": "neighbor", "field": "body"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$PARAMETERS", "stopBy": "neighbor", "field": "parameters"}}, {"pattern": "$_"}]}, {"any": [{"has": {"pattern": "$RETURN_TYPE", "stopBy": "neighbor", "field": "return_type"}}, {"pattern": "$_"}]}]}}).
+// relaxed: at strictModulesOnly true its matcher matches no file; no stage of this clause reads it.
+.decl relaxed(d: number)
+relaxed(d) :- ast(d, m, {"language": "python", "syntax": "valid", "rule": {"all": [{"kind": "module"}, {"$option": "strictModulesOnly", "cases": {"true": {"filePath": {"regex": "\\b\\B"}}, "false": {"filePath": {"regex": "(?s).*"}}}}]}}).
+
+// ---- nodes, edges ----
+// A row's id (kind:start:end) is the node.
+.decl nodes(n: node)
+nodes(n) :- raw_nodes(n).
+.decl nodes_parent(n: node, p: node)
+nodes_parent(n, p) :- nodes(n), child(p, n, _).
+// edge_parent: ANCESTOR, the deepest node of `nodes` strictly above (the matcher's `inside` stops at the selection rule).
+.decl nodes_above(n: node, a: node, depth: number)
+nodes_above(n, a, k) :- nodes(n), nodes(a), @within(n, a) = 1, k = @depth(a).
+.decl nodes_above_deepest(n: node, depth: number)
+nodes_above_deepest(n, k) :- nodes_above(n, _, _), k = max j : { nodes_above(n, _, j) }.
+.decl nodes_edge_parent(n: node, a: node)
+nodes_edge_parent(n, a) :- nodes_above(n, a, k), nodes_above_deepest(n, k).
+// ordinal: row_number() OVER (PARTITION BY parent ORDER BY __start, __end, kind) - 1, among `nodes`.
+.decl nodes_before(n: node, m: node)
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), start(n, sn), start(m, sm), sm < sn.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, _, s, en), node(_, m, _, s, em), em < en.
+nodes_before(n, m) :- nodes_parent(n, p), nodes_parent(m, p), node(_, n, kn, s, e), node(_, m, km, s, e), km < kn.
+.decl nodes_has_before(n: node)
+nodes_has_before(n) :- nodes_before(n, _).
+.decl nodes_ordinal(n: node, ordinal: number)
+nodes_ordinal(n, 0) :- nodes(n), !nodes_has_before(n).
+nodes_ordinal(n, k) :- nodes_has_before(n), k = count : { nodes_before(n, _) }.
+// NOT EXISTS (a selected node whose parent is p).
+.decl nodes_has_child(p: node)
+nodes_has_child(p) :- nodes_parent(_, p).
+.decl edges(src: node, dst: node, ordinal: number)
+edges(s, n, o) :- nodes_edge_parent(n, s), nodes_ordinal(n, o).
+
+// ---- functions, ownership, classes, methods ----
+.decl functions(f: node, name: symbol)
+functions(f, name) :- nodes(f), kind(f, "function_definition"), field(f, "name", x), text(x, name).
+
+// ownership (E0 #52): a recursion down `edges` from the roots carrying fn, cls (nearest function / class,
+// ancestor-or-self) and top_fn (outermost function). Every function_definition and class_definition is selected, so
+// the selected chain passes through all of them: `nearest` and `@within` over the tape, no recursion. One row per node.
+.decl ownership(n: node)
+ownership(n) :- nodes(n).
+.decl ownership_fn(n: node, fn: node)
+ownership_fn(n, n) :- nodes(n), kind(n, "function_definition").
+ownership_fn(n, f) :- nodes(n), !kind(n, "function_definition"), nearest(n, f, fdef).
+.decl ownership_cls(n: node, cls: node)
+ownership_cls(n, n) :- nodes(n), kind(n, "class_definition").
+ownership_cls(n, c) :- nodes(n), !kind(n, "class_definition"), nearest(n, c, cdef).
+.decl nested_function(f: node)
+nested_function(f) :- kind(f, "function_definition"), nearest(f, g, fdef).
+.decl ownership_top_fn(n: node, top_fn: node)
+ownership_top_fn(n, n) :- nodes(n), kind(n, "function_definition"), !nested_function(n).
+ownership_top_fn(n, f) :- nodes(n), kind(f, "function_definition"), @within(n, f) = 1, !nested_function(f).
+
+.decl classes(c: node, name: symbol)
+classes(c, name) :- nodes(c), kind(c, "class_definition"), field(c, "name", x), text(x, name).
+// f's parent is the class's BODY, or a selected decorated_definition whose parent is the BODY.
+.decl methods(f: node, cls: node, name: symbol)
+methods(f, c, n) :- functions(f, n), child(b, f, _), classes(c, _), field(c, "body", b).
+methods(f, c, n) :- functions(f, n), child(d, f, _), nodes(d), kind(d, "decorated_definition"), child(b, d, _), classes(c, _),
+    field(c, "body", b).
+
+// ---- attributes, calls, arguments, keywords ----
+.decl attributes(a: node, attr: symbol, object: node, object_text: symbol)
+attributes(a, attr, o, ot) :- nodes(a), kind(a, "attribute"), field(a, "attribute", x), text(x, attr), field(a, "object", o), text(o, ot).
+.decl is_attribute(a: node)
+is_attribute(a) :- attributes(a, _, _, _).
+// The FUNCTION node must be selected; callee = coalesce(its attribute name, its text).
+.decl calls(c: node, callee_id: node, callee_kind: symbol, full_callee: symbol, callee: symbol)
+calls(c, f, k, t, a) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), kind(f, k), text(f, t), attributes(f, a, _, _).
+calls(c, f, k, t, t) :- nodes(c), kind(c, "call"), field(c, "function", f), nodes(f), kind(f, k), text(f, t), !is_attribute(f).
+.decl non_argument_kind(k: symbol)
+non_argument_kind("comment"). non_argument_kind("keyword_argument"). non_argument_kind("list_splat"). non_argument_kind("dictionary_splat").
+.decl argument_of(a: node, call: node)
+argument_of(a, c) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, a, _), nodes(a), kind(a, k), !non_argument_kind(k).
+// position = row_number() OVER (PARTITION BY call ORDER BY __start) - 1: the number of earlier arguments.
+.decl argument_before(a: node, b: node)
+argument_before(a, b) :- argument_of(a, c), argument_of(b, c), start(a, sa), start(b, sb), sb < sa.
+.decl argument_not_first(a: node)
+argument_not_first(a) :- argument_before(a, _).
+.decl arguments(a: node, call: node, position: number)
+arguments(a, c, 0) :- argument_of(a, c), !argument_not_first(a).
+arguments(a, c, k) :- argument_of(a, c), argument_not_first(a), k = count : { argument_before(a, _) }.
+// The keyword_argument, its NAME and its VALUE are selected.
+.decl keywords(call: node, keyword: node, name: symbol, value: node)
+keywords(c, k, name, v) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, k, _), nodes(k), kind(k, "keyword_argument"),
+    field(k, "name", kn), nodes(kn), text(kn, name), field(k, "value", v), nodes(v).
+
+// ---- descendants (E0 #53): the reflexive closure of `edges` from every selected node. A selected node's
+// chain of edge parents passes through every selected ancestor, so the closure is the selected nodes within the root.
+.decl descendants(root: node, n: node)
+descendants(r, r) :- nodes(r).
+descendants(r, n) :- nodes(r), nodes(n), @within(n, r) = 1.
+
+// LEFT is selected; RIGHT (a LEFT JOIN on nodes) and fn (ownership) are nullable.
+.decl assignments(a: node, target: node)
+assignments(a, l) :- nodes(a), kind(a, "assignment"), field(a, "left", l), nodes(l).
+.decl assignments_value(a: node, value: node)
+assignments_value(a, r) :- assignments(a, _), field(a, "right", r), nodes(r).
+.decl assignments_fn(a: node, fn: node)
+assignments_fn(a, f) :- assignments(a, _), ownership_fn(a, f).
+
+// ---- parameters ----
+// p: a selected child of the function's PARAMETERS; its name node is p (an identifier) or p's first selected child,
+// an identifier. annotation (TYPE) is nullable. position counts the function's earlier rows.
+.decl parameter_kind(k: symbol)
+parameter_kind("identifier"). parameter_kind("typed_parameter"). parameter_kind("default_parameter"). parameter_kind("typed_default_parameter").
+.decl parameter_row(fn: node, p: node, name: symbol)
+parameter_row(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(p), kind(p, "identifier"), text(p, name).
+parameter_row(f, p, name) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), nodes(p), kind(p, k), parameter_kind(k),
+    child(p, n, _), nodes_ordinal(n, 0), kind(n, "identifier"), text(n, name).
+.decl parameter_before(p: node, q: node)
+parameter_before(p, q) :- parameter_row(f, p, _), parameter_row(f, q, _), start(p, sp), start(q, sq), sq < sp.
+.decl parameter_not_first(p: node)
+parameter_not_first(p) :- parameter_before(p, _).
+.decl parameters(fn: node, p: node, name: symbol, position: number)
+parameters(f, p, n, 0) :- parameter_row(f, p, n), !parameter_not_first(p).
+parameters(f, p, n, k) :- parameter_row(f, p, n), parameter_not_first(p), k = count : { parameter_before(p, _) }.
+.decl parameters_annotation(p: node, annotation: node)
+parameters_annotation(p, t) :- parameters(_, p, _, _), field(p, "type", t).
+
+// ---- step_classes, step_methods ----
+// A selected argument_list child of the class with a selected child naming ServerPlanStep.
+.decl step_classes(c: node)
+step_classes(c) :- classes(c, _), child(c, args, _), nodes(args), kind(args, "argument_list"), child(args, b, _), nodes(b), text(b, t),
+    @rx_matches(t, "^(?:[A-Za-z_]\\w*\\.)*ServerPlanStep(?:\\[.*\\])?$") = 1.
+.decl step_methods(f: node, cls: node, name: symbol)
+step_methods(f, c, n) :- methods(f, c, n), step_classes(c).
+
+.decl seq_kind(k: symbol)
+seq_kind("list"). seq_kind("tuple"). seq_kind("set").
+.decl string_kind(k: symbol)
+string_kind("string"). string_kind("concatenated_string").
+// A list/tuple/set node with no selected child.
+.decl empty_container(x: node)
+empty_container(x) :- nodes(x), kind(x, k), seq_kind(k), !nodes_has_child(x).
+
+// ---- nonempty_keywords, compiled ----
+// trim(text, char(34)||char(39)) is @trim(t, "\"'").
+.decl empty_value(v: node)
+empty_value(v) :- keywords(_, _, _, v), kind(v, "none").
+empty_value(v) :- keywords(_, _, _, v), kind(v, k), string_kind(k), text(v, t), @trim(t, "\"'") = "".
+empty_value(v) :- keywords(_, _, _, v), empty_container(v).
+.decl nonempty_keywords(call: node, keyword: node, name: symbol, value: node)
+nonempty_keywords(c, k, n, v) :- keywords(c, k, n, v), !empty_value(v).
+// The boolean columns grammarless, refs, sql_surface: relations that hold where true.
+.decl compiled(c: node)
+compiled(c) :- calls(c, _, _, "CompiledStep", _).
+.decl compiled_grammar(c: node)
+compiled_grammar(c) :- compiled(c), keywords(c, _, "grammar", v), !kind(v, "none").
+.decl compiled_grammarless(c: node)
+compiled_grammarless(c) :- compiled(c), !compiled_grammar(c).
+.decl ref_keyword(name: symbol)
+ref_keyword("runtime_ref_ids"). ref_keyword("source_refs").
+.decl compiled_refs(c: node)
+compiled_refs(c) :- compiled(c), nonempty_keywords(c, _, n, _), ref_keyword(n).
+.decl compiled_sql_surface(c: node)
+compiled_sql_surface(c) :- compiled_refs(c).
+compiled_sql_surface(c) :- compiled(c), nonempty_keywords(c, _, "auxiliary_ctes", _).
+compiled_sql_surface(c) :- compiled_grammar(c).
+
+// ---- compile_aliases: `name = self._attr` in a step's compile ----
+.decl compile_aliases(method: node, name: symbol, attr: symbol)
+compile_aliases(m, n, attr) :- step_methods(m, _, "compile"), assignments_fn(a, m), assignments(a, l), kind(l, "identifier"), text(l, n),
+    assignments_value(a, v), attributes(v, attr, _, "self"), @substr(attr, 1, 1) = "_".
+
+// ---- callback_links ----
+// A post_op/post_op_with_refs/on_commit/on_rollback keyword naming a function, of a CompiledStep owned by a step's
+// compile; the function is the last of that name defined inside the compile.
+.decl callback_keyword(name: symbol)
+callback_keyword("post_op"). callback_keyword("post_op_with_refs"). callback_keyword("on_commit"). callback_keyword("on_rollback").
+.decl newer_function(f: node, m: node)
+newer_function(f, m) :- step_methods(m, _, "compile"), functions(f, n), functions(g, n), node(d, f, _, fs, _), node(d, g, _, gs, ge),
+    node(d, m, _, _, me), gs > fs, ge <= me.
+.decl callback_links(method: node, cls: node, call: node, keyword: node, kind: symbol, callback: node, callback_name: symbol)
+callback_links(m, cls, c, k, kind, f, fn) :- step_methods(m, cls, "compile"), compiled(c), node(d, m, _, ms, me), node(d, c, _, cs, ce),
+    cs > ms, ce <= me, ownership_fn(c, m), keywords(c, k, kind, v), callback_keyword(kind), kind(v, "identifier"), text(v, fn),
+    functions(f, fn), node(d, f, _, fs, fe), fs > ms, fe <= me, !newer_function(f, m).
+
+// ---- authority_parameters, authority_returns, callback_carriers ----
+.decl authority_type(t: symbol)
+authority_type("DatabaseConnection"). authority_type("ReadTransaction"). authority_type("SqlConnection"). authority_type("SyncDatabaseConnection").
+authority_type("SyncSqlConnection"). authority_type("WriteTransaction").
+.decl authority_parameters(fn: node, p: node, name: symbol, position: number)
+authority_parameters(f, p, n, i) :- parameters(f, p, n, i), parameters_annotation(p, t), descendants(t, x), kind(x, "identifier"), text(x, s),
+    authority_type(s).
+// Keyed by (__path, name): the document is a column.
+.decl authority_returns(d: number, name: symbol)
+authority_returns(d, n) :- functions(f, n), docof(f, d), field(f, "return_type", t), descendants(t, x), kind(x, "identifier"), text(x, s),
+    authority_type(s).
+.decl post_op_keyword(name: symbol)
+post_op_keyword("post_op"). post_op_keyword("post_op_with_refs").
+.decl callback_carriers(keyword: node, name: symbol)
+callback_carriers(k, n) :- callback_links(_, _, _, k, kind, f, _), post_op_keyword(kind), parameters(f, _, n, 1).
+callback_carriers(k, n) :- callback_links(_, _, _, k, _, f, _), parameters(f, p, n, _), parameters_annotation(p, t), descendants(t, x),
+    kind(x, "identifier"), text(x, "Hydrator").
+
+// ---- bad_callback_nodes: runtime authority reached inside a callback ----
+.decl carrier_attr(a: symbol)
+carrier_attr("_conn"). carrier_attr("_serverplan_runtime_txn"). carrier_attr("_serverplan_sql_conn"). carrier_attr("_txn"). carrier_attr("conn").
+carrier_attr("sql_conn"). carrier_attr("txn").
+.decl bad_callback_nodes(keyword: node, n: node)
+bad_callback_nodes(k, n) :- callback_links(_, _, _, k, _, f, _), ownership_fn(n, f), attributes(n, attr, _, ot), callback_carriers(k, ot),
+    carrier_attr(attr).
+bad_callback_nodes(k, n) :- callback_links(_, _, _, k, _, f, _), ownership_fn(n, f), calls(n, _, "identifier", _, "active_pipeline_txn_for_callbacks").
+bad_callback_nodes(k, n) :- callback_links(_, _, _, k, _, f, _), ownership_fn(n, f), calls(n, _, "identifier", _, callee), docof(n, d),
+    authority_returns(d, callee).
+bad_callback_nodes(k, n) :- callback_links(_, _, _, k, _, f, _), ownership_fn(n, f), calls(n, _, _, _, _), arguments(a, n, _), kind(a, "identifier"),
+    text(a, t), authority_parameters(f, _, t, _).
+bad_callback_nodes(k, n) :- callback_links(_, _, _, k, _, f, _), ownership_fn(n, f), calls(n, _, _, "getattr", _), arguments(a, n, 0),
+    kind(a, "identifier"), text(a, t), callback_carriers(k, t), arguments(b, n, 1), text(b, u), attr = @trim(u, "\"'"), carrier_attr(attr).
+
+// ---- postop_callbacks: functions defined inside a step's compile, other than on_commit/on_rollback ----
+.decl postop_callbacks(method: node, cls: node, callback: node)
+postop_callbacks(m, c, f) :- step_methods(m, c, "compile"), functions(f, n), node(d, m, _, ms, me), node(d, f, _, fs, fe), fs > ms,
+    fe <= me, n != "on_commit", n != "on_rollback".
+
+// ---- the clause's query: one finding per (issue, node) ----
+.decl finding(clause: symbol, key: symbol, n: node)
+.output finding
+// STEP-026: per keyword, the bad node of least __start, the widest among equal starts.
+.decl bad_callback_shadowed(keyword: node, n: node)
+bad_callback_shadowed(k, n) :- bad_callback_nodes(k, n), bad_callback_nodes(k, b), start(b, sb), start(n, sn), sb < sn.
+bad_callback_shadowed(k, n) :- bad_callback_nodes(k, n), bad_callback_nodes(k, b), node(d, b, _, s, eb), node(d, n, _, s, en), eb > en.
+finding("step-contracts-2", "STEP-026", n) :- bad_callback_nodes(k, n), !bad_callback_shadowed(k, n).
+// STEP-019: inside a compile-local callback, an assignment to, a model mutator on, or a __setattr__ of a compile alias.
+.decl model_mutator(name: symbol)
+model_mutator("__setattr__"). model_mutator("model_copy"). model_mutator("model_dump"). model_mutator("model_dump_json").
+finding("step-contracts-2", "STEP-019", n) :- postop_callbacks(m, _, f), descendants(f, n), assignments(n, t), attributes(t, _, _, o),
+    compile_aliases(m, o, _).
+finding("step-contracts-2", "STEP-019", n) :- postop_callbacks(m, _, f), descendants(f, n), calls(n, ci, _, _, callee), model_mutator(callee),
+    attributes(ci, _, _, o), compile_aliases(m, o, _).
+finding("step-contracts-2", "STEP-019", n) :- postop_callbacks(m, _, f), descendants(f, n), calls(n, _, "attribute", _, "__setattr__"),
+    arguments(a, n, 0), kind(a, "identifier"), text(a, t), compile_aliases(m, t, _).

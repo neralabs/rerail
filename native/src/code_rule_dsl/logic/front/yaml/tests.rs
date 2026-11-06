@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::logic::front::parse;
+use crate::code_rule_dsl::logic::rr::parse;
 
 fn packs() -> Vec<(String, Value)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
@@ -17,7 +17,7 @@ fn packs() -> Vec<(String, Value)> {
     out
 }
 
-/// Every pack's policy round-trips: document → AST → Datalog text → AST → the same document, its matchers as `ast`
+/// Every pack's policy round-trips: document → AST → `.rr` text → AST → the same document, its matchers as `ast`
 /// atoms of `violation` rules.
 #[test]
 fn pack_policies_round_trip_through_datalog_text() {

@@ -1296,3 +1296,64 @@ Authored rules find a node's nearest enclosing scope by joining every scope's by
 file (t18 § 4): quadratic per file, 10 s of the authored logic's 24 s at 1,000 files. The wave's
 rules cannot use `nearest` or `tape`'s subtree intervals without arithmetic. **Closure:** with O63,
 an `ancestor`/`nearest` relation over syntax ids, bound with the chunk like the base relations.
+
+## O71. The converter still builds `.rdl` fragments inside
+
+The converter's emitter assembles each rule as `.rdl` text and translates the result to `.rr` at
+the end (decision 0043). The output is `.rr`, but the emitter's own strings are the old dialect.
+**Closure:** the emitter builds `.rr` (or the `Program`) directly; `rr::translate` then serves only
+the copies, and goes with them at step 31.
+
+## O72. The newer data-layer rules: converted where they can be, SQL stages by hand
+
+The converter reads 100 rules: the 60 of the earlier rewrite (`candidates/rules-ast`) first, then the 40
+newer ones from Data-layer-rule-expressivity (10 candidates, 30 certified). It converts 341 of 908 clauses.
+Its largest gap is relational clauses: 174 clauses of SQL stages in 41 rules (93 of them in
+bounded-composed-graph-paths). These are not converted; they are written by hand in `.rr` (list step 30).
+The newer branch's revisions of 24 of the first 60 convert worse (admin-async-purity: 0 of 40 events, from
+40), so the earlier versions are kept; four of batch 7's probes miss on them (quotes in comments, allowed
+sources). The replay reads every batch: recordings 1-6 give `2350 155 153 0` as before; batches 7-8 and
+the probes give `1638 20 16 0`. Of their events, 645 have configured oracles and 235 compare the message
+or oracle metadata, which the replay does not read yet. The census still counts the first 60.
+**Closure:** step 30's hand-written `.rr` for the SQL stages and the other gaps; the replay reads configured
+oracles and messages; the census counts 100.
+
+## O73. Hand-written `.rr` constructs that lowering refuses
+
+Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
+parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Still refused by name:
+`.violation` at a span or a source location (file-length, test-budget, noqa-sec-ratchet), `~` patterns,
+`must`/`may`, `=> edits`, `ordered by`, `dfs_first`, `sum`/`mean`/`join`, an aggregate over a join, kind
+sets of functions (tsx) and negated disjunctions. **Closure:** list step 30.
+
+## O74. Translated programs declare the base relations themselves
+
+Each translated program declares the engine's base relations (`node`, `text`, `child` …) instead of
+`#include "core.rr"`. **Closure:** the engine's base relations and `core.rr` agree, and the programs
+include it.
+
+## O75. The `.rdl` copies and T's tools
+
+T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
+reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
+`.rdl` left. **Closure:** step 31 (O19) removes them.
+
+## O76. Base relations and inputs the engine does not make yet
+
+Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
+parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
+(`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
+since reading it is not written. **Closure:** these relations are built natively and the files are read.
+
+## O77. Lowering shortcuts in `.rr`
+
+- A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
+  text test.
+- Comparing two symbols (`t > s`) compares their interned ids, not their text.
+- `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
+- `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
+  `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
+  path has no range read yet.
+- The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
+  no new values; this extends O11's bound.
+**Closure:** each is lowered as `core.rr` describes, or the description changed.

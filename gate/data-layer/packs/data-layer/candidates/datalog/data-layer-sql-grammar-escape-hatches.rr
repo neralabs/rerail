@@ -1,0 +1,89 @@
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.input doc, node, field
+.decl in_scope(d: number)
+.decl m10(n: node)
+.decl m11(n: node)
+.decl m19(n: node)
+.decl m20(n: node)
+.decl m28(n: node)
+.decl m29(n: node)
+.decl m37(n: node)
+.decl m38(n: node)
+.decl m46(n: node)
+.decl m47(n: node)
+.decl m55(n: node)
+.decl m56(n: node)
+.decl m64(n: node)
+.decl m65(n: node)
+.decl m73(n: node)
+.decl m74(n: node)
+.decl m82(n: node)
+.decl m83(n: node)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+m10(n) :- field(v4, "function", n), node(_, v4, "call", _, _).
+m10(n) :- field(v5, "attribute", n), node(_, v5, "attribute", _, _), field(v6, "function", v5), node(_, v6, "call", _, _).
+m10(n) :- field(v7, "name", n), node(_, v7, "class_definition", _, _), field(v7, "superclasses", v8), node(_, v8, "argument_list", _, _).
+m10(n) :- field(v9, "name", n), node(_, v9, "function_definition", _, _).
+m11(n) :- node(_, n, "dotted_name", _, _).
+m11(n) :- node(_, n, "aliased_import", _, _).
+m19(n) :- field(v13, "function", n), node(_, v13, "call", _, _).
+m19(n) :- field(v14, "attribute", n), node(_, v14, "attribute", _, _), field(v15, "function", v14), node(_, v15, "call", _, _).
+m19(n) :- field(v16, "name", n), node(_, v16, "class_definition", _, _), field(v16, "superclasses", v17), node(_, v17, "argument_list", _, _).
+m19(n) :- field(v18, "name", n), node(_, v18, "function_definition", _, _).
+m20(n) :- node(_, n, "dotted_name", _, _).
+m20(n) :- node(_, n, "aliased_import", _, _).
+m28(n) :- field(v22, "function", n), node(_, v22, "call", _, _).
+m28(n) :- field(v23, "attribute", n), node(_, v23, "attribute", _, _), field(v24, "function", v23), node(_, v24, "call", _, _).
+m28(n) :- field(v25, "name", n), node(_, v25, "class_definition", _, _), field(v25, "superclasses", v26), node(_, v26, "argument_list", _, _).
+m28(n) :- field(v27, "name", n), node(_, v27, "function_definition", _, _).
+m29(n) :- node(_, n, "dotted_name", _, _).
+m29(n) :- node(_, n, "aliased_import", _, _).
+m37(n) :- field(v31, "function", n), node(_, v31, "call", _, _).
+m37(n) :- field(v32, "attribute", n), node(_, v32, "attribute", _, _), field(v33, "function", v32), node(_, v33, "call", _, _).
+m37(n) :- field(v34, "name", n), node(_, v34, "class_definition", _, _), field(v34, "superclasses", v35), node(_, v35, "argument_list", _, _).
+m37(n) :- field(v36, "name", n), node(_, v36, "function_definition", _, _).
+m38(n) :- node(_, n, "dotted_name", _, _).
+m38(n) :- node(_, n, "aliased_import", _, _).
+m46(n) :- field(v40, "function", n), node(_, v40, "call", _, _).
+m46(n) :- field(v41, "attribute", n), node(_, v41, "attribute", _, _), field(v42, "function", v41), node(_, v42, "call", _, _).
+m46(n) :- field(v43, "name", n), node(_, v43, "class_definition", _, _), field(v43, "superclasses", v44), node(_, v44, "argument_list", _, _).
+m46(n) :- field(v45, "name", n), node(_, v45, "function_definition", _, _).
+m47(n) :- node(_, n, "dotted_name", _, _).
+m47(n) :- node(_, n, "aliased_import", _, _).
+m55(n) :- field(v49, "function", n), node(_, v49, "call", _, _).
+m55(n) :- field(v50, "attribute", n), node(_, v50, "attribute", _, _), field(v51, "function", v50), node(_, v51, "call", _, _).
+m55(n) :- field(v52, "name", n), node(_, v52, "class_definition", _, _), field(v52, "superclasses", v53), node(_, v53, "argument_list", _, _).
+m55(n) :- field(v54, "name", n), node(_, v54, "function_definition", _, _).
+m56(n) :- node(_, n, "dotted_name", _, _).
+m56(n) :- node(_, n, "aliased_import", _, _).
+m64(n) :- field(v58, "function", n), node(_, v58, "call", _, _).
+m64(n) :- field(v59, "attribute", n), node(_, v59, "attribute", _, _), field(v60, "function", v59), node(_, v60, "call", _, _).
+m64(n) :- field(v61, "name", n), node(_, v61, "class_definition", _, _), field(v61, "superclasses", v62), node(_, v62, "argument_list", _, _).
+m64(n) :- field(v63, "name", n), node(_, v63, "function_definition", _, _).
+m65(n) :- node(_, n, "dotted_name", _, _).
+m65(n) :- node(_, n, "aliased_import", _, _).
+m73(n) :- field(v67, "function", n), node(_, v67, "call", _, _).
+m73(n) :- field(v68, "attribute", n), node(_, v68, "attribute", _, _), field(v69, "function", v68), node(_, v69, "call", _, _).
+m73(n) :- field(v70, "name", n), node(_, v70, "class_definition", _, _), field(v70, "superclasses", v71), node(_, v71, "argument_list", _, _).
+m73(n) :- field(v72, "name", n), node(_, v72, "function_definition", _, _).
+m74(n) :- node(_, n, "dotted_name", _, _).
+m74(n) :- node(_, n, "aliased_import", _, _).
+m82(n) :- field(v76, "function", n), node(_, v76, "call", _, _).
+m82(n) :- field(v77, "attribute", n), node(_, v77, "attribute", _, _), field(v78, "function", v77), node(_, v78, "call", _, _).
+m82(n) :- field(v79, "name", n), node(_, v79, "class_definition", _, _), field(v79, "superclasses", v80), node(_, v80, "argument_list", _, _).
+m82(n) :- field(v81, "name", n), node(_, v81, "function_definition", _, _).
+m83(n) :- node(_, n, "dotted_name", _, _).
+m83(n) :- node(_, n, "aliased_import", _, _).
+.output violation

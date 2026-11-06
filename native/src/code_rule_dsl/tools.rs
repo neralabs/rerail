@@ -28,7 +28,7 @@ pub fn assemble(text: &str) -> Result<String, String> {
     Ok(programs.iter().map(|(program, grammar)| rir::disassemble(program, grammar.as_ref())).collect())
 }
 
-/// `program` (`.rdl` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
+/// `program` (`.rr` text) over the corpus T's `t_facts` names under `root` (list step 23): the outputs as T's
 /// `rdl.py sql` writes them, into `out`, and a report of each phase's CPU and the peak RSS.
 pub fn logic(program: &str, root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize) -> Result<String, String> {
     use super::typing::file_local::Binding;
