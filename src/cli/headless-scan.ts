@@ -491,8 +491,8 @@ function scanRulesSource(rulesRef: string | undefined, useHome: boolean): ScanRe
   return useHome ? { kind: "home" } : { kind: "worktree" };
 }
 
-/** The scan proper, in its scratch folder: the scan's own database, always, with the home's only read and closed before the scan runs. */
-async function scanInScratch(
+/** Runs the scan in its scratch folder and reports it: the scan's own database, always, with the home's only read and closed before the scan runs. */
+async function scanReport(
   scratch: string, options: HeadlessScanOptions,
   { root, home, useHome, packs, scanId, startedAt }: { root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[]; scanId: string; startedAt: number },
 ): Promise<ScanReport> {
@@ -549,7 +549,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const packs = installedPackIds(options.packs);
   const home = openHomeDatabase(homeDatabase);
   const useHome = homeIsScanConfiguration(options, home, root, packs);
-  return withScanScratch(home, scratch => scanInScratch(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
+  return withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt }));
 }
 
 /** One line per violation, then a summary: the text `rerail scan` prints without `--json`. */

@@ -307,8 +307,8 @@ function isAsEditLeft(current: Source | undefined, digest: string | undefined): 
   return current !== undefined && current.readError === undefined && current.digest === digest;
 }
 
-/** Whether `scope` lies within the captured paths and every preimage was read. */
-function isCaptured(preimages: RewindableEdit["preimages"], scope: readonly string[]): boolean {
+/** Whether there is a preimage for every path of `scope`, and every preimage was read. */
+function hasReadPreimagesFor(preimages: RewindableEdit["preimages"], scope: readonly string[]): boolean {
   if (scope.length === 0 || scope.some(path => !preimages.has(path))) return false;
   return ![...preimages.values()].some(preimage => preimage.readError !== undefined);
 }
@@ -473,7 +473,7 @@ export class CodeRuleBridge {
     const rewindable = this.#rewindable.get(toolCallId);
     if (rewindable === undefined || rewindable.revision !== revision) return undefined;
     this.#rewindable.delete(toolCallId);
-    if (!isCaptured(rewindable.preimages, scope)) return undefined;
+    if (!hasReadPreimagesFor(rewindable.preimages, scope)) return undefined;
     assertNoneWithheld(rewindable.preimages);
     const discovery = this.#discovery;
     if (discovery === undefined || discovery.cancelled) return undefined;

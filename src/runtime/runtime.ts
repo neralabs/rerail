@@ -1787,8 +1787,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#recordUndelivered(state, pending);
       return "discarded";
     }
+    this.#applySubagentStrategy(state, pending, content);
     const window = this.#ownResultWindow(state, metadata);
-    this.#addressDelivery(state, pending, content, window);
+    // The steer rides that result: its delivery names the result's tool call.
+    if (window !== undefined) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
     if (state.steerStrategy === "rewind" && window !== undefined) return await this.#rewindSteer(state, window, pending, metadata!, isRetired);
     if (this.#holdForDigest(state, pending, metadata)) return "queued";
     return this.#pendSteer(state, pending, metadata);
@@ -1811,11 +1813,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return own ? window : undefined;
   }
 
-  /** Sets how the steer goes out: reworded for a subagent, and addressed to the result it rides, `window`, when it has one. */
-  #addressDelivery(state: RuntimeSessionState, pending: PendingSteer, content: string, window: ResultWindow | undefined): void {
+  /** Under the `subagent` steer strategy, the steer goes out asking the coding agent to hand the fix to a subagent; under any other, it is left as it is. */
+  #applySubagentStrategy(state: RuntimeSessionState, pending: PendingSteer, content: string): void {
     if (state.steerStrategy === "subagent")
       pending.delivery = { ...pending.delivery, content: subagentSteer(content, state.descriptor.host), strategy: state.steerStrategy };
-    if (window !== undefined) pending.delivery = { ...pending.delivery, toolCallId: window.toolCallId };
   }
 
   /** Rolls the edit back, then pends the steer; queued before the result answers, so the steer goes out with the edit it rolled back. */

@@ -1845,15 +1845,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   }
 
   /** Each applied source under `directory` whose facts changed: `files` to send again, and `repackaged`, the applied edits they came from. */
-  async #repackagedSources(edit: CodeRuleEdit, directory: string, reading: {
+  async #repackagedSources(edit: CodeRuleEdit, directory: string, { packages, cache, serverGraph, overlay }: {
     packages: ReadonlyMap<string, string>; cache: SourceFactsCache; serverGraph: boolean; overlay: SourceOverlay | undefined;
   }): Promise<{ files: WorkspaceFile[]; repackaged: CodeRuleEdit[] }> {
     const files: WorkspaceFile[] = [];
     const repackaged: CodeRuleEdit[] = [];
-    for (const [path, sent] of reading.packages) {
+    for (const [path, sent] of packages) {
       const stored = this.#applied.get(path);
       if (stored === undefined || !this.#mayRecheck(path, edit, directory)) continue;
-      const facts = await sourceFileFacts(this.#workspaceRoot, path, stored.language, reading.cache, reading.serverGraph, reading.overlay);
+      const facts = await sourceFileFacts(this.#workspaceRoot, path, stored.language, cache, serverGraph, overlay);
       if (JSON.stringify(facts.package ?? null) === sent) continue;
       const applied = await this.#load(stored);
       if (applied.generatedText === undefined) continue;
