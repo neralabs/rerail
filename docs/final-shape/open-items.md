@@ -1343,7 +1343,8 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
 parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
 (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
-since reading it is not written. **Closure:** these relations are built natively and the files are read.
+since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
+`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.)
 
 ## O77. Lowering shortcuts in `.rr`
 
@@ -1377,15 +1378,36 @@ brought over as it lands. Hand-written rules on the recorded events: 97 of 98 ex
 
 Left: public-api's chainable-builder reads `text` of a return annotation. `core.rr` (and the rule-syntax pass's
 ALIGN-FINAL-SHAPE.md) give every node a `text`; the engine's is T's, identifiers only (1 event).
-**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests).
+**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests). Done for
+programs that include `core.rr` (decision 0046), up to 256 bytes or token-like (O80).
 
 `logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed once in the parallel `logic::` run
 at load 40-55 and passes alone: shared state between tests, not looked into.
 
 ## O79. `op` of a comparison: closed
 
+**Revised (decision 0046, the coordinator's choice):** `op` follows `core.rr`, every anonymous token of a node in
+every language, for programs that include `core.rr`. T's view below is `op_t` in both shapes, and `op` in T's
+shape; the parity test reads `op_t`. `op_at` is every non-punctuation token in order, so Rust's `&&` of a `let`
+chain has one.
+
+Before:
 `op` stays T's: one row per node, binary, boolean and unary operators, augmented assignments and `async`, so T's
 parity tests hold. A comparison has several operators in order (`a < b <= c`), so it has its own relation, the one
 `core.rr` already declares: `op_at(n, i, s)`, n's operator tokens (the `operator` and `operators` fields) from 0.
 The library's `cmp` reads `op_at(c, 0, o)`. Not yet: Rust's `&&` in a `let` chain (`complexity/rust.rr`), whose
 tokens have no field.
+
+## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
+
+- `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
+  into the batch's node space, on demand (rrlab answers requests in rounds); not built.
+- `match_all`, and `match` with captures on a node or span, need the lowering to call the text layer on the
+  bytes (0042 §3). `docof` of a span needs the lowering to read `docof` as an input; the view exists.
+- `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
+- `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict.
+- `static_value` is `value`: file-local constants are not followed.
+- `tsconfig*`, `package_export`, `git_*`, `signed_list`, `input_error` and `list_len` are not read.
+- `earlier` and `visit_index` are preorder, not CPython's ast order (as O77).
+**Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
+
