@@ -7,12 +7,13 @@
 // The `ast` rows are read over tree-sitter's tree. The CPython ↔ tree-sitter mapping, per kind used:
 //   Module ↔ module · Import/ImportFrom ↔ import_statement/import_from_statement (level 0 = a dotted_name
 //   module_name; relative_import is level > 0; future_import_statement's module `__future__` never matches) ·
-//   alias.name ↔ the dotted_name's text · Call ↔ call (func = unparen(function)) · Attribute ↔ attribute (its
-//   ast_name is the attr, the `attribute` field's text) · Name ↔ an identifier in expression position
+//   alias.name ↔ the dotted_name's identifiers joined by "." · Call ↔ call (func = unparen(function)) · Attribute ↔
+//   attribute (its ast_name is the attr, the `attribute` field's text) · Name ↔ an identifier in expression position
 //   (optimizer_name) · Constant str ↔ a str-form string or a concatenated_string of them (optimizer_str_const) ·
-//   JoinedStr ↔ an f-string, or a concatenated_string with one (optimizer_fstr) and its Constant pieces
-//   (optimizer_fpiece) · Compare ↔ comparison_operator (every named child an operand) · BinOp BitAnd ↔
-//   binary_operator with op "&" · Assign/AnnAssign ↔ a statement-level assignment (with `type`: AnnAssign), `a = b = v`
+//   JoinedStr ↔ an f-string, a concatenated_string with one (optimizer_fstr), or a format_specifier (a format spec's
+//   JoinedStr, at its `:`), and its Constant pieces ↔ W's fstring_piece literals (optimizer_fpiece) · Compare ↔
+//   comparison_operator (every named child an operand) · BinOp BitAnd ↔ binary_operator with op "&" ·
+//   Assign/AnnAssign ↔ a statement-level assignment (with `type`: AnnAssign), `a = b = v`
 //   one Assign with targets a, b and value v · Tuple (a `value`) ↔ tuple or expression_list · Raise ↔
 //   raise_statement (exc = its child that is not the `cause`) · FunctionDef ↔ function_definition without op
 //   "async"; ClassDef ↔ class_definition, a decorated one's parent being the decorated_definition's.
@@ -20,21 +21,9 @@
 // `ast` preorder ids are compared only between top-level statements of one module (pipeline_entries' `p.id <
 // tuple.id`, pass_classes' first AnnAssign): there preorder order is byte order, so starts are compared.
 //
-// Approximations (each named again where it is made):
-//   A1 f-string Constant pieces are the string_content as written, escapes NOT decoded and `{{`/`}}` kept doubled:
-//      CPython's decoded pieces (W's pythonFString parse, fstring_piece; core.rr str_part) are not bound, an engine
-//      gap. Exact for pieces without backslashes or doubled braces. A str Constant that is a plain string or an
-//      all-str concatenation is W's decoded value (value(n, v)), exactly.
-//   A2 adjacent literals with an f-string: CPython merges adjacent literal runs into one Constant (at the first
-//      run's line); here each run (a plain part, decoded, or an f-string's string_content) is a piece of its own.
-//   A3 f-string format specs (`{x:spec}`), whose pieces are Constants in CPython, are not read.
-//   A4 PV2-031's word test `\b(Fix|…)\b` on an f-string piece runs on the raw piece: an escape `\a \b \f \n \r \t
-//      \v` before the word counts as a boundary (as its decoded control character does); the engine's `\b` is ASCII
-//      (Rust's, in W, is Unicode).
-//   A5 identifiers in `case` patterns and PEP 695 type parameter names count as Names (CPython: MatchAs/TypeVar
+// Approximation (named again where it is made):
+//   A1 identifiers in `case` patterns and PEP 695 type parameter names count as Names (CPython: MatchAs/TypeVar
 //      strings), as in python/ast.rr ast_name.
-//   A6 alias names are the dotted_name's text: `import os . path` (spaces) is "os . path", CPython's "os.path"
-//      (joining its identifiers is string-building along siblings, which the engine rejects).
 //
 // optimizer-invariant-registry reads the Markdown doc `docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md` as a text
 // document (doc/source; its doc_codes input is W's regex over the file, match_group exactly). W's
@@ -46,7 +35,7 @@
 // invariant, so verifier.py, either way. `parameters` is not read by either query; optimizer-file-checks reads no
 // option.
 //
-// python/ast.rr lowers in an overlay now, but it is not included: its str_const reads str_part (CPython-only,
+// python/ast.rr lowers in an overlay, but it is not included: its str_const reads str_part (CPython-only, still
 // unbound), its ast_name makes no walrus target a Name, and its unparen/assign helpers would come with the whole
 // library. The small helpers below mirror it, each saying which and where they differ.
 
@@ -57,7 +46,9 @@
 .decl text(n: loc, s: symbol)
 .decl value(n: node, v: symbol)
 .decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl syntax_error(d: number)
 .decl source(d: number, sp: span)
 .decl src_line_lf(d: number, l: number, sp: span)
@@ -89,9 +80,6 @@ optimizer_form(n, "bytes") :- node(_, n, "string", _, _), child(n, s0, 0), node(
     node_text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
 optimizer_form(n, "str") :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _),
     node_text(s0, t), match("[rRuU]*[\"'].*", t).
-.decl optimizer_raw(n: node)
-optimizer_raw(n) :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _),
-    node_text(s0, t), match("[a-zA-Z]*[rR][a-zA-Z]*[\"'].*", t).
 
 // The literals that are one `ast` value: a string not inside an implicit concatenation, or the concatenation.
 .decl optimizer_part_of(s: node, c: node)
@@ -110,14 +98,60 @@ optimizer_str_const(c, v) :- node(_, c, "concatenated_string", _, _), !optimizer
 .decl optimizer_str_any(n: node)
 optimizer_str_any(n) :- optimizer_str_const(n, _).
 
-// optimizer_fpiece(j, c, v): JoinedStr j has the Constant piece c with value v (A1, A2, A3): each string_content of
-// its f-strings (as written), and each plain part of a concatenation (decoded).
-.decl optimizer_fpiece(j: node, c: node, v: symbol)
-optimizer_fpiece(n, c, v) :- optimizer_fstr(n), node(_, n, "string", _, _), child(n, c, _),
-    node(_, c, "string_content", _, _), node_text(c, v).
-optimizer_fpiece(j, c, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "fstr"), child(s, c, _),
-    node(_, c, "string_content", _, _), node_text(c, v).
-optimizer_fpiece(j, s, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "str"), value(s, v).
+// optimizer_fhost(h): an ast.JoinedStr: an f-string not in a concatenation or a concatenation with one
+// (optimizer_fstr), or a format spec (`:>{w}` of `{x:>{w}}`, CPython's format_spec JoinedStr, which starts at the
+// `:`). W's fstring_piece at h is CPython's `values`: adjacent literal runs merged, a debug field's `x=` in the
+// literal before it, escapes and `{{`/`}}` decoded, a spec's literal text the spec host's own pieces.
+.decl optimizer_fhost(h: node)
+optimizer_fhost(h) :- optimizer_fstr(h).
+optimizer_fhost(h) :- node(_, h, "format_specifier", _, _).
+// optimizer_fslot(h, k, s): h's replacement field number k (from 0, in source order): a string's interpolations
+// (its parts' in a concatenation), a format spec's format_expressions, as W's parse numbers them.
+.decl optimizer_fslot_at(h: node, s: node, st: number)
+optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, s, _),
+    node(_, s, "interpolation", st, _).
+optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, s, _),
+    node(_, s, "interpolation", st, _).
+optimizer_fslot_at(h, s, st) :- node(_, h, "format_specifier", _, _), child(h, s, _),
+    node(_, s, "format_expression", st, _).
+.decl optimizer_fslot(h: node, k: number, s: node)
+optimizer_fslot(h, k, s) :- optimizer_fslot_at(h, s, st), k = count : { optimizer_fslot_at(h, _, t), t < st }.
+// optimizer_flit(h, i, v, k): h's literal piece i, value v, after k replacement fields.
+.decl optimizer_flit(h: node, i: number, v: symbol, k: number)
+optimizer_flit(h, i, v, k) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v),
+    k = count : { fstring_piece(h, j, "interpolation", _), j < i }.
+// The piece's line, CPython 3.13's Constant lineno: where its first character is written. In a string host, the
+// first string_content (of any part) after field k-1 and before field k, or, for a literal that is only the debug
+// text of field k (`{x=}`), field k's `{` (the text starts right after it). In a spec, the text right after the `:`
+// or after field k-1's `}`.
+.decl optimizer_fcontent(h: node, c: node, st: number)
+optimizer_fcontent(h, c, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, c, _),
+    node(_, c, "string_content", st, _).
+optimizer_fcontent(h, c, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, c, _),
+    node(_, c, "string_content", st, _).
+.decl optimizer_flit_lo(h: node, i: number, lo: number)
+optimizer_flit_lo(h, i, 0) :- optimizer_flit(h, i, _, 0).
+optimizer_flit_lo(h, i, e) :- optimizer_flit(h, i, _, k), k > 0, j = k - 1, optimizer_fslot(h, j, s),
+    node(_, s, _, _, e).
+.decl optimizer_flit_hi(h: node, i: number, hi: number)
+optimizer_flit_hi(h, i, st) :- optimizer_flit(h, i, _, k), optimizer_fslot(h, k, s), node(_, s, _, st, _).
+optimizer_flit_hi(h, i, e) :- optimizer_flit(h, i, _, k), !optimizer_fslot(h, k, _), node(_, h, _, _, e).
+.decl optimizer_fcand(h: node, i: number, st: number, l: number)
+optimizer_fcand(h, i, st, l) :- optimizer_flit_lo(h, i, lo), optimizer_flit_hi(h, i, hi), optimizer_fcontent(h, c, st),
+    st >= lo, st < hi, line(c, l).
+optimizer_fcand(h, i, st, l) :- optimizer_flit(h, i, _, k), j = i + 1, fstring_piece(h, j, "debug", _),
+    optimizer_fslot(h, k, s), node(_, s, _, st, _), line(s, l).
+.decl optimizer_fline(h: node, i: number, l: number)
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, _), optimizer_fstr(h), m = min st : { optimizer_fcand(h, i, st, _) },
+    optimizer_fcand(h, i, m, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, 0), node(_, h, "format_specifier", _, _), line(h, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, k), k > 0, node(_, h, "format_specifier", _, _), j = k - 1,
+    optimizer_fslot(h, j, s), end_line(s, l).
+// optimizer_fpiece(h, i, v, l): JoinedStr h's Constant piece i, value v, at line l. A literal has text in a
+// string_content or a debug field, so every piece has a candidate; the last rule only keeps a piece if not.
+.decl optimizer_fpiece(h: node, i: number, v: symbol, l: number)
+optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), optimizer_fline(h, i, l).
+optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), line(h, l).
 
 // mirrors python/ast.rr ast_name (nameref less not_name): identifier n is an ast.Name. Unlike ast.rr, a walrus
 // target (`(x := …)`, field "name" of named_expression) is a Name, as in CPython.
@@ -189,13 +223,15 @@ ofc_core(d) :- ofc_file(d, p), match("(?:.*/)?l2065_plan_core/.*", p).
 .decl ofc_at(n: node, d: number, p: symbol, l: number)
 ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), line(n, l).
 
-// optimizer_imports: an Import's aliases, or a level-0 ImportFrom's module (A6).
+// optimizer_imports: an Import's aliases, or a level-0 ImportFrom's module, each CPython's alias name: the
+// dotted_name's identifiers joined by "." (`import os . path` is "os.path").
+.decl ofc_dotted(dn: node, m: symbol)
+ofc_dotted(dn, m) :- node(_, dn, "dotted_name", _, _), m = join x by i sep "." : { child(dn, c, i), text(c, x) }.
 .decl ofc_import(n: node, m: symbol)
-ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), node(_, c, "dotted_name", _, _), text(c, m).
+ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), ofc_dotted(c, m).
 ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), node(_, c, "aliased_import", _, _),
-    field(c, "name", dn), text(dn, m).
-ofc_import(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", dn),
-    node(_, dn, "dotted_name", _, _), text(dn, m).
+    field(c, "name", dn), ofc_dotted(dn, m).
+ofc_import(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", dn), ofc_dotted(dn, m).
 
 // PV2-001: an I/O module. PV2-002 (core) and PV2-003 (not core, not adapter.py): legacy layers. Their `NOT (io)`
 // is implied: the module sets are disjoint.
@@ -213,7 +249,7 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-003", p,
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-010", p, l) :- optimizer_attr(n, x),
     (x = "_bindings" ; x = "_exports"), ofc_at(n, d, p, l), !ofc_base(d, "scope.py").
 
-// PV2-011: `.partition/.rpartition/.rsplit/.split(".")` outside scope.py (args[0] the Constant ".", A1).
+// PV2-011: `.partition/.rpartition/.rsplit/.split(".")` outside scope.py (args[0] the Constant ".").
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-011", p, l) :- optimizer_callee_attr(n, x),
     (x = "partition" ; x = "rpartition" ; x = "rsplit" ; x = "split"), optimizer_arg0(n, a), optimizer_str_const(a, "."),
     ofc_at(n, d, p, l), !ofc_base(d, "scope.py").
@@ -234,19 +270,19 @@ ofc_plain_param(f, nm) :- node(_, f, "function_definition", _, _), field(f, "par
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-012", p, l) :- ofc_plain_param(_, n),
     text(n, x), suffix("_by_table", x), ofc_at(n, _, p, l).
 
-// PV2-020: a Compare operand that is the Constant "count", "count_only" or "exists" (A1), outside adapter.py.
+// PV2-020: a Compare operand that is the Constant "count", "count_only" or "exists", outside adapter.py.
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-020", p, l) :-
     node(_, n, "comparison_operator", _, _), child(n, o, _), optimizer_unparen(o, k), optimizer_str_const(k, v),
     (v = "count" ; v = "count_only" ; v = "exists"), ofc_at(n, d, p, l), !ofc_base(d, "adapter.py").
 
-// PV2-021: a str Constant ending `_count` (also an f-string's piece, at the piece's line), and the JoinedStr
-// having such a piece (A1-A3).
+// PV2-021: a str Constant ending `_count` (a JoinedStr's piece too, a spec's included, at the piece's line), and a
+// JoinedStr (a spec's too) with such a piece among its values, at the JoinedStr's line.
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_str_const(n, v),
     suffix("_count", v), ofc_at(n, _, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(_, c, v),
-    suffix("_count", v), ofc_at(c, _, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(j, _, v),
-    suffix("_count", v), ofc_at(j, _, p, l).
+violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(h, _, v, l),
+    suffix("_count", v), node(d, h, _, _, _), ofc_file(d, p).
+violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(h, _, v, _),
+    suffix("_count", v), ofc_at(h, _, p, l).
 
 // PV2-022: `set(…) & x` / `x & frozenset(…)`, and any `.intersection(…)` call.
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-022", p, l) :-
@@ -259,7 +295,7 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-022", p,
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-023", p, l) :-
     optimizer_callee_name(n, "ColumnSchema"), optimizer_arg0(n, a), optimizer_str_any(a), ofc_at(n, _, p, l).
 
-// PV2-030: a Name or Attribute spelled as model introspection (A5).
+// PV2-030: a Name or Attribute spelled as model introspection (A1).
 .decl ofc_introspection(x: symbol)
 ofc_introspection("get_type_hints"). ofc_introspection("model_fields"). ofc_introspection("model_json_schema").
 ofc_introspection("model_sql_column_type_hints").
@@ -268,22 +304,13 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-030", p,
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-030", p, l) :- optimizer_attr(n, x),
     ofc_introspection(x), ofc_at(n, _, p, l).
 
-// PV2-031: a `raise <not a Name>` in a def none of whose str Constants (pieces too) has a repair word (A1-A4).
-// SQL takes every def around the raise; the innermost has the fewest strings, so it decides. A decoded value (a
-// str Constant, a plain piece) is tested as W does; an f-string's string_content as written (A4).
+// PV2-031: a `raise <not a Name>` in a def none of whose str Constants (JoinedStr pieces too, a spec's included)
+// has a repair word. SQL takes every def around the raise; the innermost has the fewest strings, so it decides.
 .decl ofc_hint_piece(s: node)
 ofc_hint_piece(s) :- optimizer_str_const(s, v),
     match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
-ofc_hint_piece(s) :- optimizer_fpiece(_, s, v), node(_, s, "string", _, _),
+ofc_hint_piece(h) :- optimizer_fpiece(h, _, v, _),
     match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
-.decl ofc_fpiece_raw(c: node)
-ofc_fpiece_raw(c) :- node(_, c, "string_content", _, _), child(s, c, _), optimizer_raw(s).
-ofc_hint_piece(c) :- optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v),
-    ofc_fpiece_raw(c),
-    match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
-ofc_hint_piece(c) :- optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v),
-    !ofc_fpiece_raw(c),
-    match("(?s:.*)(?:(?:\\b|\\\\[abfnrtv])(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
 .decl ofc_hinted(f: node)
 ofc_hinted(f) :- ofc_hint_piece(s), ofc_in_def(s, f).
 .decl ofc_raise_exc(r: node, e: node)
@@ -389,11 +416,8 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-043", p,
 oir_verifier(d) :- doc(d, "impl/common/l2065_plan_core/verifier.py", _), in_scope(d), !out_scope(d), !syntax_error(d).
 .decl oir_doc(d: number)
 oir_doc(d) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), in_scope(d), !out_scope(d).
-// A unary flag (1): a nullary relation lowers to `SELECT  FROM …`, invalid SQL (engine gap).
-.decl oir_doc_present(k: number)
-oir_doc_present(1) :- oir_doc(_).
 
-// registered_invariants: `OptimizerInvariant(…, code=<str Constant>, …)` calls in verifier.py (A1).
+// registered_invariants: `OptimizerInvariant(…, code=<str Constant>, …)` calls in verifier.py.
 .decl oir_registered(n: node, v: symbol)
 oir_registered(n, v) :- optimizer_callee_name(n, "OptimizerInvariant"), node(d, n, _, _, _), oir_verifier(d),
     field(n, "arguments", al), child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", k),
@@ -426,12 +450,12 @@ oir_any(1) :- oir_mode(_).
 
 // PV2-050: a registered code the doc does not list; PV2-052: one verifier.py never cites as `(<code>)`.
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", p, l) :- oir_any(1),
-    oir_registered(n, v), oir_doc_present(1), !oir_doc_code(v), oir_at(n, p, l).
+    oir_registered(n, v), oir_doc(_), !oir_doc_code(v), oir_at(n, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-052", p, l) :- oir_any(1),
-    oir_registered(n, v), oir_doc_present(1), !oir_cited(v), oir_at(n, p, l).
+    oir_registered(n, v), oir_doc(_), !oir_cited(v), oir_at(n, p, l).
 // PV2-050: no doc at all, reported at the doc's path, line 1.
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1) :-
-    oir_run(1), !oir_doc_present(1).
+    oir_run(1), !oir_doc(_).
 // PV2-051: the doc lists a code nobody registers (one finding per code; all at the doc's line 1).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-051", p, 1) :- oir_run(1),
     oir_doc_code(c), !oir_code(c), oir_doc(d), doc(d, p, _).
