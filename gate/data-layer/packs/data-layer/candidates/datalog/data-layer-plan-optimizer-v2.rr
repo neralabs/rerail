@@ -6,7 +6,9 @@ rr_kind_decorated_definition("decorated_definition").
 rr_kind_function_definition("function_definition").
 .decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
+.decl end_line(n: node, l: number)
 .decl field(p: node, f: symbol, c: node)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -18,6 +20,7 @@ rr_kind_function_definition("function_definition").
 .decl ofc_core(d: number)
 .decl ofc_declared_phase(c: node, v: symbol)
 .decl ofc_def_name(f: node, x: symbol)
+.decl ofc_dotted(dn: node, m: symbol)
 .decl ofc_ends_lf(d: number)
 .decl ofc_entry(a: node, i: number, x: symbol, ts: number)
 .decl ofc_entry_phase(a: node, i: number, r: number)
@@ -38,32 +41,18 @@ rr_kind_function_definition("function_definition").
 .decl ofc_pass_class(c: node, x: symbol, st: number)
 .decl ofc_phase_decl(c: node, st: number, v: symbol)
 .decl ofc_phase_rank(v: symbol, r: number)
-.decl ofc_piece(s: node, v: symbol)
-.decl ofc_piece_raw(s: node)
 .decl ofc_pipeline(a: node, tup: node, ts: number)
 .decl ofc_plain_param(f: node, nm: node)
 .decl ofc_protocol_base(c: node)
 .decl ofc_raise_exc(r: node, e: node)
 .decl ofc_top(s: node, x: node)
-.decl oir_after(sp: node, i: number, k: number)
 .decl oir_any(k: number)
 .decl oir_at(n: node, p: symbol, l: number)
-.decl oir_bt(sp: node, i: number)
 .decl oir_cited(v: symbol)
 .decl oir_code(v: symbol)
-.decl oir_code_at(sp: node, i: number, c: symbol)
-.decl oir_digit(x: number)
 .decl oir_doc(d: number)
 .decl oir_doc_code(c: symbol)
-.decl oir_doc_present(k: number)
-.decl oir_first(sp: node, i: number)
-.decl oir_is_code(sp: node, i: number)
-.decl oir_line(sp: node, s: symbol)
-.decl oir_m(sp: node, i: number)
 .decl oir_mode(m: symbol)
-.decl oir_next(sp: node, i: number, j: number)
-.decl oir_nm(sp: node, i: number)
-.decl oir_num(i: number)
 .decl oir_registered(n: node, v: symbol)
 .decl oir_run(k: number)
 .decl oir_verifier(d: number)
@@ -74,36 +63,44 @@ rr_kind_function_definition("function_definition").
 .decl optimizer_callee_attr(c: node, x: symbol)
 .decl optimizer_callee_name(c: node, x: symbol)
 .decl optimizer_chain(a: node, x: node)
+.decl optimizer_fcand(h: node, i: number, st: number, l: number)
+.decl optimizer_fcontent(h: node, c: node, st: number)
+.decl optimizer_fhost(h: node)
+.decl optimizer_fline(h: node, i: number, l: number)
+.decl optimizer_flit(h: node, i: number, v: symbol, k: number)
+.decl optimizer_flit_hi(h: node, i: number, hi: number)
+.decl optimizer_flit_lo(h: node, i: number, lo: number)
 .decl optimizer_form(n: node, f: symbol)
-.decl optimizer_fpiece(j: node, c: node, v: symbol)
+.decl optimizer_fpiece(h: node, i: number, v: symbol, l: number)
+.decl optimizer_fslot(h: node, k: number, s: node)
+.decl optimizer_fslot_at(h: node, s: node, st: number)
 .decl optimizer_fstr(n: node)
 .decl optimizer_has_nonstr(c: node)
 .decl optimizer_name(n: node, x: symbol)
 .decl optimizer_not_name(n: node)
 .decl optimizer_param_lists(kind: symbol)
 .decl optimizer_paren_pattern(x: node)
-.decl optimizer_part(c: node, i: number, v: symbol)
 .decl optimizer_part_of(s: node, c: node)
-.decl optimizer_parts(c: node, k: number)
 .decl optimizer_posarg(c: node, a: node, j: number)
-.decl optimizer_raw(n: node)
 .decl optimizer_stmt(a: node, st: node)
 .decl optimizer_str_any(n: node)
 .decl optimizer_str_const(n: node, v: symbol)
-.decl optimizer_str_tail(c: node, v: symbol)
 .decl optimizer_target(a: node, t: node)
 .decl optimizer_unparen(e: node, m: node)
 .decl optimizer_untarget(t: node, m: node)
 .decl optimizer_value(a: node, v: node)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(h: node, st: number, t: number)
+.decl rr_agg2(h: node, i: number, j: number)
+.decl rr_agg3(dn: node, i: number, x: symbol)
 .decl source(d: number, sp: node)
 .decl src_line_lf(d: number, l: number, sp: node)
-.decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, node_text, str, field, text, syntax_error, line, op, src_line_lf, source
+.input doc, node, child, node_text, value, fstring_piece, line, end_line, field, text, syntax_error, op, src_line_lf, source
 .output violation
 ofc_introspection("get_type_hints").
 ofc_introspection("model_fields").
@@ -119,16 +116,6 @@ ofc_legality_fact("supports_sql_batch_transport").
 ofc_phase_rank("NORMALIZE", 0).
 ofc_phase_rank("ANALYZE", 1).
 ofc_phase_rank("PHYSICAL", 2).
-oir_digit(0).
-oir_digit(1).
-oir_digit(2).
-oir_digit(3).
-oir_digit(4).
-oir_digit(5).
-oir_digit(6).
-oir_digit(7).
-oir_digit(8).
-oir_digit(9).
 optimizer_param_lists("parameters").
 optimizer_param_lists("lambda_parameters").
 option_value("entryPoint", "all").
@@ -152,23 +139,35 @@ optimizer_untarget(t, m) :- optimizer_unparen(t, x), optimizer_paren_pattern(x),
 optimizer_form(n, "fstr") :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _), node_text(s0, t), match("[rRbBuU]*[fF][rR]?[\"'].*", t).
 optimizer_form(n, "bytes") :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _), node_text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
 optimizer_form(n, "str") :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _), node_text(s0, t), match("[rRuU]*[\"'].*", t).
-optimizer_raw(n) :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _), node_text(s0, t), match("[a-zA-Z]*[rR][a-zA-Z]*[\"'].*", t).
 optimizer_part_of(s, c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _).
 optimizer_fstr(n) :- optimizer_form(n, "fstr"), !optimizer_part_of(n, _).
 optimizer_fstr(c) :- optimizer_part_of(s, c), optimizer_form(s, "fstr").
 optimizer_has_nonstr(c) :- optimizer_part_of(s, c), !optimizer_form(s, "str").
-optimizer_parts(c, k) :- node(_, c, "concatenated_string", _, _), !optimizer_has_nonstr(c), k = count : { child(c, _, _) }.
-optimizer_part(c, i, v) :- optimizer_parts(c, _), child(c, s, i), str(s, v).
-optimizer_str_const(n, v) :- optimizer_form(n, "str"), !optimizer_part_of(n, _), str(n, v).
-optimizer_str_const(c, @concat(a, b)) :- optimizer_parts(c, 2), optimizer_part(c, 0, a), optimizer_part(c, 1, b).
-optimizer_str_const(c, @concat(@concat(a, b), e)) :- optimizer_parts(c, 3), optimizer_part(c, 0, a), optimizer_part(c, 1, b), optimizer_part(c, 2, e).
-optimizer_str_const(c, @concat(@concat(a, b), @concat(e, g))) :- optimizer_parts(c, 4), optimizer_part(c, 0, a), optimizer_part(c, 1, b), optimizer_part(c, 2, e), optimizer_part(c, 3, g).
-optimizer_str_tail(c, @concat(@concat(a, b), @concat(e, g))) :- optimizer_parts(c, k), k > 4, i0 = @sub(k, 4), i1 = @sub(k, 3), i2 = @sub(k, 2), i3 = @sub(k, 1), optimizer_part(c, i0, a), optimizer_part(c, i1, b), optimizer_part(c, i2, e), optimizer_part(c, i3, g).
+optimizer_str_const(n, v) :- optimizer_form(n, "str"), !optimizer_part_of(n, _), value(n, v).
+optimizer_str_const(c, v) :- node(_, c, "concatenated_string", _, _), !optimizer_has_nonstr(c), value(c, v).
 optimizer_str_any(n) :- optimizer_str_const(n, _).
-optimizer_str_any(c) :- optimizer_parts(c, _).
-optimizer_fpiece(n, c, v) :- optimizer_fstr(n), node(_, n, "string", _, _), child(n, c, _), node(_, c, "string_content", _, _), node_text(c, v).
-optimizer_fpiece(j, c, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v).
-optimizer_fpiece(j, s, v) :- optimizer_fstr(j), optimizer_part_of(s, j), optimizer_form(s, "str"), str(s, v).
+optimizer_fhost(h) :- optimizer_fstr(h).
+optimizer_fhost(h) :- node(_, h, "format_specifier", _, _).
+optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, s, _), node(_, s, "interpolation", st, _).
+optimizer_fslot_at(h, s, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, s, _), node(_, s, "interpolation", st, _).
+optimizer_fslot_at(h, s, st) :- node(_, h, "format_specifier", _, _), child(h, s, _), node(_, s, "format_expression", st, _).
+rr_agg1(h, st, t) :- optimizer_fslot_at(h, s, st), optimizer_fslot_at(h, _, t), t < st.
+optimizer_fslot(h, k, s) :- optimizer_fslot_at(h, s, st), k = count : { rr_agg1(h, st, _) }.
+rr_agg2(h, i, j) :- fstring_piece(h, i, "literal", v), fstring_piece(h, j, "interpolation", _), j < i.
+optimizer_flit(h, i, v, k) :- optimizer_fhost(h), fstring_piece(h, i, "literal", v), k = count : { rr_agg2(h, i, _) }.
+optimizer_fcontent(h, c, st) :- optimizer_fstr(h), node(_, h, "string", _, _), child(h, c, _), node(_, c, "string_content", st, _).
+optimizer_fcontent(h, c, st) :- optimizer_fstr(h), optimizer_part_of(p, h), child(p, c, _), node(_, c, "string_content", st, _).
+optimizer_flit_lo(h, i, 0) :- optimizer_flit(h, i, _, 0).
+optimizer_flit_lo(h, i, e) :- optimizer_flit(h, i, _, k), k > 0, j = @sub(k, 1), optimizer_fslot(h, j, s), node(_, s, _, _, e).
+optimizer_flit_hi(h, i, st) :- optimizer_flit(h, i, _, k), optimizer_fslot(h, k, s), node(_, s, _, st, _).
+optimizer_flit_hi(h, i, e) :- optimizer_flit(h, i, _, k), !optimizer_fslot(h, k, _), node(_, h, _, _, e).
+optimizer_fcand(h, i, st, l) :- optimizer_flit_lo(h, i, lo), optimizer_flit_hi(h, i, hi), optimizer_fcontent(h, c, st), st >= lo, st < hi, line(c, l).
+optimizer_fcand(h, i, st, l) :- optimizer_flit(h, i, _, k), j = @add(i, 1), fstring_piece(h, j, "debug", _), optimizer_fslot(h, k, s), node(_, s, _, st, _), line(s, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, _), optimizer_fstr(h), m = min st : { optimizer_fcand(h, i, st, _) }, optimizer_fcand(h, i, m, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, 0), node(_, h, "format_specifier", _, _), line(h, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, k), k > 0, node(_, h, "format_specifier", _, _), j = @sub(k, 1), optimizer_fslot(h, j, s), end_line(s, l).
+optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), optimizer_fline(h, i, l).
+optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), line(h, l).
 optimizer_not_name(n) :- field(p, "attribute", n), node(_, p, "attribute", _, _).
 optimizer_not_name(n) :- field(p, "name", n), !node(_, p, "named_expression", _, _).
 optimizer_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, optimizer_import_kinds).
@@ -206,9 +205,11 @@ ofc_base(d, "passes.py") :- ofc_file(d, p), p = "passes.py".
 ofc_base(d, "passes.py") :- ofc_file(d, p), suffix("/passes.py", p).
 ofc_core(d) :- ofc_file(d, p), match("(?:.*/)?l2065_plan_core/.*", p).
 ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), line(n, l).
-ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), node(_, c, "dotted_name", _, _), text(c, m).
-ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), node(_, c, "aliased_import", _, _), field(c, "name", dn), text(dn, m).
-ofc_import(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", dn), node(_, dn, "dotted_name", _, _), text(dn, m).
+rr_agg3(dn, i, x) :- child(dn, c, i), text(c, x).
+ofc_dotted(dn, m) :- node(_, dn, "dotted_name", _, _), m = join x by (i) sep "." : { rr_agg3(dn, i, x) }.
+ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), ofc_dotted(c, m).
+ofc_import(n, m) :- node(_, n, "import_statement", _, _), field(n, "name", c), node(_, c, "aliased_import", _, _), field(c, "name", dn), ofc_dotted(dn, m).
+ofc_import(n, m) :- node(_, n, "import_from_statement", _, _), field(n, "module_name", dn), ofc_dotted(dn, m).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-001", p, l) :- ofc_import(n, m), match("(?:os|io|socket|subprocess|sqlite3|asyncio|threading|multiprocessing|urllib|http)(?:\\..*)?", m), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-002", p, l) :- ofc_import(n, m), match("(?:l2070_batching|impl\\.common\\.l2070_server_plan|impl\\.common\\.l2100_sql_grammar|impl\\.common\\.l2066_plan_optimizer)(?:\\..*)?", m), ofc_at(n, d, p, l), ofc_core(d).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-003", p, l) :- ofc_import(n, m), match("(?:l2070_batching|impl\\.common\\.l2070_server_plan|impl\\.common\\.l2100_sql_grammar)(?:\\..*)?", m), ofc_at(n, d, p, l), !ofc_core(d), !ofc_base(d, "adapter.py").
@@ -222,21 +223,16 @@ ofc_plain_param(f, nm) :- node(_, f, "function_definition", _, _), field(f, "par
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-012", p, l) :- ofc_plain_param(_, n), text(n, x), suffix("_by_table", x), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-020", p, l) :- node(_, n, "comparison_operator", _, _), child(n, o, _), optimizer_unparen(o, k), optimizer_str_const(k, v), (v = "count" ; v = "count_only" ; v = "exists"), ofc_at(n, d, p, l), !ofc_base(d, "adapter.py").
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_str_const(n, v), suffix("_count", v), ofc_at(n, _, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_str_tail(n, v), suffix("_count", v), ofc_at(n, _, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(_, c, v), suffix("_count", v), ofc_at(c, _, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(j, _, v), suffix("_count", v), ofc_at(j, _, p, l).
+violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(h, _, v, l), suffix("_count", v), node(d, h, _, _, _), ofc_file(d, p).
+violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-021", p, l) :- optimizer_fpiece(h, _, v, _), suffix("_count", v), ofc_at(h, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-022", p, l) :- node(_, n, "binary_operator", _, _), op(n, "&"), field(n, "left", o), optimizer_unparen(o, c), optimizer_callee_name(c, x), (x = "set" ; x = "frozenset"), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-022", p, l) :- node(_, n, "binary_operator", _, _), op(n, "&"), field(n, "right", o), optimizer_unparen(o, c), optimizer_callee_name(c, x), (x = "set" ; x = "frozenset"), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-022", p, l) :- optimizer_callee_attr(n, "intersection"), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-023", p, l) :- optimizer_callee_name(n, "ColumnSchema"), optimizer_arg0(n, a), optimizer_str_any(a), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-030", p, l) :- optimizer_name(n, x), ofc_introspection(x), ofc_at(n, _, p, l).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-030", p, l) :- optimizer_attr(n, x), ofc_introspection(x), ofc_at(n, _, p, l).
-ofc_piece(s, v) :- optimizer_form(s, "str"), str(s, v).
-ofc_piece(c, v) :- optimizer_form(s, "fstr"), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, v).
-ofc_piece_raw(s) :- ofc_piece(s, _), optimizer_raw(s).
-ofc_piece_raw(c) :- ofc_piece(c, _), node(_, c, "string_content", _, _), child(s, c, _), optimizer_raw(s).
-ofc_hint_piece(s) :- ofc_piece(s, v), ofc_piece_raw(s), match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
-ofc_hint_piece(s) :- ofc_piece(s, v), !ofc_piece_raw(s), match("(?s:.*)(?:(?:\\b|\\\\[abfnrtv])(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
+ofc_hint_piece(s) :- optimizer_str_const(s, v), match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
+ofc_hint_piece(h) :- optimizer_fpiece(h, _, v, _), match("(?s:.*)(?:\\b(?:Fix|Use|Add|Publish|Call|Bind|Project|Split|Map|Cast|Rename|Remove|Inspect|Wrap|Keep)\\b)(?s:.*)", v).
 ofc_hinted(f) :- ofc_hint_piece(s), ofc_in_def(s, f).
 ofc_raise_exc(r, m) :- node(_, r, "raise_statement", _, _), child(r, e, _), !field(r, "cause", e), optimizer_unparen(e, m).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-031", p, l) :- ofc_raise_exc(n, e), !node(_, e, "identifier", _, _), nearest(n, f, rr_kind_function_definition), !ofc_hinted(f), ofc_at(n, _, p, l).
@@ -276,23 +272,9 @@ ofc_has_verifier(f) :- optimizer_name(v, "PlanVerifier"), ofc_in_def(v, f).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-043", p, l) :- ofc_top(_, n), ofc_def_name(n, "run_verified_passes"), !ofc_has_verifier(n), ofc_at(n, d, p, l), ofc_base(d, "passes.py").
 oir_verifier(d) :- doc(d, "impl/common/l2065_plan_core/verifier.py", _), in_scope(d), !out_scope(d), !syntax_error(d).
 oir_doc(d) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), in_scope(d), !out_scope(d).
-oir_doc_present(1) :- oir_doc(_).
 oir_registered(n, v) :- optimizer_callee_name(n, "OptimizerInvariant"), node(d, n, _, _, _), oir_verifier(d), field(n, "arguments", al), child(al, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", k), text(k, "code"), field(kw, "value", e), optimizer_unparen(e, c), optimizer_str_const(c, v).
 oir_code(v) :- oir_registered(_, v).
-oir_line(sp, s) :- oir_doc(d), src_line_lf(d, _, sp), text(sp, s), contains("`", s).
-oir_num(i) :- oir_digit(a), oir_digit(b), oir_digit(c), oir_digit(e), i = @add(@add(@add(@mul(a, 1000), @mul(b, 100)), @mul(c, 10)), e).
-oir_bt(sp, i) :- oir_line(sp, s), oir_num(i), i < @strlen(s), @substr(s, i, 1) = "`".
-oir_after(sp, i, k) :- oir_bt(sp, i), oir_bt(sp, k), k > i.
-oir_next(sp, i, j) :- oir_bt(sp, i), j = min k : { oir_after(sp, i, k) }.
-oir_code_at(sp, i, c) :- oir_next(sp, i, j), oir_line(sp, s), c = @substr(s, @add(i, 1), @sub(@sub(j, i), 1)), match("(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+", c).
-oir_is_code(sp, i) :- oir_code_at(sp, i, _).
-oir_first(sp, i) :- oir_line(sp, _), i = min k : { oir_bt(sp, k) }.
-oir_m(sp, i) :- oir_first(sp, i), oir_is_code(sp, i).
-oir_nm(sp, i) :- oir_first(sp, i), !oir_is_code(sp, i).
-oir_m(sp, j) :- oir_nm(sp, i), oir_next(sp, i, j), oir_is_code(sp, j).
-oir_nm(sp, j) :- oir_nm(sp, i), oir_next(sp, i, j), !oir_is_code(sp, j).
-oir_nm(sp, j) :- oir_m(sp, i), oir_next(sp, i, j).
-oir_doc_code(c) :- oir_m(sp, i), oir_code_at(sp, i, c).
+oir_doc_code(c) :- oir_doc(d), source(d, sp), match_group("`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", sp, _, "CODE", g), text(g, c).
 oir_cited(v) :- oir_code(v), oir_verifier(d), source(d, sp), text(sp, s), contains(@concat("(", @concat(v, ")")), s).
 oir_at(n, p, l) :- node(d, n, _, _, _), oir_verifier(d), doc(d, p, _), line(n, l).
 oir_mode("gated") :- option_value("entryPoint", e), e != "scan_file", e != "find_violations".
@@ -300,7 +282,7 @@ oir_mode("ungated") :- option_value("entryPoint", "find_violations").
 oir_run(1) :- oir_mode("gated"), oir_verifier(_).
 oir_run(1) :- oir_mode("ungated").
 oir_any(1) :- oir_mode(_).
-violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", p, l) :- oir_any(1), oir_registered(n, v), oir_doc_present(1), !oir_doc_code(v), oir_at(n, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-052", p, l) :- oir_any(1), oir_registered(n, v), oir_doc_present(1), !oir_cited(v), oir_at(n, p, l).
-violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1) :- oir_run(1), !oir_doc_present(1).
+violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", p, l) :- oir_any(1), oir_registered(n, v), oir_doc(_), !oir_doc_code(v), oir_at(n, p, l).
+violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-052", p, l) :- oir_any(1), oir_registered(n, v), oir_doc(_), !oir_cited(v), oir_at(n, p, l).
+violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-050", "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1) :- oir_run(1), !oir_doc(_).
 violation("data-layer-plan-optimizer-v2", "optimizer-invariant-registry", "PV2-051", p, 1) :- oir_run(1), oir_doc_code(c), !oir_code(c), oir_doc(d), doc(d, p, _).

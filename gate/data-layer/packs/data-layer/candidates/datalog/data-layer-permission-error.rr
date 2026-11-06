@@ -4,6 +4,7 @@
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl raise_allowed(r: node)
 .decl raise_builtin(d: number, r: node, start: number)
@@ -15,7 +16,7 @@
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, line, tape_line, syntax_error
+.input doc, node, child, field, text, node_text, line, tape_line, syntax_error
 .output violation
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
@@ -29,10 +30,9 @@ out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 raise_builtin(d, r, s) :- node(d, r, "raise_statement", s, _), child(r, x, 0), !child(r, _, 1), node(_, x, "identifier", _, _), text(x, "PermissionError").
 raise_builtin(d, r, s) :- node(d, r, "raise_statement", s, _), child(r, x, 0), !child(r, _, 1), node(_, x, "call", _, _), child(x, f, 0), node(_, f, "identifier", _, _), text(f, "PermissionError"), child(x, a, 1), node(_, a, "argument_list", _, _), !child(x, _, 2).
-raise_module_name(m) :- node(_, m, "dotted_name", _, _), text(m, s), contains("l1100_exceptions", s).
-raise_module_name(m) :- node(_, m, "relative_import", _, _), child(m, x, _), node(_, x, "dotted_name", _, _), text(x, s), contains("l1100_exceptions", s).
-raise_imported_name(c) :- node(_, c, "dotted_name", _, _), text(c, "PermissionError").
-raise_imported_name(c) :- node(_, c, "aliased_import", _, _), field(c, "name", x), text(x, "PermissionError"), field(c, "alias", y), text(y, "PermissionError").
+raise_module_name(m) :- field(i, "module_name", m), node(_, i, "import_from_statement", _, _), node_text(m, s), contains("l1100_exceptions", s).
+raise_imported_name(c) :- node(_, c, "dotted_name", _, _), node_text(c, "PermissionError").
+raise_imported_name(c) :- node(_, c, "aliased_import", _, _), field(c, "name", x), node_text(x, "PermissionError"), field(c, "alias", y), node_text(y, "PermissionError").
 raise_import(d, e) :- node(d, i, "import_from_statement", _, e), field(i, "module_name", m), raise_module_name(m), field(i, "name", c), raise_imported_name(c).
 raise_imported(r) :- raise_builtin(d, r, s), raise_import(d, e), e <= s.
 raise_allowed(r) :- raise_builtin(d, r, _), line(r, l), tape_line(d, l, sp), text(sp, t), contains("lint: allow-builtin-permission-error", t).

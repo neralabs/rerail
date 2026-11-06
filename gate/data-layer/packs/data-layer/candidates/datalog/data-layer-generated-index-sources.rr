@@ -10,7 +10,9 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl generated_factory(f: node)
 .decl generated_first_kw(c: node, at: number)
 .decl generated_fn(n: node, f: node)
+.decl generated_fn_at(x: node)
 .decl generated_forwards(c: node)
+.decl generated_from_module(m: node)
 .decl generated_function(f: node, x: symbol)
 .decl generated_has_source(f: node)
 .decl generated_in_factory(n: node)
@@ -20,6 +22,7 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl generated_param(f: node, p: node, x: symbol, kind: symbol)
 .decl generated_param_name(p: node, x: symbol)
 .decl generated_schema_alias(d: number, x: symbol, at: number)
+.decl generated_schema_module(m: node)
 .decl generated_source_kw(c: node, k: node, at: number)
 .decl generated_source_param(f: node, p: node)
 .decl generated_star(p: node)
@@ -33,7 +36,8 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, syntax_error, node, child, field, text, op, line
+.decl visit_index(n: node, i: number)
+.input doc, syntax_error, node, node_text, child, text, field, visit_index, op, line
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/common/l7245_versioned_backends/generic_sparse.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
@@ -46,16 +50,22 @@ out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, m, "module", _, _), node_text(m, s), (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
 generated_unparen(e, e) :- node(d, e, k, _, _), generated_doc(d), k != "parenthesized_expression".
 generated_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), generated_doc(d), child(e, i, 0), generated_unparen(i, m).
-generated_index_alias(d, x, s) :- node(d, i, "import_from_statement", _, _), generated_doc(d), field(i, "module_name", m), node(_, m, "dotted_name", _, _), text(m, "l1000_schema.schema_def"), field(i, "name", a), node(_, a, "aliased_import", s, _), field(a, "name", n), text(n, "Index"), field(a, "alias", y), text(y, x).
-generated_schema_alias(d, "schema_def", s) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", n), node(_, n, "dotted_name", s, _), text(n, "l1000_schema.schema_def").
-generated_schema_alias(d, x, s) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", a), node(_, a, "aliased_import", s, _), field(a, "name", n), text(n, "l1000_schema.schema_def"), field(a, "alias", y), text(y, x).
+generated_schema_module(m) :- node(d, m, "dotted_name", _, _), generated_doc(d), child(m, a, 0), text(a, "l1000_schema"), child(m, b, 1), text(b, "schema_def"), !child(m, _, 2).
+generated_from_module(m) :- generated_schema_module(m).
+generated_from_module(r) :- node(_, r, "relative_import", _, _), child(r, m, _), generated_schema_module(m).
+generated_index_alias(d, x, k) :- node(d, i, "import_from_statement", _, _), generated_doc(d), field(i, "module_name", m), generated_from_module(m), field(i, "name", a), node(_, a, "aliased_import", _, _), field(a, "name", n), text(n, "Index"), field(a, "alias", y), text(y, x), visit_index(i, k).
+generated_schema_alias(d, "schema_def", k) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", n), generated_schema_module(n), visit_index(i, k).
+generated_schema_alias(d, x, k) :- node(d, i, "import_statement", _, _), generated_doc(d), field(i, "name", a), node(_, a, "aliased_import", _, _), field(a, "name", n), generated_schema_module(n), field(a, "alias", y), text(y, x), visit_index(i, k).
 generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "identifier", _, _), text(f, "Index").
-generated_index_call(c) :- node(d, c, "call", cs, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "identifier", _, _), text(f, x), generated_index_alias(d, x, s), s < cs.
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "identifier", _, _), text(f, x), generated_index_alias(d, x, s), visit_index(c, k), s < k.
 generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "schema_def").
-generated_index_call(c) :- node(d, c, "call", cs, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, x), generated_schema_alias(d, x, s), s < cs.
+generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, "function", f0), generated_unparen(f0, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, "Index"), field(f, "object", o0), generated_unparen(o0, o), node(_, o, "identifier", _, _), text(o, x), generated_schema_alias(d, x, s), visit_index(c, k), s < k.
 generated_function(f, x) :- node(d, f, "function_definition", _, _), generated_doc(d), field(f, "name", n), text(n, x).
-generated_fn(n, f) :- generated_index_call(n), nearest(n, f, generated_fn_marks), node(_, f, "function_definition", _, _).
-generated_fn(n, f) :- generated_index_call(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+generated_fn_at(n) :- generated_index_call(n).
+generated_fn_at(dd) :- generated_fn_at(x), nearest(x, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, f, generated_fn_marks), node(_, f, "function_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+generated_fn(n, f) :- generated_fn_at(n), nearest(n, dc, generated_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), generated_fn(dd, f).
 generated_in_factory(n) :- generated_fn(n, f), generated_function(f, "_generated_index").
 generated_factory(f) :- generated_function(f, "_generated_index"), !op(f, "async").
 generated_param_name(p, x) :- node(_, p, "identifier", _, _), text(p, x).

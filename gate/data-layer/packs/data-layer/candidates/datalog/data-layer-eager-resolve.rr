@@ -15,6 +15,7 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl eager_ann(a: node, x: node)
 .decl eager_ann_name(t: node, s: symbol)
 .decl eager_approved(s: symbol)
+.decl eager_approved_configured(x: number)
 .decl eager_approved_pattern(p: symbol)
 .decl eager_arg(c: node, a: node, pos: number)
 .decl eager_arg_before(c: node, i: number, j: number)
@@ -52,6 +53,8 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl eager_dwalk(f: node, x: node)
 .decl eager_edge(caller: node, target: node)
 .decl eager_empty(c: node, f: node)
+.decl eager_entry(e: symbol)
+.decl eager_entry_case(x: number)
 .decl eager_external(d: number, l: number, i: symbol)
 .decl eager_external_io(f: node)
 .decl eager_finding(d: number, l: number, i: symbol)
@@ -96,6 +99,7 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl eager_preprocess(d: number, l: number, i: symbol)
 .decl eager_qual(n: node, q: symbol)
 .decl eager_raw(f: node, st: number, en: number, pat: symbol, dirty: number, trans: number)
+.decl eager_raw_string(s: node)
 .decl eager_recv(c: node, r: node)
 .decl eager_recv_self(c: node)
 .decl eager_resolve_exempt(s: symbol)
@@ -109,16 +113,19 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl eager_scope_recv(c: node, nm: symbol)
 .decl eager_seed_exempt(f: node, p: symbol)
 .decl eager_serverplan(d: number)
+.decl eager_signed(s: symbol, sig: symbol)
 .decl eager_slot(s: symbol)
 .decl eager_slot_arg(c: node, s: symbol)
 .decl eager_slot_call_trans(cn: symbol, s: symbol, t: number)
 .decl eager_slot_ok(d: number, s: symbol)
 .decl eager_slot_trans(s: symbol, t: number)
+.decl eager_source_line(d: number, l: number, t: symbol)
 .decl eager_span(n: node, st: number, en: number)
 .decl eager_sql_expr(f: node, x: node)
 .decl eager_stmt_call(f: node, s: node, c: node)
 .decl eager_str_at(x: node, v: symbol)
 .decl eager_string(s: node, v: symbol)
+.decl eager_string_kind(s: node)
 .decl eager_symbol(f: node, s: symbol)
 .decl eager_test_path(d: number)
 .decl eager_transitive(d: number, l: number, i: symbol)
@@ -132,51 +139,24 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
+.decl option_item(name: symbol, v: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl src_line_lf(d: number, l: number, sp: node)
-.decl str(n: node, s: symbol)
+.decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, node_text, op, child, str, line, src_line_lf, text, end_line, syntax_error
+.input doc, node, field, node_text, op, child, value, line, source, text, end_line, syntax_error
 .output violation
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_external").
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_external_async").
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_internal").
-eager_approved("l6500_evidence.blob_migration.migrate_blob_to_internal_async").
-eager_approved("l6500_evidence.blob_migration.migrate_blobs_batch").
-eager_approved("l6500_evidence.blob_migration.migrate_blobs_batch_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.store_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.update_blob").
-eager_approved("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async").
-eager_approved("l6500_evidence.sas_http.handle_sas_download").
-eager_approved("l6500_evidence.sas_http.handle_sas_download_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob").
-eager_approved("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob").
-eager_approved("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_access").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_access_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_and_serve").
-eager_approved("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async").
-eager_approved("l6500_evidence.sas_service.SasUrlService.validate_and_serve").
-eager_approved("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async").
-eager_approved("l6530_managed_secrets.service._resolve_managed_secret_candidate").
-eager_approved("l6530_managed_secrets.service.create_managed_secret_async").
-eager_approved("l6530_managed_secrets.service.delete_managed_secret_async").
-eager_approved("l6530_managed_secrets.service.rotate_managed_secret_async").
 eager_approved_pattern("*.resolve()").
 eager_approved_pattern("*.resolve_async()").
 eager_approved_pattern("*.result()").
+eager_entry("_scan_transitive_eager_ast").
+eager_entry("_scan_lower_compile_ast").
+eager_entry("_scan_preprocess_ast").
+eager_entry("_scan_external_io_boundary_definition_ast").
+eager_entry("_scan_legacy_boundary_definition_ast").
 eager_lazy_core("l2055_lazy_result.lazy_result.NoneResultError.__init__").
 eager_legacy_callee("_legacy_delegate_stub").
 eager_legacy_callee("_legacy_delegate_stub_async").
@@ -251,6 +231,40 @@ eager_peek_helper("peek_resolved_value").
 eager_peek_helper("preprocess_resolved_get").
 eager_result_exempt("impl.l1570_llm_client.client._run_sync").
 eager_result_exempt("l5000_subscriptions.deferred_dispatch._run_async_callback_sync").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external", "SxVBqPVb9KxkaYdUj/l97y+Rpx7uyR7kQrlNMnCxmlqEV6rWn7k1TawVXskANwmi3z6K8A1oKmVitQVRo0V/DQ==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external_async", "ZijivhYt9hPMIzRAPBVZdFUirXyY5rVlqQPN62XQ3E+/FaJTlZp8M/HKsboWYvnWeJNlW7IS/Wcpet8+4csxBw==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal", "x2BpGG1GHDMP8Nm+VzYXI9uk1t7r4H6dmchXWRsHO43fwxw/ViwXHrldNzfUR+ujYpzXXlXSyiE+sawIOHKYAQ==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal_async", "FFyel3rEwEppb6RV378cyla4xTjPIpUeU9hFWWWdnfOOcHqR3kRtrKQEU+mB0HhylaalrNW8BjRalknjOgViDA==").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch", "ReAFoGUDI8BFAeJroSsY/2fcX9njavvwOPDLZdR6ePlF01CJ+UAPcnfLae4PlZCkA8pii/ZPlWz5TVQ1oS3oCA==").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch_async", "9PdwDGHbMp4SvHIODp0Ue/HfA+qGwocDtzqVXUbBIFdIunB/kFpNvI1Fg8y6btjOj7BNFWvRDgZx2iQqHAyyCw==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob", "8PbZXPairL4eX0ShonEI9QRzz2NDxjJjv71ezKEqMJEDjgDsj0FOqIeX9jlCEdrhmekub3IAIm+0mY3adx7MCg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async", "dXES+mySa6cTtDJRLdXjyEcKcMQ9aHoWUjaDJQDWpyCRQ4sFZWTewv5GoTGPTmXt5MAf27ODB01JHGYiYyddCQ==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key", "OAQRMC57tWGD3TVnK7c4SoNMzWGBuXAVWaAoG9gKBwUxQo3WZIWo2QdW9SEKWAZF8NUmug2aoUayE/oWptigCg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async", "bFwGkxEX8VWMjn9TK3U7gTz6CxLLT3Oen+PCfxzk0bJfvQkxJtgey7fP2G3AFeXuDqcl9kJlwGa+z1XcO/jHDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob", "8bedG9GYmwKQurZvg8xkGsvSyqK6rtK2FNtDVsEHw5DIxRH8kjjWGACD198QfvZlPUlOvzNKzoaC3E7/pTOmBg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async", "Sps4LNefn4qNGle93W+WSj2Db/gu9KdlFmVrJ8dGM9MDGY2dQQRYWIJRLfNLgyQO4zJ8LxhXoMGQYTRf/aiGDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob", "iaaqVCxgFsPXe7hjci5k9m5wwxajavmOLqpnB8atS/rXZCfMbKH5V4CNTq+pqNv5JetiHsMIxFy+EmRCRQKqAg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async", "0xre2ed+OMC+n+zyS2l/WwF7szoPTUdkLS9n9plkSPFs3POuusXTiwIk/bhJoQDmOfDhVHnfMXlYhsi1P3N8Cw==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob", "95XWP+nq9n+Wh8a2FyjcotT6aMUq/v/5syUgjh7IZTRNek9pmvgX/V+oPeJP5t5xwD1ikDQKyuzpIVIeKECkDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async", "bzrXSkqU9391El5po6H4F57AAplUb5l0whRLYZIEQrViMA84TVzsfyHL+9+q1nOGRpvQoDcJzk/1bOdEfciDAA==").
+eager_signed("l6500_evidence.sas_http.handle_sas_download", "N/erEChqtYJafCH8ZlIn3YHQb69WLbiXkbSj1yyyCndkxJNcHOlsybGyK3r6MK0D94Fn5wrlY1OfhSQxzINGBw==").
+eager_signed("l6500_evidence.sas_http.handle_sas_download_async", "beXjaIVGVQ+YeffcQexHq2m1k5G9qx7Az+TE8LwXZU3YUkCe3LIaXnhfegL1fWPF6S+ag984muFlG3vaOV6SDg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob", "wh78V3IwKiUjGA+MLGRQ+OtusQzuJxr18qxjSYKv64vKLWod6YTv8JL6Q95bk4X3gaF1fmDxvoSBKagj3+NwAA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async", "kbzUVWiTCLB0ZI/HAHlA64ICBS60eFyh45dYJiL7BKHBAOAxoMgRq6DqEfTEMDgWDNXrEr+jgkR13/p547LhBg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob", "IIUH3stpPr/HdGlUXMGhht8nSmVE5okrXKrYIecNKEqLZ1CJn3I0nc/treF0/fZ7rgx8Jw8+LJYjxoH5VDRjAg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async", "BMjtTQxGUyK0FTnSrdt3Lr41/HIZGf8rH1OYF0IhJNocU6zQfVTXUyv8hp6VfPuuD/5PZ2Z3Zta5Fyig22EgAg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob", "GQSgzK6hQ/rZIhOSroWjZCpH6yQBWmC0dspVZNZWWlyyG6JKEITgHwVz8nfF7Y0aTQVTBAKdywhhJYZdAngRBA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async", "3W/o1vc9dJsEY56KMth/UfpzDr4f/pq3/ioP9zQKx+TMos9knFH88meh9VU/3ZsRj9vRXJryOayYjTZMq2tGBw==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access", "X1dLOHxDnX3PwdTArn8hgGes2Kpku2lsLsGOh+lFbk1A1rfqaGB/+c/zdzZiyllnhobyrpC3KIYG3yY5jqraCA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access_async", "OA6q+NrjCc2h0vzUC93gkvxs8Edr2z4cMUsisWxxt1Lg2HXcrQ5UV2AAKrgT4dwFSSaaR0r06w+aTMMCaFsvCg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve", "GjQ0RwiUr6aLWiBBoxEuDZ+C3HInHoEuxgZKaIewVJ1x4wJ7hcmbTxiXd2j45PDU24K6jtmZKu+pgR/JJZP/CQ==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async", "ijb8tgNmebcvTQZg1u0j2J2ScNqiTYYZu1ebSBhgSZ59RMAauIbdLLOYOuMtUlqyQRMJpOOpU3zntUy2C2SxBg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve", "wYzZYNSb+CsK658aYDbgnZxQUZuFtceuOLRwguGzxC+mWoIHsC7Df1WPhx7qNNKmcIcBQhPVcVK4GEt8KfrgCw==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async", "oAYmZ/jJcMb+/5kFW57Q0EC6vMEFpBub2OXFUnOiE/wgCOkXfG1ypN5uOmS8GESKj386tH5I4HWcFCpIiMRQCQ==").
+eager_signed("l6530_managed_secrets.service._resolve_managed_secret_candidate", "5JjmhYeHUK7c6EFlODoRZitt7jDcBKrDYiF/gpXa7UxbGZccmLLXx77z4MUXudVqC8nrY3O6fidjqfeUQyo/AQ==").
+eager_signed("l6530_managed_secrets.service.create_managed_secret_async", "NiWtDaqhmV+co/9GQP96AkgDAHPJA1dgC0jwUzJBLsiuY/moDaLKMM46sXsJNXDhhVBFv3Y/JaXRd9tT3cxNAw==").
+eager_signed("l6530_managed_secrets.service.delete_managed_secret_async", "ZGPbLZxGELL3JbHbkIDaccknMm1yroIn9LPDh/QErOSwXxwKW+CVsBKoyPMN1s7Kk1UhUJbmfnb5S/6gVg1HCA==").
+eager_signed("l6530_managed_secrets.service.rotate_managed_secret_async", "KW677DkqIRmanQeWsxMP9o6a4oK0EmZQmXanKf+JsE7AwjAm7B6l5STi665WSRHcYqC4ySQAiWu32N74enwmAA==").
 eager_slot("__dict__").
 eager_slot("_deleted_state_slot").
 eager_slot("_ref_id").
@@ -259,6 +273,7 @@ eager_slot("deleted_state_flag").
 eager_slot("deleted_state_value").
 eager_slot("is_resolved").
 eager_slot("resolved_value").
+option_value("entryPoint", "_scan_source").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
@@ -313,8 +328,11 @@ eager_arg(c, g, 0) :- node(_, c, "call", _, _), field(c, "arguments", g), node(_
 eager_kw(c, nm, v) :- node(_, c, "call", _, _), field(c, "arguments", g), child(g, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), node_text(x, nm), field(k, "value", v).
 eager_getattr_call(c) :- eager_call_ident(c), field(c, "function", g), node_text(g, s), (s = "getattr" ; s = "hasattr").
 eager_getattr_call(c) :- eager_call_attr(c), eager_callee(c, s), (s = "__getattribute__" ; s = "getattr_static").
-eager_string(s, v) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t), str(s, v), inside(s, c, eager_call_set), eager_getattr_call(c).
-eager_string(s, v) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t), str(s, v), child(p, s, _), node(_, p, "subscript", _, _).
+eager_string_kind(s) :- node(_, s, "string", _, _).
+eager_string_kind(s) :- node(_, s, "concatenated_string", _, _).
+eager_raw_string(s) :- eager_string_kind(s), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
+eager_string(s, v) :- eager_raw_string(s), value(s, v), inside(s, c, eager_call_set), eager_getattr_call(c).
+eager_string(s, v) :- eager_raw_string(s), value(s, v), child(p, s, _), node(_, p, "subscript", _, _).
 eager_str_at(x, v) :- eager_string(s, v), node(d, s, _, st, _), node(d, x, _, st, _).
 eager_asg(a, t) :- node(_, a, "assignment", _, _), field(a, "left", t).
 eager_asg_fn(a, f) :- eager_asg(a, _), nearest(a, f, eager_fdef).
@@ -345,6 +363,9 @@ eager_dwalk(f, g) :- eager_dwalk(f, c), node(_, c, "call", _, _), field(c, "func
 eager_decorator(f, nm) :- eager_dwalk(f, x), node(_, x, "identifier", _, _), node_text(x, nm).
 eager_decorator(f, nm) :- eager_dwalk(f, x), eager_attr(x, nm).
 eager_external_io(f) :- eager_func(f, _), eager_decorator(f, "external_io_boundary_eager_async").
+eager_approved_configured(1) :- option_item("externalIoBoundaries", _).
+eager_approved(s) :- option_item("externalIoBoundaries", s).
+eager_approved(s) :- eager_signed(s, sig), !eager_approved_configured(1), m = @concat("{\"allowlist\":[", @concat(@json_str(s), "],\"linter\":\"lint_eager_resolve:external_io_boundary\",\"version\":1}")), @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", m, sig) = 1.
 eager_edge(f, t) :- eager_bcall(c, f), eager_call_attr(c), eager_recv_self(c), eager_callee(c, nm), eager_func(t, nm), node(d, c, _, _, _), node(d, t, _, _, _), eager_lex(t, p), eager_lex(f, p).
 eager_edge(f, t) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, nm), eager_func(t, nm), node(d, c, _, _, _), node(d, t, _, _, _), !eager_has_lex(t).
 eager_phase(f, nm) :- eager_func(f, nm), (nm = "preprocess" ; nm = "lower" ; nm = "compile").
@@ -470,13 +491,14 @@ eager_resolved_param(f) :- eager_param(f, "resolved", pos, p), pos >= 1, !node(_
 eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_ident(c), eager_callee(c, s), (s = "resolve_lazy_param" ; s = "resolve_lazy_param_str" ; s = "resolve_server_value"), node(d, c, _, _, _), line(c, l), i = @concat(@concat("preprocess:", s), "()").
 eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, s), (s = "get" ; s = "peek" ; s = "resolve_server_ref"), eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, "resolved"), node(d, c, _, _, _), line(c, l), i = @concat(@concat("preprocess:resolved.", s), "()").
 eager_preprocess(d, l, "preprocess:*.resolve(resolved)") :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, "resolve"), eager_arg(c, a, _), node(_, a, "identifier", _, _), node_text(a, "resolved"), node(d, c, _, _, _), line(c, l).
-eager_line_issue(d, l, ".resolve()") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\\.resolve\\(\\).*", s).
-eager_line_issue(d, l, ".resolve_async()") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\\.resolve_async\\(\\).*", s).
-eager_line_issue(d, l, ".result()") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\\.result\\(\\).*", s).
-eager_line_issue(d, l, "int(lazy...)") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\\bint\\(\\s*lazy.*", s).
-eager_line_issue(d, l, "float(lazy...)") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\\bfloat\\(\\s*lazy.*", s).
-eager_line_issue(d, l, "bool(lazy...)") :- src_line_lf(d, l, sp), text(sp, s), match("(?s).*\\bbool\\(\\s*lazy.*", s).
-eager_comment_line(d, l) :- eager_line_issue(d, l, _), src_line_lf(d, l, sp), text(sp, s), match("(?s)\\s*#.*", s).
+eager_source_line(d, l, t) :- source(d, sp), match_group("(?m)^(?<LINE>[^\\n]*(?:\\.resolve\\(\\)|\\.resolve_async\\(\\)|\\.result\\(\\)|\\bint\\(\\s*lazy|\\bfloat\\(\\s*lazy|\\bbool\\(\\s*lazy)[^\\n]*)$", sp, _, "LINE", g), line(g, l), text(g, t).
+eager_line_issue(d, l, ".resolve()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.resolve\\(\\))(?s:.*)", s).
+eager_line_issue(d, l, ".resolve_async()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.resolve_async\\(\\))(?s:.*)", s).
+eager_line_issue(d, l, ".result()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.result\\(\\))(?s:.*)", s).
+eager_line_issue(d, l, "int(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bint\\(\\s*lazy)(?s:.*)", s).
+eager_line_issue(d, l, "float(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bfloat\\(\\s*lazy)(?s:.*)", s).
+eager_line_issue(d, l, "bool(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bbool\\(\\s*lazy)(?s:.*)", s).
+eager_comment_line(d, l) :- eager_line_issue(d, l, _), eager_source_line(d, l, s), match("\\s*#(?s:.*)", s).
 eager_mlstr(d, a, b) :- node(d, s, "string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), line(s, a), end_line(s, b).
 eager_mlstr(d, a, b) :- node(d, s, "concatenated_string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), line(s, a), end_line(s, b).
 eager_in_mlstr(d, l) :- eager_line_issue(d, l, _), eager_mlstr(d, a, b), a <= l, l <= b.
@@ -491,11 +513,16 @@ eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()")
 eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), eager_line_symbol(d, l, s), eager_resolve_exempt(s).
 eager_direct_exempt(d, l, ".result()") :- eager_direct_site(d, l, ".result()"), eager_line_symbol(d, l, s), eager_result_exempt(s).
 eager_direct_exempt(d, l, i) :- eager_direct_site(d, l, i), (i = ".resolve()" ; i = ".resolve_async()" ; i = ".result()"), eager_line_symbol(d, l, s), eager_approved(s).
-eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), src_line_lf(d, l, sp), text(sp, s), contains("ResolveVersionedForeignKeyTargetIntent(", s).
+eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), eager_source_line(d, l, s), contains("ResolveVersionedForeignKeyTargetIntent(", s).
 eager_direct(d, l, i) :- eager_direct_site(d, l, i), !eager_direct_exempt(d, l, i).
-eager_finding(d, l, i) :- eager_transitive(d, l, i).
-eager_finding(d, l, i) :- eager_phase_site(d, l, i).
-eager_finding(d, l, i) :- eager_external(d, l, i).
-eager_finding(d, l, i) :- eager_preprocess(d, l, i).
-eager_finding(d, l, i) :- eager_direct(d, l, i).
+eager_entry_case(1) :- option_value("entryPoint", e), eager_entry(e).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), option_value("entryPoint", "_scan_transitive_eager_ast").
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), option_value("entryPoint", "_scan_lower_compile_ast"), (prefix("lower:", i) ; prefix("compile:", i)).
+eager_finding(d, l, i) :- eager_external(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_external(d, l, i), option_value("entryPoint", "_scan_external_io_boundary_definition_ast").
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
+eager_finding(d, l, i) :- eager_direct(d, l, i), !eager_entry_case(1).
 violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).

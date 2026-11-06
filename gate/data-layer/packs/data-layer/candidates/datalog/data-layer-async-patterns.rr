@@ -34,7 +34,6 @@ async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
 .decl session_receiver_session_root(o: node, c: node)
 .decl session_receiver_value(v: node, at: node)
 .decl session_receiver_value_need(v: node, at: node)
-.decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
@@ -43,6 +42,7 @@ async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
 .decl transaction_receiver_assign(f: node, l: node, s: symbol, r: node)
 .decl transaction_receiver_decorated(c: node)
 .decl transaction_receiver_down(o: node, x: node)
+.decl transaction_receiver_literal(t: node)
 .decl transaction_receiver_name_need(x: node, at: node)
 .decl transaction_receiver_need(o: node)
 .decl transaction_receiver_param(q: node, s: symbol)
@@ -61,8 +61,10 @@ async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
 .decl transaction_receiver_typed_name(q: node, first: node, s: symbol)
 .decl transaction_receiver_value(v: node, at: node)
 .decl transaction_receiver_value_need(v: node, at: node)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, op, line, syntax_error, tape_line, str
+.input doc, node, child, field, text, op, line, syntax_error, tape_line, value, value_type_of
 .output violation
 async_patterns_method("to-thread", "to_thread").
 async_patterns_method("executor", "run_in_executor").
@@ -215,8 +217,9 @@ violation("data-layer-async-patterns", "internal-io-conform", "ASYNC005", p, l) 
 transaction_receiver_decorated(c) :- async_patterns_call("transaction-receiver", _, c, _), nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async"), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, dc, _), node(_, dc, "call", _, _), field(dc, "function", df), node(_, df, "attribute", _, _), field(df, "attribute", da), node(_, da, "identifier", _, _), text(da, dm), (dm = "write_async" ; dm = "read_async").
 transaction_receiver_annotation(t) :- transaction_receiver_txn_type_name(s), text(t, s), node(_, t, "identifier", _, _).
 transaction_receiver_annotation(t) :- transaction_receiver_txn_type_name(s), text(a, s), node(_, a, "identifier", _, _), field(t, "attribute", a), node(_, t, "attribute", _, _).
-transaction_receiver_annotation(t) :- node(_, t, "string", _, _), str(t, v), (contains("ReadTransaction", v) ; contains("WriteTransaction", v)).
-transaction_receiver_annotation(t) :- node(_, t, "concatenated_string", _, _), child(t, x, _), str(x, v), (contains("ReadTransaction", v) ; contains("WriteTransaction", v)).
+transaction_receiver_annotation(t) :- transaction_receiver_literal(t), value(t, v), value_type_of(t, "str"), match("(?s:.*)(?:LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|WriteTransaction)(?s:.*)", v).
+transaction_receiver_literal(t) :- node(_, t, "string", _, _).
+transaction_receiver_literal(t) :- node(_, t, "concatenated_string", _, _).
 transaction_receiver_annotation(t) :- transaction_receiver_annotation(x), child(t, x, _), transaction_receiver_annotation_wrapper(t).
 transaction_receiver_annotation_wrapper(t) :- node(_, t, "type", _, _).
 transaction_receiver_annotation_wrapper(t) :- node(_, t, "type_parameter", _, _).

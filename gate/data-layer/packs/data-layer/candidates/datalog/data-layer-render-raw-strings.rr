@@ -6,43 +6,46 @@ literal_raise("raise_statement"). literal_raise("assert_statement").
 .decl doc(d: number, path: symbol, module: symbol)
 .decl end_line(n: node, l: number)
 .decl field(p: node, f: symbol, c: node)
+.decl fstring_literal_after(n: node, o: number, b: number)
 .decl fstring_literal_at(n: node, l: number)
-.decl fstring_literal_bound(n: node, b: number)
-.decl fstring_literal_cand(n: node)
-.decl fstring_literal_content(n: node, c: node, o: number)
-.decl fstring_literal_debug(i: node)
-.decl fstring_literal_field(n: node, f: node, s: number, e: number)
-.decl fstring_literal_item(n: node, k: number, o: number, c: number, l: number)
-.decl fstring_literal_later(n: node, c: node, b: number)
+.decl fstring_literal_cnext(c: node, l: number)
+.decl fstring_literal_cnext_later(c: node, l: number)
+.decl fstring_literal_cont(c: node)
+.decl fstring_literal_content(n: node, c: node)
+.decl fstring_literal_debug(f: node)
+.decl fstring_literal_empty(c: node)
+.decl fstring_literal_field(n: node, f: node, b: number, e: number)
+.decl fstring_literal_ford(n: node, b: number, j: number)
+.decl fstring_literal_host(n: node)
+.decl fstring_literal_item(n: node, k: number, o: number, l: number)
+.decl fstring_literal_item0(n: node, o: number, l: number)
+.decl fstring_literal_later_piece(n: node, i: number)
 .decl fstring_literal_long(n: node, k: number)
 .decl fstring_literal_not_first(n: node, k: number, o: number)
-.decl fstring_literal_not_next(n: node, c: node, b: number)
+.decl fstring_literal_not_next(n: node, o: number, b: number)
 .decl fstring_literal_parsed(n: node)
-.decl fstring_literal_refused(n: node)
+.decl fstring_literal_pord(n: node, i: number, j: number)
 .decl fstring_literal_slice(n: node, a: number, l: number)
-.decl fstring_literal_slice_after(n: node, a: number, b: number)
-.decl fstring_literal_slice_end(n: node, a: number, b: number)
-.decl fstring_literal_slice_not_end(n: node, a: number, b: number)
-.decl fstring_literal_spec(n: node, s: number, e: number)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
 .decl literal_allowed(n: node)
 .decl literal_allowed_fn(f: node)
 .decl literal_allowed_name(s: symbol)
-.decl literal_bad(c: node)
-.decl literal_cls(c: node, k: number)
 .decl literal_content(s: node, c: node, m: symbol, t: symbol)
 .decl literal_docstring(n: node)
 .decl literal_earlier(al: node, i: number)
+.decl literal_fhas(n: node)
 .decl literal_first_pos(al: node, a: node)
+.decl literal_fpart(s: node)
+.decl literal_gate(d: number)
 .decl literal_in_concat(n: node)
 .decl literal_in_raise(n: node)
 .decl literal_in_render(n: node)
+.decl literal_kind(n: node)
 .decl literal_kwkind(kind: symbol)
 .decl literal_long(n: node)
 .decl literal_mode(s: node, m: symbol)
-.decl literal_nostr(s: node)
-.decl literal_notlit(n: node)
 .decl literal_part(n: node, s: node)
 .decl literal_render(f: node)
 .decl literal_special_arg(n: node)
@@ -52,13 +55,20 @@ literal_raise("raise_statement"). literal_raise("assert_statement").
 .decl literal_template_fn(f: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(b: number, b2: number, n: node)
+.decl rr_agg2(i: number, i2: number, n: node)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
+.decl tape_line(d: number, l: number, sp: node)
 .decl template_call(c: node, f: node)
 .decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, child, strprefix, node_text, syntax_error, line, end_line
+.input doc, node, field, text, child, strprefix, node_text, value_type_of, value, syntax_error, line, fstring_piece, end_line, tape_line, token
 .output violation
 literal_allowed_name("SqlAliasName").
 literal_allowed_name("SqlColumnName").
@@ -77,6 +87,7 @@ literal_allowed_name("startswith").
 literal_allowed_name("str").
 literal_kwkind("keyword_argument").
 literal_kwkind("dictionary_splat").
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
@@ -92,28 +103,17 @@ literal_mode(s, "p") :- node(_, s, "string", _, _), strprefix(s, x), !contains("
 literal_mode(s, "f") :- node(_, s, "string", _, _), strprefix(s, x), !contains("r", x), contains("f", x).
 literal_mode(s, "rp") :- node(_, s, "string", _, _), strprefix(s, x), contains("r", x), !contains("f", x).
 literal_mode(s, "rf") :- node(_, s, "string", _, _), strprefix(s, x), contains("r", x), contains("f", x).
-literal_nostr(s) :- strprefix(s, x), contains("b", x).
-literal_nostr(s) :- strprefix(s, x), contains("t", x).
 literal_content(s, c, m, t) :- literal_mode(s, m), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, t).
-literal_bad(c) :- literal_content(_, c, "p", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\r\\n|[^\\\\])*", t).
-literal_bad(c) :- literal_content(_, c, "f", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\{\\{|\\}\\}|\\r\\n|[^\\\\])*", t).
-literal_cls(c, 1) :- literal_content(_, c, "p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
-literal_cls(c, 2) :- literal_content(_, c, "p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\r\\n|[^\\\\])*", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t).
-literal_cls(c, 1) :- literal_content(_, c, "f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\{\\{|\\}\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
-literal_cls(c, 2) :- literal_content(_, c, "f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\{\\{|\\}\\}|\\r\\n|[^\\\\])*", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\{\\{|\\}\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t).
-literal_cls(c, 1) :- literal_content(_, c, "rp", t), match("(?s)(?:\\r\\n|.)?", t).
-literal_cls(c, 2) :- literal_content(_, c, "rp", t), !match("(?s)(?:\\r\\n|.)?", t).
-literal_cls(c, 1) :- literal_content(_, c, "rf", t), match("(?s)(?:\\r\\n|\\{\\{|\\}\\}|.)?", t).
-literal_cls(c, 2) :- literal_content(_, c, "rf", t), !match("(?s)(?:\\r\\n|\\{\\{|\\}\\}|.)?", t).
+literal_fpart(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?i)[rub]*f(?s:.*)", t).
+literal_fhas(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), literal_fpart(s).
+literal_kind(n) :- node(_, n, "string", _, _), !literal_fpart(n), !literal_in_concat(n).
+literal_kind(n) :- node(_, n, "concatenated_string", _, _), !literal_fhas(n), !literal_in_concat(n).
+literal_str(n) :- literal_kind(n), value_type_of(n, "str").
+literal_long(n) :- literal_str(n), value(n, v), match("(?s:.*)(?:(?s)^.{2})(?s:.*)", v).
 literal_part(n, n) :- node(_, n, "string", _, _), !literal_in_concat(n).
 literal_part(n, s) :- node(_, n, "concatenated_string", _, _), !literal_in_concat(n), child(n, s, _), node(_, s, "string", _, _).
-literal_notlit(n) :- literal_part(n, s), literal_mode(s, "f").
-literal_notlit(n) :- literal_part(n, s), literal_mode(s, "rf").
-literal_notlit(n) :- literal_part(n, s), literal_nostr(s).
-literal_notlit(n) :- literal_part(n, s), child(s, c, _), literal_bad(c).
-literal_str(n) :- literal_part(n, _), !literal_notlit(n).
-literal_long(n) :- literal_str(n), literal_part(n, s), child(s, c, _), literal_cls(c, 2).
-literal_long(n) :- literal_str(n), literal_part(n, s), child(s, c, _), literal_cls(c, 1), literal_part(n, s2), child(s2, c2, _), literal_cls(c2, 1), c != c2.
+literal_gate(d) :- doc(d, _, _), !option_on("sourceGate").
+literal_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, t), match("(?s:.*)(?:render|\\x27|\\x22|Template\\(|SqlFragment\\.static\\()(?s:.*)", t).
 literal_earlier(al, i) :- node(_, al, "argument_list", _, _), child(al, _, i), child(al, b, j), j < i, node(_, b, k, _, _), !literal_kwkind(k).
 literal_first_pos(al, a) :- node(_, al, "argument_list", _, _), child(al, a, i), node(_, a, k, _, _), !literal_kwkind(k), k != "list_splat", k != "parenthesized_list_splat", !literal_earlier(al, i).
 literal_template_fn(f) :- node(_, f, "identifier", _, _), text(f, "Template").
@@ -125,39 +125,42 @@ literal_allowed_fn(f) :- node(_, f, "identifier", _, _), text(f, s), literal_all
 literal_allowed_fn(f) :- node(_, f, "attribute", _, _), field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, s), literal_allowed_name(s).
 literal_allowed(n) :- child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _), field(c, "function", f), literal_allowed_fn(f).
 literal_special_arg(n) :- child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _), field(c, "function", f), literal_special_fn(f), literal_first_pos(al, n).
-violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :- literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-fstring_literal_cand(n) :- literal_part(n, s), literal_mode(s, "f").
-fstring_literal_cand(n) :- literal_part(n, s), literal_mode(s, "rf").
-fstring_literal_refused(n) :- fstring_literal_cand(n), literal_part(n, s), literal_nostr(s).
-fstring_literal_refused(n) :- fstring_literal_cand(n), literal_part(n, s), child(s, c, _), literal_bad(c).
-fstring_literal_parsed(n) :- fstring_literal_cand(n), !fstring_literal_refused(n), literal_in_render(n), !literal_in_raise(n).
-fstring_literal_bound(n, b) :- fstring_literal_parsed(n), literal_part(n, s), child(s, i, _), node(_, i, "interpolation", b, _).
-fstring_literal_content(n, c, o) :- fstring_literal_parsed(n), literal_part(n, s), child(s, c, _), literal_cls(c, _), node(_, c, _, o, _).
-fstring_literal_debug(i) :- node(_, i, "interpolation", _, _), !field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*=\\s*(?:![a-zA-Z]+\\s*)?\\}", t).
-fstring_literal_debug(i) :- node(_, i, "interpolation", _, _), field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*[^=!<>]=\\s*(?:![a-zA-Z]+\\s*)?:.*\\}", t).
-fstring_literal_debug(i) :- node(_, i, "format_expression", _, _), !field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*=\\s*(?:![a-zA-Z]+\\s*)?\\}", t).
-fstring_literal_debug(i) :- node(_, i, "format_expression", _, _), field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*[^=!<>]=\\s*(?:![a-zA-Z]+\\s*)?:.*\\}", t).
-fstring_literal_later(n, c, b) :- fstring_literal_content(n, c, o), fstring_literal_bound(n, b), b > o.
-fstring_literal_not_next(n, c, b) :- fstring_literal_later(n, c, b), fstring_literal_later(n, c, b2), b2 < b.
-fstring_literal_item(n, k, o, x, l) :- fstring_literal_content(n, c, o), fstring_literal_later(n, c, k), !fstring_literal_not_next(n, c, k), literal_cls(c, x), line(c, l).
-fstring_literal_item(n, e, o, x, l) :- fstring_literal_content(n, c, o), !fstring_literal_later(n, c, _), node(_, n, _, _, e), literal_cls(c, x), line(c, l).
-fstring_literal_item(n, b, b, 2, l) :- fstring_literal_parsed(n), literal_part(n, s), child(s, i, _), node(_, i, "interpolation", b, _), fstring_literal_debug(i), line(i, l).
-fstring_literal_spec(n, s, e) :- node(d, n, "format_specifier", s, e), literal_in_render(n), !literal_in_raise(n), !syntax_error(d).
-fstring_literal_field(n, f, s, e) :- fstring_literal_spec(n, _, _), child(n, f, _), node(_, f, "format_expression", s, e).
-fstring_literal_slice(n, a, l) :- fstring_literal_spec(n, s, _), a = @add(s, 1), line(n, l).
-fstring_literal_slice(n, a, l) :- fstring_literal_field(n, f, _, a), end_line(f, l).
-fstring_literal_slice_after(n, a, b) :- fstring_literal_slice(n, a, _), fstring_literal_field(n, _, b, _), b >= a.
-fstring_literal_slice_not_end(n, a, b) :- fstring_literal_slice_after(n, a, b), fstring_literal_slice_after(n, a, b2), b2 < b.
-fstring_literal_slice_end(n, a, b) :- fstring_literal_slice_after(n, a, b), !fstring_literal_slice_not_end(n, a, b).
-fstring_literal_slice_end(n, a, b) :- fstring_literal_slice(n, a, _), !fstring_literal_slice_after(n, a, _), fstring_literal_spec(n, _, b).
-fstring_literal_item(n, b, a, 1, l) :- fstring_literal_slice_end(n, a, b), @sub(b, a) = 1, fstring_literal_slice(n, a, l).
-fstring_literal_item(n, b, a, 2, l) :- fstring_literal_slice_end(n, a, b), @sub(b, a) >= 2, fstring_literal_slice(n, a, l).
-fstring_literal_item(n, b, b, 2, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), line(f, l).
-fstring_literal_long(n, k) :- fstring_literal_item(n, k, _, 2, _).
-fstring_literal_long(n, k) :- fstring_literal_item(n, k, o1, _, _), fstring_literal_item(n, k, o2, _, _), o1 < o2.
-fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _, _), fstring_literal_item(n, k, o2, _, _), o2 < o.
-fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, _, l), !fstring_literal_not_first(n, k, o).
-violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :- fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :- literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(n, l).
+fstring_literal_host(n) :- node(_, n, "string", _, _), literal_fpart(n), !literal_in_concat(n).
+fstring_literal_host(n) :- literal_fhas(n), !literal_in_concat(n).
+fstring_literal_host(n) :- node(_, n, "format_specifier", _, _).
+fstring_literal_parsed(n) :- fstring_literal_host(n), fstring_piece(n, _, _, _), literal_in_render(n), !literal_in_raise(n).
+fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), literal_part(n, s), child(s, f, _), node(_, f, "interpolation", b, e).
+fstring_literal_field(n, f, b, e) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), child(n, f, _), node(_, f, "format_expression", b, e).
+rr_agg1(b, b2, n) :- fstring_literal_field(n, _, b, _), fstring_literal_field(n, _, b2, _), b2 < b.
+fstring_literal_ford(n, b, j) :- fstring_literal_field(n, _, b, _), j = count : { rr_agg1(b, _, n) }.
+rr_agg2(i, i2, n) :- fstring_piece(n, i, "interpolation", _), fstring_piece(n, i2, "interpolation", _), i2 < i.
+fstring_literal_pord(n, i, j) :- fstring_literal_parsed(n), fstring_piece(n, i, "interpolation", _), j = count : { rr_agg2(i, _, n) }.
+fstring_literal_later_piece(n, i) :- fstring_literal_parsed(n), fstring_piece(n, i, _, _), fstring_piece(n, i2, _, _), i2 > i.
+fstring_literal_long(n, b) :- fstring_literal_ford(n, b, j), fstring_literal_pord(n, i, j), fstring_piece(n, h, "literal", v), i = @add(h, 1), match("(?s:.*)(?:(?s)^.{2})(?s:.*)", v).
+fstring_literal_long(n, e) :- fstring_literal_parsed(n), node(_, n, _, _, e), fstring_piece(n, i, "literal", v), !fstring_literal_later_piece(n, i), match("(?s:.*)(?:(?s)^.{2})(?s:.*)", v).
+fstring_literal_empty(c) :- literal_content(_, c, "p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
+fstring_literal_empty(c) :- literal_content(_, c, "f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
+fstring_literal_content(n, c) :- fstring_literal_parsed(n), literal_part(n, s), literal_content(s, c, _, _), !fstring_literal_empty(c).
+fstring_literal_cont(c) :- fstring_literal_content(_, c), literal_content(_, c, "p", t), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
+fstring_literal_cont(c) :- fstring_literal_content(_, c), literal_content(_, c, "f", t), match("\\\\(?:\\r\\n|\\n|\\r)(?s:.*)", t).
+fstring_literal_cnext(c, l) :- fstring_literal_cont(c), node(d, c, _, _, _), line(c, l0), end_line(c, le), tape_line(d, l, sp), l > l0, l <= le, text(sp, s), s != "\\".
+fstring_literal_cnext_later(c, l) :- fstring_literal_cnext(c, l), fstring_literal_cnext(c, k), k < l.
+fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), !fstring_literal_cont(c), node(_, c, _, o, _), line(c, l).
+fstring_literal_item0(n, o, l) :- fstring_literal_content(n, c), fstring_literal_cnext(c, l), !fstring_literal_cnext_later(c, l), node(_, c, _, o, _).
+fstring_literal_debug(f) :- node(_, f, "interpolation", _, _), token(f, _, "=", _, _).
+fstring_literal_debug(f) :- node(_, f, "format_expression", _, _), token(f, _, "=", _, _).
+fstring_literal_item0(n, o, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), o = @add(b, 1), line(f, l).
+fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", s, _), a = @add(s, 1), line(n, l).
+fstring_literal_slice(n, a, l) :- fstring_literal_parsed(n), node(_, n, "format_specifier", _, _), fstring_literal_field(n, f, _, a), end_line(f, l).
+fstring_literal_item0(n, a, l) :- fstring_literal_slice(n, a, l), node(_, n, _, _, e), a < e, !fstring_literal_field(n, _, a, _).
+fstring_literal_after(n, o, b) :- fstring_literal_item0(n, o, _), fstring_literal_field(n, _, b, fe), fe > o.
+fstring_literal_not_next(n, o, b) :- fstring_literal_after(n, o, b), fstring_literal_after(n, o, b2), b2 < b.
+fstring_literal_item(n, k, o, l) :- fstring_literal_item0(n, o, l), fstring_literal_after(n, o, k), !fstring_literal_not_next(n, o, k).
+fstring_literal_item(n, e, o, l) :- fstring_literal_item0(n, o, l), !fstring_literal_after(n, o, _), node(_, n, _, _, e).
+fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _), fstring_literal_item(n, k, o2, _), o2 < o.
+fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, l), !fstring_literal_not_first(n, k, o).
+violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :- fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _).
 template_call(c, f) :- node(_, c, "call", _, _), field(c, "function", f), field(c, "arguments", al), literal_first_pos(al, a), literal_str(a), literal_in_render(c).
-violation("data-layer-render-raw-strings", "template", "template_call", p, l) :- template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
-violation("data-layer-render-raw-strings", "static", "static_call", p, l) :- template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
+violation("data-layer-render-raw-strings", "template", "template_call", p, l) :- template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).
+violation("data-layer-render-raw-strings", "static", "static_call", p, l) :- template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), literal_gate(d), doc(d, p, _), line(c, l).

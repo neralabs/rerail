@@ -34,6 +34,7 @@ tcw_type("type").
 .decl tcw_ir_first_start(f: node, s: number)
 .decl tcw_ir_has_kwfn(al: node)
 .decl tcw_ir_kwfn(al: node, v: node)
+.decl tcw_ir_kwfn_id(al: node, v: node, i: number)
 .decl tcw_ir_lambda(al: node, la: node)
 .decl tcw_ir_lambda_versioned(la: node)
 .decl tcw_ir_named(f: node, c: node, cb: node)
@@ -102,7 +103,8 @@ tcw_ir_uncounted(y) :- node(_, y, "keyword_argument", _, _).
 tcw_ir_uncounted(y) :- node(_, y, "dictionary_splat", _, _).
 tcw_ir_before(al, y, z) :- tcw_ir_counted(al, y, i), tcw_ir_counted(al, z, j), j < i.
 tcw_ir_second(al, y) :- tcw_ir_counted(al, y, _), k = count : { tcw_ir_before(al, y, _) }, k = 1.
-tcw_ir_callback(al, v) :- tcw_ir_kwfn(al, v), node(_, v, "identifier", _, _).
+tcw_ir_kwfn_id(al, v, i) :- child(al, kw, i), node(_, kw, "keyword_argument", _, _), field(kw, "name", nm), node(_, nm, "identifier", _, _), text(nm, "fn"), field(kw, "value", v), node(_, v, "identifier", _, _).
+tcw_ir_callback(al, v) :- tcw_ir_kwfn_id(al, v, i), i = min j : { tcw_ir_kwfn_id(al, _, j) }.
 tcw_ir_callback(al, y) :- tcw_ir_second(al, y), node(_, y, "identifier", _, _), !tcw_ir_has_kwfn(al).
 tcw_ir_vcall(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", i), node(_, i, "identifier", _, _), text(i, s), tcw_versioned(s).
 tcw_ir_vcall(x) :- node(_, x, "call", _, _), field(x, "function", g), node(_, g, "identifier", _, _), text(g, "getattr"), field(x, "arguments", al), child(al, st, i), node(_, st, "string", _, _), node_text(st, s), match("[rRuUfF]{0,2}(?:\"\"\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"\"\"|'''(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)'''|\"(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)\"|'(?:versioned_read|versioned_read_async|versioned_write|versioned_write_async)')", s), child(al, _, j), j < i.

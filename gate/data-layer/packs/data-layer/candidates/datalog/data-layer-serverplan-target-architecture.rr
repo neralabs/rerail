@@ -57,6 +57,8 @@ spta_rc_type("type").
 .decl name(n: node, s: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl spta_attr_name(x: node)
 .decl spta_before(p: node, c: node, b: node)
@@ -104,14 +106,16 @@ spta_rc_type("type").
 .decl spta_second(p: node, c: node)
 .decl spta_si_name(x: node)
 .decl spta_si_type(y: node)
-.decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl t10(s: symbol)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, line, syntax_error, node_text, str
+.input doc, node, child, field, text, name, line, syntax_error, node_text, value, value_type_of
 .output violation
-spta_entry_point(1).
+option_on("requiredShape").
+option_value("entryPoint", "all").
 spta_rc_req_enum("l2070_batching/planning_contract.py", "FailureIsolationKind", "SAVEPOINT").
 spta_rc_req_enum("l2070_batching/planning_contract.py", "FailureIsolationKind", "STATEMENT").
 spta_rc_req_enum("l2070_batching/planning_contract.py", "FailureIsolationKind", "TRANSACTION").
@@ -216,7 +220,6 @@ spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication",
 spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "HydrateManyApplication").
 spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "HydrateOneApplication").
 spta_rc_req_union("l2070_batching/runtime_application.py", "RuntimeApplication", "PopulateCacheApplication").
-spta_required_shape(1).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2065_plan_core/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2066_plan_optimizer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/**/*.py", p).
@@ -295,6 +298,8 @@ m149(n) :- node(_, n, "identifier", _, _), text(n, v146), (v146 = "driver_round_
 m149(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v147), node(_, v147, "identifier", _, _), text(v147, v148), (v148 = "driver_round_trips" ; v148 = "query_rtts" ; v148 = "round_trips").
 m153(n) :- node(_, n, "attribute", _, _), field(n, "object", v151), node(_, v151, "identifier", _, _), text(v151, v152), (v152 = "execution_receipt" ; v152 = "receipt").
 violation("data-layer-serverplan-target-architecture", "receipt-accounting", "SPTA010", p, l) :- node(v140, n, _, _, _), doc(v140, v141, _), m142(n), node(v143, n, _, _, _), doc(v143, v144, _), prefix("l9900_auto_api/", v144), field(n, "left", v145), m149(v145), field(n, "right", v150), !m153(v150), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+spta_entry_point(1) :- option_value("entryPoint", v), (v = "all" ; v = "scan_sources").
+spta_required_shape(1) :- option_on("requiredShape").
 spta_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
 spta_before(p, c, b) :- child(p, c, i), child(p, b, j), j < i.
 spta_second(p, c) :- child(p, c, _), k = count : { spta_before(p, c, _) }, k = 1.
@@ -308,7 +313,7 @@ violation("data-layer-serverplan-target-architecture", "executor-imports", "SPTA
 violation("data-layer-serverplan-target-architecture", "executor-imports", "SPTA005", p, l) :- spta_entry_point(1), spta_doc(d, p), p = "l2070_batching/executor.py", node(d, s, "import_from_statement", _, _), field(s, "module_name", m), node_text(m, t), suffix(".steps", t), spta_ei_imported(s), line(s, l).
 spta_call(d, p, c, s, al) :- spta_doc(d, p), prefix("impl/common/l2070_server_plan/strategies/", p), node(d, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s), field(c, "arguments", al).
 spta_call(d, p, c, s, al) :- spta_doc(d, p), prefix("impl/common/l2070_server_plan/strategies/", p), node(d, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), field(c, "arguments", al).
-violation("data-layer-serverplan-target-architecture", "strategy-getattr", "SPTA008", p, l) :- spta_entry_point(1), spta_call(_, p, c, "getattr", al), spta_second(al, y), node(_, y, "string", _, _), str(y, v), (v = "_stmt" ; v = "_grammar" ; v = "grammar"), line(c, l).
+violation("data-layer-serverplan-target-architecture", "strategy-getattr", "SPTA008", p, l) :- spta_entry_point(1), spta_call(_, p, c, "getattr", al), spta_second(al, y), node(_, y, k, _, _), (k = "string" ; k = "concatenated_string"), value(y, v), value_type_of(y, "str"), (v = "_stmt" ; v = "_grammar" ; v = "grammar"), line(c, l).
 spta_si_name(x) :- spta_ref(x, s), prefix("Sql", s).
 spta_si_name(x) :- spta_ref(x, s), suffix("Grammar", s).
 spta_si_name(x) :- spta_ref(x, s), suffix("Stmt", s).

@@ -17,9 +17,13 @@ embedding_fn_marks("function_definition"). embedding_fn_marks("decorator").
 .decl embedding_exempt(n: node)
 .decl embedding_exempt_name(path: symbol, qualname: symbol)
 .decl embedding_fn(n: node, f: node)
+.decl embedding_fn_at(x: node)
 .decl embedding_fn_name(f: node, x: symbol)
+.decl embedding_full_union(v: symbol)
 .decl embedding_gate_word(w: symbol)
+.decl embedding_in_publisher(n: node)
 .decl embedding_issue(n: node, issue: symbol)
+.decl embedding_publisher(s: symbol)
 .decl embedding_query_link(o: node, q: node)
 .decl embedding_query_outer(o: node, q: node)
 .decl embedding_read_write(s: symbol)
@@ -35,11 +39,12 @@ embedding_fn_marks("function_definition"). embedding_fn_marks("decorator").
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, syntax_error, node, child, field, text, line
+.input doc, syntax_error, node, node_text, child, field, text, line
 .output violation
 embedding_conn_attr("conn").
 embedding_conn_attr("connection").
@@ -57,6 +62,9 @@ embedding_exempt_name("l5200_vector_index/embedding_queue.py", "apply_embeddings
 embedding_exempt_name("l5200_vector_index/index_manager.py", "get_index").
 embedding_exempt_name("l5200_vector_index/index_manager.py", "register_index").
 embedding_exempt_name("l5200_vector_index_task_payloads.py", "get_embedding_auto_queue_stats").
+embedding_full_union("scan_source").
+embedding_full_union("scan_file").
+embedding_full_union("_violations_for_files").
 embedding_gate_word(".query").
 embedding_gate_word(".read").
 embedding_gate_word(".resolve").
@@ -66,6 +74,9 @@ embedding_gate_word("_lazy").
 embedding_gate_word("_next_ref").
 embedding_gate_word("query_lazy").
 embedding_gate_word("versioned_").
+embedding_publisher("_publish_claimed_queue_message_ref").
+embedding_publisher("_publish_worker_scalar_int_ref").
+embedding_publisher("_publish_worker_scalar_string_ref").
 embedding_read_write("read").
 embedding_read_write("read_async").
 embedding_read_write("write").
@@ -81,6 +92,8 @@ embedding_txn_entry("async_write_transaction").
 embedding_txn_entry("read_transaction").
 embedding_txn_entry("write_transaction").
 embedding_worker_path("l5200_vector_index/embedding_worker.py").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("l5200_vector_index/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/vector_index.py", p).
@@ -100,8 +113,11 @@ embedding_conn(r) :- node(d, r, "attribute", _, _), embedding_doc(d), field(r, "
 embedding_conn(c) :- embedding_attr_call(c, "session", r), embedding_conn(r).
 embedding_txn(r) :- node(d, r, "identifier", _, _), embedding_doc(d), text(r, s), suffix("txn", s).
 embedding_txn(r) :- node(d, r, "attribute", _, _), embedding_doc(d), field(r, "attribute", a), text(a, s), suffix("txn", s).
-embedding_fn(n, f) :- embedding_attr_call(n, _, _), nearest(n, f, embedding_fn_marks), node(_, f, "function_definition", _, _).
-embedding_fn(n, f) :- embedding_attr_call(n, _, _), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+embedding_fn_at(n) :- embedding_attr_call(n, _, _).
+embedding_fn_at(dd) :- embedding_fn_at(x), nearest(x, dc, embedding_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, f, embedding_fn_marks), node(_, f, "function_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+embedding_fn(n, f) :- embedding_fn_at(n), nearest(n, dc, embedding_fn_marks), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), embedding_fn(dd, f).
 embedding_fn_name(f, x) :- node(d, f, "function_definition", _, _), embedding_doc(d), field(f, "name", n), text(n, x).
 embedding_within(n, f) :- embedding_attr_call(n, _, _), inside(n, f, embedding_fdef).
 embedding_within(n, f) :- embedding_attr_call(n, _, _), inside(n, dc, embedding_decorator), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
@@ -116,4 +132,7 @@ embedding_issue(n, "EVO101") :- embedding_attr_call(n, x, _), embedding_terminal
 embedding_issue(n, "EVO105") :- embedding_attr_call(n, "query", r), embedding_txn(r), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
 embedding_issue(f, "EVO104") :- embedding_fn_name(f, x), node(d, f, _, _, _), doc(d, p, _), embedding_worker_path(p), (suffix("_sync_lazy", x) ; suffix("_async_lazy", x) ; suffix("_lazy_async", x) ; suffix("_lazy_sync", x)).
 embedding_issue(n, "EVO102") :- embedding_attr_call(n, x, _), embedding_resolve(x), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p), embedding_within(n, f), embedding_fn_name(f, y), suffix("_lazy", y).
+embedding_in_publisher(n) :- embedding_fn(n, f), embedding_fn_name(f, x), embedding_publisher(x).
+embedding_issue(n, "EVO107") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_next_ref", _), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
+embedding_issue(n, "EVO108") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_add_server_step", _), !embedding_in_publisher(n), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
 violation("data-layer-embedding-vector-orchestration", "embedding-orchestration", i, p, l) :- embedding_issue(n, i), node(d, n, _, _, _), doc(d, p, _), line(n, l).

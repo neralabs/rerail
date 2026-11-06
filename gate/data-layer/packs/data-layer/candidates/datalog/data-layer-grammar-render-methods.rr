@@ -31,14 +31,17 @@ rm_string_kind("string").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
+.decl option_item(name: symbol, v: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl rm_base_sql(b: node)
-.decl rm_cstr_nonstr(n: node)
+.decl rm_cstr_fpart(n: node)
 .decl rm_fshape(n: node)
 .decl rm_fstring_part(s: node)
 .decl rm_gate(d: number)
 .decl rm_in_cstr(n: node)
 .decl rm_in_render(n: node)
+.decl rm_listed(c: node, o: symbol)
 .decl rm_render(f: node)
 .decl rm_sql_class(c: node)
 .decl rm_strlit(n: node)
@@ -46,14 +49,15 @@ rm_string_kind("string").
 .decl runtime_static_cand(d: number, c: node)
 .decl runtime_static_hidden(n: node)
 .decl runtime_static_skip(a: node)
-.decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl template_cand(d: number, c: node)
 .decl template_hidden(n: node)
 .decl text(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, end_line, node, text, field, child, strprefix, line, syntax_error, op
+.input doc, node_text, end_line, value_type_of, node, text, field, child, line, syntax_error, op
 .output violation
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2100_sql_grammar/**/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
@@ -66,21 +70,22 @@ rm_base_sql(b) :- node(_, b, "identifier", _, _), text(b, s), contains("Sql", s)
 rm_base_sql(b) :- node(_, b, "attribute", _, _), field(b, "attribute", a), text(a, s), contains("Sql", s).
 rm_base_sql(b) :- node(_, b, "subscript", _, _), field(b, "value", v), rm_base_sql(v).
 rm_sql_class(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), rm_base_sql(b).
-rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), nearest(f, c, rm_class_kind), rm_sql_class(c).
+rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), nearest(f, c, rm_class_kind), rm_sql_class(c), !rm_listed(c, "LEGACY_ALLOWLISTED_CLASSES").
+rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, x).
 rm_in_render(n) :- rm_render(f), inside(n, f, rm_fn_kind).
 rm_gate(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("render(", s) ; contains("SqlFragment.static", s) ; contains("SF.static", s) ; contains(".join(", s) ; contains(".format(", s) ; contains("Template", s)).
-rm_gate(d) :- rm_render(f), node(d, f, _, _, _), field(f, "name", i), node(_, i, _, _, e), field(f, "parameters", ps), node(_, ps, _, e, _).
+rm_gate(d) :- doc(d, _, _), !option_on("sourceGate").
 rm_in_cstr(n) :- child(p, n, _), node(_, p, "concatenated_string", _, _).
-rm_fstring_part(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("f", p).
+rm_fstring_part(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?i)[rub]*f(?s:.*)", t).
 rm_fshape(n) :- rm_fstring_part(n), !rm_in_cstr(n).
 rm_fshape(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), rm_fstring_part(s).
 rm_fshape(n) :- node(_, n, "format_specifier", _, _).
-rm_strlit(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p), !contains("t", p), !rm_in_cstr(n).
-rm_strlit(n) :- node(_, n, "concatenated_string", _, _), !rm_cstr_nonstr(n), !rm_in_cstr(n).
-rm_cstr_nonstr(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), node(_, s, "string", _, _), strprefix(s, p), (contains("f", p) ; contains("b", p) ; contains("t", p)).
+rm_strlit(n) :- node(_, n, "string", _, _), !rm_fstring_part(n), !rm_in_cstr(n), value_type_of(n, "str").
+rm_strlit(n) :- node(_, n, "concatenated_string", _, _), !rm_cstr_fpart(n), !rm_in_cstr(n), value_type_of(n, "str").
+rm_cstr_fpart(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), rm_fstring_part(s).
 fstring_in_gexc(n) :- rm_fshape(n), inside(n, c, rm_call_kind), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "GrammarException").
-fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, s, rm_string_kind), !rm_in_cstr(s), child(s, st, _), node(_, st, "string_start", _, _), line(st, l).
-fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, cs, rm_cstr_kind), fstring_first_part(cs, s), child(s, st, _), node(_, st, "string_start", _, _), line(st, l).
+fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, s, rm_string_kind), !rm_in_cstr(s), child(s, st, _), node(_, st, "string_start", _, _), end_line(st, l).
+fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, cs, rm_cstr_kind), fstring_first_part(cs, s), child(s, st, _), node(_, st, "string_start", _, _), end_line(st, l).
 fstring_first_part(cs, s) :- node(_, cs, "concatenated_string", _, _), child(cs, s, i), node(_, s, "string", _, _), !fstring_string_before(cs, i).
 fstring_string_before(cs, i) :- node(_, cs, "concatenated_string", _, _), child(cs, _, i), child(cs, s, j), node(_, s, "string", _, _), j < i.
 fstring_cand(d, n) :- rm_fshape(n), rm_in_render(n), !fstring_in_gexc(n), !fstring_spec_sameline(n), node(d, n, _, _, _).
@@ -110,7 +115,7 @@ violation("data-layer-grammar-render-methods", "concat", "STRING_CONCAT", p, l) 
 runtime_static_callee(f) :- node(_, f, "identifier", _, _), text(f, "static").
 runtime_static_callee(f) :- node(_, f, "attribute", _, _), field(f, "attribute", i), node(_, i, "identifier", _, _), text(i, "static"), field(f, "object", o), node(_, o, "identifier", _, _), text(o, s), (s = "SF" ; s = "SqlFragment").
 runtime_static_callee(f) :- node(_, f, "attribute", _, _), field(f, "attribute", i), node(_, i, "identifier", _, _), text(i, "static"), field(f, "object", o), node(_, o, "attribute", _, _).
-runtime_static_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), runtime_static_callee(f), rm_in_render(c), field(c, "arguments", args), child(args, a, _), !runtime_static_skip(a), !rm_strlit(a).
+runtime_static_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), runtime_static_callee(f), rm_in_render(c), nearest(c, k, rm_class_kind), !rm_listed(k, "ALLOWLISTED_STATIC_CLASSES"), field(c, "arguments", args), child(args, a, _), !runtime_static_skip(a), !rm_strlit(a).
 runtime_static_skip(a) :- node(_, a, "keyword_argument", _, _).
 runtime_static_skip(a) :- node(_, a, "dictionary_splat", _, _).
 runtime_static_hidden(n) :- runtime_static_cand(d, n), node(d, n, _, s, _), line(n, l), runtime_static_cand(d, x), node(d, x, _, _, e), e <= s, end_line(x, l).

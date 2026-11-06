@@ -6,46 +6,52 @@ inspection_kinds_function("function_definition").
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
-.decl inspection_after_wide(cmp: node, i: number)
+.decl inspection_alias(x: node, y: node, a: symbol, b: symbol)
 .decl inspection_annotation(n: node)
+.decl inspection_anon(x: node, y: node, a: symbol, b: symbol)
 .decl inspection_assigned(fn: node, s: symbol)
-.decl inspection_before_wide(cmp: node, i: number)
-.decl inspection_between(cmp: node, i: number, j: number)
 .decl inspection_comparison(cmp: node)
 .decl inspection_context(n: node)
 .decl inspection_dict(o: node)
 .decl inspection_equality(cmp: node)
+.decl inspection_equality_op(s: symbol)
 .decl inspection_excused(c: node)
 .decl inspection_fallback(n: node)
 .decl inspection_fname(s: symbol)
 .decl inspection_function(f: node)
-.decl inspection_gap(cmp: node, g: symbol)
 .decl inspection_get_call(c: node, dflt: node)
 .decl inspection_hints_call(c: node)
 .decl inspection_hints_name(s: symbol)
 .decl inspection_identity(cmp: node)
-.decl inspection_next(cmp: node, a: node, b: node, i: number)
+.decl inspection_identity_op(s: symbol)
+.decl inspection_kids(x: node)
+.decl inspection_neq(x: node, y: node)
 .decl inspection_none_operand(cmp: node)
+.decl inspection_nonpositional(kind: symbol)
 .decl inspection_object(o: node)
-.decl inspection_operand(cmp: node, o: node, i: number)
-.decl inspection_operands(cmp: node, k: number)
-.decl inspection_positional(al: node, a: node, i: number)
+.decl inspection_pair(x: node, y: node)
+.decl inspection_positional(al: node, i: number)
 .decl inspection_positional_before(al: node, i: number, j: number)
 .decl inspection_safe(x: node)
 .decl inspection_safe_name(s: symbol)
 .decl inspection_second(al: node, a: node)
+.decl inspection_seed(n: node, m: node)
 .decl inspection_splat(kind: symbol)
 .decl inspection_starred_before(al: node, i: number)
+.decl inspection_tisnode(p: node, i: number)
+.decl inspection_tnode(p: node, i: number, c: node)
 .decl inspection_type_operand(cmp: node)
-.decl inspection_wide(cmp: node, i: number)
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, node, field, child, syntax_error, line
+.input doc, node_text, token, node, field, child, syntax_error, line
 .output violation
+inspection_equality_op("==").
+inspection_equality_op("!=").
 inspection_fname("get_type_hints").
 inspection_fname("issubclass").
 inspection_fname("get_args").
@@ -58,6 +64,13 @@ inspection_hints_name("type_hints").
 inspection_hints_name("class_annotations").
 inspection_hints_name("resolved_annotations").
 inspection_hints_name("resolved_hints").
+inspection_identity_op("is").
+inspection_identity_op("is not").
+inspection_nonpositional("keyword_argument").
+inspection_nonpositional("dictionary_splat").
+inspection_nonpositional("comment").
+inspection_nonpositional("list_splat").
+inspection_nonpositional("parenthesized_list_splat").
 inspection_safe_name("str").
 inspection_safe_name("ForwardRef").
 inspection_safe_name("TypeVar").
@@ -76,10 +89,13 @@ inspection_object(o) :- node(_, o, "identifier", _, _), node_text(o, "f").
 inspection_object(o) :- node(_, o, "identifier", _, _), node_text(o, s), match("(?s:.*)(?:(?i:field_info|_info$))(?s:.*)", s).
 inspection_object(o) :- node(_, o, "subscript", _, _), field(o, "value", v), node(_, v, "attribute", _, _), field(v, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "model_fields").
 inspection_annotation(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "annotation"), field(n, "object", o), inspection_object(o).
-inspection_starred_before(al, i) :- node(_, al, "argument_list", _, _), child(al, _, i), child(al, s, j), j < i, node(_, s, k, _, _), inspection_splat(k).
-inspection_positional(al, a, i) :- node(_, al, "argument_list", _, _), child(al, a, i), node(_, a, k, _, _), k != "keyword_argument", k != "dictionary_splat", !inspection_splat(k), !inspection_starred_before(al, i).
-inspection_positional_before(al, i, j) :- inspection_positional(al, _, i), inspection_positional(al, _, j), j < i.
-inspection_second(al, a) :- inspection_positional(al, a, i), c = count : { inspection_positional_before(al, i, _) }, c = 1.
+inspection_tnode(p, i, c) :- token(p, i, _, s, e), child(p, c, _), node(_, c, _, s, e).
+inspection_tisnode(p, i) :- inspection_tnode(p, i, _).
+inspection_starred_before(al, i) :- node(_, al, "argument_list", _, _), token(al, i, _, _, _), inspection_tnode(al, j, s), j < i, node(_, s, k, _, _), inspection_splat(k).
+inspection_positional(al, i) :- node(_, al, "argument_list", _, _), inspection_tnode(al, i, a), node(_, a, k, _, _), !inspection_nonpositional(k), !inspection_starred_before(al, i).
+inspection_positional(al, i) :- node(_, al, "argument_list", _, _), token(al, i, t, _, _), !inspection_tisnode(al, i), match("\\\\(?s:.*)", t), !inspection_starred_before(al, i).
+inspection_positional_before(al, i, j) :- inspection_positional(al, i), inspection_positional(al, j), j < i.
+inspection_second(al, a) :- inspection_positional(al, i), c = count : { inspection_positional_before(al, i, _) }, c = 1, inspection_tnode(al, i, a).
 inspection_function(f) :- node(_, f, "identifier", _, _), node_text(f, s), inspection_fname(s).
 inspection_function(f) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), node_text(a, s), inspection_fname(s).
 inspection_safe(x) :- node(_, x, "identifier", _, _), node_text(x, s), inspection_safe_name(s).
@@ -87,18 +103,8 @@ inspection_safe(x) :- node(_, x, "tuple", _, _), child(x, c, _), node(_, c, "ide
 inspection_excused(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), node_text(f, "str").
 inspection_excused(c) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), node_text(f, "isinstance"), field(c, "arguments", al), inspection_second(al, x), inspection_safe(x).
 inspection_context(n) :- inspection_annotation(n), child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _), field(c, "function", f), inspection_function(f), !inspection_excused(c).
-inspection_operand(cmp, o, i) :- node(_, cmp, "comparison_operator", _, _), child(cmp, o, i), node(_, o, k, _, _), k != "comment", k != "line_continuation".
-inspection_between(cmp, i, j) :- inspection_operand(cmp, _, i), inspection_operand(cmp, _, j), inspection_operand(cmp, _, m), i < m, m < j.
-inspection_next(cmp, a, b, i) :- inspection_operand(cmp, a, i), inspection_operand(cmp, b, j), i < j, !inspection_between(cmp, i, j).
-inspection_operands(cmp, k) :- node(_, cmp, "comparison_operator", _, _), k = count : { inspection_operand(cmp, _, _) }.
-inspection_wide(cmp, i) :- inspection_operand(cmp, o, i), node(_, o, _, s, e), node_text(o, t), @strlen(t) < @sub(e, s).
-inspection_after_wide(cmp, i) :- inspection_operand(cmp, _, i), inspection_wide(cmp, j), j <= i.
-inspection_before_wide(cmp, i) :- inspection_operand(cmp, _, i), inspection_wide(cmp, j), j >= i.
-inspection_gap(cmp, g) :- inspection_operands(cmp, 2), inspection_next(cmp, a, b, _), node_text(cmp, t), node_text(a, ta), node_text(b, tb), x = @strlen(ta), y = @sub(@sub(@strlen(t), @strlen(ta)), @strlen(tb)), y >= 0, g = @substr(t, x, y).
-inspection_gap(cmp, g) :- inspection_operands(cmp, k), k > 2, inspection_next(cmp, a, b, i), !inspection_after_wide(cmp, i), node(_, cmp, _, cs, _), node(_, a, _, _, ae), node(_, b, _, bs, _), node_text(cmp, t), x = @sub(ae, cs), y = @sub(bs, ae), @add(x, y) <= @strlen(t), g = @substr(t, x, y).
-inspection_gap(cmp, g) :- inspection_operands(cmp, k), k > 2, inspection_next(cmp, a, b, i), inspection_after_wide(cmp, i), inspection_operand(cmp, b, j), !inspection_before_wide(cmp, j), node(_, cmp, _, _, ce), node(_, a, _, _, ae), node(_, b, _, bs, _), node_text(cmp, t), x = @sub(@strlen(t), @sub(ce, ae)), y = @sub(bs, ae), x >= 0, g = @substr(t, x, y).
-inspection_identity(cmp) :- inspection_gap(cmp, g), match("(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*(?:is|is not)(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*", g).
-inspection_equality(cmp) :- inspection_gap(cmp, g), match("(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*(?:==|!=)(?:[\\s\\x{FEFF}\\x{2060}\\x{200B}]|#[^\\n]*|\\\\\\r?\\n)*", g).
+inspection_identity(cmp) :- node(_, cmp, "comparison_operator", _, _), token(cmp, _, s, _, _), inspection_identity_op(s).
+inspection_equality(cmp) :- node(_, cmp, "comparison_operator", _, _), token(cmp, _, s, _, _), inspection_equality_op(s).
 inspection_none_operand(cmp) :- node(_, cmp, "comparison_operator", _, _), child(cmp, c, _), node(_, c, "none", _, _).
 inspection_type_operand(cmp) :- node(_, cmp, "comparison_operator", _, _), child(cmp, c, i), i > 0, node(_, c, "identifier", _, _), node_text(c, s), match("[A-Z](?s:.*)", s).
 inspection_comparison(cmp) :- inspection_identity(cmp), !inspection_none_operand(cmp).
@@ -110,6 +116,24 @@ inspection_assigned(fn, s) :- node(_, asg, "assignment", _, _), field(asg, "left
 inspection_dict(o) :- node(_, o, "identifier", _, _), node_text(o, s), inspection_hints_name(s).
 inspection_dict(o) :- node(_, o, "identifier", _, _), node_text(o, s), nearest(o, fn, inspection_kinds_function), inspection_assigned(fn, s).
 inspection_get_call(c, dflt) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), node_text(a, "get"), field(f, "object", o), inspection_dict(o), field(c, "arguments", al), inspection_second(al, dflt).
+inspection_seed(n, m) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, dflt), node(d, dflt, _, ds, de), node(d, m, _, ms, me), m != dflt, ds <= ms, me <= de.
+inspection_kids(x) :- token(x, 0, _, _, _).
+inspection_pair(n, m) :- inspection_seed(n, m).
+inspection_pair(cx, cy) :- inspection_pair(x, y), x != y, inspection_kids(x), inspection_kids(y), node(_, x, k, _, _), node(_, y, k, _, _), inspection_tnode(x, i, cx), inspection_tnode(y, i, cy).
+inspection_anon(x, y, a, b) :- inspection_pair(x, y), token(x, i, a, _, _), token(y, i, b, _, _), !inspection_tisnode(x, i), !inspection_tisnode(y, i), a != b.
+inspection_alias(x, y, a, b) :- inspection_anon(x, y, a, b), match("is(?s:.+)not", a), match("is(?s:.+)not", b).
+inspection_alias(x, y, a, b) :- inspection_anon(x, y, a, b), match("not(?s:.+)in", a), match("not(?s:.+)in", b).
+inspection_neq(x, y) :- inspection_pair(x, y), !inspection_kids(x), node_text(x, a), node_text(y, b), a != b.
+inspection_neq(x, y) :- inspection_pair(x, y), !inspection_kids(y), node_text(x, a), node_text(y, b), a != b.
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), node(_, x, k, _, _), node(_, y, k2, _, _), k != k2.
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(x, i, _, _, _), !token(y, i, _, _, _).
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(y, i, _, _, _), !token(x, i, _, _, _).
+inspection_neq(x, y) :- inspection_pair(x, y), x != y, inspection_kids(x), inspection_kids(y), inspection_tnode(x, i, cx), inspection_tnode(y, i, cy), inspection_neq(cx, cy).
+inspection_neq(x, y) :- inspection_anon(x, y, a, b), !inspection_alias(x, y, a, b), inspection_kids(x), inspection_kids(y).
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(x, i, a, _, _), token(y, i, b, _, _), !inspection_tisnode(x, i), inspection_tisnode(y, i), a != b.
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(x, i, a, _, _), token(y, i, b, _, _), inspection_tisnode(x, i), !inspection_tisnode(y, i), a != b.
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(x, i, a, _, _), !inspection_tisnode(x, i), !match("[#\\\\](?s:.*)", a), inspection_tnode(y, i, cy), inspection_kids(cy).
+inspection_neq(x, y) :- inspection_pair(x, y), inspection_kids(x), inspection_kids(y), token(y, i, b, _, _), !inspection_tisnode(y, i), !match("[#\\\\](?s:.*)", b), inspection_tnode(x, i, cx), inspection_kids(cx).
 inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, n).
-inspection_fallback(n) :- inspection_context(n), inside(n, c, inspection_kinds_call), inspection_get_call(c, dflt), node_text(n, s), node_text(m, s), node(d, m, "attribute", ms, me), m != dflt, node(d, dflt, _, ds, de), ds <= ms, me <= de.
+inspection_fallback(n) :- inspection_seed(n, m), !inspection_neq(n, m).
 violation("data-layer-unresolved-forward-refs", "inspection", "unresolved_forward_ref", p, l) :- inspection_context(n), !inspection_fallback(n), node(d, n, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(n, l).

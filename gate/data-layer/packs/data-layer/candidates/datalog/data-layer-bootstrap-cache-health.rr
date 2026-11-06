@@ -22,15 +22,15 @@ bootstrap_cache_scope("function_definition"). bootstrap_cache_scope("decorator")
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl reported_parser_error_entry(d: number)
-.decl source(d: number, sp: node)
+.decl src_line(d: number, l: number, sp: node)
 .decl syntax_error(d: number)
-.decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, child, text, line, tape_line, syntax_error, source
+.input doc, node, field, child, text, line, src_line, syntax_error, node_text
 .output violation
 bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests").
 bootstrap_cache_helper("bootstrap_test_logged_tables_for_tests_async").
@@ -80,12 +80,12 @@ bootstrap_cache_fixture(e) :- bootstrap_cache_head(e, h), node(_, h, "identifier
 bootstrap_cache_fixture(e) :- bootstrap_cache_head(e, h), node(_, h, "attribute", _, _), field(h, "attribute", t), text(t, "fixture"), field(h, "object", o0), bootstrap_cache_ast(o0, o), bootstrap_cache_qualified(o), bootstrap_cache_last(o, s), suffix("pytest", s).
 bootstrap_cache_test(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), prefix("test_", s).
 bootstrap_cache_test(f) :- bootstrap_cache_decorator(f, e0), bootstrap_cache_ast(e0, e), bootstrap_cache_fixture(e).
-bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), tape_line(d, l, sp), text(sp, s), contains("bootstrap-cache-health: allow", s).
-bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), k = @sub(l, 1), tape_line(d, k, sp), text(sp, s), contains("bootstrap-cache-health: allow", s).
+bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), src_line(d, l, sp), text(sp, s), contains("bootstrap-cache-health: allow", s).
+bootstrap_cache_allowed(c) :- bootstrap_cache_call(c, _, _), node(d, c, _, _, _), line(c, l), k = @sub(l, 1), src_line(d, k, sp), text(sp, s), contains("bootstrap-cache-health: allow", s).
 bootstrap_cache_in_test(c) :- bootstrap_cache_fn(c, f), bootstrap_cache_test(f).
 bootstrap_cache_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
 violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH001", p, l) :- bootstrap_cache_call(c, _, s), bootstrap_cache_helper(s), bootstrap_cache_in_test(c), !bootstrap_cache_allowed(c), node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
 violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH002", p, l) :- bootstrap_cache_call(c, _, s), bootstrap_cache_helper(s), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), text(x, "manifest_key"), !bootstrap_cache_allowed(c), node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
 violation("data-layer-bootstrap-cache-health", "bootstrap-cache", "BCH003", p, l) :- bootstrap_cache_call(c, "Name", s), (s = "create_table" ; s = "create_tables"), bootstrap_cache_in_test(c), !bootstrap_cache_allowed(c), node(d, c, _, _, _), bootstrap_cache_doc(d, p), line(c, l).
-reported_parser_error_entry(d) :- option_value("entryPoint", v), v != "all", source(d, sp), text(sp, s), (contains("bootstrap_test_logged_tables_for_tests", s) ; contains("bootstrap_test_queues_for_tests", s) ; contains("bootstrap_test_schema_for_tests", s) ; contains("bootstrap_test_table_triggers_for_tests", s) ; contains("bootstrap_test_tables_for_tests", s) ; contains("bootstrap_test_versioning_domain_for_tests", s) ; contains("create_table", s)).
+reported_parser_error_entry(d) :- option_value("entryPoint", v), v != "all", node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:bootstrap_test_logged_tables_for_tests|bootstrap_test_logged_tables_for_tests_async|bootstrap_test_queues_for_tests|bootstrap_test_queues_for_tests_async|bootstrap_test_schema_for_tests|bootstrap_test_schema_for_tests_async|bootstrap_test_table_triggers_for_tests|bootstrap_test_table_triggers_for_tests_async|bootstrap_test_tables_for_tests|bootstrap_test_tables_for_tests_async|bootstrap_test_versioning_domain_for_tests|bootstrap_test_versioning_domain_for_tests_async|create_table|create_tables)(?s:.*)", s).
 violation("data-layer-bootstrap-cache-health", "reported-parser-error", "BCH000", p, 1) :- reported_parser_error_entry(d), doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d).

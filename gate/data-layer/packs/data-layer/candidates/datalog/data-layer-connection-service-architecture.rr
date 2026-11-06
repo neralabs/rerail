@@ -2,6 +2,8 @@
 connection_decorator_kind("decorator").
 .decl connection_fdef(kind: symbol)
 connection_fdef("function_definition").
+.decl connection_fn_kind(kind: symbol)
+connection_fn_kind("function_definition"). connection_fn_kind("decorator").
 .decl connection_import_kind(kind: symbol)
 connection_import_kind("import_statement"). connection_import_kind("import_from_statement").
 .decl child(p: node, c: node, i: number)
@@ -27,6 +29,8 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl connection_broad_owner(d: number, m: node, p: symbol, cn: symbol, mn: symbol)
 .decl connection_call(c: node, kind: symbol, callee: symbol)
 .decl connection_call_value(s: node)
+.decl connection_chain_top(a: node, t: node)
+.decl connection_chained(a: node)
 .decl connection_class(d: number, c: node, cn: symbol)
 .decl connection_class_start(d: number, cn: symbol, st: number)
 .decl connection_counterpart(m: node, z: node)
@@ -45,7 +49,10 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl connection_first_index(f: node, i: number)
 .decl connection_first_method(d: number, c: node, cn: symbol, m: node, mn: symbol)
 .decl connection_fn(n: node, f: node)
+.decl connection_fn_at(n: node)
 .decl connection_forbidden_wrapper(s: symbol)
+.decl connection_fpart(c: node)
+.decl connection_fstring(n: node)
 .decl connection_immediate_reader(s: symbol)
 .decl connection_import_name(x: node, s: symbol)
 .decl connection_in_function(x: node, f: node)
@@ -73,6 +80,7 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl connection_owner_pair(mn: symbol, p: symbol, cn: symbol)
 .decl connection_param(f: node, x: symbol, i: number)
 .decl connection_param_list(p: node)
+.decl connection_part(n: node)
 .decl connection_plain(n: node)
 .decl connection_positional(f: node, x: symbol)
 .decl connection_probe(c: node)
@@ -89,7 +97,7 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl connection_slash_after(f: node, i: number)
 .decl connection_slash_at(f: node, i: number)
 .decl connection_slot(e: node)
-.decl connection_slot_alias(f: node, x: symbol, st: number)
+.decl connection_slot_alias(f: node, x: symbol, s: node)
 .decl connection_slot_name(s: symbol)
 .decl connection_slot_string(d: number, s: number, e: number)
 .decl connection_smethod(d: number, c: node, cn: symbol, m: node, mn: symbol)
@@ -113,6 +121,7 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl never(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl op(n: node, s: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl schema_facade(d: number)
 .decl schema_facade_class(d: number, cn: symbol)
@@ -120,12 +129,14 @@ connection_import_kind("import_statement"). connection_import_kind("import_from_
 .decl schema_first_method(d: number, cn: symbol, m: node, mn: symbol)
 .decl schema_legacy_ok(d: number)
 .decl schema_pure_lazy_ok(d: number)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, field, child, text, op, strprefix, str, name
+.decl visit_index(n: node, i: number)
+.input doc, node, line, syntax_error, visit_index, field, child, text, op, value_type_of, strprefix, value, name
 .output violation
 connection_analysis_path("impl/sqlite/connection.py").
 connection_analysis_path("impl/postgres/connection.py").
@@ -138,7 +149,6 @@ connection_backend_service("_backend_driver_service").
 connection_backend_service("_backend_maintenance_service").
 connection_backend_service("_backend_schema_service").
 connection_backend_service("_backend_session_context_service").
-connection_entry("all").
 connection_forbidden_wrapper("add_column_if_missing").
 connection_forbidden_wrapper("create_index_from_introspection").
 connection_forbidden_wrapper("create_table_from_schema").
@@ -198,6 +208,8 @@ connection_slot_name("_current_schema_transaction").
 connection_tx_class("LazySchemaTransaction").
 connection_tx_class("SyncSchemaTransaction").
 connection_tx_class("AsyncSchemaTransaction").
+option_value("entryPoint", "all").
+option_value("parameters", "{}").
 in_scope(d) :- doc(d, p, _), glob("l2000_connection/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2200_sql_dialect/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/{sqlite,postgres,mariadb,remote,read_through}/connection.py", p).
@@ -206,6 +218,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/*_test.py", p).
 violation("data-layer-connection-service-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(v1, n, _, _, _), doc(v1, v2, _), never(_), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+connection_entry(e) :- option_value("entryPoint", e).
 connection_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d).
 connection_analysis_path(p) :- connection_doc(_, p), prefix("l2000_connection/", p).
 connection_analysis_path(p) :- connection_doc(_, p), prefix("impl/common/l2200_sql_dialect/", p).
@@ -248,8 +261,12 @@ connection_single(s, e) :- node(_, s, "expression_statement", _, _), child(s, e,
 connection_single(s, e) :- node(_, s, "return_statement", _, _), child(s, e, _), !node(_, e, "comment", _, _), !connection_several(s).
 connection_several(s) :- child(s, a, i), child(s, b, j), i < j, !node(_, a, "comment", _, _), !node(_, b, "comment", _, _), node(_, s, "expression_statement", _, _).
 connection_several(s) :- child(s, a, i), child(s, b, j), i < j, !node(_, a, "comment", _, _), !node(_, b, "comment", _, _), node(_, s, "return_statement", _, _).
-connection_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !match("(?s).*[fFbB].*", p).
-connection_str_const(n, v) :- connection_plain(n), str(n, v).
+connection_plain(n) :- node(_, n, "string", _, _), !connection_part(n), !connection_fstring(n), value_type_of(n, "str").
+connection_plain(n) :- node(_, n, "concatenated_string", _, _), !connection_fpart(n), value_type_of(n, "str").
+connection_part(n) :- node(_, c, "concatenated_string", _, _), child(c, n, _).
+connection_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), match("(?s:.*)[fF](?s:.*)", p).
+connection_fpart(c) :- node(_, c, "concatenated_string", _, _), child(c, n, _), connection_fstring(n).
+connection_str_const(n, v) :- connection_plain(n), value(n, v).
 connection_docstring(f, s) :- connection_first_index(f, i), connection_stmt(f, s, i), node(_, s, "expression_statement", _, _), connection_single(s, e0), connection_un(e0, e), connection_plain(e).
 connection_body(f, s, i) :- connection_stmt(f, s, i), !connection_docstring(f, s).
 connection_body_count(f, k) :- node(_, f, "function_definition", _, _), k = count : { connection_body(f, _, _) }.
@@ -274,8 +291,14 @@ connection_arg_at(c, 0, x) :- connection_arg0_index(c, i), connection_arg(c, x0,
 connection_arg_at(c, 1, x) :- connection_arg1_index(c, i), connection_arg(c, x0, i), connection_un(x0, x).
 connection_arg_later(c, j) :- connection_arg0_index(c, i0), connection_arg(c, _, j), j > i0.
 connection_arg1_index(c, i) :- connection_arg_later(c, _), i = min j : { connection_arg_later(c, j) }.
-connection_fn(c, f) :- node(_, c, "call", _, _), nearest(c, f, connection_fdef).
-connection_fn(a, f) :- node(_, a, "assignment", _, _), nearest(a, f, connection_fdef).
+connection_fn_at(c) :- node(_, c, "call", _, _).
+connection_fn_at(a) :- node(_, a, "assignment", _, _).
+connection_fn(n, f) :- connection_fn_at(n), nearest(n, f, connection_fn_kind), node(_, f, "function_definition", _, _).
+connection_fn(n, f) :- connection_fn_at(n), nearest(n, dc, connection_fn_kind), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+connection_fn(n, f) :- connection_fn_at(n), nearest(n, dc, connection_fn_kind), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", k), node(_, k, "class_definition", _, _), nearest(dd, f, connection_fdef).
+connection_chain_top(a, a) :- node(_, a, "assignment", _, _), !connection_chained(a).
+connection_chain_top(a, t) :- node(_, p, "assignment", _, _), field(p, "right", a), node(_, a, "assignment", _, _), connection_chain_top(p, t).
+connection_chained(a) :- node(_, p, "assignment", _, _), field(p, "right", a), node(_, a, "assignment", _, _).
 connection_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
 connection_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).
 connection_not_name(n) :- node(_, p, "class_definition", _, _), field(p, "name", n).
@@ -347,10 +370,10 @@ connection_slash_after(f, i) :- connection_param(f, _, i), connection_slash_at(f
 connection_assign_value(a, v) :- node(_, a, "assignment", _, _), field(a, "right", v), !node(_, v, "assignment", _, _).
 connection_assign_value(a, v) :- node(_, a, "assignment", _, _), field(a, "right", r), node(_, r, "assignment", _, _), connection_assign_value(r, v).
 connection_slot_string(d, s, e) :- connection_str_const(n, v), connection_slot_name(v), node(d, n, _, s, e).
-connection_slot_alias(f, x, st) :- node(d, a, "assignment", st, _), connection_fn(a, f), field(a, "left", t), node(_, t, "identifier", _, _), text(t, x), connection_assign_value(a, v), node(d, v, _, vs, ve), connection_slot_string(d, ks, ke), vs <= ks, ke <= ve.
+connection_slot_alias(f, x, s) :- node(d, a, "assignment", _, _), connection_fn(a, f), connection_chain_top(a, s), field(a, "left", t), node(_, t, "identifier", _, _), text(t, x), connection_assign_value(a, v), node(d, v, _, vs, ve), connection_slot_string(d, ks, ke), vs <= ks, ke <= ve.
 connection_probe_arg(c, v) :- connection_call(c, _, s), (s = "getattr" ; s = "hasattr"), connection_arg_at(c, 1, v).
 connection_probe_arg(c, v) :- connection_call(c, "Attribute", "get"), connection_receiver(c, r), connection_call(r, _, "vars"), connection_arg_at(c, 0, v).
-connection_probe(c) :- connection_probe_arg(c, v), node(_, v, "identifier", _, _), text(v, x), connection_fn(c, f), node(_, c, _, cs, _), connection_slot_alias(f, x, st), st < cs.
+connection_probe(c) :- connection_probe_arg(c, v), node(_, v, "identifier", _, _), text(v, x), connection_fn(c, f), connection_slot_alias(f, x, s), node(rr_earlier1, s, _, _, _), visit_index(s, rr_earlier2), node(rr_earlier1, c, _, _, _), visit_index(c, rr_earlier3), rr_earlier2 < rr_earlier3.
 connection_probe(c) :- connection_probe_arg(c, v), connection_str_const(v, s), connection_slot_name(s).
 connection_owner(d, m, cn, mn) :- connection_smethod(d, c, cn, m, mn), !connection_abstract(c), connection_schema_owned(mn), !connection_delegate(m).
 connection_owner(d, m, cn, mn) :- connection_smethod(d, c, cn, m, mn), !connection_abstract(c), prefix("_schema_", mn), !connection_delegate(m).

@@ -4,7 +4,6 @@ asd_class("class_definition").
 asd_fdef("function_definition").
 .decl wrapper_shape_argk(kind: symbol)
 wrapper_shape_argk("argument_list").
-.decl asd_badpart(x: node)
 .decl asd_body_count(f: node, k: number)
 .decl asd_body_real(f: node, s: node)
 .decl asd_class_of(f: node, c: node, bc: node)
@@ -58,10 +57,10 @@ wrapper_shape_argk("argument_list").
 .decl legacy_valid(o: node, nm: symbol)
 .decl legacy_variant(dv: symbol, cv: symbol, drop: symbol, cp: symbol)
 .decl line(n: node, l: number)
-.decl name(n: node, s: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl strprefix(n: node, s: symbol)
 .decl sync_delegation_awaits(f: node)
@@ -96,6 +95,7 @@ wrapper_shape_argk("argument_list").
 .decl sync_delegation_unsupported(s: node)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl wrapper_shape_bad(f: node)
 .decl wrapper_shape_base(f: node, base: symbol)
@@ -130,12 +130,13 @@ wrapper_shape_argk("argument_list").
 .decl wrapper_shape_tx(f: node, c: node, s: node)
 .decl wrapper_shape_txn(f: node)
 .decl wrapper_shape_unsupported(f: node)
-.input doc, node, field, text, name, line, syntax_error, node_text, strprefix, child, op
+.input doc, node, field, text, line, syntax_error, node_text, value_type_of, child, op, strprefix
 .output violation
 legacy_variant("legacy_sync", "legacy_async", "_sync", "_async").
 legacy_variant("legacy_async", "legacy_sync", "_async", "").
 legacy_variant("legacy_module_sync", "legacy_module_async", "", "_async").
 legacy_variant("legacy_module_async", "legacy_module_sync", "_async", "").
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -235,7 +236,8 @@ out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-asd_gate(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("async def", s) ; contains("_async", s) ; contains("__aenter__", s) ; contains("__aexit__", s) ; contains("run_in_executor", s) ; contains("to_thread", s) ; contains("tracked_run_in_executor", s) ; contains("tracked_to_thread", s) ; contains("legacy_async", s) ; contains("legacy_module_async", s) ; contains("pure_lazy", s) ; contains("resolve_async", s)).
+asd_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), (contains("async def", s) ; contains("_async", s) ; contains("__aenter__", s) ; contains("__aexit__", s) ; contains("run_in_executor", s) ; contains("to_thread", s) ; contains("tracked_run_in_executor", s) ; contains("tracked_to_thread", s) ; contains("legacy_async", s) ; contains("legacy_module_async", s) ; contains("pure_lazy", s) ; contains("resolve_async", s)).
+asd_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
 asd_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), asd_gate(d).
 asd_test_path(p) :- doc(_, p, _), prefix("tests/", p).
 asd_test_path(p) :- doc(_, p, _), prefix("conform/", p).
@@ -244,10 +246,9 @@ asd_test_path(p) :- doc(_, p, _), contains("/tests/", p).
 asd_test_path(p) :- doc(_, p, _), contains("/conform/", p).
 asd_test_path(p) :- doc(_, p, _), contains("/impl/browser/", p).
 asd_fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", n), text(n, s).
-asd_strlit(x) :- node(_, x, "string", _, _), strprefix(x, p), !contains("b", p), !contains("f", p), !contains("B", p), !contains("F", p).
-asd_strlit(x) :- node(_, x, "concatenated_string", _, _), !asd_badpart(x).
-asd_badpart(x) :- node(_, x, "concatenated_string", _, _), child(x, c, _), strprefix(c, p), (contains("b", p) ; contains("f", p) ; contains("B", p) ; contains("F", p)).
-asd_noncomment_before(s) :- child(b, s, i), child(b, y, j), j < i, !node(_, y, "comment", _, _).
+asd_strlit(x) :- node(_, x, "string", _, _), value_type_of(x, "str").
+asd_strlit(x) :- node(_, x, "concatenated_string", _, _), value_type_of(x, "str").
+asd_noncomment_before(s) :- child(b, s, i), child(b, _, j), j < i.
 asd_docstring(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), asd_strlit(x), !asd_noncomment_before(s).
 asd_real(b, s) :- child(b, s, _), !node(_, s, "comment", _, _), !asd_docstring(s).
 asd_real_count(b, k) :- node(_, b, "block", _, _), k = count : { asd_real(b, _) }.
@@ -264,9 +265,8 @@ asd_stub(f) :- asd_body_count(f, 1), asd_body_real(f, s), asd_stub_stmt(s).
 asd_stub_stmt(s) :- node(_, s, "pass_statement", _, _).
 asd_stub_stmt(s) :- node(_, s, "expression_statement", _, _), child(s, x, _), node(_, x, "ellipsis", _, _).
 asd_stub_stmt(s) :- node(_, s, "raise_statement", _, _), child(s, c, _), node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _), text(g, "NotImplementedError").
-asd_compact(n, s) :- name(n, s).
-asd_compact(n, s) :- node(_, n, "identifier", _, _), !name(n, _), node_text(n, s).
-asd_compact(n, s) :- node(_, n, "attribute", _, _), !name(n, _), node_text(n, s).
+asd_compact(n, @replace_all(t, "\\s", "")) :- wrapper_shape_thin(_, n), node_text(n, t).
+asd_compact(n, @replace_all(t, "\\s", "")) :- wrapper_shape_lazy_thin(_, n), node_text(n, t).
 asd_first_child(p, x) :- child(p, x, 0).
 asd_next_child(p, x, y) :- child(p, x, i), j = @add(i, 1), child(p, y, j).
 asd_last_child(p, x) :- child(p, x, i), !asd_has_child_after(p, i).

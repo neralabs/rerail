@@ -13,13 +13,8 @@ lazy_fnset("function_definition").
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
 .decl lazy_af(f: node)
-.decl lazy_afirst(f: node, v: node, tag: symbol, x: node)
 .decl lazy_afree(f: node, tag: symbol, ch: number, loc: number)
-.decl lazy_ahas(f: node, v: node, tag: symbol)
-.decl lazy_akid(f: node, v: node, tag: symbol, c: node)
-.decl lazy_akidk(f: node, v: node, tag: symbol, k: number)
 .decl lazy_amark0(f: node, x: node, tag: symbol, ch: number, loc: number)
-.decl lazy_amarked(f: node, x: node, tag: symbol)
 .decl lazy_annot(f: node, name: symbol, t: node)
 .decl lazy_annwalk(f: node, name: symbol, n: node)
 .decl lazy_apick(f: node, tag: symbol, loc: number)
@@ -31,6 +26,7 @@ lazy_fnset("function_definition").
 .decl lazy_argstr(c: node, pos: number, v: symbol)
 .decl lazy_argtag(f: node, c: node, pos: number, k: symbol)
 .decl lazy_argx(k: symbol)
+.decl lazy_arow(f: node, tag: symbol, k: symbol, ch: number, x: symbol, loc: number)
 .decl lazy_asg(a: node, l: node, lk: symbol)
 .decl lazy_asgin(a: node, rs: number)
 .decl lazy_asgname(a: node, name: symbol, stmt: node)
@@ -38,17 +34,15 @@ lazy_fnset("function_definition").
 .decl lazy_asgtarget(l: node)
 .decl lazy_asgtext(a: node, t: symbol)
 .decl lazy_asyncish(f: node)
+.decl lazy_atag(f: node, tag: symbol)
 .decl lazy_attr(a: node, attr: symbol)
 .decl lazy_av(g: symbol, r: node, c: node, n: node)
-.decl lazy_bfirst(g: symbol, r: node, v: node, x: node)
-.decl lazy_bhas(g: symbol, r: node, v: node)
-.decl lazy_bkid(g: symbol, r: node, v: node, c: node)
-.decl lazy_bkidk(g: symbol, r: node, v: node, k: number)
+.decl lazy_bhasrow(g: symbol, r: node)
 .decl lazy_bmark(g: symbol, r: node, c: node, loc: number)
-.decl lazy_bmarked(g: symbol, r: node, v: node)
 .decl lazy_body(f: node, b: node, bs: number)
 .decl lazy_bootstrap(f: node)
 .decl lazy_bpick(g: symbol, r: node, loc: number)
+.decl lazy_brow(g: symbol, r: node, k: symbol, x: symbol, loc: number)
 .decl lazy_call(c: node, f: node, fk: symbol)
 .decl lazy_callee(c: node, s: symbol)
 .decl lazy_capsrecv(c: node)
@@ -96,6 +90,10 @@ lazy_fnset("function_definition").
 .decl lazy_flushok(f: node)
 .decl lazy_fname(f: node, name: symbol)
 .decl lazy_fnfrom(f: node, local: symbol, s: number, full: symbol)
+.decl lazy_fodiff(f: node, g: node, i: number)
+.decl lazy_foel(f: node, i: number, v: number)
+.decl lazy_foenc(f: node, r: number)
+.decl lazy_folen(f: node, n: number)
 .decl lazy_fpath(f: node, d: number, p: symbol)
 .decl lazy_fqual(f: node, q: symbol)
 .decl lazy_fromfn(f: node, local: symbol, full: symbol)
@@ -108,11 +106,11 @@ lazy_fnset("function_definition").
 .decl lazy_gnode(f: node, g: node)
 .decl lazy_graph(g: symbol, mode: symbol)
 .decl lazy_gsink(g: symbol, n: node, loc: number)
-.decl lazy_hasafree(f: node, tag: symbol)
 .decl lazy_hasanyimport(d: number, local: symbol)
 .decl lazy_hascma(c: node, name: symbol)
 .decl lazy_hasdelegatehit(f: node)
 .decl lazy_hasfield(x: node, f: symbol)
+.decl lazy_hasfodiff(f: node, g: node)
 .decl lazy_hasfromfn(f: node, local: symbol)
 .decl lazy_hasfromof(f: node, local: symbol)
 .decl lazy_hasintrev(f: node)
@@ -129,6 +127,7 @@ lazy_fnset("function_definition").
 .decl lazy_hasstr(d: number, s: number)
 .decl lazy_hastopfrom(d: number, local: symbol)
 .decl lazy_hastv(f: node, root: node)
+.decl lazy_hasval(n: node)
 .decl lazy_hasvb(f: node, r: node)
 .decl lazy_heads(c: node, n: node)
 .decl lazy_hit(g: symbol, r: node, loc: number)
@@ -235,16 +234,27 @@ lazy_fnset("function_definition").
 .decl lazy_spanunder(f: node, x: node)
 .decl lazy_sqf(d: number, a: node, q: symbol)
 .decl lazy_sqname(s: symbol)
+.decl lazy_strk(k: symbol)
+.decl lazy_strn(d: number, n: node, s: number, e: number)
 .decl lazy_strv(d: number, s: number, v: symbol)
+.decl lazy_strval(n: node, v: symbol)
 .decl lazy_sym(f: node, s: symbol)
 .decl lazy_symfn(s: symbol, f: node)
 .decl lazy_symlater(f: node)
+.decl lazy_sympair(f: node, g: node)
 .decl lazy_tag(f: node, n: node, k: symbol)
 .decl lazy_tagup(k: symbol)
 .decl lazy_target(f: node, s: node, t: symbol)
-.decl lazy_tied(f: node, n: node, q: node)
+.decl lazy_tdom(f: node, n: node)
 .decl lazy_topfrom(d: number, local: symbol, s: number, full: symbol)
 .decl lazy_topimport(d: number, local: symbol, s: number, name: symbol)
+.decl lazy_ts1(f: node, n: node, m: node)
+.decl lazy_ts16(f: node, n: node, m: node)
+.decl lazy_ts2(f: node, n: node, m: node)
+.decl lazy_ts32(f: node, n: node, m: node)
+.decl lazy_ts4(f: node, n: node, m: node)
+.decl lazy_ts8(f: node, n: node, m: node)
+.decl lazy_tstep(f: node, n: node, m: node)
 .decl lazy_tv(f: node, root: node, v: symbol)
 .decl lazy_tw(f: node, root: node, n: node)
 .decl lazy_twroot(k: symbol)
@@ -252,21 +262,22 @@ lazy_fnset("function_definition").
 .decl lazy_vb(f: node, r: node, a: node)
 .decl lazy_vbc(f: node, r: node, ax: number)
 .decl lazy_vbv(f: node, r: node, v: node)
-.decl lazy_vkid(f: node, p: node, n: node, key: number)
-.decl lazy_vnode(f: node, x: node, v: node)
+.decl lazy_vk(f: node, n: node, k: symbol)
+.decl lazy_vneed(f: node, n: node)
+.decl lazy_vpiece(p: node, n: node, x: symbol)
 .decl line(n: node, l: number)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl src_line_lf(d: number, l: number, sp: node)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
+.decl rr_agg1(f: node, r: number, r2: number)
 .decl syntax_error(d: number)
+.decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, child, node_text, field, strprefix, str, op, line, src_line_lf, text
+.input doc, syntax_error, node, child, node_text, field, value, op, line, tape_line, text
 .output violation
 deleted_surface("deleted-cold-0", "BootstrapEngineRunMode.COLD").
 deleted_surface("deleted-cold-1", "BootstrapMode.COLD").
@@ -531,6 +542,8 @@ lazy_sqname("pending_staged_trigger_ddl_async_batch_scheduled").
 lazy_sqname("pending_staged_trigger_ddl_async_statements").
 lazy_sqname("pending_staged_trigger_ddl_batch_scheduled").
 lazy_sqname("pending_staged_trigger_ddl_statements").
+lazy_strk("string").
+lazy_strk("concatenated_string").
 lazy_tagup("tuple").
 lazy_tagup("list").
 lazy_tagup("set").
@@ -585,8 +598,12 @@ lazy_arg(c, g, 0) :- lazy_args(c, g, "generator_expression").
 lazy_arg(c, n, pos) :- lazy_argc(c, n, _), pos = count : { lazy_argbefore(c, n, _) }.
 lazy_kw(c, name, v) :- lazy_args(c, g, _), lazy_par(k, g, _), lazy_kind(k, "keyword_argument"), field(k, "name", kn), lazy_ntext(kn, name), field(k, "value", v), lazy_kind(v, _).
 lazy_haskw(c, name) :- lazy_kw(c, name, _).
-lazy_strv(d, s, v) :- lazy_n(d, n, "string", s, _), inside(n, _, lazy_fnset), strprefix(n, p), match("[rRuU]*", p), str(n, v).
-lazy_hasstr(d, s) :- lazy_strv(d, s, _).
+lazy_strn(d, n, s, e) :- lazy_n(d, n, k, s, e), lazy_strk(k), inside(n, _, lazy_fnset), lazy_ntext(n, t), match("(?i:[ru]*[\"'])(?s:.*)", t).
+lazy_hasval(n) :- lazy_strn(_, n, _, _), value(n, _).
+lazy_strval(n, v) :- lazy_strn(_, n, _, _), value(n, v).
+lazy_strval(n, "") :- lazy_strn(_, n, _, _), !lazy_hasval(n).
+lazy_strv(d, s, v) :- lazy_strn(d, n, s, _), lazy_strval(n, v).
+lazy_hasstr(d, s) :- lazy_strn(d, _, s, _).
 lazy_argstr(c, pos, v) :- lazy_arg(c, a, pos), lazy_n(d, a, _, s, _), lazy_strv(d, s, v).
 lazy_ret(r, v) :- lazy_kind(r, "return_statement"), lazy_par(v, r, _).
 lazy_asg(a, l, lk) :- lazy_kind(a, "assignment"), field(a, "left", l), lazy_kind(l, lk).
@@ -666,31 +683,27 @@ lazy_pruned(f) :- lazy_decl(f, "function_definition", _), lazy_decname(f, x, nam
 lazy_owned(f, b) :- lazy_body(f, b, _).
 lazy_owned(f, n) :- lazy_owned(f, o), lazy_par(n, o, _), !lazy_kind(n, "class_definition"), !lazy_asgtarget(n), !lazy_pruned(n).
 lazy_ownedk(f, n, k) :- lazy_owned(f, n), lazy_kind(n, k).
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), !lazy_kind(p, "pair"), !lazy_kind(p, "argument_list"), !lazy_kind(p, "conditional_expression"), !lazy_kind(p, "dictionary"), key = @mul(i, 1000000).
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "dictionary"), !lazy_kind(n, "pair"), key = @mul(i, 1000000).
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "conditional_expression"), i = 0, key = 1000000.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "conditional_expression"), i = 1, key = 0.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "conditional_expression"), i > 1, key = @mul(i, 1000000).
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "argument_list"), lazy_kind(n, "keyword_argument"), key = @add(@add(1000000, i), 1).
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "argument_list"), !lazy_kind(n, "keyword_argument"), key = @add(i, 1).
-lazy_vkid(f, q, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "pair"), lazy_par(p, q, j), lazy_kind(q, "dictionary"), lazy_owned(f, q), key = @add(@add(@mul(i, 1000000), j), 1).
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "pair"), lazy_par(p, q, j), !lazy_kind(q, "dictionary"), key = @add(@add(@mul(i, 1000000), j), 1).
-lazy_tied(f, n, q) :- lazy_owned(f, n), lazy_kind(n, "pair"), lazy_par(n, q, _), lazy_kind(q, "dictionary"), lazy_owned(f, q).
+lazy_vpiece(p, n, "") :- lazy_par(n, p, _), lazy_kind(p, "dictionary"), lazy_kind(n, "pair").
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "dictionary"), !lazy_kind(n, "pair"), x = @concat(@to_string(@strlen(@to_string(i))), @to_string(i)).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "pair"), lazy_par(p, _, j), x = @concat(@concat(@to_string(@strlen(@to_string(i))), @to_string(i)), @concat(@to_string(@strlen(@to_string(j))), @to_string(j))).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "argument_list"), lazy_kind(n, "keyword_argument"), x = @concat("11", @concat(@to_string(@strlen(@to_string(i))), @to_string(i))).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "argument_list"), !lazy_kind(n, "keyword_argument"), x = @concat("10", @concat(@to_string(@strlen(@to_string(i))), @to_string(i))).
+lazy_vpiece(p, n, "11") :- lazy_par(n, p, 0), lazy_kind(p, "conditional_expression").
+lazy_vpiece(p, n, "10") :- lazy_par(n, p, 1), lazy_kind(p, "conditional_expression").
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "conditional_expression"), i > 1, x = @concat(@to_string(@strlen(@to_string(i))), @to_string(i)).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), !lazy_kind(p, "dictionary"), !lazy_kind(p, "pair"), !lazy_kind(p, "argument_list"), !lazy_kind(p, "conditional_expression"), x = @concat(@to_string(@strlen(@to_string(i))), @to_string(i)).
+lazy_vneed(f, x) :- lazy_amark0(f, x, _, _, _).
+lazy_vneed(f, c) :- lazy_gedge(f, _, c, _).
+lazy_vneed(f, p) :- lazy_vneed(f, n), lazy_par(n, p, _), lazy_owned(f, p).
+lazy_vk(f, b, "") :- lazy_body(f, b, _), lazy_vneed(f, b).
+lazy_vk(f, n, k) :- lazy_vk(f, p, kp), lazy_vpiece(p, n, x), lazy_vneed(f, n), lazy_owned(f, n), k = @concat(kp, x).
 lazy_spanned(f, x, s, e) :- lazy_owned(f, x), lazy_span(x, s, e).
 lazy_spanunder(f, x) :- lazy_spanned(f, x, s, e), lazy_par(x, p, _), lazy_spanned(f, p, s, e).
-lazy_spantop(f, s, e, x) :- lazy_spanned(f, x0, s, e), !lazy_spanunder(f, x0), lazy_vnode(f, x0, x).
-lazy_vnode(f, x, x) :- lazy_owned(f, x), !lazy_tied(f, x, _).
-lazy_vnode(f, x, q) :- lazy_tied(f, x, q).
-lazy_amarked(f, x, tag) :- lazy_amark0(f, x, tag, _, _).
-lazy_ahas(f, x, tag) :- lazy_amarked(f, x, tag).
-lazy_ahas(f, v, tag) :- lazy_vkid(f, v, c, _), lazy_ahas(f, c, tag).
-lazy_akidk(f, v, tag, k) :- lazy_vkid(f, v, c, k), lazy_ahas(f, c, tag).
-lazy_akid(f, v, tag, c) :- lazy_ahas(f, v, tag), !lazy_amarked(f, v, tag), k = min k2 : { lazy_akidk(f, v, tag, k2) }, lazy_vkid(f, v, c, k).
-lazy_afirst(f, v, tag, v) :- lazy_amarked(f, v, tag).
-lazy_afirst(f, v, tag, x) :- lazy_akid(f, v, tag, c), lazy_afirst(f, c, tag, x).
-lazy_hasafree(f, tag) :- lazy_afree(f, tag, _, _).
-lazy_apick(f, tag, loc) :- lazy_hasafree(f, tag), ch = min c2 : { lazy_afree(f, tag, c2, _) }, lazy_afree(f, tag, ch, loc).
-lazy_apick(f, tag, loc) :- lazy_body(f, b, _), lazy_afirst(f, b, tag, x), !lazy_hasafree(f, tag), ch = min c2 : { lazy_amark0(f, x, tag, c2, _) }, lazy_amark0(f, x, tag, ch, loc).
+lazy_spantop(f, s, e, x) :- lazy_spanned(f, x, s, e), !lazy_spanunder(f, x).
+lazy_arow(f, tag, k, ch, x, loc) :- lazy_amark0(f, n, tag, ch, loc), lazy_vk(f, n, k), x = @substr(@concat("000000000000", @to_string(loc)), @strlen(@to_string(loc)), 12).
+lazy_arow(f, tag, "", ch, x, loc) :- lazy_afree(f, tag, ch, loc), x = @substr(@concat("000000000000", @to_string(loc)), @strlen(@to_string(loc)), 12).
+lazy_atag(f, tag) :- lazy_arow(f, tag, _, _, _, _).
+lazy_apick(f, tag, loc) :- lazy_atag(f, tag), s = join x by (k, ch) sep "" : { lazy_arow(f, tag, k, ch, x, _) }, lazy_arow(f, tag, _, _, x, loc), x = @substr(s, 0, 12).
 lazy_aregion(d, s, e) :- lazy_n(d, b, "block", s, e), lazy_par(b, p, _), lazy_kind(p, k), lazy_regionk(k).
 lazy_idasg(d, a, name, s, e) :- lazy_asg(a, _, "identifier"), lazy_asgtext(a, name), lazy_n(d, a, _, s, e).
 lazy_asgin(a, rs) :- lazy_idasg(d, a, _, s, e), lazy_aregion(d, rs, re), rs <= s, re >= e.
@@ -728,10 +741,19 @@ lazy_annwalk(f, name, c) :- lazy_annwalk(f, name, n), lazy_kind(n, "type"), lazy
 lazy_annwalk(f, name, c) :- lazy_annwalk(f, name, n), lazy_kind(n, "generic_type"), lazy_first(n, c).
 lazy_nativecursor(f, name) :- lazy_annwalk(f, name, n), lazy_kind(n, "identifier"), lazy_ntext(n, t), lazy_nd(n, d), lazy_topfrom(d, t, _, full), lazy_cursor(full).
 lazy_nativecursor(f, name) :- lazy_annwalk(f, name, n), lazy_attr(n, at), lazy_object(n, o), lazy_ntext(o, ot), lazy_nd(n, d), lazy_topimport(d, ot, _, iname), lazy_cursor(full), full = @concat(@concat(iname, "."), at).
-lazy_tw(f, r, r) :- lazy_ownedk(f, r, k), lazy_twroot(k).
-lazy_tw(f, r, v) :- lazy_tw(f, r, n), lazy_kind(n, "identifier"), lazy_vbv(f, n, v).
-lazy_tw(f, r, c) :- lazy_tw(f, r, n), lazy_call(n, c, _).
-lazy_tw(f, r, c) :- lazy_tw(f, r, n), lazy_kind(n, "parenthesized_expression"), lazy_first(n, c).
+lazy_tdom(f, r) :- lazy_ownedk(f, r, k), lazy_twroot(k).
+lazy_tdom(f, m) :- lazy_tdom(f, n), lazy_tstep(f, n, m).
+lazy_tstep(f, n, v) :- lazy_tdom(f, n), lazy_kind(n, "identifier"), lazy_vbv(f, n, v).
+lazy_tstep(f, n, c) :- lazy_tdom(f, n), lazy_call(n, c, _).
+lazy_tstep(f, n, c) :- lazy_tdom(f, n), lazy_kind(n, "parenthesized_expression"), lazy_first(n, c).
+lazy_ts1(f, n, n) :- lazy_tdom(f, n).
+lazy_ts1(f, n, m) :- lazy_tstep(f, n, m).
+lazy_ts2(f, n, m) :- lazy_ts1(f, n, x), lazy_ts1(f, x, m).
+lazy_ts4(f, n, m) :- lazy_ts2(f, n, x), lazy_ts2(f, x, m).
+lazy_ts8(f, n, m) :- lazy_ts4(f, n, x), lazy_ts4(f, x, m).
+lazy_ts16(f, n, m) :- lazy_ts8(f, n, x), lazy_ts8(f, x, m).
+lazy_ts32(f, n, m) :- lazy_ts16(f, n, x), lazy_ts16(f, x, m).
+lazy_tw(f, r, n) :- lazy_ownedk(f, r, k), lazy_twroot(k), lazy_ts32(f, r, x), lazy_ts32(f, x, n).
 lazy_fromof(f, d, local, s, full) :- lazy_af(f), lazy_nd(f, d), lazy_topfrom(d, local, s, full).
 lazy_fromof(f, d, local, s, full) :- lazy_fnfrom(f, local, s, full), lazy_nd(f, d).
 lazy_hasfromof(f, local) :- lazy_fromof(f, _, local, _, _).
@@ -850,7 +872,7 @@ lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, _, v), lazy_tag(f, v,
 lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, "literal_kwargs", v), lazy_tag(f, v, "callable"), !lazy_haskw(c, "closed_post_op"), lazy_leaf(f, c, "RuntimeBuilderSpec").
 lazy_ev0(f, c, "payload", 14) :- lazy_oc(f, c), lazy_kw(c, k, v), (k = "literal_payload" ; k = "default_value"), lazy_tag(f, v, "callable"), !lazy_haskw(c, "closed_post_op"), lazy_leaf(f, c, "ResultMaterializationSpec").
 lazy_ev0(f, c, "payload", 14) :- lazy_resin(f, c, "literal_post_op"), !lazy_haskw(c, "closed_post_op"), lazy_argtag(f, c, 0, "callable").
-lazy_ev0(f, n, "dolt", 15) :- lazy_owned(f, o), lazy_n(d, o, _, s, e), lazy_n(d, n, "string", s, e), lazy_strv(d, s, v), (icontains("dolt_", v) ; icontains("dolt log", v) ; icontains("dolt branches", v)).
+lazy_ev0(f, n, "dolt", 15) :- lazy_owned(f, o), lazy_n(d, o, _, s, e), lazy_strn(d, n, s, e), lazy_strval(n, v), (icontains("dolt_", v) ; icontains("dolt log", v) ; icontains("dolt branches", v)).
 lazy_ev0(f, a, "bootstrap", 16) :- lazy_owned(f, a), lazy_asg(a, l, "attribute"), lazy_selfrooted(l).
 lazy_ev0(f, a, "bootstrap", 16) :- lazy_owned(f, a), lazy_asg(a, l, "subscript"), lazy_selfrooted(l).
 lazy_ev0(f, r, "of_return", 17) :- lazy_owned(f, r), lazy_ret(r, c), lazy_lazyof(c).
@@ -884,7 +906,16 @@ lazy_symfn(s, f) :- lazy_sym(f, s), !lazy_redefined(f).
 lazy_edge(f, c, t) :- lazy_oc(f, c), lazy_target(f, c, s), lazy_symfn(s, t), t != f.
 lazy_reach(r, r) :- lazy_af(r).
 lazy_reach(r, t) :- lazy_reach(r, n), lazy_nd(n, d), lazy_nd(r, d), lazy_edge(n, _, t).
-lazy_symlater(f) :- lazy_sym(f, s), lazy_sym(g, s), lazy_region(f, r), lazy_region(g, r2), r2 > r.
+lazy_foenc(f, r) :- lazy_sym(f, _), inside(f, c, lazy_clsset), lazy_region(c, r).
+rr_agg1(f, r, r2) :- lazy_foenc(f, r), lazy_foenc(f, r2), r2 < r.
+lazy_foel(f, i, r) :- lazy_foenc(f, r), i = count : { rr_agg1(f, r, _) }.
+lazy_foel(f, i, r) :- lazy_sym(f, _), lazy_region(f, r), i = count : { lazy_foenc(f, _) }.
+lazy_folen(f, n) :- lazy_sym(f, _), n = count : { lazy_foel(f, _, _) }.
+lazy_sympair(f, g) :- lazy_sym(f, s), lazy_sym(g, s), f != g.
+lazy_fodiff(f, g, i) :- lazy_sympair(f, g), lazy_foel(f, i, a), lazy_foel(g, i, b), a != b.
+lazy_hasfodiff(f, g) :- lazy_fodiff(f, g, _).
+lazy_symlater(f) :- lazy_hasfodiff(f, g), i = min j : { lazy_fodiff(f, g, j) }, lazy_foel(f, i, a), lazy_foel(g, i, b), b > a.
+lazy_symlater(f) :- lazy_sympair(f, g), !lazy_hasfodiff(f, g), lazy_folen(f, n), lazy_folen(g, m), m > n.
 lazy_gf(f) :- lazy_sym(f, _), !lazy_symlater(f).
 lazy_gnode(f, g) :- lazy_sym(f, s), lazy_gf(g), lazy_sym(g, s).
 lazy_gedge(f, t, c, loc) :- lazy_edge(f, c, t), lazy_gf(f), lazy_gf(t), lazy_span(c, loc, _).
@@ -909,14 +940,9 @@ lazy_ok(g, r, c) :- lazy_ge(g, r, c, _, _), lazy_issink(g, c).
 lazy_ok(g, r, c) :- lazy_ge(g, r, c, _, _), c != r, !lazy_issink(g, c), !lazy_oncycle(g, r), lazy_nd(r, d), lazy_nd(c, d), lazy_live(g, c).
 lazy_ok(g, r, c) :- lazy_av(g, r, c, n), lazy_ge(g, n, t, _, _), lazy_issink(g, t).
 lazy_bmark(g, r, c, loc) :- lazy_ok(g, r, t), lazy_ge(g, r, t, c, loc).
-lazy_bhas(g, r, c) :- lazy_bmark(g, r, c, _).
-lazy_bhas(g, r, v) :- lazy_vkid(r, v, c, _), lazy_bhas(g, r, c).
-lazy_bkidk(g, r, v, k) :- lazy_vkid(r, v, c, k), lazy_bhas(g, r, c).
-lazy_bmarked(g, r, v) :- lazy_bmark(g, r, v, _).
-lazy_bkid(g, r, v, c) :- lazy_bhas(g, r, v), !lazy_bmarked(g, r, v), k = min k2 : { lazy_bkidk(g, r, v, k2) }, lazy_vkid(r, v, c, k).
-lazy_bfirst(g, r, v, v) :- lazy_bmarked(g, r, v).
-lazy_bfirst(g, r, v, x) :- lazy_bkid(g, r, v, c), lazy_bfirst(g, r, c, x).
-lazy_bpick(g, r, loc) :- lazy_body(r, b, _), lazy_bfirst(g, r, b, x), lazy_bmark(g, r, x, loc).
+lazy_brow(g, r, k, x, loc) :- lazy_bmark(g, r, c, loc), lazy_vk(r, c, k), x = @substr(@concat("000000000000", @to_string(loc)), @strlen(@to_string(loc)), 12).
+lazy_bhasrow(g, r) :- lazy_brow(g, r, _, _, _).
+lazy_bpick(g, r, loc) :- lazy_bhasrow(g, r), s = join x by (k) sep "" : { lazy_brow(g, r, k, x, _) }, lazy_brow(g, r, _, x, loc), x = @substr(s, 0, 12).
 lazy_hit(g, r, loc) :- lazy_graph(g, "node"), lazy_gsink(g, r, loc).
 lazy_hit(g, r, loc) :- lazy_graph(g, "node"), lazy_gf(r), !lazy_issink(g, r), lazy_bpick(g, r, loc).
 lazy_hit(g, r, loc) :- lazy_graph(g, "edge"), lazy_bpick(g, r, loc).
@@ -1000,7 +1026,7 @@ lazy_row(d, s, code) :- lazy_diagc(d, s, code), lazy_gate(d), !option_value("ent
 lazy_line(d, s, l) :- lazy_row(d, s, _), node(d, n, _, s, _), line(n, l).
 violation("data-layer-lazy-architecture", "lazy-architecture", code, p, l) :- lazy_row(d, s, code), lazy_doc(d, p), lazy_line(d, s, l).
 deleted_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), suffix(".py", p), !prefix("scripts/", p), !option_value("entryPoint", "scan_files.ast-component"), !option_value("entryPoint", "collector-extra"), !option_value("entryPoint", "analyzed-functions").
-deleted_at(c, d, l) :- deleted_doc(d, _), src_line_lf(d, l, sp), text(sp, t), deleted_surface(c, s), contains(s, t).
+deleted_at(c, d, l) :- deleted_doc(d, _), tape_line(d, l, sp), text(sp, t), deleted_surface(c, s), contains(s, t).
 deleted_has(c, d) :- deleted_at(c, d, _).
 violation("data-layer-lazy-architecture", "deleted-cold-0", "LA-018", p, l) :- deleted_has("deleted-cold-0", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-0", d, l2) }.
 violation("data-layer-lazy-architecture", "deleted-cold-1", "LA-018", p, l) :- deleted_has("deleted-cold-1", d), deleted_doc(d, p), l = min l2 : { deleted_at("deleted-cold-1", d, l2) }.

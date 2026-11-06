@@ -16,24 +16,14 @@ ef_type("type").
 .decl ef_all_first(d: number, a: node)
 .decl ef_all_name(d: number, name: symbol)
 .decl ef_annot(id: symbol, name: symbol)
-.decl ef_at(t: symbol, i: number, c: symbol)
 .decl ef_base_edge(owner: symbol, base: symbol, ord: number)
 .decl ef_base_name(owner: symbol, module: symbol, bn: symbol, ord: number)
 .decl ef_base_node(d: number, b: node, st: number)
 .decl ef_base_of(n: symbol, b: symbol)
 .decl ef_before_slash(ps: node, i: number)
-.decl ef_bs_br(t: symbol, i: number)
-.decl ef_bs_cut(t: symbol, k: number)
-.decl ef_bs_dot(t: symbol, i: number)
-.decl ef_bs_from(t: symbol, a: number)
-.decl ef_bs_keep(t: symbol, i: number)
-.decl ef_bs_line(t: symbol, k: number)
 .decl ef_bs_name(s: symbol, bn: symbol)
-.decl ef_bs_nl(t: symbol, i: number)
-.decl ef_bs_t(s: symbol, t: symbol)
 .decl ef_bv_import(owner: symbol, ord: number, base: symbol)
 .decl ef_bv_module(owner: symbol, ord: number, base: symbol)
-.decl ef_catval(cs: node, s: symbol)
 .decl ef_chr(c: symbol, code: number)
 .decl ef_class(d: number, c: node, name: symbol)
 .decl ef_class_id(id: symbol)
@@ -44,12 +34,7 @@ ef_type("type").
 .decl ef_decl(id: symbol, d: number, x: node, name: symbol, kind: symbol, module: symbol, fq: symbol)
 .decl ef_decl_class(id: symbol, cname: symbol, c: node)
 .decl ef_declared_fq(fq: symbol)
-.decl ef_deco_a(t: symbol, a: number)
-.decl ef_deco_b(s: symbol, b: number)
-.decl ef_deco_cut(s: symbol, t: symbol)
 .decl ef_deco_node(x: node, owner: node, s: symbol)
-.decl ef_deco_stop(t: symbol, j: number)
-.decl ef_deco_word(t: symbol, i: number)
 .decl ef_decorator(owner: node, name: symbol)
 .decl ef_def(o: node)
 .decl ef_depth(o: symbol, b: symbol, k: number)
@@ -93,6 +78,7 @@ ef_type("type").
 .decl ef_import(d: number, i: node, st: number, module: symbol)
 .decl ef_import_top(i: node)
 .decl ef_imports(i: node, module: symbol, name: symbol, target: symbol)
+.decl ef_init_path(d: number)
 .decl ef_inv(id: symbol, d: number, x: node, st: number, name: symbol, kind: symbol, module: symbol, fq: symbol)
 .decl ef_inv_start(id: symbol, st: number)
 .decl ef_last(id: symbol, st: number)
@@ -105,6 +91,7 @@ ef_type("type").
 .decl ef_legacy_async(id: symbol)
 .decl ef_legacy_sync(id: symbol)
 .decl ef_mixed(name: symbol)
+.decl ef_module(d: number, m: symbol)
 .decl ef_oc_lt(a: symbol, b: symbol)
 .decl ef_oc_q(a: symbol, b: symbol)
 .decl ef_oc_s(a: symbol, b: symbol, ta: symbol, tb: symbol)
@@ -112,17 +99,10 @@ ef_type("type").
 .decl ef_param(p: node, f: node, name: symbol, st: number)
 .decl ef_param_name(p: node, s: symbol)
 .decl ef_params(p: node, id: symbol, name: symbol, st: number)
-.decl ef_part(cs: node, i: number, s: symbol)
-.decl ef_parts(cs: node, k: number)
 .decl ef_pbefore(p: node, q: node)
 .decl ef_pc_lt(a: symbol, b: symbol)
 .decl ef_pc_q(a: symbol, b: symbol)
 .decl ef_pc_s(a: symbol, b: symbol, ta: symbol, tb: symbol)
-.decl ef_pkg_dot(s: symbol, i: number)
-.decl ef_pkg_dot_pair(s: symbol, i: number, j: number)
-.decl ef_pkg_ndots(s: symbol, n: number)
-.decl ef_pkg_q(s: symbol)
-.decl ef_pkg_rank(s: symbol, i: number, r: number)
 .decl ef_plain(scope: symbol, owner: symbol, base: symbol, ex: symbol)
 .decl ef_plen(id: symbol, k: number)
 .decl ef_pm_beaten(o: symbol, name: symbol, c: symbol)
@@ -139,29 +119,26 @@ ef_type("type").
 .decl ef_public(o: symbol, name: symbol, id: symbol)
 .decl ef_raw_base(c: node, b: node, st: number, s: symbol)
 .decl ef_reexport(target: symbol, fq: symbol)
+.decl ef_rel_cut(i: node, s: symbol, r: symbol)
+.decl ef_rel_prefix(i: node, p: symbol)
+.decl ef_rel_strip(i: node, s: symbol, k: number)
 .decl ef_resolved(fq: symbol, id: symbol)
 .decl ef_root(d: number, module: symbol, name: symbol, id: symbol)
 .decl ef_route_lt(o: symbol, c1: symbol, c2: symbol)
 .decl ef_route_q(o: symbol, c1: symbol, c2: symbol)
 .decl ef_rt(id: symbol, s: symbol)
-.decl ef_rt_keep(t: symbol, i: number)
-.decl ef_rt_t(s: symbol, t: symbol)
 .decl ef_rt_u(s: symbol, u: symbol)
 .decl ef_same_impl(scope: symbol, base: symbol, o1: symbol, o2: symbol)
 .decl ef_same_params(s: symbol, l: symbol)
 .decl ef_sb(scope: symbol, owner: symbol, ord: symbol, id: symbol, name: symbol, base: symbol)
-.decl ef_scan_q(t: symbol)
 .decl ef_scoped_deco(id: symbol, name: symbol)
 .decl ef_self_ret(id: symbol)
-.decl ef_sfx(t: symbol, u: symbol)
 .decl ef_slash_at(ps: node, i: number)
 .decl ef_slot_first(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol)
 .decl ef_slot_notfirst(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol)
 .decl ef_slot_notlast(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol)
 .decl ef_slotrow(scope: symbol, owner: symbol, base: symbol, slot: symbol, ord: symbol, id: symbol)
 .decl ef_slots(scope: symbol, owner: symbol, base: symbol, slot: symbol, id: symbol)
-.decl ef_strip(s: symbol, k: number, p: symbol)
-.decl ef_strval(v: node, s: symbol)
 .decl ef_surf(scope: symbol, owner: symbol, ord: symbol, id: symbol, name: symbol)
 .decl ef_surface_ctx(id: symbol)
 .decl ef_surface_reason(id: symbol)
@@ -186,13 +163,11 @@ ef_type("type").
 .decl node_text(n: node, s: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl pkg(d: number, p: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, pkg, node_text, syntax_error, node, field, text, child, str, strprefix, line
+.input doc, node_text, syntax_error, node, field, text, child, value, line
 .output violation
 ef_chr("\t", 9).
 ef_chr("\n", 10).
@@ -478,18 +453,16 @@ ef_pc_s(a, b, a, b) :- ef_pc_q(a, b).
 ef_pc_s(a, b, ta2, tb2) :- ef_pc_s(a, b, ta, tb), @strlen(ta) > 0, @strlen(tb) > 0, @substr(ta, 0, 1) = @substr(tb, 0, 1), ta2 = @substr(ta, 1, @sub(@strlen(ta), 1)), tb2 = @substr(tb, 1, @sub(@strlen(tb), 1)).
 ef_pc_lt(a, b) :- ef_pc_s(a, b, "", tb), tb != "".
 ef_pc_lt(a, b) :- ef_pc_s(a, b, ta, tb), rr_t5 = @substr(ta, 0, 1), ef_chr(rr_t5, x), rr_t6 = @substr(tb, 0, 1), ef_chr(rr_t6, y), x < y.
-ef_sfx(t, t) :- ef_scan_q(t).
-ef_sfx(t, u2) :- ef_sfx(t, u), @strlen(u) > 0, u2 = @substr(u, 1, @sub(@strlen(u), 1)).
-ef_at(t, i, c) :- ef_sfx(t, u), @strlen(u) > 0, i = @sub(@strlen(t), @strlen(u)), c = @substr(u, 0, 1).
 ef_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
 ef_dl(d) :- ef_doc(d), doc(d, p, _), match("data_layer/[^/]+\\.py", p).
 ef_func(d, f, s) :- node(d, f, "function_definition", _, _), ef_doc(d), !inside(f, _, ef_fn), field(f, "name", n), text(n, s), field(f, "body", _).
 ef_func_class(f, c, s) :- ef_func(_, f, _), nearest(f, c, ef_cls), field(c, "name", n), text(n, s).
 ef_func_ret(f, s) :- ef_func(_, f, _), field(f, "return_type", t), node_text(t, s).
 ef_class(d, c, s) :- node(d, c, "class_definition", _, _), ef_doc(d), field(c, "name", n), text(n, s), field(c, "body", _).
-ef_inv(id, d, f, st, n, "function", m, fq) :- ef_func(d, f, n), !ef_func_class(f, _, _), doc(d, _, m), node(d, f, _, st, _), id = @concat(@concat(m, "::"), n), fq = @concat(@concat(m, "."), n).
-ef_inv(id, d, f, st, n, "method", m, fq) :- ef_func(d, f, n), ef_func_class(f, _, c), doc(d, _, m), node(d, f, _, st, _), q = @concat(@concat(c, "."), n), id = @concat(@concat(m, "::"), q), fq = @concat(@concat(m, "."), q).
-ef_inv(id, d, c, st, n, "class", m, fq) :- ef_class(d, c, n), doc(d, _, m), node(d, c, _, st, _), id = @concat(@concat(m, "::"), n), fq = @concat(@concat(m, "."), n).
+ef_module(d, m) :- ef_doc(d), doc(d, p, _), m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
+ef_inv(id, d, f, st, n, "function", m, fq) :- ef_func(d, f, n), !ef_func_class(f, _, _), ef_module(d, m), node(d, f, _, st, _), id = @concat(@concat(m, "::"), n), fq = @concat(@concat(m, "."), n).
+ef_inv(id, d, f, st, n, "method", m, fq) :- ef_func(d, f, n), ef_func_class(f, _, c), ef_module(d, m), node(d, f, _, st, _), q = @concat(@concat(c, "."), n), id = @concat(@concat(m, "::"), q), fq = @concat(@concat(m, "."), q).
+ef_inv(id, d, c, st, n, "class", m, fq) :- ef_class(d, c, n), ef_module(d, m), node(d, c, _, st, _), id = @concat(@concat(m, "::"), n), fq = @concat(@concat(m, "."), n).
 ef_inv_start(id, st) :- ef_inv(id, _, _, st, _, _, _, _).
 ef_last(id, s) :- ef_inv_start(id, _), s = max t : { ef_inv_start(id, t) }.
 ef_decl(id, d, x, n, k, m, fq) :- ef_inv(id, d, x, st, n, k, m, fq), ef_last(id, st).
@@ -498,14 +471,7 @@ ef_declared_fq(fq) :- ef_decl(_, _, _, _, _, _, fq).
 ef_deco_node(x, o, s) :- node(d, x, "decorator", _, _), ef_doc(d), child(dd, x, _), node(_, dd, "decorated_definition", _, _), child(dd, o, _), ef_def(o), node_text(x, s).
 ef_def(o) :- node(_, o, "function_definition", _, _).
 ef_def(o) :- node(_, o, "class_definition", _, _).
-ef_deco_cut(s, t) :- ef_deco_node(_, _, s), prefix("@", s), t = @substr(s, 0, 256).
-ef_scan_q(t) :- ef_deco_cut(_, t).
-ef_deco_word(t, i) :- ef_deco_cut(_, t), ef_at(t, i, c), i >= 1, !match("\\s", c).
-ef_deco_a(t, a) :- ef_deco_word(t, _), a = min i : { ef_deco_word(t, i) }.
-ef_deco_stop(t, j) :- ef_deco_a(t, a), ef_at(t, j, c), j > a, match("[\\s(]", c).
-ef_deco_b(s, b) :- ef_deco_cut(s, t), ef_deco_stop(t, _), b = min j : { ef_deco_stop(t, j) }.
-ef_deco_b(s, b) :- ef_deco_cut(s, t), ef_deco_a(t, _), !ef_deco_stop(t, _), b = @strlen(s), b <= 256.
-ef_decorator(o, n) :- ef_deco_node(_, o, s), ef_deco_cut(s, t), ef_deco_a(t, a), ef_at(t, a, c), c != "(", ef_deco_b(s, b), n = @substr(s, a, @sub(b, a)).
+ef_decorator(o, n) :- ef_deco_node(_, o, s), match("@\\s*[^\\s(]+(?s:.*)", s), n = @rx_replace(s, "^@\\s*([^\\s(]+)(?s:.*)$", "${1}").
 ef_param_name(p, s) :- node(_, p, "identifier", _, _), text(p, s).
 ef_param_name(p, s) :- node(_, p, "typed_parameter", _, _), child(p, c, _), node(_, c, "identifier", _, _), text(c, s).
 ef_param_name(p, s) :- node(_, p, "default_parameter", _, _), field(p, "name", c), text(c, s).
@@ -519,28 +485,26 @@ ef_type_ident(t, s) :- node(_, t, "identifier", _, _), text(t, s).
 ef_type_ident(t, s) :- node(_, t, "type", _, _), inside(x, t, ef_type), node(_, x, "identifier", _, _), text(x, s).
 ef_annot(id, s) :- ef_decl(id, _, f, _, k, _, _), k != "class", field(f, "return_type", t), ef_type_ident(t, s).
 ef_annot(id, s) :- ef_params(p, id, _, _), field(p, "type", t), ef_type_ident(t, s).
-ef_import(d, i, st, m) :- node(d, i, "import_from_statement", st, _), ef_doc(d), doc(d, _, m), node_text(i, s), match("(?s)from\\s+\\S+\\s+import\\s+.*", s).
+ef_import(d, i, st, m) :- node(d, i, "import_from_statement", st, _), ef_doc(d), ef_module(d, m), node_text(i, s), match("(?s)from\\s+\\S+\\s+import\\s+.*", s).
 ef_import_top(i) :- ef_import(_, i, _, _), child(mm, i, _), node(_, mm, "module", _, _).
 ef_imp_base(i, 0, b) :- ef_import(_, i, _, _), field(i, "module_name", mn), node(_, mn, "dotted_name", _, _), node_text(mn, b), match("\\S+", b).
 ef_imp_base(i, k, r) :- ef_import(_, i, _, _), field(i, "module_name", mn), node(_, mn, "relative_import", _, _), node_text(mn, b), match("\\S+", b), child(mn, ip, _), node(_, ip, "import_prefix", _, _), node_text(ip, pt), k = @strlen(pt), r = @substr(b, k, @sub(@strlen(b), k)).
 ef_imp_item(i, o, o) :- ef_import(_, i, _, _), field(i, "name", x), node(_, x, "dotted_name", _, _), node_text(x, o), match("\\S+", o).
 ef_imp_item(i, o, a) :- ef_import(_, i, _, _), field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", y), node_text(y, o), match("\\S+", o), field(x, "alias", z), text(z, a).
-ef_pkg_q(s) :- ef_imp_base(i, k, _), k > 0, ef_import(d, i, _, _), pkg(d, s).
-ef_scan_q(s) :- ef_pkg_q(s), @strlen(s) <= 256.
-ef_pkg_dot(s, i) :- ef_pkg_q(s), ef_at(s, i, ".").
-ef_pkg_dot_pair(s, i, j) :- ef_pkg_dot(s, i), ef_pkg_dot(s, j), i < j.
-ef_pkg_rank(s, i, r) :- ef_pkg_dot(s, i), r = count : { ef_pkg_dot_pair(s, i, _) }.
-ef_pkg_ndots(s, n) :- ef_pkg_q(s), @strlen(s) <= 256, n = count : { ef_pkg_dot(s, _) }.
-ef_strip(s, 0, s) :- ef_pkg_q(s).
-ef_strip(s, k, p) :- ef_imp_base(_, dots, _), k = @sub(dots, 1), k > 0, ef_pkg_rank(s, i, r), r = @sub(k, 1), p = @substr(s, 0, i).
-ef_strip(s, k, "") :- ef_imp_base(_, dots, _), k = @sub(dots, 1), k > 0, ef_pkg_ndots(s, n), k > n.
+ef_init_path(d) :- ef_doc(d), doc(d, p, _), match("(?s).*/..[iI][nN][iI][tT]..\\.[pP][yY]", p).
+ef_rel_strip(i, s, k) :- ef_imp_base(i, dots, _), dots > 0, ef_import(d, i, _, s), ef_init_path(d), k = @sub(dots, 1).
+ef_rel_strip(i, s, dots) :- ef_imp_base(i, dots, _), dots > 0, ef_import(d, i, _, s), !ef_init_path(d).
+ef_rel_cut(i, s, r) :- ef_rel_strip(i, s, k), k > 0, r = @rx_replace(s, @concat(@concat("(?:\\.?[^.]+){", @to_string(k)), "}$"), "").
+ef_rel_prefix(i, s) :- ef_rel_strip(i, s, 0).
+ef_rel_prefix(i, r) :- ef_rel_cut(i, s, r), r != s.
+ef_rel_prefix(i, "") :- ef_rel_cut(i, s, s).
 ef_imp_cand(i, st, m, n, t) :- ef_import(_, i, st, m), ef_imp_base(i, 0, b), ef_imp_item(i, o, n), t = @concat(@concat(b, "."), o).
-ef_imp_cand(i, st, m, n, t) :- ef_import(d, i, st, m), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, n), pkg(d, s), rr_t7 = @sub(k, 1), ef_strip(s, rr_t7, p), ef_imp_join(p, r, o, t).
+ef_imp_cand(i, st, m, n, t) :- ef_import(_, i, st, m), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, n), ef_rel_prefix(i, p), ef_imp_join(p, r, o, t).
 ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p != "", r != "", t = @concat(@concat(@concat(p, "."), @concat(r, ".")), o).
 ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p = "", r != "", t = @concat(@concat(r, "."), o).
 ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p != "", r = "", t = @concat(@concat(p, "."), o).
 ef_imp_join(p, r, o, o) :- ef_imp_parts(p, r, o), p = "", r = "".
-ef_imp_parts(p, r, o) :- ef_import(d, i, _, _), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, _), pkg(d, s), rr_t8 = @sub(k, 1), ef_strip(s, rr_t8, p).
+ef_imp_parts(p, r, o) :- ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, _), ef_rel_prefix(i, p).
 ef_imp_start(m, n, st) :- ef_imp_cand(_, st, m, n, _).
 ef_imp_last(m, n, s) :- ef_imp_start(m, n, _), s = max t : { ef_imp_start(m, n, t) }.
 ef_imports(i, m, n, t) :- ef_imp_cand(i, st, m, n, t), ef_imp_last(m, n, st).
@@ -552,19 +516,7 @@ ef_base_node(d, b, st) :- node(d, b, "identifier", st, _).
 ef_base_node(d, b, st) :- node(d, b, "attribute", st, _).
 ef_base_node(d, b, st) :- node(d, b, "generic_type", st, _).
 ef_base_node(d, b, st) :- node(d, b, "subscript", st, _).
-ef_bs_t(s, t) :- ef_raw_base(_, _, _, s), t = @substr(s, 0, 256).
-ef_scan_q(t) :- ef_bs_t(_, t).
-ef_bs_br(t, i) :- ef_bs_t(_, t), ef_at(t, i, "[").
-ef_bs_cut(t, k) :- ef_bs_br(t, _), k = min i : { ef_bs_br(t, i) }.
-ef_bs_cut(t, k) :- ef_bs_t(s, t), !ef_bs_br(t, _), @strlen(s) <= 256, k = @strlen(s).
-ef_bs_nl(t, i) :- ef_bs_t(_, t), ef_at(t, i, "\n").
-ef_bs_line(t, k) :- ef_bs_nl(t, _), k = min i : { ef_bs_nl(t, i) }.
-ef_bs_line(t, k) :- ef_bs_t(_, t), !ef_bs_nl(t, _), k = @strlen(t).
-ef_bs_dot(t, i) :- ef_at(t, i, "."), ef_bs_cut(t, k), i < k, ef_bs_line(t, l), i < l.
-ef_bs_from(t, a) :- ef_bs_dot(t, _), j = max i : { ef_bs_dot(t, i) }, a = @add(j, 1).
-ef_bs_from(t, 0) :- ef_bs_cut(t, _), !ef_bs_dot(t, _).
-ef_bs_keep(t, i) :- ef_bs_from(t, a), ef_bs_cut(t, k), ef_at(t, i, c), i >= a, i < k, c != " ".
-ef_bs_name(s, bn) :- ef_bs_t(s, t), ef_bs_keep(t, _), a = min i : { ef_bs_keep(t, i) }, b = max i : { ef_bs_keep(t, i) }, bn = @substr(t, a, @add(@sub(b, a), 1)).
+ef_bs_name(s, bn) :- ef_raw_base(_, _, _, s), x = @rx_replace(@rx_replace(s, "(?s)\\[.*$", ""), "^.*\\.", ""), bn = @rx_replace(x, "^ +| +$", ""), bn != "".
 ef_base_name(id, m, bn, st) :- ef_raw_base(c, _, st, s), ef_decl(id, _, c, _, _, m, _), ef_bs_name(s, bn).
 ef_bv_import(id, o, b) :- ef_base_name(id, m, bn, o), ef_imports(_, m, bn, t), ef_decl(b, _, _, _, "class", _, t).
 ef_bv_module(id, o, b) :- ef_base_name(id, m, bn, o), ef_decl(b, _, _, bn, "class", m, _).
@@ -598,15 +550,8 @@ ef_has_all(d) :- ef_all(d, _, _).
 ef_all_first(d, a) :- ef_all(d, a, st), st = min t : { ef_all(d, _, t) }.
 ef_all_array(a, v) :- ef_all_first(_, a), field(a, "right", r), node(_, r, "list", _, _), child(r, v, _).
 ef_all_array(a, v) :- ef_all_first(_, a), field(a, "right", r), node(_, r, "tuple", _, _), child(r, v, _).
-ef_strval(v, s) :- str(v, s), !contains("\\", s).
-ef_strval(v, s) :- str(v, s), strprefix(v, p), contains("r", p).
-ef_parts(cs, k) :- ef_all_array(_, cs), node(_, cs, "concatenated_string", _, _), k = count : { child(cs, _, _) }.
-ef_part(cs, i, s) :- ef_parts(cs, _), child(cs, c, i), ef_strval(c, s).
-ef_catval(cs, s) :- ef_parts(cs, 2), ef_part(cs, 0, a), ef_part(cs, 1, b), s = @concat(a, b).
-ef_catval(cs, s) :- ef_parts(cs, 3), ef_part(cs, 0, a), ef_part(cs, 1, b), ef_part(cs, 2, c), s = @concat(@concat(a, b), c).
-ef_catval(cs, s) :- ef_parts(cs, 4), ef_part(cs, 0, a), ef_part(cs, 1, b), ef_part(cs, 2, c), ef_part(cs, 3, e), s = @concat(@concat(@concat(a, b), c), e).
-ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "string", _, _), ef_strval(v, s).
-ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), ef_catval(v, s).
+ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "string", _, _), value(v, s).
+ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "concatenated_string", _, _), value(v, s).
 ef_export(d, m, n, t) :- ef_imports(i, m, n, t), ef_import_top(i), node(d, i, _, _, _), ef_dl(d).
 ef_export(d, m, n, fq) :- ef_decl(_, d, _, n, k, m, fq), k != "method", ef_dl(d).
 ef_root(d, m, n, id) :- ef_export(d, m, n, t), ef_resolved(t, id), !prefix("_", n), !ef_has_all(d).
@@ -638,16 +583,10 @@ ef_lazy_module_exc(id) :- ef_decl(id, d, _, n, "function", _, _), doc(d, p, _), 
 ef_lazy_module_exc(id) :- ef_decl(id, d, _, n, "function", _, _), doc(d, p, _), ef_lazy_module(p), prefix("lazy_", n), ef_lazy_annot(id).
 ef_ctx_exc(id) :- ef_decl(id, d, _, _, _, _, _), doc(d, p, _), ef_ctx_path(p), ef_decl_class(id, c, _), ef_ctx_class(c).
 ef_rt(id, s) :- ef_decl_class(id, _, _), ef_decl(id, _, x, _, _, _, _), ef_func_ret(x, s).
-ef_rt_t(s, t) :- ef_rt(_, s), t = @substr(s, 0, 256).
-ef_scan_q(t) :- ef_rt_t(_, t).
-ef_rt_keep(t, i) :- ef_rt_t(_, t), ef_at(t, i, c), c != " ", c != "'", c != "\"".
-ef_rt_u(s, u) :- ef_rt_t(s, t), ef_rt_keep(t, _), a = min i : { ef_rt_keep(t, i) }, u = @substr(s, a, @sub(@strlen(s), a)).
-ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), @strlen(u) >= @strlen(c), @substr(u, 0, @strlen(c)) = c, match("[ '\"]*", @substr(u, @strlen(c), @sub(@strlen(u), @strlen(c)))).
+ef_rt_u(s, u) :- ef_rt(_, s), u = @rx_replace(s, "^[ '\"]+|[ '\"]+$", "").
+ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), u = c.
 ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), @strlen(u) > @strlen(c), @substr(u, 0, @add(@strlen(c), 1)) = @concat(c, "[").
-ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), suffix("_lazy", n), b = @substr(n, 0, @sub(@strlen(n), 5)).
-ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), suffix("_async", n), b = @substr(n, 0, @sub(@strlen(n), 6)).
-ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), suffix("_sync", n), b = @substr(n, 0, @sub(@strlen(n), 5)).
-ef_base_of(n, n) :- ef_decl(_, _, _, n, _, _, _), !suffix("_lazy", n), !suffix("_async", n), !suffix("_sync", n).
+ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), b = @rx_replace(n, "_(?:lazy|async|sync)$", "").
 ef_surface_ctx(id) :- ef_decl(id, d, _, _, _, _, _), doc(d, p, _), (contains("/graph_query", p) ; contains("/schema_transaction", p) ; contains("/transaction", p) ; contains("/versioned_transactions", p)).
 ef_surface_ctx(id) :- ef_decl_class(id, c, _), (icontains("connection", c) ; icontains("query", c) ; icontains("schematransaction", c) ; icontains("transaction", c) ; icontains("versioned", c)).
 ef_surface_ctx(id) :- ef_annot(id, a), match("(?i)databaseconnection|lazyresult|lazyseq|readtransaction|serverplan|versioneddatabaseconnection|versionedreadtransaction|versionedwritetransaction|writetransaction", a).

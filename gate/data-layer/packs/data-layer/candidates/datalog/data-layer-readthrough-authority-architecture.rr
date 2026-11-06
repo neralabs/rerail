@@ -1,3 +1,5 @@
+.decl complete_identity_fdef(kind: symbol)
+complete_identity_fdef("function_definition").
 .decl k0(kind: symbol)
 k0("function_definition").
 .decl k1(kind: symbol)
@@ -7,6 +9,16 @@ k2("aliased_import"). k2("argument_list"). k2("as_pattern"). k2("as_pattern_targ
 .decl k3(kind: symbol)
 k3("dictionary").
 .decl child(p: node, c: node, i: number)
+.decl complete_identity_after(m: node)
+.decl complete_identity_compile(g: node)
+.decl complete_identity_def(m: node, g: node)
+.decl complete_identity_hit(g: node, t: symbol)
+.decl complete_identity_key(v: symbol)
+.decl complete_identity_miss(g: node)
+.decl complete_identity_open(g: node)
+.decl complete_identity_open_body(b: node)
+.decl complete_identity_strkind(k: symbol)
+.decl complete_identity_unknown(g: node)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
@@ -69,11 +81,24 @@ k3("dictionary").
 .decl m99(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl runtime_seed_kind(k: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, line, syntax_error
+.input doc, node, child, field, text, line, syntax_error, value, value_type_of
 .output violation
+complete_identity_key("upstream_namespace").
+complete_identity_key("authority_namespace").
+complete_identity_key("authorization_epoch").
+complete_identity_key("catalog_fingerprint").
+complete_identity_key("admitted_session_id").
+complete_identity_key("principal_user_id").
+complete_identity_strkind("string").
+complete_identity_strkind("concatenated_string").
+runtime_seed_kind("string").
+runtime_seed_kind("concatenated_string").
 in_scope(d) :- doc(d, p, _), glob("impl/read_through/connection.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/read_through/coverage.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/read_through/lowering_handlers.py", p).
@@ -167,3 +192,15 @@ m162(n) :- node(_, n, "identifier", _, _), text(n, v159), v159 = "require_public
 m162(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v160), node(_, v160, "identifier", _, _), text(v160, v161), v161 = "require_publication_precondition".
 m163(n) :- inside(v157, n, k0), node(_, v157, "call", _, _), field(v157, "function", v158), m162(v158).
 violation("data-layer-readthrough-authority-architecture", "publication-precondition", "RTA007", p, l) :- node(_, n, "function_definition", _, _), field(n, "name", v155), node(_, v155, "identifier", _, _), text(v155, v156), (v156 = "_lower_generic_cache_first_object" ; v156 = "_lower_generic_rowset_merge"), !m163(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-readthrough-authority-architecture", "runtime-seed", "RTA002", p, l) :- node(d, s, k, _, _), runtime_seed_kind(k), value(s, "__readthrough_local_overlays"), value_type_of(s, "str"), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(s, l).
+complete_identity_compile(g) :- node(_, g, "function_definition", _, _), field(g, "name", nm), node(_, nm, "identifier", _, _), text(nm, "compile").
+complete_identity_def(m, m) :- complete_identity_compile(m).
+complete_identity_def(m, g) :- node(_, m, "decorated_definition", _, _), child(m, g, _), complete_identity_compile(g).
+complete_identity_hit(g, t) :- complete_identity_compile(g), inside(s, g, complete_identity_fdef), node(_, s, k, _, _), complete_identity_strkind(k), value(s, t), complete_identity_key(t), value_type_of(s, "str").
+complete_identity_unknown(g) :- complete_identity_compile(g), inside(s, g, complete_identity_fdef), node(_, s, k, _, _), complete_identity_strkind(k), !value_type_of(s, _).
+complete_identity_miss(g) :- complete_identity_compile(g), complete_identity_key(t), !complete_identity_hit(g, t).
+complete_identity_open(g) :- complete_identity_compile(g), !complete_identity_miss(g).
+complete_identity_open(g) :- complete_identity_miss(g), complete_identity_unknown(g).
+complete_identity_after(m) :- child(b, m, i), complete_identity_def(m, _), child(b, x, j), j < i, complete_identity_def(x, _).
+complete_identity_open_body(b) :- child(b, m, _), complete_identity_def(m, g), !complete_identity_after(m), complete_identity_open(g).
+violation("data-layer-readthrough-authority-architecture", "complete-identity", "RTA008", p, l) :- node(d, c, "class_definition", _, _), field(c, "name", nm), node(_, nm, "identifier", _, _), text(nm, "ReadThroughDeleteChangedPrincipalRowsStep"), field(c, "body", b), !complete_identity_open_body(b), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).

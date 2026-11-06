@@ -4,7 +4,6 @@ constructor_class_kinds("class_definition").
 constructor_fdef_kinds("function_definition").
 .decl captured_arg_at(g: node, i: number)
 .decl captured_assign(a: node, x: symbol)
-.decl captured_bad_concat(c: node)
 .decl captured_binding_place(a: node)
 .decl captured_bs(n: node)
 .decl captured_earlier(f: node)
@@ -13,6 +12,8 @@ constructor_fdef_kinds("function_definition").
 .decl captured_first_arg(k: node, c: node)
 .decl captured_fragment_call(k: node)
 .decl captured_in_concat(n: node)
+.decl captured_index(p: node, c: node, k: number)
+.decl captured_index_list(p: node)
 .decl captured_init(c: node, f: node)
 .decl captured_later(f: node)
 .decl captured_loose_param(q: node)
@@ -33,7 +34,6 @@ constructor_fdef_kinds("function_definition").
 .decl captured_self_assign(a: node, x: symbol)
 .decl captured_self_attr(n: node, x: symbol)
 .decl captured_str_method(s: symbol)
-.decl captured_str_part(n: node)
 .decl captured_string_binding(d: number, x: symbol, e: number)
 .decl captured_typed(q: node)
 .decl captured_unsafe_field(c: node, x: symbol)
@@ -53,6 +53,7 @@ constructor_fdef_kinds("function_definition").
 .decl constructor_plain_part(n: node)
 .decl constructor_render_body(c: node)
 .decl constructor_self_param(q: node)
+.decl constructor_sync_def(f: node)
 .decl constructor_type_kinds(kind: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
@@ -62,12 +63,15 @@ constructor_fdef_kinds("function_definition").
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl str(n: node, s: symbol)
+.decl rr_agg1(i: number, j: number, p: node)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, line, syntax_error, child, node_text, str, strprefix, op
+.input doc, node, field, text, line, syntax_error, child, node_text, value, value_type_of, token, strprefix, op
 .output violation
 captured_param_kinds("typed_parameter").
 captured_param_kinds("typed_default_parameter").
@@ -114,20 +118,20 @@ out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_usage", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v1), node(_, v1, "identifier", _, _), text(v1, v2), (v2 = "SqlDeferredRenderable" ; v2 = "SqlPreRenderedFragment"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 violation("data-layer-grammar-fragment-usage", "syntax-error", "python_parse_error", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
+constructor_sync_def(f) :- node(_, f, "function_definition", _, _), node_text(f, s), match("def\\s(?s:.*)", s).
 constructor_plain_part(n) :- node(_, n, "string", _, _), strprefix(n, x), !contains("f", x).
 constructor_f_concat(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _), strprefix(s, x), contains("f", x).
 constructor_plain_literal(n) :- constructor_plain_part(n).
 constructor_plain_literal(n) :- node(_, n, "concatenated_string", _, _), !constructor_f_concat(n).
-constructor_literal_value(n, v) :- constructor_plain_literal(n), node(_, n, "string", _, _), str(n, v).
-constructor_literal_value(n, v) :- constructor_plain_literal(n), node(_, n, "concatenated_string", _, _), child(n, s, _), node(_, s, "string", _, _), str(s, v).
+constructor_literal_value(n, v) :- constructor_plain_literal(n), value(n, v), value_type_of(n, "str").
 constructor_fragment_import(a) :- node(_, a, "aliased_import", _, _), child(i, a, _), node(_, i, "import_from_statement", _, _), field(a, "name", nm), node_text(nm, "SqlFragment").
 constructor_fragment_import(a) :- node(_, a, "aliased_import", _, _), child(i, a, _), node(_, i, "import_from_statement", _, _), field(a, "name", nm), node_text(nm, s), suffix(".SqlFragment", s).
 constructor_fragment_alias(d, x) :- constructor_fragment_import(a), node(d, a, _, _, _), field(a, "alias", al), text(al, x).
 constructor_fragment_type(n) :- node(_, n, "identifier", _, _), text(n, "SqlFragment").
 constructor_fragment_type(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "SqlFragment").
 constructor_fragment_type(n) :- node(d, n, "identifier", _, _), text(n, x), constructor_fragment_alias(d, x).
-constructor_fragment_type(n) :- constructor_literal_value(n, v), word("SqlFragment", v).
-constructor_fragment_type(n) :- constructor_literal_value(n, v), node(d, n, _, _, _), constructor_fragment_alias(d, x), word(x, v).
+constructor_fragment_type(n) :- constructor_literal_value(n, v), match("(?s:.*)(?:(?:^|[^A-Za-z0-9_])SqlFragment(?:$|[^A-Za-z0-9_]))(?s:.*)", v).
+constructor_fragment_type(n) :- constructor_literal_value(n, v), node(d, n, _, _, _), constructor_fragment_alias(d, x), match("[A-Za-z_][A-Za-z0-9_]*", x), w = @concat("(?s:.*)(?:^|[^A-Za-z0-9_])[0-9]*", @concat(x, "(?:$|[^A-Za-z0-9_])(?s:.*)")), match(w, v).
 constructor_fragment_type(n) :- node(_, n, k, _, _), constructor_type_kinds(k), child(n, c, _), constructor_fragment_type(c).
 constructor_forbidden_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, s), (s = "SqlDeferredRenderable" ; s = "SqlFragment" ; s = "SqlPreRenderedFragment").
 constructor_render_body(c) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, f, _), node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render").
@@ -148,13 +152,10 @@ constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, i, _
 constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, s, _), node(_, s, "list_splat_pattern", _, _), child(s, i, _), node(_, i, "identifier", _, _).
 constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, s, _), node(_, s, "dictionary_splat_pattern", _, _), child(s, i, _), node(_, i, "identifier", _, _).
 constructor_self_param(q) :- child(q, i, _), node(_, i, "identifier", _, _), text(i, "self").
-violation("data-layer-grammar-fragment-usage", "constructor-fragment", "sqlfragment_usage", p, l) :- node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"), nearest(f, c, constructor_class_kinds), constructor_grammar_class(c), field(f, "parameters", ps), child(ps, q, _), constructor_param_shape(q), !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+violation("data-layer-grammar-fragment-usage", "constructor-fragment", "sqlfragment_usage", p, l) :- node(d, f, "function_definition", _, _), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"), nearest(f, c, constructor_class_kinds), constructor_grammar_class(c), field(f, "parameters", ps), child(ps, q, _), constructor_param_shape(q), !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
 violation("data-layer-grammar-fragment-usage", "attribute-fragment", "sqlfragment_usage", p, l) :- node(d, a, "assignment", _, _), field(a, "type", t), constructor_fragment_type(t), !inside(a, _, constructor_fdef_kinds), nearest(a, c, constructor_class_kinds), constructor_grammar_class(c), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(a, l).
-captured_str_part(n) :- node(_, n, "string", _, _), strprefix(n, x), !contains("f", x), !contains("b", x), !contains("t", x).
 captured_in_concat(n) :- node(_, n, "string", _, _), child(c, n, _), node(_, c, "concatenated_string", _, _).
-captured_bad_concat(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _), !captured_str_part(s).
-captured_bs(n) :- captured_str_part(n), !captured_in_concat(n).
-captured_bs(n) :- node(_, n, "concatenated_string", _, _), !captured_bad_concat(n).
+captured_bs(n) :- constructor_plain_literal(n), !captured_in_concat(n), value_type_of(n, "str").
 captured_bs(n) :- node(_, n, "string", _, _), strprefix(n, x), contains("f", x), !captured_in_concat(n).
 captured_bs(n) :- constructor_f_concat(n).
 captured_bs(n) :- node(_, n, "format_specifier", _, _).
@@ -171,7 +172,7 @@ captured_bs(n) :- node(_, n, "call", _, _), field(n, "function", g), node(_, g, 
 captured_bs(n) :- node(_, n, "call", _, _), field(n, "function", g), node(_, g, "attribute", _, _), field(g, "attribute", a), node(_, a, "identifier", _, _), text(a, s), captured_str_method(s), field(g, "object", o), captured_bs(o).
 captured_bs(n) :- node(d, n, "identifier", _, _), text(n, x), node(d, n, _, us, _), captured_string_binding(d, x, ae), ae <= us.
 captured_binding_place(a) :- node(_, a, "assignment", _, _), !inside(a, _, constructor_class_kinds).
-captured_binding_place(a) :- node(_, a, "assignment", _, _), nearest(a, f, constructor_fdef_kinds), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
+captured_binding_place(a) :- node(_, a, "assignment", _, _), nearest(a, f, constructor_fdef_kinds), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
 captured_string_binding(d, x, e) :- node(d, a, "assignment", _, e), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r), captured_bs(r), captured_binding_place(a).
 captured_name_assign(a, x) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r), captured_bs(r).
 captured_name_assign(a, x) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "type", t), node(_, t, "type", _, _), child(t, i, _), node(_, i, "identifier", _, _), text(i, "str").
@@ -179,12 +180,16 @@ captured_self_attr(n, x) :- node(_, n, "attribute", _, _), field(n, "object", o)
 captured_self_assign(a, x) :- node(_, a, "assignment", _, _), field(a, "left", l), captured_self_attr(l, x), field(a, "right", r), captured_bs(r).
 captured_assign(a, x) :- captured_name_assign(a, x).
 captured_assign(a, x) :- captured_self_assign(a, x).
-captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, f, _), node(_, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
-captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, g, _), node(_, g, "decorated_definition", _, _), field(g, "definition", f), node(_, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
+captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, f, _), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
+captured_init(c, f) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, g, _), node(_, g, "decorated_definition", _, _), field(g, "definition", f), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__").
 captured_field(c, x) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, a, _), captured_assign(a, x).
 captured_field(c, x) :- node(_, c, "class_definition", _, _), field(c, "body", b), child(b, s, _), node(_, s, "expression_statement", _, _), child(s, a, _), captured_assign(a, x).
 captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), inside(a, f, constructor_fdef_kinds), captured_assign(a, x).
-captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), inside(a, f, constructor_fdef_kinds), field(a, "left", lp), node(_, lp, lk, _, _), captured_pattern_kinds(lk), child(lp, t, i), captured_self_attr(t, x), field(a, "right", rp), node(_, rp, rk, _, _), captured_value_list_kinds(rk), child(rp, v, i), captured_bs(v).
+captured_field(c, x) :- captured_init(c, f), node(_, a, "assignment", _, _), inside(a, f, constructor_fdef_kinds), field(a, "left", lp), node(_, lp, lk, _, _), captured_pattern_kinds(lk), child(lp, t, _), captured_self_attr(t, x), captured_index(lp, t, i), field(a, "right", rp), node(_, rp, rk, _, _), captured_value_list_kinds(rk), child(rp, v, _), captured_bs(v), captured_index(rp, v, i).
+captured_index_list(p) :- node(_, p, k, _, _), captured_pattern_kinds(k).
+captured_index_list(p) :- node(_, p, k, _, _), captured_value_list_kinds(k).
+rr_agg1(i, j, p) :- token(p, i, _, s, e), token(p, j, ",", _, _), j < i.
+captured_index(p, c, k) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, e), token(p, i, _, s, e), k = count : { rr_agg1(i, _, p) }.
 captured_param_named(q, p) :- node(_, q, "identifier", _, _), text(q, p).
 captured_param_named(q, p) :- node(_, q, k, _, _), captured_param_kinds(k), field(q, "name", n), text(n, p).
 captured_param_named(q, p) :- node(_, q, k, _, _), captured_param_kinds(k), child(q, i, _), node(_, i, "identifier", _, _), text(i, p).

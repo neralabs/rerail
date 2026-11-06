@@ -27,14 +27,16 @@
 .decl sas_splat(q: node)
 .decl sas_splat_kind(x: node)
 .decl sas_star(z: node)
+.decl sas_string_kind(n: node)
 .decl sas_superseded(f: node)
 .decl sas_sync_key(d: number, k: symbol)
 .decl sas_txn_name(s: symbol)
-.decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, text, child, field, str, syntax_error, node_text, line
+.input doc, node, text, child, field, value, value_type_of, syntax_error, node_text, line
 .output violation
 sas_conn_name("Connection").
 sas_conn_name("SyncDatabaseConnection").
@@ -167,7 +169,9 @@ sas_any_name(s) :- sas_conn_name(s).
 sas_any_name(s) :- sas_txn_name(s).
 sas_leaf(n, s) :- node(_, n, "identifier", _, _), text(n, s).
 sas_leaf(n, s) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s).
-sas_leaf(n, s) :- node(_, n, "string", _, _), str(n, s).
+sas_leaf(n, s) :- sas_string_kind(n), value(n, s), value_type_of(n, "str").
+sas_string_kind(n) :- node(_, n, "string", _, _).
+sas_string_kind(n) :- node(_, n, "concatenated_string", _, _).
 sas_first_child(g, c) :- node(_, g, "generic_type", _, _), child(g, c, i), !sas_earlier_child(g, i).
 sas_earlier_child(g, i) :- node(_, g, "generic_type", _, _), child(g, _, i), child(g, _, j), j < i.
 sas_ann_any(n) :- sas_leaf(n, s), sas_any_name(s).

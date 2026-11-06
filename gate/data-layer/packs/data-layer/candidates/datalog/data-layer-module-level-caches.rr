@@ -10,6 +10,10 @@ k1("module").
 k2("function_definition"). k2("lambda").
 .decl k3(kind: symbol)
 k3("class_definition").
+.decl list_modules(kind: symbol)
+list_modules("module").
+.decl list_scopes(kind: symbol)
+list_scopes("class_definition"). list_scopes("function_definition"). list_scopes("lambda").
 .decl child(p: node, c: node, i: number)
 .decl decorator_cache(n: node)
 .decl decorator_in_function(n: node)
@@ -19,6 +23,15 @@ k3("class_definition").
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
+.decl list_cache_value(n: node)
+.decl list_constant(v: node)
+.decl list_empty(n: node)
+.decl list_file(i: number, p: symbol, x: symbol)
+.decl list_gated(n: node)
+.decl list_l1000(p: symbol)
+.decl list_nested(n: node)
+.decl list_skipped(p: symbol)
+.decl list_target(n: node, v: node)
 .decl m100(n: node)
 .decl m103(n: node)
 .decl m105(n: node)
@@ -237,8 +250,11 @@ k3("class_definition").
 .decl m95(n: node)
 .decl m99(n: node)
 .decl name(n: node, s: symbol)
+.decl named_list_name(v: node)
+.decl named_list_value(n: node)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl syntax_error(d: number)
 .decl t116(s: symbol)
@@ -288,6 +304,12 @@ k3("class_definition").
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, child, field, text, name, line, syntax_error, node_text
 .output violation
+list_file(0, "impl/browser/sqljs_sqlite3.py", "_memory_database_pool").
+list_file(1, "impl/common/l2210_planner_stats/config.py", "_default_config_holder").
+list_file(2, "l1000_schema/expression_function_registry.py", "_registered_functions_holder").
+list_file(3, "l4100_queue/insert_auth.py", "_queue_auth_secrets_holder").
+list_file(4, "l5200_vector_index/embedding_vector_store.py", "_embedding_collision_cache_holder").
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -743,4 +765,33 @@ decorator_cache(n) :- node(_, n, "call", _, _), field(n, "function", f), decorat
 decorator_in_function(n) :- node(_, n, "function_definition", _, _), inside(n, _, decorator_fn_scopes).
 decorator_in_nested_class(n) :- node(_, n, "function_definition", _, _), inside(n, c, decorator_classes), inside(c, _, decorator_classes).
 decorator_skipped(p) :- doc(_, p, _), (p = "impl/common/l2100_sql_grammar/fast_params.py" ; p = "impl/common/l2070_server_plan/steps/intent_transaction.py").
-violation("data-layer-module-level-caches", "decorator", "lru_cache", p, l) :- node(d, n, "function_definition", _, _), !decorator_in_function(n), !decorator_in_nested_class(n), child(dd, n, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, e, _), decorator_cache(e), doc(d, p, _), !decorator_skipped(p), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "decorator", "lru_cache", p, l) :- node(d, n, "function_definition", _, _), !decorator_in_function(n), !decorator_in_nested_class(n), child(dd, n, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, e, _), decorator_cache(e), doc(d, p, _), !decorator_skipped(p), !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+list_gated(n) :- node(_, n, "assignment", _, _), !option_on("sourceGate").
+list_gated(n) :- option_on("sourceGate"), node(_, n, "assignment", _, _), inside(n, m, list_modules), node_text(m, s), (contains("Cache", s) ; contains("cache", s) ; contains("holder", s) ; contains("memo", s) ; contains("registry", s)).
+list_nested(n) :- node(_, n, "assignment", _, _), inside(n, _, list_scopes).
+list_constant(v) :- text(v, s), glob("[!_]*_*", s), !glob("*[a-z]*", s).
+list_target(n, v) :- node(_, n, "assignment", _, _), field(n, "left", v), node(_, v, "identifier", _, _), text(v, s), s != "__all__", !list_constant(v), !list_nested(n), list_gated(n).
+list_empty(n) :- node(_, n, "list", _, _), node_text(n, s), match("(?s)^\\[\\s*(?:#[^\\n]*\\n\\s*)*\\]$", s).
+list_cache_value(n) :- list_empty(n).
+list_cache_value(n) :- node(_, n, "call", _, _), child(n, f, 0), node(_, f, "identifier", _, _), text(f, "list"), child(n, a, 1), node(_, a, "argument_list", _, _), !child(a, _, 0), !child(n, _, 2).
+list_cache_value(n) :- node(_, n, "assignment", _, _), field(n, "right", r), list_cache_value(r).
+named_list_value(n) :- node(_, n, "list", _, _), !list_empty(n).
+named_list_value(n) :- node(_, n, "assignment", _, _), field(n, "right", r), named_list_value(r).
+named_list_name(v) :- text(v, s), (icontains("cache", s) ; icontains("holder", s) ; icontains("memo", s) ; icontains("pool", s) ; icontains("registry", s) ; icontains("token", s)).
+list_l1000(p) :- doc(_, p, _), (prefix("impl/common/l1000_cache/", p) ; prefix("l1000_cache/", p)).
+list_skipped(p) :- list_l1000(p).
+list_skipped(p) :- doc(_, p, _), (p = "impl/browser/sqljs_sqlite3.py" ; p = "impl/common/l2210_planner_stats/config.py" ; p = "l1000_schema/expression_function_registry.py" ; p = "l4100_queue/insert_auth.py" ; p = "l5200_vector_index/embedding_vector_store.py").
+violation("data-layer-module-level-caches", "raw-list_cache", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), node(d, n, _, _, _), doc(d, p, _), !list_l1000(p), option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "raw-named-list", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), node(d, n, _, _, _), doc(d, p, _), !list_l1000(p), option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), node(d, n, _, _, _), doc(d, p, _), !list_skipped(p), !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), node(d, n, _, _, _), doc(d, p, _), !list_skipped(p), !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-0", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(0, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-0", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(0, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-1", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(1, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-1", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(1, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-2", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(2, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-2", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(2, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-3", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(3, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-3", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(3, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "list_cache-file-4", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), list_cache_value(r), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(4, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
+violation("data-layer-module-level-caches", "named-list-file-4", "list_cache", p, l) :- list_target(n, v), field(n, "right", r), named_list_value(r), named_list_name(v), text(v, s), node(d, n, _, _, _), doc(d, p, _), list_file(4, p, x), s != x, !option_on("oracleAnalyzer"), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).

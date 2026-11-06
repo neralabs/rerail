@@ -17,18 +17,14 @@
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
 .decl text(n: node, s: symbol)
-.decl text_deprecated_comparison_op_gap(m: node, p: node, g: number)
-.decl text_deprecated_comparison_op_gaptext(m: node, r: symbol)
-.decl text_deprecated_comparison_op_has_next(m: node)
 .decl text_deprecated_comparison_op_hit(m: node)
 .decl text_deprecated_comparison_op_m(n: node, m: node)
 .decl text_deprecated_comparison_op_name(n: node)
-.decl text_deprecated_comparison_op_next(m: node, x: node)
-.decl text_deprecated_comparison_op_off(m: node, p: node, k: number)
 .decl text_expression_any_any_kind(kind: symbol)
 .decl text_str_union_bin(d: number, n: node, a: symbol, b: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, field, text, line, syntax_error, node_text, tape_line, op, child
+.input doc, node, field, text, line, syntax_error, node_text, tape_line, token, op, child
 .output violation
 signature_order_by_offset(0).
 signature_order_by_offset(1).
@@ -154,17 +150,7 @@ violation("data-layer-type-safety-patterns", "text-expression_any_any", "TSP001"
 text_deprecated_comparison_op_name(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "_lt" ; s = "_gt" ; s = "_le" ; s = "_ge" ; s = "_eq" ; s = "_ne").
 text_deprecated_comparison_op_m(n, n) :- text_deprecated_comparison_op_name(n).
 text_deprecated_comparison_op_m(n, a) :- text_deprecated_comparison_op_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _).
-text_deprecated_comparison_op_next(m, x) :- text_deprecated_comparison_op_m(_, m), child(p, m, i), j = @add(i, 1), child(p, x, j).
-text_deprecated_comparison_op_has_next(m) :- text_deprecated_comparison_op_next(m, _).
-text_deprecated_comparison_op_gap(m, p, g) :- text_deprecated_comparison_op_next(m, x), child(p, m, _), node(_, m, _, _, me), node(_, x, _, xs, _), g = @sub(xs, me).
-text_deprecated_comparison_op_gap(m, p, g) :- text_deprecated_comparison_op_m(_, m), !text_deprecated_comparison_op_has_next(m), child(p, m, _), node(_, m, _, _, me), node(_, p, _, _, pe), g = @sub(pe, me).
-text_deprecated_comparison_op_off(m, p, k) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, _), node(_, p, _, s, _), node_text(m, mt), k = @strlen(mt).
-text_deprecated_comparison_op_off(m, p, k) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, _, me), node(_, p, _, ps, _), node_text(p, pt), k = @sub(me, ps), k <= @strlen(pt), match("[\\x00-\\x7f]*", @substr(pt, 0, k)).
-text_deprecated_comparison_op_gaptext(m, r) :- text_deprecated_comparison_op_gap(m, p, g), g > 0, text_deprecated_comparison_op_off(m, p, k), node_text(p, pt), g <= @sub(@strlen(pt), k), r = @substr(pt, k, g).
-text_deprecated_comparison_op_gaptext(m, r) :- text_deprecated_comparison_op_gap(m, p, g), g > 0, text_deprecated_comparison_op_off(m, p, k), node_text(p, pt), g > @sub(@strlen(pt), k), r = @substr(pt, k, @sub(@strlen(pt), k)).
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_gaptext(m, r), match("[ \\t\\n\\x0b\\f\\r]*[=:](?s:.*)", r).
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_next(m, x), node(_, x, "format_specifier", _, _), node_text(x, ":"), text_deprecated_comparison_op_gap(m, _, 0).
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_next(m, x), node(_, x, "format_specifier", _, _), node_text(x, ":"), text_deprecated_comparison_op_gaptext(m, r), match("[ \\t\\n\\x0b\\f\\r]*", r).
+text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, e), token(p, i, _, s, e), j = @add(i, 1), token(p, j, t, _, _), match("=|==|:|:=", t).
 violation("data-layer-type-safety-patterns", "text-deprecated_comparison_op", "TSP001", p, l) :- text_deprecated_comparison_op_m(n, m), text_deprecated_comparison_op_hit(m), node(d, n, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
 signature_def(d, n, s) :- node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, s).
 violation("data-layer-type-safety-patterns", "signature-where", "TSP001", p, l) :- signature_def(d, n, "where"), node_text(n, s), match("(?s:.*)(?:expression\\s*:\\s*str\\b|:\\s*str\\s*\\|)(?s:.*)", s), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).

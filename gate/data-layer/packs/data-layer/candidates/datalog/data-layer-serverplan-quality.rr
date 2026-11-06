@@ -30,6 +30,20 @@ quality_project_taxonomy_any_kind("aliased_import"). quality_project_taxonomy_an
 quality_project_taxonomy_kinds0("function_definition").
 .decl quality_project_taxonomy_kinds1(kind: symbol)
 quality_project_taxonomy_kinds1("for_statement").
+.decl rr_kind_assignment(kind: symbol)
+rr_kind_assignment("assignment").
+.decl rr_kind_augmented_assignment(kind: symbol)
+rr_kind_augmented_assignment("augmented_assignment").
+.decl rr_kind_delete_statement(kind: symbol)
+rr_kind_delete_statement("delete_statement").
+.decl rr_kind_for_in_clause(kind: symbol)
+rr_kind_for_in_clause("for_in_clause").
+.decl rr_kind_for_statement(kind: symbol)
+rr_kind_for_statement("for_statement").
+.decl rr_kind_function_definition(kind: symbol)
+rr_kind_function_definition("function_definition").
+.decl rr_kind_named_expression(kind: symbol)
+rr_kind_named_expression("named_expression").
 .decl spq_can_batch_lock_any_kind(kind: symbol)
 spq_can_batch_lock_any_kind("aliased_import"). spq_can_batch_lock_any_kind("argument_list"). spq_can_batch_lock_any_kind("as_pattern"). spq_can_batch_lock_any_kind("as_pattern_target"). spq_can_batch_lock_any_kind("assert_statement"). spq_can_batch_lock_any_kind("assignment"). spq_can_batch_lock_any_kind("attribute"). spq_can_batch_lock_any_kind("augmented_assignment"). spq_can_batch_lock_any_kind("await"). spq_can_batch_lock_any_kind("binary_operator"). spq_can_batch_lock_any_kind("block"). spq_can_batch_lock_any_kind("boolean_operator"). spq_can_batch_lock_any_kind("break_statement"). spq_can_batch_lock_any_kind("call"). spq_can_batch_lock_any_kind("case_clause"). spq_can_batch_lock_any_kind("case_pattern"). spq_can_batch_lock_any_kind("chevron"). spq_can_batch_lock_any_kind("class_definition"). spq_can_batch_lock_any_kind("class_pattern"). spq_can_batch_lock_any_kind("comparison_operator"). spq_can_batch_lock_any_kind("complex_pattern"). spq_can_batch_lock_any_kind("concatenated_string"). spq_can_batch_lock_any_kind("conditional_expression"). spq_can_batch_lock_any_kind("constrained_type"). spq_can_batch_lock_any_kind("continue_statement"). spq_can_batch_lock_any_kind("decorated_definition"). spq_can_batch_lock_any_kind("decorator"). spq_can_batch_lock_any_kind("default_parameter"). spq_can_batch_lock_any_kind("delete_statement"). spq_can_batch_lock_any_kind("dict_pattern"). spq_can_batch_lock_any_kind("dictionary"). spq_can_batch_lock_any_kind("dictionary_comprehension"). spq_can_batch_lock_any_kind("dictionary_splat"). spq_can_batch_lock_any_kind("dictionary_splat_pattern"). spq_can_batch_lock_any_kind("dotted_name"). spq_can_batch_lock_any_kind("elif_clause"). spq_can_batch_lock_any_kind("ellipsis"). spq_can_batch_lock_any_kind("else_clause"). spq_can_batch_lock_any_kind("escape_interpolation"). spq_can_batch_lock_any_kind("escape_sequence"). spq_can_batch_lock_any_kind("except_clause"). spq_can_batch_lock_any_kind("exec_statement"). spq_can_batch_lock_any_kind("expression_list"). spq_can_batch_lock_any_kind("expression_statement"). spq_can_batch_lock_any_kind("false"). spq_can_batch_lock_any_kind("finally_clause"). spq_can_batch_lock_any_kind("float"). spq_can_batch_lock_any_kind("for_in_clause"). spq_can_batch_lock_any_kind("for_statement"). spq_can_batch_lock_any_kind("format_expression"). spq_can_batch_lock_any_kind("format_specifier"). spq_can_batch_lock_any_kind("function_definition"). spq_can_batch_lock_any_kind("future_import_statement"). spq_can_batch_lock_any_kind("generator_expression"). spq_can_batch_lock_any_kind("generic_type"). spq_can_batch_lock_any_kind("global_statement"). spq_can_batch_lock_any_kind("identifier"). spq_can_batch_lock_any_kind("if_clause"). spq_can_batch_lock_any_kind("if_statement"). spq_can_batch_lock_any_kind("import_from_statement"). spq_can_batch_lock_any_kind("import_prefix"). spq_can_batch_lock_any_kind("import_statement"). spq_can_batch_lock_any_kind("integer"). spq_can_batch_lock_any_kind("interpolation"). spq_can_batch_lock_any_kind("keyword_argument"). spq_can_batch_lock_any_kind("keyword_pattern"). spq_can_batch_lock_any_kind("keyword_separator"). spq_can_batch_lock_any_kind("lambda"). spq_can_batch_lock_any_kind("lambda_parameters"). spq_can_batch_lock_any_kind("line_continuation"). spq_can_batch_lock_any_kind("list"). spq_can_batch_lock_any_kind("list_comprehension"). spq_can_batch_lock_any_kind("list_pattern"). spq_can_batch_lock_any_kind("list_splat"). spq_can_batch_lock_any_kind("list_splat_pattern"). spq_can_batch_lock_any_kind("match_statement"). spq_can_batch_lock_any_kind("member_type"). spq_can_batch_lock_any_kind("module"). spq_can_batch_lock_any_kind("named_expression"). spq_can_batch_lock_any_kind("none"). spq_can_batch_lock_any_kind("nonlocal_statement"). spq_can_batch_lock_any_kind("not_operator"). spq_can_batch_lock_any_kind("pair"). spq_can_batch_lock_any_kind("parameters"). spq_can_batch_lock_any_kind("parenthesized_expression"). spq_can_batch_lock_any_kind("parenthesized_list_splat"). spq_can_batch_lock_any_kind("pass_statement"). spq_can_batch_lock_any_kind("pattern_list"). spq_can_batch_lock_any_kind("positional_separator"). spq_can_batch_lock_any_kind("print_statement"). spq_can_batch_lock_any_kind("raise_statement"). spq_can_batch_lock_any_kind("relative_import"). spq_can_batch_lock_any_kind("return_statement"). spq_can_batch_lock_any_kind("set"). spq_can_batch_lock_any_kind("set_comprehension"). spq_can_batch_lock_any_kind("slice"). spq_can_batch_lock_any_kind("splat_pattern"). spq_can_batch_lock_any_kind("splat_type"). spq_can_batch_lock_any_kind("string"). spq_can_batch_lock_any_kind("string_content"). spq_can_batch_lock_any_kind("string_end"). spq_can_batch_lock_any_kind("string_start"). spq_can_batch_lock_any_kind("subscript"). spq_can_batch_lock_any_kind("true"). spq_can_batch_lock_any_kind("try_statement"). spq_can_batch_lock_any_kind("tuple"). spq_can_batch_lock_any_kind("tuple_pattern"). spq_can_batch_lock_any_kind("type"). spq_can_batch_lock_any_kind("type_alias_statement"). spq_can_batch_lock_any_kind("type_conversion"). spq_can_batch_lock_any_kind("type_default"). spq_can_batch_lock_any_kind("type_parameter"). spq_can_batch_lock_any_kind("typed_default_parameter"). spq_can_batch_lock_any_kind("typed_parameter"). spq_can_batch_lock_any_kind("unary_operator"). spq_can_batch_lock_any_kind("union_pattern"). spq_can_batch_lock_any_kind("union_type"). spq_can_batch_lock_any_kind("while_statement"). spq_can_batch_lock_any_kind("wildcard_import"). spq_can_batch_lock_any_kind("with_clause"). spq_can_batch_lock_any_kind("with_item"). spq_can_batch_lock_any_kind("with_statement"). spq_can_batch_lock_any_kind("yield").
 .decl spq_can_batch_lock_kinds1(kind: symbol)
@@ -82,6 +96,8 @@ spq_projection_repairs_kinds7("call").
 spq_replay_outer_cte_strings_kinds0("function_definition").
 .decl spq_replay_relation_columns_kinds0(kind: symbol)
 spq_replay_relation_columns_kinds0("function_definition").
+.decl spq_runtime_state_annotations_scope_kinds(kind: symbol)
+spq_runtime_state_annotations_scope_kinds("class_definition"). spq_runtime_state_annotations_scope_kinds("function_definition").
 .decl spq_serverplan_fallback_elif_clause_any_kind(kind: symbol)
 spq_serverplan_fallback_elif_clause_any_kind("aliased_import"). spq_serverplan_fallback_elif_clause_any_kind("argument_list"). spq_serverplan_fallback_elif_clause_any_kind("as_pattern"). spq_serverplan_fallback_elif_clause_any_kind("as_pattern_target"). spq_serverplan_fallback_elif_clause_any_kind("assert_statement"). spq_serverplan_fallback_elif_clause_any_kind("assignment"). spq_serverplan_fallback_elif_clause_any_kind("attribute"). spq_serverplan_fallback_elif_clause_any_kind("augmented_assignment"). spq_serverplan_fallback_elif_clause_any_kind("await"). spq_serverplan_fallback_elif_clause_any_kind("binary_operator"). spq_serverplan_fallback_elif_clause_any_kind("block"). spq_serverplan_fallback_elif_clause_any_kind("boolean_operator"). spq_serverplan_fallback_elif_clause_any_kind("break_statement"). spq_serverplan_fallback_elif_clause_any_kind("call"). spq_serverplan_fallback_elif_clause_any_kind("case_clause"). spq_serverplan_fallback_elif_clause_any_kind("case_pattern"). spq_serverplan_fallback_elif_clause_any_kind("chevron"). spq_serverplan_fallback_elif_clause_any_kind("class_definition"). spq_serverplan_fallback_elif_clause_any_kind("class_pattern"). spq_serverplan_fallback_elif_clause_any_kind("comparison_operator"). spq_serverplan_fallback_elif_clause_any_kind("complex_pattern"). spq_serverplan_fallback_elif_clause_any_kind("concatenated_string"). spq_serverplan_fallback_elif_clause_any_kind("conditional_expression"). spq_serverplan_fallback_elif_clause_any_kind("constrained_type"). spq_serverplan_fallback_elif_clause_any_kind("continue_statement"). spq_serverplan_fallback_elif_clause_any_kind("decorated_definition"). spq_serverplan_fallback_elif_clause_any_kind("decorator"). spq_serverplan_fallback_elif_clause_any_kind("default_parameter"). spq_serverplan_fallback_elif_clause_any_kind("delete_statement"). spq_serverplan_fallback_elif_clause_any_kind("dict_pattern"). spq_serverplan_fallback_elif_clause_any_kind("dictionary"). spq_serverplan_fallback_elif_clause_any_kind("dictionary_comprehension"). spq_serverplan_fallback_elif_clause_any_kind("dictionary_splat"). spq_serverplan_fallback_elif_clause_any_kind("dictionary_splat_pattern"). spq_serverplan_fallback_elif_clause_any_kind("dotted_name"). spq_serverplan_fallback_elif_clause_any_kind("elif_clause"). spq_serverplan_fallback_elif_clause_any_kind("ellipsis"). spq_serverplan_fallback_elif_clause_any_kind("else_clause"). spq_serverplan_fallback_elif_clause_any_kind("escape_interpolation"). spq_serverplan_fallback_elif_clause_any_kind("escape_sequence"). spq_serverplan_fallback_elif_clause_any_kind("except_clause"). spq_serverplan_fallback_elif_clause_any_kind("exec_statement"). spq_serverplan_fallback_elif_clause_any_kind("expression_list"). spq_serverplan_fallback_elif_clause_any_kind("expression_statement"). spq_serverplan_fallback_elif_clause_any_kind("false"). spq_serverplan_fallback_elif_clause_any_kind("finally_clause"). spq_serverplan_fallback_elif_clause_any_kind("float"). spq_serverplan_fallback_elif_clause_any_kind("for_in_clause"). spq_serverplan_fallback_elif_clause_any_kind("for_statement"). spq_serverplan_fallback_elif_clause_any_kind("format_expression"). spq_serverplan_fallback_elif_clause_any_kind("format_specifier"). spq_serverplan_fallback_elif_clause_any_kind("function_definition"). spq_serverplan_fallback_elif_clause_any_kind("future_import_statement"). spq_serverplan_fallback_elif_clause_any_kind("generator_expression"). spq_serverplan_fallback_elif_clause_any_kind("generic_type"). spq_serverplan_fallback_elif_clause_any_kind("global_statement"). spq_serverplan_fallback_elif_clause_any_kind("identifier"). spq_serverplan_fallback_elif_clause_any_kind("if_clause"). spq_serverplan_fallback_elif_clause_any_kind("if_statement"). spq_serverplan_fallback_elif_clause_any_kind("import_from_statement"). spq_serverplan_fallback_elif_clause_any_kind("import_prefix"). spq_serverplan_fallback_elif_clause_any_kind("import_statement"). spq_serverplan_fallback_elif_clause_any_kind("integer"). spq_serverplan_fallback_elif_clause_any_kind("interpolation"). spq_serverplan_fallback_elif_clause_any_kind("keyword_argument"). spq_serverplan_fallback_elif_clause_any_kind("keyword_pattern"). spq_serverplan_fallback_elif_clause_any_kind("keyword_separator"). spq_serverplan_fallback_elif_clause_any_kind("lambda"). spq_serverplan_fallback_elif_clause_any_kind("lambda_parameters"). spq_serverplan_fallback_elif_clause_any_kind("line_continuation"). spq_serverplan_fallback_elif_clause_any_kind("list"). spq_serverplan_fallback_elif_clause_any_kind("list_comprehension"). spq_serverplan_fallback_elif_clause_any_kind("list_pattern"). spq_serverplan_fallback_elif_clause_any_kind("list_splat"). spq_serverplan_fallback_elif_clause_any_kind("list_splat_pattern"). spq_serverplan_fallback_elif_clause_any_kind("match_statement"). spq_serverplan_fallback_elif_clause_any_kind("member_type"). spq_serverplan_fallback_elif_clause_any_kind("module"). spq_serverplan_fallback_elif_clause_any_kind("named_expression"). spq_serverplan_fallback_elif_clause_any_kind("none"). spq_serverplan_fallback_elif_clause_any_kind("nonlocal_statement"). spq_serverplan_fallback_elif_clause_any_kind("not_operator"). spq_serverplan_fallback_elif_clause_any_kind("pair"). spq_serverplan_fallback_elif_clause_any_kind("parameters"). spq_serverplan_fallback_elif_clause_any_kind("parenthesized_expression"). spq_serverplan_fallback_elif_clause_any_kind("parenthesized_list_splat"). spq_serverplan_fallback_elif_clause_any_kind("pass_statement"). spq_serverplan_fallback_elif_clause_any_kind("pattern_list"). spq_serverplan_fallback_elif_clause_any_kind("positional_separator"). spq_serverplan_fallback_elif_clause_any_kind("print_statement"). spq_serverplan_fallback_elif_clause_any_kind("raise_statement"). spq_serverplan_fallback_elif_clause_any_kind("relative_import"). spq_serverplan_fallback_elif_clause_any_kind("return_statement"). spq_serverplan_fallback_elif_clause_any_kind("set"). spq_serverplan_fallback_elif_clause_any_kind("set_comprehension"). spq_serverplan_fallback_elif_clause_any_kind("slice"). spq_serverplan_fallback_elif_clause_any_kind("splat_pattern"). spq_serverplan_fallback_elif_clause_any_kind("splat_type"). spq_serverplan_fallback_elif_clause_any_kind("string"). spq_serverplan_fallback_elif_clause_any_kind("string_content"). spq_serverplan_fallback_elif_clause_any_kind("string_end"). spq_serverplan_fallback_elif_clause_any_kind("string_start"). spq_serverplan_fallback_elif_clause_any_kind("subscript"). spq_serverplan_fallback_elif_clause_any_kind("true"). spq_serverplan_fallback_elif_clause_any_kind("try_statement"). spq_serverplan_fallback_elif_clause_any_kind("tuple"). spq_serverplan_fallback_elif_clause_any_kind("tuple_pattern"). spq_serverplan_fallback_elif_clause_any_kind("type"). spq_serverplan_fallback_elif_clause_any_kind("type_alias_statement"). spq_serverplan_fallback_elif_clause_any_kind("type_conversion"). spq_serverplan_fallback_elif_clause_any_kind("type_default"). spq_serverplan_fallback_elif_clause_any_kind("type_parameter"). spq_serverplan_fallback_elif_clause_any_kind("typed_default_parameter"). spq_serverplan_fallback_elif_clause_any_kind("typed_parameter"). spq_serverplan_fallback_elif_clause_any_kind("unary_operator"). spq_serverplan_fallback_elif_clause_any_kind("union_pattern"). spq_serverplan_fallback_elif_clause_any_kind("union_type"). spq_serverplan_fallback_elif_clause_any_kind("while_statement"). spq_serverplan_fallback_elif_clause_any_kind("wildcard_import"). spq_serverplan_fallback_elif_clause_any_kind("with_clause"). spq_serverplan_fallback_elif_clause_any_kind("with_item"). spq_serverplan_fallback_elif_clause_any_kind("with_statement"). spq_serverplan_fallback_elif_clause_any_kind("yield").
 .decl spq_serverplan_fallback_elif_clause_kinds0(kind: symbol)
@@ -124,6 +140,10 @@ spq_serverplan_none_fallback_if_statement_kinds3("function_definition").
 spq_strategy_sequential_probe_kinds0("function_definition").
 .decl spq_sync_async_duplication_kinds0(kind: symbol)
 spq_sync_async_duplication_kinds0("module").
+.decl spq_vector_filter_constants_kinds0(kind: symbol)
+spq_vector_filter_constants_kinds0("module").
+.decl spq_vector_filter_constants_kinds1(kind: symbol)
+spq_vector_filter_constants_kinds1("concatenated_string").
 .decl blocked1220(low: node, high: node)
 .decl blocked899(low: node, high: node)
 .decl blocked912(low: node, high: node)
@@ -168,11 +188,15 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_alias(d: number, s: number, l: symbol, o: symbol)
 .decl conditional_architecture_all_ok(x: node)
 .decl conditional_architecture_always(m: node)
+.decl conditional_architecture_ann(a: node, x: symbol)
+.decl conditional_architecture_ann_head(a: node, h: symbol)
 .decl conditional_architecture_ann_suffix(a: node, sf: symbol)
 .decl conditional_architecture_assign_in_fn(a: node)
 .decl conditional_architecture_backend_fns(n: node)
 .decl conditional_architecture_barrier(b: node, s: number)
-.decl conditional_architecture_base(c: node, b: node)
+.decl conditional_architecture_base(c: node, x: symbol)
+.decl conditional_architecture_base_head(x: symbol, h: symbol)
+.decl conditional_architecture_base_suffix(x: symbol, sf: symbol)
 .decl conditional_architecture_body_stmt(b: node, x: node)
 .decl conditional_architecture_branch_vars(n: node)
 .decl conditional_architecture_bvar(d: number, nm: symbol, s: number, e: number)
@@ -182,19 +206,18 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_ccall(n: node, ot: symbol)
 .decl conditional_architecture_cclass(d: number, n: node, s: number, e: number, nm: symbol, qn: symbol)
 .decl conditional_architecture_cfunc(d: number, f: node, fs: number, fe: number, qn: symbol)
-.decl conditional_architecture_chain(r: node, x: node, sf: symbol)
-.decl conditional_architecture_chain_more(r: node, x: node)
 .decl conditional_architecture_class(d: number, n: node, s: number, e: number, nm: symbol)
 .decl conditional_architecture_class_base(c: node, nm: symbol)
 .decl conditional_architecture_class_sups(n: node)
 .decl conditional_architecture_classes(n: node)
 .decl conditional_architecture_cmethod(d: number, f: node, fs: number, fe: number, nm: symbol, c: node)
 .decl conditional_architecture_cmethod_derived(f: node)
-.decl conditional_architecture_comp(d: number, k: number, c: symbol)
 .decl conditional_architecture_compile_calls(n: node)
 .decl conditional_architecture_compiler_ok(f: node)
 .decl conditional_architecture_controls(n: node)
 .decl conditional_architecture_cparam(f: node, nm: symbol)
+.decl conditional_architecture_cut(c: node, k: number)
+.decl conditional_architecture_cx_shift(n: node)
 .decl conditional_architecture_decl_anc(atom: node, a: node)
 .decl conditional_architecture_decl_cand(atom: node, a: node, s: number)
 .decl conditional_architecture_decl_cls(a: node, c: node)
@@ -202,7 +225,7 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_decl_x(a: node)
 .decl conditional_architecture_declared(n: node)
 .decl conditional_architecture_derived(qn: symbol)
-.decl conditional_architecture_dig(i: number)
+.decl conditional_architecture_digit(i: number)
 .decl conditional_architecture_direct_item(d: number, s: number, i: node, n: node)
 .decl conditional_architecture_direct_names(n: node)
 .decl conditional_architecture_file55(d: number)
@@ -214,37 +237,26 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_fns(n: node)
 .decl conditional_architecture_from_item(d: number, s: number, i: node, n: node)
 .decl conditional_architecture_from_names(n: node)
-.decl conditional_architecture_full_suffix(r: node, sf: symbol)
 .decl conditional_architecture_func_cand(d: number, nm: symbol, f: node, fs: number, fe: number)
-.decl conditional_architecture_gend(d: number, s: number, e: number)
-.decl conditional_architecture_gslash(d: number, j: number)
-.decl conditional_architecture_gslash_before(d: number, s: number, j: number)
-.decl conditional_architecture_gslash_from(d: number, s: number, j: number)
-.decl conditional_architecture_gstart(d: number, s: number)
 .decl conditional_architecture_has_barrier(b: node)
 .decl conditional_architecture_has_cfunc(qn: symbol)
 .decl conditional_architecture_has_cls(f: node)
-.decl conditional_architecture_has_full_suffix(r: node)
-.decl conditional_architecture_has_gend_slash(d: number, s: number)
 .decl conditional_architecture_has_method(c: node, nm: symbol)
 .decl conditional_architecture_has_mret(c: node)
-.decl conditional_architecture_has_pcut(d: number)
-.decl conditional_architecture_has_pslash(d: number)
 .decl conditional_architecture_has_qn(qn: symbol)
 .decl conditional_architecture_has_resolve_cand(d: number, h: symbol, cs: number)
 .decl conditional_architecture_has_sub(x: node)
 .decl conditional_architecture_has_zero_mret(c: node)
-.decl conditional_architecture_head(r: node, h: node, hs: symbol)
 .decl conditional_architecture_if_else(x: node)
 .decl conditional_architecture_int_returns(n: node)
 .decl conditional_architecture_intret(f: node, r: node, v: node)
+.decl conditional_architecture_item(c: node, x: symbol)
 .decl conditional_architecture_k_arm(v: symbol)
 .decl conditional_architecture_k_barrier(v: symbol)
 .decl conditional_architecture_k_contract(v: symbol)
 .decl conditional_architecture_k_import_item(v: symbol)
 .decl conditional_architecture_k_int(v: symbol)
 .decl conditional_architecture_k_typed(v: symbol)
-.decl conditional_architecture_lead_suffix(r: node, sf: symbol)
 .decl conditional_architecture_limit(b: node, l: number)
 .decl conditional_architecture_lower_ok(c: node)
 .decl conditional_architecture_match_case(x: node)
@@ -254,54 +266,15 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_mpath(d: number, p: symbol)
 .decl conditional_architecture_mret(c: node, f: node, r: node, v: node)
 .decl conditional_architecture_mret_count(c: node, k: number)
-.decl conditional_architecture_mstrip(n: node, t: symbol)
 .decl conditional_architecture_named_calls(n: node)
 .decl conditional_architecture_ncall(d: number, s: number, e: number, callee: symbol, l: number)
-.decl conditional_architecture_ncomp(d: number, k: number)
 .decl conditional_architecture_ok_upto(x: node, c: node)
 .decl conditional_architecture_own_fn(n: node, f: node)
 .decl conditional_architecture_own_in(n: node, f: node, fs: number)
 .decl conditional_architecture_ownee(n: node)
-.decl conditional_architecture_pbase_from(d: number, j: number)
-.decl conditional_architecture_pcut(d: number, i: number)
-.decl conditional_architecture_pgroup(d: number, i: number, n: number)
 .decl conditional_architecture_phys_compile_ok(c: node)
 .decl conditional_architecture_phys_contract_ok(c: node)
-.decl conditional_architecture_ppos(d: number, i: number)
 .decl conditional_architecture_present(x: number)
-.decl conditional_architecture_pslash(d: number, i: number)
-.decl conditional_architecture_qual0(d: number, q: symbol)
-.decl conditional_architecture_qual1(d: number, q: symbol)
-.decl conditional_architecture_qual10(d: number, q: symbol)
-.decl conditional_architecture_qual11(d: number, q: symbol)
-.decl conditional_architecture_qual12(d: number, q: symbol)
-.decl conditional_architecture_qual13(d: number, q: symbol)
-.decl conditional_architecture_qual14(d: number, q: symbol)
-.decl conditional_architecture_qual15(d: number, q: symbol)
-.decl conditional_architecture_qual16(d: number, q: symbol)
-.decl conditional_architecture_qual17(d: number, q: symbol)
-.decl conditional_architecture_qual18(d: number, q: symbol)
-.decl conditional_architecture_qual19(d: number, q: symbol)
-.decl conditional_architecture_qual2(d: number, q: symbol)
-.decl conditional_architecture_qual20(d: number, q: symbol)
-.decl conditional_architecture_qual21(d: number, q: symbol)
-.decl conditional_architecture_qual22(d: number, q: symbol)
-.decl conditional_architecture_qual23(d: number, q: symbol)
-.decl conditional_architecture_qual24(d: number, q: symbol)
-.decl conditional_architecture_qual25(d: number, q: symbol)
-.decl conditional_architecture_qual26(d: number, q: symbol)
-.decl conditional_architecture_qual27(d: number, q: symbol)
-.decl conditional_architecture_qual28(d: number, q: symbol)
-.decl conditional_architecture_qual29(d: number, q: symbol)
-.decl conditional_architecture_qual3(d: number, q: symbol)
-.decl conditional_architecture_qual30(d: number, q: symbol)
-.decl conditional_architecture_qual31(d: number, q: symbol)
-.decl conditional_architecture_qual4(d: number, q: symbol)
-.decl conditional_architecture_qual5(d: number, q: symbol)
-.decl conditional_architecture_qual6(d: number, q: symbol)
-.decl conditional_architecture_qual7(d: number, q: symbol)
-.decl conditional_architecture_qual8(d: number, q: symbol)
-.decl conditional_architecture_qual9(d: number, q: symbol)
 .decl conditional_architecture_raises(b: node)
 .decl conditional_architecture_raising_fns(n: node)
 .decl conditional_architecture_req_call(f: node, l: number)
@@ -312,14 +285,15 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_role_ok(c: node)
 .decl conditional_architecture_role_returns(n: node)
 .decl conditional_architecture_roleret(d: number, s: number, e: number)
-.decl conditional_architecture_root(r: node)
 .decl conditional_architecture_self_stores(n: node)
 .decl conditional_architecture_sem_compile_ok(c: node)
 .decl conditional_architecture_sem_contract_ok(c: node)
 .decl conditional_architecture_sp_cand(f: node, i: number, ann: node)
+.decl conditional_architecture_split(c: node, k: number)
 .decl conditional_architecture_step_ann(f: node, ann: node)
 .decl conditional_architecture_step_ok(f: node)
 .decl conditional_architecture_step_params(n: node)
+.decl conditional_architecture_stop(c: node, k: number)
 .decl conditional_architecture_store_right(n: node, r: node)
 .decl conditional_architecture_strat_before(f: node, l: number)
 .decl conditional_architecture_strat_line(f: node, l: number)
@@ -328,12 +302,18 @@ spq_sync_async_duplication_kinds0("module").
 .decl conditional_architecture_sub_count(x: node, k: number)
 .decl conditional_architecture_sub_next(x: node, c: node, c2: node)
 .decl conditional_architecture_sub_rank(x: node, c: node, i: number)
+.decl conditional_architecture_sup(c: node, t: symbol, n: number)
+.decl conditional_architecture_sup_k(c: node, k: number)
+.decl conditional_architecture_sup_k1(c: node, k: number)
+.decl conditional_architecture_sup_k2(c: node, k: number)
+.decl conditional_architecture_sup_k3(c: node, k: number)
 .decl conditional_architecture_typeerror(x: node)
 .decl conditional_architecture_vchild(p: node, x: node)
 .decl conditional_architecture_vnodes(n: node)
 .decl conditional_architecture_zero(v: node)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
 .decl m10(n: node)
@@ -561,11 +541,8 @@ spq_sync_async_duplication_kinds0("module").
 .decl quality_local_taxonomy_83(n: node)
 .decl quality_local_taxonomy_90(n: node)
 .decl quality_local_taxonomy_96(n: node)
-.decl quality_local_taxonomy_binary(h: node)
-.decl quality_local_taxonomy_both(a: node)
 .decl quality_local_taxonomy_callee(f: node, s: symbol)
 .decl quality_local_taxonomy_candidates(d: number, n: node)
-.decl quality_local_taxonomy_cut(h: node, x: number, y: number)
 .decl quality_local_taxonomy_def(n: node, s: symbol)
 .decl quality_local_taxonomy_dispatch(n: node, x: node)
 .decl quality_local_taxonomy_dispatching(n: node)
@@ -574,17 +551,12 @@ spq_sync_async_duplication_kinds0("module").
 .decl quality_local_taxonomy_file139(d: number)
 .decl quality_local_taxonomy_file150(d: number)
 .decl quality_local_taxonomy_message(n: node)
-.decl quality_local_taxonomy_pair(h: node, x: number, y: number)
 .decl quality_local_taxonomy_part(h: node, s: node)
-.decl quality_local_taxonomy_piece(h: node, a: node, b: number)
 .decl quality_local_taxonomy_recursive(n: node)
 .decl quality_local_taxonomy_rows(d: number, k: number)
 .decl quality_local_taxonomy_self_call(n: node, c: node)
 .decl quality_local_taxonomy_self_loop(n: node)
-.decl quality_local_taxonomy_shape(a: node)
 .decl quality_local_taxonomy_shape_message(h: node)
-.decl quality_local_taxonomy_slot(h: node, b: number)
-.decl quality_local_taxonomy_unsupported(a: node)
 .decl quality_project_taxonomy_1(n: node)
 .decl quality_project_taxonomy_10(n: node)
 .decl quality_project_taxonomy_100(n: node)
@@ -612,11 +584,8 @@ spq_sync_async_duplication_kinds0("module").
 .decl quality_project_taxonomy_83(n: node)
 .decl quality_project_taxonomy_90(n: node)
 .decl quality_project_taxonomy_96(n: node)
-.decl quality_project_taxonomy_binary(h: node)
-.decl quality_project_taxonomy_both(a: node)
 .decl quality_project_taxonomy_callee(f: node, s: symbol)
 .decl quality_project_taxonomy_candidates(d: number, n: node)
-.decl quality_project_taxonomy_cut(h: node, x: number, y: number)
 .decl quality_project_taxonomy_def(n: node, s: symbol)
 .decl quality_project_taxonomy_dispatch(n: node, x: node)
 .decl quality_project_taxonomy_dispatching(n: node)
@@ -624,19 +593,17 @@ spq_sync_async_duplication_kinds0("module").
 .decl quality_project_taxonomy_file133(d: number)
 .decl quality_project_taxonomy_file145(d: number)
 .decl quality_project_taxonomy_message(n: node)
-.decl quality_project_taxonomy_pair(h: node, x: number, y: number)
 .decl quality_project_taxonomy_part(h: node, s: node)
-.decl quality_project_taxonomy_piece(h: node, a: node, b: number)
 .decl quality_project_taxonomy_recursive(n: node)
 .decl quality_project_taxonomy_rows(k: number)
 .decl quality_project_taxonomy_self_call(n: node, c: node)
 .decl quality_project_taxonomy_self_loop(n: node)
-.decl quality_project_taxonomy_shape(a: node)
 .decl quality_project_taxonomy_shape_message(h: node)
-.decl quality_project_taxonomy_slot(h: node, b: number)
-.decl quality_project_taxonomy_unsupported(a: node)
 .decl rr_agg1(c: node, d: number, nm: symbol, s: number)
 .decl rr_agg2(d: number, nm: symbol, s: number)
+.decl rr_agg3(b2: number, d: number, nm: symbol)
+.decl rr_agg4(c: node, j: number, y: number)
+.decl source(d: number, sp: node)
 .decl spq_can_batch_lock_10(n: node)
 .decl spq_can_batch_lock_11(n: node)
 .decl spq_can_batch_lock_15(n: node)
@@ -886,6 +853,45 @@ spq_sync_async_duplication_kinds0("module").
 .decl spq_replay_step_tags_20(n: node)
 .decl spq_replay_step_tags_file2(d: number)
 .decl spq_replay_step_tags_file27(d: number)
+.decl spq_runtime_state_annotations_ai(d: number, a: node, id: symbol, origin: symbol)
+.decl spq_runtime_state_annotations_ai_any(d: number, a: node, id: symbol)
+.decl spq_runtime_state_annotations_ann(d: number, a: node, scope: node)
+.decl spq_runtime_state_annotations_ann0(d: number, a: node)
+.decl spq_runtime_state_annotations_annscope(d: number, s: node)
+.decl spq_runtime_state_annotations_arg(d: number, a: node, start: number, end: number, bs: number, be: number, any: number)
+.decl spq_runtime_state_annotations_atom(d: number, a: node, id: symbol, start: number, end: number, atom: symbol)
+.decl spq_runtime_state_annotations_between(s: node, f: node, g: node)
+.decl spq_runtime_state_annotations_bound_ctx(n: node)
+.decl spq_runtime_state_annotations_bound_excl(n: node)
+.decl spq_runtime_state_annotations_chain(d: number, s: node, f: node, depth: number)
+.decl spq_runtime_state_annotations_conn_trusted(d: number, a: node, id: symbol, origin: symbol)
+.decl spq_runtime_state_annotations_doc(d: number)
+.decl spq_runtime_state_annotations_dotted(n: node)
+.decl spq_runtime_state_annotations_first(d: number, s: node, h: symbol, k: number)
+.decl spq_runtime_state_annotations_fnanc(s: node, f: node)
+.decl spq_runtime_state_annotations_from_st(d: number, st: node, module: symbol)
+.decl spq_runtime_state_annotations_head(t: symbol, h: symbol)
+.decl spq_runtime_state_annotations_head_s(t: symbol)
+.decl spq_runtime_state_annotations_hit(d: number, a: node)
+.decl spq_runtime_state_annotations_ign(d: number, a: node, id: symbol)
+.decl spq_runtime_state_annotations_imp(d: number, scope: node, name: symbol, origin: symbol)
+.decl spq_runtime_state_annotations_imp_depth(d: number, s: node, h: symbol, k: number)
+.decl spq_runtime_state_annotations_imp_src(d: number, st: node, name: symbol, origin: symbol)
+.decl spq_runtime_state_annotations_in_attr(n: node)
+.decl spq_runtime_state_annotations_in_type(d: number, n: node, a: node)
+.decl spq_runtime_state_annotations_need(d: number, s: node, h: symbol)
+.decl spq_runtime_state_annotations_res(d: number, a: node, id: symbol, start: number, end: number, atom: symbol, origin: symbol)
+.decl spq_runtime_state_annotations_root(d: number, m: node)
+.decl spq_runtime_state_annotations_scope(d: number, s: node)
+.decl spq_runtime_state_annotations_scope_name(d: number, s: node, name: symbol)
+.decl spq_runtime_state_annotations_seg(t: symbol, h: symbol)
+.decl spq_runtime_state_annotations_seg_s(t: symbol)
+.decl spq_runtime_state_annotations_shadow(d: number, scope: node, name: symbol)
+.decl spq_runtime_state_annotations_shadow_src(d: number, n: node, name: symbol)
+.decl spq_runtime_state_annotations_shadowed(d: number, s: node, h: symbol)
+.decl spq_runtime_state_annotations_shd_depth(d: number, s: node, h: symbol, k: number)
+.decl spq_runtime_state_annotations_trusted(d: number, a: node, id: symbol)
+.decl spq_runtime_state_annotations_typed_param_kinds(kind: symbol)
 .decl spq_sequential_optins_10(n: node)
 .decl spq_sequential_optins_11(n: node)
 .decl spq_sequential_optins_15(n: node)
@@ -1114,6 +1120,7 @@ spq_sync_async_duplication_kinds0("module").
 .decl spq_serverplan_none_fallback_elif_clause_95(n: node)
 .decl spq_serverplan_none_fallback_elif_clause_file261(d: number)
 .decl spq_serverplan_none_fallback_elif_clause_reach22(a: node, c: node)
+.decl spq_serverplan_none_fallback_elif_clause_xtok(p: node, st: number)
 .decl spq_serverplan_none_fallback_if_statement_100(n: node)
 .decl spq_serverplan_none_fallback_if_statement_101(n: node)
 .decl spq_serverplan_none_fallback_if_statement_106(n: node)
@@ -1186,6 +1193,7 @@ spq_sync_async_duplication_kinds0("module").
 .decl spq_serverplan_none_fallback_if_statement_99(n: node)
 .decl spq_serverplan_none_fallback_if_statement_file252(d: number)
 .decl spq_serverplan_none_fallback_if_statement_reach22(a: node, c: node)
+.decl spq_serverplan_none_fallback_if_statement_xtok(p: node, st: number)
 .decl spq_statement_batch_rowcounts_10(n: node)
 .decl spq_statement_batch_rowcounts_16(n: node)
 .decl spq_statement_batch_rowcounts_26(n: node)
@@ -1240,6 +1248,34 @@ spq_sync_async_duplication_kinds0("module").
 .decl spq_sync_async_duplication_pm(d: number, n: node, c: node, nm: symbol)
 .decl spq_sync_async_duplication_pos42(p: node, i: number, k: number)
 .decl spq_sync_async_duplication_pos42_before(p: node, i: number, s: node)
+.decl spq_vector_filter_constants_17(n: node)
+.decl spq_vector_filter_constants_27(n: node)
+.decl spq_vector_filter_constants_28(n: node)
+.decl spq_vector_filter_constants_40(n: node)
+.decl spq_vector_filter_constants_45(n: node)
+.decl spq_vector_filter_constants_47(n: node)
+.decl spq_vector_filter_constants_50(n: node)
+.decl spq_vector_filter_constants_51(n: node)
+.decl spq_vector_filter_constants_6(n: node)
+.decl spq_vector_filter_constants_7(n: node)
+.decl spq_vector_filter_constants_8(n: node)
+.decl spq_vector_filter_constants_9(n: node)
+.decl spq_vector_filter_constants_admission(n: node)
+.decl spq_vector_filter_constants_admitted(d: number)
+.decl spq_vector_filter_constants_file2(d: number)
+.decl spq_vector_filter_constants_file37(d: number)
+.decl spq_vector_filter_constants_file55(d: number)
+.decl spq_vector_filter_constants_file65(d: number)
+.decl spq_vector_filter_constants_file68(d: number)
+.decl spq_vector_filter_constants_file77(d: number)
+.decl spq_vector_filter_constants_filter_names(n: node)
+.decl spq_vector_filter_constants_fn(d: number, n: node, nm: symbol)
+.decl spq_vector_filter_constants_last(d: number, s: node, nm: symbol, v: symbol)
+.decl spq_vector_filter_constants_module_strings(n: node)
+.decl spq_vector_filter_constants_ms(d: number, s: node, nm: symbol, v: symbol)
+.decl spq_vector_filter_constants_pos10(p: node, i: number, k: number)
+.decl spq_vector_filter_constants_pos10_before(p: node, i: number, s: node)
+.decl spq_vector_filter_constants_scope_value(v: symbol)
 .decl spq_vector_filter_literals_10(n: node)
 .decl spq_vector_filter_literals_18(n: node)
 .decl spq_vector_filter_literals_28(n: node)
@@ -1251,7 +1287,6 @@ spq_sync_async_duplication_kinds0("module").
 .decl spq_vector_filter_literals_file36(d: number)
 .decl spq_vector_filter_literals_pos11(p: node, i: number, k: number)
 .decl spq_vector_filter_literals_pos11_before(p: node, i: number, s: node)
-.decl src_line(d: number, l: number, sp: node)
 .decl str(n: node, s: symbol)
 .decl strategy_file_size_entry(e: symbol)
 .decl strprefix(n: node, s: symbol)
@@ -1388,74 +1423,77 @@ spq_sync_async_duplication_kinds0("module").
 .decl t983(s: symbol)
 .decl t992(s: symbol)
 .decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, str, strprefix, line, syntax_error, node_text, src_line
+.input doc, node, child, field, text, name, str, strprefix, line, syntax_error, node_text, token, value, source, value_type_of, fstring_piece
 .output violation
 conditional_architecture_derived("l2070_batching.conditional_step.ConditionalStep").
-conditional_architecture_dig(0).
-conditional_architecture_dig(1).
-conditional_architecture_dig(2).
-conditional_architecture_dig(3).
-conditional_architecture_dig(4).
-conditional_architecture_dig(5).
-conditional_architecture_dig(6).
-conditional_architecture_dig(7).
-conditional_architecture_dig(8).
-conditional_architecture_dig(9).
-conditional_architecture_dig(10).
-conditional_architecture_dig(11).
-conditional_architecture_dig(12).
-conditional_architecture_dig(13).
-conditional_architecture_dig(14).
-conditional_architecture_dig(15).
-conditional_architecture_dig(16).
-conditional_architecture_dig(17).
-conditional_architecture_dig(18).
-conditional_architecture_dig(19).
-conditional_architecture_dig(20).
-conditional_architecture_dig(21).
-conditional_architecture_dig(22).
-conditional_architecture_dig(23).
-conditional_architecture_dig(24).
-conditional_architecture_dig(25).
-conditional_architecture_dig(26).
-conditional_architecture_dig(27).
-conditional_architecture_dig(28).
-conditional_architecture_dig(29).
-conditional_architecture_dig(30).
-conditional_architecture_dig(31).
-conditional_architecture_dig(32).
-conditional_architecture_dig(33).
-conditional_architecture_dig(34).
-conditional_architecture_dig(35).
-conditional_architecture_dig(36).
-conditional_architecture_dig(37).
-conditional_architecture_dig(38).
-conditional_architecture_dig(39).
-conditional_architecture_dig(40).
-conditional_architecture_dig(41).
-conditional_architecture_dig(42).
-conditional_architecture_dig(43).
-conditional_architecture_dig(44).
-conditional_architecture_dig(45).
-conditional_architecture_dig(46).
-conditional_architecture_dig(47).
-conditional_architecture_dig(48).
-conditional_architecture_dig(49).
-conditional_architecture_dig(50).
-conditional_architecture_dig(51).
-conditional_architecture_dig(52).
-conditional_architecture_dig(53).
-conditional_architecture_dig(54).
-conditional_architecture_dig(55).
-conditional_architecture_dig(56).
-conditional_architecture_dig(57).
-conditional_architecture_dig(58).
-conditional_architecture_dig(59).
-conditional_architecture_dig(60).
-conditional_architecture_dig(61).
-conditional_architecture_dig(62).
-conditional_architecture_dig(63).
+conditional_architecture_digit(0).
+conditional_architecture_digit(1).
+conditional_architecture_digit(2).
+conditional_architecture_digit(3).
+conditional_architecture_digit(4).
+conditional_architecture_digit(5).
+conditional_architecture_digit(6).
+conditional_architecture_digit(7).
+conditional_architecture_digit(8).
+conditional_architecture_digit(9).
+conditional_architecture_digit(10).
+conditional_architecture_digit(11).
+conditional_architecture_digit(12).
+conditional_architecture_digit(13).
+conditional_architecture_digit(14).
+conditional_architecture_digit(15).
+conditional_architecture_digit(16).
+conditional_architecture_digit(17).
+conditional_architecture_digit(18).
+conditional_architecture_digit(19).
+conditional_architecture_digit(20).
+conditional_architecture_digit(21).
+conditional_architecture_digit(22).
+conditional_architecture_digit(23).
+conditional_architecture_digit(24).
+conditional_architecture_digit(25).
+conditional_architecture_digit(26).
+conditional_architecture_digit(27).
+conditional_architecture_digit(28).
+conditional_architecture_digit(29).
+conditional_architecture_digit(30).
+conditional_architecture_digit(31).
+conditional_architecture_digit(32).
+conditional_architecture_digit(33).
+conditional_architecture_digit(34).
+conditional_architecture_digit(35).
+conditional_architecture_digit(36).
+conditional_architecture_digit(37).
+conditional_architecture_digit(38).
+conditional_architecture_digit(39).
+conditional_architecture_digit(40).
+conditional_architecture_digit(41).
+conditional_architecture_digit(42).
+conditional_architecture_digit(43).
+conditional_architecture_digit(44).
+conditional_architecture_digit(45).
+conditional_architecture_digit(46).
+conditional_architecture_digit(47).
+conditional_architecture_digit(48).
+conditional_architecture_digit(49).
+conditional_architecture_digit(50).
+conditional_architecture_digit(51).
+conditional_architecture_digit(52).
+conditional_architecture_digit(53).
+conditional_architecture_digit(54).
+conditional_architecture_digit(55).
+conditional_architecture_digit(56).
+conditional_architecture_digit(57).
+conditional_architecture_digit(58).
+conditional_architecture_digit(59).
+conditional_architecture_digit(60).
+conditional_architecture_digit(61).
+conditional_architecture_digit(62).
+conditional_architecture_digit(63).
 conditional_architecture_k_arm("elif_clause").
 conditional_architecture_k_arm("else_clause").
 conditional_architecture_k_barrier("raise_statement").
@@ -1523,6 +1561,11 @@ spq_ordered_semantic_inventory_limit("l4250_timers/firing.py", "AdvanceDueTimers
 spq_ordered_semantic_inventory_limit("l4400_scheduler/lazy_dispatch.py", "ConsumeSchedulerTimerFiringStep", "compile", 1).
 spq_preop_functions_preop_kw("pre_op").
 spq_preop_functions_preop_kw("async_pre_op").
+spq_runtime_state_annotations_typed_param_kinds("default_parameter").
+spq_runtime_state_annotations_typed_param_kinds("typed_default_parameter").
+spq_runtime_state_annotations_typed_param_kinds("typed_parameter").
+spq_vector_filter_constants_scope_value("branch_id").
+spq_vector_filter_constants_scope_value("revision_id").
 strategy_file_size_entry("all").
 strategy_file_size_entry("_check_serverplan_quality_source").
 in_scope(d) :- doc(d, p, _), glob("**/*.py", p).
@@ -2788,8 +2831,10 @@ spq_serverplan_none_fallback_if_statement_179(n) :- field(c178, "function", n), 
 spq_serverplan_none_fallback_if_statement_180(n) :- spq_serverplan_none_fallback_if_statement_reach22(n, c176), !spq_serverplan_none_fallback_if_statement_26(c176), spq_serverplan_none_fallback_if_statement_179(c176).
 spq_serverplan_none_fallback_if_statement_181(n) :- field(n, "consequence", c115), inside(c116, c115, spq_serverplan_none_fallback_if_statement_any_kind), node(_, c116, "call", _, _), spq_serverplan_none_fallback_if_statement_142(c116), !spq_serverplan_none_fallback_if_statement_147(c116).
 spq_serverplan_none_fallback_if_statement_181(n) :- child(n, c148, _), spq_serverplan_none_fallback_if_statement_32(c148), inside(c149, c148, spq_serverplan_none_fallback_if_statement_kinds2), node(_, c149, "call", _, _), spq_serverplan_none_fallback_if_statement_175(c149), !spq_serverplan_none_fallback_if_statement_180(c149).
-spq_serverplan_none_fallback_if_statement_189(n) :- child(n, c186, _), child(p187, c186, 2).
-spq_serverplan_none_fallback_if_statement_197(n) :- child(n, c194, _), child(p195, c194, 2).
+spq_serverplan_none_fallback_if_statement_xtok(p, st) :- node(_, p, "comparison_operator", _, _), token(p, _, t, st, _), @substr(t, 0, 1) = "#".
+spq_serverplan_none_fallback_if_statement_189(n) :- child(n, _, 2).
+spq_serverplan_none_fallback_if_statement_189(n) :- spq_serverplan_none_fallback_if_statement_xtok(n, _), a = count : { child(n, _, _) }, b = count : { spq_serverplan_none_fallback_if_statement_xtok(n, _) }, @add(a, b) >= 3.
+spq_serverplan_none_fallback_if_statement_197(n) :- spq_serverplan_none_fallback_if_statement_189(n).
 spq_serverplan_none_fallback_if_statement_198(n) :- node(_, n, "comparison_operator", _, _), node_text(n, s183), match("(?s:.*)(?:\\bis(?: not)?\\b)(?s:.*)", s183), child(n, c184, _), node(_, c184, "none", _, _), child(n, c185, _), node(_, c185, "identifier", _, _), !spq_serverplan_none_fallback_if_statement_189(n).
 spq_serverplan_none_fallback_if_statement_198(n) :- inside(c190, n, spq_serverplan_none_fallback_if_statement_any_kind), node(_, c190, "comparison_operator", _, _), node_text(c190, s191), match("(?s:.*)(?:\\bis(?: not)?\\b)(?s:.*)", s191), child(c190, c192, _), node(_, c192, "none", _, _), child(c190, c193, _), node(_, c193, "identifier", _, _), !spq_serverplan_none_fallback_if_statement_197(c190).
 spq_serverplan_none_fallback_if_statement_205(n) :- node(_, n, "identifier", _, _), text(n, s202), match("(?s:.*)(?:^(?:_add_intent|_add_intent_by_ref|_get_lazy_plan|enqueue_lazy_plan_intent|execute_later|return_result)$)(?s:.*)", s202).
@@ -3017,8 +3062,10 @@ spq_serverplan_none_fallback_elif_clause_185(n) :- field(c184, "function", n), n
 spq_serverplan_none_fallback_elif_clause_186(n) :- spq_serverplan_none_fallback_elif_clause_reach22(n, c182), !spq_serverplan_none_fallback_elif_clause_26(c182), spq_serverplan_none_fallback_elif_clause_185(c182).
 spq_serverplan_none_fallback_elif_clause_190(n) :- field(n, "consequence", c121), inside(c122, c121, spq_serverplan_none_fallback_elif_clause_any_kind), node(_, c122, "call", _, _), spq_serverplan_none_fallback_elif_clause_148(c122), !spq_serverplan_none_fallback_elif_clause_153(c122).
 spq_serverplan_none_fallback_elif_clause_190(n) :- child(p187, n, i188), child(p187, b154, j189), i188 < j189, spq_serverplan_none_fallback_elif_clause_32(b154), inside(c155, b154, spq_serverplan_none_fallback_elif_clause_kinds2), node(_, c155, "call", _, _), spq_serverplan_none_fallback_elif_clause_181(c155), !spq_serverplan_none_fallback_elif_clause_186(c155).
-spq_serverplan_none_fallback_elif_clause_198(n) :- child(n, c195, _), child(p196, c195, 2).
-spq_serverplan_none_fallback_elif_clause_206(n) :- child(n, c203, _), child(p204, c203, 2).
+spq_serverplan_none_fallback_elif_clause_xtok(p, st) :- node(_, p, "comparison_operator", _, _), token(p, _, t, st, _), @substr(t, 0, 1) = "#".
+spq_serverplan_none_fallback_elif_clause_198(n) :- child(n, _, 2).
+spq_serverplan_none_fallback_elif_clause_198(n) :- spq_serverplan_none_fallback_elif_clause_xtok(n, _), a = count : { child(n, _, _) }, b = count : { spq_serverplan_none_fallback_elif_clause_xtok(n, _) }, @add(a, b) >= 3.
+spq_serverplan_none_fallback_elif_clause_206(n) :- spq_serverplan_none_fallback_elif_clause_198(n).
 spq_serverplan_none_fallback_elif_clause_207(n) :- node(_, n, "comparison_operator", _, _), node_text(n, s192), match("(?s:.*)(?:\\bis(?: not)?\\b)(?s:.*)", s192), child(n, c193, _), node(_, c193, "none", _, _), child(n, c194, _), node(_, c194, "identifier", _, _), !spq_serverplan_none_fallback_elif_clause_198(n).
 spq_serverplan_none_fallback_elif_clause_207(n) :- inside(c199, n, spq_serverplan_none_fallback_elif_clause_any_kind), node(_, c199, "comparison_operator", _, _), node_text(c199, s200), match("(?s:.*)(?:\\bis(?: not)?\\b)(?s:.*)", s200), child(c199, c201, _), node(_, c201, "none", _, _), child(c199, c202, _), node(_, c202, "identifier", _, _), !spq_serverplan_none_fallback_elif_clause_206(c199).
 spq_serverplan_none_fallback_elif_clause_214(n) :- node(_, n, "identifier", _, _), text(n, s211), match("(?s:.*)(?:^(?:_add_intent|_add_intent_by_ref|_get_lazy_plan|enqueue_lazy_plan_intent|execute_later|return_result)$)(?s:.*)", s211).
@@ -3231,6 +3278,48 @@ spq_vector_filter_literals_file36(d) :- doc(d, _, _), option_value("entryPoint",
 spq_vector_filter_literals_file36(d) :- doc(d, _, _), option_value("entryPoint", "all"), option_on("oracleAnalyzer").
 spq_vector_filter_literals_file36(d) :- option_value("entryPoint", "all"), !option_on("oracleAnalyzer"), doc(d, p34, _), match("(?s:.*)(?:^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$))(?s:.*)", p34), !match("(?s:.*)(?:(?:^|/)__init__\\.py$)(?s:.*)", p34).
 violation("data-layer-serverplan-quality", "spq-vector-filter-literals", "SPQ-042", p, l) :- node(_, n, "string", _, _), node_text(n, s1), match("(?s:.*)(?:^[rRuU]*(?:'''(?:branch_id|revision_id)'''|\"\"\"(?:branch_id|revision_id)\"\"\"|'(?:branch_id|revision_id)'|\"(?:branch_id|revision_id)\")$)(?s:.*)", s1), node(d4, n, _, _, _), spq_vector_filter_literals_file3(d4), spq_vector_filter_literals_29(n), node(d37, n, _, _, _), spq_vector_filter_literals_file36(d37), doc(d, p, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), line(n, l).
+spq_vector_filter_constants_file2(d) :- doc(d, p1, _), match("(?s:.*)(?:^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$)(?s:.*)", p1).
+spq_vector_filter_constants_6(n) :- node(_, n, "keyword_argument", _, _).
+spq_vector_filter_constants_7(n) :- node(_, n, "list_splat", _, _).
+spq_vector_filter_constants_8(n) :- node(_, n, "dictionary_splat", _, _).
+spq_vector_filter_constants_9(n) :- node(_, n, _, _, _), !spq_vector_filter_constants_6(n), !spq_vector_filter_constants_7(n), !spq_vector_filter_constants_8(n).
+spq_vector_filter_constants_pos10_before(p, i, s) :- child(p, c, i), spq_vector_filter_constants_9(c), child(p, s, j), j < i, spq_vector_filter_constants_9(s).
+spq_vector_filter_constants_pos10(p, i, k) :- child(p, c, i), spq_vector_filter_constants_9(c), k = count : { spq_vector_filter_constants_pos10_before(p, i, _) }.
+spq_vector_filter_constants_17(n) :- node(_, n, "identifier", _, _), text(n, s14), match("(?s:.*)(?:^(?:QueryFilter)$)(?s:.*)", s14).
+spq_vector_filter_constants_17(n) :- node(_, n, "attribute", _, _), field(n, "attribute", c15), node(_, c15, "identifier", _, _), text(c15, s16), match("(?s:.*)(?:^(?:QueryFilter)$)(?s:.*)", s16).
+spq_vector_filter_constants_27(n) :- node(_, n, "identifier", _, _), text(n, s24), match("(?s:.*)(?:^(?:QueryFilter)$)(?s:.*)", s24).
+spq_vector_filter_constants_27(n) :- node(_, n, "attribute", _, _), field(n, "attribute", c25), node(_, c25, "identifier", _, _), text(c25, s26), match("(?s:.*)(?:^(?:QueryFilter)$)(?s:.*)", s26).
+spq_vector_filter_constants_28(n) :- child(p4, n, i5), spq_vector_filter_constants_9(n), spq_vector_filter_constants_pos10(p4, i5, 0), child(c11, n, _), node(_, c11, "argument_list", _, _), field(c12, "arguments", c11), node(_, c12, "call", _, _), field(c12, "function", c13), spq_vector_filter_constants_17(c13).
+spq_vector_filter_constants_28(n) :- field(c18, "value", n), node(_, c18, "keyword_argument", _, _), field(c18, "name", c19), node(_, c19, "identifier", _, _), text(c19, s20), match("(?s:.*)(?:^(?:column)$)(?s:.*)", s20), child(c21, c18, _), node(_, c21, "argument_list", _, _), field(c22, "arguments", c21), node(_, c22, "call", _, _), field(c22, "function", c23), spq_vector_filter_constants_27(c23).
+spq_vector_filter_constants_file37(d) :- doc(d, _, _), option_value("entryPoint", "_check_vector_scope_filters_use_expressions").
+spq_vector_filter_constants_file37(d) :- doc(d, _, _), option_value("entryPoint", "_check_serverplan_quality_source").
+spq_vector_filter_constants_file37(d) :- doc(d, _, _), option_value("entryPoint", "all"), option_on("oracleAnalyzer").
+spq_vector_filter_constants_file37(d) :- option_value("entryPoint", "all"), !option_on("oracleAnalyzer"), doc(d, p35, _), match("(?s:.*)(?:^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$))(?s:.*)", p35), !match("(?s:.*)(?:(?:^|/)__init__\\.py$)(?s:.*)", p35).
+spq_vector_filter_constants_filter_names(n) :- node(_, n, "identifier", _, _), node(d3, n, _, _, _), spq_vector_filter_constants_file2(d3), spq_vector_filter_constants_28(n), inside(n, c29, spq_vector_filter_constants_kinds0), node(_, c29, "module", _, _), node_text(c29, s30), match("(?s:.*)(?:QueryFilter)(?s:.*)", s30), node(d38, n, _, _, _), spq_vector_filter_constants_file37(d38), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d).
+spq_vector_filter_constants_40(n) :- field(n, "type", c39).
+spq_vector_filter_constants_45(n) :- child(c44, n, _), node(_, c44, "concatenated_string", _, _).
+spq_vector_filter_constants_47(n) :- inside(c46, n, spq_vector_filter_constants_kinds1), node(_, c46, "interpolation", _, _).
+spq_vector_filter_constants_50(n) :- inside(c48, n, spq_vector_filter_constants_kinds1), node(_, c48, "string", _, _), node_text(c48, s49), match("(?s:.*)(?:(?i)^(?:fr|rf|f)['\\\"])(?s:.*)", s49).
+spq_vector_filter_constants_51(n) :- node(_, n, "string", _, _), node_text(n, s43), match("(?s:.*)(?:(?i)^[ru]*['\\\"])(?s:.*)", s43), !spq_vector_filter_constants_45(n).
+spq_vector_filter_constants_51(n) :- node(_, n, "concatenated_string", _, _), !spq_vector_filter_constants_47(n), !spq_vector_filter_constants_50(n).
+spq_vector_filter_constants_file55(d) :- doc(d, p54, _), match("(?s:.*)(?:^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$)(?s:.*)", p54).
+spq_vector_filter_constants_file65(d) :- doc(d, _, _), option_value("entryPoint", "_check_vector_scope_filters_use_expressions").
+spq_vector_filter_constants_file65(d) :- doc(d, _, _), option_value("entryPoint", "_check_serverplan_quality_source").
+spq_vector_filter_constants_file65(d) :- doc(d, _, _), option_value("entryPoint", "all"), option_on("oracleAnalyzer").
+spq_vector_filter_constants_file65(d) :- option_value("entryPoint", "all"), !option_on("oracleAnalyzer"), doc(d, p63, _), match("(?s:.*)(?:^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$))(?s:.*)", p63), !match("(?s:.*)(?:(?:^|/)__init__\\.py$)(?s:.*)", p63).
+spq_vector_filter_constants_module_strings(n) :- node(_, n, "assignment", _, _), !spq_vector_filter_constants_40(n), field(n, "left", c41), node(_, c41, "identifier", _, _), field(n, "right", c42), spq_vector_filter_constants_51(c42), child(c52, n, _), node(_, c52, "expression_statement", _, _), child(c53, c52, _), node(_, c53, "module", _, _), node(d56, n, _, _, _), spq_vector_filter_constants_file55(d56), inside(n, c57, spq_vector_filter_constants_kinds0), node(_, c57, "module", _, _), node_text(c57, s58), match("(?s:.*)(?:QueryFilter)(?s:.*)", s58), node(d66, n, _, _, _), spq_vector_filter_constants_file65(d66), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d).
+spq_vector_filter_constants_file68(d) :- doc(d, p67, _), match("(?s:.*)(?:^(?:impl/common/l2070_server_plan/steps/intent_vector_query\\.py)$)(?s:.*)", p67).
+spq_vector_filter_constants_file77(d) :- doc(d, _, _), option_value("entryPoint", "_check_vector_scope_filters_use_expressions").
+spq_vector_filter_constants_file77(d) :- doc(d, _, _), option_value("entryPoint", "_check_serverplan_quality_source").
+spq_vector_filter_constants_file77(d) :- doc(d, _, _), option_value("entryPoint", "all"), option_on("oracleAnalyzer").
+spq_vector_filter_constants_file77(d) :- option_value("entryPoint", "all"), !option_on("oracleAnalyzer"), doc(d, p75, _), match("(?s:.*)(?:^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$))(?s:.*)", p75), !match("(?s:.*)(?:(?:^|/)__init__\\.py$)(?s:.*)", p75).
+spq_vector_filter_constants_admission(n) :- node(_, n, "module", _, _), node(d69, n, _, _, _), spq_vector_filter_constants_file68(d69), node_text(n, s70), match("(?s:.*)(?:QueryFilter)(?s:.*)", s70), node(d78, n, _, _, _), spq_vector_filter_constants_file77(d78), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d).
+spq_vector_filter_constants_fn(d, n, nm) :- spq_vector_filter_constants_filter_names(n), node(d, n, _, _, _), text(n, nm).
+spq_vector_filter_constants_ms(d, s, nm, v) :- spq_vector_filter_constants_module_strings(s), node(d, s, _, _, _), field(s, "left", x), text(x, nm), field(s, "right", r), value(r, v).
+rr_agg3(b2, d, nm) :- spq_vector_filter_constants_module_strings(o), node(d, o, _, b2, _), field(o, "left", x2), text(x2, nm).
+spq_vector_filter_constants_last(d, s, nm, v) :- spq_vector_filter_constants_ms(d, s, nm, v), node(d, s, _, b, _), b = max b2 : { rr_agg3(b2, d, nm) }.
+spq_vector_filter_constants_admitted(d) :- spq_vector_filter_constants_admission(n), node(d, n, _, _, _).
+violation("data-layer-serverplan-quality", "spq-vector-filter-constants", "SPQ-042", p, l) :- spq_vector_filter_constants_fn(d, n, nm), spq_vector_filter_constants_last(d, _, nm, v), spq_vector_filter_constants_scope_value(v), spq_vector_filter_constants_admitted(d), doc(d, p, _), line(n, l).
 spq_projection_repairs_9(n) :- option_value("entryPoint", "all"), inside(n, c2, spq_projection_repairs_kinds0), node(_, c2, "module", _, _), node_text(c2, s3), match("(?s:.*)(?:extract|project|projected|projection|tuple)(?s:.*)", s3), node_text(c2, s4), match("(?s:.*)(?:execute|execute_async|resolve|resolve_async)(?s:.*)", s4).
 spq_projection_repairs_9(n) :- option_value("entryPoint", "_check_serverplan_quality_source"), inside(n, c5, spq_projection_repairs_kinds0), node(_, c5, "module", _, _), node_text(c5, s6), match("(?s:.*)(?:extract|project|projected|projection|tuple)(?s:.*)", s6), node_text(c5, s7), match("(?s:.*)(?:execute|execute_async|resolve|resolve_async)(?s:.*)", s7).
 spq_projection_repairs_9(n) :- node(_, n, "function_definition", _, _), option_value("entryPoint", e1), e1 != "all", e1 != "_check_serverplan_quality_source".
@@ -3368,7 +3457,85 @@ spq_replay_step_tags_file27(d) :- doc(d, _, _), option_value("entryPoint", "_che
 spq_replay_step_tags_file27(d) :- doc(d, _, _), option_value("entryPoint", "all"), option_on("oracleAnalyzer").
 spq_replay_step_tags_file27(d) :- option_value("entryPoint", "all"), !option_on("oracleAnalyzer"), doc(d, p25, _), match("(?s:.*)(?:^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$))(?s:.*)", p25), !match("(?s:.*)(?:(?:^|/)__init__\\.py$)(?s:.*)", p25).
 violation("data-layer-serverplan-quality", "spq-replay-step-tags", "SPQ-047", p, l) :- node(_, n, "binary_operator", _, _), node(d3, n, _, _, _), spq_replay_step_tags_file2(d3), node_text(n, s4), match("(?s:.*)(?:&)(?s:.*)", s4), spq_replay_step_tags_13(n), spq_replay_step_tags_20(n), node(d28, n, _, _, _), spq_replay_step_tags_file27(d28), doc(d, p, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), line(n, l).
-violation("data-layer-serverplan-quality", "strategy-file-size", "SPQ-010", p, l) :- doc(d, p, _), in_scope(d), !out_scope(d), strategy_file_size_entry(e), option_value("entryPoint", e), glob("impl/common/l2070_server_plan/strategies/**/*.py", p), src_line(d, 1501, sp), line(sp, l).
+spq_runtime_state_annotations_doc(d) :- option_value("entryPoint", "_check_serverplan_runtime_state_ingress"), doc(d, p, _), in_scope(d), !syntax_error(d), !out_scope(d), !match("(?s:.*)(?:(?:^|/)tests(?:/|$))(?s:.*)", p), node(d, m, "module", _, _), node_text(m, ms), match("(?s:.*)(?:Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", ms).
+spq_runtime_state_annotations_doc(d) :- option_value("entryPoint", "_check_serverplan_quality_source"), doc(d, p, _), in_scope(d), !syntax_error(d), !out_scope(d), !match("(?s:.*)(?:(?:^|/)tests(?:/|$))(?s:.*)", p), node(d, m, "module", _, _), node_text(m, ms), match("(?s:.*)(?:Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", ms).
+spq_runtime_state_annotations_doc(d) :- option_value("entryPoint", "all"), option_on("oracleAnalyzer"), doc(d, p, _), in_scope(d), !syntax_error(d), !out_scope(d), !match("(?s:.*)(?:(?:^|/)tests(?:/|$))(?s:.*)", p), node(d, m, "module", _, _), node_text(m, ms), match("(?s:.*)(?:Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", ms).
+spq_runtime_state_annotations_doc(d) :- option_value("entryPoint", "all"), !option_on("oracleAnalyzer"), doc(d, p5, _), match("(?s:.*)(?:^(?:api/l2070_batching/executor\\.py|impl/common/l2070_server_plan/base_server_plan\\.py|impl/common/l2070_server_plan/plan_helpers\\.py|impl/common/l2070_server_plan/sql_backend_executor\\.py|impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects\\.py|l2070_batching/compilation\\.py|l2070_batching/conditional_step\\.py|l2070_batching/optimizer\\.py|l2070_batching/plan_prerequisites\\.py)$|^(?:impl/common/l2070_server_plan/steps/|impl/common/l7300_sql_versioned_transactions/steps/|impl/common/l9700_sql_graph_query/steps/|impl/common/l2070_server_plan/strategies/|impl/common/l2070_server_plan/[^/]+$))(?s:.*)", p5), !match("(?s:.*)(?:(?:^|/)__init__\\.py$)(?s:.*)", p5), doc(d, p, _), in_scope(d), !syntax_error(d), !out_scope(d), !match("(?s:.*)(?:(?:^|/)tests(?:/|$))(?s:.*)", p), node(d, m, "module", _, _), node_text(m, ms), match("(?s:.*)(?:Callable|AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", ms).
+spq_runtime_state_annotations_root(d, m) :- spq_runtime_state_annotations_doc(d), node(d, m, "module", _, _).
+spq_runtime_state_annotations_in_attr(n) :- child(p, n, _), node(_, p, "attribute", _, _).
+spq_runtime_state_annotations_in_type(d, n, a) :- inside(n, a, rr_kind_assignment), field(a, "type", x), node(d, x, _, xs, xe), node(d, n, _, ns, ne), xs <= ns, ne <= xe, spq_runtime_state_annotations_doc(d).
+spq_runtime_state_annotations_scope(d, s) :- spq_runtime_state_annotations_doc(d), node(d, s, "function_definition", _, _).
+spq_runtime_state_annotations_scope(d, s) :- spq_runtime_state_annotations_doc(d), node(d, s, "class_definition", _, _).
+spq_runtime_state_annotations_scope_name(d, s, x) :- spq_runtime_state_annotations_scope(d, s), field(s, "name", c), text(c, x).
+spq_runtime_state_annotations_ann0(d, a) :- spq_runtime_state_annotations_doc(d), node(d, a, "assignment", _, _), field(a, "type", _), field(a, "left", l), node(_, l, "identifier", _, _).
+spq_runtime_state_annotations_ann(d, a, s) :- spq_runtime_state_annotations_ann0(d, a), nearest(a, s, spq_runtime_state_annotations_scope_kinds).
+spq_runtime_state_annotations_ann(d, a, m) :- spq_runtime_state_annotations_ann0(d, a), !inside(a, _, spq_runtime_state_annotations_scope_kinds), spq_runtime_state_annotations_root(d, m).
+spq_runtime_state_annotations_annscope(d, s) :- spq_runtime_state_annotations_ann(d, _, s).
+spq_runtime_state_annotations_fnanc(s, f) :- spq_runtime_state_annotations_annscope(_, s), inside(s, f, rr_kind_function_definition).
+spq_runtime_state_annotations_between(s, f, g) :- spq_runtime_state_annotations_fnanc(s, f), spq_runtime_state_annotations_fnanc(s, g), inside(g, f, rr_kind_function_definition).
+spq_runtime_state_annotations_chain(d, s, s, 0) :- spq_runtime_state_annotations_annscope(d, s).
+spq_runtime_state_annotations_chain(d, s, f, @add(k, 1)) :- spq_runtime_state_annotations_annscope(d, s), spq_runtime_state_annotations_fnanc(s, f), k = count : { spq_runtime_state_annotations_between(s, f, _) }.
+spq_runtime_state_annotations_chain(d, s, m, @add(k, 1)) :- spq_runtime_state_annotations_annscope(d, s), spq_runtime_state_annotations_root(d, m), s != m, k = count : { spq_runtime_state_annotations_fnanc(s, _) }.
+spq_runtime_state_annotations_from_st(d, st, x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_from_statement", _, _), field(st, "module_name", mn), node(_, mn, "dotted_name", _, _), text(mn, x).
+spq_runtime_state_annotations_from_st(d, st, x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_from_statement", _, _), field(st, "module_name", mn), node(_, mn, k, _, _), k != "dotted_name", node_text(mn, x).
+spq_runtime_state_annotations_imp_src(d, st, x, @concat(@concat(mo, "."), x)) :- spq_runtime_state_annotations_from_st(d, st, mo), child(st, c, _), !field(st, "module_name", c), node(_, c, "dotted_name", _, _), text(c, x).
+spq_runtime_state_annotations_imp_src(d, st, al, @concat(@concat(mo, "."), x)) :- spq_runtime_state_annotations_from_st(d, st, mo), child(st, c, _), !field(st, "module_name", c), node(_, c, "aliased_import", _, _), field(c, "name", nm), text(nm, x), field(c, "alias", an), text(an, al).
+spq_runtime_state_annotations_seg_s(x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), node_text(c, x).
+spq_runtime_state_annotations_seg(x, h) :- spq_runtime_state_annotations_seg_s(x), match("[^.](?s:.*)", x), h = @rx_replace(x, "^([^.]+)(?s:.*)$", "$1").
+spq_runtime_state_annotations_imp_src(d, st, h, h) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "dotted_name", _, _), node_text(c, x), spq_runtime_state_annotations_seg(x, h).
+spq_runtime_state_annotations_imp_src(d, st, al, x) :- spq_runtime_state_annotations_doc(d), node(d, st, "import_statement", _, _), child(st, c, _), node(_, c, "aliased_import", _, _), field(c, "name", nm), text(nm, x), field(c, "alias", an), text(an, al).
+spq_runtime_state_annotations_imp(d, s, x, o) :- spq_runtime_state_annotations_imp_src(d, st, x, o), nearest(st, s, spq_runtime_state_annotations_scope_kinds).
+spq_runtime_state_annotations_imp(d, m, x, o) :- spq_runtime_state_annotations_imp_src(d, st, x, o), !inside(st, _, spq_runtime_state_annotations_scope_kinds), spq_runtime_state_annotations_root(d, m).
+spq_runtime_state_annotations_bound_ctx(n) :- node(d, n, "identifier", ns, ne), inside(n, a, rr_kind_assignment), field(a, "left", x), node(d, x, _, xs, xe), xs <= ns, ne <= xe.
+spq_runtime_state_annotations_bound_ctx(n) :- node(d, n, "identifier", ns, ne), inside(n, a, rr_kind_augmented_assignment), field(a, "left", x), node(d, x, _, xs, xe), xs <= ns, ne <= xe.
+spq_runtime_state_annotations_bound_ctx(n) :- node(d, n, "identifier", ns, ne), inside(n, a, rr_kind_for_statement), field(a, "left", x), node(d, x, _, xs, xe), xs <= ns, ne <= xe.
+spq_runtime_state_annotations_bound_ctx(n) :- node(d, n, "identifier", ns, ne), inside(n, a, rr_kind_for_in_clause), field(a, "left", x), node(d, x, _, xs, xe), xs <= ns, ne <= xe.
+spq_runtime_state_annotations_bound_ctx(n) :- node(d, n, "identifier", ns, ne), inside(n, a, rr_kind_named_expression), field(a, "name", x), node(d, x, _, xs, xe), xs <= ns, ne <= xe.
+spq_runtime_state_annotations_bound_ctx(n) :- node(_, n, "identifier", _, _), inside(n, _, rr_kind_delete_statement).
+spq_runtime_state_annotations_bound_excl(n) :- field(p, "name", n), node(_, p, "function_definition", _, _).
+spq_runtime_state_annotations_bound_excl(n) :- field(p, "name", n), node(_, p, "class_definition", _, _).
+spq_runtime_state_annotations_bound_excl(n) :- field(p, "name", n), node(_, p, "keyword_argument", _, _).
+spq_runtime_state_annotations_bound_excl(n) :- field(p, "attribute", n), node(_, p, "attribute", _, _).
+spq_runtime_state_annotations_shadow_src(d, n, x) :- spq_runtime_state_annotations_doc(d), node(d, n, "identifier", _, _), spq_runtime_state_annotations_bound_ctx(n), !spq_runtime_state_annotations_bound_excl(n), text(n, x).
+spq_runtime_state_annotations_shadow(d, s, x) :- spq_runtime_state_annotations_shadow_src(d, n, x), nearest(n, s, spq_runtime_state_annotations_scope_kinds).
+spq_runtime_state_annotations_shadow(d, m, x) :- spq_runtime_state_annotations_shadow_src(d, n, x), !inside(n, _, spq_runtime_state_annotations_scope_kinds), spq_runtime_state_annotations_root(d, m).
+spq_runtime_state_annotations_shadow(d, f, x) :- spq_runtime_state_annotations_doc(d), node(d, n, "identifier", _, _), child(pr, n, _), node(_, pr, "parameters", _, _), child(f, pr, _), node(_, f, "function_definition", _, _), text(n, x).
+spq_runtime_state_annotations_shadow(d, f, x) :- spq_runtime_state_annotations_doc(d), node(d, n, "identifier", _, _), child(tp, n, 0), node(_, tp, k, _, _), spq_runtime_state_annotations_typed_param_kinds(k), child(pr, tp, _), node(_, pr, "parameters", _, _), child(f, pr, _), node(_, f, "function_definition", _, _), text(n, x).
+spq_runtime_state_annotations_shadow(d, m, x) :- spq_runtime_state_annotations_scope_name(d, _, x), spq_runtime_state_annotations_root(d, m).
+spq_runtime_state_annotations_shadow(d, m, x) :- spq_runtime_state_annotations_root(d, m), node(d, n, "identifier", _, _), child(g, n, _), node(_, g, "global_statement", _, _), text(n, x).
+spq_runtime_state_annotations_shadow(d, f, x) :- spq_runtime_state_annotations_doc(d), node(d, n, "identifier", _, _), child(g, n, _), node(_, g, "nonlocal_statement", _, _), text(n, x), inside(n, f, rr_kind_function_definition).
+spq_runtime_state_annotations_atom(d, a, @concat("name:", @to_string(ns)), ns, ne, x) :- node(d, n, "identifier", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), text(n, x).
+spq_runtime_state_annotations_dotted(n) :- node(_, n, "attribute", _, _), node_text(n, s), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", s).
+spq_runtime_state_annotations_atom(d, a, @concat(@concat(@concat("member:", @to_string(ns)), ":"), @to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), node_text(n, t), v = @rx_replace(t, "\\s+", "").
+spq_runtime_state_annotations_atom(d, a, @concat(@concat(@concat("member:", @to_string(ns)), ":"), @to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_in_attr(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
+spq_runtime_state_annotations_atom(d, a, @concat(@concat(@concat("member:", @to_string(ns)), ":"), @to_string(ne)), ns, ne, v) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), spq_runtime_state_annotations_dotted(n), node_text(n, t), v = @rx_replace(t, "\\s+", "").
+spq_runtime_state_annotations_atom(d, a, @concat(@concat(@concat("member:", @to_string(ns)), ":"), @to_string(ne)), ns, ne, x) :- node(d, n, "attribute", ns, ne), !spq_runtime_state_annotations_dotted(n), spq_runtime_state_annotations_in_type(d, n, a), spq_runtime_state_annotations_ann0(d, a), !spq_runtime_state_annotations_dotted(n), field(n, "attribute", c), text(c, x).
+spq_runtime_state_annotations_head_s(x) :- spq_runtime_state_annotations_atom(_, _, _, _, _, x).
+spq_runtime_state_annotations_head(x, h) :- spq_runtime_state_annotations_head_s(x), match("[A-Za-z_](?s:.*)", x), h = @rx_replace(x, "^([A-Za-z_]\\w*)(?s:.*)$", "$1").
+spq_runtime_state_annotations_need(d, s, h) :- spq_runtime_state_annotations_atom(d, a, _, _, _, x), spq_runtime_state_annotations_ann(d, a, s), spq_runtime_state_annotations_head(x, h).
+spq_runtime_state_annotations_imp_depth(d, s, h, k) :- spq_runtime_state_annotations_need(d, s, h), spq_runtime_state_annotations_chain(d, s, f, k), spq_runtime_state_annotations_imp(d, f, h, _).
+spq_runtime_state_annotations_first(d, s, h, k) :- spq_runtime_state_annotations_need(d, s, h), k = min j : { spq_runtime_state_annotations_imp_depth(d, s, h, j) }.
+spq_runtime_state_annotations_shd_depth(d, s, h, j) :- spq_runtime_state_annotations_need(d, s, h), spq_runtime_state_annotations_chain(d, s, f, j), spq_runtime_state_annotations_shadow(d, f, h).
+spq_runtime_state_annotations_shadowed(d, s, h) :- spq_runtime_state_annotations_first(d, s, h, k), spq_runtime_state_annotations_shd_depth(d, s, h, j), j <= k.
+spq_runtime_state_annotations_ai(d, a, id, o) :- spq_runtime_state_annotations_atom(d, a, id, _, _, x), spq_runtime_state_annotations_ann(d, a, s), spq_runtime_state_annotations_head(x, h), spq_runtime_state_annotations_first(d, s, h, k), spq_runtime_state_annotations_chain(d, s, f, k), spq_runtime_state_annotations_imp(d, f, h, o).
+spq_runtime_state_annotations_ai_any(d, a, id) :- spq_runtime_state_annotations_ai(d, a, id, _).
+spq_runtime_state_annotations_trusted(d, a, id) :- spq_runtime_state_annotations_ai_any(d, a, id), spq_runtime_state_annotations_atom(d, a, id, _, _, x), spq_runtime_state_annotations_ann(d, a, s), spq_runtime_state_annotations_head(x, h), !spq_runtime_state_annotations_shadowed(d, s, h), c = count : { spq_runtime_state_annotations_ai(d, a, id, _) }, c = 1.
+spq_runtime_state_annotations_res(d, a, id, xs, xe, x, @concat(o, @substr(x, @strlen(h), @sub(@strlen(x), @strlen(h))))) :- spq_runtime_state_annotations_atom(d, a, id, xs, xe, x), spq_runtime_state_annotations_ai(d, a, id, o), spq_runtime_state_annotations_head(x, h).
+spq_runtime_state_annotations_res(d, a, id, xs, xe, x, x) :- spq_runtime_state_annotations_atom(d, a, id, xs, xe, x), !spq_runtime_state_annotations_ai_any(d, a, id).
+spq_runtime_state_annotations_arg(d, a, xs, xe, bs, be, 1) :- node(d, tp, "type_parameter", _, _), child(g, tp, _), node(_, g, "generic_type", _, _), child(g, b, 0), node(d, b, _, bs, be), spq_runtime_state_annotations_in_type(d, tp, a), spq_runtime_state_annotations_ann0(d, a), child(tp, x, i), node(d, x, _, xs, xe).
+spq_runtime_state_annotations_arg(d, a, xs, xe, bs, be, 0) :- node(d, tp, "type_parameter", _, _), child(g, tp, _), node(_, g, "generic_type", _, _), child(g, b, 0), node(d, b, _, bs, be), spq_runtime_state_annotations_in_type(d, tp, a), spq_runtime_state_annotations_ann0(d, a), child(tp, x, i), node(d, x, _, xs, xe), i >= 1.
+spq_runtime_state_annotations_arg(d, a, xs, xe, bs, be, 0) :- node(d, tp, "type_parameter", _, _), child(g, tp, _), node(_, g, "generic_type", _, _), child(g, b, 0), node(d, b, _, bs, be), spq_runtime_state_annotations_in_type(d, tp, a), spq_runtime_state_annotations_ann0(d, a), child(tp, x, 0), node(d, x, _, xs, xe), token(tp, _, t, st, _), @substr(t, 0, 1) = "#", st < xs.
+spq_runtime_state_annotations_ign(d, a, id) :- spq_runtime_state_annotations_res(d, a, id, xs, xe, _, _), spq_runtime_state_annotations_arg(d, a, gs, ge, bs, be, 1), xs >= gs, xe <= ge, spq_runtime_state_annotations_res(d, a, bid, bs, be, _, "typing.Literal"), spq_runtime_state_annotations_trusted(d, a, bid).
+spq_runtime_state_annotations_ign(d, a, id) :- spq_runtime_state_annotations_res(d, a, id, xs, xe, _, _), spq_runtime_state_annotations_arg(d, a, gs, ge, bs, be, 1), xs >= gs, xe <= ge, spq_runtime_state_annotations_res(d, a, bid, bs, be, _, "typing_extensions.Literal"), spq_runtime_state_annotations_trusted(d, a, bid).
+spq_runtime_state_annotations_ign(d, a, id) :- spq_runtime_state_annotations_res(d, a, id, xs, xe, _, _), spq_runtime_state_annotations_arg(d, a, gs, ge, bs, be, 0), xs >= gs, xe <= ge, spq_runtime_state_annotations_res(d, a, bid, bs, be, _, "typing.Annotated"), spq_runtime_state_annotations_trusted(d, a, bid).
+spq_runtime_state_annotations_ign(d, a, id) :- spq_runtime_state_annotations_res(d, a, id, xs, xe, _, _), spq_runtime_state_annotations_arg(d, a, gs, ge, bs, be, 0), xs >= gs, xe <= ge, spq_runtime_state_annotations_res(d, a, bid, bs, be, _, "typing_extensions.Annotated"), spq_runtime_state_annotations_trusted(d, a, bid).
+spq_runtime_state_annotations_conn_trusted(d, a, id, "data_layer.types.ConnectionId") :- spq_runtime_state_annotations_res(d, a, id, _, _, _, "data_layer.types.ConnectionId"), spq_runtime_state_annotations_trusted(d, a, id).
+spq_runtime_state_annotations_conn_trusted(d, a, id, "l1350_foundational_types.ConnectionId") :- spq_runtime_state_annotations_res(d, a, id, _, _, _, "l1350_foundational_types.ConnectionId"), spq_runtime_state_annotations_trusted(d, a, id).
+spq_runtime_state_annotations_conn_trusted(d, a, id, "l1400_types.ConnectionId") :- spq_runtime_state_annotations_res(d, a, id, _, _, _, "l1400_types.ConnectionId"), spq_runtime_state_annotations_trusted(d, a, id).
+spq_runtime_state_annotations_hit(d, a) :- spq_runtime_state_annotations_res(d, a, id, _, _, _, o), match("(?s:.*)(?:(?:^|\\.)Callable(?:\\.|$))(?s:.*)", o), !spq_runtime_state_annotations_ign(d, a, id).
+spq_runtime_state_annotations_hit(d, a) :- spq_runtime_state_annotations_res(d, a, id, _, _, _, o), !spq_runtime_state_annotations_conn_trusted(d, a, id, o), match("(?s:.*)(?:AsyncCapabilityTokenService|BackendExecutor|CapabilityTokenService|CapabilityTokenStore|Connection|Cursor|Hydrator|RuntimeBundle|SyncDatabaseConnection|TokenStore|Transaction)(?s:.*)", o), !spq_runtime_state_annotations_ign(d, a, id).
+violation("data-layer-serverplan-quality", "spq-runtime-state-annotations", "SPQ-050", p, l) :- spq_runtime_state_annotations_hit(d, a), doc(d, p, _), line(a, l).
+violation("data-layer-serverplan-quality", "strategy-file-size", "SPQ-010", p, l) :- doc(d, p, _), in_scope(d), !out_scope(d), strategy_file_size_entry(e), option_value("entryPoint", e), glob("impl/common/l2070_server_plan/strategies/**/*.py", p), source(d, sp), match_group("\\A(?:[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*(?:\\r\\n|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\x{2028}\\x{2029}])){1500}(?<OVERFLOW>[^\\n\\r\\v\\f\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]+|[\\n\\r\\v\\f\\x1c-\\x1e\\x85\\x{2028}\\x{2029}])", sp, _, "OVERFLOW", g), line(g, l).
 quality_local_taxonomy_1(n) :- node(_, n, "if_statement", _, _).
 quality_local_taxonomy_1(n) :- node(_, n, "elif_clause", _, _).
 quality_local_taxonomy_7(n) :- node(_, n, "identifier", _, _), text(n, s4), match("(?s:.*)(?:^(?:get_origin|id|is_dataclass|isinstance|type)$)(?s:.*)", s4).
@@ -3457,17 +3624,8 @@ quality_local_taxonomy_dispatch(n, x) :- quality_local_taxonomy_def(n, _), insid
 quality_local_taxonomy_dispatching(n) :- quality_local_taxonomy_def(n, _), k = count : { quality_local_taxonomy_dispatch(n, _) }, k >= 3.
 quality_local_taxonomy_part(h, h) :- node(_, h, "string", _, _).
 quality_local_taxonomy_part(h, s) :- node(_, h, "concatenated_string", _, _), child(h, s, _), node(_, s, "string", _, _).
-quality_local_taxonomy_binary(h) :- quality_local_taxonomy_part(h, s), strprefix(s, x), match("(?s:.*)[bt](?s:.*)", x).
-quality_local_taxonomy_piece(h, a, b) :- quality_local_taxonomy_part(h, s), child(s, a, _), node(_, a, "string_content", b, _).
-quality_local_taxonomy_slot(h, b) :- quality_local_taxonomy_part(h, s), child(s, i, _), node(_, i, "interpolation", b, _).
-quality_local_taxonomy_both(a) :- node(_, a, "string_content", _, _), node_text(a, x), match("(?s:.*)(?:(?is)unsupported.*shape|shape.*unsupported)(?s:.*)", x).
-quality_local_taxonomy_unsupported(a) :- node(_, a, "string_content", _, _), node_text(a, x), match("(?s:.*)(?:(?i)unsupported)(?s:.*)", x).
-quality_local_taxonomy_shape(a) :- node(_, a, "string_content", _, _), node_text(a, x), match("(?s:.*)(?:(?i)shape)(?s:.*)", x).
-quality_local_taxonomy_pair(h, x, x) :- quality_local_taxonomy_piece(h, a, x), quality_local_taxonomy_both(a).
-quality_local_taxonomy_pair(h, x, y) :- quality_local_taxonomy_piece(h, a, x), quality_local_taxonomy_unsupported(a), quality_local_taxonomy_piece(h, b, y), quality_local_taxonomy_shape(b), x < y.
-quality_local_taxonomy_pair(h, x, y) :- quality_local_taxonomy_piece(h, a, x), quality_local_taxonomy_shape(a), quality_local_taxonomy_piece(h, b, y), quality_local_taxonomy_unsupported(b), x < y.
-quality_local_taxonomy_cut(h, x, y) :- quality_local_taxonomy_pair(h, x, y), quality_local_taxonomy_slot(h, z), x < z, z < y.
-quality_local_taxonomy_shape_message(h) :- quality_local_taxonomy_pair(h, x, y), !quality_local_taxonomy_cut(h, x, y), !quality_local_taxonomy_binary(h).
+quality_local_taxonomy_shape_message(h) :- quality_local_taxonomy_part(h, _), value(h, v), value_type_of(h, "str"), match("(?s:.*)(?:(?is)unsupported.*shape|shape.*unsupported)(?s:.*)", v).
+quality_local_taxonomy_shape_message(h) :- quality_local_taxonomy_part(h, _), fstring_piece(h, _, "literal", v), match("(?s:.*)(?:(?is)unsupported.*shape|shape.*unsupported)(?s:.*)", v).
 quality_local_taxonomy_message(n) :- quality_local_taxonomy_def(n, _), inside(h, n, quality_local_taxonomy_kinds0), quality_local_taxonomy_shape_message(h).
 quality_local_taxonomy_self_loop(n) :- quality_local_taxonomy_self_call(n, c), inside(c, f, quality_local_taxonomy_kinds1), node(_, f, "for_statement", _, _), !quality_local_taxonomy_23(f), inside(f, n, quality_local_taxonomy_kinds0).
 quality_local_taxonomy_candidates(d, n) :- quality_local_taxonomy_def(n, _), quality_local_taxonomy_recursive(n), quality_local_taxonomy_dispatching(n), quality_local_taxonomy_message(n), inside(c127, n, quality_local_taxonomy_kinds0), node(_, c127, "raise_statement", _, _), child(c127, c128, _), node(_, c128, "call", _, _), field(c128, "function", c129), node(_, c129, "identifier", _, _), text(c129, s130), match("(?s:.*)(?:^(?:TypeError)$)(?s:.*)", s130), quality_local_taxonomy_126(n), node(d134, n, _, _, _), quality_local_taxonomy_file133(d134), node(d151, n, _, _, _), quality_local_taxonomy_file150(d151), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d).
@@ -3544,17 +3702,8 @@ quality_project_taxonomy_dispatch(n, x) :- quality_project_taxonomy_def(n, _), i
 quality_project_taxonomy_dispatching(n) :- quality_project_taxonomy_def(n, _), k = count : { quality_project_taxonomy_dispatch(n, _) }, k >= 3.
 quality_project_taxonomy_part(h, h) :- node(_, h, "string", _, _).
 quality_project_taxonomy_part(h, s) :- node(_, h, "concatenated_string", _, _), child(h, s, _), node(_, s, "string", _, _).
-quality_project_taxonomy_binary(h) :- quality_project_taxonomy_part(h, s), strprefix(s, x), match("(?s:.*)[bt](?s:.*)", x).
-quality_project_taxonomy_piece(h, a, b) :- quality_project_taxonomy_part(h, s), child(s, a, _), node(_, a, "string_content", b, _).
-quality_project_taxonomy_slot(h, b) :- quality_project_taxonomy_part(h, s), child(s, i, _), node(_, i, "interpolation", b, _).
-quality_project_taxonomy_both(a) :- node(_, a, "string_content", _, _), node_text(a, x), match("(?s:.*)(?:(?is)unsupported.*shape|shape.*unsupported)(?s:.*)", x).
-quality_project_taxonomy_unsupported(a) :- node(_, a, "string_content", _, _), node_text(a, x), match("(?s:.*)(?:(?i)unsupported)(?s:.*)", x).
-quality_project_taxonomy_shape(a) :- node(_, a, "string_content", _, _), node_text(a, x), match("(?s:.*)(?:(?i)shape)(?s:.*)", x).
-quality_project_taxonomy_pair(h, x, x) :- quality_project_taxonomy_piece(h, a, x), quality_project_taxonomy_both(a).
-quality_project_taxonomy_pair(h, x, y) :- quality_project_taxonomy_piece(h, a, x), quality_project_taxonomy_unsupported(a), quality_project_taxonomy_piece(h, b, y), quality_project_taxonomy_shape(b), x < y.
-quality_project_taxonomy_pair(h, x, y) :- quality_project_taxonomy_piece(h, a, x), quality_project_taxonomy_shape(a), quality_project_taxonomy_piece(h, b, y), quality_project_taxonomy_unsupported(b), x < y.
-quality_project_taxonomy_cut(h, x, y) :- quality_project_taxonomy_pair(h, x, y), quality_project_taxonomy_slot(h, z), x < z, z < y.
-quality_project_taxonomy_shape_message(h) :- quality_project_taxonomy_pair(h, x, y), !quality_project_taxonomy_cut(h, x, y), !quality_project_taxonomy_binary(h).
+quality_project_taxonomy_shape_message(h) :- quality_project_taxonomy_part(h, _), value(h, v), value_type_of(h, "str"), match("(?s:.*)(?:(?is)unsupported.*shape|shape.*unsupported)(?s:.*)", v).
+quality_project_taxonomy_shape_message(h) :- quality_project_taxonomy_part(h, _), fstring_piece(h, _, "literal", v), match("(?s:.*)(?:(?is)unsupported.*shape|shape.*unsupported)(?s:.*)", v).
 quality_project_taxonomy_message(n) :- quality_project_taxonomy_def(n, _), inside(h, n, quality_project_taxonomy_kinds0), quality_project_taxonomy_shape_message(h).
 quality_project_taxonomy_self_loop(n) :- quality_project_taxonomy_self_call(n, c), inside(c, f, quality_project_taxonomy_kinds1), node(_, f, "for_statement", _, _), !quality_project_taxonomy_23(f), inside(f, n, quality_project_taxonomy_kinds0).
 quality_project_taxonomy_candidates(d, n) :- quality_project_taxonomy_def(n, _), quality_project_taxonomy_recursive(n), quality_project_taxonomy_dispatching(n), quality_project_taxonomy_message(n), inside(c127, n, quality_project_taxonomy_kinds0), node(_, c127, "raise_statement", _, _), child(c127, c128, _), node(_, c128, "call", _, _), field(c128, "function", c129), node(_, c129, "identifier", _, _), text(c129, s130), match("(?s:.*)(?:^(?:TypeError)$)(?s:.*)", s130), quality_project_taxonomy_126(n), node(d134, n, _, _, _), quality_project_taxonomy_file133(d134), node(d146, n, _, _, _), quality_project_taxonomy_file145(d146), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d).
@@ -3637,7 +3786,8 @@ conditional_architecture_245(n) :- node(_, n, "attribute", _, _), field(n, "attr
 conditional_architecture_245(n) :- inside(c242, n, conditional_architecture_any_kind), node(_, c242, "attribute", _, _), field(c242, "attribute", c243), node(_, c243, "identifier", _, _), text(c243, s244), match("(?s:.*)(?:^(?:backend_type|is_sql_backend)$)(?s:.*)", s244).
 conditional_architecture_246(n) :- conditional_architecture_222(n), field(n, "condition", c223), conditional_architecture_229(c223).
 conditional_architecture_246(n) :- node(_, n, "match_statement", _, _), field(n, "subject", c230), conditional_architecture_236(c230).
-conditional_architecture_246(n) :- node(_, n, "conditional_expression", _, _), child(n, c237, _), child(p238, c237, 1), conditional_architecture_245(c237).
+conditional_architecture_246(n) :- node(_, n, "conditional_expression", _, _), child(n, c237, 1), !conditional_architecture_cx_shift(n), conditional_architecture_245(c237).
+conditional_architecture_cx_shift(n) :- node(_, n, "conditional_expression", _, _), token(n, _, t, st, _), @substr(t, 0, 1) = "#", child(n, c, 1), node(_, c, _, s, _), st < s.
 conditional_architecture_controls(n) :- node(d221, n, _, _, _), conditional_architecture_file6(d221), conditional_architecture_246(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d).
 conditional_architecture_253(n) :- node(_, n, "raise_statement", _, _).
 conditional_architecture_253(n) :- node(_, n, "return_statement", _, _).
@@ -3661,121 +3811,44 @@ conditional_architecture_class(d, n, s, e, nm) :- conditional_architecture_class
 conditional_architecture_fn(d, n, s, e, nm) :- conditional_architecture_fns(n), node(d, n, _, s, e), field(n, "name", x), text(x, nm).
 conditional_architecture_mpath(d, p) :- conditional_architecture_class(d, _, _, _, _), doc(d, p, _).
 conditional_architecture_mpath(d, p) :- conditional_architecture_fn(d, _, _, _, _), doc(d, p, _).
-conditional_architecture_ppos(d, i) :- conditional_architecture_mpath(d, p), l = @strlen(p), conditional_architecture_dig(a), @mul(a, 64) <= l, conditional_architecture_dig(b), i = @add(@mul(a, 64), b), i <= l.
-conditional_architecture_pcut(d, 0) :- conditional_architecture_mpath(d, p), match("(?:impl|l2070_batching|scripts)/(?s:.*)", p).
-conditional_architecture_pcut(d, i) :- conditional_architecture_ppos(d, i), conditional_architecture_mpath(d, p), i > 0, k = @sub(i, 1), @substr(p, k, 1) = "/", n = @sub(@strlen(p), i), u = @substr(p, i, n), match("(?:impl|l2070_batching|scripts)/(?s:.*)", u).
-conditional_architecture_has_pcut(d) :- conditional_architecture_pcut(d, _).
-conditional_architecture_pgroup(d, i, n) :- conditional_architecture_has_pcut(d), i = min j : { conditional_architecture_pcut(d, j) }, conditional_architecture_mpath(d, p), match("(?s:.*)\\.py", p), n = @sub(@sub(@strlen(p), i), 3).
-conditional_architecture_pslash(d, i) :- conditional_architecture_ppos(d, i), conditional_architecture_mpath(d, p), i < @strlen(p), @substr(p, i, 1) = "/".
-conditional_architecture_has_pslash(d) :- conditional_architecture_pslash(d, _).
-conditional_architecture_gslash(d, j) :- conditional_architecture_pgroup(d, i, n), conditional_architecture_pslash(d, j), j >= i, j < @add(i, n).
-conditional_architecture_gstart(d, i) :- conditional_architecture_pgroup(d, i, _).
-conditional_architecture_gstart(d, s) :- conditional_architecture_gslash(d, j), s = @add(j, 1).
-conditional_architecture_gslash_from(d, s, j) :- conditional_architecture_gstart(d, s), conditional_architecture_gslash(d, j), j >= s.
-conditional_architecture_gslash_before(d, s, j) :- conditional_architecture_gstart(d, s), conditional_architecture_gslash(d, j), j < s.
-conditional_architecture_has_gend_slash(d, s) :- conditional_architecture_gslash_from(d, s, _).
-conditional_architecture_gend(d, s, e) :- conditional_architecture_has_gend_slash(d, s), e = min j : { conditional_architecture_gslash_from(d, s, j) }.
-conditional_architecture_gend(d, s, e) :- conditional_architecture_gstart(d, s), !conditional_architecture_has_gend_slash(d, s), conditional_architecture_pgroup(d, i, n), e = @add(i, n).
-conditional_architecture_comp(d, k, c) :- conditional_architecture_gstart(d, s), conditional_architecture_gend(d, s, e), conditional_architecture_mpath(d, p), n = @sub(e, s), c = @substr(p, s, n), k = count : { conditional_architecture_gslash_before(d, s, _) }.
-conditional_architecture_ncomp(d, k) :- conditional_architecture_pgroup(d, _, _), m = count : { conditional_architecture_gslash(d, _) }, k = @add(m, 1).
-conditional_architecture_qual0(d, c) :- conditional_architecture_comp(d, 0, c).
-conditional_architecture_qual1(d, s) :- conditional_architecture_qual0(d, a), conditional_architecture_comp(d, 1, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual2(d, s) :- conditional_architecture_qual1(d, a), conditional_architecture_comp(d, 2, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual3(d, s) :- conditional_architecture_qual2(d, a), conditional_architecture_comp(d, 3, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual4(d, s) :- conditional_architecture_qual3(d, a), conditional_architecture_comp(d, 4, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual5(d, s) :- conditional_architecture_qual4(d, a), conditional_architecture_comp(d, 5, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual6(d, s) :- conditional_architecture_qual5(d, a), conditional_architecture_comp(d, 6, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual7(d, s) :- conditional_architecture_qual6(d, a), conditional_architecture_comp(d, 7, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual8(d, s) :- conditional_architecture_qual7(d, a), conditional_architecture_comp(d, 8, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual9(d, s) :- conditional_architecture_qual8(d, a), conditional_architecture_comp(d, 9, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual10(d, s) :- conditional_architecture_qual9(d, a), conditional_architecture_comp(d, 10, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual11(d, s) :- conditional_architecture_qual10(d, a), conditional_architecture_comp(d, 11, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual12(d, s) :- conditional_architecture_qual11(d, a), conditional_architecture_comp(d, 12, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual13(d, s) :- conditional_architecture_qual12(d, a), conditional_architecture_comp(d, 13, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual14(d, s) :- conditional_architecture_qual13(d, a), conditional_architecture_comp(d, 14, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual15(d, s) :- conditional_architecture_qual14(d, a), conditional_architecture_comp(d, 15, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual16(d, s) :- conditional_architecture_qual15(d, a), conditional_architecture_comp(d, 16, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual17(d, s) :- conditional_architecture_qual16(d, a), conditional_architecture_comp(d, 17, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual18(d, s) :- conditional_architecture_qual17(d, a), conditional_architecture_comp(d, 18, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual19(d, s) :- conditional_architecture_qual18(d, a), conditional_architecture_comp(d, 19, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual20(d, s) :- conditional_architecture_qual19(d, a), conditional_architecture_comp(d, 20, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual21(d, s) :- conditional_architecture_qual20(d, a), conditional_architecture_comp(d, 21, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual22(d, s) :- conditional_architecture_qual21(d, a), conditional_architecture_comp(d, 22, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual23(d, s) :- conditional_architecture_qual22(d, a), conditional_architecture_comp(d, 23, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual24(d, s) :- conditional_architecture_qual23(d, a), conditional_architecture_comp(d, 24, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual25(d, s) :- conditional_architecture_qual24(d, a), conditional_architecture_comp(d, 25, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual26(d, s) :- conditional_architecture_qual25(d, a), conditional_architecture_comp(d, 26, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual27(d, s) :- conditional_architecture_qual26(d, a), conditional_architecture_comp(d, 27, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual28(d, s) :- conditional_architecture_qual27(d, a), conditional_architecture_comp(d, 28, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual29(d, s) :- conditional_architecture_qual28(d, a), conditional_architecture_comp(d, 29, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual30(d, s) :- conditional_architecture_qual29(d, a), conditional_architecture_comp(d, 30, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_qual31(d, s) :- conditional_architecture_qual30(d, a), conditional_architecture_comp(d, 31, c), s = @concat(@concat(a, "."), c).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 1), conditional_architecture_qual0(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 2), conditional_architecture_qual1(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 3), conditional_architecture_qual2(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 4), conditional_architecture_qual3(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 5), conditional_architecture_qual4(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 6), conditional_architecture_qual5(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 7), conditional_architecture_qual6(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 8), conditional_architecture_qual7(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 9), conditional_architecture_qual8(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 10), conditional_architecture_qual9(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 11), conditional_architecture_qual10(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 12), conditional_architecture_qual11(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 13), conditional_architecture_qual12(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 14), conditional_architecture_qual13(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 15), conditional_architecture_qual14(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 16), conditional_architecture_qual15(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 17), conditional_architecture_qual16(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 18), conditional_architecture_qual17(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 19), conditional_architecture_qual18(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 20), conditional_architecture_qual19(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 21), conditional_architecture_qual20(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 22), conditional_architecture_qual21(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 23), conditional_architecture_qual22(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 24), conditional_architecture_qual23(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 25), conditional_architecture_qual24(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 26), conditional_architecture_qual25(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 27), conditional_architecture_qual26(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 28), conditional_architecture_qual27(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 29), conditional_architecture_qual28(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 30), conditional_architecture_qual29(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 31), conditional_architecture_qual30(d, s).
-conditional_architecture_module(d, s) :- conditional_architecture_ncomp(d, 32), conditional_architecture_qual31(d, s).
-conditional_architecture_pbase_from(d, 0) :- conditional_architecture_mpath(d, _), !conditional_architecture_has_pslash(d).
-conditional_architecture_pbase_from(d, j) :- conditional_architecture_has_pslash(d), m = max i : { conditional_architecture_pslash(d, i) }, j = @add(m, 1).
-conditional_architecture_module(d, s) :- conditional_architecture_mpath(d, p), !conditional_architecture_has_pcut(d), conditional_architecture_pbase_from(d, j), n = @sub(@strlen(p), j), b = @substr(p, j, n), match("(?s:.+)\\.py", b), k = @sub(@strlen(b), 3), s = @substr(b, 0, k).
+conditional_architecture_module(d, q) :- conditional_architecture_mpath(d, p), match("(?s:.*)(?:(?:^|/)(?:impl|l2070_batching|scripts)/)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)", p), u = @rx_replace(p, "^(?s:.*?)(?:(?:^|/)((?:impl|l2070_batching|scripts)/.*)\\.py$)(?s:.*)$", "$1"), q = @rx_replace(u, "/", ".").
+conditional_architecture_module(d, q) :- conditional_architecture_mpath(d, p), !match("(?s:.*)(?:(?:^|/)(?:impl|l2070_batching|scripts)/)(?s:.*)", p), match("(?s:.*)(?:(?:^|/)([^/]+)\\.py$)(?s:.*)", p), q = @rx_replace(p, "^(?s:.*?)(?:(?:^|/)([^/]+)\\.py$)(?s:.*)$", "$1").
 conditional_architecture_from_item(d, s, i, n) :- conditional_architecture_from_names(n), child(n, i, _), node(d, i, k, s, _), conditional_architecture_k_import_item(k), !field(n, "module_name", i).
 conditional_architecture_direct_item(d, s, i, n) :- conditional_architecture_direct_names(n), child(n, i, _), node(d, i, k, s, _), conditional_architecture_k_import_item(k), !field(n, "module_name", i).
-conditional_architecture_mstrip(n, t) :- conditional_architecture_from_names(n), field(n, "module_name", m), node_text(m, t).
-conditional_architecture_mstrip(n, u) :- conditional_architecture_mstrip(n, t), @substr(t, 0, 1) = ".", u = @substr(t, 1, 1000000000).
-conditional_architecture_mfull(n, t) :- conditional_architecture_mstrip(n, t), @substr(t, 0, 1) != ".".
+conditional_architecture_mfull(n, t) :- conditional_architecture_from_names(n), field(n, "module_name", m), node_text(m, x), t = @rx_replace(x, "^\\.+|\\.+$", "").
 conditional_architecture_alias(d, s, l, o) :- conditional_architecture_from_item(d, s, i, n), node(d, i, "dotted_name", _, _), node_text(i, l), conditional_architecture_mfull(n, m), o = @concat(@concat(m, "."), l).
 conditional_architecture_alias(d, s, l, o) :- conditional_architecture_from_item(d, s, i, n), node(d, i, "aliased_import", _, _), field(i, "alias", a), node_text(a, l), field(i, "name", x), node_text(x, nm), conditional_architecture_mfull(n, m), o = @concat(@concat(m, "."), nm).
-conditional_architecture_alias(d, s, l, o) :- conditional_architecture_direct_item(d, s, i, _), node(d, i, "dotted_name", _, _), child(i, h, 0), text(h, l), node_text(i, o).
+conditional_architecture_alias(d, s, l, o) :- conditional_architecture_direct_item(d, s, i, _), node(d, i, "dotted_name", _, _), node_text(i, o), match("\\w(?s:.*)", o), l = @rx_replace(o, "^(\\w+)(?s:.*)$", "$1").
 conditional_architecture_alias(d, s, l, o) :- conditional_architecture_direct_item(d, s, i, _), node(d, i, "aliased_import", _, _), field(i, "alias", a), node_text(a, l), field(i, "name", x), node_text(x, o).
 conditional_architecture_cclass(d, n, s, e, nm, qn) :- conditional_architecture_class(d, n, s, e, nm), s = max u : { conditional_architecture_class(d, _, u, _, nm) }, conditional_architecture_module(d, m), qn = @concat(@concat(m, "."), nm).
 conditional_architecture_has_qn(qn) :- conditional_architecture_cclass(_, _, _, _, _, qn).
-conditional_architecture_base(c, b) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_class_sups(c), field(c, "superclasses", g), child(g, b, _), node_text(b, x), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", x).
-conditional_architecture_base(c, b) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_class_sups(c), field(c, "superclasses", g), child(g, b, _), node_text(b, x), match("[A-Za-z_][\\w.\\s]*\\((?s:.*)\\)", x).
+conditional_architecture_sup(c, t, n) :- conditional_architecture_class_sups(c), field(c, "superclasses", g), node_text(g, x), t = @substr(x, 1, @sub(@strlen(x), 2)), n = @strlen(@rx_replace(t, "[^,]", "")).
+conditional_architecture_sup_k1(c, k) :- conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = @mul(a, 262144), k < n.
+conditional_architecture_sup_k2(c, k) :- conditional_architecture_sup_k1(c, h), conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = @add(h, @mul(a, 4096)), k < n.
+conditional_architecture_sup_k3(c, k) :- conditional_architecture_sup_k2(c, h), conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = @add(h, @mul(a, 64)), k < n.
+conditional_architecture_sup_k(c, k) :- conditional_architecture_sup_k3(c, h), conditional_architecture_sup(c, _, n), conditional_architecture_digit(a), k = @add(h, a), k < n.
+conditional_architecture_split(c, k) :- conditional_architecture_sup_k(c, k), conditional_architecture_sup(c, t, _), re = @concat(@concat("^((?:[^,]*,){", @to_string(k)), "}[^,]*),(?s:.*)$"), u = @rx_replace(t, re, "$1"), o = @strlen(@rx_replace(u, "[^(\\[{]", "")), z = @strlen(@rx_replace(u, "[^)\\]}]", "")), o = z.
+conditional_architecture_cut(c, 0) :- conditional_architecture_sup(c, _, _).
+conditional_architecture_cut(c, j) :- conditional_architecture_split(c, k), j = @add(k, 1).
+conditional_architecture_stop(c, k) :- conditional_architecture_split(c, k).
+conditional_architecture_stop(c, n) :- conditional_architecture_sup(c, _, n).
+rr_agg4(c, j, y) :- conditional_architecture_cut(c, j), conditional_architecture_stop(c, y), y >= j.
+conditional_architecture_item(c, x) :- conditional_architecture_cut(c, j), conditional_architecture_sup(c, t, _), q = min y : { rr_agg4(c, j, y) }, re = @concat(@concat(@concat(@concat("^(?:[^,]*,){", @to_string(j)), "}([^,]*(?:,[^,]*){"), @to_string(@sub(q, j))), "})(?:,(?s:.*))?$"), u = @rx_replace(t, re, "$1"), x = @rx_replace(u, "^[ \\t\\n\\r]+|[ \\t\\n\\r]+$", "").
+conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_]\\w*(?:\\s*\\.\\s*[A-Za-z_]\\w*)*", x).
+conditional_architecture_base(c, x) :- conditional_architecture_cclass(_, c, _, _, _, _), conditional_architecture_item(c, x), match("[A-Za-z_][\\w.\\s]*\\((?s:.*)", x), match("(?s:.*)\\)", x).
 conditional_architecture_sp_cand(f, i, ann) :- conditional_architecture_step_params(f), field(f, "parameters", ps), child(ps, tp, i), node(_, tp, k, _, _), conditional_architecture_k_typed(k), child(tp, x, 0), node(_, x, "identifier", _, _), text(x, "step"), field(tp, "type", ann).
 conditional_architecture_step_ann(f, ann) :- conditional_architecture_sp_cand(f, i, ann), i = min j : { conditional_architecture_sp_cand(f, j, _) }.
-conditional_architecture_root(b) :- conditional_architecture_base(_, b).
-conditional_architecture_root(a) :- conditional_architecture_step_ann(_, a).
-conditional_architecture_head(r, h, hs) :- conditional_architecture_root(r), node(d, r, _, s, _), node(d, h, "identifier", s, _), text(h, hs).
-conditional_architecture_chain(r, h, "") :- conditional_architecture_head(r, h, _).
-conditional_architecture_chain(r, a, s2) :- conditional_architecture_chain(r, x, s1), field(a, "object", x), node(d, a, "attribute", _, ae), node(d, r, _, _, re), ae <= re, field(a, "attribute", y), node(d, x, _, _, xe), node(d, y, _, ys, _), ys = @add(xe, 1), text(y, at), s2 = @concat(@concat(s1, "."), at).
-conditional_architecture_chain_more(r, x) :- conditional_architecture_chain(r, x, _), conditional_architecture_chain(r, a, _), field(a, "object", x).
-conditional_architecture_lead_suffix(r, s) :- conditional_architecture_chain(r, x, s), !conditional_architecture_chain_more(r, x).
-conditional_architecture_full_suffix(r, s) :- conditional_architecture_chain(r, x, s), node(d, x, _, _, e), node(d, r, _, _, e).
-conditional_architecture_has_full_suffix(r) :- conditional_architecture_full_suffix(r, _).
-conditional_architecture_resolve_need(d, h, cs) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, b), conditional_architecture_head(b, _, h).
-conditional_architecture_resolve_need(d, h, fs) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_head(a, _, h).
+conditional_architecture_base_head(x, h) :- conditional_architecture_base(_, x), match("\\w(?s:.*)", x), h = @rx_replace(x, "^(\\w+)(?s:.*)$", "$1").
+conditional_architecture_base_suffix(x, sf) :- conditional_architecture_base_head(x, _), sf = @rx_replace(x, "^\\w+((?:\\.\\w+)*)(?s:.*)$", "$1").
+conditional_architecture_ann(a, x) :- conditional_architecture_step_ann(_, a), node_text(a, x).
+conditional_architecture_ann_head(a, h) :- conditional_architecture_ann(a, x), match("\\w(?s:.*)", x), h = @rx_replace(x, "^(\\w+)(?s:.*)$", "$1").
+conditional_architecture_resolve_need(d, h, cs) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, x), conditional_architecture_base_head(x, h).
+conditional_architecture_resolve_need(d, h, fs) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_ann_head(a, h).
 conditional_architecture_resolve_cand(d, h, cs, s) :- conditional_architecture_resolve_need(d, h, cs), conditional_architecture_alias(d, s, h, _), s < cs.
 conditional_architecture_has_resolve_cand(d, h, cs) :- conditional_architecture_resolve_cand(d, h, cs, _).
 conditional_architecture_resolved(d, h, cs, o) :- conditional_architecture_has_resolve_cand(d, h, cs), m = max s : { conditional_architecture_resolve_cand(d, h, cs, s) }, conditional_architecture_alias(d, m, h, o).
 conditional_architecture_resolved(d, h, cs, h) :- conditional_architecture_resolve_need(d, h, cs), !conditional_architecture_has_resolve_cand(d, h, cs).
-conditional_architecture_class_base(c, nm) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, b), conditional_architecture_head(b, _, h), conditional_architecture_resolved(d, h, cs, o), conditional_architecture_lead_suffix(b, sf), nm = @concat(o, sf).
+conditional_architecture_class_base(c, nm) :- conditional_architecture_cclass(d, c, cs, _, _, _), conditional_architecture_base(c, x), conditional_architecture_base_head(x, h), conditional_architecture_resolved(d, h, cs, o), conditional_architecture_base_suffix(x, sf), nm = @concat(o, sf).
 conditional_architecture_derived(qn) :- conditional_architecture_derived(b), conditional_architecture_class_base(c, b), conditional_architecture_cclass(_, c, _, _, _, qn).
 conditional_architecture_fn_in(f, c, cs) :- conditional_architecture_fn(d, f, fs, fe, _), conditional_architecture_class(d, c, cs, ce, _), cs < fs, ce >= fe.
 conditional_architecture_fn_cls(f, c) :- conditional_architecture_fn_in(f, c, cs), cs = max u : { conditional_architecture_fn_in(f, _, u) }.
@@ -3848,9 +3921,9 @@ conditional_architecture_phys_compile_ok(c) :- conditional_architecture_cmethod(
 conditional_architecture_sem_contract_ok(c) :- conditional_architecture_cmethod(_, m, _, _, "require_sql_physical_conditional", c), conditional_architecture_always(m).
 conditional_architecture_phys_contract_ok(c) :- conditional_architecture_cmethod(_, m, _, _, "require_sql_physical_conditional", c), !conditional_architecture_always(m), !conditional_architecture_backend_fns(m).
 conditional_architecture_lower_ok(c) :- conditional_architecture_cmethod(d, m, ms, me, "_lower_conditional_step", c), conditional_architecture_ncall(d, s, e, x, _), s >= ms, e <= me, match("(?s:.*)(?:SqlConditionalStep\\.from_semantic$)(?s:.*)", x).
-conditional_architecture_ann_suffix(a, s) :- conditional_architecture_full_suffix(a, s), conditional_architecture_step_ann(_, a).
-conditional_architecture_ann_suffix(a, "") :- conditional_architecture_step_ann(_, a), !conditional_architecture_has_full_suffix(a).
-conditional_architecture_step_ok(f) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_head(a, _, h), conditional_architecture_resolved(d, h, fs, o), conditional_architecture_ann_suffix(a, sf), nm = @concat(o, sf), nm = "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep".
+conditional_architecture_ann_suffix(a, s) :- conditional_architecture_ann(a, x), match("\\w+(?:\\.\\w+)*", x), s = @rx_replace(x, "^\\w+((?:\\.\\w+)*)$", "$1").
+conditional_architecture_ann_suffix(a, "") :- conditional_architecture_ann(a, x), !match("\\w+(?:\\.\\w+)*", x).
+conditional_architecture_step_ok(f) :- conditional_architecture_cfunc(d, f, fs, _, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_step_ann(f, a), conditional_architecture_ann_head(a, h), conditional_architecture_resolved(d, h, fs, o), conditional_architecture_ann_suffix(a, sf), nm = @concat(o, sf), nm = "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep".
 conditional_architecture_req_call(f, l) :- conditional_architecture_cfunc(d, f, fs, fe, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_ncall(d, s, e, "step.require_sql_physical_conditional", l), s >= fs, e <= fe.
 conditional_architecture_strat_line(f, l) :- conditional_architecture_cfunc(d, f, fs, fe, "impl.common.l2070_server_plan.steps._conditional_compile.compile_sql_conditional_step"), conditional_architecture_ncall(d, s, e, x, l), s >= fs, e <= fe, match("(?s:.*)(?:_conditional_strategy$)(?s:.*)", x).
 conditional_architecture_strat_before(f, l) :- conditional_architecture_req_call(f, l), conditional_architecture_strat_line(f, k), k <= l.

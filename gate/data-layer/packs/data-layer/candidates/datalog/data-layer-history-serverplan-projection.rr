@@ -13,14 +13,15 @@ history_runtime_ret("return_statement").
 .decl name(n: node, s: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
-.decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl t13(s: symbol)
 .decl t24(s: symbol)
 .decl t5(s: symbol)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, name, line, syntax_error, str
+.input doc, node, child, field, text, name, line, syntax_error, value, value_type_of
 .output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/**/*.py", p).
@@ -53,6 +54,6 @@ history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _)
 history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "tuple", _, _).
 history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "list", _, _).
 history_runtime_shape(n) :- node(_, n, "return_statement", _, _), child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, "frozenset").
-history_runtime_word(n, v) :- node(_, s, "string", _, _), str(s, v), inside(s, n, history_runtime_ret).
+history_runtime_word(n, v) :- node(_, s, "string", _, _), value(s, v), value_type_of(s, "str"), inside(s, n, history_runtime_ret).
 violation("data-layer-history-serverplan-projection", "history-runtime", "HSP-002", p, l) :- history_runtime_shape(n), history_runtime_word(n, "history"), history_runtime_word(n, "runtime"), node(d, n, _, _, _), history_runtime_file(d, p), line(n, l).
 violation("data-layer-history-serverplan-projection", "sentinel", "HSP-003", p, l) :- history_runtime_shape(n), history_runtime_word(n, "__history_runtime__"), node(d, n, _, _, _), history_runtime_file(d, p), line(n, l).

@@ -13,7 +13,6 @@ prs_lambdak("lambda").
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
-.decl name(n: node, s: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl option_item(name: symbol, v: symbol)
@@ -49,10 +48,6 @@ prs_lambdak("lambda").
 .decl prs_c3(f: node, c: node)
 .decl prs_call(d: number, c: node, s: number, e: number, f: node, fk: symbol, full: symbol, callee: symbol)
 .decl prs_cast2(c: node)
-.decl prs_ccat(n: node, v: symbol)
-.decl prs_ccle(n: node, cs: number, cs2: number)
-.decl prs_ccn(n: node, k: number)
-.decl prs_ccp(n: node, c: node, j: number)
 .decl prs_cedge(d: number, o: node, d2: number, t: node)
 .decl prs_cg(d: number, f: node, c: node, cs: number, ce: number, cn: symbol, nm: symbol, mg: number)
 .decl prs_cgok(d: number, c: node, cn: symbol, nm: symbol, mg: number)
@@ -125,28 +120,19 @@ prs_lambdak("lambda").
 .decl prs_legacy(f: node)
 .decl prs_legacyname(s: symbol)
 .decl prs_lp(x: node, lp: node)
-.decl prs_lsuf(ms: symbol, s: symbol)
-.decl prs_lsufn(ms: symbol, j: number)
 .decl prs_managed(c: node)
 .decl prs_managedm(s: symbol)
 .decl prs_mb(d: number, a: node, nm: symbol)
 .decl prs_mcall(d: number, o: node, c: node, cn: symbol, fk: symbol, cl: node)
-.decl prs_mdge(d: number, i: number, j: number)
-.decl prs_mdot(d: number, i: number)
-.decl prs_mdots(d: number, i: number, k: number)
 .decl prs_mgcond(c: node)
 .decl prs_mm(d: number, mm: symbol)
 .decl prs_modimp(d: number, ik: symbol, loc: symbol, tg: symbol, xs: number)
 .decl prs_modimpl(d: number, loc: symbol)
-.decl prs_msuf(d: number, s: symbol)
 .decl prs_mutated(d: number, nm: symbol)
 .decl prs_mutk(k: symbol)
 .decl prs_mutm(s: symbol)
 .decl prs_n(d: number, n: node, k: symbol, s: number, e: number)
 .decl prs_nameslot(n: node)
-.decl prs_ndots(d: number, k: number)
-.decl prs_needk(d: number, k: number)
-.decl prs_nlead(ms: symbol, k: number)
 .decl prs_nonfactory(s: symbol)
 .decl prs_oploc(d: number, f: node, nm: symbol, since: number)
 .decl prs_opq(d: number, c: node)
@@ -158,7 +144,6 @@ prs_lambdak("lambda").
 .decl prs_pathok(d: number)
 .decl prs_pattr(d: number, x: node, xs: number, xe: number, at: symbol, rn: symbol, tc: number)
 .decl prs_pedge(d: number, o: node, d2: number, t: node)
-.decl prs_plainstr(c: node, v: symbol)
 .decl prs_policytext(v: node, t: symbol)
 .decl prs_prot(d: number, f: node, x: node, xs: number, xe: number, tc: number)
 .decl prs_protattr(s: symbol)
@@ -174,7 +159,6 @@ prs_lambdak("lambda").
 .decl prs_r7(f: node, r: node, v: node)
 .decl prs_recv(c: node, r: node, rk: symbol, rt: symbol)
 .decl prs_region(x: node, rs: number)
-.decl prs_relms(ms: symbol)
 .decl prs_ret(d: number, r: node, rs: number, re: number, v: node)
 .decl prs_rin(d: number, f: node, r: node, rs: number, re: number, v: node, vs: number, ve: number, vk: symbol, pv: node)
 .decl prs_root(e: node, nm: symbol, tc: number)
@@ -195,9 +179,9 @@ prs_lambdak("lambda").
 .decl prs_step(n: node, c: node)
 .decl prs_str(d: number, s: number, e: number, v: symbol)
 .decl prs_strict(f: node)
-.decl prs_strip(d: number, k: number, st: symbol)
 .decl prs_surface(f: node)
 .decl prs_surfcls(c: node)
+.decl prs_sval(n: node, v: symbol)
 .decl prs_taint(d: number, f: node, nm: symbol, since: number)
 .decl prs_thru(x: node, y: node)
 .decl prs_tuplek(k: symbol)
@@ -206,11 +190,11 @@ prs_lambdak("lambda").
 .decl prs_walk(e: node, x: node, tc: number)
 .decl prs_wrapm(s: symbol)
 .decl prs_wrapper(v: node)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, syntax_error, node, child, node_text, field, strprefix, str, name, line
+.input doc, syntax_error, node, child, node_text, field, value, strprefix, line
 .output violation
 option_value("entryPoint", "scan_paths").
 prs_allowcallee("build_internal_permission_query_request").
@@ -358,14 +342,10 @@ prs_rsplace(n) :- prs_n(_, n, "string", _, _), inside(n, _, prs_fdk).
 prs_rsplace(n) :- prs_n(_, n, "concatenated_string", _, _), inside(n, _, prs_fdk).
 prs_rsplace(n) :- prs_n(_, n, "string", _, _), inside(n, a, prs_assignk), field(a, "left", t), prs_ident(_, t, _, _, "__all__").
 prs_rsplace(n) :- prs_n(_, n, "concatenated_string", _, _), inside(n, a, prs_assignk), field(a, "left", t), prs_ident(_, t, _, _, "__all__").
-prs_plainstr(c, v) :- prs_n(_, c, "string", _, _), strprefix(c, p), match("[ru]*", p), str(c, v).
-prs_ccle(n, cs, cs2) :- prs_n(_, n, "concatenated_string", _, _), prs_kid(n, c, _), prs_n(_, c, "string", cs, _), prs_kid(n, c2, _), prs_n(_, c2, "string", cs2, _), cs2 <= cs.
-prs_ccp(n, c, @sub(k, 1)) :- prs_n(_, n, "concatenated_string", _, _), prs_kid(n, c, _), prs_n(_, c, "string", cs, _), k = count : { prs_ccle(n, cs, _) }.
-prs_ccn(n, k) :- prs_ccp(n, _, 0), k = count : { prs_ccp(n, _, _) }.
-prs_ccat(n, @concat(v0, v1)) :- prs_ccn(n, 2), prs_ccp(n, c0, 0), prs_plainstr(c0, v0), prs_ccp(n, c1, 1), prs_plainstr(c1, v1).
-prs_ccat(n, @concat(@concat(v0, v1), v2)) :- prs_ccn(n, 3), prs_ccp(n, c0, 0), prs_plainstr(c0, v0), prs_ccp(n, c1, 1), prs_plainstr(c1, v1), prs_ccp(n, c2, 2), prs_plainstr(c2, v2).
-prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "string", s, e), prs_plainstr(n, v).
-prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "concatenated_string", s, e), prs_first(n, c), strprefix(c, p), match("[ru]*", p), prs_ccat(n, v).
+prs_sval(n, v) :- prs_rsplace(n), value(n, v).
+prs_sval(n, "") :- prs_rsplace(n), !value(n, _).
+prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "string", s, e), strprefix(n, p), match("[ru]*", p), prs_sval(n, v).
+prs_str(d, s, e, v) :- prs_rsplace(n), prs_n(d, n, "concatenated_string", s, e), prs_first(n, c), strprefix(c, p), match("[ru]*", p), prs_sval(n, v).
 prs_attr(d, a, s, e, at, o, ot) :- prs_n(d, a, "attribute", s, e), field(a, "attribute", x), node_text(x, at), field(a, "object", o), node_text(o, ot).
 prs_call(d, c, s, e, f, fk, ft, ft) :- prs_n(d, c, "call", s, e), field(c, "function", f), prs_n(d, f, fk, _, _), fk != "attribute", node_text(f, ft).
 prs_call(d, c, s, e, f, "attribute", ft, at) :- prs_n(d, c, "call", s, e), field(c, "function", f), prs_n(d, f, "attribute", _, _), node_text(f, ft), field(f, "attribute", a), node_text(a, at).
@@ -416,25 +396,10 @@ prs_ledge(d, o, t) :- prs_call(d, c, _, _, fi, "attribute", _, cn), prs_cown(d, 
 prs_impfrom(d, n, ms) :- prs_n(d, n, "import_from_statement", _, _), field(n, "module_name", mn), node_text(mn, ms).
 prs_impx(d, n, t, t, xs) :- prs_impfrom(d, n, _), field(n, "module_name", mn), prs_kid(n, x, _), x != mn, prs_n(d, x, "dotted_name", xs, _), node_text(x, t).
 prs_impx(d, n, al, nm, xs) :- prs_impfrom(d, n, _), field(n, "module_name", mn), prs_kid(n, x, _), x != mn, prs_n(d, x, "aliased_import", xs, _), field(x, "name", y), node_text(y, nm), field(x, "alias", z), node_text(z, al).
-prs_relms(ms) :- prs_impfrom(_, _, ms), prefix(".", ms).
-prs_lsuf(ms, ms) :- prs_relms(ms).
-prs_lsuf(ms, @substr(s, 1, @sub(@strlen(s), 1))) :- prs_lsuf(ms, s), @strlen(s) > 0, @substr(s, 0, 1) = ".".
-prs_lsufn(ms, @sub(@strlen(ms), @strlen(s))) :- prs_lsuf(ms, s).
-prs_nlead(ms, k) :- prs_relms(ms), k = max j : { prs_lsufn(ms, j) }.
-prs_needk(d, k) :- prs_impfrom(d, _, ms), prs_nlead(ms, k).
-prs_mm(d, @concat(m, ".__init__")) :- prs_needk(d, _), prs_doc(d, p, m), suffix("/__init__.py", p).
-prs_mm(d, m) :- prs_needk(d, _), prs_doc(d, p, m), !suffix("/__init__.py", p).
-prs_msuf(d, mm) :- prs_mm(d, mm).
-prs_msuf(d, @substr(s, 1, @sub(@strlen(s), 1))) :- prs_msuf(d, s), @strlen(s) > 1.
-prs_mdot(d, i) :- prs_msuf(d, s), @substr(s, 0, 1) = ".", prs_mm(d, mm), i = @sub(@strlen(mm), @strlen(s)).
-prs_mdge(d, i, j) :- prs_mdot(d, i), prs_mdot(d, j), j >= i.
-prs_mdots(d, i, k) :- prs_mdot(d, i), k = count : { prs_mdge(d, i, _) }.
-prs_ndots(d, k) :- prs_mdot(d, _), k = count : { prs_mdot(d, _) }.
-prs_strip(d, k, @substr(mm, 0, i)) :- prs_needk(d, k), prs_mm(d, mm), prs_mdots(d, i, k).
-prs_strip(d, k, mm) :- prs_needk(d, k), prs_mm(d, mm), prs_ndots(d, nd), nd < k.
-prs_strip(d, k, mm) :- prs_needk(d, k), prs_mm(d, mm), !prs_mdot(d, _).
+prs_mm(d, @concat(m, ".__init__")) :- prs_doc(d, p, m), suffix("/__init__.py", p).
+prs_mm(d, m) :- prs_doc(d, p, m), !suffix("/__init__.py", p).
 prs_fbase(d, n, ms) :- prs_impfrom(d, n, ms), !prefix(".", ms).
-prs_fbase(d, n, @concat(@concat(st, "."), @substr(ms, k, @sub(@strlen(ms), k)))) :- prs_impfrom(d, n, ms), prs_nlead(ms, k), prs_strip(d, k, st).
+prs_fbase(d, n, b) :- prs_impfrom(d, n, ms), prefix(".", ms), prs_mm(d, mm), r = @rx_replace(ms, "^\\.+", ""), k = @sub(@strlen(ms), @strlen(r)), st = @rx_replace(mm, @concat(@concat("(?:\\.[^.]+){", @to_string(k)), "}$"), ""), b = @concat(@concat(st, "."), r).
 prs_dn(t) :- prs_n(d, n, "import_statement", _, _), prs_kid(n, x, _), prs_n(d, x, "dotted_name", _, _), node_text(x, t).
 prs_dnsuf(t, t) :- prs_dn(t).
 prs_dnsuf(t, @substr(s, 1, @sub(@strlen(s), 1))) :- prs_dnsuf(t, s), @strlen(s) > 1.
@@ -477,7 +442,7 @@ prs_firstimp(d, ik, loc, tg) :- prs_modimp(d, ik, loc, tg, xs), xs = min s : { p
 prs_baseq(d, c, o, tg) :- prs_basex(d, c, b, o, "identifier"), node_text(b, bt), prs_firstimp(d, "import_from_statement", bt, tg).
 prs_baseq(d, c, o, @concat(@concat(m, "."), bt)) :- prs_basex(d, c, b, o, "identifier"), node_text(b, bt), !prs_firstimp(d, "import_from_statement", bt, _), prs_doc(d, _, m).
 prs_baseq(d, c, o, @concat(@concat(tg, "."), at)) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, at, _, ot), prs_firstimp(d, "import_statement", ot, tg).
-prs_baseq(d, c, o, q) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, _, _, ot), !prs_firstimp(d, "import_statement", ot, _), name(b, q).
+prs_baseq(d, c, o, q) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, _, _, ot), !prs_firstimp(d, "import_statement", ot, _), node_text(b, t), q = @rx_replace(t, "\\s+", "").
 prs_base(c, p, o) :- prs_baseq(_, c, o, q), prs_cls(_, p, q).
 prs_mcall(d, o, c, cn, fk, cl) :- prs_call(d, c, cs, ce, _, fk, _, cn), prs_cown(d, c, o), prs_flag(d, o), prs_lp(o, cl), prs_cls(d, cl, _), prs_body(o, bs, be), cs >= bs, ce <= be, !prs_inlambda(c).
 prs_globalfn(d, nm) :- prs_flag(d, g), !prs_lp(g, _), prs_decl(d, g, _, nm, _, _).

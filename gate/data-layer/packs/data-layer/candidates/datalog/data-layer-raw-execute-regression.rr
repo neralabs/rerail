@@ -4,43 +4,88 @@ removed_definitions_fdef("function_definition").
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
 .decl line(n: node, l: number)
-.decl mixed_marker_module(p: symbol, s: symbol)
+.decl mixed_marker_code(c: symbol)
+.decl mixed_marker_codes(c: symbol, when: symbol)
+.decl mixed_marker_entry(v: symbol)
+.decl mixed_marker_module(p: symbol, s: symbol, c: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
+.decl option_item(name: symbol, v: symbol)
+.decl option_on(name: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl removed_definitions_call(x: node)
-.decl removed_definitions_call_name(s: symbol)
+.decl removed_calls_call(x: node)
+.decl removed_calls_code(c: symbol)
+.decl removed_calls_codes(c: symbol, when: symbol)
+.decl removed_calls_entry(v: symbol)
+.decl removed_calls_name(s: symbol)
 .decl removed_definitions_calls(f: node)
+.decl removed_definitions_code(c: symbol)
+.decl removed_definitions_codes(c: symbol, when: symbol)
 .decl removed_definitions_name(s: symbol)
 .decl removed_definitions_own(f: node, x: node)
 .decl removed_definitions_owner(d: number, f: node)
 .decl removed_definitions_raise(x: node)
 .decl removed_definitions_raises(f: node)
-.decl removed_definitions_stub(p: symbol)
 .decl removed_definitions_stubbed(f: node)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, field, text, line, syntax_error, node_text
 .output violation
-removed_definitions_call_name("_execute_grammar").
-removed_definitions_call_name("_execute_sql_or_schema_statement").
-removed_definitions_call_name("_execute_sql_or_schema_statement_async").
-removed_definitions_call_name("_execute_template_with_params").
-removed_definitions_call_name("_execute_template_with_params_async").
-removed_definitions_call_name("execute_grammar").
-removed_definitions_call_name("execute_sql").
-removed_definitions_call_name("fetchall_grammar").
-removed_definitions_call_name("fetchall_raw").
-removed_definitions_call_name("fetchall_raw_async").
-removed_definitions_call_name("fetchone_grammar").
-removed_definitions_call_name("fetchone_raw").
-removed_definitions_call_name("fetchone_raw_async").
-removed_definitions_call_name("nonportably_execute_sql").
-removed_definitions_call_name("raw_execute").
-removed_definitions_call_name("raw_execute_async").
-removed_definitions_call_name("raw_execute_fetch").
-removed_definitions_call_name("raw_execute_fetch_async").
+mixed_marker_codes("mixed_helper_text", "on").
+mixed_marker_codes("RER001", "off").
+mixed_marker_entry("all").
+mixed_marker_entry("_check_text").
+mixed_marker_entry("scan_file_content").
+option_item("compatibilityStubFiles", "impl/common/l2200_sql_dialect/sql_connection.py").
+option_item("compatibilityStubFiles", "impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_transaction.py").
+option_item("compatibilityStubFiles", "impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py").
+option_item("compatibilityStubFiles", "impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py").
+option_item("compatibilityStubFiles", "impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py").
+option_item("compatibilityStubFiles", "impl/doltdb/connection.py").
+option_item("compatibilityStubFiles", "impl/doltdb/versioned_write_transaction.py").
+option_item("compatibilityStubFiles", "impl/mariadb/connection.py").
+option_item("compatibilityStubFiles", "impl/mongodb/connection.py").
+option_item("compatibilityStubFiles", "impl/mongodb/transaction.py").
+option_item("compatibilityStubFiles", "impl/mongodb/versioned_read_transaction_sparse.py").
+option_item("compatibilityStubFiles", "impl/neo4j/connection.py").
+option_item("compatibilityStubFiles", "impl/neo4j/transaction.py").
+option_item("compatibilityStubFiles", "impl/neo4j/versioned_read_transaction_sparse.py").
+option_item("compatibilityStubFiles", "impl/postgres/connection.py").
+option_item("compatibilityStubFiles", "impl/read_through/connection.py").
+option_item("compatibilityStubFiles", "impl/read_through/transaction.py").
+option_item("compatibilityStubFiles", "impl/sqlite/connection.py").
+option_item("compatibilityStubFiles", "impl/sqlite/transaction.py").
+option_item("compatibilityStubFiles", "l2000_connection/connection.py").
+option_item("compatibilityStubFiles", "l2050_transaction/transaction.py").
+option_item("compatibilityStubFiles", "l7200_versioned_transactions/versioned_transactions.py").
+option_value("entryPoint", "all").
+removed_calls_codes("removed_call", "on").
+removed_calls_codes("RER001", "off").
+removed_calls_entry("all").
+removed_calls_entry("_check_ast").
+removed_calls_entry("scan_file_content").
+removed_calls_name("_execute_grammar").
+removed_calls_name("_execute_sql_or_schema_statement").
+removed_calls_name("_execute_sql_or_schema_statement_async").
+removed_calls_name("_execute_template_with_params").
+removed_calls_name("_execute_template_with_params_async").
+removed_calls_name("execute_grammar").
+removed_calls_name("execute_sql").
+removed_calls_name("fetchall_grammar").
+removed_calls_name("fetchall_raw").
+removed_calls_name("fetchall_raw_async").
+removed_calls_name("fetchone_grammar").
+removed_calls_name("fetchone_raw").
+removed_calls_name("fetchone_raw_async").
+removed_calls_name("nonportably_execute_sql").
+removed_calls_name("raw_execute").
+removed_calls_name("raw_execute_async").
+removed_calls_name("raw_execute_fetch").
+removed_calls_name("raw_execute_fetch_async").
+removed_definitions_codes("removed_definition", "on").
+removed_definitions_codes("RER001", "off").
 removed_definitions_name("_execute_grammar").
 removed_definitions_name("_execute_grammar_async").
 removed_definitions_name("_execute_sql_or_schema_statement").
@@ -61,28 +106,6 @@ removed_definitions_name("raw_execute").
 removed_definitions_name("raw_execute_async").
 removed_definitions_name("raw_execute_fetch").
 removed_definitions_name("raw_execute_fetch_async").
-removed_definitions_stub("impl/common/l2200_sql_dialect/sql_connection.py").
-removed_definitions_stub("impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_transaction.py").
-removed_definitions_stub("impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py").
-removed_definitions_stub("impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py").
-removed_definitions_stub("impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py").
-removed_definitions_stub("impl/doltdb/connection.py").
-removed_definitions_stub("impl/doltdb/versioned_write_transaction.py").
-removed_definitions_stub("impl/mariadb/connection.py").
-removed_definitions_stub("impl/mongodb/connection.py").
-removed_definitions_stub("impl/mongodb/transaction.py").
-removed_definitions_stub("impl/mongodb/versioned_read_transaction_sparse.py").
-removed_definitions_stub("impl/neo4j/connection.py").
-removed_definitions_stub("impl/neo4j/transaction.py").
-removed_definitions_stub("impl/neo4j/versioned_read_transaction_sparse.py").
-removed_definitions_stub("impl/postgres/connection.py").
-removed_definitions_stub("impl/read_through/connection.py").
-removed_definitions_stub("impl/read_through/transaction.py").
-removed_definitions_stub("impl/sqlite/connection.py").
-removed_definitions_stub("impl/sqlite/transaction.py").
-removed_definitions_stub("l2000_connection/connection.py").
-removed_definitions_stub("l2050_transaction/transaction.py").
-removed_definitions_stub("l7200_versioned_transactions/versioned_transactions.py").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -184,19 +207,25 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-violation("data-layer-raw-execute-regression", "removed-calls", "RER001", p, l) :- node(v1, n, _, _, _), doc(v1, v2, _), node(_, n, "call", _, _), field(n, "function", v3), node(_, v3, "attribute", _, _), field(v3, "attribute", v4), node(_, v4, "identifier", _, _), text(v4, v5), (v5 = "_execute_grammar" ; v5 = "_execute_sql_or_schema_statement" ; v5 = "_execute_sql_or_schema_statement_async" ; v5 = "_execute_template_with_params" ; v5 = "_execute_template_with_params_async" ; v5 = "execute_grammar" ; v5 = "execute_sql" ; v5 = "fetchall_grammar" ; v5 = "fetchall_raw" ; v5 = "fetchall_raw_async" ; v5 = "fetchone_grammar" ; v5 = "fetchone_raw" ; v5 = "fetchone_raw_async" ; v5 = "nonportably_execute_sql" ; v5 = "raw_execute" ; v5 = "raw_execute_async" ; v5 = "raw_execute_fetch" ; v5 = "raw_execute_fetch_async"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+removed_calls_code(c) :- removed_calls_codes(c, "on"), option_on("oracleAnalyzer").
+removed_calls_code(c) :- removed_calls_codes(c, "off"), !option_on("oracleAnalyzer").
+removed_calls_call(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", at), node(_, at, "identifier", _, _), text(at, s), removed_calls_name(s).
+violation("data-layer-raw-execute-regression", "removed-calls", c, p, l) :- option_value("entryPoint", e), removed_calls_entry(e), removed_calls_code(c), node(d, x, _, _, _), removed_calls_call(x), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(x, l).
+removed_definitions_code(c) :- removed_definitions_codes(c, "on"), option_on("oracleAnalyzer").
+removed_definitions_code(c) :- removed_definitions_codes(c, "off"), !option_on("oracleAnalyzer").
 removed_definitions_owner(d, f) :- node(d, f, "function_definition", _, _), field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), removed_definitions_name(s).
 removed_definitions_own(f, x) :- removed_definitions_owner(d, f), field(f, "body", b), node(d, b, _, bs, be), node(d, x, _, xs, xe), x != b, bs <= xs, xe <= be, nearest(x, f, removed_definitions_fdef).
 removed_definitions_raise(x) :- node(_, x, "raise_statement", _, _).
 removed_definitions_raise(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", at), text(at, s), prefix("_raise_", s).
-removed_definitions_call(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", at), node(_, at, "identifier", _, _), text(at, s), removed_definitions_call_name(s).
 removed_definitions_raises(f) :- removed_definitions_own(f, x), removed_definitions_raise(x).
-removed_definitions_calls(f) :- removed_definitions_own(f, x), removed_definitions_call(x).
-removed_definitions_stubbed(f) :- removed_definitions_owner(d, f), doc(d, p, _), removed_definitions_stub(p), removed_definitions_raises(f), !removed_definitions_calls(f).
-violation("data-layer-raw-execute-regression", "removed-definitions", "RER001", p, l) :- removed_definitions_owner(d, f), !removed_definitions_stubbed(f), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
-mixed_marker_module(p, s) :- node(d, n, "module", _, _), node_text(n, s), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
-violation("data-layer-raw-execute-regression", "mixed-marker-0", "RER001", p, 1) :- mixed_marker_module(p, s), contains("_execute_sql_or_schema_statement", s).
-violation("data-layer-raw-execute-regression", "mixed-marker-1", "RER001", p, 1) :- mixed_marker_module(p, s), contains("_execute_sql_or_schema_statement_async", s).
-violation("data-layer-raw-execute-regression", "mixed-marker-2", "RER001", p, 1) :- mixed_marker_module(p, s), contains("_is_schema_ddl_statement", s).
-violation("data-layer-raw-execute-regression", "mixed-marker-3", "RER001", p, 1) :- mixed_marker_module(p, s), contains("arbitrary grammar router", s).
-violation("data-layer-raw-execute-regression", "mixed-marker-4", "RER001", p, 1) :- mixed_marker_module(p, s), contains("compatibility router", s).
+removed_definitions_calls(f) :- removed_definitions_own(f, x), removed_calls_call(x).
+removed_definitions_stubbed(f) :- removed_definitions_owner(d, f), doc(d, p, _), option_item("compatibilityStubFiles", p), removed_definitions_raises(f), !removed_definitions_calls(f).
+violation("data-layer-raw-execute-regression", "removed-definitions", c, p, l) :- option_value("entryPoint", e), removed_calls_entry(e), removed_definitions_code(c), removed_definitions_owner(d, f), !removed_definitions_stubbed(f), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+mixed_marker_code(c) :- mixed_marker_codes(c, "on"), option_on("oracleAnalyzer").
+mixed_marker_code(c) :- mixed_marker_codes(c, "off"), !option_on("oracleAnalyzer").
+mixed_marker_module(p, s, c) :- option_value("entryPoint", e), mixed_marker_entry(e), mixed_marker_code(c), node(d, n, "module", _, _), node_text(n, s), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+violation("data-layer-raw-execute-regression", "mixed-marker-0", c, p, 1) :- mixed_marker_module(p, s, c), contains("_execute_sql_or_schema_statement", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-1", c, p, 1) :- mixed_marker_module(p, s, c), contains("_execute_sql_or_schema_statement_async", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-2", c, p, 1) :- mixed_marker_module(p, s, c), contains("_is_schema_ddl_statement", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-3", c, p, 1) :- mixed_marker_module(p, s, c), contains("arbitrary grammar router", s).
+violation("data-layer-raw-execute-regression", "mixed-marker-4", c, p, 1) :- mixed_marker_module(p, s, c), contains("compatibility router", s).

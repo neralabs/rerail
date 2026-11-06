@@ -46,11 +46,11 @@ lao_decorator("decorator").
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl str(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, node_text, field, text, child, str, op
+.input doc, node, line, syntax_error, node_text, value, field, text, child, op
 .output violation
 lao_delegate("_legacy_delegate_stub").
 lao_delegate("_legacy_delegate_stub_async").
@@ -115,7 +115,7 @@ lao_base(f, n) :- lao_legacy(d, f, _, l), lao_strip_both(l), lao_owned(d, f, n, 
 lao_base(f, b) :- lao_legacy(d, f, _, "legacy_module_async"), lao_owned(d, f, n, _, _, _), suffix("_async", n), b = @substr(n, 0, @sub(@strlen(n), 6)).
 lao_base(f, n) :- lao_legacy(d, f, _, "legacy_module_async"), lao_owned(d, f, n, _, _, _), !suffix("_async", n).
 lao_base(f, n) :- lao_legacy(d, f, _, "legacy_module_sync"), lao_owned(d, f, n, _, _, _).
-lao_kw(dec, k, v) :- lao_legacy(d, _, dec, _), inside(kw, dec, lao_decorator), node(d, kw, "keyword_argument", k, _), field(kw, "name", ni), node(d, ni, "identifier", _, _), text(ni, "lazy_name"), field(kw, "value", s), lao_kw_string(s), str(s, v).
+lao_kw(dec, k, v) :- lao_legacy(d, _, dec, _), inside(kw, dec, lao_decorator), node(d, kw, "keyword_argument", k, _), field(kw, "name", ni), node(d, ni, "identifier", _, _), text(ni, "lazy_name"), field(kw, "value", s), lao_kw_string(s), value(s, v).
 lao_kw_string(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
 lao_kw_string(s) :- node(_, s, "concatenated_string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
 lao_has_kw(dec) :- lao_kw(dec, _, _).

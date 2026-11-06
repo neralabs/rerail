@@ -1,13 +1,7 @@
-847/908 clauses converted or authored (307 converted, 126 of them for the default options only; 540 authored)
+905/908 clauses converted or authored (268 converted, 89 of them for the default options only; 637 authored)
 
 gaps (clauses):
-     26  relational (SQL stages)
-     17  semantic value
-      6  a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      6  regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      3  nthChild other than a fixed position
-      2  a regex on an anonymous token
-      1  semantic binds
+      3  relational (SQL stages)
 
 approximations (rules):
       1  a metavariable twice: equal names
@@ -94,22 +88,12 @@ per rule:
   data-layer-bootstrap-eager-resolve: 2/2 (authored 1)
   data-layer-bootstrap-engine-invariants: 3/3 (authored 3)
   data-layer-bootstrap-lazy-sql: 2/2 (authored 1)
-  data-layer-bounded-composed-graph-paths: 84/93 (authored 84)
-      text-contract-81: relational (SQL stages)
-      text-contract-82: relational (SQL stages)
-      text-contract-83: relational (SQL stages)
-      text-contract-84: relational (SQL stages)
-      text-contract-85: relational (SQL stages)
-      text-contract-86: relational (SQL stages)
-      text-contract-87: relational (SQL stages)
-      text-contract-88: relational (SQL stages)
-      text-contract-89: relational (SQL stages)
+  data-layer-bounded-composed-graph-paths: 93/93 (authored 93)
   data-layer-cached-pure-lazy-allowlist: 0/3 (authored 0)
       cached-policy: relational (SQL stages)
       memoized-policy: relational (SQL stages)
       cached-runtime-contract: relational (SQL stages)
-  data-layer-classvar-check: 0/1 (authored 0)
-      comparison: a regex on an anonymous token
+  data-layer-classvar-check: 1/1 (authored 1)
   data-layer-conditional-architecture: 5/5 (authored 5)
   data-layer-conn-or-txn-union: 2/2 (authored 2)
   data-layer-connection-caches: 4/4 (authored 4)
@@ -138,11 +122,9 @@ per rule:
   data-layer-hasattr-async: 2/2 (authored 2)
   data-layer-history-serverplan-projection: 5/5 (authored 2)
   data-layer-hnsw-architecture: 2/2 (authored 2)
-  data-layer-imperative-private-functions: 2/3 (authored 2)
-      caller: semantic binds
+  data-layer-imperative-private-functions: 3/3 (authored 3)
   data-layer-impl-direct-execution: 1/1 (authored 1)
-  data-layer-internal-dead-code: 0/1 (authored 0)
-      unreachable-internal-symbols: relational (SQL stages)
+  data-layer-internal-dead-code: 1/1 (authored 1)
   data-layer-layer-violations: 6/6 (authored 6)
   data-layer-lazy-adapter-ownership: 2/2 (authored 1)
   data-layer-lazy-architecture: 56/56 (authored 56)
@@ -152,7 +134,7 @@ per rule:
   data-layer-legacy-execution-surfaces: 25/25 (authored 14)
   data-layer-matching-architecture: 2/2 (authored 2)
   data-layer-missing-async-pairs: 3/3 (authored 3)
-  data-layer-module-level-caches: 28/40 (authored 1)
+  data-layer-module-level-caches: 40/40 (authored 15)
       raw-dict_cache: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
       dict_cache: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
       dict_cache-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
@@ -171,20 +153,6 @@ per rule:
       set_cache-file-1: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
       set_cache-file-2: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
       set_cache-file-3: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
-      raw-list_cache: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      list_cache: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-0: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-1: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-2: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-3: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      list_cache-file-4: a regex on the text of list ((?s)^\[\s*(?:#[^\n]*\n\s*)*\]$)
-      raw-named-list: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      named-list: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-0: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-1: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-2: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-3: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
-      named-list-file-4: regex (?s)^\[\s*(?:#[^\n]*\n\s*)*\]$
       raw-constructor: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
       constructor: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
       constructor-file-0: converted for the default options only (when {"option":{"oracleAnalyzer":false}}): author it on option_on/option_item
@@ -196,8 +164,7 @@ per rule:
   data-layer-no-blanket-grammar-bypass: 3/3 (authored 1)
   data-layer-no-source-inspection: 5/5 (authored 2)
   data-layer-permission-error: 1/1 (authored 1)
-  data-layer-plan-composition-architecture: 2/3 (authored 1)
-      composition-runtime-observations: relational (SQL stages)
+  data-layer-plan-composition-architecture: 3/3 (authored 2)
   data-layer-plan-helpers-allowlist: 1/1 (authored 1)
   data-layer-plan-optimizer-v2: 2/2 (authored 2)
   data-layer-plan-scope-ownership: 26/26 (authored 26)
@@ -208,99 +175,31 @@ per rule:
   data-layer-public-api-triples: 1/1 (authored 1)
   data-layer-publication-registry-writes: 1/1 (authored 0)
   data-layer-pure-lazy-runtime-purity: 1/1 (authored 1)
-  data-layer-raw-execute-regression: 7/7 (authored 6)
-  data-layer-readthrough-authority-architecture: 8/10 (authored 0)
-      runtime-seed: semantic value
-      complete-identity: semantic value
-  data-layer-regex-sql-parsing: 0/9 (authored 0)
-      category-0: semantic value
-      category-1: semantic value
-      category-2: semantic value
-      category-3: semantic value
-      category-4: semantic value
-      category-5: semantic value
-      category-6: semantic value
-      category-7: semantic value
-      category-8: semantic value
+  data-layer-raw-execute-regression: 7/7 (authored 7)
+  data-layer-readthrough-authority-architecture: 10/10 (authored 2)
+  data-layer-regex-sql-parsing: 9/9 (authored 9)
   data-layer-removed-compat-surfaces: 3/3 (authored 0)
   data-layer-render-fstrings: 1/1 (authored 1)
   data-layer-render-raw-strings: 4/4 (authored 4)
   data-layer-revision-ancestry-invariants: 10/10 (authored 10)
   data-layer-rust-sql-grammar-boundary: 8/8 (authored 8)
-  data-layer-schema-architecture: 4/4 (authored 3)
+  data-layer-schema-architecture: 4/4 (authored 4)
   data-layer-schema-bootstrap-contracts: 2/2 (authored 1)
   data-layer-schema-introspection-data-paths: 1/1 (authored 1)
   data-layer-serverplan-bypass: 3/3 (authored 3)
-  data-layer-serverplan-dispatch-architecture: 5/9 (authored 3)
-      backend-identity: semantic value
-      step-name-compare: semantic value
-      dialect-compare: semantic value
-      dialect-truth: semantic value
+  data-layer-serverplan-dispatch-architecture: 9/9 (authored 7)
   data-layer-serverplan-grammar-surface: 7/7 (authored 0)
-  data-layer-serverplan-name-inference: 3/4 (authored 3)
-      column-shape: a regex on an anonymous token
-  data-layer-serverplan-quality: 121/123 (authored 34)
-      spq-vector-filter-constants: relational (SQL stages)
-      spq-runtime-state-annotations: relational (SQL stages)
-  data-layer-serverplan-state-tripwires: 25/31 (authored 25)
-      queue-udf-symbols: semantic value
-      serverplan-ddl: nthChild other than a fixed position
-      private-lazy-ref: nthChild other than a fixed position
-      state-signatures: relational (SQL stages)
-      state-flow-narrow: relational (SQL stages)
-      state-projection-recovery: relational (SQL stages)
-  data-layer-serverplan-steps: 12/21 (authored 0)
-      side-effect-tags: semantic value
-      runtime-builder-string-name: nthChild other than a fixed position
-      step-contracts-1: relational (SQL stages)
-      step-contracts-2: relational (SQL stages)
-      step-contracts-3: relational (SQL stages)
-      step-contracts-4: relational (SQL stages)
-      step-contracts-5: relational (SQL stages)
-      step-contracts-6: relational (SQL stages)
-      runtime-reference-summaries: relational (SQL stages)
+  data-layer-serverplan-name-inference: 4/4 (authored 4)
+  data-layer-serverplan-quality: 123/123 (authored 36)
+  data-layer-serverplan-state-tripwires: 31/31 (authored 31)
+  data-layer-serverplan-steps: 21/21 (authored 9)
   data-layer-serverplan-target-architecture: 16/16 (authored 4)
   data-layer-sql-grammar-escape-hatches: 11/11 (authored 11)
   data-layer-swallowed-exceptions: 4/4 (authored 4)
   data-layer-sync-async-signatures: 1/1 (authored 1)
   data-layer-transaction-callback-wrappers: 2/2 (authored 2)
   data-layer-transaction-closures: 6/6 (authored 6)
-  data-layer-transaction-patterns: 58/58 (authored 23)
-      category-1: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-2: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-3: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-4: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-5: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-6: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-7: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-8: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-9: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-10: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-11: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-12: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-13: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-17: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-18: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-19: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-20: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-21: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-22: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-23: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-24: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-25: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-26: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-27: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-28: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-29: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-30: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-31: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-32: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-33: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-34: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-35: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-36: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-37: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
-      category-38: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+  data-layer-transaction-patterns: 58/58 (authored 58)
   data-layer-type-safety-patterns: 9/9 (authored 8)
   data-layer-unknown-contract-defaults: 3/3 (authored 2)
   data-layer-unresolved-forward-refs: 1/1 (authored 1)
