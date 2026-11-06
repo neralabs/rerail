@@ -155,5 +155,5 @@ export function comparablePositions<T extends { text: string; anchors: UnitAncho
     score += common / Math.sqrt(Math.max(1, theirs.size));
     return { unit, score };
   });
-  return scored.filter(entry => entry.score > 0.5).sort((a, b) => b.score - a.score).slice(0, max).map(entry => entry.unit);
+  return scored.filter(entry => entry.score > 0).sort((a, b) => b.score - a.score).slice(0, max).map(entry => entry.unit);
 }

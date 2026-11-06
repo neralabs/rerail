@@ -510,19 +510,41 @@ message: for "contradicts", at most ${MAX_COMPARE_MESSAGE} characters to the aut
 Answer exactly one item for each of theirs, by its id as candidateId. Two decisions about different folders rarely contradict.
 The files Git reports as conflicting between the branches are context only: overlapping edits are not a contradiction by themselves.`;
 
-/** The comparison prompt for one other branch's decisions against this branch's, with every input fenced as data. */
-export function comparePrompt(input: CompareInput, nonce: string): string {
+const POSITION_COMPARE_INSTRUCTIONS = `Another branch of this repository states design positions ("theirs"), read from its design documents, decision records and commit messages. Say how each of theirs relates to the positions on this branch ("mine"):
+- "contradicts": both cannot hold for the same system. They answer the same design question differently (a different owner, store, format, algorithm, budget, rule or scope for the same thing), or one rules out what the other relies on, or following theirs would break one of mine. mineId names that one of mine.
+- "duplicate": it states the same position as one of mine; mineId names that one.
+- "compatible": both can hold at once, including when they answer different questions.
+- "unsure": they answer the same question and you cannot tell whether both can hold.
+Positions written in different documents or folders can still contradict: two branches often write the same design in different places, in different words.
+explanation: at most ${MAX_COMPARE_EXPLANATION} characters, for the developer on this branch.
+message: for "contradicts", at most ${MAX_COMPARE_MESSAGE} characters to the author of theirs: name both positions and propose how to agree, politely. Otherwise null.
+Answer exactly one item for each of theirs, by its id as candidateId.`;
+
+function comparisonPrompt(instructions: string, input: CompareInput, nonce: string): string {
   const mine = input.mine.map(own => `- ${own.id} (scope: ${own.scope.join(", ")}): ${own.decision}`);
   const theirs = input.theirs.map(peer => `- ${peer.id} (scope: ${peer.scope.join(", ")}; author: ${peer.author}): ${peer.decision}`);
   return [
     framing(nonce, "When unsure, answer relation \"unsure\"."),
     "",
-    COMPARE_INSTRUCTIONS,
+    instructions,
     "",
     fenceData("mine - decisions on this branch", mine.length > 0 ? mine.join("\n") : "(none)", nonce),
     fenceData("theirs - decisions on the other branch", theirs.length > 0 ? theirs.join("\n") : "(none)", nonce),
     fenceData("files git reports as conflicting", input.conflicts.length > 0 ? input.conflicts.join("\n") : "(none)", nonce),
   ].join("\n");
+}
+
+/** The comparison prompt for one other branch's decisions against this branch's, with every input fenced as data. */
+export function comparePrompt(input: CompareInput, nonce: string): string {
+  return comparisonPrompt(COMPARE_INSTRUCTIONS, input, nonce);
+}
+
+/**
+ * The comparison prompt for design positions (`contestPositions`): the same answer shape as {@link comparePrompt}, with
+ * "contradicts" read as two answers to one design question, wherever each is written.
+ */
+export function positionComparePrompt(input: CompareInput, nonce: string): string {
+  return comparisonPrompt(POSITION_COMPARE_INSTRUCTIONS, input, nonce);
 }
 
 /** The most positions one passage yields, and the limits of each. */
@@ -532,6 +554,8 @@ const MIN_POSITION_QUOTE = 10;
 export const MAX_POSITION_QUOTE = 200;
 const MAX_POSITION_ANCHORS = 8;
 const MAX_POSITION_ANCHOR_LENGTH = 200;
+const MAX_POSITION_SUBSYSTEM = 80;
+const MAX_POSITION_ID_LENGTH = 40;
 
 /** Design-doc and commit-message passages from one branch, each under an id the caller chose. */
 export interface PositionsInput {
@@ -548,6 +572,10 @@ export interface PositionsVerdict {
     /** Paths and code names the passage writes that the position governs. */
     files: string[];
     symbols: string[];
+    /** The subsystem or component the position governs, in a few words. */
+    subsystem: string;
+    /** Decision-record numbers and open-item ids the passage or its heading writes for the position (`0035`, `O41`). */
+    ids: string[];
   }>;
 }
 
@@ -563,6 +591,8 @@ export function positionsVerdictSchemaFor(input: PositionsInput): z.ZodType<Posi
       quote: z.string().trim().min(MIN_POSITION_QUOTE).max(MAX_POSITION_QUOTE),
       files: anchorListSchema,
       symbols: anchorListSchema,
+      subsystem: z.string().trim().max(MAX_POSITION_SUBSYSTEM),
+      ids: z.array(z.string().trim().min(1).max(MAX_POSITION_ID_LENGTH)).max(MAX_POSITION_ANCHORS),
     }).strict()).max(MAX_PASSAGE_POSITIONS * Math.max(1, input.passages.length)),
   }).strict();
 }
@@ -581,13 +611,15 @@ export function positionsJsonSchemaFor(input: PositionsInput): Record<string, un
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["passageId", "statement", "quote", "files", "symbols"],
+          required: ["passageId", "statement", "quote", "files", "symbols", "subsystem", "ids"],
           properties: {
             passageId: { type: "string", enum: input.passages.map(passage => passage.id) },
             statement: { type: "string", maxLength: MAX_POSITION_STATEMENT },
             quote: { type: "string", maxLength: MAX_POSITION_QUOTE },
             files: anchors,
             symbols: anchors,
+            subsystem: { type: "string", maxLength: MAX_POSITION_SUBSYSTEM },
+            ids: { type: "array", maxItems: MAX_POSITION_ANCHORS, items: { type: "string", maxLength: MAX_POSITION_ID_LENGTH } },
           },
         },
       },
@@ -603,6 +635,8 @@ For each position:
 - quote: an exact excerpt of that passage, ${MIN_POSITION_QUOTE} to ${MAX_POSITION_QUOTE} characters, copied character for character, that states the position.
 - files: the repository paths written in the passage that the position governs; only paths the passage writes.
 - symbols: the code names written in the passage (functions, types, tables, constants) that the position governs; only names the passage writes.
+- subsystem: the subsystem or component the position governs, in two to four words as the passage names it (for example "content store", "SQL executor", "merge assist").
+- ids: the decision-record numbers and open-item ids the passage or its heading writes that the position belongs to or answers (for example "0035", "O41"); an empty list when it writes none.
 At most ${MAX_PASSAGE_POSITIONS} positions per passage, the most consequential first. Answer an empty list when no passage takes a position.`;
 
 /** The positions prompt for one branch's passages, with every passage fenced as data. */

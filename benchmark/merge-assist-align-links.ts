@@ -230,6 +230,8 @@ interface ExtractionResult {
 async function scoreExtraction(context: AlignmentContext, pairs: readonly Pair[], options: Options): Promise<ExtractionResult[]> {
   const labels = readLabels<ExpectedUnit>(options, "link1-expected.json", "conflicts").filter(label => label.primary);
   const judge = judgeOf(context);
+  // Positions first, every side at once at the judge's concurrency; scoring then reads them from the cache.
+  await prefetchPositions(context, pairSides(context, pairs), options.concurrency);
   return pool(labels, options.concurrency, async label => {
     const base = { conflict_id: label.conflict_id, catalogue_id: label.catalogue_id, type: label.type };
     if (label.type === "id-collision" || label.scored === false) return { ...base, candidates: 0, hit: false, primaryHit: false, reason: "excluded", matched: [], errors: [] };
@@ -387,8 +389,6 @@ function verdict(value: number, bar: number, atMost = false): string {
 }
 
 async function linkOne(context: AlignmentContext, pairs: readonly Pair[], options: Options): Promise<unknown> {
-  // Positions first, every side at once at the judge's concurrency; scoring then reads them from the cache.
-  await prefetchPositions(context, pairSides(context, pairs), options.concurrency);
   const results = await scoreExtraction(context, pairs, options);
   const scored = results.filter(result => result.reason !== "excluded");
   const hits = scored.filter(result => result.hit).length;

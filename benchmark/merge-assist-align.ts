@@ -42,6 +42,7 @@ import {
   consumerHits,
   extractUnits,
   type ExtractedUnit,
+  folderIndex,
   identifiers,
   isDesignDoc,
   type LedgerUnit,
@@ -123,6 +124,10 @@ export interface Pair {
 
 /** Bumped whenever extraction changes, so cached commit records are rebuilt. */
 const EXTRACT_VERSION = 8;
+/** Bumped whenever position anchoring changes, so cached positions are read again. */
+const POSITION_ANCHORS_VERSION = 2;
+/** The most files one decision or open-item id anchors a position to. */
+const MAX_REFERENCING_FILES = 12;
 export const JUDGE_REPOSITORY = "eval:merge-assist-align";
 const MAX_CONCURRENCY = 4;
 /** Pairs replayed at once; pairs that share a side and ledger then share judge answers as they go. */
@@ -349,18 +354,32 @@ export class AlignmentContext {
 
   async #readPositions(record: CommitRecord): Promise<ExtractedUnit[]> {
     if (this.judge === null || record.passages.length === 0) return [];
-    const key = hashOf(record.passages);
+    const key = hashOf({ passages: record.passages, anchors: POSITION_ANCHORS_VERSION });
     const path = join(this.#cache, "positions", `${record.sha}.json`);
     const cached = readJson<PositionsRecord>(path);
     if (cached?.key === key) return Object.values(cached.units).flat();
-    const resolver = treeResolver(treePaths(this.root, record.sha));
-    const outcome = await extractPositions(this.judge, { repositoryKey: JUDGE_REPOSITORY, source: record.subject, passages: record.passages, resolve: resolver });
+    const paths = treePaths(this.root, record.sha);
+    const tree = { folders: folderIndex(paths), referencing: (id: string) => this.#referencing(record.sha, paths, id) };
+    const outcome = await extractPositions(this.judge, { repositoryKey: JUDGE_REPOSITORY, source: record.subject, passages: record.passages, resolve: treeResolver(paths), tree });
     if (outcome.error !== null) {
       this.errors.push(`positions ${record.sha.slice(0, 10)}: ${outcome.error}`);
       return [];
     }
     writeJson(path, { key, units: Object.fromEntries(outcome.units), rejected: outcome.rejected } satisfies PositionsRecord);
     return [...outcome.units.values()].flat();
+  }
+
+  /**
+   * Files in the tree at `sha` that write `id` as a word: a decision record or note named for it first, then docs, then
+   * code, at most {@link MAX_REFERENCING_FILES}.
+   */
+  #referencing(sha: string, paths: readonly string[], id: string): string[] {
+    const named = paths.filter(path => (path.split("/").pop() ?? "").startsWith(`${id}-`));
+    const listed = git(this.root, ["grep", "-l", "-w", "-F", "-e", id, sha, "--"]) ?? "";
+    const writing = listed.split("\n").filter(Boolean).map(line => line.slice(sha.length + 1));
+    const docs = writing.filter(isDesignDoc);
+    const code = writing.filter(path => sourceLanguageOf(path) !== null);
+    return [...new Set([...named, ...docs, ...code])].slice(0, MAX_REFERENCING_FILES);
   }
 
   /** The mainline commits branch from: the default branch's ref. */

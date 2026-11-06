@@ -154,6 +154,65 @@ export function namedAnchors(text: string, resolve: PathResolver): UnitAnchors {
   return { files: unique(files, MAX_UNIT_FILES), symbols: unique(symbols, MAX_UNIT_SYMBOLS) };
 }
 
+/** Words a subsystem's name carries that name no folder: "the SQL engine" lives in `sql/`. */
+const GENERIC_SUBSYSTEM_WORDS = new Set(["the", "a", "an", "engine", "subsystem", "layer", "module", "component", "system", "pipeline", "crate", "package", "service", "library"]);
+/** More folders than this at a subsystem name's shallowest depth name no one home. */
+const MAX_SUBSYSTEM_FOLDERS = 3;
+
+/** A tree's folders by their own name folded (`content_store` → `contentstore`), each as a folder anchor (`a/b/`). */
+export type FolderIndex = ReadonlyMap<string, readonly string[]>;
+
+export function folderIndex(paths: readonly string[]): FolderIndex {
+  const folders = new Map<string, Set<string>>();
+  for (const path of paths) {
+    const parts = path.split("/");
+    for (let end = 1; end < parts.length; end += 1) {
+      const key = parts[end - 1]!.toLowerCase().replace(/[^a-z0-9]/gu, "");
+      if (key.length < 3) continue;
+      const set = folders.get(key) ?? new Set<string>();
+      set.add(`${parts.slice(0, end).join("/")}/`);
+      folders.set(key, set);
+    }
+  }
+  return new Map([...folders].map(([key, set]) => [key, [...set].sort()]));
+}
+
+/**
+ * The folders a subsystem's name names (`content store` → `native/src/content_store/`): those whose own name is its
+ * words run together, generic words ("engine", "layer") dropped, at the shallowest depth; none when that is ambiguous.
+ */
+export function subsystemFolders(name: string, folders: FolderIndex): string[] {
+  const words = name.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
+  const forms = [words.join(""), words.filter(word => !GENERIC_SUBSYSTEM_WORDS.has(word)).join("")].filter(form => form.length >= 3);
+  const found = [...new Set(forms.flatMap(form => folders.get(form) ?? []))];
+  if (found.length === 0) return [];
+  const depth = (folder: string): number => folder.split("/").length;
+  const shallowest = Math.min(...found.map(depth));
+  const home = found.filter(folder => depth(folder) === shallowest);
+  return home.length <= MAX_SUBSYSTEM_FOLDERS ? home : [];
+}
+
+/**
+ * The decision-record numbers and open-item ids of `ids` that `text` writes, canonical: `O41`, and a decision's
+ * number zero-padded to four digits (`decision 35` → `0035`). Anything else, or an id the text does not write, drops.
+ */
+export function conceptIds(ids: readonly string[], text: string): string[] {
+  const kept: string[] = [];
+  for (const raw of ids) {
+    const openItem = /^O(\d{1,3})$/iu.exec(raw.trim());
+    if (openItem !== null) {
+      const id = `O${openItem[1]}`;
+      if (new RegExp(`\\b${id}\\b`, "u").test(text)) kept.push(id);
+      continue;
+    }
+    const decision = /^(?:decision\s*|ADR[-\s]?)?#?(\d{1,4})$/iu.exec(raw.trim());
+    if (decision === null) continue;
+    const number = Number(decision[1]);
+    if (new RegExp(`(?<![\\w.])0*${number}(?![\\w.])`, "u").test(text)) kept.push(String(number).padStart(4, "0"));
+  }
+  return [...new Set(kept)];
+}
+
 function normaliseLine(line: string): string {
   return line.replace(/\s+/gu, " ").trim().toLowerCase();
 }

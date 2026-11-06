@@ -5,11 +5,13 @@ import {
   closedHandoffKeys,
   codeFingerprints,
   type CommitChange,
+  conceptIds,
   consumerHits,
   contractUnits,
   declarations,
   extractUnits,
   type FileChange,
+  folderIndex,
   handoffUnits,
   movedCodeUnits,
   namedAnchors,
@@ -18,6 +20,7 @@ import {
   type RefHistory,
   retirementUnits,
   sqlTables,
+  subsystemFolders,
   touchedAnchors,
   visibleUnits,
 } from "../../../src/engine/index.js";
@@ -399,5 +402,30 @@ describe("link-1 precision regressions", () => {
       ["changes the format in src/engine/storage/migrations.ts (Packs: rule approvals)", []],
       ['appends rule-approvals to RERAIL_MIGRATIONS in src/engine/storage/migrations.ts ("This build\'s steps, oldest first. Append only.") (Packs: rule approvals)', ["RERAIL_MIGRATIONS"]],
     ]);
+  });
+});
+
+describe("concept anchors", () => {
+  const folders = folderIndex([
+    "native/src/content_store/schema.rs",
+    "native/src/code_rule_dsl/sql/exec.rs",
+    "native/src/code_rule_dsl/matcher/anchors/sql/lower.rs",
+    "src/engine/merge-assist/candidate.ts",
+    "src/runtime/merge-assist/capture.ts",
+    "a/sql/x.rs",
+    "b/sql/x.rs",
+    "c/sql/x.rs",
+    "d/sql/x.rs",
+  ]);
+
+  it("names a subsystem's home folders, shallowest first, and none when that is ambiguous", () => {
+    expect(subsystemFolders("content store", folders)).toEqual(["native/src/content_store/"]);
+    expect(subsystemFolders("Merge Assist engine", folders)).toEqual(["src/engine/merge-assist/", "src/runtime/merge-assist/"]);
+    expect(subsystemFolders("SQL engine", folders)).toEqual([]);
+    expect(subsystemFolders("", folders)).toEqual([]);
+  });
+
+  it("keeps the decision and open-item ids a passage writes, canonical", () => {
+    expect(conceptIds(["0035", "decision 8", "O41", "o7", "O99", "t18", "35"], "## 0035: bounded rounds\nAs decision 0008 says, O41 and O7 stay open.")).toEqual(["0035", "0008", "O41", "O7"]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LedgerUnit, Passage } from "../../../src/engine/index.js";
+import { folderIndex, type LedgerUnit, type Passage } from "../../../src/engine/index.js";
 import { comparePositions, contestPositions, extractPositions, rankUnits } from "../../../src/runtime/index.js";
 import { FakeJudge } from "./support/merge-assist-workspace.js";
 
@@ -19,8 +19,8 @@ describe("extractPositions", () => {
   it("fences the passages and keeps a position only when its quote is in the passage, anchored to names it writes", async () => {
     const judge = new FakeJudge(() => ({
       positions: [
-        { passageId: "p1", statement: "SQLite is the facts system of record.", quote: "SQLite is the  system of record for facts", files: ["native/src/facts/store.rs", "src/invented.ts"], symbols: ["FactStore", "InventedThing"] },
-        { passageId: "p1", statement: "Facts live in RAM.", quote: "facts live in a columnar RAM engine", files: [], symbols: [] },
+        { passageId: "p1", statement: "SQLite is the facts system of record.", quote: "SQLite is the  system of record for facts", files: ["native/src/facts/store.rs", "src/invented.ts"], symbols: ["FactStore", "InventedThing"], subsystem: "facts store", ids: [] },
+        { passageId: "p1", statement: "Facts live in RAM.", quote: "facts live in a columnar RAM engine", files: [], symbols: [], subsystem: "", ids: [] },
       ],
     }));
     const outcome = await extractPositions(judge, { repositoryKey: "test", source: "facts: decide the store", passages: [passage], resolve });
@@ -29,12 +29,26 @@ describe("extractPositions", () => {
     expect(outcome.units.get(passage.id)).toEqual([{
       kind: "position",
       text: "SQLite is the facts system of record. (\"SQLite is the system of record for facts\", docs/decisions/0030.md)",
-      anchors: { files: ["docs/decisions/0030.md", "native/src/facts/store.rs"], symbols: ["FactStore"] },
+      anchors: { files: ["docs/decisions/0030.md", "native/src/facts/store.rs", "docs/decisions/"], symbols: ["FactStore"] },
       key: null,
     }]);
     const prompt = judge.tasks[0]!.prompt;
     expect(prompt).toMatch(/<<<RERAIL-DATA [0-9a-f]{32} the passages>>>\np1 \(docs\/decisions\/0030\.md, under "0030: Facts store"\):/u);
     expect(judge.tasks[0]!.kind).toBe("positions");
+  });
+
+  it("anchors a position to the folder its subsystem names and to the files that write the ids it belongs to", async () => {
+    const judge = new FakeJudge(() => ({
+      positions: [{ passageId: "p1", statement: "SQLite is the facts system of record.", quote: "SQLite is the system of record", files: [], symbols: [], subsystem: "content store", ids: ["0030", "O41", "O99", "decision 7"] }],
+    }));
+    const folders = folderIndex(["native/src/content_store/schema.rs", "docs/decisions/0030.md", "docs/open-items.md"]);
+    const referencing = (id: string): string[] => (id === "0030" ? ["docs/decisions/0030.md", "docs/plan.md"] : id === "O41" ? ["docs/open-items.md"] : []);
+    const withIds = { ...passage, text: `${passage.text} It answers O41.` };
+    const outcome = await extractPositions(judge, { repositoryKey: "test", source: "s", passages: [withIds], resolve, tree: { folders, referencing } });
+    expect(outcome.units.get(passage.id)?.[0]?.anchors).toEqual({
+      files: ["docs/decisions/0030.md", "docs/decisions/", "native/src/content_store/", "docs/plan.md", "docs/open-items.md"],
+      symbols: ["O41"],
+    });
   });
 
   it("rejects an answer naming a passage it was not given", async () => {
@@ -65,6 +79,8 @@ describe("comparePositions", () => {
       error: null,
       verdicts: [{ theirs: theirs[0], mine: { id: "m1", text: "SQLite is the system of record.", files: ["docs/a.md"] }, relation: "contradicts", explanation: "RAM engine against SQLite.", message: "Let us agree on one store." }],
     });
+    expect(judge.tasks[0]!.prompt).toContain("Positions written in different documents or folders can still contradict");
+    expect(judge.tasks[0]!.prompt).not.toContain("rarely contradict");
   });
 });
 
@@ -77,5 +93,14 @@ describe("contestPositions", () => {
     expect(judge.count("compare")).toBe(1);
     expect(contest.contested).toEqual(new Set(["a1", "b1"]));
     expect(contest.pairs.map(pair => [pair.mine?.id, pair.theirs.id, pair.relation])).toEqual([["a1", "b1", "contradicts"]]);
+  });
+
+  it("compares two positions that share only a little, in different folders (link-4 L4-002)", async () => {
+    const planned = { ...unit("a1", "A rule's plan is planned once and is identical for every file. (docs/facts/INVARIANTS.md)"), ref: "refs/a", anchors: { files: ["docs/facts/INVARIANTS.md"], symbols: [] } };
+    const statistics = { ...unit("b1", "One compiler lowers each query, driven by the statistics it gathers. (docs/final-shape/02-shape.md)"), ref: "refs/b", anchors: { files: ["docs/final-shape/02-shape.md"], symbols: [] } };
+    const judge = new FakeJudge(() => ({ items: [{ candidateId: "candidate:t-1", relation: "contradicts", mineId: "candidate:m-1", explanation: "Fixed against stat-driven plans.", message: "Agree on one." }] }));
+    const contest = await contestPositions(judge, { repositoryKey: "test", positions: [planned, statistics] });
+    expect(judge.count("compare")).toBe(1);
+    expect(contest.contested).toEqual(new Set(["a1", "b1"]));
   });
 });

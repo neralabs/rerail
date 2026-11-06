@@ -40,6 +40,7 @@ export {
 export {
   comparePositions,
   type ComparisonOutcome,
+  type ConceptTree,
   contestPositions,
   extractPositions,
   MAX_AREA_UNITS,

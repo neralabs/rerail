@@ -5,16 +5,16 @@
  * position is kept only when its quote is in the passage and its anchors are names the passage writes.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { comparablePositions, type LedgerUnit } from "../../engine/merge-assist/alignment/ledger.js";
-import { distinctiveSymbol, type ExtractedUnit, MAX_UNIT_TEXT, type Passage, type PathResolver } from "../../engine/merge-assist/alignment/units.js";
+import { comparablePositions, type LedgerUnit, pathArea } from "../../engine/merge-assist/alignment/ledger.js";
+import { conceptIds, distinctiveSymbol, type ExtractedUnit, type FolderIndex, MAX_UNIT_TEXT, type Passage, type PathResolver, subsystemFolders } from "../../engine/merge-assist/alignment/units.js";
 import { stableJsonText } from "../../engine/stable-json.js";
 import type { AgentJudge } from "./agent-judge.js";
 import {
   type CompareInput,
   compareJsonSchemaFor,
-  comparePrompt,
   compareVerdictSchema,
   MAX_COMPARE_ITEMS,
+  positionComparePrompt,
   positionsJsonSchemaFor,
   positionsPrompt,
   positionsVerdictSchemaFor,
@@ -44,13 +44,25 @@ export interface PositionsOutcome {
   readonly rejected: number;
 }
 
+/** The ref's tree as concept anchors read it: its folders, and the files that write a decision or open-item id. */
+export interface ConceptTree {
+  readonly folders: FolderIndex;
+  /** Files in the tree that write `id` (`O41`, or a decision number `0035`), at most a dozen, most direct first. */
+  referencing(id: string): readonly string[];
+}
+
+/** The most files one position is anchored to. */
+const MAX_POSITION_FILES = 16;
+
 /**
  * The positions `passages` take, as units anchored to the files and symbols each passage names (resolved by
- * `resolve`) and to the doc it is in. One judge call for all of them; `source` labels the commit they come from.
+ * `resolve`), to the doc it is in and that doc's area (`docs/final-shape/`), and, given the ref's `tree`, to concept
+ * anchors: the folders its subsystem names and the files that write the decision and open-item ids it belongs to.
+ * One judge call for all of them; `source` labels the commit they come from.
  */
 export async function extractPositions(
   judge: AgentJudge,
-  input: { repositoryKey: string; source: string; passages: readonly Passage[]; resolve: PathResolver },
+  input: { repositoryKey: string; source: string; passages: readonly Passage[]; resolve: PathResolver; tree?: ConceptTree },
 ): Promise<PositionsOutcome> {
   if (input.passages.length === 0) return { units: new Map(), error: null, rejected: 0 };
   const byId = new Map(input.passages.map((passage, index) => [`p${index + 1}`, passage]));
@@ -64,7 +76,7 @@ export async function extractPositions(
     prompt: positionsPrompt(prompted, randomBytes(16).toString("hex")),
     jsonSchema: positionsJsonSchemaFor(prompted),
     parse: value => verdict.parse(value),
-    cacheKey: cacheKey("positions", prompted),
+    cacheKey: cacheKey("positions:concepts", prompted),
   });
   if (!outcome.ok) return { units: new Map(), error: `${outcome.reason}: ${outcome.detail}`, rejected: 0 };
   const units = new Map<string, ExtractedUnit[]>();
@@ -84,11 +96,19 @@ export async function extractPositions(
       .filter(symbol => passage.text.includes(symbol))
       .map(symbol => symbol.replace(/(?:\(\)|!)$/u, "").replace(/::/gu, "."))
       .filter(distinctiveSymbol);
+    const ids = conceptIds(position.ids, `${passage.heading ?? ""}\n${passage.text}`);
+    const area = passage.path === null ? "" : pathArea(passage.path);
+    const tree = input.tree;
+    const concepts = tree === undefined ? [] : [...subsystemFolders(position.subsystem, tree.folders), ...ids.flatMap(id => tree.referencing(id))];
     const where = passage.path ?? `commit message: ${input.source}`;
     const unit: ExtractedUnit = {
       kind: "position",
       text: `${position.statement} ("${position.quote.replace(/\s+/gu, " ").trim()}", ${where})`.slice(0, MAX_UNIT_TEXT),
-      anchors: { files: [...new Set([...(passage.path === null ? [] : [passage.path]), ...files])], symbols: [...new Set(symbols)] },
+      anchors: {
+        files: [...new Set([...(passage.path === null ? [] : [passage.path]), ...files, ...(area === "" ? [] : [`${area}/`]), ...concepts])].slice(0, MAX_POSITION_FILES),
+        // Open-item ids are names the later side writes too; a decision is reached through its record's files.
+        symbols: [...new Set([...symbols, ...ids.filter(id => id.startsWith("O"))])],
+      },
       key: null,
     };
     units.set(passage.id, [...(units.get(passage.id) ?? []), unit]);
@@ -159,7 +179,7 @@ export interface ComparisonOutcome {
 
 /**
  * How each of the positions live on other branches (`theirs`, at most `MAX_COMPARE_ITEMS`) relates to the positions
- * this branch just stated (`mine`), from one `comparePrompt` call.
+ * this branch just stated (`mine`), from one `positionComparePrompt` call.
  */
 export async function comparePositions(
   judge: AgentJudge,
@@ -175,10 +195,10 @@ export async function comparePositions(
   const outcome = await judge.judge({
     kind: "compare",
     repositoryKey: input.repositoryKey,
-    prompt: comparePrompt(compare, randomBytes(16).toString("hex")),
+    prompt: positionComparePrompt(compare, randomBytes(16).toString("hex")),
     jsonSchema: compareJsonSchemaFor(compare),
     parse: value => compareVerdictSchema.parse(value),
-    cacheKey: cacheKey("compare", compare),
+    cacheKey: cacheKey("compare:positions", compare),
   });
   if (!outcome.ok) return { verdicts: [], error: `${outcome.reason}: ${outcome.detail}` };
   const verdicts = outcome.value.items.flatMap(item => {

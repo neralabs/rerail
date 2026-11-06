@@ -526,7 +526,7 @@ async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align
     try {
       reference = mergeCheck(scratchRepository(folder, [objects]), pair.second.head_sha, pair.first.head_sha);
     } finally {
-      await rm(folder, { recursive: true, force: true });
+      await removeFolder(folder);
     }
   }
   const time = ledgerTime(pair, spec);
@@ -612,6 +612,18 @@ function homeDenials(readable: readonly string[]): string[] {
 
 /** Turns off Codex's built-in apps server, whose `search_service.web_run` reaches the web even with web search off. */
 const NO_WEB_ARGS = ["--disable", "apps"] as const;
+
+/**
+ * Removes a run's folder. Cleanup never fails a job: Codex's background plugin sync, still writing into the grader's
+ * CODEX_HOME, once made `rmdir` hit ENOTEMPTY and killed every run after it.
+ */
+async function removeFolder(folder: string): Promise<void> {
+  try {
+    await rm(folder, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.error(`could not remove ${folder}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
 
 /**
  * The run's CODEX_HOME config: the model provider, if any; a shell environment policy that keeps credentials out of
@@ -1106,7 +1118,7 @@ async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<stri
     return { pair: pair.id, arm, trial, ...empty, error: error instanceof Error ? error.message : String(error), folder: options.keep ? folder : null };
   } finally {
     if (options.keep) console.error(`kept ${folder}`);
-    else await rm(folder, { recursive: true, force: true });
+    else await removeFolder(folder);
   }
 }
 
