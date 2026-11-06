@@ -22,7 +22,7 @@
 
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom};
+use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom, kind_code};
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
@@ -126,14 +126,20 @@ impl Dialect {
         }
         Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), canonical, codes })
     }
-    fn code(f: &Facts, id: u32) -> u16 {
-        (f.kind[id as usize] % KIND_STRIDE) as u16
+    /// Node `id`'s kind code (ERROR's is `u16::MAX`).
+    fn code(&self, f: &Facts, id: u32) -> u16 {
+        kind_code(self.tag, f.kind[id as usize]).unwrap_or(0)
     }
     fn class(&self, f: &Facts, id: u32) -> Class {
-        self.classes.get(usize::from(Self::code(f, id))).copied().unwrap_or(Class::Other)
+        self.classes.get(usize::from(self.code(f, id))).copied().unwrap_or(Class::Other)
     }
     fn name(&self, f: &Facts, id: u32) -> &'static str {
-        self.catalog.kind_name(Self::code(f, id)).unwrap_or("")
+        self.catalog.kind_name(self.code(f, id)).unwrap_or("")
+    }
+    /// Node `id`'s kind atom as the `kind` column holds it: its name's canonical code's.
+    fn kind(&self, f: &Facts, id: u32) -> i64 {
+        let code = self.code(f, id);
+        i64::from(kind_atom(self.tag, self.canonical.get(usize::from(code)).copied().unwrap_or(code)))
     }
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
@@ -545,7 +551,8 @@ impl Batch {
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
-            let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
+            // The document's own dialect: its first node's kind may be ERROR's, past the stride (`kind_atom`).
+            let tag = d.facts.tag;
             if !dialects.contains_key(&tag) {
                 dialects.insert(tag, Dialect::new(tag)?);
             }
@@ -801,14 +808,20 @@ impl Source for Viewed {
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
-                    continue;
-                };
-                let Some(dialect) = b.dialects.get(&tag).filter(|_| v >= 0) else { continue };
-                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| p.tag == tag) {
-                    for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                // The constant's dialect is the batch's whose code it is (ERROR's reaches past the stride).
+                let Ok(v) = u32::try_from(v) else { continue };
+                for (&tag, dialect) in &b.dialects {
+                    let Some(code) = kind_code(tag, v).filter(|&c| u32::from(c) < KIND_STRIDE || c == u16::MAX) else { continue };
+                    // ERROR has no canonical entry: its nodes hold its atom itself.
+                    let atoms: Vec<u32> = match dialect.codes.get(&code) {
+                        Some(codes) => codes.iter().map(|&c| kind_atom(tag, c)).collect(),
+                        None if code == u16::MAX => vec![v],
+                        None => Vec::new(),
+                    };
+                    for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| p.tag == tag) {
+                        for &kind in &atoms {
+                            rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                        }
                     }
                 }
             } else {
@@ -830,10 +843,7 @@ impl Source for Viewed {
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
-            (View::Node, 2) => {
-                let code = (p.facts.kind[id] % KIND_STRIDE) as usize;
-                i64::from(kind_atom(p.tag, self.batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
-            }
+            (View::Node, 2) => self.batch.dialects[&p.tag].kind(&p.facts, id as u32),
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
             (View::Line, 1) => i64::from(p.facts.start_line[id]),
@@ -974,8 +984,7 @@ impl Batch {
             for local in 0..p.len() as usize {
                 let up = p.parent[local];
                 parent.push(if up == NONE { crate::code_rule_dsl::typing::file_local::NONE } else { (self.nodes[doc] + up as usize) as u32 });
-                let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
-                kind.push(i64::from(kind_atom(p.tag, self.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16))));
+                kind.push(self.dialects[&p.tag].kind(&p.facts, p.core[local]));
             }
         }
         (parent, kind)

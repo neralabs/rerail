@@ -234,3 +234,32 @@ t(s, l) :- text(n, s), line(n, l).
     assert_eq!(run(&dir, program, &["t"])[0], "x\t1\ny\t2\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A file whose tree starts with an ERROR node (its kind atom past the dialect's stride) is read in its own dialect:
+/// `node` has its ERROR nodes, by kind as W's `kind: "ERROR"` finds them, and `syntax_error` has the file.
+#[test]
+fn a_tree_rooted_at_an_error_node_is_read() {
+    let (path, source) = ("l9750_graphql/d.py", "def f(scope: PlanScope):\n    return (\n");
+    let dir = corpus("error-root", &[(path, source)]);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, line, syntax_error
+.decl errors(p: symbol, l: number, s: number, e: number)
+errors(p, l, s, e) :- doc(d, p, _), node(d, n, "ERROR", s, e), line(n, l).
+.decl invalid(p: symbol)
+invalid(p) :- doc(d, p, _), syntax_error(d).
+.output errors, invalid
+"#;
+    let got = run(&dir, program, &["errors", "invalid"]);
+    let want = csv(w(json!({ "ast": { "language": "python", "syntax": "invalid", "rule": { "kind": "ERROR" } } }), path, source).into_iter().map(|v| {
+        let span = &v["span"];
+        format!("{path}\t{}\t{}\t{}", span["startLine"].as_u64().unwrap() + 1, span["startByte"], span["endByte"])
+    }));
+    assert!(want.starts_with(&format!("{path}\t1\t0\t")), "W finds the ERROR root: {want:?}");
+    assert_eq!(got[0], want);
+    assert_eq!(got[1], format!("{path}\n"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
