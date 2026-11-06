@@ -90,6 +90,9 @@ struct Lowerer {
     /// The literals beside the one being lowered, in its conjunction and those enclosing it: what binds an
     /// aggregate's shared variables (`aggregate`).
     siblings: Vec<Lit>,
+    /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
+    /// lattice's top value (`v != top`), as the translated programs write it.
+    top_is_var: bool,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -299,6 +302,14 @@ impl Lowerer {
     }
 
     fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {
+        fn binds_top(lits: &[Lit]) -> bool {
+            lits.iter().any(|l| match l {
+                Lit::Atom { neg: false, args, .. } => args.iter().any(|a| matches!(a, STerm::Var(v) if v == "top")),
+                Lit::Group { alts, neg: false } => alts.iter().any(|a| binds_top(a)),
+                _ => false,
+            })
+        }
+        self.top_is_var = binds_top(body);
         let mut outer = Vec::new();
         heads.iter().flat_map(|h| &h.args).for_each(|a| a.vars(&mut outer));
         let bodies = self.conjunction(body, &outer.into_iter().collect())?;
@@ -567,7 +578,9 @@ impl Lowerer {
                 let v = self.fresh("agg");
                 let mut out = self.aggregate(&v, agg, over.as_deref(), by, sep, body, outer)?;
                 let other = self.term(other)?;
-                let (l, r) = if matches!(l, STerm::Agg { .. }) { (Term::Var(v), other) } else { (other, Term::Var(v)) };
+                // `$v = 0` with `$v` unbound would assign it (`front::cmp_binds`), and the planner may place it
+                // before the aggregate: an equality is written `0 = $v`, a test that waits for the aggregate.
+                let (l, r) = if matches!(l, STerm::Agg { .. }) && op != "=" { (Term::Var(v), other) } else { (other, Term::Var(v)) };
                 out.push(Literal::Cmp { l, op, r });
                 Ok(vec![out])
             }
@@ -699,7 +712,7 @@ impl Lowerer {
 
     fn term(&mut self, t: &STerm) -> Result<Term, Error> {
         Ok(match t {
-            STerm::Var(v) if v == "top" => Term::Top,
+            STerm::Var(v) if v == "top" && !self.top_is_var => Term::Top,
             STerm::Var(v) => Term::Var(v.clone()),
             STerm::Wild => Term::Wild,
             STerm::Num(n) => Term::Int(*n),

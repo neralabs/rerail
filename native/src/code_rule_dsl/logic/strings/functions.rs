@@ -35,6 +35,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sha256", &[Text], Text),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
+    ("str_cmp", &[Text, Text], Number),
 ];
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
@@ -78,6 +80,7 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "convert" => Some(convert(t(0), t(1), t(2))),
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
+        "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "count_matches" => return with_regex(t(0), |re| Value::Integer(re.find_iter(t(1)).count() as i64)).unwrap_or(Value::Null),
         "sha256" => {
             use sha2::Digest;

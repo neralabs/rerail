@@ -1349,7 +1349,6 @@ since reading it is not written. **Closure:** these relations are built natively
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
   text test.
-- Comparing two symbols (`t > s`) compares their interned ids, not their text.
 - `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
