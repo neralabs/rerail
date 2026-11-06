@@ -7,8 +7,8 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -16,7 +16,7 @@
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .decl node_text(n: node, s: symbol)
-.input node_text
+.input node_text, value, value_type_of
 
 // ---- or-empty (UNKNOWN_DEFAULTED): `<x>.auxiliary_query or <empty>` ----
 // boolean_operator whose operator token is `or` (op: the operator field's token), whose left is an attribute
@@ -35,11 +35,10 @@ or_empty_left(n) :- node(_, n, "boolean_operator", _, _), op(n, "or"), field(n, 
 or_empty_right(r) :- node(_, r, "tuple", _, _), node_text(r, s), match("\\((?:\\s|#[^\\n]*(?:\\n|$))*\\)", s).
 or_empty_right(r) :- node(_, r, "list", _, _), node_text(r, s), match("\\[(?:\\s|#[^\\n]*(?:\\n|$))*\\]", s).
 or_empty_right(r) :- node(_, r, "dictionary", _, _), node_text(r, s), match("\\{(?:\\s|#[^\\n]*(?:\\n|$))*\\}", s).
-// `value: {regex: ^(?:)$}` on a string: its value is empty. approximation (awaiting `value`): str(r, "") — the literal's
-// content between its quotes is empty — and no bytes prefix (W's value regex never matches bytes). A literal whose
-// content is only a backslash-newline continuation ("\<newline>") has the empty value in W and is missed here; an
-// interpolated f-string has no str row and no known value in W either.
-or_empty_right(r) :- node(_, r, "string", _, _), str(r, ""), strprefix(r, x), !contains("b", x).
+// `value: {regex: ^(?:)$}` on a string: W's value of the literal is a str and the regex (anchored, `$` the text's
+// end) matches it: the empty str (`""`, `''`, `""""""`, a backslash-newline continuation alone, an f-string with
+// no interpolation and no text). A bytes literal's value is no str (W's value regex reads strings only). Exact.
+or_empty_right(r) :- node(_, r, "string", _, _), value(r, ""), value_type_of(r, "str").
 // `dict()`, `list()` … : the function an identifier of the set (the second `has` requires an identifier, so the
 // attribute alternative of the first never holds), the arguments only brackets, whitespace and comments.
 or_empty_right(r) :- node(_, r, "call", _, _), field(r, "function", f), node(_, f, "identifier", _, _), text(f, s),
