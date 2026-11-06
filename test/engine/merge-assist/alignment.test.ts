@@ -335,24 +335,69 @@ describe("link-1 regressions", () => {
 });
 
 describe("artefactUnits", () => {
-  it("records a new module with its doc comment and new exports added to an existing file", () => {
+  it("records a new harness or tool with its doc comment, and leaves other new modules, tests and new exports out", () => {
+    const harness = ["/** `run --engine slice`: the first slice over the whole worktree. */", "export function runSlice(dir: string): void {}"];
     const module = ["//! The setfix evaluator: runs recursive rules to a fixed point over sets.", "pub fn run_setfix(program: &Program) -> Sets {", "}"];
     const change = commit([
+      file("benchmark/workspaces/slice.ts", harness, [], "added"),
+      file("benchmark/workspaces/slice.test.ts", ["it('runs', () => {});"], [], "added"),
       file("native/src/logic/native/setfix.rs", module, [], "added"),
       file("src/engine/store.ts", ["export function compileOnce(table: Table) {}"]),
-      file("src/engine/other.ts", ["const local = 1;"]),
-    ], { subject: "logic: setfix" });
+    ], { subject: "bench: slice" });
     const texts = {
-      before: new Map([["src/engine/store.ts", "export function open() {}"], ["src/engine/other.ts", "export function open() {}"]]),
+      before: new Map([["src/engine/store.ts", "export function open() {}"]]),
       after: new Map([
+        ["benchmark/workspaces/slice.ts", harness.join("\n")],
+        ["benchmark/workspaces/slice.test.ts", "it('runs', () => {});"],
         ["native/src/logic/native/setfix.rs", module.join("\n")],
         ["src/engine/store.ts", "export function open() {}\nexport function compileOnce(table: Table) {}"],
-        ["src/engine/other.ts", "export function open() {}\nconst local = 1;"],
       ]),
     };
     expect(artefactUnits(change, texts).map(unit => [unit.text, unit.anchors])).toEqual([
-      ["adds native/src/logic/native/setfix.rs: The setfix evaluator: runs recursive rules to a fixed point over sets. (run_setfix)", { files: ["native/src/logic/native/setfix.rs"], symbols: ["run_setfix"] }],
-      ["adds compileOnce to src/engine/store.ts: logic: setfix", { files: ["src/engine/store.ts"], symbols: ["compileOnce"] }],
+      ["adds benchmark/workspaces/slice.ts: `run --engine slice`: the first slice over the whole worktree. (runSlice)", { files: ["benchmark/workspaces/slice.ts"], symbols: ["runSlice"] }],
+    ]);
+  });
+});
+
+describe("link-1 precision regressions", () => {
+  it("takes no hand-off from a table separator or a row whose status is closed", () => {
+    const lines = ["## Open items", "| id | item | status |", "| --- | ---: | ---: |", "| O22 | P's text prefilter in `src/engine/store.ts` | closed (2026-10-29): option (a) |", "| O41 | Producer labels in `src/engine/store.ts` | open |"];
+    const change = commit([file("docs/notes.md", lines)]);
+    const texts = { before: new Map(), after: new Map([["docs/notes.md", lines.join("\n")]]) };
+    expect(handoffUnits(change, texts, resolve).map(unit => unit.text)).toEqual(["| O41 | Producer labels in `src/engine/store.ts` | open | (docs/notes.md)"]);
+  });
+
+  it("reads no contract from tests, benchmarks or a placeholder table name", () => {
+    const vtab = ['const SCHEMA: &CStr = c"CREATE TABLE x(file, id, parent, kind)";'];
+    const change = commit([
+      file("native/src/sql/nodes.rs", vtab),
+      file("native/src/sql/lower_tests.rs", ["conn.execute(\"CREATE TABLE points(a, b)\")"]),
+      file("benchmark/candidate-pruning.sql", ["SELECT 1;"]),
+      file("native/src/content_store/schema.rs", ["CREATE TABLE facts_results (content BLOB)"]),
+    ], { subject: "sql" });
+    expect(contractUnits(change, noTexts).map(unit => unit.text)).toEqual(["changes the schema of facts_results in native/src/content_store/schema.rs (sql)"]);
+  });
+
+  it("states a migration step appended to a registry list with the list's rule (sf-12)", () => {
+    const after = [
+      "/** This build's steps, oldest first. Append only. */",
+      "export const RERAIL_MIGRATIONS: readonly Migration[] = [",
+      "  {",
+      '    id: "repositories-follow-gitignore",',
+      "    up(database) {},",
+      "  },",
+      "  {",
+      '    id: "rule-approvals",',
+      "    up(database) {},",
+      "  },",
+      "];",
+    ];
+    const migrations: FileChange = { path: "src/engine/storage/migrations.ts", oldPath: "src/engine/storage/migrations.ts", status: "modified", added: [{ start: 7, lines: after.slice(6, 10) }], removed: [] };
+    const change = commit([migrations], { subject: "Packs: rule approvals" });
+    const texts = { before: new Map(), after: new Map([[migrations.path, after.join("\n")]]) };
+    expect(contractUnits(change, texts).map(unit => [unit.text, unit.anchors.symbols])).toEqual([
+      ["changes the format in src/engine/storage/migrations.ts (Packs: rule approvals)", []],
+      ['appends rule-approvals to RERAIL_MIGRATIONS in src/engine/storage/migrations.ts ("This build\'s steps, oldest first. Append only.") (Packs: rule approvals)', ["RERAIL_MIGRATIONS"]],
     ]);
   });
 });

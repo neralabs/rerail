@@ -641,7 +641,7 @@ interface ReplayReport {
 
 const REPLAY_REPORT_FORMAT = "rerail.merge-assist-replay/v1";
 /** The replay options that define what an arm and its grading are: they must match to pool. */
-const REPLAY_PROTOCOL_OPTIONS = ["dataset", "model", "judgeModel", "config", "timeoutMin", "judgeTimeoutMin", "alignModule"] as const;
+const REPLAY_PROTOCOL_OPTIONS = ["dataset", "provider", "model", "judgeModel", "config", "timeoutMin", "judgeTimeoutMin", "alignModule"] as const;
 
 export const REPLAY_METRICS = ["conflict", "done", "total_tokens", "wall_time", "merge_conflict_files", "first_half_files"] as const;
 export type ReplayMetric = (typeof REPLAY_METRICS)[number];

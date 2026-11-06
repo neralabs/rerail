@@ -35,7 +35,9 @@ import {
   type OwnCommits,
   type Pair,
   pool,
+  prefetchPositions,
   replayPair,
+  type ResolvedSide,
   resolveSide,
   type Side,
 } from "./merge-assist-align.js";
@@ -282,6 +284,7 @@ const GRADE_INSTRUCTIONS = `Notes extracted automatically from branches of one r
 - retirement: a module, file or symbol removed, retired, deprecated, replaced or moved, or a statement that it is.
 - contract: a change to an exported signature, a schema or table, or a file format that other code depends on.
 - copy: code one branch holds that another branch also has.
+- artefact: something one branch built (a module, harness, tool or format) that work on another branch could reuse instead of rebuilding.
 Not real: noise (measurements, logs, status lines, test data), statements too vague to act on, or a change no one else depends on (a private helper, a typo).
 For each note: real (true when it is a real unit of some kind), typeCorrect (true when its claimed kind fits), reason (one short sentence).`;
 
@@ -355,13 +358,18 @@ function parseGrades(value: unknown, ids: readonly string[]): Array<{ id: string
   });
 }
 
-/** Every unit of every ref the dev pairs name, with positions; copy units are relational and left out of the sample. */
-async function allUnits(context: AlignmentContext, pairs: readonly Pair[]): Promise<LedgerUnit[]> {
+/** Every distinct side the dev pairs name, resolved against the clone. */
+function pairSides(context: AlignmentContext, pairs: readonly Pair[]): ResolvedSide[] {
   const sides = new Map<string, Side>();
   for (const pair of pairs) for (const side of [pair.first, pair.second]) sides.set(`${side.ref ?? side.pr}\u0000${side.head_sha}`, side);
+  return [...sides.values()].map(side => resolveSide(context, side));
+}
+
+/** Every unit of every ref the dev pairs name, with positions; copy units are relational and left out of the sample. */
+async function allUnits(context: AlignmentContext, pairs: readonly Pair[]): Promise<LedgerUnit[]> {
   const units = new Map<string, LedgerUnit>();
-  for (const side of sides.values()) {
-    const loaded = await loadHistory(context, resolveSide(context, side), NO_OWN);
+  for (const side of pairSides(context, pairs)) {
+    const loaded = await loadHistory(context, side, NO_OWN);
     for (const unit of visibleUnits([loaded.history], "9999-12-31T00:00:00Z")) {
       const key = `${unit.sha}\u0000${unit.kind}\u0000${unit.text}`;
       if (!units.has(key)) units.set(key, unit);
@@ -379,6 +387,8 @@ function verdict(value: number, bar: number, atMost = false): string {
 }
 
 async function linkOne(context: AlignmentContext, pairs: readonly Pair[], options: Options): Promise<unknown> {
+  // Positions first, every side at once at the judge's concurrency; scoring then reads them from the cache.
+  await prefetchPositions(context, pairSides(context, pairs), options.concurrency);
   const results = await scoreExtraction(context, pairs, options);
   const scored = results.filter(result => result.reason !== "excluded");
   const hits = scored.filter(result => result.hit).length;

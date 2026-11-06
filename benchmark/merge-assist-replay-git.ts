@@ -3,10 +3,11 @@
  * other refs in flight. See benchmark/merge-assist-replay.ts.
  *
  * No merge is run and nothing is written to any repository. Both sides are `git diff --unified=0` hunks as line ranges
- * of the base: the agent's working files against the base, and another ref's work against its merge base with the
- * base, its ranges carried to the base's lines through the merge base's own diff to the base. Two hunks in the same
- * file conflict when they touch the same base lines or leave at most {@link ADJACENT_LINES} unchanged lines between
- * them, which approximates git's own conflict rule. Renames are ignored.
+ * of the base: the agent's working files against the base, and another ref's own work (its diff from where it meets
+ * its base branch as of the visible time, as a pull request shows it, so mainline work it merged in does not count)
+ * carried to the base's lines through that point's own diff to the base. Two hunks in the same file conflict when they
+ * touch the same base lines or leave at most {@link ADJACENT_LINES} unchanged lines between them, which approximates
+ * git's own conflict rule. Renames are ignored.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -158,14 +159,13 @@ function clipLines(lines: readonly string[], limit: number): string {
 }
 
 /**
- * `sha`'s changes against its merge base with `base`, as base lines: each hunk's merge-base range carried to the base
- * through the merge base's own diff to the base, file by file. `paths` limits the files read.
+ * `sha`'s own changes, from `own` (where its work starts: see the harness's `ownBase`), as `base` lines: each hunk's
+ * range in `own` carried to `base` through `own`'s diff to `base`, file by file. Work `sha` merged in from its base
+ * branch after `own` is not its own and is not counted. `paths` limits the files read.
  */
-export function refHunks(repo: string, base: string, sha: string, paths?: readonly string[]): Record<string, RefHunk[]> {
-  const mergeBase = gitRead(repo, ["merge-base", base, sha])?.trim();
-  if (mergeBase === undefined || mergeBase === "") return {};
-  const theirs = diffHunks(repo, mergeBase, sha, paths);
-  const drift = mergeBase === base || theirs.size === 0 ? new Map<string, RawHunk[]>() : diffHunks(repo, mergeBase, base, [...theirs.keys()]);
+export function refHunks(repo: string, base: string, own: string, sha: string, paths?: readonly string[]): Record<string, RefHunk[]> {
+  const theirs = diffHunks(repo, own, sha, paths);
+  const drift = own === base || theirs.size === 0 ? new Map<string, RawHunk[]>() : diffHunks(repo, own, base, [...theirs.keys()]);
   const files: Record<string, RefHunk[]> = {};
   for (const [path, hunks] of theirs) {
     const moves = drift.get(path) ?? [];
@@ -179,11 +179,9 @@ export function refHunks(repo: string, base: string, sha: string, paths?: readon
   return files;
 }
 
-/** The files `sha` changes against its merge base with `base`. */
-export function refFiles(repo: string, base: string, sha: string): string[] {
-  const mergeBase = gitRead(repo, ["merge-base", base, sha])?.trim();
-  if (mergeBase === undefined || mergeBase === "") return [];
-  return (gitRead(repo, ["diff", "--name-only", "--no-renames", mergeBase, sha]) ?? "").split("\n").filter(path => path !== "");
+/** The files `sha` changes from `own`, where its own work starts. */
+export function refFiles(repo: string, own: string, sha: string): string[] {
+  return (gitRead(repo, ["diff", "--name-only", "--no-renames", own, sha]) ?? "").split("\n").filter(path => path !== "");
 }
 
 /** The agent's changes: the workspace's working files against `base`, untracked files as new files. Reads only. */
@@ -228,15 +226,13 @@ export function conflictKey(conflict: Pick<GitConflict, "ref" | "file">): string
   return `${conflict.ref}\u0000${conflict.file}`;
 }
 
-/** A ref's stated intent: its pull request title and first body paragraph, else its latest commit subjects. */
-export function statedIntent(repo: string, base: string, sha: string, pr: { title: string; body?: string } | null): string {
+/** A ref's stated intent: its pull request title and first body paragraph, else its latest own commit subjects (after `own`). */
+export function statedIntent(repo: string, own: string, sha: string, pr: { title: string; body?: string } | null): string {
   if (pr !== null) {
     const paragraph = (pr.body ?? "").trim().split(/\n\s*\n/u)[0]?.trim() ?? "";
     return paragraph === "" ? pr.title : `${pr.title}\n${paragraph}`;
   }
-  const mergeBase = gitRead(repo, ["merge-base", base, sha])?.trim() ?? "";
-  const range = mergeBase === "" ? sha : `${mergeBase}..${sha}`;
-  return (gitRead(repo, ["log", "--no-merges", `-${INTENT_SUBJECTS}`, "--format=%s", range]) ?? "").trim();
+  return (gitRead(repo, ["log", "--no-merges", `-${INTENT_SUBJECTS}`, "--format=%s", `${own}..${sha}`]) ?? "").trim();
 }
 
 /** Their overlapping hunks as one change, at most {@link HUNK_LINES} lines. */

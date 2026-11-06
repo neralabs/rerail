@@ -355,8 +355,9 @@ are quick.
   environment (`env`, `printenv`, `export -p`, `/proc/*/environ`, all of `os.environ` or `process.env`), or one that
   reads a credential (`$AWS_…`, Secrets Manager, the instance metadata address, `~/.aws`). So does a credential Codex
   ran with appearing in the run's events or transcript. Patches count by the files they name. Leaked runs are listed
-  with their calls and counted per arm, then left out of every aggregate. `--tamper` runs each selected pair once
-  under `none` with the task "Run `ls /tmp/ma-ctx/oss` …" and exits non-zero unless every run is flagged.
+  with their calls and counted per arm, then left out of every aggregate. `--tamper` runs each selected pair under
+  `none` once per probe ("Run `ls /tmp/ma-ctx/oss` …" and "Run `env | grep -i -E 'aws|token|bedrock'` …", each
+  insisting on the attempt) and exits non-zero unless every run is flagged.
 - **Arms.** `none`: the hook only logs. `align`: at an area's first touch (the context eval's areas and triggers:
   files read after a command, files patched before the patch), the hook asks `--align-module`'s `deliverForArea`
   (`benchmark/merge-assist-align.ts` by default) for that area's units, passing the files the call touched there.
@@ -369,10 +370,15 @@ are quick.
   tool call (a patch, a command or a code cell may write files), the hook (`benchmark/merge-assist-replay-git.ts`)
   identifies, reading only, which of the agent's changes would conflict with another ref visible at second's start:
   first as of `first_visible`, and each `concurrent` ref at its newest first-parent commit by then. The agent's side
-  is `git diff --unified=0` of the working files against the base (untracked files as new files); a ref's side is the
-  same diff from its merge base with `base_sha`, its ranges carried to the base's lines through the merge base's own
-  diff to the base. Two hunks in the same file conflict when they touch the same base lines or leave at most 3
-  unchanged lines between them (an approximation of git's rule), unless both make the same change to the same lines;
+  is `git diff --unified=0` of the working files against the base (untracked files as new files); a ref's side is its
+  own work, as its pull request shows it: the same diff from its merge base with its base branch (a side's labelled
+  `base_ref`, else the default branch: `origin/main`, `origin/master`, HEAD, `main`, `master`) as that branch stood
+  at second's start, so mainline work it merged in does not count; or from its merge base with `base_sha` when that
+  is nearer, so a branch stacked on second's does not own second's work. If the base branch already held all of it
+  then (a merged pull request), a pair side starts at its labelled `base_sha`. Its ranges are carried to the base's
+  lines through that starting point's own diff to the base, and its stated intent's commit subjects come from the same
+  range. Two hunks in the same file conflict when they touch the same base lines or leave at most 3 unchanged lines
+  between them (an approximation of git's rule), unless both make the same change to the same lines;
   renames are ignored. Files the agent did not change never count, so base drift does not. The refs' hunks are read
   from the source before the run; the hook never reads the source, and nothing is written to it. `git-conflict`
   pushes each (ref, file) once, at most 3 per call: "Git conflict in flight: <PR #N or
@@ -407,8 +413,9 @@ are quick.
   unless `--keep`.
 - **`--detect-only`.** No agent. Every selected pair of `pairs.json` (specs not needed) replays second's real commits
   in order, at their authoring times, through the same identifier: the files second's own non-merge commits changed
-  so far are the agent's, and each ref visible then (first's last labelled commit visible by then, each `concurrent`
-  ref's head then) is compared from the commit's merge base with it. It prints, per pair, when a conflict with first
+  so far are the agent's (second's own work at that time, measured the same way as a ref's), and each ref visible
+  then (first's last labelled commit visible by then, each `concurrent` ref's head then) is its own work at that time,
+  carried to the lines of second's starting point. It prints, per pair, when a conflict with first
   was first identified against `noticed_at` (the lead in hours), on any file and on one of the conflict's labelled
   (`first_half` or `second_half`) files, how many (ref, file) pairs were identified against first and against other
   refs, then the conflict pairs identified before `noticed_at` (any file, labelled file) and the negatives identified
@@ -437,7 +444,10 @@ and not changed after.
   Codex's Linux one, with the same profile rules (network off, only the run's folder writable, other runs, the
   dataset and home denied) and the tamper check passing on the host before look 1. The Bedrock key reaches the Codex
   process only, never the agent's shell. An earlier look 1 started on the Mac was stopped before any run finished;
-  nothing from it is used.
+  nothing from it is used. A pull request's "change" is its own diff as its base branch saw it at the time (from its
+  merge base with the base branch tip then, or with the replay base when that is nearer, for stacked branches), not
+  its diff from the replay base: the first definition counted mainline work a branch had merged in as its own. Fixed
+  on the dev pair before any OSS data.
 - **Primary** (per treatment against `none`, one-sided, stratified by pair, Holm across the two treatments): R1, the
   share of runs the blind grader judges to conflict with the first pull request's design (yes or unclear count as a
   conflict; errors and empty diffs count as failures) is lower.

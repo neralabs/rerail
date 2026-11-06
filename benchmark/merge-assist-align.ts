@@ -122,7 +122,7 @@ export interface Pair {
 }
 
 /** Bumped whenever extraction changes, so cached commit records are rebuilt. */
-const EXTRACT_VERSION = 5;
+const EXTRACT_VERSION = 8;
 export const JUDGE_REPOSITORY = "eval:merge-assist-align";
 const MAX_CONCURRENCY = 4;
 /** Pairs replayed at once; pairs that share a side and ledger then share judge answers as they go. */
@@ -486,7 +486,7 @@ export async function pool<T, R>(items: readonly T[], concurrency: number, work:
 }
 
 /** Positions for every passage-bearing commit of `sides`, extracted at most `concurrency` at once. */
-async function prefetchPositions(context: AlignmentContext, sides: readonly ResolvedSide[], concurrency: number): Promise<void> {
+export async function prefetchPositions(context: AlignmentContext, sides: readonly ResolvedSide[], concurrency: number): Promise<void> {
   if (context.judge === null) return;
   const shas = [...new Set(sides.flatMap(side => side.commits.map(commit => commit.sha)))];
   const records = (await pool(shas, concurrency, sha => context.record(sha))).filter((record): record is CommitRecord => record !== undefined && record.passages.length > 0);

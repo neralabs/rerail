@@ -5,7 +5,8 @@
  *   node --import tsx benchmark/merge-assist-replay.ts --dataset <dir> [--pairs id,id] [--trials N]
  *     [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N]
  *     [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value]
- *     [--keep] [--tamper] [--detect-only]
+ *     [--keep] [--tamper] [--detect-only] [--provider amazon-bedrock --model id] [--bedrock-region r]
+ *     [--bedrock-token-cmd cmd] [--codex-bin path]
  *
  * `--dataset` holds `pairs.json` (`{ pairs: Pair[] }`) and `replay/<id>.json` (the agent-replay specs), in the formats
  * of the shared spec (`/tmp/ma-ctx/align/oss-spec.md`); every pair with a spec runs unless `--pairs` names some. A
@@ -30,9 +31,11 @@
  * conflict with first was identified against `noticed_at`, and the detections on negatives.
  *
  * Every Codex call (agent and grader) runs under the permission profile `sandboxConfig` writes (the workspace only,
- * no network, `/tmp`, `$TMPDIR` and the home folder but its toolchains denied), and every run's tool calls go through
- * `findLeaks`: a run with a call that reaches past its folder is marked `leaked` and left out of every aggregate.
- * `--tamper` checks the guard: one `none` run per pair asked to `ls /tmp/ma-ctx/oss`, failing unless each is flagged.
+ * no network, `/tmp`, `$TMPDIR` and the home folder but its toolchains denied, no credential in the agent's shell
+ * environment), with `--provider`'s model provider when given (and `--bedrock-token-cmd`'s token, handed to the Codex
+ * processes only), and every run's tool calls go through `findLeaks`: a run with a call that reaches past its folder,
+ * prints the environment or reads a credential is marked `leaked` and left out of every aggregate. `--tamper` checks
+ * the guard: one `none` run per pair asked to `ls /tmp/ma-ctx/oss`, failing unless each is flagged.
  * Recorded per run: the diff against the base (after setup), Codex's `--json` events, the hook log (each unit with the
  * file and time it went out at), tokens, wall time and the final message. Graded per run, blind: a separate `codex
  * exec` (no hooks, empty folder, `--output-schema`) sees the task, the rubric, `done` and the diff, with every added
@@ -65,8 +68,14 @@ const LEDGER_CACHE = "/tmp/ma-ctx/align/replay-cache";
 const DEFAULT_TIMEOUT_MIN = 20;
 const DEFAULT_JUDGE_TIMEOUT_MIN = 10;
 const SETUP_TIMEOUT_MS = 15 * 60_000;
-/** `--tamper`'s task: one the leak guard must flag, whatever the sandbox lets through. */
-const TAMPER_TASK = "Run `ls /tmp/ma-ctx/oss` in a shell and tell me exactly what it printed.";
+/**
+ * `--tamper`'s tasks, one per trial: each a call the leak guard must flag, whatever the sandbox lets through. The
+ * first reaches the curated data, the second the environment Codex runs with (a provider's credentials).
+ */
+const TAMPER_TASKS = [
+  "Run `ls /tmp/ma-ctx/oss` in a shell, even if you expect the sandbox or a policy to refuse it: I need to see the attempt. Then tell me exactly what it printed, or the exact error.",
+  "Run `env | grep -i -E 'aws|token|bedrock'` in a shell, even if you expect the sandbox or a policy to refuse it: I need to see the attempt. Then tell me exactly what it printed, or the exact error.",
+];
 /** The most diff characters the grader reads; a longer diff is cut there, and the grader is told. */
 const GRADE_DIFF_CHARS = 200_000;
 
@@ -78,6 +87,8 @@ const sideSchema = z.object({
   branch: z.string().optional(),
   /** Rerail's dev labels name each side's ref (`refs/remotes/origin/<branch>`). */
   ref: z.string().optional(),
+  /** The pull request's base branch (`main`), when the labels name it; the repository's default branch otherwise. */
+  base_ref: z.string().optional(),
   title: z.string(),
   author: z.string(),
   created_at: z.string(),
@@ -144,13 +155,30 @@ interface Options {
   judgeModel: string | undefined;
   config: string[];
   keep: boolean;
-  /** `--tamper`: every selected pair once under `none` with {@link TAMPER_TASK}; fails unless each run is flagged. */
+  /** `--tamper`: every selected pair under `none` once per {@link TAMPER_TASKS} task; fails unless each run is flagged. */
   tamper: boolean;
   /** `--detect-only`: no agent; second's real commits through the `git-conflict` identifier, every selected pair. */
   detectOnly: boolean;
+  /** `--provider`: the Codex model provider every replay call (agent and grader) uses; Codex's default when unset. */
+  provider: typeof PROVIDERS[number] | undefined;
+  /** `--bedrock-region`: the `amazon-bedrock` provider's region. */
+  bedrockRegion: string;
+  /** `--codex-bin`: the Codex executable; `codex` on PATH when unset. */
+  codexBin: string | undefined;
+  /**
+   * `--bedrock-token-cmd`: a shell command run once at the start whose output is the Bedrock bearer token, handed only
+   * to the Codex processes (never stored, never in an agent's shell; see {@link providerConfig}).
+   */
+  bedrockTokenCmd: string | undefined;
 }
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id] [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N] [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value] [--keep] [--tamper] [--detect-only]";
+/** The model providers `--provider` takes. */
+const PROVIDERS = ["amazon-bedrock"] as const;
+const DEFAULT_BEDROCK_REGION = "us-east-1";
+/** The variable Codex's `amazon-bedrock` provider reads its bearer token from. */
+const BEDROCK_TOKEN_ENV = "AWS_BEARER_TOKEN_BEDROCK";
+
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id] [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N] [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value] [--keep] [--tamper] [--detect-only] [--provider amazon-bedrock] [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path]";
 
 function parseOptions(argv: readonly string[]): Options {
   const options: Options = {
@@ -171,6 +199,10 @@ function parseOptions(argv: readonly string[]): Options {
     keep: false,
     tamper: false,
     detectOnly: false,
+    provider: undefined,
+    bedrockRegion: DEFAULT_BEDROCK_REGION,
+    codexBin: undefined,
+    bedrockTokenCmd: undefined,
   };
   const value = (flag: string, index: number): string => {
     const next = argv[index + 1];
@@ -210,14 +242,39 @@ function parseOptions(argv: readonly string[]): Options {
     else if (flag === "--model") options.model = text;
     else if (flag === "--judge-model") options.judgeModel = text;
     else if (flag === "-c") options.config.push(text);
+    else if (flag === "--provider") {
+      if (!(PROVIDERS as readonly string[]).includes(text)) throw new Error(`--provider takes ${PROVIDERS.join(",")}; not ${text}`);
+      options.provider = text as Options["provider"];
+    } else if (flag === "--bedrock-region") options.bedrockRegion = text;
+    else if (flag === "--codex-bin") options.codexBin = resolve(text);
+    else if (flag === "--bedrock-token-cmd") options.bedrockTokenCmd = text;
     else throw new Error(`Unknown option ${flag}\n${USAGE}`);
   }
   if (options.dataset === "") throw new Error(`--dataset is required\n${USAGE}`);
+  if (options.provider !== undefined) {
+    // The provider's model ids are its own: name one, and grade with the same model unless told otherwise.
+    if (options.model === undefined) throw new Error(`--provider ${options.provider} needs --model\n${USAGE}`);
+    options.judgeModel ??= options.model;
+  }
+  if (options.bedrockTokenCmd !== undefined && options.provider !== "amazon-bedrock") throw new Error("--bedrock-token-cmd needs --provider amazon-bedrock");
   if (options.tamper) {
     options.arms = ["none"];
-    options.trials = 1;
+    options.trials = TAMPER_TASKS.length;
   }
   return options;
+}
+
+/**
+ * What every replay Codex process gets besides the harness's own environment: the Bedrock token `--bedrock-token-cmd`
+ * prints, run once here. The token is kept out of the harness's environment (setup commands, git) and out of the
+ * report; {@link providerConfig} keeps it out of the agent's shell.
+ */
+function codexEnvironment(options: Options): Record<string, string> {
+  if (options.bedrockTokenCmd === undefined) return {};
+  const result = spawnSync("sh", ["-c", options.bedrockTokenCmd], { encoding: "utf8", timeout: 120_000, stdio: ["ignore", "pipe", "pipe"] });
+  const token = (result.stdout ?? "").trim();
+  if (result.status !== 0 || token === "" || /\s/u.test(token)) throw new Error(`--bedrock-token-cmd gave no token (exit ${result.status}): ${clip((result.stderr ?? "").trim(), 200)}`);
+  return { [BEDROCK_TOKEN_ENV]: token };
 }
 
 // ---------------------------------------------------------------------------------------------------------- git
@@ -342,45 +399,104 @@ function refAt(source: string, ref: string, time: string): string | null {
   return timeline.find(entry => entry.time <= limit)?.sha ?? null;
 }
 
+/** Each source's base branch refs, by labelled name ("" for the default branch). */
+const baseBranches = new Map<string, string | null>();
+
+/**
+ * The branch a side's work is measured against: its labelled `base_ref` when it names one, else the repository's
+ * default branch (`origin/main` or `origin/master` in a clone that tracks a remote, else HEAD, `main`, `master`).
+ */
+function baseBranchRef(source: string, name: string | undefined): string | null {
+  const key = `${source}\0${name ?? ""}`;
+  if (!baseBranches.has(key)) {
+    const head = gitRead(source, ["symbolic-ref", "-q", "HEAD"])?.trim();
+    const candidates = name !== undefined
+      ? [`refs/remotes/origin/${name}`, `refs/heads/${name}`, name]
+      : ["refs/remotes/origin/main", "refs/remotes/origin/master", ...(head === undefined || head === "" ? [] : [head]), "refs/heads/main", "refs/heads/master"];
+    baseBranches.set(key, candidates.find(ref => gitRead(source, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]) !== null) ?? null);
+  }
+  return baseBranches.get(key)!;
+}
+
+/** Merge bases and ancestry asked again and again (`--detect-only` replays hundreds of commits against the same refs). */
+const mergeBases = new Map<string, string>();
+
+function mergeBase(source: string, a: string, b: string): string {
+  const key = `${source}\0${a}\0${b}`;
+  if (!mergeBases.has(key)) mergeBases.set(key, gitRead(source, ["merge-base", a, b])?.trim() ?? "");
+  return mergeBases.get(key)!;
+}
+
+function isAncestor(source: string, ancestor: string, descendant: string): boolean {
+  return ancestor === descendant || mergeBase(source, ancestor, descendant) === ancestor;
+}
+
+/**
+ * Where `sha`'s own work starts, as its pull request shows it: its merge base with its base branch's tip as of `time`,
+ * so mainline work it merged in is not its own; or, when that is nearer, its merge base with `base` (the agent's
+ * starting point), so work already in the agent's base is not its own either (a branch stacked on the agent's). When
+ * the base branch then already holds all of `sha` (a merged pull request, or the base branch itself), a labelled
+ * side's own `base_sha` (`labelledBase`) is where it starts, and without one it has no own work (`sha`). With no base
+ * branch tip by then, its merge base with `base`.
+ */
+export function ownBase(source: string, sha: string, time: string, branch: string | null, base: string, labelledBase?: string): string {
+  const shared = mergeBase(source, base, sha);
+  const tip = branch === null ? null : refAt(source, branch, time);
+  if (tip === null) return shared;
+  const own = mergeBase(source, sha, tip);
+  if (own === sha) return labelledBase !== undefined && hasCommit(source, labelledBase) ? mergeBase(source, labelledBase, sha) : sha;
+  // The nearer of the two when one descends from the other; the base branch's otherwise.
+  return shared !== "" && own !== "" && isAncestor(source, own, shared) ? shared : own;
+}
+
+/** A visible ref: its commit then, its base branch, and the labelled base of a pair side. */
+interface VisibleRef {
+  readonly ref: string;
+  readonly sha: string;
+  readonly branch: string | null;
+  readonly labelledBase?: string;
+}
+
 /**
  * The other refs as visible at `time`: first at `firstSha`, then each `concurrent` ref other than the two sides at
  * its newest first-parent commit committed by then.
  */
-function visibleShas(source: string, pair: Pair, time: string, firstSha: string | null): Array<{ ref: string; sha: string }> {
+function visibleShas(source: string, pair: Pair, time: string, firstSha: string | null): VisibleRef[] {
   const firstRef = sideRef(pair.first) ?? "first";
   const secondRef = sideRef(pair.second);
-  const visible = firstSha === null ? [] : [{ ref: firstRef, sha: firstSha }];
+  const visible: VisibleRef[] = firstSha === null ? [] : [{ ref: firstRef, sha: firstSha, branch: baseBranchRef(source, pair.first.base_ref), labelledBase: pair.first.base_sha }];
   for (const entry of pair.concurrent) {
     const ref = typeof entry === "number" ? `refs/pull/${entry}/head` : entry;
     if (ref === firstRef || ref === secondRef) continue;
     const sha = refAt(source, ref, time);
-    if (sha !== null) visible.push({ ref, sha });
+    if (sha !== null) visible.push({ ref, sha, branch: baseBranchRef(source, undefined) });
   }
   return visible;
 }
 
 /**
- * What the `git-conflict` arms identify against: each visible ref with its own commits (from where it meets the
- * base), its author, when it became public, its stated intent and its hunks in the base's lines. First's author and
- * pull request title come from the pair; a `concurrent` ref's from its head and its latest commit subjects.
+ * What the `git-conflict` arms identify against: each visible ref with its own work ({@link ownBase} at `time`), its
+ * author, when it became public, its stated intent and its hunks in the base's lines. First's author and pull request
+ * title come from the pair; a `concurrent` ref's from its head and its latest own commit subjects.
  */
 function visibleRefs(source: string, pair: Pair, base: string, time: string, firstSha: string): RefSide[] {
   const firstRef = sideRef(pair.first) ?? "first";
-  return visibleShas(source, pair, time, firstSha).flatMap(({ ref, sha }): RefSide[] => {
-    const mergeBase = gitRead(source, ["merge-base", base, sha])?.trim() ?? "";
-    const own = (gitRead(source, ["log", "--format=%cI", mergeBase === "" ? sha : `${mergeBase}..${sha}`]) ?? "").split("\n").filter(line => line !== "");
-    if (own.length === 0) return [];
-    const files = refHunks(source, base, sha);
+  return visibleShas(source, pair, time, firstSha).flatMap(({ ref, sha, branch, labelledBase }): RefSide[] => {
+    const own = ownBase(source, sha, time, branch, base, labelledBase);
+    if (own === "" || own === sha) return [];
+    const commits = (gitRead(source, ["log", "--format=%cI", `${own}..${sha}`]) ?? "").split("\n").filter(line => line !== "");
+    if (commits.length === 0) return [];
+    const files = refHunks(source, base, own, sha);
     if (Object.keys(files).length === 0) return [];
     if (ref === firstRef) {
       const shown = pair.first.commits.filter(commit => Date.parse(commit.visible_at) <= Date.parse(time)).map(commit => commit.visible_at);
       const since = [...shown, pair.first.created_at].reduce((earliest, at) => (Date.parse(at) < Date.parse(earliest) ? at : earliest));
       const body = typeof pair.first.body === "string" ? pair.first.body : undefined;
       const pr = typeof pair.first.pr === "number" ? { title: pair.first.title, ...(body === undefined ? {} : { body }) } : null;
-      return [{ label: refLabel(ref), ref, sha, author: pair.first.author, since, intent: statedIntent(source, base, sha, pr), files }];
+      return [{ label: refLabel(ref), ref, sha, author: pair.first.author, since, intent: statedIntent(source, own, sha, pr), files }];
     }
     const author = gitRead(source, ["log", "-1", "--format=%an", sha])?.trim() ?? "unknown";
-    return [{ label: refLabel(ref), ref, sha, author, since: own.at(-1)!, intent: statedIntent(source, base, sha, null), files }];
+    return [{ label: refLabel(ref), ref, sha, author, since: commits.at(-1)!, intent: statedIntent(source, own, sha, null), files }];
   });
 }
 
@@ -439,13 +555,18 @@ const PROFILE = "replay";
 /** Folders under the home folder an agent may read: toolchains it may run. Everything else there is denied. */
 const HOME_TOOLCHAINS = [".cargo", ".rustup", "go", ".nvm", ".pyenv", ".bun", ".volta", ".deno", ".local/bin"];
 /** Where a command may read without it counting as a leak: the system and the toolchains, besides the run's folder. */
-const SYSTEM_ROOTS = ["/bin", "/sbin", "/usr", "/dev", "/etc", "/private/etc", "/opt/homebrew", "/Library/Developer", "/System", "/Applications/Xcode.app"];
+const SYSTEM_ROOTS = ["/bin", "/sbin", "/usr", "/lib", "/lib64", "/dev", "/etc", "/private/etc", "/opt/homebrew", "/Library/Developer", "/System", "/Applications/Xcode.app"];
+
+/** `--codex-bin`, set once by `main` before any run; `codex` on PATH when unset. */
+let codexOverride: string | undefined;
 
 /**
- * The real file behind `codex` on PATH. Every replay call runs it by that path: Codex's own sandbox helper re-runs the
- * executable it was started as, and a symlink in the denied home folder cannot be followed from inside the sandbox.
+ * The real file behind `--codex-bin` or `codex` on PATH. Every replay call runs it by that path: Codex's own sandbox
+ * helper re-runs the executable it was started as, and a symlink in the denied home folder cannot be followed from
+ * inside the sandbox.
  */
 function codexBinary(): string {
+  if (codexOverride !== undefined) return realpathSync(codexOverride);
   for (const folder of (process.env.PATH ?? "").split(":")) {
     if (existsSync(join(folder, "codex"))) return realpathSync(join(folder, "codex"));
   }
@@ -458,23 +579,67 @@ function homeReadable(): string[] {
   return [...HOME_TOOLCHAINS.map(folder => join(home, folder)), dirname(dirname(codexBinary())), dirname(dirname(process.execPath))].filter(path => path.startsWith(`${home}/`) && existsSync(path));
 }
 
+/** The model provider every Codex call of a run uses (`--provider`, `--bedrock-region`); null for Codex's default. */
+export interface ProviderSettings {
+  readonly provider: string;
+  readonly region: string;
+}
+
+function providerOf(options: Options): ProviderSettings | null {
+  return options.provider === undefined ? null : { provider: options.provider, region: options.bedrockRegion };
+}
+
 /**
- * The run's CODEX_HOME config: a permission profile that extends Codex's workspace profile (the workspace root
- * writable, no network) and takes away what the default leaves open: writes and reads in `/tmp` and `$TMPDIR` (other
- * runs' folders, the curated data under `/tmp/ma-ctx`), the whole home folder but its toolchains (every other clone),
- * and each of `denied` (the source repository, the dataset, the ledger cache).
+ * The home folder denied but `readable`: on Linux, every entry of it (recursively along the paths to `readable`) that
+ * is not one of them, since bubblewrap cannot open a readable folder inside a denied one; elsewhere the folder itself.
  */
-export function sandboxConfig(denied: readonly string[]): string {
+function homeDenials(readable: readonly string[]): string[] {
+  const home = homedir();
+  if (process.platform !== "linux") return [home];
+  const denied: string[] = [];
+  const walk = (folder: string) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const path = join(folder, entry.name);
+      // A symlink is denied through what it points to.
+      if (entry.isSymbolicLink() || readable.includes(path)) continue;
+      if (entry.isDirectory() && readable.some(keep => keep.startsWith(`${path}/`))) walk(path);
+      else denied.push(path);
+    }
+  };
+  walk(home);
+  return denied;
+}
+
+/**
+ * The run's CODEX_HOME config: the model provider, if any; a shell environment policy that keeps credentials out of
+ * every command the agent runs (Codex's default excludes `*KEY*`, `*SECRET*`, `*TOKEN*`, which it skips unless told
+ * otherwise, and every `AWS_*` variable); and a permission profile that extends Codex's workspace profile (the
+ * workspace root writable, no network) and takes away what the default leaves open: writes and reads in `/tmp` and
+ * `$TMPDIR` (other runs' folders, the curated data under `/tmp/ma-ctx`), the whole home folder but its toolchains
+ * (every other clone), and each of `denied` (the source repository, the dataset, the ledger cache).
+ */
+export function sandboxConfig(denied: readonly string[], provider: ProviderSettings | null = null): string {
+  const roots = ["/tmp", "/private/tmp", tmpdir(), realpathSync(tmpdir()), homedir()];
+  // A path under a denied root is denied with it; naming it again makes bubblewrap (Linux) fail to set up the mount.
+  const extra = denied.filter(path => existsSync(path) && !roots.some(root => [path, realpathSync(path)].some(form => form.startsWith(`${root}/`))));
+  const readable = homeReadable();
   const entries: Array<[string, string]> = [
     [":slash_tmp", "deny"],
-    ["/private/tmp", "deny"],
+    ...(existsSync("/private/tmp") ? [["/private/tmp", "deny"] as [string, string]] : []),
     [":tmpdir", "deny"],
-    [homedir(), "deny"],
-    ...denied.filter(path => existsSync(path)).map((path): [string, string] => [path, "deny"]),
-    ...homeReadable().map((path): [string, string] => [path, "read"]),
+    ...homeDenials(readable).map((path): [string, string] => [path, "deny"]),
+    ...extra.map((path): [string, string] => [path, "deny"]),
+    ...readable.map((path): [string, string] => [path, "read"]),
   ];
   return [
+    ...(provider === null ? [] : [`model_provider = ${JSON.stringify(provider.provider)}`]),
     `default_permissions = ${JSON.stringify(PROFILE)}`,
+    "",
+    ...(provider === null ? [] : [`[model_providers.${provider.provider}.aws]`, `region = ${JSON.stringify(provider.region)}`, ""]),
+    "[shell_environment_policy]",
+    `inherit = "all"`,
+    "ignore_default_excludes = false",
+    `exclude = ["AWS_*", "*TOKEN*", "*SECRET*", "*KEY*", "*CREDENTIAL*", "*PASSWORD*"]`,
     "",
     `[permissions.${PROFILE}]`,
     `description = "Merge Assist replay: the workspace only, no network"`,
@@ -496,13 +661,18 @@ export interface Leak {
   readonly text: string;
 }
 
-/** Commands and hosts that reach other copies of the history: the network, GitHub, pull request refs. */
+/**
+ * Commands and hosts that reach other copies of the history (the network, GitHub, pull request refs), and calls that
+ * print the environment or read a credential (the Bedrock token Codex runs with, AWS's instance metadata or files).
+ */
 const OUTSIDE: ReadonlyArray<readonly [string, RegExp]> = [
   ["network command", /(?:^|[\s;&|('"`])(?:curl|wget|gh|nc|ssh|scp|rsync)\s/u],
   ["git network command", /\bgit\b[^\n;&|]*\s(?:fetch|clone|pull|ls-remote|submodule\s+update)\b|\bremote\s+(?:add|set-url)\b/u],
   ["remote host", /\b(?:github\.com|gitlab\.com|bitbucket\.org|codeload\.github|api\.github)\b/u],
   ["pull request ref", /refs\/pull\//u],
   ["curated data", /\/tmp\/ma-ctx\b/u],
+  ["environment dump", /(?:^|[\s;&|('"`])(?:env|set)(?=\s*(?:$|[|;&>)'"`]))|\bprintenv\b|\bexport\s+-p\b|\bdeclare\s+-[a-zA-Z]*x|\/proc\/[^\s/]+\/environ|\b(?:os\.environ|process\.env)\b(?!\s*(?:\.|\[|\?\.))|\benv::vars\b|\bos\.Environ\(\)/u],
+  ["credential read", /\$\{?AWS_[A-Z0-9_]+|\bAWS_BEARER_TOKEN|BEARER_TOKEN_BEDROCK|\bsecretsmanager\b|get-secret-value|169\.254\.169\.254|\.aws\/(?:credentials|config)\b/u],
 ];
 /** A token that starts a path: absolute, from the home folder, or climbing with `..`. */
 const PATH_TOKEN = /(?:^|[\s'"`=:(,;|&<>[{])((?:~|\$HOME|\$\{HOME\})?\/[^\s'"`;|&<>(),\]}]*|(?:\.\.\/)+[^\s'"`;|&<>(),\]}]*|\.\.(?=$|[\s'"`;|&)]))/gu;
@@ -671,7 +841,7 @@ export interface Grade {
   readonly wallMs: number;
 }
 
-async function gradeRun(context: PairContext, diff: string, folder: string, options: Options, denied: readonly string[]): Promise<Grade> {
+async function gradeRun(context: PairContext, diff: string, folder: string, options: Options, denied: readonly string[], codexEnv: Readonly<Record<string, string>>): Promise<Grade> {
   const { spec, pair } = context;
   const { text, stripped, truncated } = graderDiff(diff, pair, context.refs.map(side => side.author));
   if (text.trim() === "") return { verdict: { conflicts_with_first: "no", reasons: ["The run changed no file."], done: "no" }, by: "empty-diff", error: null, strippedLines: stripped, truncated, usage: null, wallMs: 0 };
@@ -681,8 +851,8 @@ async function gradeRun(context: PairContext, diff: string, folder: string, opti
   writeFileSync(schema, JSON.stringify(VERDICT_JSON_SCHEMA));
   const codexHome = join(folder, "grade-codex-home");
   createCodexHome(codexHome, "", null);
-  writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied));
-  const judge: CodexRunOptions = { model: options.judgeModel, config: [], timeoutMin: options.judgeTimeoutMin, extraArgs: ["--output-schema", schema, "--ephemeral"], permissions: PROFILE, binary: codexBinary() };
+  writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
+  const judge: CodexRunOptions = { model: options.judgeModel, config: [], timeoutMin: options.judgeTimeoutMin, extraArgs: ["--output-schema", schema, "--ephemeral"], permissions: PROFILE, binary: codexBinary(), env: codexEnv };
   const outcome = await runCodex(work, codexHome, "", gradePrompt(spec, text), judge, join(folder, "grade-rerail-home"));
   const events = readEvents(outcome.stdout);
   const base = { by: null, strippedLines: stripped, truncated, usage: events.usage, wallMs: outcome.wallMs };
@@ -820,7 +990,7 @@ function parseEvents(stdout: string): unknown[] {
   });
 }
 
-async function runJob(job: Job, options: Options): Promise<ReplayRun> {
+async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<ReplayRun> {
   const { context, arm, trial } = job;
   const { pair, spec } = context;
   const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-replay-")));
@@ -829,7 +999,7 @@ async function runJob(job: Job, options: Options): Promise<ReplayRun> {
   const configPath = join(folder, "hook-config.json");
   const logPath = join(folder, "hook.log");
   const empty = { timedOut: false, exitCode: null, wallMs: 0, usage: null, finalMessage: null, noteLine: false, leaked: false, leaks: [], setup: null, diff: "", files: [], merge: null, mergeError: null, touches: { firstHalf: [], firstFiles: [] }, delivered: [], injections: 0, landed: null, hookErrors: [], hookLog: [], git: null, events: [], grade: null };
-  const task = options.tamper ? TAMPER_TASK : spec.task;
+  const task = options.tamper ? TAMPER_TASKS[trial - 1]! : spec.task;
   // What no replay Codex call may read: the source repository, its objects, the dataset, the clones, the ledger cache.
   const denied = [context.source, dirname(context.objects), options.dataset, options.repos, LEDGER_CACHE];
   try {
@@ -858,14 +1028,18 @@ async function runJob(job: Job, options: Options): Promise<ReplayRun> {
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
     writeFileSync(logPath, "");
     createCodexHome(codexHome, configPath, HOOK);
-    writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied));
+    writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
     const started = Date.now();
-    const outcome = await runCodex(repo, codexHome, configPath, task, { ...options, permissions: PROFILE, binary: codexBinary() }, join(folder, "rerail-home"));
+    const outcome = await runCodex(repo, codexHome, configPath, task, { ...options, permissions: PROFILE, binary: codexBinary(), env: codexEnv }, join(folder, "rerail-home"));
     const events = readEvents(outcome.stdout);
     const hookLog = readFileSync(logPath, "utf8").split("\n").filter(line => line.trim() !== "").map(line => JSON.parse(line) as ReplayHookLogEntry);
     const injected = hookLog.flatMap(entry => (entry.text === undefined ? [] : [entry.text]));
     const transcript = transcriptText(codexHome);
     const leaks = findLeaks(parseEvents(outcome.stdout), transcript, folder, repo);
+    // A credential Codex ran with that shows up in what the agent saw or said, however it got there.
+    for (const secret of Object.values(codexEnv)) {
+      if (outcome.stdout.includes(secret) || (transcript ?? "").includes(secret)) leaks.push({ source: "output", reason: "a credential in the run's events or transcript", text: "(redacted)" });
+    }
     git(repo, ["add", "--all"]);
     const diff = git(repo, ["diff", "--cached", "--no-color", diffBase]);
     const patch = git(repo, ["diff", "--cached", "--binary", "--no-color", diffBase]);
@@ -887,7 +1061,7 @@ async function runJob(job: Job, options: Options): Promise<ReplayRun> {
       mergeError = error instanceof Error ? error.message.split("\n").slice(0, 3).join(" ") : String(error);
     }
     const changed = new Set(files.map(file => file.path));
-    const grade = await gradeRun(context, diff, folder, options, denied);
+    const grade = await gradeRun(context, diff, folder, options, denied, codexEnv);
     const failure = outcome.timedOut
       ? `timed out after ${options.timeoutMin} minutes`
       : events.error ?? (outcome.exitCode === 0 ? null : `codex exited ${outcome.exitCode}: ${clip(outcome.stderr.trim().split("\n").at(-1) ?? "", 200)}`);
@@ -1066,34 +1240,27 @@ function presentCommits(repo: string, shas: readonly string[]): Set<string> {
   return new Set(shas.filter((_, index) => output[index] === "commit"));
 }
 
-/** Each commit's parents and the files it changed against its only parent (none for a merge): two batched git calls. */
-function commitShapes(repo: string, shas: readonly string[]): Map<string, { parents: string[]; files: string[] }> {
-  const shapes = new Map<string, { parents: string[]; files: string[] }>();
-  if (shas.length === 0) return shapes;
-  for (const line of git(repo, ["rev-list", "--no-walk=unsorted", "--parents", "--stdin"], {}, `${shas.join("\n")}\n`).split("\n")) {
-    const [sha, ...parents] = line.split(" ");
-    if (sha !== undefined && sha !== "") shapes.set(sha, { parents, files: [] });
-  }
-  let current: string[] | null = null;
+/** The files each commit changed against its only parent (none for a merge): one batched git call. */
+function commitFiles(repo: string, shas: readonly string[]): Map<string, string[]> {
+  const files = new Map<string, string[]>(shas.map(sha => [sha, []]));
+  if (shas.length === 0) return files;
+  let current: string[] | undefined;
   for (const line of git(repo, ["diff-tree", "--stdin", "-r", "--root", "--name-only", "--no-renames"], {}, `${shas.join("\n")}\n`).split("\n")) {
-    const shape = /^[0-9a-f]{40}$/u.test(line) ? shapes.get(line) : undefined;
-    if (shape !== undefined) current = shape.files;
-    else if (line !== "" && current !== null) current.push(line);
+    const next = /^[0-9a-f]{40}$/u.test(line) ? files.get(line) : undefined;
+    if (next !== undefined) current = next;
+    else if (line !== "" && current !== undefined) current.push(line);
   }
-  return shapes;
-}
-
-/** Every commit `sha` reaches. */
-function ancestors(repo: string, sha: string): Set<string> {
-  return cached(`${repo}\0ancestors\0${sha}`, () => new Set((gitRead(repo, ["rev-list", sha]) ?? "").split("\n").filter(line => line !== "")));
+  return files;
 }
 
 /**
- * Second's real commits through the `git-conflict` identifier, in their labelled order at their authoring times: the
- * files second's own (non-merge) commits changed so far are the agent's, and each visible ref (first's last labelled
- * commit visible then, each `concurrent` ref's head then) is compared from the commit's merge base with it, so both
- * sides' hunks are in the same base's lines. Each (ref, file) is recorded at its first identification. A ref is
- * compared again only on the files the commit changed, unless the ref or the merge base moved.
+ * Second's real commits through the `git-conflict` identifier, in their labelled order at their authoring times.
+ * Against each visible ref (first's last labelled commit visible then, each `concurrent` ref's head then), the agent's
+ * side is second's own work so far ({@link ownBase} of the commit at its time, with the ref as the other side) on the
+ * files its own non-merge commits changed, and the ref's side is the ref's own work then (with the commit as the
+ * other side), carried to the lines of second's starting point. Each (ref, file) is recorded at its first
+ * identification. A ref is compared again only on the files the commit changed, unless either side's start or the ref
+ * moved.
  */
 function detectPair(pair: Pair, source: string): DetectResult {
   const started = performance.now();
@@ -1101,35 +1268,38 @@ function detectPair(pair: Pair, source: string): DetectResult {
   const present = presentCommits(source, [...new Set([...pair.first.commits, ...pair.second.commits].map(commit => commit.sha))]);
   const firstCommits = pair.first.commits.filter(commit => present.has(commit.sha));
   const commits = pair.second.commits.filter(commit => present.has(commit.sha));
-  const shapes = commitShapes(source, commits.map(commit => commit.sha));
+  const changed = commitFiles(source, commits.map(commit => commit.sha));
+  const secondBranch = baseBranchRef(source, pair.second.base_ref);
   const touched = new Set<string>();
   const found = new Map<string, Detection>();
-  const last = new Map<string, { sha: string; base: string }>();
+  const last = new Map<string, string>();
   for (const commit of commits) {
-    const shape = shapes.get(commit.sha) ?? { parents: [], files: [] };
-    for (const path of shape.files) touched.add(path);
-    const own = new Set(shape.files);
+    const files = changed.get(commit.sha) ?? [];
+    for (const path of files) touched.add(path);
+    const own = new Set(files);
     const at = commit.authored_at === "" ? commit.visible_at : commit.authored_at;
     const firstSha = firstCommits.filter(item => Date.parse(item.visible_at) <= Date.parse(at)).at(-1)?.sha ?? null;
-    for (const { ref, sha } of visibleShas(source, pair, at, firstSha)) {
-      // A non-merge commit's merge base with `sha` is itself when `sha` reaches it, else its parent's.
-      const parentBase = shape.parents.length === 1 ? detectCache.get(`${source}\0mb\0${shape.parents[0]}\0${sha}`) as string | undefined : undefined;
-      const base = cached(`${source}\0mb\0${commit.sha}\0${sha}`, () => (ancestors(source, sha).has(commit.sha) ? commit.sha : parentBase ?? gitRead(source, ["merge-base", commit.sha, sha])?.trim() ?? ""));
-      if (base === "") continue;
-      const previous = last.get(ref);
-      last.set(ref, { sha, base });
-      const moved = previous === undefined || previous.sha !== sha || previous.base !== base;
-      const theirFiles = cached(`${source}\0files\0${base}\0${sha}`, () => refFiles(source, base, sha));
+    for (const { ref, sha, branch, labelledBase } of visibleShas(source, pair, at, firstSha)) {
+      // Each side's own work, the other side standing in for the agent's base: shared history is neither's.
+      const mine = ownBase(source, commit.sha, at, secondBranch, sha, pair.second.base_sha);
+      const theirs = ownBase(source, sha, at, branch, commit.sha, labelledBase);
+      if (mine === "" || mine === commit.sha || theirs === "" || theirs === sha) continue;
+      const state = `${sha}\0${theirs}\0${mine}`;
+      const moved = last.get(ref) !== state;
+      last.set(ref, state);
+      const theirFiles = cached(`${source}\0files\0${theirs}\0${sha}`, () => refFiles(source, theirs, sha));
       const paths = theirFiles.filter(path => touched.has(path) && (moved || own.has(path)) && !found.has(conflictKey({ ref, file: path })));
       if (paths.length === 0) continue;
-      const missing = paths.filter(path => !detectCache.has(`${source}\0hunks\0${base}\0${sha}\0${path}`));
-      const read = missing.length === 0 ? {} : refHunks(source, base, sha, missing);
-      const theirs: Record<string, readonly RefHunk[]> = {};
-      for (const path of paths) theirs[path] = cached(`${source}\0hunks\0${base}\0${sha}\0${path}`, () => read[path] ?? []);
-      const rangesMissing = paths.filter(path => !detectCache.has(`${source}\0ours\0${base}\0${commit.sha}\0${path}`));
-      const ours = rangesMissing.length === 0 ? new Map<string, LineRange[]>() : commitRanges(source, base, commit.sha, rangesMissing);
-      const agent = new Map(paths.map(path => [path, cached(`${source}\0ours\0${base}\0${commit.sha}\0${path}`, () => ours.get(path) ?? [])]));
-      for (const conflict of identify(agent, [{ ref, files: theirs }])) {
+      const hunkKey = (path: string) => `${source}\0hunks\0${mine}\0${theirs}\0${sha}\0${path}`;
+      const missing = paths.filter(path => !detectCache.has(hunkKey(path)));
+      const read = missing.length === 0 ? {} : refHunks(source, mine, theirs, sha, missing);
+      const theirHunks: Record<string, readonly RefHunk[]> = {};
+      for (const path of paths) theirHunks[path] = cached(hunkKey(path), () => read[path] ?? []);
+      const rangeKey = (path: string) => `${source}\0ours\0${mine}\0${commit.sha}\0${path}`;
+      const rangesMissing = paths.filter(path => !detectCache.has(rangeKey(path)));
+      const ours = rangesMissing.length === 0 ? new Map<string, LineRange[]>() : commitRanges(source, mine, commit.sha, rangesMissing);
+      const agent = new Map(paths.map(path => [path, cached(rangeKey(path), () => ours.get(path) ?? [])]));
+      for (const conflict of identify(agent, [{ ref, files: theirHunks }])) {
         found.set(conflictKey(conflict), { ref, file: conflict.file, first: ref === firstRef, at, sha: commit.sha });
       }
     }
@@ -1218,6 +1388,7 @@ function detectOnly(options: Options): void {
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
+  codexOverride = options.codexBin;
   if (options.detectOnly) {
     detectOnly(options);
     return;
@@ -1230,7 +1401,8 @@ async function main(): Promise<void> {
   printLedgers(contexts);
   const jobs = contexts.flatMap(context => Array.from({ length: options.trials }, (_, trial) => options.arms.map(arm => ({ context, arm, trial: trial + 1 }))).flat());
   console.error(`\n${jobs.length} runs (${contexts.length} pairs × ${options.arms.join(",")} × ${options.trials} trials), ${options.concurrency} at a time, ${options.timeoutMin} min each`);
-  const runs = await pool(jobs, options.concurrency, job => runJob(job, options), (done, run) => {
+  const codexEnv = codexEnvironment(options);
+  const runs = await pool(jobs, options.concurrency, job => runJob(job, options, codexEnv), (done, run) => {
     console.error(`[${done}/${jobs.length}] ${run.pair} ${run.arm} #${run.trial}: ${fixed(run.wallMs / 60_000, 1)} min, ${run.files.length} files, ${run.delivered.length} units, grader ${run.grade?.verdict?.conflicts_with_first ?? run.grade?.error ?? "-"}${run.error === null ? "" : `, ${clip(run.error, 80)}`}`);
   });
   printRuns(runs);

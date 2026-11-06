@@ -71,6 +71,15 @@ const DOC_PATH = /\.(?:md|mdx|markdown|rst|adoc)$/iu;
 const NOT_DESIGN_DOC = /(?:^|\/)(?:CHANGELOG|CHANGES|HISTORY|LICENSE|NOTICE|CODE_OF_CONDUCT|SECURITY|THIRD_PARTY)[^/]*$/iu;
 const HEADING = /^\s{0,3}#{1,6}\s+(.*)$/u;
 const LIST_OR_ROW = /^\s*(?:[-*+]|\d+[.)]|\|)\s*\S/u;
+/** A list item or table row that says it is settled: a closed status cell, a ticked box, struck-through text. */
+const SETTLED_ROW = /\|\s*(?:\*\*)?(?:closed|done|resolved|fixed|superseded|dropped|merged)\b|^\s*[-*+]\s*\[[xX]\]|^\s*(?:[-*+]|\d+[.)]|\|)?\s*~~/iu;
+const TABLE_SEPARATOR = /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*$/u;
+/** Tests and fixtures: code no other code depends on. */
+const TEST_PATH = /(?:^|\/)(?:tests?|__tests__|specs?|fixtures?|testdata)\/|[._-](?:test|tests|spec)\.\w+$|_tests?\.rs$|(?:^|\/)test_[^/]*\.py$/iu;
+/** Benchmarks and profiling scripts: measurement code, not an interface. */
+const BENCH_PATH = /(?:^|\/)(?:bench(?:mark)?(?:es|s)?|profiling)\//iu;
+/** Harnesses, benchmarks and tools: what other work runs rather than rebuilds. */
+const HARNESS_PATH = /(?:^|\/)(?:bench(?:mark)?(?:es|s)?|harness(?:es)?|tools?|conformance)\/|harness/iu;
 
 /** Whether `path` is prose a design position can live in: a doc, ADR or PRD, not a changelog or licence. */
 export function isDesignDoc(path: string): boolean {
@@ -176,7 +185,9 @@ export function handoffUnits(change: CommitChange, texts: CommitTexts, resolve: 
     const afterLines = doc ? (texts.after.get(file.path) ?? "").split("\n") : [];
     for (const block of file.added) {
       block.lines.forEach((line, offset) => {
-        if (line.trim().length < 6) return;
+        if (line.trim().length < 6 || !/[A-Za-z]{3}/u.test(line) || SETTLED_ROW.test(line)) return;
+        // A table's header row: the line after it in the file is the separator.
+        if (doc && /^\s*\|/u.test(line) && TABLE_SEPARATOR.test(afterLines[block.start + offset] ?? "")) return;
         const heading = doc ? headingAbove(afterLines, block.start + offset) ?? "" : "";
         if (doc && OPEN_ITEM_HEADING.test(heading)) {
           const section = sections.get(heading) ?? { path: file.path, lines: [] };
@@ -359,11 +370,59 @@ function signatureKey(signature: string): string {
     .trim();
 }
 
-/** Contract units: an exported declaration whose signature changed, a schema's tables, a format file's change. */
+/** An entry's key in a registry list, written where its line starts: `id: "rule-approvals",`, `name = 'v3'`. */
+const ENTRY_KEY = /^\s*(?:id|name|key|version)\s*[:=]\s*["'`]([\w.:/-]{2,80})["'`]/gmu;
+
+/** The doc comment directly above 1-based `line` of `lines`, markers stripped, or null. */
+function docCommentAbove(lines: readonly string[], line: number): string | null {
+  const kept: string[] = [];
+  for (let index = line - 2; index >= 0; index -= 1) {
+    const comment = /^\s*(?:\/\/[!/]?|\/\*\*?|\*(?!\/)|#)\s?(.*?)\s*(?:\*\/)?$/u.exec(lines[index]!);
+    if (comment === null) break;
+    kept.unshift(comment[1]!);
+  }
+  const text = kept.join(" ").replace(/\s+/gu, " ").trim();
+  return text === "" ? null : text;
+}
+
+/**
+ * Entries a commit appends to an exported registry list in a schema or migrations file (a migration step, a schema
+ * version), with the list's doc comment, which states the registry's rule ("Append only"): a list other branches add
+ * to in the same order.
+ */
+function appendedEntryUnits(change: CommitChange, file: FileChange, after: string | undefined): ExtractedUnit[] {
+  const language = sourceLanguageOf(file.path);
+  if (language === null || after === undefined || !FORMAT_PATH.test(file.path)) return [];
+  const all = declarations(language, after).filter(declaration => !declaration.name.includes("."));
+  const lines = after.split("\n");
+  const byList = new Map<Declaration, string[]>();
+  for (const block of file.added) {
+    const list = all.filter(declaration => declaration.line <= block.start).at(-1);
+    if (list === undefined || !list.exported || list.kind !== "constant" || !/\[\s*$|\[\]|Array</u.test(list.signature)) continue;
+    const keys = [...block.lines.join("\n").matchAll(ENTRY_KEY)].map(match => match[1]!);
+    if (keys.length > 0) byList.set(list, [...(byList.get(list) ?? []), ...keys]);
+  }
+  return [...byList].map(([list, keys]) => {
+    const doc = docCommentAbove(lines, list.line);
+    return {
+      kind: "contract",
+      text: cutText(`appends ${unique(keys, 6).join(", ")} to ${list.name} in ${file.path}${doc === null ? "" : ` ("${doc}")`} (${change.subject})`, MAX_UNIT_TEXT),
+      anchors: { files: [file.path], symbols: [list.name] },
+      key: null,
+    };
+  });
+}
+
+/**
+ * Contract units: an exported declaration whose signature changed, a schema's tables, a format file's change, an entry
+ * appended to a registry list (`appendedEntryUnits`). Tests and benchmarks declare nothing other code depends on, and a
+ * one-letter table is a placeholder (`CREATE TABLE x(…)` declaring a virtual table's columns, a scratch table), not a
+ * name anything reads.
+ */
 export function contractUnits(change: CommitChange, texts: CommitTexts): ExtractedUnit[] {
   const units: ExtractedUnit[] = [];
   for (const file of change.files) {
-    if (file.status === "deleted") continue;
+    if (file.status === "deleted" || TEST_PATH.test(file.path) || BENCH_PATH.test(file.path)) continue;
     const before = new Map(exportedDeclarations(file.oldPath, texts.before.get(file.oldPath)).map(declaration => [declaration.name, declaration]));
     for (const after of exportedDeclarations(file.path, texts.after.get(file.path))) {
       const previous = before.get(after.name);
@@ -376,7 +435,7 @@ export function contractUnits(change: CommitChange, texts: CommitTexts): Extract
       });
     }
     const changed = [...file.added, ...file.removed].flatMap(block => block.lines).join("\n");
-    const tables = sqlTables(changed);
+    const tables = sqlTables(changed).filter(table => shortName(table).length > 1);
     if (tables.length > 0 || FORMAT_PATH.test(file.path)) {
       units.push({
         kind: "contract",
@@ -385,6 +444,7 @@ export function contractUnits(change: CommitChange, texts: CommitTexts): Extract
         key: null,
       });
     }
+    units.push(...appendedEntryUnits(change, file, texts.after.get(file.path)));
   }
   return units;
 }
@@ -504,33 +564,23 @@ export function leadingSummary(text: string): string | null {
   return (sentence?.[1] ?? joined).slice(0, 240);
 }
 
-/** New exported declarations a modified file gains that make one artefact unit. */
-const MIN_NEW_EXPORTS = 1;
-
 /**
- * Artefact units: something a commit builds that other work should reuse rather than rebuild: a new module, harness or
- * design note (an added file), or new exported functions and types in an existing one. Summarised by the file's
- * leading doc comment or the commit subject, anchored to the file and the new declarations.
+ * Artefact units: a harness, benchmark or tool a commit adds (a new source file on such a path, not a test), which
+ * other work should run rather than rebuild. Summarised by the file's leading doc comment or the commit subject,
+ * anchored to the file and its exported declarations. Any other new module or export is left out: on its own it says
+ * nothing another branch depends on, and the docs and messages that frame one as reusable reach the position judge.
  */
 export function artefactUnits(change: CommitChange, texts: CommitTexts): ExtractedUnit[] {
   const units: ExtractedUnit[] = [];
   for (const file of change.files) {
-    if (file.status === "deleted") continue;
-    const after = texts.after.get(file.path);
+    if (file.status !== "added" || !HARNESS_PATH.test(file.path) || TEST_PATH.test(file.path)) continue;
     const language = sourceLanguageOf(file.path);
-    const doc = DOC_PATH.test(file.path) && isDesignDoc(file.path);
-    if (language === null && !doc) continue;
-    const exported = language === null || after === undefined ? [] : declarations(language, after).filter(declaration => declaration.exported && declaration.kind !== "module");
-    const previously = new Set(exportedDeclarations(file.oldPath, texts.before.get(file.oldPath)).map(declaration => declaration.name));
-    const fresh = file.status === "added" ? exported : exported.filter(declaration => !previously.has(declaration.name));
-    if (file.status !== "added" && fresh.length < MIN_NEW_EXPORTS) continue;
-    if (file.status === "added" && language !== null && fresh.length === 0 && !/(?:bench|harness|test|spike|tool|script)/iu.test(file.path)) continue;
-    const summary = (after === undefined ? null : leadingSummary(after)) ?? change.subject;
-    const names = fresh.map(declaration => declaration.name);
-    const what = file.status === "added" ? `adds ${file.path}` : `adds ${names.slice(0, 6).join(", ")} to ${file.path}`;
+    const after = texts.after.get(file.path);
+    if (language === null || after === undefined) continue;
+    const names = declarations(language, after).filter(declaration => declaration.exported && declaration.kind !== "module").map(declaration => declaration.name);
     units.push({
       kind: "artefact",
-      text: cutText(`${what}: ${summary}${file.status === "added" && names.length > 0 ? ` (${names.slice(0, 6).join(", ")})` : ""}`, MAX_UNIT_TEXT),
+      text: cutText(`adds ${file.path}: ${leadingSummary(after) ?? change.subject}${names.length > 0 ? ` (${names.slice(0, 6).join(", ")})` : ""}`, MAX_UNIT_TEXT),
       anchors: { files: [file.path], symbols: unique(names.filter(distinctiveSymbol), MAX_UNIT_SYMBOLS) },
       key: null,
     });

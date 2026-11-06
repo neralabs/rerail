@@ -1270,6 +1270,8 @@ export interface CodexRunOptions {
   readonly permissions?: string;
   /** The Codex executable; `codex` from PATH by default. */
   readonly binary?: string;
+  /** More environment for the Codex process only (a provider's credentials), over the harness's own. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -1292,7 +1294,7 @@ export function runCodex(repo: string, codexHome: string, configPath: string, pr
   const child = spawn(options.binary ?? "codex", args, {
     cwd: repo,
     detached: true,
-    env: { ...process.env, CODEX_HOME: codexHome, MA_CONTEXT_CONFIG: configPath, RERAIL_HOME: rerailHome, RERAIL_AUTOSTART: "0" },
+    env: { ...process.env, ...options.env, CODEX_HOME: codexHome, MA_CONTEXT_CONFIG: configPath, RERAIL_HOME: rerailHome, RERAIL_AUTOSTART: "0" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const stdout: Buffer[] = [];
