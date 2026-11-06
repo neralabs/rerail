@@ -972,16 +972,22 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const root = await twoBranches();
     const { worktree, roots, extra } = await withWorktree(root, join(root, "wt"));
     const { bridge, auditGeneratedEdits } = await opened(root, extra, 200);
-    // Leaves the worktree walk timed, for after the next session walk has started.
-    await bridge.checkpoint("turn");
-    await writeFile(join(root, "src", "hold.py"), "mine\n");
-    const walk = holdDiscovery("reads", join(root, "src", "hold.py"));
-    await requestDiscovery(bridge, walk);
-    git(root, "worktree", "remove", worktree);
-    roots.length = 0;
-    await bridge.settleWorktreeWalk();
-    walk.release();
-    await bridge.checkpoint("turn");
+    // The worktree walk this turn times runs only when the test moves the clock, once the next session walk has started.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await bridge.checkpoint("turn");
+      await writeFile(join(root, "src", "hold.py"), "mine\n");
+      const walk = holdDiscovery("reads", join(root, "src", "hold.py"));
+      await requestDiscovery(bridge, walk);
+      git(root, "worktree", "remove", worktree);
+      roots.length = 0;
+      await vi.advanceTimersByTimeAsync(200);
+      await bridge.settleWorktreeWalk();
+      walk.release();
+      await bridge.checkpoint("turn");
+    } finally {
+      vi.useRealTimers();
+    }
     expect(auditedPaths(auditGeneratedEdits)).toEqual(["src/hold.py"]);
   });
 

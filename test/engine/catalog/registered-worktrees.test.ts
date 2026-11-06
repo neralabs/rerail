@@ -125,7 +125,10 @@ describe("recordStartedWorktree", () => {
     // The copy keeps the clone id; recorded again after it, the main checkout's row comes second.
     expect(recordCheckout(database, copy).cloneId).toBe(recordCheckout(database, main).cloneId);
     database.delete(checkouts).where(eq(checkouts.checkoutPath, main)).run();
-    recordCheckout(database, main);
+    const { cloneId } = recordCheckout(database, main);
+    // The select recordStartedWorktree makes has no order: this test covers the refusal only while the copy comes first.
+    expect(database.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all().map(row => row.path))
+      .toEqual([copy, main]);
     const worktree = join(root, "w");
     git(main, "worktree", "add", "--quiet", "-b", "linked", worktree);
 
