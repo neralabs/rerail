@@ -10,9 +10,9 @@ runs the files. Modes:
   literal_json `json.dumps(ast.literal_eval(node), sort_keys=True, separators=(",", ":"))` (null where either raises),
   names the def's [body_sha256, signature_sha256] as W's python_ast worker hashed them (null but for a def).
 - `names`: {"p", "n"}: each Name id, Attribute attr, def/class name and arg, [start, end, text].
-- `annotations`: {"p", "n"}: each str Constant at an annotation (field annotation or returns, or inside a Subscript
-  there), [start, end, parsed, names]: parsed whether `ast.parse(value, mode="eval")` accepts it, names the sorted Name
-  ids and Attribute attrs of its tree.
+- `annotations`: {"p", "n"}: each str Constant, [start, end, parsed, names, annotation]: parsed whether
+  `ast.parse(value, mode="eval")` accepts it, names the sorted Name ids and Attribute attrs of its tree, annotation
+  whether it stands at an annotation (field annotation or returns, or anywhere below one).
 """
 import ast
 import hashlib
@@ -121,20 +121,18 @@ def one(path):
                     if isinstance(child, ast.AST):
                         parents[id(child)] = (parent, field)
         roots = [n for n in ast.walk(tree) if parents.get(id(n), (None, ""))[1] in ("annotation", "returns")]
-        seen = set()
-        for root in roots:
-            for node in ast.walk(root):
-                if id(node) in seen or not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
-                    continue
-                seen.add(id(node))
-                try:
-                    inner = ast.parse(node.value, mode="eval").body
-                    parsed = True
-                    names = sorted({c.id if isinstance(c, ast.Name) else c.attr for c in ast.walk(inner) if isinstance(c, (ast.Name, ast.Attribute))})
-                except SyntaxError:
-                    parsed, names = False, []
-                s, e = span(node, offsets)
-                out.append([s, e, parsed, names])
+        annotated = {id(node) for root in roots for node in ast.walk(root)}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or parents.get(id(node), (None, ""))[0].__class__ is ast.JoinedStr:
+                continue
+            try:
+                inner = ast.parse(node.value, mode="eval").body
+                parsed = True
+                names = sorted({c.id if isinstance(c, ast.Name) else c.attr for c in ast.walk(inner) if isinstance(c, (ast.Name, ast.Attribute))})
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
+                parsed, names = False, []
+            s, e = span(node, offsets)
+            out.append([s, e, parsed, names, id(node) in annotated])
     return {"p": path, "n": out}
 
 

@@ -222,3 +222,91 @@ fn syntax_error_parity() {
         }
     }
 }
+
+/// The names of an annotation's tree as the oracle's `annotations` mode gives them: each identifier but a keyword
+/// argument's name (CPython's `Name` ids and `Attribute` attrs), sorted and distinct.
+fn annotation_names(tree: &crate::code_rule_dsl::literal::SubTree) -> Vec<String> {
+    use crate::code_rule_dsl::literal::annotation::{kind_name, python};
+    let name = python().field_id_for_name("name").map_or(0, |f| f.get());
+    let nodes: Vec<_> = tree.preorder().collect();
+    let mut out = BTreeSet::new();
+    for node in &nodes {
+        let keyword = node.field == name && node.parent.is_some_and(|p| kind_name(nodes[p as usize].kind) == "keyword_argument");
+        if kind_name(node.kind) == "identifier" && node.named && !keyword {
+            out.insert(tree.text()[node.start as usize..node.end as usize].to_owned());
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// `string_annotation(s)` and `parsed(s, "annotation", root)` (`facts::vtab::syntax::annotation`) against CPython: at
+/// each string the scope table reads as a type definition in the source (nested ones are in no file's tree), whether
+/// `ast.parse(value, mode="eval")` accepts its value where the engine has a tree, and the tree's names (Name ids,
+/// Attribute attrs) where both parse; those at an annotation (fields `annotation`, `returns`, and below) counted apart
+/// from Ruff's other positions (`cast`, `TypeVar` bounds). Listed: the engine's annotations that are no str Constant
+/// (none expected), and the strings at an annotation that the engine does not read as type definitions (a `Literal`
+/// argument, `Annotated` metadata).
+#[test]
+#[ignore]
+fn string_annotation_parity() {
+    use crate::code_rule_dsl::facts::vtab::syntax::annotation::string_annotations;
+    for python in pythons() {
+        println!("CPython {} ({python})", version(&python));
+        for corpus in corpora() {
+            let want = oracle(&python, "annotations", &corpus.files);
+            let texts = sources(&corpus.files);
+            type Engine = Vec<(usize, usize, bool, Vec<String>)>;
+            let got: Vec<Option<Engine>> = corpus
+                .files
+                .par_iter()
+                .zip(&texts)
+                .map(|((_, shown), s)| {
+                    let s = s.as_ref()?;
+                    let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
+                    let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file).ok()??;
+                    let found = string_annotations(&tape).ok()?;
+                    Some(found.iter().filter(|a| a.outer.is_none()).map(|a| (a.start, a.end, !a.tree.is_error(), if a.tree.is_error() { Vec::new() } else { annotation_names(&a.tree) })).collect())
+                })
+                .collect();
+            let (mut verdict, mut names, mut at_verdict, mut at_names) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
+            // `unmatched`: the engine's annotations that are no str Constant; `oracle_only`: the oracle's strings at an
+            // annotation that the engine does not read as type definitions. Both only listed (equal counts nothing).
+            let (mut unmatched, mut oracle_only) = (Tally::default(), Tally::default());
+            for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
+                let (Some(source), Some(got), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };
+                let Some(rows) = row["n"].as_array() else { continue };
+                let cpython: BTreeMap<(usize, usize), (bool, Vec<String>, bool)> = rows
+                    .iter()
+                    .map(|r| {
+                        let names = r[3].as_array().map(|a| a.iter().filter_map(|n| n.as_str().map(str::to_owned)).collect()).unwrap_or_default();
+                        ((r[0].as_u64().unwrap() as usize, r[1].as_u64().unwrap() as usize), (r[2].as_bool().unwrap(), names, r[4].as_bool().unwrap()))
+                    })
+                    .collect();
+                let engine: BTreeSet<(usize, usize)> = got.iter().map(|g| (g.0, g.1)).collect();
+                for ((s, e), _) in cpython.iter().filter(|(k, v)| v.2 && !engine.contains(k)) {
+                    oracle_only.add(false, || format!("{shown}@{s}: {:?}", source.get(*s..*e).unwrap_or("?").chars().take(120).collect::<String>()));
+                }
+                for (s, e, parsed, got_names) in got {
+                    let text = || source.get(*s..*e).unwrap_or("?").chars().take(120).collect::<String>();
+                    let Some((cp_parsed, cp_names, at)) = cpython.get(&(*s, *e)) else {
+                        unmatched.add(false, || format!("{shown}@{s}: {:?}", text()));
+                        continue;
+                    };
+                    let (v, n) = if *at { (&mut at_verdict, &mut at_names) } else { (&mut verdict, &mut names) };
+                    v.add(parsed == cp_parsed, || format!("{shown}@{s}: {:?}: CPython parses {cp_parsed}, engine {parsed}", text()));
+                    if *parsed && *cp_parsed {
+                        n.add(got_names == cp_names, || format!("{shown}@{s}: {:?}: CPython {cp_names:?}, engine {got_names:?}", text()));
+                    }
+                }
+            }
+            println!(" {}: {} files; {} string annotations (the engine's, in the source)", corpus.name, want.len(), unmatched.total + verdict.total + at_verdict.total);
+            unmatched.report("string annotations that are no str Constant (listed)");
+            oracle_only.report("strings at an annotation that are no string annotation (listed)");
+            at_verdict.report("at an annotation: parses (ast.parse(value, mode=\"eval\"))");
+            at_names.report("at an annotation: names, where both parse");
+            verdict.report("elsewhere (cast, TypeVar, …): parses");
+            names.report("elsewhere: names, where both parse");
+        }
+    }
+}
+

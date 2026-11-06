@@ -106,6 +106,9 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
                                                   // its root value with `interpolation: marker` (a constant)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
                                                   // CPython 3.13's verdict: ast.parse rejects d, at line l, with msg
+.decl string_annotation(s: node)                  // a string Ruff's semantic model reads as a type definition
+.decl parsed(s: node, grammar: symbol, root: node)
+                                                  // grammar "annotation": root is the tree of string annotation s
 // built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
 // match_all(re: symbol, sp: span, m: span)
 // built-in, not declared: gsp is the span of named group g in match m (of match_all("re", sp, m)), where g takes part
@@ -203,6 +206,18 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   `pythonAst` stage (a file `ast.parse` rejects fails the stage) is `!cpython_syntax_error(d, _, _)`; a policy's
   `parsed` stage `syntax_error` (`reported-parser-error`) is `cpython_syntax_error(d, _, _)`. A program outside this
   overlay that declares no `syntax_error` reads core.rr's three columns by that name (`rr::lower::core`).
+- `string_annotation(s)` and `parsed(s, "annotation", root)` (`facts::vtab::syntax::annotation`): `s` (a `string` or
+  `concatenated_string`) is a string Ruff 0.16.9's semantic model reads as a type definition (the engine's scope
+  table: `x: "Foo"`, `-> "Foo"`, `List["Foo"]` in one, `cast("Foo", x)`, `TypeVar("T", bound="Foo")`; not a
+  `Literal` argument or `Annotated` metadata), nested ones included; `root` is the tree of its value (decoded) as
+  Ruff's `parse_type_annotation` reads it, an `expression_statement` over the whole value. Each tree is a document of
+  its own, numbered past the files (no `doc`, `pkg`, `syntax_error`, `source` row): its nodes have `node`, `child`,
+  `field`, `tape`, `text`, `name`, `str`, `strprefix`, `intval`, `op`, `line`, `end_line`, `col`, `node_text`
+  and `docof` rows over the value's text (lines and offsets in it, not the file's), so `inside(n, root,
+  "expression_statement")` and `text(n, x)` read its names. A nested string (`"List['A']"`'s `'A'`) is a node of its
+  outer tree, and has its own. A string Ruff's parser refuses (CPython's `ast.parse(value, mode="eval")` refuses it
+  too) has `string_annotation` and no `parsed` row. A rule over `node(d, n, …)` that is not joined to `doc(d, …)` or
+  `in_scope(d)` also reads the trees' nodes, where the program reads `parsed` or `string_annotation`.
 
 The tree and the path, bound the same way (`facts::vtab::syntax::tree`; `docof` with `Extra`):
 
@@ -249,13 +264,12 @@ unset(x)              x is -1, which no node, span or document is
 
 `child` has no comments, so `next_sibling` and `precedes` step over them, where W's `follows` and `precedes` see
 them (`prev_token`, `token` do). A relation nothing derives and the runner does not bind fails the run naming it;
-`str_part`, `parsed`, `@unparse` and `@ast_dump` need CPython (core.rr's isolated `ast.parse` worker), which the
-corpus runner does not run, `list_len` a pattern's list variable, `string_annotation` Ruff's table.
+`str_part`, `@unparse` and `@ast_dump` need CPython (core.rr's isolated `ast.parse` worker), which the corpus runner
+does not run, `list_len` a pattern's list variable.
 
 `#include "python/ast.rr"` (with names, imports and flow; `#include "python/calls.rr"` beside it) works in a file
 here: the libraries' `.output`s are theirs, not the file's, and their fixes (`=> …`) are not run. What reads
-`str_part` (`str_const`, `docstring`, `ast_constant`), `parsed` (`ann_node`, `ann_name`) or `string_annotation`
-(`annotation`) fails until those are bound.
+`str_part` (`str_const`, `docstring`, `ast_constant`) fails until it is bound.
 
 ### Functors and aggregates
 

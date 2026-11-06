@@ -203,9 +203,7 @@ fn bound(prog: &front::Program) -> Result<()> {
             }
             let why = match rel {
                 "str_part" => format!("it needs {cpython}"),
-                "parsed" => format!("it needs the string's contents parsed, by {cpython}, or by a sub-grammar parse the runner does not do either"),
                 "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
-                "string_annotation" => "it needs Ruff's table of the positions that hold a type (core.rr)".to_owned(),
                 _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
             };
             return Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {why}")));

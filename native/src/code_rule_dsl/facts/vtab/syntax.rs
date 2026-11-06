@@ -47,8 +47,9 @@ pub(crate) struct Document {
 }
 
 /// The relations read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`): W's
-/// values (`Extra`) and its f-string trees (`fstring`).
-pub(crate) const TAPED: [&str; 6] = ["value", "static_value", "value_type_of", "value_type", fstring::RELATIONS[0], fstring::RELATIONS[1]];
+/// values (`Extra`), its f-string trees (`fstring`) and the string annotations' (`annotation`).
+pub(crate) const TAPED: [&str; 8] =
+    ["value", "static_value", "value_type_of", "value_type", fstring::RELATIONS[0], fstring::RELATIONS[1], annotation::RELATIONS[0], annotation::RELATIONS[1]];
 
 /// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
 /// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
@@ -516,6 +517,33 @@ impl Extra {
         }
     }
 
+    /// Document `p`'s node rows: `line`, `end_line`, `col`, `node_text` and `docof`.
+    fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
+        let f = &*p.facts;
+        if self.line_rows() || self.end_line || self.col || self.node_text {
+            for (local, &id) in p.core.iter().enumerate() {
+                let n = p.global(local as u32);
+                let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                if self.line_rows() {
+                    self.lines.push([n, i64::from(f.start_line[id as usize])]);
+                }
+                if self.end_line {
+                    self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
+                }
+                if self.col {
+                    self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
+                }
+                if self.node_text {
+                    self.node_texts.push([n, string(f.text(id)) as i64]);
+                }
+            }
+        }
+        if self.docof {
+            let key = i64::from(p.key);
+            self.docofs.extend((0..p.len()).map(|local| [p.global(local), key]));
+        }
+    }
+
     /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
     /// `splitlines`: its lines split as Python's `str.splitlines()` does.
     #[allow(clippy::too_many_arguments)]
@@ -558,28 +586,7 @@ impl Extra {
                 }
             });
         }
-        if self.line_rows() || self.end_line || self.col || self.node_text {
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
-                let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
-                if self.line_rows() {
-                    self.lines.push([n, i64::from(f.start_line[id as usize])]);
-                }
-                if self.end_line {
-                    self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
-                }
-                if self.col {
-                    self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
-                }
-                if self.node_text {
-                    self.node_texts.push([n, string(f.text(id)) as i64]);
-                }
-            }
-        }
-        if self.docof {
-            let key = i64::from(p.key);
-            self.docofs.extend((0..p.len()).map(|local| [p.global(local), key]));
-        }
+        self.nodes(p, string);
         let key = i64::from(p.key);
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
@@ -762,6 +769,74 @@ impl Extra {
     }
 }
 
+/// The small relations of a document's nodes, with string indexes: `text(n, s)`, `intval(n, v)`, `op(n, s)`, and the
+/// text relations (decision 0037) `name(n, s)` (an identifier's text, an attribute's dotted text), `str(n, s)` (a
+/// string literal's content, between its quotes) and `strprefix(n, p)` (its prefix, lowercased).
+#[derive(Default)]
+struct NodeRows {
+    text: Vec<[i64; 2]>,
+    intval: Vec<[i64; 2]>,
+    op: Vec<[i64; 2]>,
+    name: Vec<[i64; 2]>,
+    strs: Vec<[i64; 2]>,
+    strprefix: Vec<[i64; 2]>,
+}
+
+impl NodeRows {
+    /// Document `p`'s rows (`dialect` its grammar's kinds).
+    fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        let f = &*p.facts;
+        for (local, &id) in p.core.iter().enumerate() {
+            let n = p.global(local as u32);
+            match dialect.class(f, id) {
+                Class::Text => {
+                    let t = f.text(id);
+                    if !t.contains(['\t', '\n', '\r', '\\']) {
+                        self.text.push([n, string(t) as i64]);
+                        self.name.push([n, string(t) as i64]);
+                    }
+                }
+                Class::Attribute => {
+                    if let Some(dotted) = dialect.dotted(f, id) {
+                        self.name.push([n, string(&dotted) as i64]);
+                    }
+                }
+                Class::String => {
+                    if let Some((prefix, content)) = dialect.string(f, id) {
+                        self.strprefix.push([n, string(&prefix) as i64]);
+                        if let Some(content) = content {
+                            self.strs.push([n, string(content) as i64]);
+                        }
+                    }
+                }
+                Class::Integer => {
+                    if let Ok(v) = f.text(id).replace('_', "").parse::<i64>() {
+                        self.intval.push([n, v]);
+                    }
+                }
+                Class::Operator => {
+                    let operator = dialect.operator.filter(|&o| o != 0);
+                    if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field[c as usize])) {
+                        self.op.push([n, string(dialect.name(f, o)) as i64]);
+                    }
+                }
+                // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
+                Class::FunctionDefinition if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
+                    self.op.push([n, string("async") as i64]);
+                }
+                Class::FunctionItem
+                    if f.children(id).iter().any(|&m| {
+                        dialect.name(f, m) == "function_modifiers" && f.children(m).iter().any(|&k| dialect.name(f, k) == "async")
+                    }) =>
+                {
+                    self.op.push([n, string("async") as i64]);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
@@ -792,16 +867,18 @@ impl Batch {
             })
         };
         // Rows with string indexes; the indexes become atoms once the batch's strings are interned.
-        let (mut doc, mut pkg, mut text, mut intval, mut op) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        // Text relations (decision 0037): `name(n, s)` (an identifier's text, an attribute's dotted text),
-        // `str(n, s)` (a string literal's content, between its quotes) and `strprefix(n, p)` (its prefix, lowercased).
-        let (mut name, mut strs, mut strprefix) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut doc, mut pkg) = (Vec::new(), Vec::new());
+        // `text`, `intval`, `op` and the text relations (`NodeRows`).
+        let mut rows = NodeRows::default();
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
         let mut extra = Extra::new(reads, matches);
         let mut tree = tree::Tree::new(reads);
         let mut fstrings = fstring::FStrings::new(reads, markers);
         let mut cpython = cpython::CPython::new(reads);
+        let mut annotations = annotation::Annotations::new(reads);
+        // The documents of the string annotations' trees, placed after the real documents (keys `annotation::PARSED`).
+        let mut parsed = Vec::new();
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
@@ -822,63 +899,27 @@ impl Batch {
             if d.facts.syntax_errors {
                 errors.push(key);
             }
-            let f = &*d.facts;
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
-                // A text document has no node.
-                let Some(dialect) = dialect else { break };
-                match dialect.class(f, id) {
-                    Class::Text => {
-                        let t = f.text(id);
-                        if !t.contains(['\t', '\n', '\r', '\\']) {
-                            text.push([n, string(t) as i64]);
-                            name.push([n, string(t) as i64]);
-                        }
-                    }
-                    Class::Attribute => {
-                        if let Some(dotted) = dialect.dotted(f, id) {
-                            name.push([n, string(&dotted) as i64]);
-                        }
-                    }
-                    Class::String => {
-                        if let Some((prefix, content)) = dialect.string(f, id) {
-                            strprefix.push([n, string(&prefix) as i64]);
-                            if let Some(content) = content {
-                                strs.push([n, string(content) as i64]);
-                            }
-                        }
-                    }
-                    Class::Integer => {
-                        if let Ok(v) = f.text(id).replace('_', "").parse::<i64>() {
-                            intval.push([n, v]);
-                        }
-                    }
-                    Class::Operator => {
-                        let operator = dialect.operator.filter(|&o| o != 0);
-                        if let Some(&o) = f.children(id).iter().find(|&&c| operator == Some(f.field[c as usize])) {
-                            op.push([n, string(dialect.name(f, o)) as i64]);
-                        }
-                    }
-                    // `async def`: the keyword is an anonymous child, recorded as the definition's modifier.
-                    Class::FunctionDefinition if f.children(id).first().is_some_and(|&k| dialect.name(f, k) == "async") => {
-                        op.push([n, string("async") as i64]);
-                    }
-                    Class::FunctionItem
-                        if f.children(id).iter().any(|&m| {
-                            dialect.name(f, m) == "function_modifiers" && f.children(m).iter().any(|&k| dialect.name(f, k) == "async")
-                        }) =>
-                    {
-                        op.push([n, string("async") as i64]);
-                    }
-                    _ => {}
-                }
+            if let Some(dialect) = dialect {
+                rows.document(&p, dialect, &mut string);
             }
             // A text document's lines split as W's `lines` regexes split any file's.
-            extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
+            extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut rows.text, &mut string)?;
             tree.document(&p, dialect, &d.path, python == Some(tag), &mut string);
             fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
             cpython.document(&p, python == Some(tag), &mut string);
+            parsed.extend(annotations.document(&p, d, dialect, python == Some(tag), &mut string)?);
             docs.push(p);
+        }
+        if let Some(p) = parsed.first() {
+            if docs.last().is_some_and(|q| q.key >= annotation::PARSED) {
+                return Err(StoreError::Invalid(format!("a document key reaches {}, where string annotations' trees are numbered", annotation::PARSED)));
+            }
+            let dialect = &dialects[&p.tag];
+            for p in parsed {
+                rows.document(&p, dialect, &mut string);
+                extra.nodes(&p, &mut string);
+                docs.push(p);
+            }
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
@@ -900,12 +941,12 @@ impl Batch {
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", relation(&["d", "p"], &mut pkg.iter().map(|&[d, p]| vec![d, atom(p)]))),
             ("syntax_error", relation(&["d"], &mut errors.iter().map(|&d| vec![d]))),
-            ("text", relation(&["n", "s"], &mut text.iter().map(|&[n, s]| vec![n, atom(s)]))),
-            ("intval", relation(&["n", "v"], &mut intval.iter().map(|&[n, v]| vec![n, v]))),
-            ("op", relation(&["n", "s"], &mut op.iter().map(|&[n, s]| vec![n, atom(s)]))),
-            ("name", relation(&["n", "s"], &mut name.iter().map(|&[n, s]| vec![n, atom(s)]))),
-            ("str", relation(&["n", "s"], &mut strs.iter().map(|&[n, s]| vec![n, atom(s)]))),
-            ("strprefix", relation(&["n", "s"], &mut strprefix.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("text", relation(&["n", "s"], &mut rows.text.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("intval", relation(&["n", "v"], &mut rows.intval.iter().map(|&[n, v]| vec![n, v]))),
+            ("op", relation(&["n", "s"], &mut rows.op.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("name", relation(&["n", "s"], &mut rows.name.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("str", relation(&["n", "s"], &mut rows.strs.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("strprefix", relation(&["n", "s"], &mut rows.strprefix.iter().map(|&[n, s]| vec![n, atom(s)]))),
         ];
         let line_rows = extra.line_rows();
         let (read, matched) = extra.relations(&atom);
@@ -913,6 +954,7 @@ impl Batch {
         relations.extend(tree.relations(&atom));
         relations.extend(fstrings.relations(&atom));
         relations.extend(cpython.relations(&atom));
+        relations.extend(annotations.relations(&atom));
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
             docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
@@ -1179,7 +1221,8 @@ impl Batch {
             let started = std::time::Instant::now();
             let mut out: Vec<Relation> = PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect();
             let mut skipped = 0;
-            for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
+            // An annotation's tree is no file: it has no call sites of its own.
+            for p in self.docs.iter().filter(|p| p.tag == py.grammar.tag() && p.key < annotation::PARSED) {
                 let rows = py::rows(&py.grammar, &p.facts);
                 let d = i64::from(p.key);
                 // A node id, `-1` for none; `None` for a node the projection leaves out.
@@ -1441,6 +1484,7 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+pub(crate) mod annotation;
 pub(crate) mod cpython;
 mod fstring;
 mod tree;

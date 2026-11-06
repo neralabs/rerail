@@ -105,6 +105,9 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "fstring_template" => &["n", "marker", "v"],
         // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
         "cpython_syntax_error" => &["d", "l", "msg"],
+        // Ruff's string annotations and their trees (`facts::vtab::syntax::annotation`).
+        "string_annotation" => &["s"],
+        "parsed" => &["s", "grammar", "root"],
         "intval" => &["n", "v"],
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],

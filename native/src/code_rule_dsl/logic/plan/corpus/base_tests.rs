@@ -1447,3 +1447,62 @@ only_tree(p) :- doc(d, p, _), syntax_error(d), !cpython_syntax_error(d, _, _).
     assert_eq!(got[1], "");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `string_annotation(s)` is each string Ruff's semantic model reads as a type definition (the scope table's), nested
+/// ones included, and `parsed(s, "annotation", root)` its tree, a document of its own: an `expression_statement` over
+/// the string's value, its identifiers `text` rows as a file's are. A string Ruff's parser refuses has no tree; a
+/// `Literal` argument is no type definition.
+#[test]
+fn string_annotations_are_ruffs_with_their_trees() {
+    let source = "from typing import List, Literal, Optional\nimport typing\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\", b: 'typing.Dict[str, \"Bar\"]') -> \"Baz\":\n    pass\n\ny: \"not valid ((\" = 1\nz: Literal[\"notatype\"] = 1\n";
+    let dir = corpus("string-annotations", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl annotated(t: symbol)
+annotated(t) :- string_annotation(n), node_text(n, t).
+.decl names(t: symbol, x: symbol)
+names(t, x) :- parsed(n, "annotation", r), node_text(n, t), inside(m, r, "expression_statement"), node(_, m, "identifier", _, _), text(m, x).
+.decl roots(t: symbol, k: symbol, s: number, e: number)
+roots(t, k, s, e) :- parsed(n, "annotation", r), node_text(n, t), node(_, r, k, s, e).
+.decl files(p: symbol)
+files(p) :- doc(_, p, _).
+.output annotated, names, roots, files
+"#;
+    let got = run(&dir, program, &["annotated", "names", "roots", "files"]);
+    let set = |csv: &str| csv.lines().map(str::to_owned).collect::<BTreeSet<String>>();
+    let want = |rows: &[&str]| rows.iter().map(|r| (*r).to_owned()).collect::<BTreeSet<String>>();
+    assert_eq!(
+        set(&got[0]),
+        want(&["\"List[int]\"", "\"Optional[Foo]\"", "'typing.Dict[str, \"Bar\"]'", "\"Bar\"", "\"Baz\"", "\"not valid ((\""])
+    );
+    assert_eq!(
+        set(&got[1]),
+        want(&[
+            "\"List[int]\"\tList",
+            "\"List[int]\"\tint",
+            "\"Optional[Foo]\"\tOptional",
+            "\"Optional[Foo]\"\tFoo",
+            "'typing.Dict[str, \"Bar\"]'\ttyping",
+            "'typing.Dict[str, \"Bar\"]'\tDict",
+            "'typing.Dict[str, \"Bar\"]'\tstr",
+            "\"Bar\"\tBar",
+            "\"Baz\"\tBaz",
+        ])
+    );
+    // Each root spans its string's whole value.
+    assert_eq!(
+        set(&got[2]),
+        want(&[
+            "\"List[int]\"\texpression_statement\t0\t9",
+            "\"Optional[Foo]\"\texpression_statement\t0\t13",
+            "'typing.Dict[str, \"Bar\"]'\texpression_statement\t0\t23",
+            "\"Bar\"\texpression_statement\t0\t3",
+            "\"Baz\"\texpression_statement\t0\t3",
+        ])
+    );
+    // The trees are no files.
+    assert_eq!(got[3], "a.py\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -203,9 +203,13 @@
 // `follows` with a `stopBy` rule.
 .decl precedes_stop(a: node, b: node, stop: relation)
 // Python `x: "List[int]"`: parsed(str, "annotation", root) gives the tree of the code inside the string, so
-// rules can resolve names in string annotations. Native because it runs the parser on the string's contents.
-// Cost: one parse per distinct string; ask for it only for strings that hold code (annotations, embedded SQL).
-.decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation", …)
+// rules can resolve names in string annotations. Native: the string's value (decoded) parsed as Ruff's
+// `parse_type_annotation` reads it, at each string_annotation; the tree is a document of its own (its nodes have the
+// tree rows, text, name, line and the rest over the value's text; no doc, pkg or syntax_error row), root an
+// expression_statement over the whole value, and a string nested in it (`"List['A']"`) a node of that document. A
+// string the parser refuses (as CPython's `ast.parse(value, mode="eval")` does) has no row.
+// Cost: the scope table of each Python file, then one parse per string annotation.
+.decl parsed(s: node, grammar: symbol, root: node)       // root of string s parsed as `grammar` ("annotation")
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
 // argument-matching rules must treat the call as open.
 .decl spread(n: node)                                    // a spread element or argument (`*args`, `...xs`)
@@ -383,8 +387,9 @@
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
 // package_export("@acme/ui", "./button", "./src/button.ts").
 .decl package_export(name: symbol, subpath: symbol, target: symbol)
-// Python: in `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the list of
-// positions follows Ruff's own table, not anything visible in the tree.
+// Python: in `x: "Foo"`, `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the
+// list of positions follows Ruff's own table (its semantic model's string type definitions, nested ones included),
+// not anything visible in the tree. A `Literal` argument or `Annotated` metadata is none.
 .decl string_annotation(s: node)                         // a string Ruff reads as a type definition
 // option("max_depth", "3"): a policy's tunable, so one rule text serves repositories with different settings.
 .decl option(name: symbol, v: symbol)  // a rule option's configured value (rerail.policy/v1 `options`)

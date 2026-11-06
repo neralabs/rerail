@@ -539,6 +539,35 @@ impl SubTree {
             ))
         })
     }
+
+    /// Every node in preorder (the tree's own order: a parent before its children, siblings in order), each with its
+    /// parent's index (`None` at the root) and its range in `text()` (the offset left out).
+    pub(crate) fn preorder(&self) -> impl Iterator<Item = PreNode> + '_ {
+        self.nodes.iter().map(|rec| PreNode {
+            kind: rec.kind,
+            field: rec.field,
+            parent: (rec.parent != NONE).then_some(rec.parent),
+            start: rec.start,
+            end: rec.end,
+            named: rec.named,
+            extra: rec.extra,
+            error: rec.error,
+        })
+    }
+}
+
+/// One node of a `SubTree` (`SubTree::preorder`): its grammar kind and field ids (tree-sitter's, for an annotation:
+/// ERROR is `annotation::ERROR_KIND`), its parent's index, its range in the tree's text and its flags.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PreNode {
+    pub(crate) kind: u16,
+    pub(crate) field: u16,
+    pub(crate) parent: Option<u32>,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
+    pub(crate) named: bool,
+    pub(crate) extra: bool,
+    pub(crate) error: bool,
 }
 
 /// A sub-tree's text. Node ranges are offsets into it plus `offset`, which an annotation's tree

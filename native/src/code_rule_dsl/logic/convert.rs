@@ -32,7 +32,9 @@
 //!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`, and core.rr's the README lists
 //!   (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`, W's
 //!   values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant; CPython's verdict,
-//!   `cpython_syntax_error(d: number, l: number, msg: symbol)`, core.rr's `syntax_error(d, l, msg)`); those
+//!   `cpython_syntax_error(d: number, l: number, msg: symbol)`, core.rr's `syntax_error(d, l, msg)`; Ruff's string
+//!   annotations and their trees, `string_annotation(s: node)` and `parsed(s: node, grammar: symbol, root: node)`,
+//!   each tree a document of its own); those
 //!   it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`): their `.output`s are
 //!   theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
 //!   or the replay's per event): read, never derived. So is the report gate, `report_when_gt(k: number)`: one row
@@ -826,6 +828,8 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl fstring_piece(n: node, i: int, kind: sym, v: sym)
 .decl fstring_template(n: node, marker: sym, v: sym)
 .decl cpython_syntax_error(d: int, l: int, msg: sym)
+.decl string_annotation(s: node)
+.decl parsed(s: node, grammar: sym, root: node)
 .decl reference_edge(src: node, dst: node, via: sym)
 .decl reference_open(n: node)
 ";
