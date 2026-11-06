@@ -2,8 +2,9 @@
 // Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-public-api-triples.json.
 // Started from the `.rdl`-style design native/src/code_rule_dsl/logic/programs/data_layer/public_api_triples.rr,
 // rewritten into what the engine lowers: tree relations for its ast(...) inputs, text tests for rx_matches,
-// character scans (substr/strlen over a node's text) for rx_replace/rx_extract/trim, a walk counted down a
-// fixed string for the hierarchy (no lattice, no counter), and a character-table comparison where SQL orders text.
+// @rx_replace for rx_replace/rx_extract/trim (the same regex crate's replace_all W's SQL function runs), a walk
+// counted down a fixed string for the hierarchy (no lattice, no counter), and a character-table comparison where
+// SQL orders text.
 //
 // Options from the converter's facts (ConvertFoundation A9): executionOnly (`option_on("executionOnly")`) picks
 // stage `eligible_groups`' "true" or "false" case. oracleAnalyzer and sourceGate are not read by this clause's
@@ -21,25 +22,22 @@
 // - A2 text order: SQL orders text bytewise; here a character table of ASCII (9, 10, 13, 32-126) compares the
 //   first differing character. Two strings that first differ at a character outside it are not ordered (both
 //   kept, as A1). Names, modules and paths are ASCII in practice; routes are compared as ordinal sequences.
-// - (A3, exact since round 2) `__all__` names: W's TEXT is the string's decoded value (replace with value: true),
-//   `value(n, v)`, escapes decoded and a concatenation's parts joined. An unknown value reads as "" there, a name
-//   no export has, so it is left out.
 // - A4 import items: SQL splits the statement text at commas (after `#` comments), trims ` ()\n\r` and takes the
 //   first non-space run (and `\s+as\s+(\S+)$`); here the items are the statement's `name` children. They differ
 //   only where an item is preceded by a tab or a backslash continuation inside the list (SQL drops or garbles that
 //   item), or a dotted name holds whitespace (dropped here).
-// - A5 packages: a relative import starts from `pkg(d, p)` (the module for a path ending `__init__.py`, else its
-//   parent); SQL tests `path LIKE '%/__init__.py'` (case-insensitive, with the slash): they differ only for a root
-//   `__init__.py`, a file named `<x>__init__.py`, or case variants.
+// - A5 relative imports strip their package's trailing components in one regex (`(?:\.?[^.]+){k}$`) where SQL
+//   strips one per round: the two differ only on a module with an empty component (a path holding `//`, or a
+//   directory name starting or ending with `.`).
 // - A6 `lower(x) IN (…)`: a case-insensitive whole-string match (`(?i)`, Unicode simple folding) where SQLite's
 //   lower() folds ASCII only; they differ only on non-ASCII letters that fold to ASCII (e.g. U+212A).
-// - A7 scans read a text's first 256 characters: a decorator name, a base's name before its first `[`, a return
-//   annotation's leading quotes, or a package that needs more gives nothing.
-// - A8 the hierarchy is walked 63 hops up at most (the SQL's walk is unbounded).
+// - A8 the hierarchy is walked 63 hops up at most (the SQL's walk is unbounded): a hop counter over the base
+//   graph is a value-making recursion the cycle check refuses (it accepts one along the tree or along a node's
+//   child positions, and ef_base_edge is neither).
+// (`__all__` names are exact: W's TEXT is the string's decoded value, `value(n, v)`; an unknown value reads as ""
+// there, a name no export has, so it is left out.)
 
 .decl doc(d: number, path: symbol, module: symbol)
-.decl pkg(d: number, p: symbol)
-.input pkg
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
@@ -113,17 +111,6 @@ ef_pc_s(a, b, ta2, tb2) :- ef_pc_s(a, b, ta, tb), strlen(ta) > 0, strlen(tb) > 0
 ef_pc_lt(a, b) :- ef_pc_s(a, b, "", tb), tb != "".
 ef_pc_lt(a, b) :- ef_pc_s(a, b, ta, tb), ef_chr(substr(ta, 0, 1), x), ef_chr(substr(tb, 0, 1), y), x < y.
 
-// ---- character scans (rx_replace / rx_extract / trim over a text) ----
-// ef_at(t, i, c): t's character i is c, for the texts asked (ef_scan_q), each cut to its first 256 characters
-// (A7: a scan that would need a later character gives nothing; each use says where). The positions come from
-// t's suffixes (substr only: no value is made; a counter `i + 1` in a recursion is not allowed).
-.decl ef_scan_q(t: symbol)
-.decl ef_sfx(t: symbol, u: symbol)
-ef_sfx(t, t) :- ef_scan_q(t).
-ef_sfx(t, u2) :- ef_sfx(t, u), strlen(u) > 0, u2 = substr(u, 1, strlen(u) - 1).
-.decl ef_at(t: symbol, i: number, c: symbol)
-ef_at(t, i, c) :- ef_sfx(t, u), strlen(u) > 0, i = strlen(t) - strlen(u), c = substr(u, 0, 1).
-
 // ---- documents ----
 .decl ef_doc(d: number)
 ef_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
@@ -147,13 +134,15 @@ ef_func_ret(f, s) :- ef_func(_, f, _), field(f, "return_type", t), node_text(t, 
 ef_class(d, c, s) :- node(d, c, "class_definition", _, _), ef_doc(d), field(c, "name", n), text(n, s), field(c, "body", _).
 
 // ---- stages inventory, declarations ----
-// module: doc's module (`a/b.py` is `a.b`, `a/__init__.py` is `a`), as the SQL's replace(rx_replace(…)).
+// module: replace(rx_replace(__path, '/__init__\.py$|\.py$', ''), '/', '.'), as the SQL computes it.
+.decl ef_module(d: number, m: symbol)
+ef_module(d, m) :- ef_doc(d), doc(d, p, _), m = @rx_replace(@rx_replace(p, "/__init__\\.py$|\\.py$", ""), "/", ".").
 .decl ef_inv(id: symbol, d: number, x: node, st: number, name: symbol, kind: symbol, module: symbol, fq: symbol)
-ef_inv(id, d, f, st, n, "function", m, fq) :- ef_func(d, f, n), !ef_func_class(f, _, _), doc(d, _, m), node(d, f, _, st, _),
+ef_inv(id, d, f, st, n, "function", m, fq) :- ef_func(d, f, n), !ef_func_class(f, _, _), ef_module(d, m), node(d, f, _, st, _),
     id = cat(cat(m, "::"), n), fq = cat(cat(m, "."), n).
-ef_inv(id, d, f, st, n, "method", m, fq) :- ef_func(d, f, n), ef_func_class(f, _, c), doc(d, _, m), node(d, f, _, st, _),
+ef_inv(id, d, f, st, n, "method", m, fq) :- ef_func(d, f, n), ef_func_class(f, _, c), ef_module(d, m), node(d, f, _, st, _),
     q = cat(cat(c, "."), n), id = cat(cat(m, "::"), q), fq = cat(cat(m, "."), q).
-ef_inv(id, d, c, st, n, "class", m, fq) :- ef_class(d, c, n), doc(d, _, m), node(d, c, _, st, _),
+ef_inv(id, d, c, st, n, "class", m, fq) :- ef_class(d, c, n), ef_module(d, m), node(d, c, _, st, _),
     id = cat(cat(m, "::"), n), fq = cat(cat(m, "."), n).
 // row_number() OVER (PARTITION BY id ORDER BY __start DESC) = 1: the last definition of an id (A1: equal starts in
 // two documents of one module are both kept).
@@ -171,30 +160,15 @@ ef_declared_fq(fq) :- ef_decl(_, _, _, _, _, _, fq).
 
 // ---- input raw_decorators / stage decorators ----
 // A decorator child of a decorated_definition, owned by that definition (a function_definition or
-// class_definition child). name: `^@\s*([^\s(]+)` over the decorator's text, as a scan of its first 256
-// characters: after `@`, the first character that is not whitespace (a), which must not be `(`, up to the next
-// whitespace or `(` (b), else the end of the text. A7: a run reaching past 256 characters gives no name.
+// class_definition child). name: group 1 of `^@\s*([^\s(]+)` over the decorator's text (no match: no name).
 .decl ef_deco_node(x: node, owner: node, s: symbol)
 ef_deco_node(x, o, s) :- node(d, x, "decorator", _, _), ef_doc(d), child(dd, x, _), node(_, dd, "decorated_definition", _, _),
     child(dd, o, _), ef_def(o), node_text(x, s).
 .decl ef_def(o: node)
 ef_def(o) :- node(_, o, "function_definition", _, _).
 ef_def(o) :- node(_, o, "class_definition", _, _).
-.decl ef_deco_cut(s: symbol, t: symbol)
-ef_deco_cut(s, t) :- ef_deco_node(_, _, s), prefix("@", s), t = substr(s, 0, 256).
-ef_scan_q(t) :- ef_deco_cut(_, t).
-.decl ef_deco_word(t: symbol, i: number)
-ef_deco_word(t, i) :- ef_deco_cut(_, t), ef_at(t, i, c), i >= 1, !match("\\s", c).
-.decl ef_deco_a(t: symbol, a: number)
-ef_deco_a(t, a) :- ef_deco_word(t, _), a = min i : { ef_deco_word(t, i) }.
-.decl ef_deco_stop(t: symbol, j: number)
-ef_deco_stop(t, j) :- ef_deco_a(t, a), ef_at(t, j, c), j > a, match("[\\s(]", c).
-.decl ef_deco_b(s: symbol, b: number)
-ef_deco_b(s, b) :- ef_deco_cut(s, t), ef_deco_stop(t, _), b = min j : { ef_deco_stop(t, j) }.
-ef_deco_b(s, b) :- ef_deco_cut(s, t), ef_deco_a(t, _), !ef_deco_stop(t, _), b = strlen(s), b <= 256.
 .decl ef_decorator(owner: node, name: symbol)
-ef_decorator(o, n) :- ef_deco_node(_, o, s), ef_deco_cut(s, t), ef_deco_a(t, a), ef_at(t, a, c), c != "(", ef_deco_b(s, b),
-    n = substr(s, a, b - a).
+ef_decorator(o, n) :- ef_deco_node(_, o, s), match("@\\s*[^\\s(]+(?s:.*)", s), n = @rx_replace(s, "^@\\s*([^\\s(]+)(?s:.*)$", "${1}").
 
 // ---- input raw_parameters / stage parameters ----
 // util b5-common-1: an identifier (NAME itself), a typed_parameter with a direct identifier child, or a
@@ -233,7 +207,7 @@ ef_annot(id, s) :- ef_params(p, id, _, _), field(p, "type", t), ef_type_ident(t,
 // The statement's text must match `(?s)^(?:from\s+(?P<BASE>[^\s]+)\s+)?import\s+(?P<ITEMS>.*)$`; BASE is then
 // module_name's text (it holds no whitespace).
 .decl ef_import(d: number, i: node, st: number, module: symbol)
-ef_import(d, i, st, m) :- node(d, i, "import_from_statement", st, _), ef_doc(d), doc(d, _, m), node_text(i, s),
+ef_import(d, i, st, m) :- node(d, i, "import_from_statement", st, _), ef_doc(d), ef_module(d, m), node_text(i, s),
     match("(?s)from\\s+\\S+\\s+import\\s+.*", s).
 .decl ef_import_top(i: node)
 ef_import_top(i) :- ef_import(_, i, _, _), child(mm, i, _), node(_, mm, "module", _, _).
@@ -249,31 +223,27 @@ ef_imp_base(i, k, r) :- ef_import(_, i, _, _), field(i, "module_name", mn), node
 ef_imp_item(i, o, o) :- ef_import(_, i, _, _), field(i, "name", x), node(_, x, "dotted_name", _, _), node_text(x, o), match("\\S+", o).
 ef_imp_item(i, o, a) :- ef_import(_, i, _, _), field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", y),
     node_text(y, o), match("\\S+", o), field(x, "alias", z), text(z, a).
-// relative: the package (A5), less `dots - 1` trailing components (rx_replace(prefix, '\.?[^.]+$', '') each
-// round): the prefix before the (dots-1)-th dot from the end, "" past the first component.
-.decl ef_pkg_q(s: symbol)
-ef_pkg_q(s) :- ef_imp_base(i, k, _), k > 0, ef_import(d, i, _, _), pkg(d, s).
-// A7: a package of more than 256 characters is not stripped (no target for its relative imports above it).
-ef_scan_q(s) :- ef_pkg_q(s), strlen(s) <= 256.
-.decl ef_pkg_dot(s: symbol, i: number)
-ef_pkg_dot(s, i) :- ef_pkg_q(s), ef_at(s, i, ".").
-.decl ef_pkg_dot_pair(s: symbol, i: number, j: number)
-ef_pkg_dot_pair(s, i, j) :- ef_pkg_dot(s, i), ef_pkg_dot(s, j), i < j.
-// rank: the dots after it.
-.decl ef_pkg_rank(s: symbol, i: number, r: number)
-ef_pkg_rank(s, i, r) :- ef_pkg_dot(s, i), r = count : { ef_pkg_dot_pair(s, i, _) }.
-.decl ef_pkg_ndots(s: symbol, n: number)
-ef_pkg_ndots(s, n) :- ef_pkg_q(s), strlen(s) <= 256, n = count : { ef_pkg_dot(s, _) }.
-// ef_strip(s, k, p): s less k trailing components.
-.decl ef_strip(s: symbol, k: number, p: symbol)
-ef_strip(s, 0, s) :- ef_pkg_q(s).
-ef_strip(s, k, p) :- ef_imp_base(_, dots, _), k = dots - 1, k > 0, ef_pkg_rank(s, i, r), r = k - 1, p = substr(s, 0, i).
-ef_strip(s, k, "") :- ef_imp_base(_, dots, _), k = dots - 1, k > 0, ef_pkg_ndots(s, n), k > n.
+// relative: the package, less `dots - 1` trailing components. SQL starts from the module where the path is LIKE
+// '%/__init__.py' (ASCII case-insensitive, each `_` any one character), else from the module less its last
+// component, and takes one component per round (rx_replace(prefix, '\.?[^.]+$', '')), "" once none is left. So it
+// takes k components off the module, k = dots - 1 or dots: `(?:\.?[^.]+){k}$` removes the last k, and where there
+// are fewer it does not match and the result is "" (A5).
+.decl ef_init_path(d: number)
+ef_init_path(d) :- ef_doc(d), doc(d, p, _), match("(?s).*/..[iI][nN][iI][tT]..\\.[pP][yY]", p).
+.decl ef_rel_strip(i: node, s: symbol, k: number)
+ef_rel_strip(i, s, k) :- ef_imp_base(i, dots, _), dots > 0, ef_import(d, i, _, s), ef_init_path(d), k = dots - 1.
+ef_rel_strip(i, s, dots) :- ef_imp_base(i, dots, _), dots > 0, ef_import(d, i, _, s), !ef_init_path(d).
+.decl ef_rel_cut(i: node, s: symbol, r: symbol)
+ef_rel_cut(i, s, r) :- ef_rel_strip(i, s, k), k > 0, r = @rx_replace(s, cat(cat("(?:\\.?[^.]+){", to_string(k)), "}$"), "").
+.decl ef_rel_prefix(i: node, p: symbol)
+ef_rel_prefix(i, s) :- ef_rel_strip(i, s, 0).
+ef_rel_prefix(i, r) :- ef_rel_cut(i, s, r), r != s.
+ef_rel_prefix(i, "") :- ef_rel_cut(i, s, s).
 // resolved: target and name.
 .decl ef_imp_cand(i: node, st: number, module: symbol, name: symbol, target: symbol)
 ef_imp_cand(i, st, m, n, t) :- ef_import(_, i, st, m), ef_imp_base(i, 0, b), ef_imp_item(i, o, n), t = cat(cat(b, "."), o).
-ef_imp_cand(i, st, m, n, t) :- ef_import(d, i, st, m), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, n), pkg(d, s),
-    ef_strip(s, k - 1, p), ef_imp_join(p, r, o, t).
+ef_imp_cand(i, st, m, n, t) :- ef_import(_, i, st, m), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, n), ef_rel_prefix(i, p),
+    ef_imp_join(p, r, o, t).
 // CASE WHEN prefix='' THEN '' ELSE prefix || '.' END || CASE WHEN rest='' THEN '' ELSE rest || '.' END || original.
 .decl ef_imp_join(p: symbol, r: symbol, o: symbol, t: symbol)
 ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p != "", r != "", t = cat(cat(cat(p, "."), cat(r, ".")), o).
@@ -281,7 +251,7 @@ ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p = "", r != "", t = cat(cat(r
 ef_imp_join(p, r, o, t) :- ef_imp_parts(p, r, o), p != "", r = "", t = cat(cat(p, "."), o).
 ef_imp_join(p, r, o, o) :- ef_imp_parts(p, r, o), p = "", r = "".
 .decl ef_imp_parts(p: symbol, r: symbol, o: symbol)
-ef_imp_parts(p, r, o) :- ef_import(d, i, _, _), ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, _), pkg(d, s), ef_strip(s, k - 1, p).
+ef_imp_parts(p, r, o) :- ef_imp_base(i, k, r), k > 0, ef_imp_item(i, o, _), ef_rel_prefix(i, p).
 // row_number() OVER (PARTITION BY module, name, base IS NULL ORDER BY ordinal DESC) = 1: the last statement
 // importing a name into a module (A1: two items of one statement, or equal starts in two documents).
 .decl ef_imp_start(module: symbol, name: symbol, st: number)
@@ -308,33 +278,11 @@ ef_base_node(d, b, st) :- node(d, b, "identifier", st, _).
 ef_base_node(d, b, st) :- node(d, b, "attribute", st, _).
 ef_base_node(d, b, st) :- node(d, b, "generic_type", st, _).
 ef_base_node(d, b, st) :- node(d, b, "subscript", st, _).
-// trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')), as a scan of the text's first 256 characters:
-// cut at the first `[`; then, if a `.` comes before the first newline (`.` in `^.*` does not match one), drop
-// through the last such `.`; then trim spaces. An empty result names no class (no lookup matches it). A7: a text
-// of more than 256 characters with no `[` among them gives no name.
-.decl ef_bs_t(s: symbol, t: symbol)
-ef_bs_t(s, t) :- ef_raw_base(_, _, _, s), t = substr(s, 0, 256).
-ef_scan_q(t) :- ef_bs_t(_, t).
-.decl ef_bs_br(t: symbol, i: number)
-ef_bs_br(t, i) :- ef_bs_t(_, t), ef_at(t, i, "[").
-.decl ef_bs_cut(t: symbol, k: number)
-ef_bs_cut(t, k) :- ef_bs_br(t, _), k = min i : { ef_bs_br(t, i) }.
-ef_bs_cut(t, k) :- ef_bs_t(s, t), !ef_bs_br(t, _), strlen(s) <= 256, k = strlen(s).
-.decl ef_bs_nl(t: symbol, i: number)
-ef_bs_nl(t, i) :- ef_bs_t(_, t), ef_at(t, i, "\n").
-.decl ef_bs_line(t: symbol, k: number)
-ef_bs_line(t, k) :- ef_bs_nl(t, _), k = min i : { ef_bs_nl(t, i) }.
-ef_bs_line(t, k) :- ef_bs_t(_, t), !ef_bs_nl(t, _), k = strlen(t).
-.decl ef_bs_dot(t: symbol, i: number)
-ef_bs_dot(t, i) :- ef_at(t, i, "."), ef_bs_cut(t, k), i < k, ef_bs_line(t, l), i < l.
-.decl ef_bs_from(t: symbol, a: number)
-ef_bs_from(t, a) :- ef_bs_dot(t, _), j = max i : { ef_bs_dot(t, i) }, a = j + 1.
-ef_bs_from(t, 0) :- ef_bs_cut(t, _), !ef_bs_dot(t, _).
-.decl ef_bs_keep(t: symbol, i: number)
-ef_bs_keep(t, i) :- ef_bs_from(t, a), ef_bs_cut(t, k), ef_at(t, i, c), i >= a, i < k, c != " ".
+// trim(rx_replace(rx_replace(name, '(?s)\[.*$', ''), '^.*\.', '')): trim(x) takes spaces off both ends. An empty
+// result names no class (no lookup matches it).
 .decl ef_bs_name(s: symbol, bn: symbol)
-ef_bs_name(s, bn) :- ef_bs_t(s, t), ef_bs_keep(t, _), a = min i : { ef_bs_keep(t, i) }, b = max i : { ef_bs_keep(t, i) },
-    bn = substr(t, a, b - a + 1).
+ef_bs_name(s, bn) :- ef_raw_base(_, _, _, s), x = @rx_replace(@rx_replace(s, "(?s)\\[.*$", ""), "^.*\\.", ""),
+    bn = @rx_replace(x, "^ +| +$", ""), bn != "".
 
 // ---- stage base_edges ----
 .decl ef_base_name(owner: symbol, module: symbol, bn: symbol, ord: number)
@@ -360,8 +308,7 @@ ef_base_edge(id, b, o) :- ef_base_name(id, _, bn, o), ef_unique_class(bn, b), !e
 
 // ---- stage hierarchy: per (owner, base) the least (depth, route) over simple paths ----
 // depth: the least walk length (a shortest walk is simple). The walk counts its hops down a 64-character string
-// (substr only: a counter `k + 1` in a recursion is not allowed); A8: bases more than 63 hops up are not reached
-// (the SQL's walk is unbounded).
+// (substr only; A8: bases more than 63 hops up are not reached).
 .decl ef_class_id(id: symbol)
 ef_class_id(id) :- ef_decl(id, _, _, _, "class", _, _).
 .decl ef_walk(o: symbol, b: symbol, t: symbol)
@@ -508,29 +455,18 @@ ef_ctx_path("l2055_lazy_result/lazy_seq.py"). ef_ctx_path("l2055_lazy_result/tra
 ef_ctx_class("BatchContext"). ef_ctx_class("EagerContext"). ef_ctx_class("LazyResult"). ef_ctx_class("LazySeq"). ef_ctx_class("OnAccessContext").
 .decl ef_ctx_exc(id: symbol)
 ef_ctx_exc(id) :- ef_decl(id, d, _, _, _, _, _), doc(d, p, _), ef_ctx_path(p), ef_decl_class(id, c, _), ef_ctx_class(c).
-// self_returning: trim(return_annotation, ' ''"') is the class name or starts with it and `[`. With u the text
-// less its leading spaces and quotes (the first other character, among the first 256: A7), that is: u is the
-// class name and then only spaces and quotes, or u starts with the class name and `[` (a class name ends in no
-// space or quote, and `[` is not trimmed).
+// self_returning: trim(return_annotation, ' ''"') (spaces and quotes off both ends) is the class name, or starts
+// with it and `[`.
 .decl ef_rt(id: symbol, s: symbol)
 ef_rt(id, s) :- ef_decl_class(id, _, _), ef_decl(id, _, x, _, _, _, _), ef_func_ret(x, s).
-.decl ef_rt_t(s: symbol, t: symbol)
-ef_rt_t(s, t) :- ef_rt(_, s), t = substr(s, 0, 256).
-ef_scan_q(t) :- ef_rt_t(_, t).
-.decl ef_rt_keep(t: symbol, i: number)
-ef_rt_keep(t, i) :- ef_rt_t(_, t), ef_at(t, i, c), c != " ", c != "'", c != "\"".
 .decl ef_rt_u(s: symbol, u: symbol)
-ef_rt_u(s, u) :- ef_rt_t(s, t), ef_rt_keep(t, _), a = min i : { ef_rt_keep(t, i) }, u = substr(s, a, strlen(s) - a).
+ef_rt_u(s, u) :- ef_rt(_, s), u = @rx_replace(s, "^[ '\"]+|[ '\"]+$", "").
 .decl ef_self_ret(id: symbol)
-ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), strlen(u) >= strlen(c), substr(u, 0, strlen(c)) = c,
-    match("[ '\"]*", substr(u, strlen(c), strlen(u) - strlen(c))).
+ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), u = c.
 ef_self_ret(id) :- ef_rt(id, s), ef_rt_u(s, u), ef_decl_class(id, c, _), strlen(u) > strlen(c), substr(u, 0, strlen(c) + 1) = cat(c, "[").
 // rx_replace(name, '_(?:lazy|async|sync)$', ''), over declared names.
 .decl ef_base_of(n: symbol, b: symbol)
-ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), suffix("_lazy", n), b = substr(n, 0, strlen(n) - 5).
-ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), suffix("_async", n), b = substr(n, 0, strlen(n) - 6).
-ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), suffix("_sync", n), b = substr(n, 0, strlen(n) - 5).
-ef_base_of(n, n) :- ef_decl(_, _, _, n, _, _, _), !suffix("_lazy", n), !suffix("_async", n), !suffix("_sync", n).
+ef_base_of(n, b) :- ef_decl(_, _, _, n, _, _, _), b = @rx_replace(n, "_(?:lazy|async|sync)$", "").
 .decl ef_verb(name: symbol)
 ef_verb("aggregate"). ef_verb("commit"). ef_verb("commit_branch"). ef_verb("count"). ef_verb("create_branch").
 ef_verb("cursor_paginate"). ef_verb("cursor_paginate_with_total"). ef_verb("delete_by_id"). ef_verb("delete_by_key").
