@@ -25,15 +25,16 @@
 //   type (targets: every left of a chained `a = b = v`), AnnAssign one with a type; Delete is `delete_statement`;
 //   Lambda is `lambda`; Tuple is `tuple` (elts: its children but comments);
 // - Constant str is a `string` (not a part of a concatenated_string) or a `concatenated_string`, neither with an
-//   f/t/b prefix; its value is read through str(n, s), each literal piece's undecoded content;
+//   f/t prefix, whose value_type_of is str; its value is W's decoded value (value: CPython's ast_value);
 // - lines are CPython's lineno: the node's first token, tree-sitter's start line (a def's is its `def`/`async`,
 //   decorators apart, as CPython 3.8+ has it);
 // - bfs (breadth-first order, used where the SQL picks the first or last def/class of a name) is (ast depth, start):
 //   bootstrap_invariants_depth counts the ast statement nodes around a node, an elif counting the Ifs it nests in.
 // The `syntax: valid` gate is !syntax_error(d) (tree-sitter's ERROR verdict, not CPython's compile); the scope is
 // in_scope/out_scope. The source text the SQL reads (effective_source: source_text(path, 0, module end); the
-// `$SOURCE` capture: the module's text) is node_text of the module; a line counted as the SQL does (newlines before
-// the first occurrence, plus one) is the first src_line_lf (\n lines) holding it.
+// `$SOURCE` capture: the module's text) is node_text of the module (it differs from source_text(path, 0, …) only
+// by the whitespace before the first token, which holds no surface); a line counted as the SQL does (newlines
+// before the first occurrence, plus one) is the first src_line_lf (\n lines) holding it.
 //
 // Options are the converter's facts: entryPoint is option_value("entryPoint", v) (default "all"), the SQL's
 // entryPoint cases written against it; parameters (default "{}") is read through option_json for enginePaths,
@@ -42,24 +43,25 @@
 // "all" bootstrap-source-syntax reads no file (its input's filePath is `\b\B` there): it reports nothing at the
 // defaults.
 //
-// Approximations (each where it is used): str(n, s) is undecoded (CPython's decoded value is str_part, not bound),
-// so a placeholder text written with escapes, or a Constant whose pieces only together hold it, is missed (BEI036),
-// and BEI009's exact value is the single literal's; a return annotation "starts with LazyResult[" (ast.unparse) is a
-// LazyResult subscript, through subscripts, attributes, calls and binary operators' left sides (other forms that
-// unparse so are not seen); identifiers in match-case capture patterns and PEP 695 type parameters count as Names;
-// "parses" is tree-sitter's verdict (syntax_error), not CPython's, in the gates, coverage_errors and
-// bootstrap-source-syntax. Checked on fixtures and the batch 9-10 API records.
-// Written around four corpus-runner gaps: an aggregate's body is one atom (helpers hold the joins and negations); a
-// kind variable cannot be compared with a string (`node(d, n, k, _, _), k = "x"`); a recursion that computes a value
-// (a string position, an escaped key) is refused as unbounded, even under a bound; a `match` whose pattern is a
-// variable prints as an undeclared `rx(x, s)`. Hence the digit facts and the plain-key match for rawSources.
+// Remaining approximations (each where it is used), each blocked on something unbound: a return annotation
+// "starts with LazyResult[" (ast.unparse; @unparse needs CPython) is a LazyResult subscript, through subscripts,
+// attributes, calls and binary operators' left sides (other forms that unparse so are not seen); the Constant str
+// pieces of an f-string (fstring_piece) are not read (BEI036); an imaginary literal that underflows to 0j is not
+// zero (value has no text for a complex; BEI007); identifiers in match-case capture patterns and PEP 695 type
+// parameters count as Names (tree-sitter's tree read as CPython's); "parses" is tree-sitter's verdict
+// (syntax_error), not CPython's (unbound), in the gates, coverage_errors and bootstrap-source-syntax: a gated file
+// CPython rejects fails W's pythonAst stage (its worker raises), and is read here. Checked on fixtures and the
+// batch 9-10 API records.
+// A recursion that computes a value (a string position) is refused as unbounded, so positions are digit facts.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl file_name(d: number, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
@@ -80,15 +82,15 @@
 .decl bootstrap_invariants_entry(v: symbol)
 bootstrap_invariants_entry(v) :- option_value("entryPoint", v).
 // parameters: a JSON object (its default "{}"), read as the SQL's json_extract reads it: option_json's leaves by
-// JSON pointer, and its text for whether an array key is there at all (an absent key takes the default list; `[]`
-// has no leaves but is an empty list).
+// JSON pointer, and its text for whether an array key is there at all (an absent or null key takes the default list;
+// `[]` has no leaves but is an empty list). The text test finds the key anywhere in the object, not only at its top.
 .decl option_json(name: symbol, pointer: symbol, v: symbol)
 .decl bootstrap_invariants_params(j: symbol)
 bootstrap_invariants_params(j) :- option_value("parameters", j).
 .decl bootstrap_invariants_has_engine_key(x: number)
-bootstrap_invariants_has_engine_key(1) :- bootstrap_invariants_params(j), match("(?s:.*)\"enginePaths\" *: *\\[(?s:.*)", j).
+bootstrap_invariants_has_engine_key(1) :- bootstrap_invariants_params(j), match("(?s:.*)\"enginePaths\"[ \\t\\n\\r]*:[ \\t\\n\\r]*\\[(?s:.*)", j).
 .decl bootstrap_invariants_has_bootstrap_key(x: number)
-bootstrap_invariants_has_bootstrap_key(1) :- bootstrap_invariants_params(j), match("(?s:.*)\"bootstrapPaths\" *: *\\[(?s:.*)", j).
+bootstrap_invariants_has_bootstrap_key(1) :- bootstrap_invariants_params(j), match("(?s:.*)\"bootstrapPaths\"[ \\t\\n\\r]*:[ \\t\\n\\r]*\\[(?s:.*)", j).
 .decl bootstrap_invariants_default_path(d: number)
 bootstrap_invariants_default_path(d) :- doc(d, p, _), (p = "l3200_metadata/bootstrap_state.py" ; p = "l3200_metadata/bootstrap_coordinator.py").
 // The documents in enginePaths, and in bootstrapPaths.
@@ -104,23 +106,56 @@ bootstrap_invariants_has_fline(1) :- option_json("parameters", "/functionLine", 
 .decl bootstrap_invariants_fline_def(f: node)
 bootstrap_invariants_fline_def(f) :- option_json("parameters", "/functionLine", v), node(_, f, "function_definition", _, _), line(f, l),
     v = to_string(l).
-// rawSources: a document's source given in parameters (`$.rawSources.<path>`), which effective_source prefers to
-// the file's. Its key is the path as a JSON pointer token (`~` as ~0, `/` as ~1). Approximation: only a path holding
-// neither is matched to its key (escaping needs a replace, or a recursion over string positions, which the runner
-// refuses as unbounded); the recorded keys are such paths.
-.decl bootstrap_invariants_raw(d: number, s: symbol)
-bootstrap_invariants_raw(d, s) :- option_json("parameters", q, s), prefix("/rawSources/", q), t = substr(q, 12, strlen(q) - 12), doc(d, t, _).
-// raw_line(d, surface, l): the line of the surface's first occurrence in d's raw source: the newlines before it, plus
-// one. Positions are numbers from digit facts (a recursion over positions is refused as unbounded). Approximation: a
-// raw source past 100000 characters is read up to there.
+// Positions (string indexes) are numbers made of digit facts: a recursion over positions is refused as unbounded.
 .decl bootstrap_invariants_digit(n: number)
 bootstrap_invariants_digit(0). bootstrap_invariants_digit(1). bootstrap_invariants_digit(2). bootstrap_invariants_digit(3).
 bootstrap_invariants_digit(4). bootstrap_invariants_digit(5). bootstrap_invariants_digit(6). bootstrap_invariants_digit(7).
 bootstrap_invariants_digit(8). bootstrap_invariants_digit(9).
+.decl bootstrap_invariants_n3(n: number)
+bootstrap_invariants_n3(n) :- bootstrap_invariants_digit(a), bootstrap_invariants_digit(b), bootstrap_invariants_digit(c), n = 100 * a + 10 * b + c.
+// rawSources: a document's source given in parameters (`$.rawSources.<json_quote(path)>`: the key is the path,
+// exactly), which effective_source prefers to the file's. option_json's pointer holds the key as an RFC 6901 token
+// (`~` as ~0, `/` as ~1). A path p is the key t when t is p so escaped: as long as p and its `/`s and `~`s, and
+// at each position i of p, t at i plus the `/`s and `~`s before i holds p's character (or its escape).
+.decl bootstrap_invariants_raw_key(t: symbol, s: symbol)
+bootstrap_invariants_raw_key(t, s) :- option_json("parameters", q, s), prefix("/rawSources/", q), t = substr(q, 12, strlen(q) - 12).
+// The documents a key may name: those whose file name ends it (a file name holding `~`: every key).
+.decl bootstrap_invariants_raw_cand(d: number, t: symbol)
+bootstrap_invariants_raw_cand(d, t) :- bootstrap_invariants_raw_key(t, _), file_name(d, f), !contains("~", f), suffix(f, t).
+bootstrap_invariants_raw_cand(d, t) :- bootstrap_invariants_raw_key(t, _), file_name(d, f), contains("~", f).
+.decl bootstrap_invariants_cand_doc(d: number, k: number)
+bootstrap_invariants_cand_doc(d, k) :- bootstrap_invariants_raw_cand(d, _), doc(d, p, _), k = strlen(p).
+.decl bootstrap_invariants_cand_pos(d: number, i: number)
+bootstrap_invariants_cand_pos(d, i) :- bootstrap_invariants_cand_doc(d, k), bootstrap_invariants_n3(a), a * 1000 < k, bootstrap_invariants_n3(b),
+    i = 1000 * a + b, i < k.
+.decl bootstrap_invariants_cand_special(d: number, i: number)
+bootstrap_invariants_cand_special(d, i) :- bootstrap_invariants_cand_pos(d, i), doc(d, p, _), c = substr(p, i, 1), (c = "/" ; c = "~").
+.decl bootstrap_invariants_cand_specials(d: number, k: number)
+bootstrap_invariants_cand_specials(d, k) :- bootstrap_invariants_cand_doc(d, _), k = count : { bootstrap_invariants_cand_special(d, _) }.
+.decl bootstrap_invariants_cand_shift(d: number, i: number, k: number)
+bootstrap_invariants_cand_shift(d, i, k) :- bootstrap_invariants_cand_pos(d, i), k = count : { bootstrap_invariants_cand_special(d, j), j < i }.
+.decl bootstrap_invariants_cand_len(d: number, t: symbol)
+bootstrap_invariants_cand_len(d, t) :- bootstrap_invariants_raw_cand(d, t), bootstrap_invariants_cand_doc(d, n), bootstrap_invariants_cand_specials(d, k),
+    m = strlen(t), m = n + k.
+.decl bootstrap_invariants_cand_differs(d: number, t: symbol)
+bootstrap_invariants_cand_differs(d, t) :- bootstrap_invariants_cand_len(d, t), doc(d, p, _), bootstrap_invariants_cand_shift(d, i, k),
+    c = substr(p, i, 1), c != "/", c != "~", j = i + k, w = substr(t, j, 1), w != c.
+bootstrap_invariants_cand_differs(d, t) :- bootstrap_invariants_cand_len(d, t), doc(d, p, _), bootstrap_invariants_cand_shift(d, i, k),
+    c = substr(p, i, 1), c = "/", j = i + k, w = substr(t, j, 2), w != "~1".
+bootstrap_invariants_cand_differs(d, t) :- bootstrap_invariants_cand_len(d, t), doc(d, p, _), bootstrap_invariants_cand_shift(d, i, k),
+    c = substr(p, i, 1), c = "~", j = i + k, w = substr(t, j, 2), w != "~0".
+.decl bootstrap_invariants_raw(d: number, s: symbol)
+bootstrap_invariants_raw(d, s) :- bootstrap_invariants_cand_len(d, t), !bootstrap_invariants_cand_differs(d, t), bootstrap_invariants_raw_key(t, s).
+// raw_line(d, surface, l): the line of the surface's first occurrence in d's raw source: the newlines before it, plus
+// one (SQLite's instr and length count characters, as substr and strlen do). Positions to 10^9 characters.
+.decl bootstrap_invariants_raw_len(d: number, k: number)
+bootstrap_invariants_raw_len(d, k) :- bootstrap_invariants_raw(d, s), k = strlen(s).
+.decl bootstrap_invariants_raw_block(d: number, b: number)
+bootstrap_invariants_raw_block(d, b) :- bootstrap_invariants_raw_len(d, k), bootstrap_invariants_n3(a), a * 1000000 < k, bootstrap_invariants_n3(c),
+    b = 1000 * a + c, b * 1000 < k.
 .decl bootstrap_invariants_raw_pos(d: number, i: number)
-bootstrap_invariants_raw_pos(d, i) :- bootstrap_invariants_raw(d, s), bootstrap_invariants_digit(a), bootstrap_invariants_digit(b),
-    bootstrap_invariants_digit(c), bootstrap_invariants_digit(e), bootstrap_invariants_digit(g),
-    i = 10000 * a + 1000 * b + 100 * c + 10 * e + g, i < strlen(s).
+bootstrap_invariants_raw_pos(d, i) :- bootstrap_invariants_raw_block(d, b), bootstrap_invariants_raw_len(d, k), bootstrap_invariants_n3(c),
+    i = 1000 * b + c, i < k.
 .decl bootstrap_invariants_raw_has(d: number, u: symbol)
 bootstrap_invariants_raw_has(d, u) :- bootstrap_invariants_raw(d, s), bootstrap_invariants_deleted_surface(_, u, _), contains(u, s).
 .decl bootstrap_invariants_raw_at(d: number, u: symbol, i: number)
@@ -242,24 +277,31 @@ bootstrap_invariants_haskw(c, s) :- bootstrap_invariants_kw(c, _, s, _).
 .decl bootstrap_invariants_elt(t: node, x: node)
 bootstrap_invariants_elt(t, x) :- node(_, t, "tuple", _, _), child(t, x, _), !node(_, x, "comment", _, _).
 bootstrap_invariants_tuple_len(t, k) :- node(_, t, "tuple", _, _), k = count : { bootstrap_invariants_elt(t, _) }.
-// Constant str: n and (each piece of) its value, undecoded; and a single literal's whole value.
+// Constant str (the SQL's `kind='Constant' AND value_kind='str'`): a `string` not part of a concatenated_string,
+// or a concatenated_string, with no f/t piece (those are CPython's JoinedStr/TemplateStr), of type str
+// (value_type_of; a bytes literal's is bytes), and its value: W's decoded value (value: escapes decoded, adjacent
+// literals joined), CPython's `ast_value`. Remaining gap: the Constant pieces CPython puts inside a JoinedStr
+// (an f-string's literal text) are not read (fstring_piece, W's pythonFString parse, is not bound).
 .decl bootstrap_invariants_noconst(n: node)
-bootstrap_invariants_noconst(n) :- strprefix(n, x), (contains("f", x) ; contains("t", x) ; contains("b", x)).
+bootstrap_invariants_noconst(n) :- strprefix(n, x), (contains("f", x) ; contains("t", x)).
 .decl bootstrap_invariants_cstr_part(n: node)
 bootstrap_invariants_cstr_part(n) :- node(_, c, "concatenated_string", _, _), child(c, n, _).
 .decl bootstrap_invariants_cstr_noconst(c: node)
 bootstrap_invariants_cstr_noconst(c) :- node(_, c, "concatenated_string", _, _), child(c, n, _), bootstrap_invariants_noconst(n).
-.decl bootstrap_invariants_strval(n: node, s: symbol)
-bootstrap_invariants_strval(n, s) :- node(_, n, "string", _, _), !bootstrap_invariants_cstr_part(n), !bootstrap_invariants_noconst(n), str(n, s).
-// mirrors python/ast.rr str_const (undecoded: str_part, CPython's decoder, is not bound)
 .decl bootstrap_invariants_str(n: node, s: symbol)
-bootstrap_invariants_str(n, s) :- bootstrap_invariants_strval(n, s).
-bootstrap_invariants_str(c, s) :- node(_, c, "concatenated_string", _, _), !bootstrap_invariants_cstr_noconst(c), child(c, n, _), node(_, n, "string", _, _), str(n, s).
-// A numeric Constant whose str() is '0', '0.0' or '0j' (any zero int, float or complex), or False.
+bootstrap_invariants_str(n, s) :- node(_, n, "string", _, _), !bootstrap_invariants_cstr_part(n), !bootstrap_invariants_noconst(n),
+    value_type_of(n, "str"), value(n, s).
+bootstrap_invariants_str(c, s) :- node(_, c, "concatenated_string", _, _), !bootstrap_invariants_cstr_noconst(c),
+    value_type_of(c, "str"), value(c, s).
+// A numeric Constant whose str() is '0', '0.0' or '0j' (any zero int, float or complex), or False. An int or float
+// by its value (so `1e-400` is 0.0); a complex literal (an imaginary one: value has no text for a complex) by its
+// digits. Remaining gap: an imaginary literal that underflows to 0j (`1e-400j`) is not seen as zero.
 .decl bootstrap_invariants_zero(x: node)
 bootstrap_invariants_zero(x) :- node(_, x, "false", _, _).
-bootstrap_invariants_zero(x) :- node(_, x, "integer", _, _), node_text(x, s), (match("^0[xXoObB][0_]+$", s) ; match("^[0_]+[jJ]?$", s)).
-bootstrap_invariants_zero(x) :- node(_, x, "float", _, _), node_text(x, s), match("^[0_]*\\.?[0_]*([eE][+-]?[0-9_]+)?[jJ]?$", s).
+bootstrap_invariants_zero(x) :- node(_, x, "integer", _, _), value(x, "0").
+bootstrap_invariants_zero(x) :- node(_, x, "float", _, _), value(x, "0.0").
+bootstrap_invariants_zero(x) :- node(_, x, "integer", _, _), node_text(x, s), match("[0_]+[jJ]", s).
+bootstrap_invariants_zero(x) :- node(_, x, "float", _, _), node_text(x, s), match("[0_]*\\.?[0_]*([eE][+-]?[0-9_]+)?[jJ]", s).
 
 // Assign: a statement-level assignment without a type; its targets (every left of the chain) and its value.
 .decl bootstrap_invariants_assign(a: node)
@@ -908,7 +950,7 @@ bootstrap_invariants_row(d, "BEI008", l) :- bootstrap_invariants_ecall(d, n, _, 
 
 // ---- diagnostics_4 ----
 bootstrap_invariants_row(d, "BEI009", l) :- bootstrap_invariants_ecall(d, n, _, "_bootstrap_engine_placeholder"), bootstrap_invariants_engine(d), bootstrap_invariants_arg0(n, v),
-    bootstrap_invariants_strval(v, "lazy bootstrap index interrogation"), line(n, l).
+    bootstrap_invariants_str(v, "lazy bootstrap index interrogation"), line(n, l).
 bootstrap_invariants_row(d, "BEI010", l) :- bootstrap_invariants_ecall(d, n, _, "_plan_physical_schema_contract"), bootstrap_invariants_engine(d), bootstrap_invariants_base(d, "bootstrap_coordinator.py"),
     bootstrap_invariants_haskw(n, "conn"), line(n, l).
 .decl bootstrap_invariants_publish_call(d: number, n: node)
