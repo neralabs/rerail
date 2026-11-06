@@ -27,6 +27,7 @@ use ast_grep_core::source::{Content, Doc, Edit, SgNode};
 use ast_grep_core::tree_sitter::StrDoc;
 use offsets::Decoded;
 pub(crate) use python_fstring::parse as parse_python_fstring;
+pub(crate) use python_fstring::{pieces as fstring_pieces, template as fstring_template};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
@@ -516,6 +517,27 @@ impl SubTree {
     /// The value the grammar gives the node with this id.
     pub(crate) fn value(&self, node_id: usize) -> Option<&Value> {
         self.values.get(self.index_of(node_id)?)?.as_ref()
+    }
+
+    /// The root's value.
+    pub(crate) fn root_value(&self) -> Option<&Value> {
+        self.values.first()?.as_ref()
+    }
+
+    /// The root's children in order, each its kind's name and its value.
+    pub(crate) fn root_children(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, Option<&Value>)> + '_ {
+        let grammar = self.lang.0;
+        let mut at = self.nodes.first().map_or(NONE, |root| root.first);
+        std::iter::from_fn(move || {
+            let i = (at != NONE).then_some(at as usize)?;
+            at = self.nodes[i].next;
+            Some((
+                grammar.kind_name(self.nodes[i].kind),
+                self.values[i].as_ref(),
+            ))
+        })
     }
 }
 

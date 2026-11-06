@@ -30,7 +30,8 @@
 //!   (named children), `field(p: node, f: symbol, c: node)`, `text(n: node, s: symbol)`, `name(n: node, s: symbol)`,
 //!   `str(n: node, s: symbol)`, `strprefix(n: node, s: symbol)`, `intval(n: node, v: number)`,
 //!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`, and core.rr's the README lists
-//!   (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`); those
+//!   (the source text, `docof`, `op_at`, `prev_token`, `token`, `visit_index`, `path_part`, `file_name`, `pkg`, W's
+//!   values and f-string trees: `fstring_piece`, `fstring_template`, whose marker is a constant); those
 //!   it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`): their `.output`s are
 //!   theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
 //!   or the replay's per event): read, never derived. So is the report gate, `report_when_gt(k: number)`: one row
@@ -821,6 +822,8 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl value_type_of(n: node, t: sym)
 .decl value_type(v: sym, t: sym)
 .decl comment(n: node, s: sym)
+.decl fstring_piece(n: node, i: int, kind: sym, v: sym)
+.decl fstring_template(n: node, marker: sym, v: sym)
 .decl reference_edge(src: node, dst: node, via: sym)
 .decl reference_open(n: node)
 ";
