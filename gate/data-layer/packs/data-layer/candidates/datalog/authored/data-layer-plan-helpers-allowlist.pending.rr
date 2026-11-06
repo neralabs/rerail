@@ -1,0 +1,20 @@
+// data-layer-plan-helpers-allowlist, option-gated form (awaiting the converter's option facts, ConvertFoundation A9).
+// Not read by the converter. When `option_value` lands, replace the main file's helpers_doc rule with the two below
+// and declare option_value. The final query's `$option: entryPoint` has one case, `scan_repo` (the default), whose
+// query adds the path filter; any other entry point (the recorded events use `scan_file`) runs the default query,
+// the same without the path filter.
+// Checked on the replay (2026-11-06, box nera-port-1, name port-w25) by running the main file with its path filter
+// removed: the 66 configured events (entryPoint scan_file) were 64 exact (1 of them by duplicates collapsed) and
+// 2 errors of the replay's own (a missing prefilter file); the main file as it is gives the 16 default events
+// 11 exact and 5 replay errors (missing prefilter files, `no statistics for doc.d` on corpora with no document).
+.decl option_value(name: symbol, v: symbol)
+
+.decl helpers_doc(d: number)
+helpers_doc(d) :-
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), option_value("entryPoint", "scan_repo"),
+    suffix(".py", p), !match("(?:.*/)?\\.py", p),
+    match(".*(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_).*", p),
+    !match(".*(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$).*", p).
+helpers_doc(d) :-
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), option_value("entryPoint", e), e != "scan_repo",
+    suffix(".py", p).
