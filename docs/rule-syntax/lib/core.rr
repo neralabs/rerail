@@ -44,12 +44,19 @@
 // In `f(x)`: field(call, "function", f) and field(call, "arguments", args). Field names come from the grammar.
 .decl field(p: node, f: symbol, c: node)                 // c is p's child in field f
 // In `f(a, b)`, the argument list has child(args, a, 0) and child(args, b, 1). Anonymous tokens (`(`, `,`)
-// are not named children and are not counted.
+// are not named children and are not counted. Comments are named children (tree-sitter's extras) and are
+// counted: in `f(# c` / `a)`, child(args, comment, 0), child(args, a, 1). Where an index must not count them,
+// the libraries filter them (`!kind(c, "comment")`, python/ast's body_stmt, tsx's call_arg).
 .decl child(p: node, c: node, i: number)                 // c is p's i-th named child, from 0
-// text(n, "foo") for the identifier `foo`. Interned, so equal texts compare as equal symbols cheaply.
+// text(n, "foo") for the identifier `foo`; text(call, "f(a, b)") for the call. Every node's and span's source
+// text exactly as written, comments and spacing inside it included. Interned, so equal texts compare as equal
+// symbols cheaply. For an identifier's or a dotted name's text, `name` (below) is the typed relation.
 .decl text(n: loc, s: symbol)                            // source text, interned
-// In `a + b`, op(binary, "+"); in `async def f()`, op(def, "async"). These tokens have no node of their own.
-.decl op(n: node, s: symbol)                             // an anonymous token child: operators, `async`
+// Every anonymous token child of n, punctuation included: in `a + b`, op(binary, "+"); in `a not in b`,
+// op(cmp, "not in") (one token); in `async def f()`, op(def, "async"); in `f(a, b)`,
+// op(args, ","); in `static readonly x`, op(field, "static") and op(field, "readonly"). These tokens have no
+// node of their own. op_at (below) is the ordered view.
+.decl op(n: node, s: symbol)                             // an anonymous token child: operators, keywords, punctuation
 // docof(n, d): the document node n was parsed from. Joins a node to doc(d, path, module).
 .decl docof(n: loc, d: number)
 // line(n, 12): used in messages ("at line {outer.line}") and line-based suppressions.
@@ -62,8 +69,11 @@
 .decl list_len(l: loc, k: number)
 // value(n, "a\nb") for the literal "a\\nb"; value(n, "255") for 0xff. Lets rules compare literals by meaning.
 .decl value(n: node, v: symbol)  // static value of a literal: strings unescaped, numbers normalised
-// str(n, "react") for the literal 'react' or "react": contents without quotes.
-.decl str(n: node, v: symbol)                            // a string literal's contents
+// str(n, "react") for the literal 'react' or "react": the decoded contents (escapes applied; a raw literal keeps
+// its backslashes), without prefix or quotes, as decision 0037 has it. A literal with interpolations has no row:
+// a Python f-string with `{x}`, a JavaScript template with `${x}`, a PHP "…$x…". Their constant pieces are
+// str_part (Python, below).
+.decl str(n: node, v: symbol)                            // a string literal's decoded contents
 // strprefix(n, "rb") for rb"…": the literal's prefix letters, lowercased; "" for none.
 .decl strprefix(n: node, p: symbol)
 // name(n, "a.b.c"): an identifier's text, or the dotted text of an attribute chain or dotted name, no spaces.
@@ -113,8 +123,10 @@
 .decl end_line(n: loc, l: number)                        // 1-based line of the last character
 .decl col(n: loc, c: number)                             // 0-based column of the start, for keys that need one
 // op_at(n, i, s): n's operator tokens in order, from 0: in `a < b <= c`, op_at(cmp, 0, "<"), op_at(cmp, 1, "<=").
-// A two-word operator is one token: "not in", "is not". `op` (above) is the unordered view; chained comparisons
-// need the order.
+// A two-word operator is one token: "not in", "is not". The tokens are n's anonymous children other than
+// brackets, quotes, `,`, `;`, `:` and `.`, whatever field holds them: in a Rust
+// `let` chain, op_at(chain, 0, "&&"); in `not x`, op_at(n, 0, "not"). `op` (above) is the unordered view, with
+// punctuation; chained comparisons need the order.
 .decl op_at(n: node, i: number, s: symbol)
 // syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
 // For Python the verdict and line come from a native parser that follows CPython's grammar (Ruff's parser):
@@ -142,7 +154,8 @@
 .decl within(n: node, a: node)                           // n is strictly below a
 // Cost: a range test per pair, but its rows are every (node, ancestor) pair. Bind both ends, or use inside/nearest.
 // inside(n, a, set): a is a strict ancestor of n, and a's kind is in set. has(a, n, set): n is a strict descendant
-// of a, and n's kind is in set. The set always constrains the end being looked for (decision 0036):
+// of a, and n's kind is in set. So has is not inside with its columns swapped: has(a, n, set) is
+// within(n, a), kind(n, k), set(k). The set always constrains the end being looked for (decision 0036):
 // inside(call, f, "function_definition"): call is somewhere in function f. !has(b, _, "comment"): no comment
 // anywhere inside b. The kind set is part of the axis, so the transducer answers either in one tape pass.
 // Cost (inside, has, nearest, within_stop, precedes_stop): one tape pass per axis and set; keep the set small.
@@ -160,7 +173,7 @@
 // (tsx/jsx uses nearest(c, p, render_stop)), so "climb until X" needs no recursion.
 .decl nearest(n: node, a: node, set: relation)           // a: n's nearest strict ancestor in `set`
 // In `a(); b(); c();` as siblings: precedes(a, c) holds; next_sibling(a, b) holds, next_sibling(a, c) does not.
-.decl precedes(a: node, b: node)                         // a ends before b starts, same parent
+.decl precedes(a: node, b: node)                         // child(p, a, i), child(p, b, j), i < j
 .decl next_sibling(a: node, b: node)                     // b is the named sibling right after a
 // precedes_stop(a, b, stop): as precedes, with no sibling of `stop` between them. Lowers JSON's `precedes` and
 // `follows` with a `stopBy` rule.
@@ -250,7 +263,7 @@
 // Soufflé built-ins used here: cat(a, b) concatenation, strlen(s), to_number(s), to_string(n), contains(a, b),
 // and match(re, s).
 //
-// glob("re", s)  s matches the regex re as a whole, as in Soufflé: write `.*` where the text may go on, so
+// match("re", s)  s matches the regex re as a whole, as in Soufflé: write `.*` where the text may go on, so
 //                 prefix("test_", name) is "starts with test_". On a node or span, s is its text.
 //                 It runs on the vocabulary: tested once per distinct interned string, not once per node.
 //                 Addition 2, captures: a named group (?<X>…) binds the variable X to what it matched, from
@@ -445,7 +458,13 @@
 // are free, so two matches at one key are one finding; a check that needs two keeps them apart with a tag.
 //
 // .violation V(at: loc, …) "message"          at is a node, a span, or a @place. A place with line 0 is a file-level
-//                                              finding; @place of a missing path is a repository-level one.
+//                                              finding; @place of a missing path is a repository-level one. The
+//                                              code is V.
+// .violation V(at: loc, …) code "E501" "…"    a constant code, for a code that is no identifier ("@next/next/x")
+//     suppress ruff "E501", …                 continuation line: the tool comments that silence it (`# noqa: E501`;
+//                                              ruff, flake8, nosec, eslint, oxlint, biome, clippy, phpcs, phpstan,
+//                                              psalm, sqlfluff), one line per tool
+//     fix [safe] F "title"                    continuation line: the fix relation F offers (edits, above)
 // .violation V(at: loc, c: symbol) code {c}   the code is a column: SEC123 found in a comment is its own code.
 //     code {c} in "SEC\d+"                     the codes it may produce; a row outside them is Unknown, not a finding
 // .violation V(…, t: symbol) tag {t}          an extra key field: findings at one place stay apart (one per probe)

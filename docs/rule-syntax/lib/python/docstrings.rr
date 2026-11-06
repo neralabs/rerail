@@ -86,7 +86,9 @@ doc_pkg_dir(d, r) :- doc_pkg_dir(d, c), contains("/", c), r = @replace_all(c, "/
 doc_mod_seg(d, x) :- doc(d, p, _), x = @replace_all(p, "^.*/|\\.[^.]*$", "").
 doc_mod_seg(d, x) :- doc_pkg_dir(d, r), x = @replace_all(r, "^.*/", "").
 .decl doc_private_module(d: number)  // Ruff's is_private_module on some segment
-doc_private_module(d) :- doc_mod_seg(d, x), prefix("_", x), !(prefix("__", x), suffix("__", x)).
+doc_private_module(d) :- doc_mod_seg(d, x), prefix("_", x), !doc_dunder_seg(x).
+.decl doc_dunder_seg(x: symbol)  // a segment that starts and ends with `__` (`__main__`; `__` itself too)
+doc_dunder_seg(x) :- doc_mod_seg(_, x), prefix("__", x), suffix("__", x).
 .decl doc_unlisted(m: node, x: symbol)  // the module binds `__all__` and does not list x
 doc_unlisted(m, x) :- doc_def(o, _), doc_parent(o, m), kind(m, "module"), doc_name(o, _, x), doc_exports(m), docof(m, d),
     !doc_listed(d, x).
