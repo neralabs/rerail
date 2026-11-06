@@ -193,14 +193,14 @@ fn rule_file(check: &str) -> Option<PathBuf> {
     rule_files().into_iter().find(|p| p.file_stem().is_some_and(|s| s.to_string_lossy() == name))
 }
 
-/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rr`, and the
-/// coverage (`coverage.txt`): clauses converted, the gaps by kind, the approximations.
+/// The converter's run: every rule of the pack as a program in `candidates/datalog/<rule>.rr` (its authored file
+/// merged), and the coverage (`coverage.txt`): clauses converted or authored, the gaps by kind, the approximations.
 #[test]
 #[ignore = "writes the converted rules into the pack"]
 fn convert_the_data_layer_pack() {
     let out = pack().join("datalog");
     std::fs::create_dir_all(&out).unwrap();
-    let (mut total, mut done) = (0, 0);
+    let (mut total, mut converted, mut authored) = (0, 0, 0);
     let mut gaps = BTreeMap::<String, usize>::new();
     let mut approx = BTreeMap::<String, usize>::new();
     let mut per_rule = Vec::new();
@@ -210,8 +210,10 @@ fn convert_the_data_layer_pack() {
         crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
         std::fs::write(out.join(format!("{id}.rr")), &c.program).unwrap();
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
+        let by_hand = c.clauses.iter().filter(|(_, r)| *r == Ok(Origin::Authored)).count();
         total += c.clauses.len();
-        done += ok;
+        converted += ok - by_hand;
+        authored += by_hand;
         for (_, r) in &c.clauses {
             if let Err(Gap(g)) = r {
                 // Gaps by kind: the text before any detail.
@@ -222,7 +224,7 @@ fn convert_the_data_layer_pack() {
         for a in &c.approx {
             *approx.entry(a.clone()).or_default() += 1;
         }
-        per_rule.push(format!("{id}: {ok}/{}", c.clauses.len()));
+        per_rule.push(format!("{id}: {ok}/{} (authored {by_hand})", c.clauses.len()));
         for (clause, r) in &c.clauses {
             if let Err(Gap(g)) = r {
                 let g: String = g.chars().take(160).collect();
@@ -230,7 +232,7 @@ fn convert_the_data_layer_pack() {
             }
         }
     }
-    let mut report = format!("{done}/{total} clauses converted\n\ngaps (clauses):\n");
+    let mut report = format!("{}/{total} clauses converted or authored ({converted} converted, {authored} authored)\n\ngaps (clauses):\n", converted + authored);
     let mut by_count: Vec<_> = gaps.into_iter().collect();
     by_count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     for (g, n) in by_count {
@@ -399,13 +401,18 @@ fn keep(check: &str, entry: &str, production: bool) -> Option<Box<dyn Fn(&str) -
     }
 }
 
-/// The converted rules on the recorded events: per check, the events whose clauses all converted and how many
-/// give the recorded findings exactly (path, line, code). `RERAIL_REPLAY_CHECK` selects checks (comma-separated).
+/// The converted rules, with their authored files, on the recorded events: per check, the events whose kept clauses
+/// are all converted or authored and how many give the recorded findings exactly (path, line, code); then per check
+/// the clauses still gapped, and the first misses. `RERAIL_REPLAY_CHECK` selects checks (comma-separated),
+/// `RERAIL_REPLAY_MISSES` how many misses are printed (40).
 #[test]
 #[ignore = "runs every recorded event through the corpus runner"]
 fn converted_rules_give_the_recorded_findings() {
     let only: Option<Vec<String>> = std::env::var("RERAIL_REPLAY_CHECK").ok().map(|s| s.split(',').map(str::to_owned).collect());
+    let shown: usize = std::env::var("RERAIL_REPLAY_MISSES").ok().map_or(40, |n| n.parse().expect("RERAIL_REPLAY_MISSES: a count"));
     let mut per_check = BTreeMap::<(String, String), [usize; 4]>::new();
+    let mut gapped = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut unreplayed = BTreeMap::<String, usize>::new();
     let mut misses = Vec::new();
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay");
     for (k, event) in events().into_iter().enumerate() {
@@ -419,6 +426,7 @@ fn converted_rules_give_the_recorded_findings() {
         // the findings here do not carry) are not replayed.
         let unread = ["compare_message", "compare_fields"].iter().any(|k| event.get(*k).is_some_and(|v| !v.is_null() && v != false && v.as_array().is_none_or(|a| !a.is_empty())));
         if unread || event.get("oracle_config").is_some_and(|c| !c.is_null()) || event.get("path_skip_override").is_some_and(|v| v == true) {
+            *unreplayed.entry(check.clone()).or_default() += 1;
             continue;
         }
         let production = event.get("production_scope").is_some_and(|v| v == true);
@@ -437,7 +445,9 @@ fn converted_rules_give_the_recorded_findings() {
                 continue;
             }
         };
-        if c.clauses.iter().any(|(_, r)| r.is_err()) {
+        let gaps: Vec<&String> = c.clauses.iter().filter(|(_, r)| r.is_err()).map(|(id, _)| id).collect();
+        if !gaps.is_empty() {
+            gapped.entry(check.clone()).or_default().extend(gaps.into_iter().cloned());
             continue;
         }
         row[1] += 1;
@@ -461,7 +471,7 @@ fn converted_rules_give_the_recorded_findings() {
         }
     }
     let _ = std::fs::remove_dir_all(&root);
-    let mut report = String::from("check: events, all clauses converted, exact, errors\n");
+    let mut report = String::from("check: events, all kept clauses converted or authored, exact, errors\n");
     let mut sums = BTreeMap::<&str, [usize; 4]>::new();
     for ((group, check), row) in &per_check {
         report.push_str(&format!("  {group} {check}: {} {} {} {}\n", row[0], row[1], row[2], row[3]));
@@ -476,8 +486,17 @@ fn converted_rules_give_the_recorded_findings() {
         let name = if *group == "recordings 1-6" { "total".to_owned() } else { format!("total ({group})") };
         report.push_str(&format!("{name}: {} {} {} {}\n", sum[0], sum[1], sum[2], sum[3]));
     }
+    report.push_str("\nclauses still gapped, by check:\n");
+    for (check, clauses) in &gapped {
+        report.push_str(&format!("  {check}: {}\n", clauses.iter().cloned().collect::<Vec<_>>().join(", ")));
+    }
+    report.push_str("\nevents not replayed (a configured oracle, a message or field comparison, a path-skip override), by check:\n");
+    for (check, n) in &unreplayed {
+        report.push_str(&format!("  {check}: {n}\n"));
+    }
     println!("{report}");
-    for m in misses.iter().take(40) {
+    println!("misses: {} (the first {})", misses.len(), shown.min(misses.len()));
+    for m in misses.iter().take(shown) {
         println!("{m}");
     }
 }
