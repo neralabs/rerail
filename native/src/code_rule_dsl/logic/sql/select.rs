@@ -110,6 +110,9 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],
+        // W's Python reference graph (`logic::plan::corpus::references`).
+        "reference_edge" => &["src", "dst", "via"],
+        "reference_open" => &["n"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).

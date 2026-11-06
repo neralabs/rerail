@@ -781,7 +781,8 @@ impl Emitter {
 }
 
 /// The base relations every converted program reads, and those the corpus runner binds for an authored file beyond
-/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not.
+/// them (core.rr's, `facts::vtab::syntax::Extra`): the source text, its spans and node columns T had not; and W's
+/// Python reference graph (`logic::plan::corpus::references`).
 pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl doc(d: int, path: sym, module: sym)
 .decl node(d: int, n: node, kind: sym, start: int, end: int)
@@ -808,6 +809,8 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl value_type_of(n: node, t: sym)
 .decl value_type(v: sym, t: sym)
 .decl comment(n: node, s: sym)
+.decl reference_edge(src: node, dst: node, via: sym)
+.decl reference_open(n: node)
 ";
 
 const BASE_RELATIONS: [&str; 13] = ["doc", "node", "child", "field", "text", "name", "str", "strprefix", "intval", "op", "line", "syntax_error", "node_text"];
