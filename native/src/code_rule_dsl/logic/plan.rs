@@ -2405,7 +2405,12 @@ impl Run<'_> {
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
         let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         self.model.stats.solving = if reads { scc.clone() } else { BTreeSet::new() };
-        let out = self.native_stratum_(scc, rules);
+        // The relations run natively so far, lent to the stratum (it reads them, and adds its own only at the end):
+        // cloning them per stratum was quadratic in strata (3% of a combined run's main thread).
+        let native_rels = std::mem::take(&mut self.native_rels);
+        let out = self.native_stratum_(scc, rules, &native_rels);
+        let added = std::mem::replace(&mut self.native_rels, native_rels);
+        self.native_rels.extend(added);
         self.model.stats.solving.clear();
         out
     }
@@ -2415,7 +2420,7 @@ impl Run<'_> {
     /// replanned from live counts between chunks of waves (T's `native_stratum_`). Lower strata it reads natively
     /// come from the native store (`r:`), others from their tables or the facts. Nothing is written back: the
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
-    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule]) -> Result<bool> {
+    fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&Rule], native_rels: &BTreeSet<String>) -> Result<bool> {
         let prog = self.prog;
         self.why_not = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -2434,7 +2439,6 @@ impl Run<'_> {
         // A stratum's relations were made empty by `run` unless the program states facts of them.
         lines.extend(rels.iter().map(|r| format!("rel {r} {}{}", types(r), if prog.facts.get(*r).is_none_or(|f| f.is_empty()) { " empty" } else { "" })));
         lines.push("nowrite".to_owned());
-        let native_rels = self.native_rels.clone();
         let mut est: HashMap<&str, f64> = HashMap::new();
         let mut orders = Vec::new();
         let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();

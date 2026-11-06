@@ -180,8 +180,20 @@ static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(
 /// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
 static MEMORY: LazyLock<Arc<Atoms>> = LazyLock::new(|| Arc::new(Atoms::new(None)));
 
+/// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
+/// run's main thread). A path that does not resolve yet is not remembered.
 fn key(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    static CANONICAL: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Default::default);
+    if let Some(key) = CANONICAL.lock().get(path) {
+        return key.clone();
+    }
+    match std::fs::canonicalize(path) {
+        Ok(key) => {
+            CANONICAL.lock().insert(path.to_path_buf(), key.clone());
+            key
+        }
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 fn sidecar(path: &Path, suffix: &str) -> PathBuf {
