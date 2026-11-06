@@ -234,3 +234,288 @@ t(s, l) :- text(n, s), line(n, l).
     assert_eq!(run(&dir, program, &["t"])[0], "x\t1\ny\t2\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Python literals and folds W's `value` reads: escapes, adjacent literals, numbers in every base and form,
+/// operators, a bool, None, Ellipsis, containers, bytes, f-strings with and without an interpolation, and names
+/// (which only a following reading knows).
+const VALUES: &str = r#"import os
+A = "k"
+B = A
+x = "a\x41\u00e9" 'b'
+y = r"\d+" "z"
+n = 0xff + 1_000
+f1 = 1.5
+f2 = 1e20
+f3 = 10 / 4
+t = True
+nn = None
+e = ...
+neg = -3
+p = 2 ** 10
+s3 = "ab" * 2
+tup = (1, "a")
+lst = [1]
+bb = b"x"
+fs = f"x{os.sep}"
+fz = f"plain"
+call(A, B, x)
+def g(A=1):
+    return A
+twelve = "12"
+n12 = 12
+d = {"a": 1}
+st = {1}
+c = 1j
+"#;
+
+/// Python's type names of the scalars `value` gives (`value::python::to_str`), as W's `value.type` names them.
+const SCALARS: [&str; 6] = ["str", "int", "float", "bool", "NoneType", "ellipsis"];
+
+/// W's value of the node spanning `[start, end)` as `v` (a scalar of type `ty`, its `str`), by W's `value.eq`;
+/// `follow`: names followed. An Ellipsis has no JSON literal: its type alone says it.
+fn w_value_is(path: &str, source: &str, start: u64, end: u64, ty: &str, v: &str, follow: bool) -> bool {
+    let eq = match ty {
+        "str" => json!(v),
+        "int" => json!(v.parse::<i64>().unwrap()),
+        "float" => json!(v.parse::<f64>().unwrap()),
+        "bool" => json!(v == "True"),
+        "NoneType" => Value::Null,
+        _ => return v == "Ellipsis",
+    };
+    let rule = json!({ "value": { "type": ty, "eq": eq, "follow": follow } });
+    w(json!({ "ast": { "language": "python", "rule": rule } }), path, source)
+        .iter()
+        .any(|f| f["span"]["startByte"].as_u64() == Some(start) && f["span"]["endByte"].as_u64() == Some(end))
+}
+
+/// W's nodes whose value is a scalar of each type (`value.type`, `follow` or not), as `(start, end, type)`.
+fn w_scalars(path: &str, source: &str, follow: bool) -> BTreeSet<(u64, u64, String)> {
+    let mut out = BTreeSet::new();
+    for ty in SCALARS {
+        let rule = json!({ "value": { "type": ty, "follow": follow } });
+        for f in w(json!({ "ast": { "language": "python", "rule": rule } }), path, source) {
+            out.insert((f["span"]["startByte"].as_u64().unwrap(), f["span"]["endByte"].as_u64().unwrap(), ty.to_owned()));
+        }
+    }
+    out
+}
+
+/// `program`'s `vals(s, e, v)` rows read back as `(start, end, v)`.
+fn spans_and_values(csv: &str) -> Vec<(u64, u64, String)> {
+    csv.lines()
+        .map(|row| {
+            let mut cells = row.splitn(3, '\t');
+            let mut number = || cells.next().unwrap().parse::<u64>().unwrap();
+            let (start, end) = (number(), number());
+            (start, end, cells.next().unwrap().to_owned())
+        })
+        .collect()
+}
+
+/// `value(n, v)` is W's value of each expression node, as Python's `str(v)`: a row exactly where W's value is a known
+/// scalar (a str, int, float, bool, None or Ellipsis: `value.type`), and that row's `v` is W's value (`value.eq`, the
+/// type fixed). A name, an f-string with an interpolation, a container and bytes have none; escapes are decoded and
+/// adjacent literals joined.
+#[test]
+fn value_is_ws_value() {
+    let dir = corpus("value", &[("a.py", VALUES)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.input node, value
+.decl vals(s: number, e: number, v: symbol)
+vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
+.output vals
+"#;
+    let got = spans_and_values(&run(&dir, program, &["vals"])[0]);
+    let text = |s: u64, e: u64| &VALUES[s as usize..e as usize];
+    let scalars = w_scalars("a.py", VALUES, false);
+    assert_eq!(got.iter().map(|(s, e, _)| (*s, *e)).collect::<BTreeSet<_>>(), scalars.iter().map(|(s, e, _)| (*s, *e)).collect(), "{got:?}");
+    for (start, end, ty) in &scalars {
+        let (_, _, v) = got.iter().find(|(s, e, _)| (s, e) == (start, end)).unwrap();
+        assert!(w_value_is("a.py", VALUES, *start, *end, ty, v, false), "{:?} is not W's {ty} {v:?}", text(*start, *end));
+    }
+    let value_of = |source: &str| got.iter().filter(|(s, e, _)| text(*s, *e) == source).map(|(_, _, v)| v.as_str()).collect::<Vec<_>>();
+    assert_eq!(value_of(r#""a\x41\u00e9" 'b'"#), ["aAéb"]);
+    assert_eq!(value_of(r#"r"\d+" "z""#), [r"\d+z"]);
+    assert_eq!(value_of("0xff + 1_000"), ["1255"]);
+    assert_eq!(value_of("1e20"), ["1e+20"]);
+    assert_eq!(value_of("10 / 4"), ["2.5"]);
+    assert_eq!(value_of("True"), ["True"]);
+    assert_eq!(value_of("None"), ["None"]);
+    assert_eq!(value_of("..."), ["Ellipsis"]);
+    assert_eq!(value_of("-3"), ["-3"]);
+    assert_eq!(value_of("2 ** 10"), ["1024"]);
+    assert_eq!(value_of(r#""ab" * 2"#), ["abab"]);
+    assert_eq!(value_of(r#"f"plain""#), ["plain"]);
+    for none in ["A", r#"f"x{os.sep}""#, r#"(1, "a")"#, "[1]", r#"b"x""#] {
+        assert_eq!(value_of(none), Vec::<&str>::new(), "{none}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `static_value(n, v)` is W's value with names followed (`value.follow`): a row exactly where that value is a known
+/// scalar, its `v` W's there; a name bound once in the file to a literal (or to such a name) has the literal's value,
+/// a parameter none, and a literal the value `value` gives it.
+#[test]
+fn static_value_is_ws_followed_value() {
+    let dir = corpus("static-value", &[("a.py", VALUES)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl static_value(n: node, v: symbol)
+.input node, value, static_value
+.decl vals(s: number, e: number, v: symbol)
+vals(s, e, v) :- static_value(n, v), node(_, n, _, s, e).
+.decl plain(s: number, e: number, v: symbol)
+plain(s, e, v) :- value(n, v), node(_, n, _, s, e).
+.output vals, plain
+"#;
+    let out = run(&dir, program, &["vals", "plain"]);
+    let (got, plain) = (spans_and_values(&out[0]), spans_and_values(&out[1]));
+    let text = |s: u64, e: u64| &VALUES[s as usize..e as usize];
+    let scalars = w_scalars("a.py", VALUES, true);
+    assert_eq!(got.iter().map(|(s, e, _)| (*s, *e)).collect::<BTreeSet<_>>(), scalars.iter().map(|(s, e, _)| (*s, *e)).collect(), "{got:?}");
+    for (start, end, ty) in &scalars {
+        let (_, _, v) = got.iter().find(|(s, e, _)| (s, e) == (start, end)).unwrap();
+        assert!(w_value_is("a.py", VALUES, *start, *end, ty, v, true), "{:?} is not W's followed {ty} {v:?}", text(*start, *end));
+    }
+    // Every literal's value is its static value.
+    assert!(plain.iter().all(|row| got.contains(row)), "{plain:?}");
+    let at = |needle: &str, offset: usize| {
+        let start = (VALUES.find(needle).unwrap() + offset) as u64;
+        got.iter().filter(|(s, _, _)| *s == start).map(|(_, _, v)| v.as_str()).collect::<Vec<_>>()
+    };
+    assert_eq!(at("call(A, B, x)", 5), ["k"]);
+    assert_eq!(at("call(A, B, x)", 8), ["k"]);
+    assert_eq!(at("call(A, B, x)", 11), ["aAéb"]);
+    assert_eq!(at("B = A", 4), ["k"]);
+    assert_eq!(at("return A", 7), Vec::<&str>::new());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The type names W's `value.type` gives Python values, containers, bytes and complex numbers included.
+const TYPES: [&str; 12] = ["str", "int", "float", "bool", "NoneType", "ellipsis", "bytes", "complex", "tuple", "list", "dict", "set"];
+
+/// `value_type_of(n, t)` is W's `value.type` of each node, containers and bytes included; `value_type(v, t)` pairs
+/// `value`'s strings with them (the str "12" and the int 12 both `12`); and W's `value.regex`, which reads strings only,
+/// is `value`, `value_type_of(n, "str")` and `match`.
+#[test]
+fn value_types_are_ws_value_types() {
+    let dir = corpus("value-type", &[("a.py", VALUES)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl value_type(v: symbol, t: symbol)
+.input node, value, value_type_of, value_type
+.decl types(s: number, e: number, t: symbol)
+types(s, e, t) :- value_type_of(n, t), node(_, n, _, s, e).
+.decl pairs(v: symbol, t: symbol)
+pairs(v, t) :- value_type(v, t).
+.decl hits(s: number, e: number)
+hits(s, e) :- value(n, v), value_type_of(n, "str"), match("(?s:.*)(?:b)(?s:.*)", v), node(_, n, _, s, e).
+.decl vals(s: number, e: number, v: symbol)
+vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
+.output types, pairs, hits, vals
+"#;
+    let out = run(&dir, program, &["types", "pairs", "hits", "vals"]);
+    let spans = |f: &Value| (f["span"]["startByte"].as_u64().unwrap(), f["span"]["endByte"].as_u64().unwrap());
+    let mut want = Vec::new();
+    for ty in TYPES {
+        for f in w(json!({ "ast": { "language": "python", "rule": { "value": { "type": ty } } } }), "a.py", VALUES) {
+            let (s, e) = spans(&f);
+            want.push(format!("{s}\t{e}\t{ty}"));
+        }
+    }
+    assert!(want.iter().any(|r| r.ends_with("\tlist")) && want.iter().any(|r| r.ends_with("\tbytes")), "{want:?}");
+    assert_eq!(out[0], csv(want.clone()));
+    // value_type: each typed node's value text with its type.
+    let values = spans_and_values(&out[3]);
+    let pairs = want.iter().flat_map(|row| {
+        let [s, e, ty]: [&str; 3] = row.split('\t').collect::<Vec<_>>().try_into().unwrap();
+        let (s, e) = (s.parse::<u64>().unwrap(), e.parse::<u64>().unwrap());
+        values.iter().filter(move |(vs, ve, _)| (*vs, *ve) == (s, e)).map(move |(_, _, v)| format!("{v}\t{ty}"))
+    });
+    let pairs = csv(pairs);
+    assert!(pairs.contains("12\tstr\n") && pairs.contains("12\tint\n"), "{pairs}");
+    assert_eq!(out[1], pairs);
+    let regex = w(json!({ "ast": { "language": "python", "rule": { "value": { "regex": "b" } } } }), "a.py", VALUES);
+    let regex = csv(regex.iter().map(|f| {
+        let (s, e) = spans(&f);
+        format!("{s}\t{e}")
+    }));
+    assert!(!regex.is_empty());
+    assert_eq!(out[2], regex);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// W's findings of one `clause` (its `forbid`) in a `language` file.
+fn w_in(language: &str, forbid: Value, path: &str, source: &str) -> Vec<Value> {
+    let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation() })), &capabilities)
+        .unwrap_or_else(|e| panic!("{}", e.reason));
+    evaluate_file(&compiled, language, path, source)["violations"].as_array().unwrap().clone()
+}
+
+/// W's comment nodes of `kinds` in a `language` file, as `comments` rows (start line, end line, start column, text
+/// and the text without its marker), and the texts without their markers.
+fn w_comments(language: &str, kinds: &[&str], path: &str, source: &str) -> (String, BTreeSet<String>) {
+    let (mut rows, mut bodies) = (Vec::new(), BTreeSet::new());
+    for kind in kinds {
+        for v in w_in(language, json!({ "ast": { "language": language, "rule": { "kind": kind } } }), path, source) {
+            let span = &v["span"];
+            let at = |k: &str| span[k].as_u64().unwrap();
+            let text = &source[at("startByte") as usize..at("endByte") as usize];
+            let body = crate::code_rule_dsl::facts::vtab::syntax::comment_body(text);
+            rows.push(format!("{}\t{}\t{}\t{text}\t{body}", at("startLine") + 1, at("endLine") + 1, at("startColumn")));
+            bodies.insert(body.to_owned());
+        }
+    }
+    (csv(rows), bodies)
+}
+
+/// `comment(c, s)`: each of W's comment nodes once, `s` its text without the marker; a Python comment, which T's
+/// nodes leave out, is a span whose `line`, `end_line`, `col`, `node_text` and `text` are W's span of it, and a Rust
+/// comment, which T keeps, is its node.
+#[test]
+fn comments_are_ws_comment_nodes() {
+    let python = "#!/usr/bin/env python\r\n# noqa: E501\nimport os  # type: ignore\ndef f():\n    #\n    return 1  #   trailing   \nx = \"# not a comment\"  # é\n";
+    let dir = corpus("comments", &[("a.py", python)]);
+    let program = r#"
+.decl comment(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl node_text(n: node, s: symbol)
+.decl text(n: loc, s: symbol)
+.input comment, line, end_line, col, node_text, text
+.decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
+comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c), node_text(n, t), text(n, t).
+.output comments
+"#;
+    let got = run(&dir, program, &["comments"]);
+    let (want, bodies) = w_comments("python", &["comment"], "a.py", python);
+    assert_eq!(bodies, BTreeSet::from(["!/usr/bin/env python", "noqa: E501", "type: ignore", "", "trailing", "é"].map(str::to_owned)), "{want}");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+    let rust = "//! crate doc\n/// item doc\nfn f() { /* block */ let x = 1; // tail\n}\n/** outer block doc */\nfn g() {}\n";
+    let dir = corpus("rust-comments", &[("src/lib.rs", rust)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl comment(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl node_text(n: node, s: symbol)
+.input node, comment, line, end_line, col, node_text
+.decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
+comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), line(n, l), end_line(n, e), col(n, c), node_text(n, t).
+.output comments
+"#;
+    let got = run(&dir, program, &["comments"]);
+    let (want, bodies) = w_comments("rust", &["line_comment", "block_comment"], "src/lib.rs", rust);
+    assert_eq!(bodies, BTreeSet::from(["crate doc", "item doc", "block", "tail", "outer block doc"].map(str::to_owned)), "{want}");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+}

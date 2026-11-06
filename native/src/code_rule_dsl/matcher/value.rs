@@ -346,6 +346,63 @@ impl ValueTest {
     }
 }
 
+/// W's values of a file's expression nodes, as a clause's `value` reads them (`ValueTest::holds`) in its per-file
+/// context: the file's scopes installed as W's evaluation installs them (`FileScopeSlot`: its module, its path, its
+/// syntax errors hiding bindings), the query's language options the defaults, and no utility budget (past W's, its
+/// clause fails the file; here every node is decoded). For each reading asked (`plain`; `follow`: names followed
+/// through their file-local bindings, W's `value.follow`), `each(followed, ordinal, text, types)` for every tape node
+/// that is an expression (`Reading::has_value`) whose value is known: `text` the value as its language converts it to a
+/// string (`ValueRules::to_str`: Python's `str(v)` of a scalar, so a str, int, float, bool, None or Ellipsis; none for
+/// a container or bytes), `types` the type names W's `type` accepts of it (`Value::is_type`: its `type_name`, and
+/// `object` for a JavaScript RegExp). Each node is decoded once per reading, memoized per file as W memoizes it.
+pub(in crate::code_rule_dsl) fn file_values(
+    tape: &crate::code_rule_dsl::tape::TapeDoc,
+    file: &crate::code_rule_dsl::model::FileInput,
+    plain: bool,
+    follow: bool,
+    each: &mut dyn FnMut(bool, u32, Option<String>, &[&'static str]),
+) {
+    let language = tape.file_dialect();
+    let root = ast_grep_core::AstGrep::doc(tape.clone());
+    let hide = crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(tape).hide_bindings();
+    let _scopes = super::FileScopeSlot::install(Vec::new(), file.module.clone(), hide).file(file);
+    for followed in [false, true] {
+        if !(if followed { follow } else { plain }) {
+            continue;
+        }
+        let reading = Reading::new(language, None, None);
+        let reading = if followed { reading.following() } else { reading };
+        // The reading's scope-table charges are its own, as one clause's are.
+        super::resolve::CURRENT_CLAUSE.set(&reading as *const Reading as usize);
+        let lang = reading.lang();
+        for ordinal in 0..tape.transducer_len() as u32 {
+            let node = super::node_at(&root, ordinal);
+            if !reading.has_value(&node) {
+                continue;
+            }
+            UTIL_EXCEEDED.set(None);
+            UTIL_STEPS_LEFT.set(usize::MAX);
+            let value = reading.value(&node);
+            if !value.is_known() {
+                continue;
+            }
+            let text = with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::to_str(&value, &node));
+            let own;
+            let types: &[&'static str] = match value.type_name(lang) {
+                None => &[],
+                Some("regexp") => &["regexp", "object"],
+                Some(name) => {
+                    own = [name];
+                    &own
+                }
+            };
+            each(followed, ordinal, text, types);
+        }
+    }
+    super::resolve::CURRENT_CLAUSE.set(0);
+    UTIL_EXCEEDED.set(None);
+}
+
 #[cfg(test)]
 mod tests {
     use super::Reading;

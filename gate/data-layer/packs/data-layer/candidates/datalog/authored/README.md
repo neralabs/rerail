@@ -92,6 +92,11 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl end_line(n: loc, l: number)                 // the line holding the end offset
 .decl col(n: loc, c: number)                      // the start's byte column, from 0 (0 on a span)
 .decl node_text(n: node, s: symbol)               // a node's source text, exactly (W's `regex` on a node)
+.decl value(n: node, v: symbol)                   // W's value of an expression, as Python's str(v) of a scalar
+.decl static_value(n: node, v: symbol)            // the same, names followed to their bindings (W's value.follow)
+.decl value_type_of(n: node, t: symbol)           // the type of n's value, as W's value.type names it
+.decl value_type(v: symbol, t: symbol)            // core.rr's: a value text of `value` and a type it has somewhere
+.decl comment(c: node, s: symbol)                 // a comment's text without its marker
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -108,3 +113,31 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   the regex matches no line terminator (no `\n`, `\s`, `[^…]` or `(?s).` that could reach one) and has no `^`, `$`,
   `\A` or `\z`. Otherwise read `source(d, sp), text(sp, s)` and test the whole text (`match("(?s).*re.*", s)`), and
   count lines with `line_count` (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`). There is no `match_all`.
+- `value(n, v)` is W's value of expression node `n` (what W's `value` reads, in a clause's per-file context, the
+  language options the defaults), as the language converts it to a string: for Python `str(v)` of a str, int, float,
+  bool, None or Ellipsis (escapes decoded, adjacent literals joined, `0xff + 1` is `256`, `1e20` is `1e+20`, `...` is
+  `Ellipsis`). There is no row where W's value is unknown (a name, an f-string with an interpolation, a call) or is no
+  scalar (a tuple, list, dict, set, bytes). W's budget does not apply: every node is decoded. `v` alone does not say
+  the type (the str `"12"` and the int `12` are both `12`); W's `value.eq` on a number compares Python's way (`1 == 1.0
+  == True`), so it is every spelling of the number.
+- `static_value(n, v)` is `value` with names followed as W's `value.follow` follows them (`ScopeTable::binding`, up to
+  16 hops): for Python, a name whose file-local binding the read sees (Ruff's model: the latest one) is a plain or
+  annotated assignment with a value, a walrus, or an unpacked name paired with a display's element has that value's
+  (`A = "k"`, then `A`; `B = A`, then `B`); a parameter, an import, a global or builtin, and every name of a file with
+  syntax errors have none. Every row of `value` is a row of `static_value`.
+- `value_type_of(n, t)` is the type W's `value.type` gives n's value, for Python `type(v).__name__`: `str`, `int`,
+  `float`, `complex`, `bool`, `NoneType`, `ellipsis`, `bytes`, `tuple`, `list`, `dict`, `set` (a container whose
+  elements are not all known has its type too; an unknown value none). It is the relation to read for a type:
+  core.rr's `value_type(v, t)` is keyed by `value`'s text, which the str `"12"` and the int `12` share (it has both
+  rows), and a container or bytes has no text. So W's `value: {type: str}` is `value_type_of(n, "str")`; its
+  `regex` and `startsWith`, which read strings only, are `value(n, v), value_type_of(n, "str"), match(re, v)` (W's
+  regex searches: `match("(?s:.*)(?:re)(?s:.*)", v)`); its `eq` on a string `value(n, "s"), value_type_of(n, "str")`.
+- `comment(c, s)` has every comment node of the tape (a comment kind not inside another: Python's `comment`,
+  Rust's `line_comment` and `block_comment`, what W's `kind: comment` matches), `s` its text with the marker (`#`,
+  `//`, `///`, `//!`, `/*` … `*/`, `/**` … `*/`, `--`) taken off and then the whitespace around it (`# noqa: E501`
+  is `noqa: E501`, `#!/usr/bin/env python` is `!/usr/bin/env python`, a lone `#` is the empty string). T's nodes
+  leave Python's comments out, so a Python comment is a span (`d << 32 | SPAN | 1 << 28 | k`, the document's k-th
+  comment), never in `node`, `child` or `field`, with rows in `line`, `end_line`, `col` (its real column),
+  `node_text` and `text` (its whole text, marker included, what W's `regex` on it reads) and in `docof` (it is a
+  document's like any span). A Rust comment is a node of `node`, which T keeps, and has its node rows. Tie a comment
+  to code by position: `line` and `col` against a node's, or its document's `tape_line`.

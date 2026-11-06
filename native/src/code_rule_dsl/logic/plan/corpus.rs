@@ -18,7 +18,7 @@
 
 use super::{Error, Outcome, Result, lower};
 
-use crate::code_rule_dsl::facts::core::{self, Built};
+use crate::code_rule_dsl::facts::core;
 use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
@@ -374,6 +374,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let mut pending_nodes = 0;
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
+        let keep_tapes = syntax::VALUES.iter().any(|rel| read.contains(*rel));
         let build = |d: &i64, path: &String| -> Result<syntax::Document> {
             let _parse = crate::code_rule_dsl::logic::profile::span(|| "worker parse".into());
             let read = crate::code_rule_dsl::logic::profile::span(|| "read".into());
@@ -381,11 +382,13 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             drop(read);
             let _build = crate::code_rule_dsl::logic::profile::span(|| "tree-sitter and facts".into());
             let file = FileInput::new(path.clone(), label.to_owned(), Arc::new(source), None, None, "core").map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
-            let facts = match core::build(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-                Built::Facts(f) => Arc::new(f),
-                Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
+            let Some((facts, doc)) = core::build_with_tape(&file).map_err(|e| Error::Plan(format!("{path}: {e:?}")))? else {
+                return Err(Error::Plan(format!("{path} did not parse")));
             };
-            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
+            let facts = Arc::new(facts);
+            // W's values are read off the tape, in the file's context: kept only for a program that reads them.
+            let tape = keep_tapes.then(|| (doc, file));
+            Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts, tape })
         };
         while let Some((d, path)) = at.next() {
             match build(d, path) {
