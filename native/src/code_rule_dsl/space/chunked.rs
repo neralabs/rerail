@@ -121,6 +121,54 @@ impl View<'_> {
     }
 }
 
+/// Members in `words`. Four accumulators, so the counts vectorize.
+fn count(words: &[u64]) -> usize {
+    let mut acc = [0u64; 4];
+    let mut chunks = words.chunks_exact(4);
+    for c in &mut chunks {
+        for i in 0..4 {
+            acc[i] += u64::from(c[i].count_ones());
+        }
+    }
+    (acc.iter().sum::<u64>() + chunks.remainder().iter().map(|w| u64::from(w.count_ones())).sum::<u64>()) as usize
+}
+
+/// `out &= other` (equal lengths), returning the members left.
+fn and_count(out: &mut [u64], other: &[u64]) -> usize {
+    out.iter_mut().zip(other).for_each(|(o, b)| *o &= b);
+    count(out)
+}
+
+/// `out &= !other` (equal lengths), returning the members left.
+fn and_not_count(out: &mut [u64], other: &[u64]) -> usize {
+    out.iter_mut().zip(other).for_each(|(o, b)| *o &= !b);
+    count(out)
+}
+
+/// `out |= other` (equal lengths), returning the members.
+fn or_count(out: &mut [u64], other: &[u64]) -> usize {
+    out.iter_mut().zip(other).for_each(|(o, b)| *o |= b);
+    count(out)
+}
+
+/// Bit `i` of the result is the xor of `w`'s bits `0..=i`: a carry-less multiply by all ones.
+#[inline]
+fn prefix_xor(w: u64) -> u64 {
+    #[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
+    {
+        // SAFETY: the `aes` target feature (PMULL) is enabled for this build.
+        unsafe { std::arch::aarch64::vmull_p64(w, !0) as u64 }
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "aes")))]
+    {
+        let mut w = w;
+        for shift in [1, 2, 4, 8, 16, 32] {
+            w ^= w << shift;
+        }
+        w
+    }
+}
+
 /// Clears bits `s..=l`, cut at the bitmap's end.
 fn clear_clipped(b: &mut [u64], s: u16, l: u16) {
     let end = b.len() * 64;
@@ -415,6 +463,26 @@ impl NodeSet {
     }
 
     /// Bitmap words of chunk `k` written in place at `words[from..]`: trimmed, and kept or moved.
+    /// `seal_words` with the members already counted.
+    fn seal_counted(&mut self, k: u64, from: usize, n: usize) {
+        if n == 0 {
+            self.words.truncate(from);
+            return;
+        }
+        while self.words.last() == Some(&0) {
+            self.words.pop();
+        }
+        let len = self.words.len() - from;
+        if n <= len {
+            let at = self.values.len();
+            self.values.extend(bits(&self.words[from..]));
+            self.words.truncate(from);
+            self.directory.push(Entry { key: k, form: Form::Array, at: at as u32, len: n as u32 });
+            return;
+        }
+        self.directory.push(Entry { key: k, form: Form::Bitmap, at: from as u32, len: len as u32 });
+    }
+
     fn seal_words(&mut self, k: u64, from: usize) {
         while self.words.len() > from && self.words.last() == Some(&0) {
             self.words.pop();
@@ -514,43 +582,58 @@ impl NodeSet {
                 }
                 self.seal_runs(k, from)
             }
-            // Bitmaps against bitmaps: one pass, written once.
+            // Bitmaps against bitmaps: whole-slice word operations (they vectorize), the count
+            // taken in the same pass.
             (op, Bitmap(x), Bitmap(y)) => {
                 let at = self.words.len();
-                match op {
-                    Op::And => self.words.extend(x.iter().zip(y).map(|(a, b)| a & b)),
-                    Op::AndNot => self.words.extend(x.iter().enumerate().map(|(i, a)| a & !y.get(i).copied().unwrap_or(0))),
+                let n = match op {
+                    Op::And => {
+                        let len = x.len().min(y.len());
+                        self.words.extend_from_slice(&x[..len]);
+                        and_count(&mut self.words[at..], &y[..len])
+                    }
+                    Op::AndNot => {
+                        self.words.extend_from_slice(x);
+                        let len = x.len().min(y.len());
+                        let n = and_not_count(&mut self.words[at..at + len], &y[..len]);
+                        n + count(&self.words[at + len..])
+                    }
                     Op::Or => {
                         let (long, short) = if x.len() >= y.len() { (x, y) } else { (y, x) };
-                        self.words.extend(long.iter().enumerate().map(|(i, a)| a | short.get(i).copied().unwrap_or(0)));
+                        self.words.extend_from_slice(long);
+                        or_count(&mut self.words[at..at + short.len()], short) + count(&long[short.len()..])
                     }
-                }
-                self.seal_words(k, at)
+                };
+                self.seal_counted(k, at, n)
             }
-            // A bitmap within runs: only the words the runs cover are read.
+            // A bitmap within runs, without a branch or call per run (runs here average under two
+            // words, so those cost more than the words): each run toggles the bit at its start
+            // and the bit after its end; a prefix xor over the words turns the toggles into the
+            // runs' mask, and-ed with the bitmap and counted in the same pass.
             (Op::And, Bitmap(x), Runs(r)) | (Op::And, Runs(r), Bitmap(x)) => {
                 let at = self.words.len();
-                self.words.resize(at + x.len(), 0);
+                let len = x.len().min(r.last().map_or(0, |&(_, l)| words_to(l)));
+                self.words.resize(at + len, 0);
                 let out = &mut self.words[at..];
+                let end = len * 64;
                 for &(s, l) in r {
-                    let (ws, wl) = (usize::from(s) / 64, usize::from(l) / 64);
-                    if ws >= x.len() {
+                    let (s, after) = (usize::from(s), usize::from(l) + 1);
+                    if s >= end {
                         break;
                     }
-                    let lo = !0u64 << (s % 64);
-                    if ws == wl {
-                        out[ws] |= x[ws] & lo & (!0u64 >> (63 - l % 64));
-                        continue;
-                    }
-                    out[ws] |= x[ws] & lo;
-                    for i in (ws + 1)..wl.min(x.len()) {
-                        out[i] = x[i];
-                    }
-                    if wl < x.len() {
-                        out[wl] |= x[wl] & (!0u64 >> (63 - l % 64));
+                    out[s / 64] ^= 1 << (s % 64);
+                    if after < end {
+                        out[after / 64] ^= 1 << (after % 64);
                     }
                 }
-                self.seal_words(k, at)
+                let (mut carry, mut n) = (0u64, 0usize);
+                for (o, &v) in out.iter_mut().zip(&x[..len]) {
+                    let mask = prefix_xor(*o) ^ carry;
+                    carry = 0u64.wrapping_sub(mask >> 63);
+                    *o = v & mask;
+                    n += o.count_ones() as usize;
+                }
+                self.seal_counted(k, at, n)
             }
             (Op::AndNot, Bitmap(x), Runs(r)) => {
                 let at = self.words.len();
@@ -659,6 +742,17 @@ impl NodeSet {
         *self = self.apply(other, Op::And);
     }
 
+    /// `self ∩ other` as a new set: an operation writes its result's buffers itself, so its first
+    /// operand is not copied first (as `clone` then `intersect_with` would).
+    pub(in crate::code_rule_dsl) fn intersection(&self, other: &Self) -> Self {
+        self.apply(other, Op::And)
+    }
+
+    /// `self − other` as a new set.
+    pub(in crate::code_rule_dsl) fn difference(&self, other: &Self) -> Self {
+        self.apply(other, Op::AndNot)
+    }
+
     pub(in crate::code_rule_dsl) fn union_with(&mut self, other: &Self) {
         // Appending later files (the common way sets are built) copies the other's buffers once.
         if self.directory.last().is_none_or(|l| other.directory.first().is_none_or(|f| l.key < f.key)) {
@@ -671,6 +765,7 @@ impl NodeSet {
         *self = self.apply(other, Op::Or);
     }
 
+    #[cfg_attr(not(test), allow(dead_code))] // the programs use `difference`
     pub(in crate::code_rule_dsl) fn difference_with(&mut self, other: &Self) {
         *self = self.apply(other, Op::AndNot);
     }
@@ -812,6 +907,22 @@ impl NodeSet {
                 Form::Bitmap => s.1 += 1,
                 Form::Runs => s.2 += 1,
             }
+        }
+        s
+    }
+
+    /// Per form: (chunks, containers' elements: values, words or runs).
+    #[cfg(test)]
+    pub(in crate::code_rule_dsl) fn census(&self) -> [(usize, usize); 3] {
+        let mut s = [(0, 0); 3];
+        for e in &self.directory {
+            let at = match e.form {
+                Form::Array => 0,
+                Form::Bitmap => 1,
+                Form::Runs => 2,
+            };
+            s[at].0 += 1;
+            s[at].1 += e.len as usize;
         }
         s
     }
