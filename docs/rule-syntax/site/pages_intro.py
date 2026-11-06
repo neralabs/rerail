@@ -238,11 +238,10 @@ w('''  <section style="display:grid;gap:10px">
         fixed. Each rule's NOTES file lists where it still differs from the tool, and why.</li>
       <li>The rules run in <code>tools/rrlab</code>, a lab harness on Soufflé, and are scored against the tool's own
         findings on its test fixtures.</li>
-      <li>The engine reads <code>.rr</code> as its only rule format. Run through its reader, 3,831 of the libraries'
-        3,905 clauses lower today. Every pack stops first at the <code>code "X"</code> and <code>suppress</code>
-        lines, which the reader has yet to accept; past those, 4,602 of the packs' 5,242 clauses lower. The rest are
-        constructs it still refuses by name, such as a finding at a span, <code>ordered by</code> and
-        <code>join</code>. <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code> lists every difference and who changes
+      <li>The engine reads <code>.rr</code> as its only rule format. Run through its reader, 3,890 of the libraries'
+        3,906 clauses and 5,220 of the packs' 5,264 clauses lower today. The rest are constructs it still refuses by
+        name, such as <code>ordered by</code>, a place used as a value, and recursion whose bound it cannot yet
+        prove. <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code> lists every difference and who changes
         what.</li>
       <li>The machine translation of the JSON is kept as a second tab, for comparison.</li>
       <li>Six data-layer checks, function-level-imports and the router rule are also written in their final form, beside the Python they replace.</li>

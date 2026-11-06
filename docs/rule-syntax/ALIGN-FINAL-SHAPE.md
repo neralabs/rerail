@@ -10,8 +10,8 @@ relations deliver. It records which side should move, and what was changed on th
 In short:
 
 - The engine is behind `core.rr` far more often than the reverse. Most rows below are engine work.
-- Two syntax forms stop all 930 pack rules at the reader: the constant `code "X"` and the `suppress` line.
-  Both are this branch's settled syntax, so the reader should learn them.
+- Two syntax forms stopped all 930 pack rules at the reader: the constant `code "X"` and the `suppress` line.
+  The reader has since learnt both (section 4, status).
 - One engine lowering is wrong rather than missing: `has(a, n, set)` puts the set on the ancestor.
 - This branch changed descriptions in `core.rr`, one `rrlab` fact (`str` of an interpolated literal), two rules
   whose refused construct had an equally clear form, and one malformed message string.
@@ -283,6 +283,49 @@ In order of what it unblocks:
 8. **Hygiene:** an axis prefix that rule names cannot collide with (`inside_def` and four others exist);
    `doc`'s module `""` for files with none, and `pkg` for Python only; translated programs include `core.rr`
    (O74).
+
+### Status after the engine work (2026-11-06)
+
+The work was done on the sibling branch `jeremybarnes/final-rerail-shape-rr-align`, recorded in its decision
+0046-rr-as-core-rr-states-it.md. The `op` question (O79) was settled as `core.rr` says: `op` is every anonymous
+token, and T's narrower view is kept as `op_t` for T's parity tests.
+
+| Census | Before | After |
+|---|---|---|
+| Library files that parse whole | 51 of 106 | 98 of 106 |
+| Library clauses that lower | 3,831 of 3,905 | 3,890 of 3,906 |
+| Pack files that parse whole | 0 (all stopped at `code "X"`) | 871 of 949 |
+| Pack clauses that lower | 4,602 of 5,242 (with the shim) | 5,220 of 5,264 (no shim) |
+| Data-layer clauses that lower | 293 | 359 of 372 |
+
+Done:
+- items 1 to 5 and 8, apart from the items listed below;
+- from item 6, everything except `ordered by`, `dfs_first`, patterns, `mean` and the unproven value cycles;
+- from item 7, `unset`.
+
+Left, with the reason:
+- **`ordered by`** (37 clauses) needs evaluation in visit order per document, which the planner does not do.
+- **`@place` as a value outside a violation's head** (12 files) needs a place value in the node/span domain.
+- **Value cycles with bounds the check cannot prove yet** (73 files, 15 library clauses): `hex_place`,
+  `norm`/`sci`, `unescape`, `slot_walk`. They are refused, never run to a budget.
+- **Still refused:** `dfs_first`, `~` patterns and `mean`.
+- **Text layer:** captures and `match_all` are still computed per row, not chunk-at-a-time (decisions 0041, 0042).
+- **Not yet made:** `parsed` and `string_annotation` (O80), and `earlier` in CPython's order.
+- **O74:** translated programs still read T's shape.
+- **A relation named `set`** breaks the SQL lowering. Table names need quoting.
+
+Findings replay (path, line, code), as `events / compared / exact / errors`:
+
+| Run | Recordings 1–6 | Batches 7–8 and probes |
+|---|---|---|
+| 0043 and O72 | `2350 155 153 0` | `1638 20 16 0` |
+| After the base relations | `2350 178 176 0` | `1638 95 91 0` |
+| After the reader | `2350 178 171 0` | `1638 117 100 0` |
+
+The hand-written data-layer rules now lower, and are compared instead of the converted JSON. The drop of 5 was
+plan-scope-side-effects. The recorded findings spell its codes `PSE-050`, but `core.rr` names a violation's code
+after the violation. Its rule now gives each code with `code "PSE-…"`, and it sees through a parenthesized `if`
+test.
 
 ## 5. Scores before and after
 
