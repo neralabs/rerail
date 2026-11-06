@@ -405,21 +405,9 @@ fn converted_rules_give_the_recorded_findings() {
         }
         row[1] += 1;
         let dir = root.join(format!("e{k}"));
-        for f in event["files"].as_array().unwrap() {
-            let p = dir.join(f["path"].as_str().unwrap());
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(&p, f["source"].as_str().unwrap()).unwrap();
-        }
-        let out = dir.join(".out");
-        let mut got: Vec<String> = match super::super::plan::corpus::run(&c.program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
-            Ok(_) => std::fs::read_to_string(out.join("violation.csv"))
-                .unwrap_or_default()
-                .lines()
-                .map(|l| {
-                    let f: Vec<&str> = l.split('\t').collect();
-                    format!("{}:{}:{}", f[3], f[4], f[2])
-                })
-                .collect(),
+        write_files(&dir, event["files"].as_array().unwrap().iter().map(|f| (f["path"].as_str().unwrap(), f["source"].as_str().unwrap())));
+        let mut got = match findings(&c.program, &dir) {
+            Ok(got) => got,
             Err(e) => {
                 row[3] += 1;
                 misses.push(format!("{check} {}: error {e}", event["test"]));
@@ -455,6 +443,61 @@ fn converted_rules_give_the_recorded_findings() {
     for m in misses.iter().take(40) {
         println!("{m}");
     }
+}
+
+/// Writes `files` (path, source) under `dir`.
+fn write_files<'a>(dir: &Path, files: impl IntoIterator<Item = (&'a str, &'a str)>) {
+    for (path, source) in files {
+        let p = dir.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(&p, source).unwrap();
+    }
+}
+
+/// A program's findings over the files under `dir` (the corpus runner), each `path:line:code`.
+fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
+    let out = dir.join(".out");
+    super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
+    Ok(std::fs::read_to_string(out.join("violation.csv"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            format!("{}:{}:{}", f[3], f[4], f[2])
+        })
+        .collect())
+}
+
+/// `has` filters its ancestor, the node it is at, by that node's kinds, not the descendant's: the executor's typed
+/// parameters (a `has` within the `parameters` field) and the tag conditions (a `has` from the condition) are
+/// found as W finds them.
+#[test]
+fn has_filters_the_ancestor_by_its_own_kinds() {
+    let path = "l2070_batching/executor.py";
+    let source = "def run(step: ServerPlanStep, other: int):\n    if step_tags(step):\n        pass\n    if \"x\" in step_tags(step):\n        pass\n";
+    let rule = rule_file("serverplan_target_architecture").unwrap();
+    let c = convert(&rule, &Adjust::default());
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("has-ancestor");
+    let _ = std::fs::remove_dir_all(&dir);
+    write_files(&dir, [(path, source)]);
+    let mut got = findings(&c.program, &dir).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    got.sort();
+    // W, on the same source: its findings of the clauses converted (its lines 0-based).
+    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(&rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
+    let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
+    let mut w: Vec<String> = result["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["clauseId"].as_str().is_some_and(|id| converted.contains(id)))
+        .map(|v| format!("{path}:{}:{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["code"].as_str().unwrap()))
+        .collect();
+    w.sort();
+    let want = [format!("{path}:1:SPTA006"), format!("{path}:2:SPTA007"), format!("{path}:4:SPTA007")];
+    assert_eq!(w, want, "W");
+    assert_eq!(got, want);
 }
 
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus

@@ -10,8 +10,10 @@
 //! The relations, per node `n`:
 //! - `inside` (to the end): `inside($n, $a, set)`, the set being the kinds the ancestor's rule allows;
 //! - `inside` with a stop rule: the same, less ancestors past the first stop node (`blocked`);
-//! - `has` likewise, read from the ancestor; with a field, the descendant is within that field's child
-//!   (byte spans, both nodes bound);
+//! - `has` (to the end): `inside($m, $n, set)` read the other way, `$m` the descendant; the set filters the
+//!   ancestor `$n`, so it is the kinds `$n`'s own rule allows (the enclosing `all`'s, `here`), or every kind where
+//!   that rule names none; with a stop rule, less descendants past the first stop node; with a field, the
+//!   descendant is within that field's child (byte spans, both nodes bound);
 //! - neighbours: `child(p, c, i)` or `field(p, f, c)`.
 
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
@@ -48,6 +50,9 @@ pub(in crate::code_rule_dsl) struct Emitter {
     pub(in crate::code_rule_dsl) captures: BTreeMap<String, String>,
     /// Whether the empty relation `never` is used.
     never: bool,
+    /// The kinds the node being converted can have, where the rules around it name them: what `has` filters
+    /// its ancestor by.
+    here: Option<BTreeSet<u16>>,
 }
 
 /// A conjunction over one node variable: the literals, as text.
@@ -66,6 +71,7 @@ impl Emitter {
             utils: BTreeMap::new(),
             captures: BTreeMap::new(),
             never: false,
+            here: None,
         }
     }
 
@@ -141,21 +147,31 @@ impl Emitter {
                 let mut body = self.body(&c.rule, n)?;
                 for (name, rule) in &c.constraints {
                     let Some(v) = self.captures.get(name).cloned() else { return gap(format!("constraint on ${name}, not captured")) };
-                    body.extend(self.body(rule, &v)?);
+                    body.extend(self.at(rule, &v)?);
                 }
                 body
             }
             AstMatcher::Regex(r) => self.regex(r.as_str(), n, None)?,
             AstMatcher::All(ms) => {
                 let kinds = kinds(m, 0);
-                let mut body = Vec::new();
-                for t in ms {
-                    match t {
-                        AstMatcher::Regex(r) => body.extend(self.regex(r.as_str(), n, kinds.as_ref())?),
-                        _ => body.extend(self.body(t, n)?),
+                // Every sub-rule is at this node: what they say of its kinds holds for each.
+                let here = match (self.here.clone(), kinds.clone()) {
+                    (Some(a), Some(b)) => Some(a.intersection(&b).copied().collect()),
+                    (a, b) => a.or(b),
+                };
+                let saved = std::mem::replace(&mut self.here, here);
+                let body = (|| {
+                    let mut body = Vec::new();
+                    for t in ms {
+                        match t {
+                            AstMatcher::Regex(r) => body.extend(self.regex(r.as_str(), n, kinds.as_ref())?),
+                            _ => body.extend(self.body(t, n)?),
+                        }
                     }
-                }
-                body
+                    Ok(body)
+                })();
+                self.here = saved;
+                body?
             }
             AstMatcher::Any(ms) => {
                 let bodies = ms.iter().map(|t| self.scoped(|e| e.body(t, "$n"))).collect::<Res<Vec<_>>>()?;
@@ -196,7 +212,8 @@ impl Emitter {
                         let name = self.fresh("u");
                         self.utils.insert(key, name.clone());
                         self.decls.insert(name.clone(), "n: node".to_owned());
-                        let body = u.with_target(|rule| self.scoped(|e| e.body(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
+                        // The relation is every caller's: it knows of the node only what its own rule says.
+                        let body = u.with_target(|rule| self.scoped(|e| e.at(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
                         self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
                         name
                     }
@@ -240,6 +257,21 @@ impl Emitter {
         out
     }
 
+    /// The literals under which `m` holds at `n`, a node other than the one being converted: what is known of its
+    /// kinds is what `m` says.
+    fn at(&mut self, m: &AstMatcher, n: &str) -> Res<Body> {
+        let saved = std::mem::replace(&mut self.here, kinds(m, 0));
+        let body = self.body(m, n);
+        self.here = saved;
+        body
+    }
+
+    /// Every kind a node with children can have: the named kinds, comments left out (they are not in `node`).
+    fn every_kind(&self) -> BTreeSet<u16> {
+        let count = u16::try_from(self.kinds.kind_count()).unwrap_or(u16::MAX);
+        (0..count).filter(|&k| self.kinds.kind_is_named(k) && self.kinds.kind_name(k).is_some_and(|name| name != "comment")).collect()
+    }
+
     /// A text condition (`regex`, `notRegex`) over the text in `s`.
     pub(in crate::code_rule_dsl) fn condition(&mut self, c: &crate::code_rule_dsl::language::TextCondition, s: &str) -> Res<Body> {
         let mut body = Vec::new();
@@ -276,7 +308,15 @@ impl Emitter {
                 None => body.push(format!("child({n}, {m}, _)")),
             },
             (Axis::Inside | Axis::Has, StopBy::End | StopBy::Rule(_)) => {
-                let Some(ks) = kinds(rule, 0) else { return gap(format!("{axis:?} to a rule of any kind")) };
+                // `inside` filters the ancestor by its rule's kinds; `has` filters the ancestor too, the node here,
+                // by what the rules around it say of its kinds, or by none.
+                let ks = match axis {
+                    Axis::Inside => match kinds(rule, 0) {
+                        Some(ks) => ks,
+                        None => return gap("Inside to a rule of any kind"),
+                    },
+                    _ => self.here.clone().unwrap_or_else(|| self.every_kind()),
+                };
                 let set = self.kindset(&ks)?;
                 let (low, high) = if axis == Axis::Inside { (n.to_owned(), m.clone()) } else { (m.clone(), n.to_owned()) };
                 // `inside` stopping at the first node of the same kinds is the nearest one (decision 0038): a
@@ -295,7 +335,7 @@ impl Emitter {
                 {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
-                    let is_stop = self.scoped(|e| e.body(stop, "$s"))?;
+                    let is_stop = self.scoped(|e| e.at(stop, "$s"))?;
                     let blocked = self.fresh("blocked");
                     self.decls.insert(blocked.clone(), "low: node, high: node".to_owned());
                     // A stop node strictly between: over `low`, under `high`.
@@ -331,7 +371,7 @@ impl Emitter {
         if matches!(axis, Axis::Has | Axis::Inside) && matches!(stop, StopBy::Neighbor) {
             self.approx.insert("neighbours among named children".into());
         }
-        body.extend(self.body(rule, &m)?);
+        body.extend(self.at(rule, &m)?);
         Ok(body)
     }
 
