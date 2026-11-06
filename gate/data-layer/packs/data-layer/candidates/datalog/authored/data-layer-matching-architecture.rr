@@ -80,6 +80,7 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl node_text(n: node, s: symbol)
 .input node_text
 .decl value(n: node, v: symbol)
@@ -90,8 +91,9 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 // ---- the files read: parsing, in scope, in the gate and among the canonical roots ----
 // The gate (`requireNonemptyInput`) and the roots differ in what their regexes read: the gate's `regex` on the
 // module reads its node text, the roots' `source_text(__path)` the whole file. A file is read when it is in both.
-// `syntax: valid` is CPython's verdict; tree-sitter's (`syntax_error`) stands in for it (CPython's syntax verdict is
-// not bound).
+// Two verdicts. The gate's AST matcher's `syntax: valid` is W's own: tree-sitter's (`syntax_error`, ERROR and
+// MISSING nodes). The `canonical` stage is a `pythonAst` stage: CPython's `ast.parse` reads the file, and a file it
+// rejects fails the stage (`cpython_syntax_error`, CPython 3.13's verdict). A file is read when it passes both.
 .decl matching_file_every_module(x: number)
 matching_file_every_module(0) :- option_value("entryPoint", "scan_sources").
 matching_file_every_module(0) :- option_value("entryPoint", "_scan_tree").
@@ -99,7 +101,8 @@ matching_file_every_module(0) :- option_value("entryPoint", "_scan_tree").
 .decl matching_file_application_path(p: symbol)
 matching_file_application_path(p) :- option_json("parameters", k, p), match("/applicationPaths(/[^/]*)?", k).
 .decl matching_file_candidate(d: number)
-matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _).
+matching_file_candidate(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _),
+    node(d, _, "module", _, _).
 .decl matching_file_contract_text(s: symbol)
 matching_file_contract_text(s) :- (matching_file_module_text(_, s) ; matching_file_source_text(_, s)),
     match("(?s:.*)(?:data_layer\\.matching|l1470_matching_contracts|l5250_matching|MatchSpec|MatchResult|MatchPhysicalPlanError|MatchAccessMethodKind)(?s:.*)", s).
