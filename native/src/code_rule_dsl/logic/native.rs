@@ -357,7 +357,7 @@ unsafe impl VTabCursor for ResultCursor {
     fn rowid(&self) -> Result<i64> { Ok(self.pos as i64) }
 }
 
-/// Registers the functions and virtual tables on `db`, `atoms` and the store's commit hook among them (decision 0047).
+/// Registers the functions and virtual tables on `db`, `atoms` and the store's commit hook among them (decision 0049).
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::install(db)?;
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;

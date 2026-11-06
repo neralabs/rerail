@@ -222,7 +222,7 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
 }
 
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
-/// document of `node`, `doc`, …). A row's document is read off any of them (decision 0050).
+/// document of `node`, `doc`, …). A row's document is read off any of them (decision 0052).
 pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>) {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
@@ -555,7 +555,7 @@ pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Pr
 }
 
 /// Gives every relation the chunks hand on (an export, or a file-local output) a location column, so each of its
-/// rows names its document (decision 0050): a relation without one, `r(p, l)`, is derived by the chunks as
+/// rows names its document (decision 0052): a relation without one, `r(p, l)`, is derived by the chunks as
 /// `r_at(d, p, l)`, `d` a document its rules bind (from `node`, `doc`, …, or a node through `node(d, n, …)`), and
 /// the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.

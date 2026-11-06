@@ -1,4 +1,4 @@
-# 0046: Relations that rules only negate are computed for the keys the rules reach
+# 0048: Relations that rules only negate are computed for the keys the rules reach
 
 Status: accepted (2026-11-06)
 
@@ -41,7 +41,7 @@ gate), not recursive, and every one of its rules starts from every node: a `near
 `inside_<set>` or kind-free `node` atom on its key. It must also be read, and every read must be a
 negation whose arguments are variables or constants. If a variable has no known type, or the result
 does not stratify, nothing is rewritten. The profile then gives the reason under
-"demand (decision 0046)".
+"demand (decision 0048)".
 
 It complements the earlier key-only demand of `magic::demand_negated_tests` (m1028, m1597, m819).
 That rewrite seeds a per-node test from the reader's atoms over its key alone. This one seeds a

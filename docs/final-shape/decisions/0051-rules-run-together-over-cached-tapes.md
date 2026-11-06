@@ -1,4 +1,4 @@
-# 0049: All rules run together over cached tapes; a cross-file rule's file-local part runs in the chunks
+# 0051: All rules run together over cached tapes; a cross-file rule's file-local part runs in the chunks
 
 Status: accepted (2026-11-06; built and measured)
 
@@ -104,7 +104,7 @@ the encoder takes the field from status and treats an extra node's field as none
 - "Restore is 20-26x faster than parse" (history index, TAG). That is why a cached tape is worth
   keeping: on the full corpus, warm parse is 4.3 s against 26.9 s cold.
 - The existence semi-join of the spike's outlier pass (design index, D S054 L3349-3382) is the
-  same idea as §3 and decision 0046: the cheap, local part of a join runs first, and only its
+  same idea as §3 and decision 0048: the cheap, local part of a join runs first, and only its
   survivors meet the expensive part.
 
 ## Measured (2026-11-06)

@@ -20,7 +20,7 @@
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
 //! - `within(n, a)` is the engine's relation read off the tree, and `within_stop(n, a, stop)` that less a stop
-//!   between (`Lowerer::within`, decision 0048);
+//!   between (`Lowerer::within`, decision 0050);
 //! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `+ - * /` and Soufflé's `cat`,
 //!   `strlen`, `to_string`, `substr` are functors.
 //!
@@ -156,7 +156,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.projections();
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
-    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0048).
+    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0050).
     let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
     for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
@@ -386,7 +386,7 @@ impl Lowerer {
         })
     }
 
-    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0048): a's
+    /// `within(n, a)`: n is strictly below a, the engine's relation read off the tree (decision 0050): a's
     /// subtree for a bound `a`, n's ancestors for a bound `n`, made per node looked up. No range over ids and no
     /// climb through `child` (`core.rr`: tape arithmetic, never Datalog recursion). `within_stop(n, a, stop)`: also
     /// no node of `stop` strictly between them. The ancestors of n are ordered by id, so that is: n has no
@@ -629,7 +629,7 @@ impl Lowerer {
     }
 
     /// Whether a positive atom beside the literal being lowered (not a text test or `earlier`) binds `v`. `within`
-    /// and `within_stop` bind both ends: they are the engine's relation (decision 0048).
+    /// and `within_stop` bind both ends: they are the engine's relation (decision 0050).
     fn bound_beside(&self, v: &str) -> bool {
         let atoms: Vec<Lit> = self
             .siblings

@@ -1,10 +1,10 @@
-# 0050: A corpus run memoises each file's file-local rows; an unchanged file is neither parsed nor evaluated
+# 0052: A corpus run memoises each file's file-local rows; an unchanged file is neither parsed nor evaluated
 
 Status: accepted (2026-11-06; built and measured)
 
 ## Intro
 
-After decision 0049, a warm full-corpus run of every rule still took about 49 s of CPU. Almost all
+After decision 0051, a warm full-corpus run of every rule still took about 49 s of CPU. Almost all
 of it was the file-local part: the rules evaluated per chunk of files. That part is a function of
 each file alone, so its result for an unchanged file is the same as last time. Only the cross-file
 part, which took 0.01 s, needs every file.
@@ -72,7 +72,7 @@ run:
   the content and the grammar.
 - **Kinds** are grammar codes.
 - **Symbols** are atoms of the persistent store, which never gives an atom out again (decision
-  0047). The run interns into that store. Its SQL connection (a fresh `store.sqlite`) shares the
+  0049). The run interns into that store. Its SQL connection (a fresh `store.sqlite`) shares the
   store's arena in the process (`Atoms::share`), so `sym_text` and `sym_atom` agree with it.
   Earlier, the run's atoms were its own, so a symbol's id changed every run. Storing symbols as
   text was tried first, but kinds and atoms share a type and overlapping values, so it can't be
@@ -126,4 +126,4 @@ The replay is unchanged, and the same on a second run that reads every check's f
 - Nothing removes old memo rows yet: each engine build or program writes a new plan's rows. They die
   with their sources when the store collects them.
 - A run whose cross-file part reads base relations isn't memoised. Pushing reads into the chunks
-  (decision 0049) leaves none in the combined run, but some single rules keep them.
+  (decision 0051) leaves none in the combined run, but some single rules keep them.

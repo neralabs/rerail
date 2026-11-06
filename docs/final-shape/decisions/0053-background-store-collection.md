@@ -1,11 +1,11 @@
-# 0051: The store collects in the background, keeping recent runs and a bounded history
+# 0053: The store collects in the background, keeping recent runs and a bounded history
 
 Status: accepted (2026-11-06; bounded by size, not by age; built and measured, apart from the atom epoch in §7)
 
 ## Intro
 
 A corpus run keeps three things in its persistent store (`RERAIL_TAPE_CACHE`): each file's source and tape
-(decision 0049), each file's memoised rows (decision 0050), and the atoms the rows name (decision 0047). Nothing
+(decision 0051), each file's memoised rows (decision 0052), and the atoms the rows name (decision 0049). Nothing
 ever removes any of them. Four kinds of rows pile up:
 
 - **Every edit** adds a source, a tape and a memo row for the new content. The old ones stay.
@@ -233,7 +233,7 @@ blob that names an atom would have to be rewritten under an exclusive lock.
   oldest first, and never touches a root's last runs, so a collection never empties the memo as a whole. The atom epoch is the one all-or-nothing
   step, and it is bounded to a size trigger.
 - "Incremental indexing allows no corpus-wide statistic" (design index, top findings item 10; S124). Collection removes rows whose
-  roots lapsed. The cross-file statistics of later runs are rebuilt from the rows that remain, as in decision 0050.
+  roots lapsed. The cross-file statistics of later runs are rebuilt from the rows that remain, as in decision 0052.
 
 ## Built and measured (2026-11-06)
 
@@ -253,7 +253,7 @@ Measured (load 50–60):
   were 4 findings each run.
 - **Full corpus, 100 rules, a warm run:** 12.32e9 instructions with collection, 12.28e9 with `RERAIL_CORPUS_GC=off`.
   Recording the manifest costs under 0.4%.
-- **The full-corpus store, made before 0051 (135 MB):** `gc` converted it in 3.75 s. The run's 8,957 tapes and memo
+- **The full-corpus store, made before 0053 (135 MB):** `gc` converted it in 3.75 s. The run's 8,957 tapes and memo
   rows were kept.
 - **A rebuilt engine** makes a new plan, so its first run is cold and writes a new manifest. The previous plan stays
   live while its manifest is among the root's last 2 runs.
@@ -263,9 +263,9 @@ The replay is unchanged (3988 273 266 0), and the `content_store` tests pass (10
 ## Open
 
 - **The atom epoch (§7) isn't built.** It waits until an arena first approaches 64 MB. The full corpus holds 26 MB.
-- **Memo rows from before 0051** (memo schema 2, 18,020 rows and about 2 MB on the full-corpus store) were never
+- **Memo rows from before 0053** (memo schema 2, 18,020 rows and about 2 MB on the full-corpus store) were never
   named by a manifest. So they stay until their sources go.
-- **An older binary's collector** (one built before 0051) ignores `corpus_live`, so it would collect corpus tapes.
+- **An older binary's collector** (one built before 0053) ignores `corpus_live`, so it would collect corpus tapes.
   That costs a cold run, never a wrong result.
 - **The marks** (512 and 384 MB) and the protected count (2 runs) are starting values. They should be revisited with a
   measured development workflow.

@@ -229,7 +229,7 @@ fn modules_and_packages_follow_t() {
     assert_eq!(module("src/lib.rs"), "crate");
 }
 
-/// `within` and `span_within` (decision 0048) hold exactly the pairs that comparing every pair of one document's
+/// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
 /// nodes gives (preorder intervals for the tree, spans for the other): looked up by either column, and scanned.
 /// The documents with errors and empty bodies bring nodes of zero width.
 #[test]

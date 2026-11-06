@@ -93,7 +93,7 @@ impl StorageMaintenance {
                             .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
                             .collect::<Vec<_>>();
                         let _ = store.renew_workspace_leases(&leases, now + 120);
-                        // Above the soft limit, or with corpus runs' collection due (decision 0051): passes
+                        // Above the soft limit, or with corpus runs' collection due (decision 0053): passes
                         // for up to a second of each wake, each a bounded transaction.
                         let pressed = store
                             .capacity()

@@ -1,4 +1,4 @@
-# 0048: Containment is a relation read off the tree: `within(n, a)` and `span_within(inner, outer)`
+# 0050: Containment is a relation read off the tree: `within(n, a)` and `span_within(inner, outer)`
 
 Status: accepted (2026-11-06; built and measured; amended the same day: the language's `within` is served by the
 same relation, and the converter writes it, §4)

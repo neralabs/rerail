@@ -54,7 +54,7 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) unread: Vec<String>,
     /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
     pub(in crate::code_rule_dsl) existentials: Vec<String>,
-    /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0048).
+    /// Span comparisons of two nodes of one document, made `span_within(inner, outer)` (decision 0050).
     pub(in crate::code_rule_dsl) within: usize,
 }
 

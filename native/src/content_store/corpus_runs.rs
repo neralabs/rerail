@@ -1,4 +1,4 @@
-//! Corpus runs' roots and the bounded history the store keeps of them (decision 0051).
+//! Corpus runs' roots and the bounded history the store keeps of them (decision 0053).
 //!
 //! Each run of a corpus root records a manifest: the sources it read, the grammar version and tape format of their
 //! tapes, and its memo plan. Collection keeps
@@ -230,7 +230,7 @@ impl ContentStore {
         Ok(pass)
     }
 
-    /// Converts a store made before decision 0051 (`auto_vacuum` never took) to incremental vacuum: a full `VACUUM`,
+    /// Converts a store made before decision 0053 (`auto_vacuum` never took) to incremental vacuum: a full `VACUUM`,
     /// which rewrites the file. True if it converted. For maintenance that holds the store alone (`rerail-engine gc`).
     pub fn convert_to_incremental_vacuum(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");

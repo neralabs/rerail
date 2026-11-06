@@ -913,7 +913,7 @@ pub(crate) fn with_nearest(
         }
         out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
     }
-    // Containment (decision 0048): made per looked-up node, so a program that never reads it pays nothing.
+    // Containment (decision 0050): made per looked-up node, so a program that never reads it pays nothing.
     out.push((WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree))));
     out.push((SPAN_WITHIN.to_owned(), Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Span))));
     Ok(out)
