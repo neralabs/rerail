@@ -1,0 +1,188 @@
+// data-layer-hnsw-architecture: clauses `hnsw-architecture` and `hnsw-forbidden-files` (relational), with the
+// option entryPoint from the converter's option_value (every recorded event runs `find_hnsw_architecture_findings`;
+// the default, "all", gates on the module text and has no HNSW006). Policy: rules/data-layer-hnsw-architecture.json.
+//
+// The SQL reads CPython's `ast` (the `pythonAst` stage) over the files the gate passes. Here the same rows are read
+// on tree-sitter's tree (as data-layer-connection-mode-split.rr does):
+// - Name: an `identifier` in expression position (not an attribute's attr, a def/class/keyword/parameter name, an
+//   import's names, a global/nonlocal name, an `except … as` alias or inside a case pattern); its token its id.
+// - Attribute: `attribute`, its token the attr. Lines are tree-sitter start lines, which are CPython's for these.
+// - Constant str (`value_kind='str'`): a non-f, non-bytes `string`; a `concatenated_string` of such strings (one
+//   Constant, at its start line), and each literal part of an f-string (`string_content`), CPython 3.12's Constants.
+// - Import: its token every alias's dotted name; ImportFrom: its module as written (relative dots dropped) and every
+//   alias's name, none at all when the module is empty (`from . import x`: SQL's NULL || …).
+// - A docstring (excluded from HNSW007): a Constant that is the whole first statement of a module, class or def body.
+// Approximations (noted): a Constant's value is its literal text between the quotes (`str`, escapes not decoded;
+// an f-string part's `node_text`), and a concatenation is tested part by part, at the concatenation's line; W's
+// `value` would decode and join them. A parenthesized receiver `(SqlFragment).x()` is not read as a Name receiver.
+// Identifiers in PEP 695 type parameters are read as Names (CPython: strings). CPython's own syntax verdict is
+// tree-sitter's (`syntax_error`).
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.decl str(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl inside(n: node, a: node, set: relation)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl option_value(name: symbol, v: symbol)
+.output violation
+
+.decl hnsw_entry(e: symbol)
+hnsw_entry(e) :- option_value("entryPoint", e).
+// The six forbidden modules (HNSW006, and left out of the other rows at `find_hnsw_architecture_findings`).
+.decl hnsw_forbidden_path(p: symbol)
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/frontier.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/normalized_vectors.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/recovery_schema.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/search_program.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_construction.py").
+hnsw_forbidden_path("impl/common/l2100_sql_grammar/domain/sql_table_hnsw/sqlite_frontier.py").
+
+// ---- the gate (requireNonemptyInput, per file) ----
+// Any other entry point: a valid file whose module text holds HNSW, Hnsw, JSON, Json, hnsw or json.
+// `find_hnsw_architecture_findings`: every valid file (its rule is `kind: module`), less the forbidden modules (its
+// outer WHERE).
+.decl hnsw_architecture_gate(d: number)
+hnsw_architecture_gate(d) :- hnsw_entry(e), e != "find_hnsw_architecture_findings", node(d, m, "module", _, _),
+    node_text(m, s), !syntax_error(d),
+    (contains("HNSW", s) ; contains("Hnsw", s) ; contains("JSON", s) ; contains("Json", s) ; contains("hnsw", s) ; contains("json", s)).
+hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !syntax_error(d),
+    doc(d, p, _), !hnsw_forbidden_path(p).
+
+// ---- Names ----
+.decl hnsw_architecture_not_name(n: node)
+hnsw_architecture_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
+hnsw_architecture_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "class_definition", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "keyword_argument", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "default_parameter", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_default_parameter", _, _), field(p, "name", n).
+hnsw_architecture_not_name(n) :- node(_, p, "except_clause", _, _), field(p, "alias", n).
+hnsw_architecture_not_name(n) :- hnsw_architecture_params(p), child(p, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_params(p), child(p, s, _), hnsw_architecture_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "typed_parameter", _, _), child(p, s, _), hnsw_architecture_splat(s), child(s, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- node(_, p, "global_statement", _, _), child(p, n, _).
+hnsw_architecture_not_name(n) :- node(_, p, "nonlocal_statement", _, _), child(p, n, _).
+hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_imports).
+hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_patterns).
+.decl hnsw_architecture_params(p: node)
+hnsw_architecture_params(p) :- node(_, p, "parameters", _, _).
+hnsw_architecture_params(p) :- node(_, p, "lambda_parameters", _, _).
+.decl hnsw_architecture_splat(s: node)
+hnsw_architecture_splat(s) :- node(_, s, "list_splat_pattern", _, _).
+hnsw_architecture_splat(s) :- node(_, s, "dictionary_splat_pattern", _, _).
+.decl hnsw_architecture_imports(kind: symbol)
+hnsw_architecture_imports("import_statement"). hnsw_architecture_imports("import_from_statement").
+.decl hnsw_architecture_patterns(kind: symbol)
+hnsw_architecture_patterns("case_pattern").
+
+// hnsw_architecture_ref(d, n, s): a Name or an Attribute and its name (`kind IN ('Name','Attribute')`).
+.decl hnsw_architecture_ref(d: number, n: node, s: symbol)
+hnsw_architecture_ref(d, n, s) :- node(d, n, "identifier", _, _), text(n, s), !hnsw_architecture_not_name(n).
+hnsw_architecture_ref(d, a, s) :- node(d, a, "attribute", _, _), field(a, "attribute", x), text(x, s).
+
+// ---- Constants (str) ----
+// A plain string: no f, no b in its prefix.
+.decl hnsw_architecture_plain(n: node)
+hnsw_architecture_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p).
+.decl hnsw_architecture_fstring(n: node)
+hnsw_architecture_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
+// hnsw_architecture_const(c, v): Constant c (a string, a concatenation, an f-string part) and a value it holds.
+.decl hnsw_architecture_const(c: node, v: symbol)
+hnsw_architecture_const(c, v) :- hnsw_architecture_plain(c), child(q, c, _), !node(_, q, "concatenated_string", _, _), str(c, v).
+hnsw_architecture_const(q, v) :- node(_, q, "concatenated_string", _, _), !hnsw_architecture_mixed(q), child(q, c, _), str(c, v).
+hnsw_architecture_const(c, v) :- hnsw_architecture_fstring(f), child(f, c, _), node(_, c, "string_content", _, _), node_text(c, v).
+// A concatenation with an f-string part is a JoinedStr: its literal parts are the f-string parts above, and its
+// plain strings' parts, approximately, the plain strings themselves.
+.decl hnsw_architecture_mixed(q: node)
+hnsw_architecture_mixed(q) :- node(_, q, "concatenated_string", _, _), child(q, c, _), hnsw_architecture_fstring(c).
+hnsw_architecture_const(c, v) :- hnsw_architecture_mixed(q), child(q, c, _), hnsw_architecture_plain(c), str(c, v).
+// A docstring: the whole first statement of a module, class or function body.
+.decl hnsw_architecture_docstring(c: node)
+hnsw_architecture_docstring(c) :- hnsw_architecture_const(c, _), child(e, c, 0), node(_, e, "expression_statement", _, _),
+    !child(e, _, 1), child(b, e, 0), hnsw_architecture_body(b).
+.decl hnsw_architecture_body(b: node)
+hnsw_architecture_body(b) :- node(_, b, "module", _, _).
+hnsw_architecture_body(b) :- node(_, o, "class_definition", _, _), field(o, "body", b).
+hnsw_architecture_body(b) :- node(_, o, "function_definition", _, _), field(o, "body", b).
+
+// ---- Imports: their tokens ----
+.decl hnsw_architecture_alias(i: node, s: symbol)
+hnsw_architecture_alias(i, s) :- field(i, "name", x), node(_, x, "dotted_name", _, _), name(x, s).
+hnsw_architecture_alias(i, s) :- field(i, "name", x), node(_, x, "aliased_import", _, _), field(x, "name", dn), name(dn, s).
+// imported: an Import's alias names; an ImportFrom's module (none for `from . import x`).
+.decl hnsw_architecture_imported(d: number, i: node, s: symbol)
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_statement", _, _), hnsw_architecture_alias(i, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "module_name", m),
+    node(_, m, "dotted_name", _, _), name(m, s).
+hnsw_architecture_imported(d, i, s) :- node(d, i, "import_from_statement", _, _), field(i, "module_name", r),
+    node(_, r, "relative_import", _, _), child(r, m, _), node(_, m, "dotted_name", _, _), name(m, s).
+// The token: imported || ' ' || imported_names, every piece, where imported is not NULL.
+.decl hnsw_architecture_import_token(d: number, i: node, s: symbol)
+hnsw_architecture_import_token(d, i, s) :- hnsw_architecture_imported(d, i, s).
+hnsw_architecture_import_token(d, i, s) :- hnsw_architecture_imported(d, i, _), hnsw_architecture_alias(i, s).
+
+// ---- the rows (document, node, issue) ----
+.decl hnsw_architecture_module(d: number)
+hnsw_architecture_module(d) :- doc(d, p, _), match("(?i)(?:.*/)?[^/]*hnsw[^/]*", p).
+hnsw_architecture_module(d) :- doc(d, p, _), match("(?:.*/)?sql_table_hnsw(?:/.*)?", p).
+.decl hnsw_architecture_algorithm(d: number)
+hnsw_architecture_algorithm(d) :- doc(d, p, _), match("(?:.*/)?algorithm\\.py", p).
+.decl hnsw_architecture_forbidden(s: symbol)
+hnsw_architecture_forbidden("SqlHnswBeamLayerSearch"). hnsw_architecture_forbidden("SqlHnswBeamLayerTrace").
+hnsw_architecture_forbidden("SqlHnswEpochRecoveryStep"). hnsw_architecture_forbidden("SqlHnswFrontierAdvance").
+hnsw_architecture_forbidden("SqlHnswFrontierTickInsert"). hnsw_architecture_forbidden("SqlHnswIncrementalMutationProgram").
+hnsw_architecture_forbidden("SqlTableHnswIncrementalUpperEdges"). hnsw_architecture_forbidden("SqlTableHnswRepairContentOrphanNeighbors").
+hnsw_architecture_forbidden("SqlTableHnswRepairSourceNeighbors"). hnsw_architecture_forbidden("SqlTableHnswScopedRebuild").
+hnsw_architecture_forbidden("_SqlHnswEpochLayerEdges"). hnsw_architecture_forbidden("hnsw_flat_walk_neighbor_limit").
+hnsw_architecture_forbidden("hnsw_flat_walk_recursion_limit"). hnsw_architecture_forbidden("hnsw_flat_walk_visited_budget").
+hnsw_architecture_forbidden("hnsw_insertion_recursive_iteration_limit"). hnsw_architecture_forbidden("hnsw_recovery_diversity_candidate_limit").
+hnsw_architecture_forbidden("hnsw_recovery_exhaustive_candidate_limit"). hnsw_architecture_forbidden("hnsw_recovery_initial_neighbor_limit").
+hnsw_architecture_forbidden("hnsw_recovery_pruning_candidate_limit"). hnsw_architecture_forbidden("hnsw_recovery_route_partition_count").
+hnsw_architecture_forbidden("hnsw_search_frontier_iteration_limit"). hnsw_architecture_forbidden("scored_pairs_query").
+
+.decl hnsw_architecture_row(d: number, n: node, issue: symbol)
+// HNSW007: a JSON token in an HNSW module: a Name/Attribute, a non-docstring str Constant, an import.
+hnsw_architecture_row(d, n, "HNSW007") :- hnsw_architecture_ref(d, n, s), hnsw_architecture_module(d),
+    match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_row(d, c, "HNSW007") :- hnsw_architecture_const(c, s), !hnsw_architecture_docstring(c), node(d, c, _, _, _),
+    hnsw_architecture_module(d), match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_row(d, i, "HNSW007") :- hnsw_architecture_import_token(d, i, s), hnsw_architecture_module(d),
+    match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+// HNSW001: a forbidden Name/Attribute, or a class or def of that name.
+hnsw_architecture_row(d, n, "HNSW001") :- hnsw_architecture_ref(d, n, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, n, "HNSW001") :- node(d, n, "class_definition", _, _), field(n, "name", x), text(x, s), hnsw_architecture_forbidden(s).
+hnsw_architecture_row(d, n, "HNSW001") :- node(d, n, "function_definition", _, _), field(n, "name", x), text(x, s), hnsw_architecture_forbidden(s).
+// HNSW003-005, in a file named algorithm.py.
+hnsw_architecture_row(d, i, "HNSW003") :- hnsw_architecture_imported(d, i, s), hnsw_architecture_algorithm(d),
+    (contains(".sqlite", s) ; contains("sql_dialect", s) ; contains("backend_type", s)).
+hnsw_architecture_row(d, f, "HNSW004") :- node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", x), text(x, "render"),
+    hnsw_architecture_algorithm(d).
+hnsw_architecture_row(d, c, "HNSW005") :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _),
+    field(a, "object", o), node(_, o, "identifier", _, _), text(o, "SqlFragment"), hnsw_architecture_algorithm(d).
+// HNSW002: forbidden state words in str Constants.
+hnsw_architecture_row(d, c, "HNSW002") :- hnsw_architecture_const(c, s), node(d, c, _, _, _),
+    (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
+
+// The outer WHERE: not rust_bridge/generated_*.
+.decl hnsw_architecture_generated(d: number)
+hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).
+
+violation("data-layer-hnsw-architecture", "hnsw-architecture", issue, p, l) :-
+    hnsw_architecture_row(d, n, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d),
+    in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// hnsw-forbidden-files: every file (a file.content regex: parsed or not) at a forbidden path, at line 1; at any
+// other entry point the query ends `WHERE 0`: no rows.
+violation("data-layer-hnsw-architecture", "hnsw-forbidden-files", "HNSW006", p, 1) :-
+    hnsw_entry("find_hnsw_architecture_findings"), doc(d, p, _), hnsw_forbidden_path(p), in_scope(d), !out_scope(d).
