@@ -3,6 +3,7 @@ hnsw_architecture_imports("import_statement"). hnsw_architecture_imports("import
 .decl hnsw_architecture_patterns(kind: symbol)
 hnsw_architecture_patterns("case_pattern").
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl end_line(n: node, l: number)
 .decl field(p: node, f: symbol, c: node)
@@ -56,13 +57,15 @@ hnsw_architecture_patterns("case_pattern").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(h: node, s: number, t: number)
-.decl rr_agg2(h: node, i: number, j: number)
+.decl rr_agg3(h: node, i: number, j: number)
+.decl rr_ctx2(s: number)
+.decl rr_ctx4(i: number)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, node_text, syntax_error, field, child, text, strprefix, value, fstring_piece, line, end_line, name, op
+.input doc, node, node_text, syntax_error, cpython_syntax_error, field, child, text, strprefix, value, fstring_piece, line, end_line, name, op
 .output violation
 hnsw_architecture_forbidden("SqlHnswBeamLayerSearch").
 hnsw_architecture_forbidden("SqlHnswBeamLayerTrace").
@@ -105,8 +108,8 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 hnsw_entry(e) :- option_value("entryPoint", e).
-hnsw_architecture_gate(d) :- hnsw_entry(e), e != "find_hnsw_architecture_findings", node(d, m, "module", _, _), node_text(m, s), !syntax_error(d), (contains("HNSW", s) ; contains("Hnsw", s) ; contains("JSON", s) ; contains("Json", s) ; contains("hnsw", s) ; contains("json", s)).
-hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !syntax_error(d), doc(d, p, _), !hnsw_forbidden_path(p).
+hnsw_architecture_gate(d) :- hnsw_entry(e), e != "find_hnsw_architecture_findings", node(d, m, "module", _, _), node_text(m, s), !syntax_error(d), !cpython_syntax_error(d, _, _), (contains("HNSW", s) ; contains("Hnsw", s) ; contains("JSON", s) ; contains("Json", s) ; contains("hnsw", s) ; contains("json", s)).
+hnsw_architecture_gate(d) :- hnsw_entry("find_hnsw_architecture_findings"), node(d, _, "module", _, _), !syntax_error(d), !cpython_syntax_error(d, _, _), doc(d, p, _), !hnsw_forbidden_path(p).
 hnsw_architecture_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
 hnsw_architecture_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).
 hnsw_architecture_not_name(n) :- node(_, p, "class_definition", _, _), field(p, "name", n).
@@ -149,12 +152,14 @@ hnsw_architecture_fpart(h, h) :- hnsw_architecture_host_str(h), hnsw_architectur
 hnsw_architecture_fpart(q, p) :- hnsw_architecture_mixed(q), child(q, p, _), hnsw_architecture_fstring(p).
 hnsw_architecture_interp(h, x, s) :- hnsw_architecture_fpart(h, p), child(p, x, _), node(_, x, "interpolation", s, _).
 hnsw_architecture_interp(h, x, s) :- hnsw_architecture_host_spec(h), child(h, x, _), node(_, x, "format_expression", s, _).
-rr_agg1(h, s, t) :- hnsw_architecture_interp(h, x, s), hnsw_architecture_interp(h, _, t), t < s.
+rr_ctx2(s) :- hnsw_architecture_interp(h, x, s).
+rr_agg1(h, s, t) :- rr_ctx2(s), hnsw_architecture_interp(h, _, t), t < s.
 hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { rr_agg1(h, s, _) }.
 hnsw_architecture_host(h) :- hnsw_architecture_host_str(h).
 hnsw_architecture_host(h) :- hnsw_architecture_host_spec(h).
-rr_agg2(h, i, j) :- fstring_piece(h, i, "interpolation", _), fstring_piece(h, j, "interpolation", _), j < i.
-hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg2(h, i, _) }, hnsw_architecture_interp_k(h, x, k).
+rr_ctx4(i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), hnsw_architecture_interp_k(h, x, k).
+rr_agg3(h, i, j) :- rr_ctx4(i), fstring_piece(h, j, "interpolation", _), j < i.
+hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg3(h, i, _) }, hnsw_architecture_interp_k(h, x, k).
 hnsw_architecture_lit(h, i, v) :- hnsw_architecture_host(h), fstring_piece(h, i, "literal", v).
 hnsw_architecture_frag(q, p, s) :- hnsw_architecture_mixed(q), child(q, p, _), node(_, p, "string", s, _), !hnsw_architecture_fstring(p).
 hnsw_architecture_frag(h, f, s) :- hnsw_architecture_fpart(h, p), child(p, f, _), node(_, f, k, s, _), k != "interpolation", k != "string_start", k != "string_end".

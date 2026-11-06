@@ -8,6 +8,7 @@
 .decl bootstrap_sql_receiver(c: node, r: node)
 .decl bootstrap_sql_slot(n: node)
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
@@ -18,7 +19,7 @@
 .decl syntax_error(d: number)
 .decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, field, child, text
+.input doc, node, line, syntax_error, field, child, text, cpython_syntax_error
 .output violation
 in_scope(d) :- doc(d, p, _), glob("l3200_metadata/bootstrap_state.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
@@ -47,7 +48,7 @@ bootstrap_sql_first(c, i) :- bootstrap_sql_positional(c, _, _), i = min j : { bo
 bootstrap_sql_arg0(c, x) :- bootstrap_sql_first(c, i), bootstrap_sql_positional(c, x, i).
 bootstrap_sql_iter(f, v) :- node(_, f, "for_statement", _, _), field(f, "right", v0), bootstrap_sql_ast(v0, v).
 bootstrap_sql_iter(f, v) :- bootstrap_sql_iter(f, c), bootstrap_sql_call(c, "Name", s), (s = "list" ; s = "tuple" ; s = "set" ; s = "sorted"), bootstrap_sql_arg0(c, a0), bootstrap_sql_ast(a0, v).
-bootstrap_sql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), contains("bootstrap", p).
+bootstrap_sql_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), contains("bootstrap", p).
 violation("data-layer-bootstrap-eager-resolve", "bootstrap-sql", "BLB-001", p, l) :- bootstrap_sql_call(n, "Attribute", "execute_lazy"), bootstrap_sql_receiver(n, r), bootstrap_sql_call(r, "Attribute", "query_lazy"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
 violation("data-layer-bootstrap-eager-resolve", "bootstrap-sql", "BLB-004", p, l) :- bootstrap_sql_call(n, _, s), (s = "physical_table_exists_many" ; s = "physical_table_exists_many_async" ; s = "table_exists_many" ; s = "table_exists_many_async" ; s = "table_exists_many_for_schema_batch" ; s = "table_exists_many_for_schema_batch_async"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).
 violation("data-layer-bootstrap-eager-resolve", "bootstrap-sql", "BLB-003", p, l) :- bootstrap_sql_call(n, "Attribute", s), (s = "model_dump" ; s = "model_copy"), node(d, n, _, _, _), bootstrap_sql_doc(d, p), line(n, l).

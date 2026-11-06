@@ -18,7 +18,7 @@
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_on(name: symbol)
 .decl out_scope(d: number)
 .decl prev_token(n: node, s: symbol)
@@ -122,90 +122,90 @@ esc_forbidden("SqlRawSqlWithParams").
 esc_forbidden("SqlUnsafe").
 esc_forbidden("_SqlPrebuiltCondition").
 esc_forbidden("_SqlPrebuiltQuery").
-option_item("CALLSITE_PROTECTED_CLASSES", "SqlAdminToolRawStatement").
-option_item("SCHEMA_METADATA_CLASSES", "sql_schema_view_definition").
-option_item("grammar_class_names", "SqlClause").
-option_item("grammar_class_names", "SqlFragment").
-option_item("grammar_class_names", "SqlParam").
-option_item("grammar_class_names", "SqlRenderable").
-option_item("safe_param_types", "BranchId").
-option_item("safe_param_types", "Callable").
-option_item("safe_param_types", "CallsiteToken").
-option_item("safe_param_types", "ConcatSeparator").
-option_item("safe_param_types", "DoltCommitHash").
-option_item("safe_param_types", "Ellipsis").
-option_item("safe_param_types", "Expression").
-option_item("safe_param_types", "ExpressionSerializedSQL").
-option_item("safe_param_types", "ForeignKeyAction").
-option_item("safe_param_types", "FtsMatchMode").
-option_item("safe_param_types", "FtsQueryText").
-option_item("safe_param_types", "GraphDirection").
-option_item("safe_param_types", "IntrospectedCheckSQL").
-option_item("safe_param_types", "IntrospectedConstraintSQL").
-option_item("safe_param_types", "JsonKey").
-option_item("safe_param_types", "JsonPrimitive").
-option_item("safe_param_types", "JsonValue").
-option_item("safe_param_types", "Literal").
-option_item("safe_param_types", "None").
-option_item("safe_param_types", "NoneType").
-option_item("safe_param_types", "RevisionId").
-option_item("safe_param_types", "ServerPlanRefId").
-option_item("safe_param_types", "SqlAliasName").
-option_item("safe_param_types", "SqlCastTargetType").
-option_item("safe_param_types", "SqlColumnName").
-option_item("safe_param_types", "SqlConstraintName").
-option_item("safe_param_types", "SqlCteDefinition").
-option_item("safe_param_types", "SqlCteStepName").
-option_item("safe_param_types", "SqlDialect").
-option_item("safe_param_types", "SqlDynamicOrderBy").
-option_item("safe_param_types", "SqlEscapeChar").
-option_item("safe_param_types", "SqlExplainStatementInput").
-option_item("safe_param_types", "SqlExplainStatementText").
-option_item("safe_param_types", "SqlExprType").
-option_item("safe_param_types", "SqlFunctionName").
-option_item("safe_param_types", "SqlHandlerId").
-option_item("safe_param_types", "SqlIdentifierKindValue").
-option_item("safe_param_types", "SqlIndexName").
-option_item("safe_param_types", "SqlInlineLiteralValue").
-option_item("safe_param_types", "SqlJsonPath").
-option_item("safe_param_types", "SqlLiteral").
-option_item("safe_param_types", "SqlLockName").
-option_item("safe_param_types", "SqlMatchAgainstMode").
-option_item("safe_param_types", "SqlOperatorType").
-option_item("safe_param_types", "SqlOrderDirection").
-option_item("safe_param_types", "SqlProcedureName").
-option_item("safe_param_types", "SqlRawExpressionText").
-option_item("safe_param_types", "SqlSavepointName").
-option_item("safe_param_types", "SqlSequenceName").
-option_item("safe_param_types", "SqlSessionType").
-option_item("safe_param_types", "SqlSessionValue").
-option_item("safe_param_types", "SqlSetVariableName").
-option_item("safe_param_types", "SqlSystemVariableName").
-option_item("safe_param_types", "SqlTableInput").
-option_item("safe_param_types", "SqlTableName").
-option_item("safe_param_types", "SqlTreeKind").
-option_item("safe_param_types", "SqlTriggerEvent").
-option_item("safe_param_types", "SqlTriggerName").
-option_item("safe_param_types", "SqlTriggerTiming").
-option_item("safe_param_types", "SqlTypeName").
-option_item("safe_param_types", "SqlWindowFrame").
-option_item("safe_param_types", "SysIdValue").
-option_item("safe_param_types", "TransactionMode").
-option_item("safe_param_types", "TsVectorConfig").
-option_item("safe_param_types", "UnversionedVectorScoreWithChunk").
-option_item("safe_param_types", "ViewDefinition").
-option_item("safe_param_types", "_IdentifierNameT").
-option_item("safe_param_types", "_IntrospectedTriggerLike").
-option_item("safe_param_types", "_SqlCompactJsonKeyT").
-option_item("safe_param_types", "_SqlCompactJsonValueT").
-option_item("safe_param_types", "_SqlExprInputT").
-option_item("safe_param_types", "_SqlJsonValueT").
-option_item("safe_param_types", "_SqlParamValueT").
-option_item("safe_param_types", "bool").
-option_item("safe_param_types", "bytes").
-option_item("safe_param_types", "float").
-option_item("safe_param_types", "int").
-option_item("safe_param_types", "type").
+option_item("CALLSITE_PROTECTED_CLASSES", 0, "SqlAdminToolRawStatement").
+option_item("SCHEMA_METADATA_CLASSES", 0, "sql_schema_view_definition").
+option_item("grammar_class_names", 0, "SqlRenderable").
+option_item("grammar_class_names", 1, "SqlClause").
+option_item("grammar_class_names", 2, "SqlFragment").
+option_item("grammar_class_names", 3, "SqlParam").
+option_item("safe_param_types", 0, "BranchId").
+option_item("safe_param_types", 1, "Callable").
+option_item("safe_param_types", 10, "FtsQueryText").
+option_item("safe_param_types", 11, "GraphDirection").
+option_item("safe_param_types", 12, "IntrospectedCheckSQL").
+option_item("safe_param_types", 13, "IntrospectedConstraintSQL").
+option_item("safe_param_types", 14, "JsonKey").
+option_item("safe_param_types", 15, "JsonPrimitive").
+option_item("safe_param_types", 16, "JsonValue").
+option_item("safe_param_types", 17, "Literal").
+option_item("safe_param_types", 18, "None").
+option_item("safe_param_types", 19, "NoneType").
+option_item("safe_param_types", 2, "CallsiteToken").
+option_item("safe_param_types", 20, "RevisionId").
+option_item("safe_param_types", 21, "ServerPlanRefId").
+option_item("safe_param_types", 22, "SqlAliasName").
+option_item("safe_param_types", 23, "SqlCastTargetType").
+option_item("safe_param_types", 24, "SqlColumnName").
+option_item("safe_param_types", 25, "SqlConstraintName").
+option_item("safe_param_types", 26, "SqlCteDefinition").
+option_item("safe_param_types", 27, "SqlCteStepName").
+option_item("safe_param_types", 28, "SqlDialect").
+option_item("safe_param_types", 29, "SqlDynamicOrderBy").
+option_item("safe_param_types", 3, "ConcatSeparator").
+option_item("safe_param_types", 30, "SqlEscapeChar").
+option_item("safe_param_types", 31, "SqlExplainStatementInput").
+option_item("safe_param_types", 32, "SqlExplainStatementText").
+option_item("safe_param_types", 33, "SqlExprType").
+option_item("safe_param_types", 34, "SqlFunctionName").
+option_item("safe_param_types", 35, "SqlHandlerId").
+option_item("safe_param_types", 36, "SqlIdentifierKindValue").
+option_item("safe_param_types", 37, "SqlIndexName").
+option_item("safe_param_types", 38, "SqlInlineLiteralValue").
+option_item("safe_param_types", 39, "SqlJsonPath").
+option_item("safe_param_types", 4, "DoltCommitHash").
+option_item("safe_param_types", 40, "SqlLiteral").
+option_item("safe_param_types", 41, "SqlLockName").
+option_item("safe_param_types", 42, "SqlMatchAgainstMode").
+option_item("safe_param_types", 43, "SqlOperatorType").
+option_item("safe_param_types", 44, "SqlOrderDirection").
+option_item("safe_param_types", 45, "SqlProcedureName").
+option_item("safe_param_types", 46, "SqlRawExpressionText").
+option_item("safe_param_types", 47, "SqlSavepointName").
+option_item("safe_param_types", 48, "SqlSequenceName").
+option_item("safe_param_types", 49, "SqlSessionType").
+option_item("safe_param_types", 5, "Ellipsis").
+option_item("safe_param_types", 50, "SqlSessionValue").
+option_item("safe_param_types", 51, "SqlSetVariableName").
+option_item("safe_param_types", 52, "SqlSystemVariableName").
+option_item("safe_param_types", 53, "SqlTableInput").
+option_item("safe_param_types", 54, "SqlTableName").
+option_item("safe_param_types", 55, "SqlTreeKind").
+option_item("safe_param_types", 56, "SqlTriggerEvent").
+option_item("safe_param_types", 57, "SqlTriggerName").
+option_item("safe_param_types", 58, "SqlTriggerTiming").
+option_item("safe_param_types", 59, "SqlTypeName").
+option_item("safe_param_types", 6, "Expression").
+option_item("safe_param_types", 60, "SqlWindowFrame").
+option_item("safe_param_types", 61, "SysIdValue").
+option_item("safe_param_types", 62, "TransactionMode").
+option_item("safe_param_types", 63, "TsVectorConfig").
+option_item("safe_param_types", 64, "UnversionedVectorScoreWithChunk").
+option_item("safe_param_types", 65, "ViewDefinition").
+option_item("safe_param_types", 66, "_IdentifierNameT").
+option_item("safe_param_types", 67, "_IntrospectedTriggerLike").
+option_item("safe_param_types", 68, "_SqlCompactJsonKeyT").
+option_item("safe_param_types", 69, "_SqlCompactJsonValueT").
+option_item("safe_param_types", 7, "ExpressionSerializedSQL").
+option_item("safe_param_types", 70, "_SqlExprInputT").
+option_item("safe_param_types", 71, "_SqlJsonValueT").
+option_item("safe_param_types", 72, "_SqlParamValueT").
+option_item("safe_param_types", 73, "bool").
+option_item("safe_param_types", 74, "bytes").
+option_item("safe_param_types", 75, "float").
+option_item("safe_param_types", 76, "int").
+option_item("safe_param_types", 77, "type").
+option_item("safe_param_types", 8, "ForeignKeyAction").
+option_item("safe_param_types", 9, "FtsMatchMode").
 option_on("sourceGate").
 report_when_gt(16).
 unsafe_alpha("a").
@@ -390,7 +390,7 @@ esc_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 esc_doc(d) :- in_scope(d), !out_scope(d), !syntax_error(d), esc_gate(d).
 forbidden_class_line_ok(d, l) :- tape_line(d, l, sp), text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
 forbidden_class_hit(d, n) :- node(d, n, "class_definition", _, _), esc_doc(d), field(n, "name", x), node(d, x, "identifier", _, _), text(x, s), esc_forbidden(s), line(n, l), !forbidden_class_line_ok(d, l).
-unsafe_seed(s) :- option_item("grammar_class_names", s).
+unsafe_seed(s) :- option_item("grammar_class_names", _, s).
 unsafe_class_arg(d, cls, arg) :- node(d, cls, "class_definition", _, _), esc_doc(d), child(cls, al, _), node(d, al, "argument_list", _, _), child(al, arg, _).
 unsafe_base_walk(arg, arg) :- unsafe_class_arg(_, _, arg).
 unsafe_base_walk(arg, v) :- unsafe_base_walk(arg, n), node(_, n, "subscript", _, _), field(n, "value", v).
@@ -410,9 +410,9 @@ unsafe_known_class(c) :- unsafe_known_class(b), unsafe_class_edge(b, c).
 unsafe_known(s) :- unsafe_known_class(s).
 unsafe_known(t) :- unsafe_known(f), unsafe_alias_edge(f, t).
 unsafe_excluded(s) :- esc_forbidden(s).
-unsafe_excluded(s) :- option_item("ALLOWLISTED_CLASSES", s).
-unsafe_excluded(s) :- option_item("SCHEMA_METADATA_CLASSES", s).
-unsafe_excluded(s) :- option_item("CALLSITE_PROTECTED_CLASSES", s).
+unsafe_excluded(s) :- option_item("ALLOWLISTED_CLASSES", _, s).
+unsafe_excluded(s) :- option_item("SCHEMA_METADATA_CLASSES", _, s).
+unsafe_excluded(s) :- option_item("CALLSITE_PROTECTED_CLASSES", _, s).
 unsafe_grammar_class(d, cls, owner) :- unsafe_class_arg(d, cls, arg), unsafe_base_of(arg, b), unsafe_known(b), unsafe_class_name(cls, owner), !unsafe_excluded(owner).
 unsafe_init_def(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, "__init__"), node_text(f, s), match("def\\s(?s:.*)", s).
 unsafe_init(cls, f) :- unsafe_grammar_class(_, cls, _), field(cls, "body", b), child(b, f, _), unsafe_init_def(f).
@@ -434,10 +434,10 @@ unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "subscript", _, _), field(n, 
 unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "subscript", _, _), field(n, "subscript", c).
 unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "left", c).
 unsafe_walk(p, c) :- unsafe_walk(p, n), node(_, n, "binary_operator", _, _), op(n, "|"), field(n, "right", c).
-unsafe_safe_name(s) :- option_item("safe_param_types", s).
+unsafe_safe_name(s) :- option_item("safe_param_types", _, s).
 unsafe_safe_name(s) :- unsafe_container(s).
-unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("DATA_VALUE_PARAMS", s).
-unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("OPERATOR_PARAMS", s).
+unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("DATA_VALUE_PARAMS", _, s).
+unsafe_str_exempt(p) :- unsafe_param(_, p, _), child(p, x, _), node(_, x, "identifier", _, _), text(x, s), option_item("OPERATOR_PARAMS", _, s).
 unsafe_leaf(p, s) :- unsafe_walk(p, n), node(_, n, "identifier", _, _), text(n, s), !unsafe_safe_name(s), !unsafe_str_exempt_name(p, s).
 unsafe_str_exempt_name(p, "str") :- unsafe_str_exempt(p).
 unsafe_literal(p) :- unsafe_walk(p, n), node(_, n, k, _, _), unsafe_literal_kind(k).

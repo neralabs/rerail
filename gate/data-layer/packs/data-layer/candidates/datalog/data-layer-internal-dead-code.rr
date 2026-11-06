@@ -30,7 +30,8 @@ unreachable_nest_k("function_definition"). unreachable_nest_k("class_definition"
 .decl out_scope(d: number)
 .decl reference_edge(src: node, dst: node, via: symbol)
 .decl rr_agg1(c: symbol, o: symbol, x: node, y: node)
-.decl rr_agg2(j: number, n: symbol, o: symbol)
+.decl rr_agg3(j: number, n: symbol, o: symbol)
+.decl rr_ctx2(x: node)
 .decl source(d: number, sp: node)
 .decl syntax_error(d: number)
 .decl tape_line(d: number, l: number, sp: node)
@@ -371,16 +372,17 @@ unreachable_base_edge(id, b, s) :- unreachable_bname(id, m, bn, s), !unreachable
 unreachable_base_edge(id, b, s) :- unreachable_bname(id, _, bn, s), !unreachable_has_bi(id, bn), !unreachable_has_bm(id, bn), unreachable_unique_class(bn, b).
 unreachable_reach(id, id) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_reach(o, b) :- unreachable_reach(o, x), unreachable_base_edge(x, b, _).
-rr_agg1(c, o, x, y) :- unreachable_decl_node(x, b), unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x.
+rr_ctx2(x) :- unreachable_reach(o, b), unreachable_decl_node(x, b).
+rr_agg1(c, o, x, y) :- rr_ctx2(x), unreachable_reach(o, c), unreachable_decl_node(y, c), y <= x.
 unreachable_hops(o, k) :- unreachable_reach(o, b), unreachable_decl_node(x, b), k = count : { rr_agg1(_, o, x, _) }.
 unreachable_hier_l(id, id, 0) :- unreachable_decl(id, _, _, _, "class", _, _).
 unreachable_hier_l(o, b, j) :- unreachable_hier_l(o, x, i), unreachable_base_edge(x, b, _), unreachable_hops(o, j), j = @add(i, 1).
 unreachable_hier_d(o, b, k) :- unreachable_hier_l(o, b, _), k = min j : { unreachable_hier_l(o, b, j) }.
 unreachable_property(x) :- unreachable_deco(x, n), (suffix("property", n) ; suffix(".setter", n) ; suffix(".deleter", n)).
 unreachable_pub(c, n, id) :- unreachable_decl(c, _, _, cn, _, cm, _), unreachable_decl(id, x, _, n, "method", cm, _), unreachable_decl_class(id, cn), !prefix("_", n), !unreachable_excluded(n), !unreachable_property(x).
-rr_agg2(j, n, o) :- unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _).
-unreachable_pdist(o, n, k) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _), k = min j : { rr_agg2(j, n, o) }.
-unreachable_next_c(x, n, k, y, ord) :- unreachable_pdist(x, n, k), k > 0, unreachable_base_edge(x, y, ord), rr_t3 = @sub(k, 1), unreachable_pdist(y, n, rr_t3).
+rr_agg3(j, n, o) :- unreachable_hier_d(o, c2, j), unreachable_pub(c2, n, _).
+unreachable_pdist(o, n, k) :- unreachable_hier_d(o, c, _), unreachable_pub(c, n, _), k = min j : { rr_agg3(j, n, o) }.
+unreachable_next_c(x, n, k, y, ord) :- unreachable_pdist(x, n, k), k > 0, unreachable_base_edge(x, y, ord), rr_t4 = @sub(k, 1), unreachable_pdist(y, n, rr_t4).
 unreachable_next_min(x, n, k, m) :- unreachable_next_c(x, n, k, _, _), m = min q : { unreachable_next_c(x, n, k, _, q) }.
 unreachable_next(x, n, k, y) :- unreachable_next_min(x, n, k, m), unreachable_next_c(x, n, k, y, m).
 unreachable_walk(o, n, o) :- unreachable_pdist(o, n, _).

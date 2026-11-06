@@ -10,7 +10,7 @@ str_params_fn_kind("function_definition").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl out_scope(d: number)
 .decl str_call_at(c: node)
 .decl str_call_has_init(c: node)
@@ -34,20 +34,20 @@ str_params_fn_kind("function_definition").
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node_text, node, text, op, field, child, syntax_error, line
 .output violation
-option_item("ALLOWLISTED_STR_CLASSES", "CheckExpressionLexer").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlAdminToolRawStatement").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlColumnConstraint").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlColumnType").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlEscapedLiteral").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlExplain").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlFragment").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlHybridSearchQuery").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlIntegerLiteral").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlPreRenderedFragment").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlQuotedIdentifier").
-option_item("ALLOWLISTED_STR_CLASSES", "SqlTypeRef").
-option_item("ALLOWLISTED_STR_CLASSES", "ViewDefinition").
-option_item("ALLOWLISTED_STR_CLASSES", "sql_ddl_comment").
+option_item("ALLOWLISTED_STR_CLASSES", 0, "CheckExpressionLexer").
+option_item("ALLOWLISTED_STR_CLASSES", 1, "SqlAdminToolRawStatement").
+option_item("ALLOWLISTED_STR_CLASSES", 10, "SqlQuotedIdentifier").
+option_item("ALLOWLISTED_STR_CLASSES", 11, "SqlTypeRef").
+option_item("ALLOWLISTED_STR_CLASSES", 12, "ViewDefinition").
+option_item("ALLOWLISTED_STR_CLASSES", 13, "sql_ddl_comment").
+option_item("ALLOWLISTED_STR_CLASSES", 2, "SqlColumnConstraint").
+option_item("ALLOWLISTED_STR_CLASSES", 3, "SqlColumnType").
+option_item("ALLOWLISTED_STR_CLASSES", 4, "SqlEscapedLiteral").
+option_item("ALLOWLISTED_STR_CLASSES", 5, "SqlExplain").
+option_item("ALLOWLISTED_STR_CLASSES", 6, "SqlFragment").
+option_item("ALLOWLISTED_STR_CLASSES", 7, "SqlHybridSearchQuery").
+option_item("ALLOWLISTED_STR_CLASSES", 8, "SqlIntegerLiteral").
+option_item("ALLOWLISTED_STR_CLASSES", 9, "SqlPreRenderedFragment").
 str_params_allow_pair("generation_type", "SqlAlterColumnAddIdentity").
 str_params_allow_pair("value", "SqlAlterColumnSet").
 str_params_allow_pair("value", "SqlAlterTableSet").
@@ -105,7 +105,7 @@ str_params_before_posonly(n) :- child(p, n, i), child(p, s, j), j > i, node(_, s
 str_params_allowed(n) :- child(n, i, _), node(_, i, "identifier", _, _), text(i, x), str_params_allow_pair(x, cls), inside(n, f, str_params_fn_kind), str_params_def(f, "__init__"), nearest(f, c, str_params_class_kind), field(c, "name", ci), node(_, ci, "identifier", _, _), text(ci, cls).
 str_params_sql_name(s) :- text(_, s), (prefix("Sql", s) ; prefix("_Sql", s)).
 str_params_grammar_class(c) :- node(_, c, "class_definition", _, _), !str_params_listed_class(c), str_params_grammarish(c).
-str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item("ALLOWLISTED_STR_CLASSES", x).
+str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item("ALLOWLISTED_STR_CLASSES", _, x).
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "identifier", _, _), text(b, s), str_params_sql_name(s).
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "attribute", _, _), field(b, "attribute", i), text(i, s), str_params_sql_name(s).
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "body", bd), child(bd, st, _), str_params_member(st, _, "render").

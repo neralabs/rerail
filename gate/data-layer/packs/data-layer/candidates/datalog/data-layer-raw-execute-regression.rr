@@ -10,7 +10,7 @@ removed_definitions_fdef("function_definition").
 .decl mixed_marker_module(p: symbol, s: symbol, c: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_on(name: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
@@ -38,28 +38,28 @@ mixed_marker_codes("RER001", "off").
 mixed_marker_entry("all").
 mixed_marker_entry("_check_text").
 mixed_marker_entry("scan_file_content").
-option_item("compatibilityStubFiles", "impl/common/l2200_sql_dialect/sql_connection.py").
-option_item("compatibilityStubFiles", "impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_transaction.py").
-option_item("compatibilityStubFiles", "impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py").
-option_item("compatibilityStubFiles", "impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py").
-option_item("compatibilityStubFiles", "impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py").
-option_item("compatibilityStubFiles", "impl/doltdb/connection.py").
-option_item("compatibilityStubFiles", "impl/doltdb/versioned_write_transaction.py").
-option_item("compatibilityStubFiles", "impl/mariadb/connection.py").
-option_item("compatibilityStubFiles", "impl/mongodb/connection.py").
-option_item("compatibilityStubFiles", "impl/mongodb/transaction.py").
-option_item("compatibilityStubFiles", "impl/mongodb/versioned_read_transaction_sparse.py").
-option_item("compatibilityStubFiles", "impl/neo4j/connection.py").
-option_item("compatibilityStubFiles", "impl/neo4j/transaction.py").
-option_item("compatibilityStubFiles", "impl/neo4j/versioned_read_transaction_sparse.py").
-option_item("compatibilityStubFiles", "impl/postgres/connection.py").
-option_item("compatibilityStubFiles", "impl/read_through/connection.py").
-option_item("compatibilityStubFiles", "impl/read_through/transaction.py").
-option_item("compatibilityStubFiles", "impl/sqlite/connection.py").
-option_item("compatibilityStubFiles", "impl/sqlite/transaction.py").
-option_item("compatibilityStubFiles", "l2000_connection/connection.py").
-option_item("compatibilityStubFiles", "l2050_transaction/transaction.py").
-option_item("compatibilityStubFiles", "l7200_versioned_transactions/versioned_transactions.py").
+option_item("compatibilityStubFiles", 0, "impl/common/l2200_sql_dialect/sql_connection.py").
+option_item("compatibilityStubFiles", 1, "impl/common/l7248_sparse_versioned_transactions/sparse_versioned_write_transaction.py").
+option_item("compatibilityStubFiles", 10, "impl/mongodb/versioned_read_transaction_sparse.py").
+option_item("compatibilityStubFiles", 11, "impl/neo4j/connection.py").
+option_item("compatibilityStubFiles", 12, "impl/neo4j/transaction.py").
+option_item("compatibilityStubFiles", 13, "impl/neo4j/versioned_read_transaction_sparse.py").
+option_item("compatibilityStubFiles", 14, "impl/postgres/connection.py").
+option_item("compatibilityStubFiles", 15, "impl/read_through/connection.py").
+option_item("compatibilityStubFiles", 16, "impl/read_through/transaction.py").
+option_item("compatibilityStubFiles", 17, "impl/sqlite/connection.py").
+option_item("compatibilityStubFiles", 18, "impl/sqlite/transaction.py").
+option_item("compatibilityStubFiles", 19, "l2000_connection/connection.py").
+option_item("compatibilityStubFiles", 2, "impl/common/l7300_sql_versioned_transactions/sql_read_transaction.py").
+option_item("compatibilityStubFiles", 20, "l2050_transaction/transaction.py").
+option_item("compatibilityStubFiles", 21, "l7200_versioned_transactions/versioned_transactions.py").
+option_item("compatibilityStubFiles", 3, "impl/common/l7300_sql_versioned_transactions/sql_versioned_read_transaction.py").
+option_item("compatibilityStubFiles", 4, "impl/common/l7300_sql_versioned_transactions/sql_write_transaction.py").
+option_item("compatibilityStubFiles", 5, "impl/doltdb/connection.py").
+option_item("compatibilityStubFiles", 6, "impl/doltdb/versioned_write_transaction.py").
+option_item("compatibilityStubFiles", 7, "impl/mariadb/connection.py").
+option_item("compatibilityStubFiles", 8, "impl/mongodb/connection.py").
+option_item("compatibilityStubFiles", 9, "impl/mongodb/transaction.py").
 option_value("entryPoint", "all").
 removed_calls_codes("removed_call", "on").
 removed_calls_codes("RER001", "off").
@@ -219,7 +219,7 @@ removed_definitions_raise(x) :- node(_, x, "raise_statement", _, _).
 removed_definitions_raise(x) :- node(_, x, "call", _, _), field(x, "function", a), node(_, a, "attribute", _, _), field(a, "attribute", at), text(at, s), prefix("_raise_", s).
 removed_definitions_raises(f) :- removed_definitions_own(f, x), removed_definitions_raise(x).
 removed_definitions_calls(f) :- removed_definitions_own(f, x), removed_calls_call(x).
-removed_definitions_stubbed(f) :- removed_definitions_owner(d, f), doc(d, p, _), option_item("compatibilityStubFiles", p), removed_definitions_raises(f), !removed_definitions_calls(f).
+removed_definitions_stubbed(f) :- removed_definitions_owner(d, f), doc(d, p, _), option_item("compatibilityStubFiles", _, p), removed_definitions_raises(f), !removed_definitions_calls(f).
 violation("data-layer-raw-execute-regression", "removed-definitions", c, p, l) :- option_value("entryPoint", e), removed_calls_entry(e), removed_definitions_code(c), removed_definitions_owner(d, f), !removed_definitions_stubbed(f), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
 mixed_marker_code(c) :- mixed_marker_codes(c, "on"), option_on("oracleAnalyzer").
 mixed_marker_code(c) :- mixed_marker_codes(c, "off"), !option_on("oracleAnalyzer").

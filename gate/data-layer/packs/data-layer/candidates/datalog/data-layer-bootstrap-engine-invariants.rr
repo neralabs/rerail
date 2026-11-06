@@ -83,6 +83,7 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl bootstrap_invariants_fname_sync(f: node)
 .decl bootstrap_invariants_fnode(d: number, f: node, x: symbol)
 .decl bootstrap_invariants_func(c: node, f: node)
+.decl bootstrap_invariants_gate(d: number, p: symbol)
 .decl bootstrap_invariants_has_bootstrap_key(x: number)
 .decl bootstrap_invariants_has_engine_key(x: number)
 .decl bootstrap_invariants_has_fline(x: number)
@@ -188,6 +189,7 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl bootstrap_source_syntax_doc(d: number, p: symbol)
 .decl bootstrap_source_syntax_scope(d: number)
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
@@ -208,7 +210,7 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl primitive_install_later(f: node)
 .decl primitive_install_not_first(c: node)
 .decl primitive_install_valid(d: number, p: symbol)
-.decl rr_agg4(c: node, dn: node)
+.decl rr_agg1(c: node, dn: node)
 .decl src_line_lf(d: number, l: number, sp: node)
 .decl strprefix(n: node, s: symbol)
 .decl syntax_error(d: number)
@@ -216,7 +218,7 @@ bootstrap_invariants_stmtk("class_definition"). bootstrap_invariants_stmtk("func
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node_text, src_line_lf, node, line, field, child, text, strprefix, value_type_of, value, fstring_piece, op, syntax_error, path_part
+.input doc, node_text, src_line_lf, node, line, field, child, text, strprefix, value_type_of, value, fstring_piece, op, syntax_error, cpython_syntax_error, path_part
 .output violation
 bootstrap_invariants_backend5("collection_names").
 bootstrap_invariants_backend5("execute_cypher").
@@ -693,11 +695,11 @@ bootstrap_invariants_not_name(n) :- node(_, g, "global_statement", _, _), child(
 bootstrap_invariants_not_name(n) :- node(_, g, "nonlocal_statement", _, _), child(g, n, _).
 bootstrap_invariants_not_name(n) :- node(_, x, "except_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _), field(ap, "alias", t), child(t, n, _).
 bootstrap_invariants_not_name(n) :- node(_, x, "except_group_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _), field(ap, "alias", t), child(t, n, _).
-bootstrap_invariants_not_name(n) :- node(_, n, "identifier", _, _), child(p, n, _), node(_, p, k, _, _), bootstrap_invariants_patk(k), nearest(n, rr_near1, bootstrap_invariants_casek).
-bootstrap_invariants_not_name(n) :- node(_, n, "identifier", _, _), child(t, n, _), node(_, t, "as_pattern_target", _, _), nearest(n, rr_near2, bootstrap_invariants_casek).
+bootstrap_invariants_not_name(n) :- node(_, n, "identifier", _, _), child(p, n, _), node(_, p, k, _, _), bootstrap_invariants_patk(k), inside(n, _, bootstrap_invariants_casek).
+bootstrap_invariants_not_name(n) :- node(_, n, "identifier", _, _), child(t, n, _), node(_, t, "as_pattern_target", _, _), inside(n, _, bootstrap_invariants_casek).
 bootstrap_invariants_not_name(n) :- node(_, p, "keyword_pattern", _, _), child(p, n, 0), node(_, n, "identifier", _, _).
-rr_agg4(c, dn) :- child(dn, c, _), node(_, c, "identifier", _, _).
-bootstrap_invariants_pat_dotted(dn, k) :- node(_, dn, "dotted_name", _, _), nearest(dn, rr_near3, bootstrap_invariants_casek), k = count : { rr_agg4(_, dn) }.
+rr_agg1(c, dn) :- child(dn, c, _), node(_, c, "identifier", _, _).
+bootstrap_invariants_pat_dotted(dn, k) :- node(_, dn, "dotted_name", _, _), inside(dn, _, bootstrap_invariants_casek), k = count : { rr_agg1(_, dn) }.
 bootstrap_invariants_not_name(n) :- bootstrap_invariants_pat_dotted(dn, 1), child(dn, n, _), !field(_, "key", dn), !bootstrap_invariants_class_head(dn).
 bootstrap_invariants_not_name(n) :- bootstrap_invariants_pat_dotted(dn, k), k > 1, child(dn, n, j), j > 0.
 bootstrap_invariants_class_head(dn) :- node(_, cp, "class_pattern", _, _), child(cp, dn, 0).
@@ -825,7 +827,8 @@ bootstrap_invariants_base(d, b) :- doc(d, p, _), b = @rx_replace(p, "^.*/", "").
 bootstrap_invariants_base_bootstrap(d) :- bootstrap_invariants_base(d, b), contains("bootstrap", b).
 bootstrap_invariants_engine(d) :- bootstrap_invariants_engine_path(d).
 bootstrap_invariants_engine(d) :- bootstrap_invariants_bootstrap_path(d).
-bootstrap_invariants_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e), e != "_collect_primitive_install_coverage_violations".
+bootstrap_invariants_gate(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e), e != "_collect_primitive_install_coverage_violations".
+bootstrap_invariants_valid(d, p) :- bootstrap_invariants_gate(d, p), !cpython_syntax_error(d, _, _).
 bootstrap_invariants_source(d, s) :- bootstrap_invariants_valid(d, _), bootstrap_invariants_raw(d, s).
 bootstrap_invariants_source(d, s) :- bootstrap_invariants_valid(d, _), !bootstrap_invariants_raw(d, _), node(d, m, "module", _, _), node_text(m, s).
 bootstrap_invariants_scope(d, p) :- bootstrap_invariants_valid(d, p), bootstrap_invariants_entry("_collect_fake_executor_violations").
@@ -991,11 +994,11 @@ bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_fnode(d, f, x),
 bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), node(d, t, "boolean_operator", _, _), bootstrap_invariants_or_value(t, v), bootstrap_invariants_named(v, x), (x = "request" ; x = "proof_hashes" ; x = "seed_hashes"), line(t, l).
 bootstrap_invariants_coverage_error(p) :- bootstrap_invariants_entry("all"), doc(d, p, _), in_scope(d), !out_scope(d), syntax_error(d), (p = "l3200_metadata/bootstrap_coordinator.py" ; p = "l3200_metadata/bootstrap_data_plan.py").
 bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error("l3200_metadata/bootstrap_coordinator.py").
-bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error(_), bootstrap_invariants_valid(_, "l3200_metadata/bootstrap_coordinator.py").
+bootstrap_invariants_quiet(1) :- bootstrap_invariants_coverage_error(_), bootstrap_invariants_gate(_, "l3200_metadata/bootstrap_coordinator.py").
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", i, p, l) :- bootstrap_invariants_entry("all"), !bootstrap_invariants_quiet(1), bootstrap_invariants_row(d, i, l), doc(d, p, _).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", "BEI007", p, l) :- bootstrap_invariants_entry("_collect_fake_executor_violations"), bootstrap_invariants_row(d, "BEI007", l), doc(d, p, _).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-invariants", i, p, l) :- bootstrap_invariants_entry(e), e != "all", e != "_collect_fake_executor_violations", bootstrap_invariants_row(d, i, l), doc(d, p, _).
-primitive_install_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), bootstrap_invariants_entry(e), (e = "_collect_primitive_install_coverage_violations" ; e = "all").
+primitive_install_valid(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _), bootstrap_invariants_entry(e), (e = "_collect_primitive_install_coverage_violations" ; e = "all").
 bootstrap_invariants_depth_need(f) :- primitive_install_valid(d, "l3200_metadata/bootstrap_coordinator.py"), bootstrap_invariants_def(d, f, x), primitive_install_install_name(x).
 primitive_install_fn(d, f, x, k, s) :- primitive_install_valid(d, "l3200_metadata/bootstrap_coordinator.py"), bootstrap_invariants_def(d, f, x), primitive_install_install_name(x), bootstrap_invariants_depth(f, k), node(d, f, _, s, _).
 primitive_install_later(f) :- primitive_install_fn(d, f, x, k, _), primitive_install_fn(d, _, x, k2, _), k2 > k.

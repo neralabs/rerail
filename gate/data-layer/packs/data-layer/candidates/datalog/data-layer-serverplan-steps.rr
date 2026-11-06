@@ -101,6 +101,7 @@ side_effect_block("block").
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl rr_agg1(p: node, s: number, t: number)
+.decl rr_ctx2(s: number)
 .decl rrs_bindings(b: node, name: symbol, v: node)
 .decl rrs_calls(c: node)
 .decl rrs_calls_callee(c: node, callee: symbol)
@@ -1367,7 +1368,8 @@ sc4_sel_start(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _).
 sc4_sel_start(p, s) :- sc4_sel_comment(p, s).
 sc4_sel_before(p, s) :- sc4_sel_start(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, 0) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), !sc4_sel_before(p, s).
-rr_agg1(p, s, t) :- node(_, n, _, s, _), sc4_sel_before(p, s), sc4_sel_start(p, t), t < s.
+rr_ctx2(s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
+rr_agg1(p, s, t) :- rr_ctx2(s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, o) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s), o = count : { rr_agg1(p, s, _) }.
 sc4_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
 sc4_class(c, s) :- node(_, c, "class_definition", _, _), field(c, "name", x), text(x, s).

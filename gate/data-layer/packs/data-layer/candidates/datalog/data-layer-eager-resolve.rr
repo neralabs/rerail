@@ -139,7 +139,7 @@ eager_region_set("lambda"). eager_region_set("class_definition").
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
-.decl option_item(name: symbol, v: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
 .decl source(d: number, sp: node)
@@ -363,8 +363,8 @@ eager_dwalk(f, g) :- eager_dwalk(f, c), node(_, c, "call", _, _), field(c, "func
 eager_decorator(f, nm) :- eager_dwalk(f, x), node(_, x, "identifier", _, _), node_text(x, nm).
 eager_decorator(f, nm) :- eager_dwalk(f, x), eager_attr(x, nm).
 eager_external_io(f) :- eager_func(f, _), eager_decorator(f, "external_io_boundary_eager_async").
-eager_approved_configured(1) :- option_item("externalIoBoundaries", _).
-eager_approved(s) :- option_item("externalIoBoundaries", s).
+eager_approved_configured(1) :- option_item("externalIoBoundaries", _, _).
+eager_approved(s) :- option_item("externalIoBoundaries", _, s).
 eager_approved(s) :- eager_signed(s, sig), !eager_approved_configured(1), m = @concat("{\"allowlist\":[", @concat(@json_str(s), "],\"linter\":\"lint_eager_resolve:external_io_boundary\",\"version\":1}")), @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", m, sig) = 1.
 eager_edge(f, t) :- eager_bcall(c, f), eager_call_attr(c), eager_recv_self(c), eager_callee(c, nm), eager_func(t, nm), node(d, c, _, _, _), node(d, t, _, _, _), eager_lex(t, p), eager_lex(f, p).
 eager_edge(f, t) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, nm), eager_func(t, nm), node(d, c, _, _, _), node(d, t, _, _, _), !eager_has_lex(t).

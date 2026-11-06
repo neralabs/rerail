@@ -39,6 +39,7 @@ bootstrap_type("type").
 .decl bootstrap_txn_param(f: node)
 .decl bootstrap_txn_type(x: symbol)
 .decl child(p: node, c: node, i: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
@@ -51,7 +52,7 @@ bootstrap_type("type").
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, line, syntax_error, field, text, child, strprefix, value_type_of, value
+.input doc, node, line, syntax_error, cpython_syntax_error, field, text, child, strprefix, value_type_of, value
 .output violation
 bootstrap_broad("Any").
 bootstrap_broad("Collection").
@@ -140,7 +141,7 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 violation("data-layer-schema-bootstrap-contracts", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d).
+bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), !cpython_syntax_error(d, _, _).
 bootstrap_fn(f, x) :- node(d, f, "function_definition", _, _), bootstrap_doc(d), field(f, "name", nm), text(nm, x).
 bootstrap_interest(x) :- bootstrap_lazy_forbidden(x).
 bootstrap_interest(x) :- bootstrap_conn_type(x).

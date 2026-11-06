@@ -1,4 +1,4 @@
-905/908 clauses converted or authored (268 converted, 89 of them for the default options only; 637 authored)
+905/908 clauses converted or authored (264 converted, 88 of them for the default options only; 641 authored)
 
 gaps (clauses):
       3  relational (SQL stages)
@@ -13,7 +13,7 @@ approximations (rules):
       2  siblings among named children
 
 per rule:
-  data-layer-admin-async-purity: 3/3 (authored 0)
+  data-layer-admin-async-purity: 3/3 (authored 3)
   data-layer-async-executor: 1/1 (authored 1)
   data-layer-async-patterns: 32/32 (authored 32)
   data-layer-async-sync-boundary: 63/63 (authored 0)
@@ -168,8 +168,7 @@ per rule:
   data-layer-plan-helpers-allowlist: 1/1 (authored 1)
   data-layer-plan-optimizer-v2: 2/2 (authored 2)
   data-layer-plan-scope-ownership: 26/26 (authored 26)
-  data-layer-plan-scope-side-effects: 6/6 (authored 0)
-      branch-audit: converted for the default options only (when {"option":{"oracleAnalyzer":true}}): author it on option_on/option_item
+  data-layer-plan-scope-side-effects: 6/6 (authored 1)
   data-layer-post-op-no-internal-dispatch: 9/9 (authored 9)
   data-layer-post-op-side-effects: 1/1 (authored 1)
   data-layer-public-api-triples: 1/1 (authored 1)
