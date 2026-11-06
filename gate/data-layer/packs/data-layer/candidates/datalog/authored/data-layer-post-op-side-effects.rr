@@ -7,28 +7,12 @@
 // Options, read from the converter's option facts (the run's resolved options): entryPoint (option_value: the
 // `query` and `trusted_overrides` cases), fateOverrides (option_json: its items in the option's order, at their
 // pointers "/0", "/1", …, so the scalar subqueries' first override of a symbol is the least index), fatesSignature
-// and surfaceSignature (option_value; see [signed-default]). All followed.
+// and surfaceSignature (option_value, the signatures fate_valid and surface_valid check). All followed.
 //
-// Signatures. The stages fate_valid, surface_valid and runtime_valid call verify_ed25519(key, message, signature)
-// over a canonical JSON message (json_group_array of the sorted entries); the engine has no ed25519, JSON or
-// join/group-concat function. Instead:
-//   [signed-default] fate_valid and surface_valid check an option. Ed25519 verification is deterministic and the
-//             options' default signatures verify (checked offline with PyNaCl against key 7e9776d8…fbb6) exactly
-//             one message each: the fates and surface at the pinned revision (ss_fate_signed, ss_surface_signed).
-//             A JSON array of distinct strings is an injective encoding of its sorted set, so with the default
-//             signature "the signature verifies" is "the entries are exactly that set" (exact, short of an Ed25519
-//             forgery). APPROXIMATION: a signature option other than the default (after the cleanup) counts
-//             invalid; W verifies it, so a maintainer's re-signing (a new default) needs these facts redone.
-//   [runtime-sig] runtime_valid's signature is not a policy constant but the file's ALLOWLIST_SIGNATURE. It counts
-//             valid only when the registry is exactly the one signed at the pinned revision (ss_runtime_signed, as
-//             a multiset: json_group_array keeps duplicates) and the signature, cleaned as rx_replace does
-//             ([^A-Za-z0-9+/=] removed), is the signature recorded for it. APPROXIMATION: any other registry with a
-//             fresh valid maintainer signature counts invalid (POSTOP202) here; W verifies it. [b64-lenient]
-//             APPROXIMATION: a cleaned signature that is the recorded one plus base64 characters after its "=="
-//             padding counts invalid here, as a strict base64 decoder has it; a lenient one (Python's
-//             base64.b64decode, which stops at the padding) decodes the same 64 bytes, so it verifies there. The
-//             same holds for the signature options. The exact form, with an @ed25519_ok functor, is in the
-//             .pending.rr file.
+// Signatures. The stages fate_valid, surface_valid and runtime_valid are W's verify_ed25519(key, message,
+// rx_replace(signature, '[^A-Za-z0-9+/=]', '')): @ed25519_ok over @rx_replace, the message built as the stages
+// build it (ss_message): '{"allowlist":' || json_group_array(value ORDER BY value) || ',"linter":…,"version":1}',
+// each element @json_str (json_group_array's json_quote), ordered by code point as SQLite's ORDER BY over text.
 //
 // String values. W's `capture.DECODED.text` (substring with value: true) reads a string's decoded value: value(n,
 // v), escapes decoded and a concatenated_string's parts joined, exactly. An unknown value (a part that is an
@@ -226,32 +210,13 @@ ss_membership(cat(c, cat(".", x))) :- ss_member(d, c, x), ss_doc(d, p), (p = "l2
 ss_fate(s, f) :- ss_membership(s), ss_first_override(s, f).
 ss_fate(s, "audit_required") :- ss_membership(s), !ss_override_sym(s).
 
-// [signed-default]: whether a signature option, cleaned as rx_replace does ([^A-Za-z0-9+/=] removed), is the
-// option's default: ss_opt_run(o, q, t) reads option o's value with q left and t left of the default to match
-// (suffixes only, as ss_sig_run below).
-.decl ss_opt_default(o: symbol, sig: symbol)
-ss_opt_default("fatesSignature", "O5p2GYtRWESKK6seL21Gfmhwt2BbRXEnKngA04J0vENAIfu6AjtJFZ19ohuzcRF5cudla5PLEZiRVdCvwyGKAw==").
-ss_opt_default("surfaceSignature", "emKOwGOeajpPhSrYX3SEMcDDgJEjK05SpABfUYhg2WFXVJH4GzV55DwdK9Ddy6zisH4M5r1bh1T8OOkaWQYqBg==").
-.decl ss_opt_run(o: symbol, q: symbol, t: symbol)
-ss_opt_run(o, s, t) :- ss_opt_default(o, t), option_value(o, s).
-ss_opt_run(o, q2, t2) :- ss_opt_run(o, q, t), h = substr(q, 0, 1), strlen(h) = 1, match("[A-Za-z0-9+/=]", h), substr(t, 0, 1) = h,
-    q2 = substr(q, 1, 1000000000), t2 = substr(t, 1, 1000000000).
-ss_opt_run(o, q2, t) :- ss_opt_run(o, q, t), h = substr(q, 0, 1), strlen(h) = 1, !match("[A-Za-z0-9+/=]", h), q2 = substr(q, 1, 1000000000).
-.decl ss_opt_signed(o: symbol)
-ss_opt_signed(o) :- ss_opt_run(o, "", "").
+// ---- signatures: the stages fate_valid, surface_valid and runtime_valid ----------------------------------------
+.decl ss_key(hex: symbol)
+ss_key("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6").
 
-// fate_valid [signed-default]: fatesSignature is the default and the "symbol=fate" entries are exactly those it signs.
-.decl ss_fate_signed(entry: symbol)
-ss_fate_signed("PostOpBehavior.EXCEPTION_ONLY=exception_only"). ss_fate_signed("PostOpBehavior.TERMINAL_ARRAY=keep_terminal").
-ss_fate_signed("PostOpBehavior.TERMINAL_OBJECT=keep_terminal"). ss_fate_signed("PostOpBehavior.TERMINAL_SCALAR=keep_terminal").
-ss_fate_signed("PostOpKind.ASSERT_RESULT=exception_only"). ss_fate_signed("PostOpKind.MATERIALIZE_RESULT=keep_terminal").
+// fates' "symbol=fate" entries (one per membership: fates is a row per distinct membership).
 .decl ss_fate_entry(entry: symbol)
 ss_fate_entry(cat(s, cat("=", f))) :- ss_fate(s, f).
-.decl ss_fate_differs(x: number)
-ss_fate_differs(0) :- ss_fate_entry(e), !ss_fate_signed(e).
-ss_fate_differs(0) :- ss_fate_signed(e), !ss_fate_entry(e).
-.decl ss_fate_valid(x: number)
-ss_fate_valid(0) :- ss_opt_signed("fatesSignature"), !ss_fate_differs(0).
 
 // surface: post_op.py's PostOpKind/PostOpBehavior members and post_op_specs.py's DomainPostOpDecoderKind members,
 // post_op.py's module-level sync `…_post_op` functions, post_op_specs.py's spec classes.
@@ -261,13 +226,15 @@ ss_surface(cat(c, cat(".", x))) :- ss_member(d, c, x), ss_doc(d, "l2070_batching
 ss_surface(cat("post_op_factory.", x)) :- ss_fn(d, f, x, _, _), ss_doc(d, "l2070_batching/post_op.py"), glob("*_post_op", x), ss_fn_def(f).
 ss_surface(cat("post_op_spec.", x)) :- ss_spec(d, x), ss_doc(d, "l2070_batching/post_op_specs.py").
 
-// surface_valid [signed-default]: surfaceSignature is the default and the surface is exactly the set it signs.
-.decl ss_surface_signed(sym: symbol)
-.decl ss_surface_differs(x: number)
-ss_surface_differs(0) :- ss_surface(s), !ss_surface_signed(s).
-ss_surface_differs(0) :- ss_surface_signed(s), !ss_surface(s).
-.decl ss_surface_valid(x: number)
-ss_surface_valid(0) :- ss_opt_signed("surfaceSignature"), !ss_surface_differs(0).
+// ss_message(list, m): each stage's signed message. fates and surface are sets (DISTINCT, UNION); the registry keeps
+// a row per string (json_group_array keeps duplicates), so it is ordered by value and then by node, one element each.
+.decl ss_message(list: symbol, m: symbol)
+ss_message("fates", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_side_effects\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by e sep "," : { ss_fate_entry(e), q = @json_str(e) }.
+ss_message("surface", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_surface\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by e sep "," : { ss_surface(e), q = @json_str(e) }.
+ss_message("runtime", cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_runtime_allowlist\",\"version\":1}"))) :- ss_unit(0),
+    b = join q by (v, n) sep "," : { ss_reg(n, v), q = @json_str(v) }.
 
 // reachable: the `assertion.*`/`materializer.*` string values strictly inside post_op.py's first
 // `post_op_runtime_symbol` (f.start < s.start, s.end <= f.end), and "decoder.DomainPostOpDecoderKind.NAME" for
@@ -283,19 +250,10 @@ ss_reg(n, v) :- ss_registry(d, n, v), ss_doc(d, "l2070_batching/post_op_allowlis
 .decl ss_reg_value(v: symbol)
 ss_reg_value(v) :- ss_reg(_, v).
 
-// runtime_valid [runtime-sig]: the registry rows are exactly the signed registry (each signed value once, no other
-// value) and the first signature string's value (least start; at a tie, a concatenated_string and its first part,
-// the concatenated_string [sig-tie]: APPROXIMATION, SQLite's choice among equal __start is unspecified; '' when
-// there is none) cleans to the signature recorded for it.
-.decl ss_runtime_signed(v: symbol)
-.decl ss_runtime_signature(sig: symbol)
-ss_runtime_signature("LfKJGRAPH2yBnDMoevmv5KyZcuPE3hsX4bkEUPXblphuoyI3+QG+racYSEau1uxNHvBPDG2bMmsxGgohzanjCQ==").
-.decl ss_runtime_differs(x: number)
-ss_runtime_differs(0) :- ss_reg_value(v), !ss_runtime_signed(v).
-ss_runtime_differs(0) :- ss_runtime_signed(v), !ss_reg_value(v).
-ss_runtime_differs(0) :- ss_reg_value(v), k = count : { ss_reg(_, v) }, k > 1.
-
-// The signature string: the least start among post_op_allowlist.py's signature strings.
+// runtime_valid's signature: the value of post_op_allowlist.py's first ALLOWLIST_SIGNATURE string (least __start,
+// '' when there is none). At a tie (a concatenated_string and its first part start together) this takes the
+// concatenated_string [sig-tie]: APPROXIMATION, W's `ORDER BY __start LIMIT 1` leaves the choice among rows of
+// equal __start to SQLite, unspecified.
 .decl ss_sig_start(s: number)
 ss_sig_start(m) :- ss_signature(d, _, _), ss_doc(d, "l2070_batching/post_op_allowlist.py"), m = min s : { ss_signature(d, _, s) }.
 .decl ss_sig_node(n: node)
@@ -308,20 +266,19 @@ ss_sig_concat_at(m) :- ss_sig_start(m), ss_signature(_, n, m), node(_, n, "conca
 ss_sig_value(s) :- ss_sig_node(n), ss_val(n, s).
 ss_sig_value("") :- ss_unit(0), !ss_sig_start(_).
 
-// The cleanup is matched against the recorded signature rather than built (a recursion concatenating characters is
-// a value cycle the engine rejects): ss_sig_run(q, t) reads the value with q left to read and t left of the
-// recorded signature to match; every step only takes suffixes. A base64 character must be t's next one; any other
-// character is what rx_replace removes.
-.decl ss_sig_run(q: symbol, t: symbol)
-ss_sig_run(s, t) :- ss_sig_value(s), ss_runtime_signature(t).
-ss_sig_run(q2, t2) :- ss_sig_run(q, t), h = substr(q, 0, 1), strlen(h) = 1, match("[A-Za-z0-9+/=]", h), substr(t, 0, 1) = h,
-    q2 = substr(q, 1, 1000000000), t2 = substr(t, 1, 1000000000).
-ss_sig_run(q2, t) :- ss_sig_run(q, t), h = substr(q, 0, 1), strlen(h) = 1, !match("[A-Za-z0-9+/=]", h), q2 = substr(q, 1, 1000000000).
-.decl ss_sig_matches(x: number)
-ss_sig_matches(0) :- ss_sig_run("", "").
-
+// ss_signed_with(list, s): the signature each stage checks, cleaned as rx_replace(…, '[^A-Za-z0-9+/=]', '').
+.decl ss_signed_with(list: symbol, sig: symbol)
+ss_signed_with("fates", c) :- option_value("fatesSignature", s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_signed_with("surface", c) :- option_value("surfaceSignature", s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+ss_signed_with("runtime", c) :- ss_sig_value(s), c = @rx_replace(s, "[^A-Za-z0-9+/=]", "").
+.decl ss_verified(list: symbol)
+ss_verified(l) :- ss_message(l, m), ss_signed_with(l, s), ss_key(k), @ed25519_ok(k, m, s) = 1.
+.decl ss_fate_valid(x: number)
+ss_fate_valid(0) :- ss_verified("fates").
+.decl ss_surface_valid(x: number)
+ss_surface_valid(0) :- ss_verified("surface").
 .decl ss_runtime_valid(x: number)
-ss_runtime_valid(0) :- ss_unit(0), !ss_runtime_differs(0), ss_sig_matches(0).
+ss_runtime_valid(0) :- ss_verified("runtime").
 
 // verifiers: each document's first module-level `assert_post_op_symbol_signed`, and the least line of a
 // verification call within its span (none: no row of ss_verifier_first).
@@ -405,152 +362,3 @@ violation("data-layer-post-op-side-effects", "signed-surface", "POSTOP204", "l20
 // _collect_exact_runtime_symbol_coverage_violations: POSTOP205 and POSTOP206.
 violation("data-layer-post-op-side-effects", "signed-surface", c, "l2070_batching/post_op.py", 1) :-
     ss_entry("_collect_exact_runtime_symbol_coverage_violations"), ss_finding(c), (c = "POSTOP205" ; c = "POSTOP206").
-
-// ---- the signed sets at the pinned revision [signed-default] [runtime-sig] ---------------------------------------
-// The surface the default surfaceSignature signs (187 entries).
-ss_surface_signed("DomainPostOpDecoderKind.BRANCH_HISTORY_CURSOR_PAGE"). ss_surface_signed("DomainPostOpDecoderKind.BRANCH_INFO").
-ss_surface_signed("DomainPostOpDecoderKind.BRANCH_INFO_WITH_CREATED"). ss_surface_signed("DomainPostOpDecoderKind.BRANCH_ROUTE_PROOF").
-ss_surface_signed("DomainPostOpDecoderKind.BULK_INTEGER_CURSOR_CHANGES"). ss_surface_signed("DomainPostOpDecoderKind.CACHE_GENERATION_MAP").
-ss_surface_signed("DomainPostOpDecoderKind.CLEANUP_RESULT"). ss_surface_signed("DomainPostOpDecoderKind.COALESCED_INSERT_RETURN_MAP").
-ss_surface_signed("DomainPostOpDecoderKind.COMMIT_BRANCH_CONTEXT"). ss_surface_signed("DomainPostOpDecoderKind.COMMIT_BRANCH_FETCH").
-ss_surface_signed("DomainPostOpDecoderKind.CONTENT_STORE_ROW_LOOKUP"). ss_surface_signed("DomainPostOpDecoderKind.CROSS_BRANCH_RESULT").
-ss_surface_signed("DomainPostOpDecoderKind.DELETED_COUNT"). ss_surface_signed("DomainPostOpDecoderKind.EDGE_VIOLATION").
-ss_surface_signed("DomainPostOpDecoderKind.EMBEDDING_HASH"). ss_surface_signed("DomainPostOpDecoderKind.EMBEDDING_MATERIALIZED_METADATA").
-ss_surface_signed("DomainPostOpDecoderKind.EMBEDDING_METADATA_VALIDATION"). ss_surface_signed("DomainPostOpDecoderKind.EMBEDDING_STORE_STATS").
-ss_surface_signed("DomainPostOpDecoderKind.EMBEDDING_VECTOR_CONFLICT_VALIDATION"). ss_surface_signed("DomainPostOpDecoderKind.GRAPH_PATH_EVIDENCE").
-ss_surface_signed("DomainPostOpDecoderKind.GRAPH_RESULT"). ss_surface_signed("DomainPostOpDecoderKind.HISTORY_CURSOR_PAGE").
-ss_surface_signed("DomainPostOpDecoderKind.HISTORY_ENTRIES"). ss_surface_signed("DomainPostOpDecoderKind.HISTORY_ENTRIES_WITH_META").
-ss_surface_signed("DomainPostOpDecoderKind.INTEGER_CURSOR_ROWS"). ss_surface_signed("DomainPostOpDecoderKind.MERGE_RESULT").
-ss_surface_signed("DomainPostOpDecoderKind.PLAN_HISTORY_CURSOR_PAGE"). ss_surface_signed("DomainPostOpDecoderKind.PREPARED_CACHE_COMMIT").
-ss_surface_signed("DomainPostOpDecoderKind.RENEWABLE_ACCESS_VALIDATION"). ss_surface_signed("DomainPostOpDecoderKind.RENEWABLE_FAMILY_PROJECTION").
-ss_surface_signed("DomainPostOpDecoderKind.RENEWABLE_REFRESH_REPLAY_VALIDATION"). ss_surface_signed("DomainPostOpDecoderKind.RENEWABLE_REFRESH_ROTATE_VALIDATION").
-ss_surface_signed("DomainPostOpDecoderKind.RENEWABLE_REFRESH_VALIDATION"). ss_surface_signed("DomainPostOpDecoderKind.REPLAYED_REBASE_RESULT").
-ss_surface_signed("DomainPostOpDecoderKind.REQUIRED_ENCRYPTED_BLOB"). ss_surface_signed("DomainPostOpDecoderKind.SCALAR_COLUMNS_TUPLE").
-ss_surface_signed("DomainPostOpDecoderKind.SCHEMA_STATE_SNAPSHOT"). ss_surface_signed("DomainPostOpDecoderKind.SELECTED_UPDATE_RESULT").
-ss_surface_signed("DomainPostOpDecoderKind.SESSION_LOOKUP_ROW"). ss_surface_signed("DomainPostOpDecoderKind.SESSION_VALIDATION").
-ss_surface_signed("DomainPostOpDecoderKind.SQUASH_BRANCH_CONTEXT"). ss_surface_signed("DomainPostOpDecoderKind.SQUASH_MERGE_CONTEXT").
-ss_surface_signed("DomainPostOpDecoderKind.TABLE_EXISTS_MANY"). ss_surface_signed("DomainPostOpDecoderKind.VECTOR_DIMENSION_VALIDATION").
-ss_surface_signed("DomainPostOpDecoderKind.VERSIONED_NODE_METADATA_MAP"). ss_surface_signed("DomainPostOpDecoderKind.VERSIONED_READ_CONTEXT").
-ss_surface_signed("DomainPostOpDecoderKind.VERSIONED_TYPE_NAME_MAP"). ss_surface_signed("DomainPostOpDecoderKind.VERSIONED_WRITE_BRANCH_CONTEXT").
-ss_surface_signed("DomainPostOpDecoderKind.WORKSPACE_NONCE"). ss_surface_signed("post_op_factory.auth_validate_tracked_token_post_op").
-ss_surface_signed("post_op_factory.branch_eol_plan_post_op"). ss_surface_signed("post_op_factory.branch_eol_result_post_op").
-ss_surface_signed("post_op_factory.branch_history_cursor_page_post_op"). ss_surface_signed("post_op_factory.cache_generation_map_post_op").
-ss_surface_signed("post_op_factory.cache_get_resolution_post_op"). ss_surface_signed("post_op_factory.cleanup_result_post_op").
-ss_surface_signed("post_op_factory.commit_branch_context_post_op"). ss_surface_signed("post_op_factory.commit_branch_fetch_and_staged_post_op").
-ss_surface_signed("post_op_factory.commit_branch_fetch_tip_post_op"). ss_surface_signed("post_op_factory.commit_chain_post_op").
-ss_surface_signed("post_op_factory.commit_result_post_op"). ss_surface_signed("post_op_factory.discard_result_post_op").
-ss_surface_signed("post_op_factory.edge_violation_post_op"). ss_surface_signed("post_op_factory.embedding_first_hydrated_row_post_op").
-ss_surface_signed("post_op_factory.embedding_hash_post_op"). ss_surface_signed("post_op_factory.embedding_materialized_metadata_post_op").
-ss_surface_signed("post_op_factory.embedding_metadata_validation_post_op"). ss_surface_signed("post_op_factory.embedding_require_no_rows_post_op").
-ss_surface_signed("post_op_factory.embedding_vector_conflict_validation_post_op"). ss_surface_signed("post_op_factory.exact_single_row_post_op").
-ss_surface_signed("post_op_factory.fetch_merge_branch_by_name_post_op"). ss_surface_signed("post_op_factory.fts_collision_stats_post_op").
-ss_surface_signed("post_op_factory.graph_bindings_post_op"). ss_surface_signed("post_op_factory.graph_nodes_post_op").
-ss_surface_signed("post_op_factory.graph_one_node_post_op"). ss_surface_signed("post_op_factory.graph_path_evidence_post_op").
-ss_surface_signed("post_op_factory.graph_result_post_op"). ss_surface_signed("post_op_factory.history_entries_post_op").
-ss_surface_signed("post_op_factory.history_entries_with_meta_post_op"). ss_surface_signed("post_op_factory.history_versions_post_op").
-ss_surface_signed("post_op_factory.list_branches_post_op"). ss_surface_signed("post_op_factory.list_staged_commits_post_op").
-ss_surface_signed("post_op_factory.literal_array_post_op"). ss_surface_signed("post_op_factory.literal_post_op").
-ss_surface_signed("post_op_factory.materialize_compiled_post_op"). ss_surface_signed("post_op_factory.merge_classification_post_op").
-ss_surface_signed("post_op_factory.merge_conflict_views_post_op"). ss_surface_signed("post_op_factory.merge_result_post_op").
-ss_surface_signed("post_op_factory.merge_revision_id_post_op"). ss_surface_signed("post_op_factory.optional_single_row_post_op").
-ss_surface_signed("post_op_factory.plan_history_cursor_page_post_op"). ss_surface_signed("post_op_factory.prepared_cache_commit_post_op").
-ss_surface_signed("post_op_factory.query_execute_rows_post_op"). ss_surface_signed("post_op_factory.query_first_projected_value_post_op").
-ss_surface_signed("post_op_factory.query_first_row_post_op"). ss_surface_signed("post_op_factory.raw_rows_post_op").
-ss_surface_signed("post_op_factory.renewable_access_validation_post_op"). ss_surface_signed("post_op_factory.renewable_family_projection_post_op").
-ss_surface_signed("post_op_factory.renewable_refresh_replay_validation_post_op"). ss_surface_signed("post_op_factory.renewable_refresh_rotate_validation_post_op").
-ss_surface_signed("post_op_factory.renewable_refresh_validation_post_op"). ss_surface_signed("post_op_factory.replay_loop_result_post_op").
-ss_surface_signed("post_op_factory.replayed_rebase_result_post_op"). ss_surface_signed("post_op_factory.require_existing_branch_row_post_op").
-ss_surface_signed("post_op_factory.require_non_null_post_op"). ss_surface_signed("post_op_factory.require_permitted_row_post_op").
-ss_surface_signed("post_op_factory.require_value_post_op"). ss_surface_signed("post_op_factory.required_merge_conflict_view_post_op").
-ss_surface_signed("post_op_factory.required_pending_conflict_row_post_op"). ss_surface_signed("post_op_factory.required_scalar_column_post_op").
-ss_surface_signed("post_op_factory.revision_cache_tags_post_op"). ss_surface_signed("post_op_factory.row_dicts_post_op").
-ss_surface_signed("post_op_factory.scalar_column_frozenset_post_op"). ss_surface_signed("post_op_factory.scalar_column_list_post_op").
-ss_surface_signed("post_op_factory.scalar_column_post_op"). ss_surface_signed("post_op_factory.scalar_column_set_post_op").
-ss_surface_signed("post_op_factory.selected_update_result_post_op"). ss_surface_signed("post_op_factory.session_lookup_row_post_op").
-ss_surface_signed("post_op_factory.session_validation_post_op"). ss_surface_signed("post_op_factory.squash_branch_context_post_op").
-ss_surface_signed("post_op_factory.squash_merge_context_post_op"). ss_surface_signed("post_op_factory.static_exception_post_op").
-ss_surface_signed("post_op_factory.table_exists_many_post_op"). ss_surface_signed("post_op_factory.up_to_date_rebase_result_post_op").
-ss_surface_signed("post_op_factory.versioned_delete_count_post_op"). ss_surface_signed("post_op_factory.versioned_node_metadata_map_post_op").
-ss_surface_signed("post_op_factory.versioned_type_name_map_post_op"). ss_surface_signed("post_op_spec.BranchHistoryCursorPageDecoderSpec").
-ss_surface_signed("post_op_spec.BranchInfoSpec"). ss_surface_signed("post_op_spec.BranchRouteProofAssertionSpec").
-ss_surface_signed("post_op_spec.BranchRouteProofDecoderSpec"). ss_surface_signed("post_op_spec.BulkIntegerCursorChangesDecoderSpec").
-ss_surface_signed("post_op_spec.CacheGenerationMapDecoderSpec"). ss_surface_signed("post_op_spec.CleanupResultDecoderSpec").
-ss_surface_signed("post_op_spec.CoalescedInsertReturnMapDecoderSpec"). ss_surface_signed("post_op_spec.CoalescedInsertReturnMapSpec").
-ss_surface_signed("post_op_spec.CommitBranchContextSpec"). ss_surface_signed("post_op_spec.CommitBranchFetchSpec").
-ss_surface_signed("post_op_spec.CompoundResultChildSpec"). ss_surface_signed("post_op_spec.CompoundResultSpec").
-ss_surface_signed("post_op_spec.ConditionalFiredLabelsSpec"). ss_surface_signed("post_op_spec.ContentStoreRowLookupDecoderSpec").
-ss_surface_signed("post_op_spec.ContentStoreRowLookupSpec"). ss_surface_signed("post_op_spec.CrossBranchResultSpec").
-ss_surface_signed("post_op_spec.DeletedCountSpec"). ss_surface_signed("post_op_spec.DomainPostOpDecoderSpec").
-ss_surface_signed("post_op_spec.EdgeViolationDecoderSpec"). ss_surface_signed("post_op_spec.EmbeddingStoreStatsDecoderSpec").
-ss_surface_signed("post_op_spec.EmbeddingStoreStatsSpec"). ss_surface_signed("post_op_spec.EmbeddingVectorConflictValidationDecoderSpec").
-ss_surface_signed("post_op_spec.GraphResultDecoderSpec"). ss_surface_signed("post_op_spec.HistoryCursorPageSpec").
-ss_surface_signed("post_op_spec.HistoryEntriesDecoderSpec"). ss_surface_signed("post_op_spec.HistoryEntriesSpec").
-ss_surface_signed("post_op_spec.IntegerCursorRowsSpec"). ss_surface_signed("post_op_spec.MergeResultSpec").
-ss_surface_signed("post_op_spec.PlanHistoryCursorPageDecoderSpec"). ss_surface_signed("post_op_spec.PublicationProofAssertionSpec").
-ss_surface_signed("post_op_spec.RenewableAccessValidationDecoderSpec"). ss_surface_signed("post_op_spec.RenewableRefreshReplayValidationDecoderSpec").
-ss_surface_signed("post_op_spec.RenewableRefreshRotateValidationDecoderSpec"). ss_surface_signed("post_op_spec.RenewableRefreshValidationDecoderSpec").
-ss_surface_signed("post_op_spec.ReplayedRebaseResultSpec"). ss_surface_signed("post_op_spec.ReplayedRebaseStepSummarySpec").
-ss_surface_signed("post_op_spec.RequiredEncryptedBlobDecoderSpec"). ss_surface_signed("post_op_spec.RequiredEncryptedBlobSpec").
-ss_surface_signed("post_op_spec.ResultAssertionFromRowSpec"). ss_surface_signed("post_op_spec.ResultAssertionSpec").
-ss_surface_signed("post_op_spec.ResultMaterializationSpec"). ss_surface_signed("post_op_spec.RevisionCacheTagsSpec").
-ss_surface_signed("post_op_spec.ScalarColumnsTupleSpec"). ss_surface_signed("post_op_spec.ScalarRowValueSpec").
-ss_surface_signed("post_op_spec.ScalarTupleResultSpec"). ss_surface_signed("post_op_spec.SchemaStateSnapshotDecoderSpec").
-ss_surface_signed("post_op_spec.SelectedUpdateResultDecoderSpec"). ss_surface_signed("post_op_spec.SessionValidationDecoderSpec").
-ss_surface_signed("post_op_spec.StructuredArraySpec"). ss_surface_signed("post_op_spec.StructuredResultSpec").
-ss_surface_signed("post_op_spec.TableExistsManyDecoderSpec"). ss_surface_signed("post_op_spec.TableExistsManySpec").
-ss_surface_signed("post_op_spec.TerminalObjectEmptySpec"). ss_surface_signed("post_op_spec.VectorDimensionValidationAssertionSpec").
-ss_surface_signed("post_op_spec.VectorDimensionValidationSpec"). ss_surface_signed("post_op_spec.VersionedReadContextSpec").
-ss_surface_signed("post_op_spec.VersionedWriteBranchContextSpec"). ss_surface_signed("post_op_spec.WorkspaceNonceDecoderSpec").
-ss_surface_signed("post_op_spec.WorkspaceNonceSpec").
-
-// The runtime registry ss_runtime_signature signs (100 entries).
-ss_runtime_signed("assertion.exception_row"). ss_runtime_signed("assertion.result").
-ss_runtime_signed("assertion.row.vector_dimension_validation"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.BRANCH_HISTORY_CURSOR_PAGE").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.BRANCH_INFO"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.BRANCH_INFO_WITH_CREATED").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.BRANCH_ROUTE_PROOF"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.BULK_INTEGER_CURSOR_CHANGES").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.CACHE_GENERATION_MAP"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.CLEANUP_RESULT").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.COALESCED_INSERT_RETURN_MAP"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.COMMIT_BRANCH_CONTEXT").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.COMMIT_BRANCH_FETCH"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.CONTENT_STORE_ROW_LOOKUP").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.CROSS_BRANCH_RESULT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.DELETED_COUNT").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.EDGE_VIOLATION"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.EMBEDDING_HASH").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.EMBEDDING_MATERIALIZED_METADATA"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.EMBEDDING_METADATA_VALIDATION").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.EMBEDDING_STORE_STATS"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.EMBEDDING_VECTOR_CONFLICT_VALIDATION").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.GRAPH_PATH_EVIDENCE"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.GRAPH_RESULT").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.HISTORY_CURSOR_PAGE"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.HISTORY_ENTRIES").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.HISTORY_ENTRIES_WITH_META"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.INTEGER_CURSOR_ROWS").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.MERGE_RESULT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.PLAN_HISTORY_CURSOR_PAGE").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.PREPARED_CACHE_COMMIT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.RENEWABLE_ACCESS_VALIDATION").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.RENEWABLE_FAMILY_PROJECTION"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.RENEWABLE_REFRESH_REPLAY_VALIDATION").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.RENEWABLE_REFRESH_ROTATE_VALIDATION"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.RENEWABLE_REFRESH_VALIDATION").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.REPLAYED_REBASE_RESULT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.REQUIRED_ENCRYPTED_BLOB").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.SCALAR_COLUMNS_TUPLE"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.SCHEMA_STATE_SNAPSHOT").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.SELECTED_UPDATE_RESULT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.SESSION_LOOKUP_ROW").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.SESSION_VALIDATION"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.SQUASH_BRANCH_CONTEXT").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.SQUASH_MERGE_CONTEXT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.TABLE_EXISTS_MANY").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.VECTOR_DIMENSION_VALIDATION"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.VERSIONED_NODE_METADATA_MAP").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.VERSIONED_READ_CONTEXT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.VERSIONED_TYPE_NAME_MAP").
-ss_runtime_signed("decoder.DomainPostOpDecoderKind.VERSIONED_WRITE_BRANCH_CONTEXT"). ss_runtime_signed("decoder.DomainPostOpDecoderKind.WORKSPACE_NONCE").
-ss_runtime_signed("materializer.HydrateFirstResolvedRowStep.model_one"). ss_runtime_signed("materializer.HydrateResolvedRowsStep.model_many").
-ss_runtime_signed("materializer.array_payload.dolt_materialized_revision_ids"). ss_runtime_signed("materializer.array_payload.graph_bindings").
-ss_runtime_signed("materializer.array_payload.materialization_candidates"). ss_runtime_signed("materializer.array_payload.search_with_meta").
-ss_runtime_signed("materializer.auth_tracked_token_validation"). ss_runtime_signed("materializer.blob_diff").
-ss_runtime_signed("materializer.compound_array"). ss_runtime_signed("materializer.conditional_fired_labels").
-ss_runtime_signed("materializer.dataclass_one"). ss_runtime_signed("materializer.embedding_worker_dispatch_groups").
-ss_runtime_signed("materializer.inline_large_column"). ss_runtime_signed("materializer.literal").
-ss_runtime_signed("materializer.model_one_empty.object_not_found"). ss_runtime_signed("materializer.model_one_empty.programming_error").
-ss_runtime_signed("materializer.model_one_empty.value_error"). ss_runtime_signed("materializer.object_payload.cache_get_resolution").
-ss_runtime_signed("materializer.object_payload.embedding_require_no_rows"). ss_runtime_signed("materializer.object_payload.exact_single_row").
-ss_runtime_signed("materializer.object_payload.replay_loop_result"). ss_runtime_signed("materializer.permitted_raw_row").
-ss_runtime_signed("materializer.projected_model_many"). ss_runtime_signed("materializer.projected_model_one").
-ss_runtime_signed("materializer.projected_row_one"). ss_runtime_signed("materializer.projected_rows").
-ss_runtime_signed("materializer.raw_row"). ss_runtime_signed("materializer.raw_rows").
-ss_runtime_signed("materializer.required_raw_row"). ss_runtime_signed("materializer.result_class_many").
-ss_runtime_signed("materializer.result_class_one"). ss_runtime_signed("materializer.revision_cache_tags").
-ss_runtime_signed("materializer.row_count"). ss_runtime_signed("materializer.scalar_column").
-ss_runtime_signed("materializer.scalar_column_frozenset"). ss_runtime_signed("materializer.scalar_column_list").
-ss_runtime_signed("materializer.scalar_column_set"). ss_runtime_signed("materializer.scalar_column_tuple").
-ss_runtime_signed("materializer.scalar_row.deleted_count_bool"). ss_runtime_signed("materializer.scalar_tuple").
-ss_runtime_signed("materializer.structured_array"). ss_runtime_signed("materializer.structured_object").
-ss_runtime_signed("materializer.three_way_diff"). ss_runtime_signed("materializer.tuple_query_projection").
-ss_runtime_signed("materializer.two_way_diff"). ss_runtime_signed("materializer.unversioned_vector_scores").
-ss_runtime_signed("materializer.vector_search_id_scores"). ss_runtime_signed("materializer.vector_search_results").
