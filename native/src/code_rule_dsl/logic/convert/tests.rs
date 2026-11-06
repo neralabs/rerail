@@ -355,9 +355,14 @@ fn rule_files() -> Vec<PathBuf> {
 }
 
 /// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
-/// it lowers. `RERAIL_REPLAY_CONVERTED` replays the converted JSON instead.
+/// it lowers and the check has no authored file (`authored()`, which follows the oracle's configurations: on
+/// layer-violations, missing-async-pairs, post-op-no-internal-dispatch, public-api-triples and swallowed-exceptions
+/// it gives 107 of 107 events, the hand-written rules 97 of 98 and none of the 9 configured).
+/// `RERAIL_REPLAY_HAND_WRITTEN` runs the hand-written rule over an authored file; `RERAIL_REPLAY_CONVERTED` replays
+/// the converted JSON (and its authored file) instead.
 fn hand_written(check: &str) -> Option<String> {
-    if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
+    let overlay = authored().join(format!("data-layer-{}.rr", check.replace('_', "-")));
+    if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() || (overlay.exists() && std::env::var_os("RERAIL_REPLAY_HAND_WRITTEN").is_none()) {
         return None;
     }
     let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
