@@ -241,7 +241,7 @@ Each file is judged by the checkout that owns it, with that checkout's configura
 
 The owner is the nearest folder above the file holding a `.git` entry that Git confirms as a checkout's top level. Only checkouts that are recorded, started and set up evaluate files.
 
-A worktree of a repository where Rerail runs is recorded the first time a session's path falls in it, wherever it sits and whichever folder the session started in, and judges its files itself. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
+A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
 
 Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this: a finding there reaches the agent at a later tool call. The walk can't tell who wrote a file, so every active session of the repository is steered on it and keeps its own record. What Git wrote is left out, as in the session's own folder.
 
