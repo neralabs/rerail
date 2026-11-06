@@ -51,6 +51,26 @@ describe("IgnoreRuleFiles", () => {
     expect(await files.changes(look, [root])).toEqual([{ path: ".git/info/exclude", via: "observed", ignoresMore: ["!keep.log"] }]);
   });
 
+  it("records a pattern repeated after a negation, and a reorder, in a file with a negation: Git's last match wins", async () => {
+    const root = await checkout(join(home, "repo"));
+    const exclude = join(root, ".git", "info", "exclude");
+    await writeFile(exclude, "*.log\n!keep.log\n");
+    const files = await IgnoreRuleFiles.open(root, [root]);
+    await appendFile(exclude, "*.log\n");
+    expect(await files.changes(look, [root])).toEqual([{ path: ".git/info/exclude", via: "observed", ignoresMore: [], reordered: true }]);
+    await writeFile(exclude, "!keep.log\n*.log\n");
+    expect(await files.changes(look, [root])).toEqual([{ path: ".git/info/exclude", via: "observed", ignoresMore: [], reordered: true }]);
+  });
+
+  it("follows `git config core.excludesFile` to a new file, compared from empty", async () => {
+    const root = await checkout(join(home, "repo"));
+    const files = await IgnoreRuleFiles.open(root, [root]);
+    await writeFile(join(root, "ig"), "cfg/\n");
+    execFileSync("git", ["config", "core.excludesFile", "ig"], { cwd: root });
+    expect(await files.changes(look, [root])).toEqual([{ path: "ig", via: "observed", ignoresMore: ["cfg/"] }]);
+    expect(await files.changes(look, [root])).toEqual([]);
+  });
+
   it("compares a .gitignore a tool edit names with what it held before the edit, and one a walk found with what it first held", async () => {
     const root = await checkout(join(home, "repo"));
     const files = await IgnoreRuleFiles.open(root, [root]);

@@ -1,7 +1,7 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join, posix, resolve, win32 } from "node:path";
+import { dirname, join, posix, resolve, win32 } from "node:path";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -274,6 +274,22 @@ export async function gitExcludeFiles(cwd: string): Promise<string[]> {
 function defaultExcludesFile(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
   return join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore");
+}
+
+/**
+ * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
+ * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig`
+ * and `git/config` in `XDG_CONFIG_HOME` or `~/.config`. The system file, which only an administrator writes, and files
+ * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ */
+export async function gitConfigFiles(cwd: string): Promise<string[]> {
+  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
+  if (local === undefined || local === "") return [];
+  const global = process.env.GIT_CONFIG_GLOBAL;
+  const globals = global === undefined || global === ""
+    ? [join(process.env.HOME ?? homedir(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
+    : [global];
+  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */

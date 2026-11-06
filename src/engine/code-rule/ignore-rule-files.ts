@@ -1,16 +1,19 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { gitExcludeFiles } from "../git.js";
+import { gitConfigFiles, gitExcludeFiles } from "../git.js";
 
 /**
- * A change to Git's ignore rules in a session that makes them ignore more: `ignoresMore` holds each pattern the file
- * gained and each negation (`!pattern`) it lost. `tool` when a finished tool edit of the session named the file;
- * `observed` when a look after a command or at a turn end found it changed, whoever changed it.
+ * A change to Git's ignore rules in a session that can make them ignore more. `ignoresMore` holds each pattern the file
+ * gained and each negation (`!pattern`) it lost; `reordered` is set when the file holds a negation and its patterns
+ * changed otherwise (an order, a duplicate, a removal), since Git's last matching pattern wins. `tool` when a finished
+ * tool edit of the session named the file; `observed` when a look after a command or at a turn end found it changed,
+ * whoever changed it.
  */
 export interface IgnoreRulesChange {
   path: string;
   via: "tool" | "observed";
   ignoresMore: string[];
+  reordered?: true;
 }
 
 /** What a look compares: the ignore files a finished tool edit named, and the `.gitignore` files a walk found changed. */
@@ -21,11 +24,15 @@ export interface IgnoreRuleCandidates {
   observed: readonly string[];
 }
 
+/** The patterns of an ignore file, in order (`patternsOf`). */
+type Patterns = readonly string[];
+
 /**
  * Git's ignore rules as a session can change them: every `.gitignore` a tool edit names or a walk finds, and the
  * exclude files no diff shows (`info/exclude`, `core.excludesFile`) of every checkout whose files the session's checks
- * judge. Each is compared by its patterns, so a comment, a blank line or a duplicate line changes nothing. Files are
- * named relative to the session folder where they lie within it, else absolute.
+ * judge. Each is compared by its patterns, so a comment, a blank line or a duplicate line changes nothing. The Git
+ * configuration files that name `core.excludesFile` are watched too: once one changes, an excludes file it newly names
+ * is compared from empty. Files are named relative to the session folder where they lie within it, else absolute.
  */
 export class IgnoreRuleFiles {
   readonly #root: string;
@@ -33,8 +40,10 @@ export class IgnoreRuleFiles {
   readonly #checkouts = new Set<string>();
   /** The watched exclude files, absolute: compared at every look. */
   readonly #excludeFiles = new Set<string>();
+  /** Each watched Git configuration file, absolute, with its stamp at the last look (`null`: absent). */
+  readonly #configStamps = new Map<string, string | null>();
   /** Each ignore file known, absolute, with its patterns when last read (none for a file absent or unreadable). */
-  readonly #patterns = new Map<string, ReadonlySet<string>>();
+  readonly #patterns = new Map<string, Patterns>();
   /** The look in progress, or the last one: looks run one at a time, so two never report one change twice. */
   #looking: Promise<unknown> = Promise.resolve();
 
@@ -60,17 +69,19 @@ export class IgnoreRuleFiles {
   }
 
   /**
-   * What made Git's rules ignore more since the last look, now taken as seen: each ignore file `candidates` names, then
-   * each watched exclude file. The exclude files of `checkouts` not watched before are watched from now on, as they are.
+   * What can have made Git's rules ignore more since the last look, now taken as seen: each ignore file `candidates`
+   * names, then each watched exclude file, including one a changed configuration file now names. The exclude files of
+   * `checkouts` not watched before are watched from now on, as they are.
    */
   async changes(candidates: IgnoreRuleCandidates, checkouts: readonly string[]): Promise<IgnoreRulesChange[]> {
     return await this.#serially(async () => {
+      await this.#followConfiguration();
       const named = new Set(this.#ignoreFiles(candidates.named));
       const files = new Set([...named, ...this.#ignoreFiles(candidates.observed), ...this.#excludeFiles]);
       const changes: IgnoreRulesChange[] = [];
       for (const file of files) {
-        const ignoresMore = await this.#ignoresMore(file);
-        if (ignoresMore.length > 0) changes.push({ path: shownIgnoreFile(this.#root, file), via: named.has(file) ? "tool" : "observed", ignoresMore });
+        const change = await this.#change(file, named.has(file) ? "tool" : "observed");
+        if (change !== undefined) changes.push(change);
       }
       await this.#watch(checkouts);
       return changes;
@@ -84,14 +95,14 @@ export class IgnoreRuleFiles {
     return await run;
   }
 
-  /** The patterns by which `file` ignores more than at the last look, which it now holds as its baseline. */
-  async #ignoresMore(file: string): Promise<string[]> {
-    const before = this.#patterns.get(file) ?? NO_PATTERNS;
+  /** How `file` can ignore more than at the last look, which it now holds as its baseline; undefined when it cannot. */
+  async #change(file: string, via: IgnoreRulesChange["via"]): Promise<IgnoreRulesChange | undefined> {
+    const before = this.#patterns.get(file) ?? [];
     const after = await patternsOf(file);
     this.#patterns.set(file, after);
-    const gained = [...after].filter(pattern => !pattern.startsWith("!") && !before.has(pattern));
-    const lostNegations = [...before].filter(pattern => pattern.startsWith("!") && !after.has(pattern));
-    return [...gained, ...lostNegations];
+    const { ignoresMore, reordered } = widening(before, after);
+    if (ignoresMore.length === 0 && !reordered) return undefined;
+    return { path: shownIgnoreFile(this.#root, file), via, ignoresMore, ...(reordered ? { reordered: true as const } : {}) };
   }
 
   /** The ignore files among `paths`, absolute: any `.gitignore`, and the watched exclude files. */
@@ -100,12 +111,36 @@ export class IgnoreRuleFiles {
       .filter(absolute => basename(absolute) === ".gitignore" || this.#excludeFiles.has(absolute));
   }
 
-  /** Watches the exclude files of each of `checkouts` not watched yet, from what they hold now. */
+  /**
+   * Once a watched configuration file changed, asks Git again which exclude files each watched checkout reads, and
+   * watches one it newly names from empty: its patterns are all new to the session's rules.
+   */
+  async #followConfiguration(): Promise<void> {
+    if (!(await this.#configurationChanged())) return;
+    for (const checkout of this.#checkouts) {
+      for (const file of await gitExcludeFiles(checkout)) this.#excludeFiles.add(file);
+    }
+  }
+
+  /** Whether a watched configuration file changed since the last look; each now holds its new stamp. */
+  async #configurationChanged(): Promise<boolean> {
+    let changed = false;
+    for (const [file, before] of this.#configStamps) {
+      const after = await stampOf(file);
+      if (after === before) continue;
+      this.#configStamps.set(file, after);
+      changed = true;
+    }
+    return changed;
+  }
+
+  /** Watches the exclude and configuration files of each of `checkouts` not watched yet, from what they hold now. */
   async #watch(checkouts: readonly string[]): Promise<void> {
     for (const checkout of checkouts) {
       if (this.#checkouts.has(checkout)) continue;
       this.#checkouts.add(checkout);
       for (const file of await gitExcludeFiles(checkout)) await this.#watchExcludeFile(file);
+      for (const file of await gitConfigFiles(checkout)) if (!this.#configStamps.has(file)) this.#configStamps.set(file, await stampOf(file));
     }
   }
 
@@ -117,7 +152,23 @@ export class IgnoreRuleFiles {
   }
 }
 
-const NO_PATTERNS: ReadonlySet<string> = new Set();
+/**
+ * How the patterns `after` of an ignore file can ignore more than `before`: each pattern gained and each negation
+ * lost, and, where either holds a negation, whether their order changed, since Git's last matching pattern wins (a
+ * pattern added again after a negation re-ignores what it re-included). Without a negation, order and duplicates
+ * change nothing.
+ */
+export function widening(before: Patterns, after: Patterns): { ignoresMore: string[]; reordered: boolean } {
+  const had = new Set(before);
+  const has = new Set(after);
+  const ignoresMore = [
+    ...[...has].filter(pattern => !pattern.startsWith("!") && !had.has(pattern)),
+    ...[...had].filter(pattern => pattern.startsWith("!") && !has.has(pattern)),
+  ];
+  const negated = [...before, ...after].some(pattern => pattern.startsWith("!"));
+  const reordered = negated && ignoresMore.length === 0 && before.join("\n") !== after.join("\n");
+  return { ignoresMore, reordered };
+}
 
 /** An ignore file as a session sees it: relative to its folder `root` where it lies within it, else absolute. */
 export function shownIgnoreFile(root: string, absolute: string): string {
@@ -126,16 +177,25 @@ export function shownIgnoreFile(root: string, absolute: string): string {
 }
 
 /**
- * The patterns of the ignore file `file`, as Git reads them: each line without its unescaped trailing spaces, but for
- * blank lines and comments; none when it is absent or unreadable.
+ * The patterns of the ignore file `file`, in order, as Git reads them: each line without its unescaped trailing spaces,
+ * but for blank lines and comments; none when it is absent or unreadable.
  */
-async function patternsOf(file: string): Promise<ReadonlySet<string>> {
+async function patternsOf(file: string): Promise<Patterns> {
   let text: string;
   try {
     text = await readFile(file, "utf8");
   } catch {
-    return NO_PATTERNS;
+    return [];
   }
-  const patterns = text.split(/\r?\n/u).map(line => line.replace(/(?<!\\) +$/u, ""));
-  return new Set(patterns.filter(pattern => pattern !== "" && !pattern.startsWith("#")));
+  return text.split(/\r?\n/u).map(line => line.replace(/(?<!\\) +$/u, "")).filter(pattern => pattern !== "" && !pattern.startsWith("#"));
+}
+
+/** A configuration file's stamp (size, modification time, inode), or null when it is absent. */
+async function stampOf(file: string): Promise<string | null> {
+  try {
+    const info = await stat(file);
+    return `${info.size}:${info.mtimeMs}:${info.ino}`;
+  } catch {
+    return null;
+  }
 }

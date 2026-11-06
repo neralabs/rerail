@@ -513,6 +513,15 @@ function reportBestEffort(report: () => void): void {
     process.stderr.write(`rerail: policy execution recording failed: ${errorMessage(error)}\n`);
   }
 }
+/** Whether the file at `absolute` changed after `startedAt`, on the filesystem's clock; false when it cannot be read. */
+async function writtenSince(absolute: string, startedAt: number): Promise<boolean> {
+  try {
+    const info = await lstat(absolute);
+    return Math.max(info.mtimeMs, info.ctimeMs) >= startedAt;
+  } catch {
+    return false;
+  }
+}
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -1170,8 +1179,9 @@ export class CodeRuleBridge {
     const first: string[] = [];
     for (const path of new Set([...walk.previous.keys(), ...current.keys()])) {
       const seen = this.#walkedIgnoreFile(discovery, walk, current, path);
-      if (seen === "first") first.push(path);
-      else if (seen === "changed") this.#walkedIgnoreChanges.add(path);
+      // One first seen but written since the session started may be the session's own write: it is compared from empty.
+      if (seen === "first" && !(await writtenSince(resolve(discovery.root, path), discovery.startedAt))) first.push(path);
+      else if (seen !== undefined) this.#walkedIgnoreChanges.add(path);
     }
     await this.#rememberIgnoreFiles(first);
   }

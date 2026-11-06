@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitExcludeFiles, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, runGit,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
+  runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
@@ -181,6 +182,17 @@ describe("gitExcludeFiles", () => {
   it("names none outside a Git checkout", async () => {
     const { home } = await isolatedRepository();
     expect(await gitExcludeFiles(home)).toEqual([]);
+  });
+
+  it("names the configuration files that can set core.excludesFile: the repository's, the worktree's and the global ones", async () => {
+    const { root, home } = await isolatedRepository();
+    vi.stubEnv("GIT_CONFIG_GLOBAL", "");
+    expect(await gitConfigFiles(root)).toEqual([
+      join(root, ".git", "config"), join(root, ".git", "config.worktree"), join(home, ".gitconfig"), join(home, ".config", "git", "config"),
+    ]);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
+    expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
+    expect(await gitConfigFiles(home)).toEqual([]);
   });
 });
 
