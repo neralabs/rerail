@@ -102,7 +102,9 @@ const EQ16: &str = "static inline uint eq16(uint4 v, uint c4) {
 }
 ";
 
-/// How generated MSL computes `class` (being evaluated; `docs/parser-generators/12`):
+/// How generated MSL computes `class`. `Planes` is the default: on simdjson's five classes over
+/// 64 MiB it ran at the speed of five plain byte compares (memory-bound), and `Lookup` about 30%
+/// slower at every lane width (`block_tests::class_strategies_gpu_time`).
 ///
 /// - `Lookup`: simdjson's form, byte by byte: two lookups per byte in `constant` tables give each
 ///   byte's class bits, then a SWAR nonzero test of the selected bits gives the mask.
@@ -141,7 +143,7 @@ const TRANSPOSE8: &str = "static inline ulong transpose8(ulong x) {
 
 /// The native IR as one straight-line MSL kernel, `tempo_block`, for lanes of `width`.
 pub(in crate::code_rule_dsl) fn generate(native: &BlockNative, width: LaneWidth) -> String {
-    generate_with(native, width, ClassStrategy::Lookup)
+    generate_with(native, width, ClassStrategy::Planes)
 }
 
 /// A class formula's value: a constant, or a named lane word.
@@ -419,7 +421,7 @@ pub(in crate::code_rule_dsl) fn run_generated(
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<Vec<Vec<u64>>, Error> {
-    run_generated_with(native, bytes, width, ClassStrategy::Lookup).map(|(words, _)| words)
+    run_generated_with(native, bytes, width, ClassStrategy::Planes).map(|(words, _)| words)
 }
 
 /// Generated MSL run with `class` by `strategy`: the outputs, and the dispatch's GPU seconds.
