@@ -1,0 +1,94 @@
+{
+  "caught": [
+    {
+      "path": "packs/python/rules/bandit-b101-assert-used.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b101-assert-used\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Bandit B101 (assert-used)\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/rules/bandit-b113-request-without-timeout.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b113-request-without-timeout\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass a timeout to this requests call [bandit-b113-request-without-timeout].\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-console.json",
+      "content": "{\"format\":\"rerail.policy/v1\",\"id\":\"eslint-no-console\",\"revision\":1,\"mode\":\"steer\",\"description\":\"Pass a timeout to every requests call.\",\"scope\":{\"include\":[\"**/*.py\"],\"exclude\":[]},\"clauses\":[{\"id\":\"c\",\"forbid\":{\"regex\":{\"source\":\"file.content\",\"pattern\":\"requests\\\\.get\\\\(\"}},\"violation\":{\"code\":\"X\",\"anchor\":\"witness.span\",\"message\":{\"$option\":\"allow\",\"cases\":{\"[\\\"warn\\\"]\":\"Use the logger; ESLint allows only console.warn here.\"},\"default\":\"Use the logger instead of console.\"}}}]}"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-sort-keys.json",
+      "content": "{\"format\":\"rerail.policy/v1\",\"id\":\"eslint-sort-keys\",\"revision\":1,\"mode\":\"steer\",\"description\":\"Pass a timeout to every requests call.\",\"scope\":{\"include\":[\"**/*.py\"],\"exclude\":[]},\"clauses\":[{\"id\":\"c\",\"forbid\":{\"regex\":{\"source\":\"file.content\",\"pattern\":\"requests\\\\.get\\\\(\"}},\"violation\":{\"code\":\"X\",\"anchor\":\"witness.span\",\"message\":{\"$option\":\"caseSensitive\",\"cases\":{\"false\":{\"$option\":\"order\",\"cases\":{\"asc\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural ascending order.\"},\"default\":\"Sort these keys in ascending order.\"}},\"default\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural descending order.\"},\"default\":\"Sort these keys in descending order.\"}}},\"default\":{\"$option\":\"order\",\"cases\":{\"desc\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural descending order.\"},\"default\":\"Sort these keys in descending order.\"}},\"default\":{\"$option\":\"natural\",\"cases\":{\"true\":\"Sort these keys in natural ascending order.\"},\"default\":\"Sort these keys in ascending order, as Biome does.\"}}}}}]}"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-console-levels.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-no-console-levels\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass 'warn' or 'error', the levels ESLint accepts.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/rules/ruff-up007-non-pep604-annotation.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-up007-non-pep604-annotation\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Ruff can't see your target version; if it is below 3.10, keep this Union.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/php/rules/phpcs-no-silenced-errors.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpcs-no-silenced-errors\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"PHP_CodeSniffer flags this silenced call; handle the error instead of using @.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-max-len.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-max-len\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Keep this on one line.\\nESLint reports the rest.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/rules/bandit-b310-urllib-urlopen.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b310-urllib-urlopen\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Pass a timeout to this call.\"\n      }\n    },\n    {\n      \"id\": \"second\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"urllib\\\\.urlopen\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"Y\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Bandit B310 (urllib_urlopen)\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/candidates/rules/ruff-a005-stdlib-module-shadowing.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-a005-stdlib-module-shadowing\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Rename a module that shadows a standard-library module.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Ruff A005: rename this module.\"\n      }\n    }\n  ]\n}\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "packs/python/rules/ruff-up007-non-pep604-annotation.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-up007-non-pep604-annotation\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"This rule can't see your target version; if it is below 3.10, keep this `Union`.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/php/rules/phpcs-no-unused-ignore.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"phpcs-no-unused-ignore\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Remove this unused `phpcs:ignore` comment; this rule found nothing on the line it silences.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-restricted-imports.json",
+      "content": "{\"format\":\"rerail.policy/v1\",\"id\":\"eslint-no-restricted-imports\",\"revision\":1,\"mode\":\"steer\",\"description\":\"Pass a timeout to every requests call.\",\"scope\":{\"include\":[\"**/*.py\"],\"exclude\":[]},\"clauses\":[{\"id\":\"options\",\"define\":{\"options\":{\"paths\":{\"type\":\"array\",\"default\":[{\"name\":\"lodash\",\"message\":\"ESLint users import lodash-es.\"}]}}}},{\"id\":\"c\",\"forbid\":{\"regex\":{\"source\":\"file.content\",\"pattern\":\"eslint|biome\"}},\"violation\":{\"code\":\"ESLINT_NO_RESTRICTED_IMPORTS\",\"anchor\":\"witness.span\",\"message\":\"Import this from the module the project allows instead.\",\"suppress\":{\"eslint\":{\"rules\":[\"no-restricted-imports\"]},\"biome\":{\"rules\":[\"lint/style/noRestrictedImports\"]}}}}]}"
+    },
+    {
+      "path": "packs/python/candidates/rules/ruff-a005-stdlib-module-shadowing.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-a005-stdlib-module-shadowing\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": {\n          \"$option\": \"flake8-builtins.strict-checking\",\n          \"cases\": {\n            \"true\": \"Rename this module; at any depth it shadows a standard-library module.\"\n          },\n          \"default\": \"Rename this top-level module; it shadows a standard-library module.\"\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-unused-vars.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-no-unused-vars\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Prefix `$NAME` with `_`, or remove it; keep an `// eslint-disable-next-line` only for generated code.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/rules/ruff-pgh004-blanket-noqa.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"ruff-pgh004-blanket-noqa\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Name the code in this `# noqa: <code>` comment, such as `# noqa: E501` for `ruff`.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-warning-comments.json",
+      "content": "{\"format\":\"rerail.policy/v1\",\"id\":\"eslint-no-warning-comments\",\"revision\":1,\"mode\":\"steer\",\"description\":\"Pass a timeout to every requests call.\",\"scope\":{\"include\":[\"**/*.py\"],\"exclude\":[]},\"clauses\":[{\"id\":\"c\",\"forbid\":{\"regex\":{\"source\":\"file.content\",\"pattern\":\"requests\\\\.get\\\\(\"}},\"violation\":{\"code\":\"X\",\"anchor\":\"witness.span\",\"message\":{\"$option\":\"terms\",\"cases\":{\"[\\\"eslint\\\"]\":\"Unexpected 'eslint' comment: '$CT'.\"},\"default\":\"Unexpected 'fixme' comment: '$CT'.\"}}}]}"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-restricted-syntax.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-no-restricted-syntax\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Don't add 'eslint' to this list; it's a reserved key.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/rust/candidates/rules/clippy-redundant-static-lifetimes.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"clippy-redundant-static-lifetimes\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Remove this 'static; keep 'biome' as the option value.\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/python/candidates/probes/rules/bandit-b101-assert-used.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"bandit-b101-assert-used\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Bandit B101 (assert-used)\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/javascript/rules/eslint-no-alert.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"eslint-no-alert\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Show this in the page instead of an alert.\"\n      }\n    },\n    {\n      \"id\": \"notes\",\n      \"define\": {\n        \"options\": {\n          \"notes\": {\n            \"type\": \"array\",\n            \"default\": [\n              {\n                \"message\": \"ESLint users keep this off.\"\n              }\n            ]\n          }\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "path": "packs/rerail/rules/rerail-pack-data-helper-copies.json",
+      "content": "{\n  \"format\": \"rerail.policy/v1\",\n  \"id\": \"rerail-pack-data-helper-copies\",\n  \"revision\": 1,\n  \"mode\": \"steer\",\n  \"description\": \"Pass a timeout to every requests call.\",\n  \"scope\": {\n    \"include\": [\n      \"**/*.py\"\n    ],\n    \"exclude\": []\n  },\n  \"clauses\": [\n    {\n      \"id\": \"c\",\n      \"forbid\": {\n        \"regex\": {\n          \"source\": \"file.content\",\n          \"pattern\": \"requests\\\\.get\\\\(\"\n        }\n      },\n      \"violation\": {\n        \"code\": \"X\",\n        \"anchor\": \"witness.span\",\n        \"message\": \"Import this from scripts/pack-data/eslint-expected.mjs instead of defining it here.\"\n      }\n    }\n  ]\n}\n"
+    }
+  ]
+}
