@@ -1,8 +1,8 @@
 // data-layer-execution-authority-bypass, clause authority-sites (relational, partitionBy file), options at their
 // defaults (oracleAnalyzer false, entryPoint "all"; no stage reads them). Started from
 // native/src/code_rule_dsl/logic/programs/data_layer/execution_authority_bypass.rr, with its `ast(...)` inputs
-// written out over the base relations, its builtins (@qualname, @replace, @rx_replace) replaced by Datalog, and the
-// module-text gate the rules-ast policy adds to raw_functions / raw_classes.
+// written out over the base relations, its @qualname folded in Datalog, its @replace(…, "/", ".") an @rx_replace
+// of the literal "/", and the module-text gate the rules-ast policy adds to raw_functions / raw_classes.
 //
 // Inputs (one relation each):
 //   raw_functions / raw_classes: every function_definition / class_definition, its name field's text, its WRAPPER
@@ -18,10 +18,9 @@
 //     recursion runs along the tree (parents), one row per frame.
 //   sites: the frame f with f.lexical_start <= r.start and f.end >= r.end of largest start: r's def/class
 //     ancestors, and the frames whose decorated_definition wrapper holds r (r in a decorator); else "<module>".
-//     module = replace(rx_replace(path, '\.py$', ''), '/', '.'): doc's module, except that doc drops a trailing
-//     `.__init__`, so a path ending `/__init__.py` is given no module here (its SQL module ends `.__init__`, which
-//     no signed_callsites row has); doc also strips a repeated `.py` suffix where rx_replace strips one (no row of
-//     signed_callsites ends in `.py`, so neither form can match there).
+//     module = replace(rx_replace(path, '\.py$', ''), '/', '.'), computed as the SQL does:
+//     @rx_replace(@rx_replace(path, "\\.py$", ""), "/", ".") (a path ending `/__init__.py` gets a module ending
+//     `.__init__`, which no signed_callsites row has).
 //   private_exceptions, explicit_exceptions, signed_callsites: facts.
 // Query: AUTH001 off l2050_transaction/execution_boundary.py and not a private exception; AUTH002 not signed and
 // not an explicit exception; AUTH003 not a private exception. Key issue, code issue, at the site.
@@ -168,7 +167,8 @@ authority_signed("l4170_inbound_bridge.process", "_invoke_inbound_bridge_handler
 authority_signed("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority").
 authority_signed("l7500_commit_triggers.registry", "CommitTriggerRegistry._materialize_pending_triggers_under_authority_async").
 .decl authority_signed_site(r: node)
-authority_signed_site(r) :- authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, m), !suffix("/__init__.py", p), authority_signed(m, q).
+authority_signed_site(r) :- authority_qualname(r, q), node(d, r, _, _, _), doc(d, p, _),
+    m = @rx_replace(@rx_replace(p, "\\.py$", ""), "/", "."), authority_signed(m, q).
 
 // ---- the query ----
 violation("data-layer-execution-authority-bypass", "authority-sites", "AUTH001", p, l) :- authority_site(r, "AUTH001"),
