@@ -20,7 +20,6 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: loc, s: symbol)
 .decl node_text(n: node, s: symbol)
-.decl intval(n: node, v: number)
 .decl line(n: loc, l: number)
 .decl syntax_error(d: number)
 .decl value(n: node, v: symbol)
@@ -178,8 +177,6 @@ violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD00
 // field F, stopBy neighbor); `text` `node_text`; `ordinal` the row's index among its parent's rows (by start).
 // A kind test is a `node` constant (or a helper of them), never a comparison of a kind variable.
 // UNION ALL's duplicate rows are one finding per (issue, node), as the findings key (issue, identity) has them.
-// Approximations (named): `executor_cast_int` (CAST AS INTEGER), and the regexes' `\w`/`\b` (the text layer's \b is
-// ASCII; SQLite's rx_matches is W's regex).
 
 .decl executor_doc(d: number)
 executor_doc(d) :-
@@ -442,17 +439,18 @@ executor_prop(p, n) :- executor_attr(p, a, _), executor_attr_self(p), executor_a
 // subscripts and carrier_edges: the container, its ordinal-0 child.
 .decl executor_sub(s: node, c: node)
 executor_sub(s, c) :- executor_row(_, s), node(_, s, "subscript", _, _), executor_edge(s, c), executor_ord(c, 0).
-// CAST(text AS INTEGER): a decimal literal's value; 0 for 0x/0o/0b literals (their leading digit). Approximation
-// (named): a literal with underscores (`1_0`) casts to its leading digits in SQLite and has no row here.
-.decl executor_cast_int(n: node, v: number)
-executor_cast_int(n, v) :- node(_, n, "integer", _, _), node_text(n, t), match("[0-9]+", t), intval(n, v).
-executor_cast_int(n, 0) :- node(_, n, "integer", _, _), node_text(n, t), match("0[xXoObB](?s:.*)", t).
+// CAST(indexer.text AS INTEGER) for an `integer` indexer: SQLite reads the text's leading decimal digits (`1_0` is 1,
+// `0x10`/`0o7`/`0b1` are 0, `10j` is 10), as the decimal text `s` of that number (leading zeros off), compared with
+// the ordinal's `to_string`. (A text past i64 saturates in SQLite; no ordinal reaches it, and none equals its digits.)
+.decl executor_cast_int(n: node, s: symbol)
+executor_cast_int(n, s) :- node(_, n, "integer", _, _), node_text(n, t), s = @rx_replace(t, "(?s)^0*([0-9]+).*$", "${1}").
 .decl executor_carry(src: node, dst: node)
 executor_carry(c, s) :-
     executor_sub(s, c), !node(_, c, "list", _, _), !node(_, c, "tuple", _, _), !node(_, c, "dictionary", _, _).
 executor_carry(e, s) :-
     executor_sub(s, c), executor_seq(c), !node(_, c, "expression_list", _, _),
-    executor_edge(s, ix), executor_ord(ix, 1), executor_cast_int(ix, v), executor_edge(c, e), executor_ord(e, v).
+    executor_edge(s, ix), executor_ord(ix, 1), executor_cast_int(ix, x), executor_edge(c, e), executor_ord(e, v),
+    to_string(v) = x.
 executor_carry(v, s) :-
     executor_sub(s, c), node(_, c, "dictionary", _, _), executor_edge(s, ix), executor_ord(ix, 1), node_text(ix, t),
     executor_edge(c, pr), executor_edge(pr, k), executor_ord(k, 0), node_text(k, t), executor_edge(pr, v), executor_ord(v, 1).
