@@ -12,8 +12,10 @@
 //   argument, a `**` splat nor a comment (CPython keeps keywords apart; `*x` is in args).
 // Lines: CPython's lineno of a Call or For is its first token's line, tree-sitter's start line.
 // The outer `WHERE instr(path,'bootstrap')>0` is contains("bootstrap", p). The gate (`syntax: valid`) is
-// !syntax_error(d). Options (entryPoint, parameters) are not read by this clause.
-// Approximation: none known. Checked against the recorded batch 9-10 API events (all exact) and fixtures.
+// !syntax_error(d), tree-sitter's verdict. Remaining gap: CPython's verdict is not bound; a gated file tree-sitter
+// accepts and CPython rejects fails W's pythonAst stage (its worker raises: the run errors), and is read here.
+// Options (entryPoint, parameters) are not read by this clause. Checked against the recorded batch 9-10 API
+// events (all exact) and fixtures.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
