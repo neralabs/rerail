@@ -175,6 +175,51 @@ fn or_count(out: &mut [u64], other: &[u64]) -> usize {
     count(out)
 }
 
+/// Appends the members of `words` (`n` of them), plus `offset`, to `out`: one tight loop.
+fn push_bits(words: &[u64], offset: usize, n: usize, out: &mut Vec<u16>) {
+    out.reserve(n);
+    for (at, &w) in words.iter().enumerate() {
+        let mut w = w;
+        let base = (offset + at * 64) as u16;
+        while w != 0 {
+            out.push(base + w.trailing_zeros() as u16);
+            w &= w - 1;
+        }
+    }
+}
+
+/// `bytes` as little-endian `u16`s, into `out`: one copy on a little-endian host.
+fn le_u16s(bytes: &[u8], out: &mut Vec<u16>) {
+    let n = bytes.len() / 2;
+    out.clear();
+    out.reserve(n);
+    // SAFETY: `out` has room for `n` u16s (2n bytes), `bytes` holds at least 2n bytes, they do
+    // not overlap, and every bit pattern is a valid u16; the copy initializes the first `n`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), 2 * n);
+        out.set_len(n);
+    }
+    if cfg!(target_endian = "big") {
+        out.iter_mut().for_each(|v| *v = u16::from_le(*v));
+    }
+}
+
+/// `bytes` as little-endian `u64`s, into `out`.
+fn le_u64s(bytes: &[u8], out: &mut Vec<u64>) {
+    let n = bytes.len() / 8;
+    out.clear();
+    out.reserve(n);
+    // SAFETY: `out` has room for `n` u64s (8n bytes), `bytes` holds at least 8n bytes, they do
+    // not overlap, and every bit pattern is a valid u64; the copy initializes the first `n`.
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), 8 * n);
+        out.set_len(n);
+    }
+    if cfg!(target_endian = "big") {
+        out.iter_mut().for_each(|v| *v = u64::from_le(*v));
+    }
+}
+
 /// Bit `i` of the result is the xor of `w`'s bits `0..=i`: a carry-less multiply by all ones.
 #[inline]
 fn prefix_xor(w: u64) -> u64 {
@@ -433,7 +478,7 @@ impl NodeSet {
         let n: usize = b.iter().map(|w| w.count_ones() as usize).sum();
         if n <= b.len() {
             let from = self.values.len();
-            self.values.extend(bits(&b));
+            push_bits(&b, 0, n, &mut self.values);
             self.directory.push(Entry { key: k, form: Form::Array, at: from as u32, len: n as u32 });
             return;
         }
@@ -454,7 +499,7 @@ impl NodeSet {
         let len = self.words.len() - from;
         if n <= len {
             let at = self.values.len();
-            self.values.extend(bits(&self.words[from..]));
+            push_bits(&self.words[from..], 0, n, &mut self.values);
             self.words.truncate(from);
             self.directory.push(Entry { key: k, form: Form::Array, at: at as u32, len: n as u32 });
             return;
@@ -473,7 +518,7 @@ impl NodeSet {
         let n: usize = self.words[from..].iter().map(|w| w.count_ones() as usize).sum();
         if n <= len {
             let at = self.values.len();
-            self.values.extend(bits(&self.words[from..]));
+            push_bits(&self.words[from..], 0, n, &mut self.values);
             self.words.truncate(from);
             self.directory.push(Entry { key: k, form: Form::Array, at: at as u32, len: n as u32 });
             return;
@@ -1055,6 +1100,9 @@ pub(in crate::code_rule_dsl) struct Builder {
     /// The open chunk's members while it has only single nodes, few enough to seal as an array
     /// without scanning the chunk's words.
     pending: Vec<u16>,
+    /// Buffers reused to read stored containers.
+    u16s: Vec<u16>,
+    u64s: Vec<u64>,
     /// Whether the open chunk is in `scratch`.
     dense: bool,
     scratch: Vec<u64>,
@@ -1065,7 +1113,7 @@ pub(in crate::code_rule_dsl) struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
-        Self { set: NodeSet::default(), key: None, pending: Vec::new(), dense: false, scratch: vec![0; 1024], lo: usize::MAX, hi: 0 }
+        Self { set: NodeSet::default(), key: None, pending: Vec::new(), u16s: Vec::new(), u64s: Vec::new(), dense: false, scratch: vec![0; 1024], lo: usize::MAX, hi: 0 }
     }
 }
 
@@ -1134,87 +1182,135 @@ impl Builder {
         }
     }
 
-    /// Adds the members of `words`, whose bit `j` of word `i` is node `start + 64 i + j`.
+    /// Adds the members of `words`, whose bit `j` of word `i` is node `start + 64 i + j`: per
+    /// chunk the words it covers, shifted into place in one pass.
     pub(in crate::code_rule_dsl) fn words_at(&mut self, start: u32, words: &[u64]) {
-        for (i, &w) in words.iter().enumerate() {
-            if w == 0 {
-                continue;
-            }
+        let mut i = 0;
+        let mut carry = 0u64;
+        while i < words.len() {
             let (k, v) = key(start + 64 * i as u32);
+            let (at, shift) = (usize::from(v) / 64, u32::from(v % 64));
+            let m = (words.len() - i).min(1024 - at);
+            let part = &words[i..i + m];
             self.open(k);
             self.spill();
-            let (at, shift) = (usize::from(v) / 64, v % 64);
-            self.scratch[at] |= w << shift;
-            self.touch(at, at);
-            let carry = if shift == 0 { 0 } else { w >> (64 - shift) };
-            if carry != 0 {
-                if at + 1 < 1024 {
-                    self.scratch[at + 1] |= carry;
-                    self.touch(at + 1, at + 1);
-                } else {
-                    self.open(k + 1);
-                    self.spill();
-                    self.scratch[0] |= carry;
-                    self.touch(0, 0);
+            let out = &mut self.scratch[at..at + m];
+            if shift == 0 {
+                out.iter_mut().zip(part).for_each(|(o, &w)| *o |= w);
+            } else {
+                out[0] |= part[0] << shift | carry;
+                for j in 1..m {
+                    out[j] |= part[j] << shift | part[j - 1] >> (64 - shift);
                 }
+                carry = part[m - 1] >> (64 - shift);
             }
+            let mut last = at + m - 1;
+            if carry != 0 && at + m < 1024 {
+                self.scratch[at + m] |= carry;
+                carry = 0;
+                last += 1;
+            }
+            self.touch(at, last);
+            i += m;
+        }
+        if carry != 0 {
+            // The last word's high bits, at the start of the next chunk.
+            let (k, _) = key(start + 64 * words.len() as u32);
+            self.open(k);
+            self.spill();
+            self.scratch[0] |= carry;
+            self.touch(0, 0);
+        }
+    }
+
+    /// Adds nodes `offset + v` for `values`, ascending: per chunk one slice, appended to the
+    /// pending array when it fits, else set in the chunk's words.
+    fn array_at(&mut self, offset: u32, values: &[u16]) {
+        let mut rest = values;
+        while let Some(&first) = rest.first() {
+            let (k, _) = key(offset + u32::from(first));
+            let end = (k + 1) << 16;
+            let split = rest.partition_point(|&v| u64::from(offset + u32::from(v)) < end);
+            let (part, tail) = rest.split_at(split);
+            self.open(k);
+            let add = offset as u16;
+            let lowest = first.wrapping_add(add);
+            if !self.dense && self.pending.last().is_none_or(|&l| l < lowest) && self.pending.len() + part.len() <= 1024 {
+                self.pending.extend(part.iter().map(|&v| v.wrapping_add(add)));
+            } else {
+                self.spill();
+                for &v in part {
+                    let x = v.wrapping_add(add);
+                    self.scratch[usize::from(x) / 64] |= 1 << (x % 64);
+                }
+                let highest = part[part.len() - 1].wrapping_add(add);
+                self.touch(usize::from(lowest) / 64, usize::from(highest) / 64);
+            }
+            rest = tail;
         }
     }
 
     /// Adds a stored segment (`NodeSet::encode`) of the file at `base`, whose positions are below
-    /// `count`: arrays and runs move by `base`, bitmaps are shifted into the space's chunks.
+    /// `count`: arrays and runs move by `base`, bitmaps are shifted into the space's chunks. The
+    /// containers are read in bulk into reused buffers.
     pub(in crate::code_rule_dsl) fn segment(&mut self, base: u32, mut bytes: &[u8], count: u32) -> Result<(), &'static str> {
         let invalid = "invalid segment";
+        let past = "a position past the file's nodes";
         let mut last: Option<u16> = None;
-        while !bytes.is_empty() {
-            let (head, rest) = bytes.split_at_checked(7).ok_or(invalid)?;
-            let slice = u16::from_le_bytes([head[0], head[1]]);
-            let len = u32::from_le_bytes([head[3], head[4], head[5], head[6]]) as usize;
-            if last.is_some_and(|l| l >= slice) || len == 0 {
-                return Err(invalid);
-            }
-            last = Some(slice);
-            let size = match head[2] {
-                0 => 2 * len,
-                1 => 8 * len,
-                2 => 4 * len,
-                _ => return Err(invalid),
-            };
-            let (payload, rest) = rest.split_at_checked(size).ok_or(invalid)?;
-            let from = u32::from(slice) << 16;
-            let u16s = || payload.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]));
-            match head[2] {
-                0 => {
-                    for v in u16s() {
-                        let top = from | u32::from(v);
-                        if top >= count {
-                            return Err("a position past the file's nodes");
+        let (mut u16s, mut u64s) = (std::mem::take(&mut self.u16s), std::mem::take(&mut self.u64s));
+        let result = (|| {
+            while !bytes.is_empty() {
+                let (head, rest) = bytes.split_at_checked(7).ok_or(invalid)?;
+                let slice = u16::from_le_bytes([head[0], head[1]]);
+                let len = u32::from_le_bytes([head[3], head[4], head[5], head[6]]) as usize;
+                if last.is_some_and(|l| l >= slice) || len == 0 {
+                    return Err(invalid);
+                }
+                last = Some(slice);
+                let size = match head[2] {
+                    0 => 2 * len,
+                    1 => 8 * len,
+                    2 => 4 * len,
+                    _ => return Err(invalid),
+                };
+                let (payload, rest) = rest.split_at_checked(size).ok_or(invalid)?;
+                let from = u32::from(slice) << 16;
+                match head[2] {
+                    0 => {
+                        le_u16s(payload, &mut u16s);
+                        if !u16s.windows(2).all(|p| p[0] < p[1]) {
+                            return Err(invalid);
                         }
-                        self.node(base + top);
-                    }
-                }
-                1 => {
-                    let words = payload.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))).collect::<Vec<_>>();
-                    let top = from + View::Bitmap(&words).last() as u32;
-                    if words.last() == Some(&0) || top >= count {
-                        return Err("a position past the file's nodes");
-                    }
-                    self.words_at(base + from, &words);
-                }
-                _ => {
-                    let mut pairs = u16s();
-                    while let (Some(s), Some(l)) = (pairs.next(), pairs.next()) {
-                        let top = from | u32::from(l);
-                        if s > l || top >= count {
-                            return Err("a position past the file's nodes");
+                        if from | u32::from(u16s[len - 1]) >= count {
+                            return Err(past);
                         }
-                        self.run(base + (from | u32::from(s)), base + top + 1);
+                        self.array_at(base + from, &u16s);
+                    }
+                    1 => {
+                        le_u64s(payload, &mut u64s);
+                        if u64s[len - 1] == 0 || from + View::Bitmap(&u64s).last() as u32 >= count {
+                            return Err(past);
+                        }
+                        self.words_at(base + from, &u64s);
+                    }
+                    _ => {
+                        le_u16s(payload, &mut u16s);
+                        for pair in u16s.chunks_exact(2) {
+                            let (s, l) = (pair[0], pair[1]);
+                            let top = from | u32::from(l);
+                            if s > l || top >= count {
+                                return Err(past);
+                            }
+                            self.run(base + (from | u32::from(s)), base + top + 1);
+                        }
                     }
                 }
+                bytes = rest;
             }
-            bytes = rest;
-        }
-        Ok(())
+            Ok(())
+        })();
+        (self.u16s, self.u64s) = (u16s, u64s);
+        result
     }
 
     /// Seals the open chunk.
@@ -1228,7 +1324,19 @@ impl Builder {
             return;
         }
         self.dense = false;
-        if self.lo > self.hi {
+        // Words touched may be zero (a bitmap's words are or-ed in whole): trim to the members.
+        while self.lo <= self.hi && self.scratch[self.hi] == 0 {
+            if self.hi == 0 {
+                break;
+            }
+            self.hi -= 1;
+        }
+        if self.lo > self.hi || self.scratch[self.hi] == 0 {
+            if self.lo <= self.hi {
+                self.scratch[self.lo..=self.hi].fill(0);
+            }
+            self.lo = usize::MAX;
+            self.hi = 0;
             return;
         }
         let (lo, hi) = (self.lo, self.hi);
@@ -1284,7 +1392,7 @@ impl Builder {
             set.directory.push(Entry { key: k, form: Form::Bitmap, at: set.words.len() as u32, len: w as u32 });
             set.words.extend_from_slice(words);
         } else {
-            set.values.extend(bits(&words[lo..]).map(|v| v + (lo * 64) as u16));
+            push_bits(&words[lo..], lo * 64, n, &mut set.values);
             set.directory.push(Entry { key: k, form: Form::Array, at: from as u32, len: n as u32 });
         }
         self.scratch[lo..=hi].fill(0);

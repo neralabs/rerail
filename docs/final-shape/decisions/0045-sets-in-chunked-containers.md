@@ -319,8 +319,34 @@ What it shows:
 
   What is left is mostly the benchmark's clone, the copy and the count, and turning sparse
   results into arrays.
-- **Reading postings doubles**, from 66 to 135 ms over the whole repository. It is still faster
-  than delta-varint, and it is paid once per batch.
+- **Reading postings was twice as slow: 135 ms against 66 ms.** A profile of reading every
+  kind's set (`posting_forms`, `RERAIL_POSTING_SPIN`) found:
+  - ~45%: decoding bytes element by element (`chunks_exact` over `u8`, a new `Vec<u64>` per
+    bitmap);
+  - ~15%: `words_at`, word by word;
+  - ~13%: `node()` per array member;
+  - ~8%: sealing.
+
+  Now:
+  - containers are read with one copy into reused buffers;
+  - an array is offset and appended a chunk at a time;
+  - a bitmap is shifted into its chunk in one loop;
+  - a sealed chunk's array is extracted in one tight loop.
+
+  The bench now also times a floor: each segment's containers parsed and copied as they are,
+  which is what per-file chunks did. At load 37, twice:
+
+  | Read | ms |
+  |---|---|
+  | delta-varint | 196-199 |
+  | segments into the space's chunks | 107-113 |
+  | segments copied as they are (the floor) | 46-48 |
+
+  Moving segments into the space's chunks costs about 60 ms over the whole repository, all
+  393,756 (document, kind) postings. That is the price of the layout, paid once when a batch
+  reads its leaves. Of what is left, about half the samples are the first touch of each
+  segment: 40 MB in 393 K separate buffers, more than the 16 MB L2. The floor pays that too.
+  The rest is the shift and offset, and choosing each chunk's form.
 
 ## Steps
 

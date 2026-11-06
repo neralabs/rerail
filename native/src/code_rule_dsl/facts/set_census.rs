@@ -503,13 +503,44 @@ fn posting_forms() {
         }).sum::<usize>()
     };
     assert_eq!(read_varint(), read_segments());
+    // `RERAIL_POSTING_SPIN=<seconds>`: only read the segments, for a profiler.
+    if let Some(seconds) = std::env::var("RERAIL_POSTING_SPIN").ok().and_then(|s| s.parse::<f64>().ok()) {
+        println!("spinning on segments for {seconds} s, pid {}", std::process::id());
+        let start = std::time::Instant::now();
+        while start.elapsed().as_secs_f64() < seconds {
+            std::hint::black_box(read_segments());
+        }
+        return;
+    }
     let t = thread_cpu();
     (0..rounds).for_each(|_| { std::hint::black_box(read_varint()); });
     let tv = (thread_cpu() - t) / f64::from(rounds) * 1e3;
     let t = thread_cpu();
     (0..rounds).for_each(|_| { std::hint::black_box(read_segments()); });
     let ts = (thread_cpu() - t) / f64::from(rounds) * 1e3;
-    println!("  reading every kind's set: delta-varint {tv:.1} ms, segments {ts:.1} ms (thread CPU, mean of {rounds})");
+    // The floor: each segment's containers parsed and copied into one set's buffers as they are
+    // (what per-file chunks did), with no move into the space's chunks.
+    let read_copy = || {
+        by_kind.values().map(|ids| {
+            let (mut directory, mut values, mut words) = (Vec::new(), Vec::<u8>::new(), Vec::<u8>::new());
+            for &i in ids {
+                let mut bytes: &[u8] = &segments[i].2;
+                while bytes.len() >= 7 {
+                    let len = u32::from_le_bytes([bytes[3], bytes[4], bytes[5], bytes[6]]) as usize;
+                    let size = [2, 8, 4][usize::from(bytes[2])] * len;
+                    directory.push((segments[i].0, u16::from_le_bytes([bytes[0], bytes[1]]), bytes[2], len));
+                    let into = if bytes[2] == 1 { &mut words } else { &mut values };
+                    into.extend_from_slice(&bytes[7..7 + size]);
+                    bytes = &bytes[7 + size..];
+                }
+            }
+            directory.len() + values.len() + words.len()
+        }).sum::<usize>()
+    };
+    let t = thread_cpu();
+    (0..rounds).for_each(|_| { std::hint::black_box(read_copy()); });
+    let tc = (thread_cpu() - t) / f64::from(rounds) * 1e3;
+    println!("  reading every kind's set: delta-varint {tv:.1} ms, segments {ts:.1} ms, copying the containers only {tc:.1} ms (thread CPU, mean of {rounds})");
 }
 
 /// The process's retired instructions and cycles (macOS `proc_pid_rusage`); 0s elsewhere.
