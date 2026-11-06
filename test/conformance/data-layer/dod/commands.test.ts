@@ -66,6 +66,10 @@ it("reads live source approvals and delegates only explicit signing to the origi
     expect(await runDataLayerCommand(["--repo", root, "--pack", pack, "--snapshot", snapshot, "--rules", id,
       "--schema-approvals", join(root, "approvals.json"), "--summary", "--check"], { write(chunk: string) { output += chunk; return true; } })).toBe(1);
     expect(output).toBe("1 schema introspection data-path violation(s)\n");
+    output = "";
+    expect(await runDataLayerCommand(["--repo", root, "--pack", pack, "--snapshot", snapshot, "--rules", id,
+      "--schema-approvals", join(root, "approvals.json"), "--json"], { write(chunk: string) { output += chunk; return true; } })).toBe(1);
+    expect(JSON.parse(output).violations.map((row: { code: string }) => row.code)).toEqual(["SIDP000"]);
     await writeFile(script, "APPROVED_USER_SCHEMA_CHECK_CALLSITES=[]\nAPPROVED_USER_SCHEMA_CHECK_CALLSITES_SIGNATURE='UNSIGNED'\n");
     expect((await runDataLayerAudit(options)).violations.map(r => r.code)).toEqual(["SIDP001"]);
   } finally { await rm(root, { recursive: true, force: true }); }
