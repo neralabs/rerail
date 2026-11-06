@@ -863,15 +863,22 @@ impl Lowerer {
                 Term::Call(if name == "dot" { "cat".to_owned() } else { name.clone() }, args)
             }
             STerm::Call { name, functor: false, args } => {
-                // Soufflé's functions: `cat` joins strings (the engine's `cat` joins with a dot, so it is `concat`).
+                // Soufflé's functions: `cat` joins strings (the engine's `cat` joins with a dot, so it is `concat`;
+                // `cat(a, b, c)` is `concat(concat(a, b), c)`). `to_number`, `max` and `min` are
+                // `strings::functions`'.
                 let f = match (name.as_str(), args.len()) {
-                    ("cat", 2) => "concat",
-                    ("strlen" | "to_string", 1) => name.as_str(),
+                    ("cat", 2..) => "concat",
+                    ("strlen" | "to_string" | "to_number", 1) => name.as_str(),
                     ("substr", 3) => "substr",
+                    ("max" | "min", 2) => name.as_str(),
                     _ => return not_yet(format!("the built-in function {name}/{}", args.len())),
                 };
-                let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
-                Term::Call(f.to_owned(), args)
+                let mut args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?.into_iter();
+                if f == "concat" {
+                    let first = args.next().expect("two or more arguments");
+                    return Ok(args.fold(first, |l, r| Term::Call("concat".to_owned(), vec![l, r])));
+                }
+                Term::Call(f.to_owned(), args.collect())
             }
             STerm::Bin { op, l, r } => {
                 let f = match *op {
@@ -879,6 +886,8 @@ impl Lowerer {
                     "-" => "sub",
                     "*" => "mul",
                     "/" => "div",
+                    // C's `%`, as Soufflé's: the sign of `l`; `l % 0` has no value (`strings::functions`).
+                    "%" => "mod",
                     other => return not_yet(format!("arithmetic ({other})")),
                 };
                 Term::Call(f.to_owned(), vec![self.term(l)?, self.term(r)?])

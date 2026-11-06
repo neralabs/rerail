@@ -1,7 +1,9 @@
-//! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), each a native SQL
-//! function of the same name. A rule's call `@f(a, b)` is lowered to `f(a, b)` in SQL, its symbol arguments
-//! decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`). Each function's meaning
-//! is `core.rr`'s comment on it. A NULL argument, or a regex that does not compile, gives NULL (no value).
+//! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
+//! built-in functions beyond SQL's (`to_number`, `max`, `min`, `%`), each a native SQL function. A rule's call
+//! `@f(a, b)` is lowered to `f(a, b)` in SQL (`sql_name`: `rr_f` where SQLite has its own `f`), its symbol
+//! arguments decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`). Each function's
+//! meaning is `core.rr`'s comment on it, or Soufflé's. A NULL argument, a regex that does not compile, or a value
+//! Soufflé has none for (`to_number("a")`, `x % 0`) gives NULL: no value, so the rule gives no row for it.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -35,20 +37,39 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sha256", &[Text], Text),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // JavaScript's `toLowerCase` (Unicode default case mapping), not SQLite's ASCII `lower`.
+    ("lower", &[Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
+    // Soufflé's `to_number(s)`, `max(a, b)`, `min(a, b)` and `a % b` (`mod`).
+    ("to_number", &[Text], Number),
+    ("max", &[Number, Number], Number),
+    ("min", &[Number, Number], Number),
+    ("mod", &[Number, Number], Number),
 ];
 
-/// A function's name (as SQL names it), arguments and result, if `name` is one of these.
+/// The SQL name of function `name`: its own, or `rr_<name>` where SQLite has a function of that name, which
+/// other SQL on the same connection may read with SQLite's meaning.
+fn sql_name(name: &'static str) -> &'static str {
+    match name {
+        "lower" => "rr_lower",
+        "max" => "rr_max",
+        "min" => "rr_min",
+        "mod" => "rr_mod",
+        other => other,
+    }
+}
+
+/// A function's name as SQL names it, its arguments and its result, if `name` is one of these.
 pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
-    FUNCTIONS.iter().find(|(n, _, _)| *n == name).copied()
+    FUNCTIONS.iter().find(|(n, _, _)| *n == name).map(|&(n, args, ret)| (sql_name(n), args, ret))
 }
 
 /// Registers every function on `db`.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     for &(name, args, _) in FUNCTIONS {
         let arity = i32::try_from(args.len()).expect("few arguments");
-        db.create_scalar_function(name, arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
+        db.create_scalar_function(sql_name(name), arity, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, move |ctx| Ok(call(name, args, ctx)))?;
     }
     Ok(())
 }
@@ -82,6 +103,11 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         "slice" => Some(slice(t(0), numbers[0], numbers[1])),
         "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
         "count_matches" => return with_regex(t(0), |re| Value::Integer(re.find_iter(t(1)).count() as i64)).unwrap_or(Value::Null),
+        "to_number" => return to_number(t(0)).map_or(Value::Null, Value::Integer),
+        "max" => return Value::Integer(numbers[0].max(numbers[1])),
+        "min" => return Value::Integer(numbers[0].min(numbers[1])),
+        "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
+        "lower" => Some(t(0).to_lowercase()),
         "sha256" => {
             use sha2::Digest;
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
@@ -94,6 +120,41 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
         _ => None,
     };
     out.map_or(Value::Null, Value::Text)
+}
+
+/// Soufflé's `to_number(s)`: `0x…` hexadecimal and `0b…` binary (either after a `-`), else decimal; as C's
+/// `strtoll`, leading white space and a sign are read and the text after the number's digits is ignored
+/// (`to_number(" 12px")` = 12). `None` where Soufflé stops with an error: no digits (`"a"`, `""`, `"0b"`) or out of
+/// range.
+pub(in crate::code_rule_dsl) fn to_number(s: &str) -> Option<i64> {
+    if let Some(rest) = s.strip_prefix("-0b") {
+        return strtoll(&format!("-{rest}"), 2);
+    }
+    if let Some(rest) = s.strip_prefix("0b") {
+        return strtoll(rest, 2);
+    }
+    strtoll(s, if s.starts_with("0x") || s.starts_with("-0x") { 16 } else { 10 })
+}
+
+/// C's `strtoll(s, base)` as C++'s `stoll` uses it: `None` where `stoll` throws (no digits, out of range).
+fn strtoll(s: &str, base: u32) -> Option<i64> {
+    let s = s.trim_start_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
+    let (neg, s) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    // Base 16 reads an optional `0x` when a hex digit follows it (else the `0` alone is the number).
+    let s = match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(rest) if base == 16 && rest.starts_with(|c: char| c.is_ascii_hexdigit()) => rest,
+        _ => s,
+    };
+    let digits = s.find(|c: char| !c.is_digit(base)).unwrap_or(s.len());
+    if digits == 0 {
+        return None;
+    }
+    let magnitude = i128::from_str_radix(&s[..digits], base).ok()?;
+    i64::try_from(if neg { -magnitude } else { magnitude }).ok()
 }
 
 /// `f(re)` with `re` compiled once per thread; `None` if it does not compile.
