@@ -307,6 +307,9 @@ impl ThreadConnection {
     }
 }
 
+/// A connection's page cache at rest, in KiB.
+pub(super) const CACHE_KIB: i64 = 1_024;
+
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
@@ -317,7 +320,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     // A store may be opened by each of Rerail's worker threads. Keep their aggregate page-cache
     // residency bounded; active reads still use the decompressed cache above.
-    connection.pragma_update(None, "cache_size", -1_024_i64)?;
+    connection.pragma_update(None, "cache_size", -CACHE_KIB)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay

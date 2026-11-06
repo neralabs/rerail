@@ -147,6 +147,15 @@ pub fn hold(path: &std::path::Path, held: bool) {
     }
 }
 
+/// More new values than this make an append bulk (`ContentStore::intern_atoms`).
+const BULK: usize = 1024;
+/// A bulk append's page cache (KiB): the index pages a chunk's names rewrite (about 1,900 pages a chunk on the
+/// 9,010-file corpus), for the transaction only (decision 0024 §6 keeps 1 MB per connection at rest).
+const BULK_CACHE_KIB: i64 = 32 * 1024;
+/// A bulk append's WAL size before a checkpoint, in pages (SQLite's default is 1,000, which a chunk's commit
+/// exceeds alone).
+const BULK_CHECKPOINT_PAGES: i64 = 16 * 1024;
+
 impl ContentStore {
     /// The atom of each of `values`, appending the new ones to the table in one transaction.
     pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
@@ -161,9 +170,18 @@ impl ContentStore {
         // The mirror keeps only committed rows: each attempt starts from what it held, and a
         // failed one is undone.
         let start = atoms.len();
+        let mut bulk = false;
         let result = self.immediate_transaction(|transaction| {
             atoms.truncate(start);
             atoms.catch_up(transaction)?;
+            // A bulk append (a chunk's names, thousands at once) lands all over the `atoms_by_value` index: it gets a
+            // cache that holds the pages it rewrites, and its commit does not checkpoint each time (the WAL then
+            // copies a page rewritten by several commits once). Both go back to the store's settings after it.
+            bulk = values.iter().filter(|value| atoms.get(value).is_none()).nth(BULK).is_some();
+            if bulk {
+                transaction.pragma_update(None, "cache_size", -BULK_CACHE_KIB)?;
+                let _: i64 = transaction.query_row(&format!("PRAGMA wal_autocheckpoint = {BULK_CHECKPOINT_PAGES}"), [], |row| row.get(0))?;
+            }
             let mut insert = transaction.prepare_cached("INSERT INTO atoms(atom,value) VALUES (?1,?2)")?;
             values
                 .iter()
@@ -177,6 +195,15 @@ impl ContentStore {
                 })
                 .collect()
         });
+        if bulk && let Ok(connection) = self.connection.lock() {
+            // The page cache is freed now; the checkpoint interval is SQLite's default again.
+            let restored = connection.pragma_update(None, "cache_size", -super::connection::CACHE_KIB).and_then(|()| {
+                connection.query_row("PRAGMA wal_autocheckpoint = 1000", [], |row| row.get::<_, i64>(0)).map(drop)
+            });
+            if let Err(error) = restored {
+                eprintln!("rerail: atoms: restoring the page cache failed: {error}");
+            }
+        }
         if result.is_err() {
             atoms.truncate(start);
         }

@@ -8,7 +8,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 |---|---|---|---|
 | O1 | Phase 1 | Crash recovery: pending writes lost in a crash must always be recomputed | closed (2026-10-27): marker, recovery and (1)–(3) validated; 2026-11-01: called by every slice run before its push (`a_run_after_a_crashed_push_recovers_it`) |
 | O2 | Phase 1 | Nothing calls the push path yet (ingest wired in S3) | closed for the observers (2026-11-01): the slice's napi `CodeRuleSlice` pushes a directory snapshot with editor buffers over it, or a Git `HEAD` (W's `git_workspace` discovery); the anchor lab's corpus capture moves to Phase 3's check |
-| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open |
+| O3 | Phase 1 | A new name is interned by a synchronous SQLite write | open: bulk appends tuned (2026-11-06); fewer commits remain |
 | O4 | Phase 1 | Spill files are not recovered after a crash | open (depends on O1) |
 | O5 | Phase 1 | Page collection can drop pages bound only in the overlay | open |
 | O6 | Phase 1 | Overlay byte accounting is an estimate; single pushing thread | open |
@@ -170,6 +170,31 @@ A new name is interned into `atoms` with one SQLite transaction per batch, under
 Warm edits rebind existing names; a cold scan pays one write per batch. Closure: measure on a cold
 scan of the gate corpus; if it is visible in CPU time, intern ahead in the overlay with a reserved
 range and write the atoms with the first layer that uses them.
+
+**Measured (2026-11-06, notes T10 §1b):** it is visible. On the 9,010-file corpus, 104 chunks
+intern 640k new names, one transaction each. The batch worker spent 77% of its samples there
+(about 6–7 s CPU), mostly in SQLite's page cache and WAL. SQLite's own counters per run:
+
+| Setting | Misses | Spills | Pages written |
+|---|---|---|---|
+| 1 MB cache | 158,806 | 168,121 | 261,856 |
+| 32 MB for the transaction | 107,432 | 0 | 202,009 |
+
+**Done:**
+- A bulk append (more than 1,024 new names) gets a 32 MB cache and a 16k-page checkpoint
+  interval for its transaction only. Both return to the store's settings after it.
+- Per run, interning went from 77% to 44% of the batch phase, and sys from about 6 s to 3.5 s.
+
+**Still open:** about 200k pages, roughly 800 MB, are written per run. Each commit rewrites
+about 1,900 leaf pages of `atoms_by_value`, so the volume scales with the number of commits, not
+the number of names. The fix is fewer commits: allocate ids in memory and write the rows later.
+That needs:
+
+- one in-process mirror per database, shared by the store and the planner's symbols
+  (`logic::native::setfix::Interner`). Today each catches up from the table.
+- every store write transaction appending the pending atoms first, so no durable row refers to an
+  unwritten atom.
+- an in-process reader of `atoms` by value (vocabulary SQL) flushing first.
 
 ## O4. Spill files after a crash
 

@@ -412,7 +412,9 @@ impl Batch {
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
         });
+        let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
+        drop(intern);
         let atom = |i: i64| i64::from(atoms[i as usize]);
         let py = vocabulary.zip(python).map(|((contexts, spreads), tag)| Py {
             grammar: py::Grammar::new(tag, &dialects[&tag].catalog),
