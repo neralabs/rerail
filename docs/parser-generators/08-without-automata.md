@@ -1,7 +1,9 @@
 # Parser generators: machines as bit operations, and Python without automata
 
 Status: design with prototype measurements, 2026-11-06. It follows `03-bitlex.md` §3.2 and
-`05-many-states.md`.
+`05-many-states.md`. Done since: the constructs of §8 are in Bitlex (`03-bitlex.md` §2.7),
+`lexers/python.bitlex` uses them and has no machine, and its tokens equal tree-sitter's
+(`03-bitlex.md` §5). §9 says what changed on the way.
 
 ## Intro
 
@@ -396,3 +398,33 @@ Recommended order:
    oracles for the mask versions.
 3. Cover nested specs and PEP 701 (§5.3). After that, no file in either corpus needs either
    machine, other than the few already sent to fallback.
+
+## 9. Built: what changed from the design
+
+All three steps of §8 are done. The prototypes are ported into `tools/bitlex` as oracles, the
+lexer is written with the new constructs, and the evaluator compares both with tree-sitter.
+
+- **Nested format specs** need no level per depth. A second count for the innermost field
+  referred to its own closes and gained one field per round. Two questions about frames replace
+  it: `depth.frame(fopen)` (is the frame around this byte a replacement field?) and
+  `depth.since(colon)` (has that field passed its `:`?). Both are matching by depth.
+- **Python 3.12 quote reuse** is an outer round. The interpolation code found in one round is
+  hidden from the string scan in the next. Each round moves the end of such an f-string past one
+  more quote. One CPython file needs 8 rounds; files without such an f-string need 1, or 2 when
+  they hold an f-string. The second confirms that no interpolation ended open.
+- **A newline inside interpolation code** no longer ends a line, which covers the two
+  "unsupported" Python 3.12 cases of §5.2.
+- **Bracket depth has no bound.** `head(rb, depth)` closes as many levels as the depth before the
+  run.
+- **A comment ends at any newline,** even one after a backslash. Its line then goes on in code,
+  found with one more carried mask in the line rounds.
+
+| | data-layer Python | CPython 3.15 |
+|---|---:|---:|
+| files tree-sitter parses | 13,042 | 1,993 |
+| tokens equal to tree-sitter's | 13,042 | 1,990 |
+| f-string fields equal to tree-sitter's (files) | 13,042 | 1,990 |
+| falls back | 0 | 3 |
+
+The three CPython fallbacks are a triple-quoted string inside an interpolation, `1or 0`, and the
+run of quotes from §4.2 that does not settle. Rounds taken are in `03-bitlex.md` §5.

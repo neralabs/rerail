@@ -62,35 +62,30 @@ inside comments do not open strings, `#` inside strings does not open comments, 
 four quote forms, prefixes and f-strings. simdjson's prefix XOR only works for one quote character
 with no comments.
 
-**The answer** is two data-parallel automata over event bytes, specified in `03-bitlex.md` §1 and
-written out in `lexers/python.bitlex`:
+**The answer** needs no automaton. `08-without-automata.md` derives it, and `lexers/python.bitlex`
+writes it out with the constructs of `03-bitlex.md` §2.7:
 
-- **`strings`** (13 states):
-  - its events are every unescaped quote, every `#`, and each newline ending a line that holds a
-    quote or `#`. That is one event per 53 bytes of the corpus;
-  - it treats an f-string as a plain string, which is exact before Python 3.12;
-  - triple quotes take two extra states each way, to consume the second and third quote.
-- **`fstrings`** (14 states):
-  - its events are braces, brackets, `:`, quotes and `#` inside f-string bodies only;
-  - it finds interpolations, `{{` and `}}`, inner strings and format specs, with bracket depth
-    bounded at 2;
-  - it sets the error bit for a Python 3.12 f-string that reuses its own quote, which `strings`
-    gets wrong, and for anything beyond its bounds.
+- **Strings and comments.** Quotes act on the three states code, in `'` and in `"` as
+  reflections, so which string a byte is in is a toggle and a count mod 3 (`reflect`). Short
+  strings and comments end with their line, so each line is lexed three times, as if it started
+  in code, inside `'''` or inside `"""`, and the line ends pick one (`hypotheses`). A `'''` inside a
+  short string or a comment is found by a fixed point within the line (`rounds`).
+- **F-string fields.** Depth is a count. Whether the bracket frame around a byte is a replacement
+  field, and whether that field has passed its `:`, come from matching by depth (`count.frame`,
+  `count.since`). The roles of braces are a fixed point over rounds, so format specs nest to any
+  depth.
+- **Python 3.12 quote reuse.** An outer `rounds` feeds the interpolation code it found back to the
+  string scan, which then ignores the quotes in it.
 
-Each automaton's map from start states to end states fits one 16-byte register. Applying one event
-is one table shuffle. Chunks of the event list compose independently, so the work splits across
-CPU chunks and Metal SIMD groups with no serial chain between them.
-
-Before the automata run, each event byte gets its symbol from local facts:
+Before these run, each byte gets its local facts:
 
 - **Escapes:** simdjson's odd-backslash-run mask.
-- **Triple quotes:** `q & next(q) & next(q, 2)`.
+- **Triple quotes:** runs of one quote character cut into threes from their first byte.
 - **Prefixes:** shifted letter masks.
-- **Doubled braces:** `{{` and `}}` as byte pairs.
+- **Doubled braces:** runs of `{` and `}`, decided at their first byte.
 
-PEP 701 lets an f-string reuse its own quote inside an interpolation. `strings` ends this string
-at the second `"`; `fstrings` then sees that end inside an open interpolation and sends the file
-to tree-sitter:
+The lexer's tokens equal tree-sitter's leaves on all 13,042 data-layer files tree-sitter parses,
+and on 1,990 of 1,993 CPython files (`03-bitlex.md` §5). Quote reuse, as tree-sitter parses it:
 
 ```text
 y = f"{f"{x}"}"
@@ -508,7 +503,7 @@ over several closing blocks) is the first thing the differential test should che
 
 | Stage | Errors |
 |---|---|
-| 1 | an unterminated string; an f-string beyond the `fstrings` automaton's bounds |
+| 1 | an unterminated string; an f-string form the lexer leaves to fallback (`07-viability.md` §1) |
 | 2 | an invalid byte or number |
 | 3 | mismatched brackets; a bad dedent |
 | 4 | a token pair the binding-power table does not relate (two operands in a row, as in `a b`); a statement no rule recognises; an operand outside its slot's supertype (`a == not b`, where a comparison operand must be a `primary_expression`) |

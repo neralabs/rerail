@@ -1,7 +1,8 @@
 # Bitlex: a lexer language that lowers to branch-free SIMD
 
-Status: language proposal, 2026-11-06. The lexers in `lexers/` are written in it. No compiler
-or evaluator exists yet, and neither lexer has been run.
+Status: language with a reference evaluator, 2026-11-06. The lexers in `lexers/` are written in
+it, and `tools/bitlex` runs them. Their tokens equal tree-sitter's on every JSON file and every
+data-layer Python file that tree-sitter parses (§5). No compiler to NEON or Metal exists yet.
 
 ## Intro
 
@@ -43,38 +44,26 @@ Not as it is usually run. There are three ways to run a deterministic automaton:
 
 Bitlex's `machine` construct means the third way, and only it.
 
-### 1.2 Over what does the automaton run?
+### 1.2 What the lexers need
 
-Over the whole file, but only over the bytes that can change the mode. Whether a `"` opens a
-string depends on everything before it: an earlier `#` may have made it part of a comment, and an
-earlier `'''` may have made it part of a string. So no stretch of the file can be lexed without
-knowing the state at its start. But most bytes cannot change the state.
+A first version of the Python lexer had two machines: `strings` (13 states, for strings and
+comments) and `fstrings` (25 states, for interpolations). Both are gone. `08-without-automata.md`
+shows how each is replaced by bit operations:
 
-One automaton covering strings, comments and f-string interpolations together needs about 50
-states. Two automata with 16 states or fewer are better, because each one's map then fits one
-NEON register:
+- **Quotes are reflections.** On the three states code, in `'` and in `"`, a `'` sends `x` to
+  `1 − x mod 3` and a `"` sends `x` to `2 − x`. So which string a byte is in is a toggle and a
+  count mod 3: `reflect` (§2.7).
+- **Everything but triple-quoted strings ends with its line.** Each line is lexed three times, as
+  if it started in code, inside `'''` or inside `"""`. The line ends pick one: `hypotheses`.
+- **A few roles depend on bytes after them in the same line:** a `'''` inside a short string, and
+  a brace whose role depends on the depth. These are fixed points, unrolled a fixed number of
+  times: `rounds`.
+- **Depth is a count,** a prefix sum, and the field a byte is in comes from matching by depth.
 
-| Automaton | Runs over | States | Events (data-layer Python) |
-|---|---|---|---|
-| `strings` | every unescaped quote, every `#`, and each newline that ends a line containing a quote or `#` | 13 | one per 53 bytes (1.87% of bytes) |
-| `fstrings` | braces, brackets, `:`, quotes and `#` inside f-string bodies, and each f-string's closing quote | 14 | only inside f-strings |
-
-- **`strings` treats an f-string as a plain string.** Before Python 3.12, an interpolation could
-  not contain the f-string's own quote character, so the string still ends at the first unescaped
-  matching quote. Raw and byte strings need no special case either: in Python, a backslash keeps
-  a quote from ending even a raw string.
-- **`fstrings` runs only inside f-strings.** It finds the interpolations. It also detects what
-  `strings` gets wrong. A Python 3.12 f-string that reuses its own quote inside an interpolation
-  (`f"{f"{x}"}"`, or `f"{'"'}"`) makes `strings` end the string while an interpolation is still
-  open. `fstrings` then sees the closing quote in a state other than literal text and sets the
-  error bit. The file goes to tree-sitter.
-- **Nothing is lost.** Every file that `strings` mislexes is caught by `fstrings`. In the corpus,
-  strings inside interpolations occur in 5.17% of files, and almost all of them use the other
-  quote character. How many files reuse their own quote has not been measured yet.
-
-Where plain bit operations are enough, no automaton is used at all. JSON needs none. Its escapes
-come from simdjson's carry trick (`after_odd_run`), and its strings from one prefix XOR
-(`toggle`).
+The `machine` construct stays in the language, and the JSON lexer's comments still use one
+(7 states). Where plain bit operations are enough, no machine is used: JSON's escapes come from
+simdjson's carry trick (`after_odd_run`), and a JSON file without a `/` outside strings needs only
+one prefix XOR (`toggle`).
 
 ## 2. The language
 
@@ -90,6 +79,11 @@ directed acyclic graph of mask operations.
 | `class NAME = ITEMS` | A set of bytes, such as `'"'`, `'\n'`, `'a'..'z'` or `0x80..0xff`. Its mask has a bit at each byte in the set. |
 | `mask NAME = EXPR` | A named mask. |
 | `machine NAME { … }` | A data-parallel automaton over chosen event bytes (§2.3). |
+| `scan NAME = reflect(A -> S, B -> T) [reset R] [start lane]` | The reflection scan: states `out`, `S`, `T` (§2.7). |
+| `scan NAME = count(UP, DOWN) [reset R]` | A count that never goes below 0 (§2.7). |
+| `hypotheses NAME split E lanes L … { … }` | Statements evaluated once per lane on every segment; the segment ends pick the lane (§2.7). |
+| `rounds N { carry X = E … next X = E … }` | A fixed point, unrolled at most `N` times (§2.7). |
+| `block NAME(P, …) { … }`, `block NAME = TEMPLATE(E, …)` | A family of statements with mask parameters, and an instance of it (§2.5). |
 | `machine NAME(P, …) { … }`, `machine NAME = TEMPLATE(EXPR, …)` | A machine with mask parameters, and an instance of it (§2.5). |
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
@@ -118,14 +112,21 @@ Bit `i` is byte `i`. "Earlier" means a smaller `i`.
 | `after_odd_run(a)` | `i − 1` ends a run of set bits of `a` whose length is odd: the byte after an odd run of backslashes |
 | `run(a, n)`, `run(a, n+)` | `i` starts a run of exactly `n`, or at least `n`, set bits of `a` |
 | `line_has(a, nl)` | `i` is a bit of `nl`, and some bit of `a` is set since the previous bit of `nl`: newlines of lines that hold an `a` |
-| `M.in(S)` | machine `M`'s state at byte `i` is `S` or a member of group `S` (§2.3) |
+| `aligned(a, n)` | `i` is `0, n, 2n, …` bytes from the start of its run of `a` |
+| `head(a, k)`, `head(a, C)` | `i` is among the first `k` bytes of its run of `a`; with a count `C`, among the first `C` bytes, `C` read before the run's first byte |
+| `text("…")` | the input at `i` starts with the given bytes |
+| `M.in(S)` | machine or scan `M`'s state at byte `i` is `S` or a member of group `S` (§2.3) |
 | `M.on(A -> B)` | `i` is an event of `M` that moves it from a state in `A` to a state in `B` |
 | `M.final(S)`, `M.reached(S)` | (file-level) `M` ends in `S`; `M` is ever in `S` |
+| `C.eq(k)`, `C.ge(k)`, `C.eq(D)` | count `C` after byte `i` is `k`, at least `k`, or equal to count `D` |
+| `C.frame(a)` | the frame open before byte `i` (the innermost, by `C`) was opened by a byte of `a` |
+| `C.since(a)` | that frame holds a byte of `a` at its own level, before `i` |
 | `T*.in(S)`, `T*.on(A -> B)`, … | the OR of the same test over every instance of the machine template `T` (§2.5) |
 | `at_end(a)` | (file-level) `a` is set at the last byte |
 
-Overlap between a start and an end in `fill(s, e)`: a start that is also an end covers only its
-own byte. The lexers below never write one.
+A byte that is both a start and an end of `fill(s, e)` starts a new fill: the end stops the fill
+coming in, and the start begins another. So a fill meant to cover only the bytes of a token must
+take its starts from those bytes: `fill(prev(dot) & num, ~num)`, not `fill(prev(dot), ~num)`.
 
 ### 2.3 Machines
 
@@ -175,23 +176,25 @@ The lexer's output is the token stream, in byte order: each token's kind, start 
 - a byte is in no token and not in a `skip` mask;
 - a machine ever reaches `error`, or does not end in one of its `final` states.
 
-### 2.5 Families of machines
+### 2.5 Families: machines and blocks
 
-A machine may take masks as parameters. Each instance is a separate machine, with its own
-events and its own state:
+A `block` is a list of statements with mask parameters. Each instance evaluates them once, with
+its own arguments, and its names are read as `INSTANCE.NAME`:
 
 ```text
-machine fstrings(body, end) { events { lb = lbrace & body … end = end } … }
-machine f1 = fstrings(fbody, fend)            # f-strings
-machine f2 = fstrings(f2_body, f2_end)        # f-strings inside f1's interpolations
+block fstrings(body, end, raw, triple) { rounds 8 { … }  mask iopen = fopen & d0  … }
+block f1 = fstrings(fbody, fend, raw, fbody & tstr)            # f-strings
+block f2 = fstrings(f2_body, f2_end, f2_raw, empty)            # f-strings inside f1's interpolations
+mask s_open = opened | fstrings*.iq_open
 ```
 
-- **Where an instance holds.** An instance's `in()` and `on()` hold only on bytes of its events'
-  masks and between them. Outside its input it is in no state.
-- **`fstrings*`** is the OR over the instances, so later masks need not name each one.
+- **`fstrings*.NAME`** is the OR of `NAME` over the instances, so later masks need not name each
+  one. Tests work the same way: `fstrings*.inner.in(s)`.
 - **Cascades.** A later instance may take as input masks computed from an earlier one. This is
   the cascade of `05-many-states.md` §2.3: each nesting level is one more instance, and a fixed
   number of levels is a fallback bound.
+- Machines take parameters the same way (`machine NAME(P, …) { … }`,
+  `machine NAME = TEMPLATE(…)`). The reference evaluator runs only machines without them.
 
 **Per-file variants.** A lexer may describe two ways to compute the same masks, and choose one
 per file by a test that is exact for that file. `lexers/json.bitlex` does this: a file with no
@@ -216,6 +219,69 @@ ucode over code & high {
   points, or a Unicode property.
 
 `04-unicode-and-numbers.md` gives the design, the lowering and the measured cost.
+
+### 2.7 Scans, hypotheses and rounds
+
+```text
+scan qq    = reflect(sq -> s, dq -> d) reset tstr      # states out, s, d
+scan depth = count(up, down) reset ~body               # +1, -1, never below 0
+
+hypotheses line split nl & ~icode lanes out s3 d3 {
+  rounds 6 {
+    carry hidden = empty
+    scan tq      = reflect(t1 & ~hidden -> s3, t2 & ~hidden -> d3) start lane
+    …
+    next hidden  = …
+  }
+  reject "a short string still open at the end of its line" when last & short
+  exit tq
+}
+```
+
+**`reflect(A -> S, B -> T)`** has three states, numbered `out` = 0, `S` = 1 and `T` = 2. A byte of
+`A` sends `x` to `1 − x mod 3`; a byte of `B` sends it to `2 − x`. The other kind's state is the
+reflection's fixed point, so a `"` inside `'…'` changes nothing.
+
+- **`reset R`:** at each byte of `R` the state is `out`, and the scan goes on from there. A byte
+  of `R` is never an event.
+- **Tests:** `in()` and `on()`, as for a machine. `on(out -> s | d)` holds at an opening quote.
+
+**`count(UP, DOWN)`** adds 1 at each byte of `UP` and subtracts 1 at each byte of `DOWN`, except at
+0. With `reset R` it is 0 at the bytes of `R`. Besides `eq` and `ge`, it answers two questions
+about the bracket frames it counts:
+
+- `C.frame(a)`: whether the frame around byte `i` was opened by a byte of `a`. The f-string lexer
+  asks whether that frame is a replacement field or a bracket.
+- `C.since(a)`: whether that frame already holds a byte of `a` at its own level. The lexer asks
+  whether the field has passed its `:`, so that the byte is format-spec text.
+
+**`hypotheses NAME split E lanes L1 L2 …`** cuts the input into segments; a byte of `E` ends its
+segment. Its statements run once per lane, and in each run:
+
+- every segment is treated as a whole input: `prev`, `next`, fills, scans and run operations do
+  not cross a segment edge;
+- `start lane` makes a reflect scan start each segment in the state named like the lane;
+- `first` and `last` are the first and last byte of each segment;
+- `reject "…" when E` marks the segments where `E` holds as impossible in that lane;
+- `exit S` names a scan whose state at a segment's last byte is the lane the next segment starts
+  in.
+
+The real lane of the first segment is the first lane; each segment's exit gives the next one's.
+After the block, every name defined in it holds, on each segment, its value in that segment's
+real lane. A rejected real lane, or a last segment that exits in a lane other than the first, is
+an error.
+
+**`rounds N { … }`** evaluates its statements up to `N` times. A `carry` gives a mask its value
+for the first round; each `next` gives it the value for the round after. When a round leaves every
+carry unchanged, it has reached the fixed point, and the names keep that round's values.
+
+- Inside `hypotheses`, the segments whose carries still change after `N` rounds reject their
+  lane. Elsewhere, not settling is an error.
+- Errors reported during a round count only in the last one.
+
+The lexers use rounds only where the fixed point is unique: every role is decided from bytes
+before it, so by induction from the left there is one self-consistent answer
+(`08-without-automata.md` §3.3, §5.1).
 
 ## 3. Lowering
 
@@ -300,16 +366,33 @@ runs at once. On the CPU the carry passes from one block to the next in a regist
 - **A complete error signal.** Every way a file can fall outside the lexer is an error bit,
   explicit or implicit (§2.4). One OR per file decides whether it goes to tree-sitter.
 
+### 3.5 Scans, hypotheses and rounds
+
+| construct | lowering | carried between blocks |
+|---|---|---|
+| `reflect` | `toggle` of the events for the sign, then a prefix sum mod 3 over two bit planes; a reset is a segmented scan | parity + a value mod 3: 3 bits |
+| `count` | a prefix sum in bytes. The floor at 0 makes each step `x ↦ max(x + a, b)`, which composes, so it is still a scan | the count |
+| `C.frame`, `C.since` | matching by depth, as brackets are matched in `01-branch-free-design.md` §3 | the open frames' flags |
+| `hypotheses` | every lane computed for every segment; each segment's action is a map on the lanes (three 2-bit fields), composed by a scan of selects; each byte then selects its lane's masks | one map |
+| `rounds` | unrolled `N` times, with a convergence bit per segment or per file | per round, as its body |
+
+`08-without-automata.md` §6 and §7 work these through for a `"""` split by a block edge, and for the
+cost of running every lane and every round.
+
 ## 4. The examples
 
 - `lexers/json.bitlex`: tree-sitter-json's tokens, comments included.
   - Masks only, for a file without comments.
   - The 7-state `lex` machine otherwise.
-- `lexers/python.bitlex`: tree-sitter-python's leaves.
-  - The `strings` automaton, and `fstrings` in two instances (interpolation depth up to 4,
-    comments inside interpolations, f-strings nested two deep);
+- `lexers/python.bitlex`: tree-sitter-python's leaves, with no machine.
+  - Strings and comments by `reflect`, per line under three `hypotheses`, with a `rounds` fixed
+    point for hidden triple quotes;
+  - f-string and t-string fields by `count`, `frame` and `since`, in two `block` instances,
+    format specs at every depth;
+  - Python 3.12 quote reuse, by an outer `rounds` that feeds interpolation code back to the
+    string scan;
   - Unicode identifiers and the three non-ASCII whitespace characters, by `ucode`;
-  - prefixes, raw strings and escape sequences;
+  - prefixes, raw and bytes strings, and escape sequences;
   - numbers, words and keywords;
   - operators by `munch`;
   - line continuations and comments.
@@ -317,17 +400,70 @@ runs at once. On the CPU the carry passes from one block to the next in a regist
   Layout (NEWLINE, INDENT, DEDENT) is not a token here. It is stage 3 of `02-python.md`, which
   reads this lexer's masks.
 
-## 5. Next
+## 5. The reference evaluator, and what it found
 
-1. **A reference evaluator.** It reads `.bitlex` and evaluates the masks a block at a time with
-   plain `u64` operations. Each machine is evaluated as a table walk, so the evaluator stays simple
-   and gives the semantics.
-2. **The differential check** of each lexer's tokens against tree-sitter's leaves:
-   - all 14,669 JSON files;
-   - the 13,042 Python files;
-   - CPython's standard library.
-3. **NEON and Metal lowerings** of the same mask graph, checked against the evaluator, in the
-   block-parallel form of `06-block-parallel.md`.
+`tools/bitlex` reads a `.bitlex` file and runs it on one input. Masks are word operations, with
+their carries passed from word to word; scans, counts, machines and everything inside
+`hypotheses` run byte by byte. It gives the semantics, not the speed.
 
-What the lexers leave to fallback, and which node kinds each stage produces, is measured in
-`07-viability.md`.
+```text
+cargo run --release --offline --manifest-path tools/bitlex/Cargo.toml -- diff LEXER LIST
+    tokens against tree-sitter's leaves, for every path in LIST
+… -- strings LEXER LIST    Python: string and comment bytes against the old 13-state machine
+… -- fstr LEXER LIST       Python: interpolations, format expressions and specs, against
+                           tree-sitter and the f-string oracle
+… -- tokens LEXER FILE     the tokens and errors of one file
+```
+
+Tokens are compared with tree-sitter's leaves; a `string_content` with escape children counts as
+the pieces between them, as the lexer emits it.
+
+| corpus | files tree-sitter parses | tokens equal to tree-sitter's | lexer falls back |
+|---|---:|---:|---:|
+| data-layer JSON | 14,668 | 14,668 | 0 |
+| data-layer Python | 13,042 | 13,042 | 0 |
+| CPython 3.15 standard library | 1,993 | 1,990 | 3 |
+
+- **The 3 CPython fallbacks:**
+  - `test_fstring.py`, with a triple-quoted string inside an interpolation;
+  - `syntax_warnings.py`, whose `1or 0` is a number run into a word;
+  - `test_string_literals.py`, with a run of 21 quotes inside a short string whose grouping does
+    not settle.
+- **F-string fields** equal tree-sitter's in every file that does not fall back. That is 42,956
+  f-strings in the data layer and 5,998 in CPython.
+
+**What the differential test found.** Every one of these was a wrong belief about tree-sitter, or
+a bug in a lexer as first written. The lexers had not been run before:
+
+- in both lexers, an escape starts at an even offset in its run of backslashes (`aligned(backslash, 2)`);
+  "not escaped" is not enough, because the second `\` of `\\` is not "after an odd run";
+- a fill whose start may fall outside the token runs into the next token (the `fill` note in §2.2);
+- in a non-raw string, a backslash that starts no escape is an anonymous `\` leaf;
+- in a raw string, `\`, `\\` or `\` + quote just before the closing quote belong to `string_end`;
+- `\N`, `\u` and `\U` are content in a bytes string;
+- a Python comment keeps its `\r`, and ends at a newline even after a backslash;
+- `t"…"` (PEP 750) has interpolations like `f"…"`;
+- a run of `.` after `from` is `.` tokens, not an ellipsis;
+- a `.` ends a number after an exponent or another `.`, or in `0x…`.
+
+**Rounds taken** (files by the most rounds any block needed, the confirming round included):
+
+| | 1 | 2 | 3 | 4–5 | 6–7 | not settled |
+|---|---:|---:|---:|---:|---:|---:|
+| data layer: triple quotes inside lines | 11,954 | 1,029 | 55 | 4 | | |
+| data layer: f-string fields | 10,661 | 2,127 | 254 | | | |
+| data layer: quote reuse (outer) | 8,304 | 4,737 | 1 | | | |
+| CPython: triple quotes inside lines | 1,851 | 109 | 24 | 7 | 2 | |
+| CPython: f-string fields | 1,714 | 237 | 38 | 3 | | 1 |
+| CPython: quote reuse (outer) | 1,314 | 673 | | 3 | 1 | 1 at 8, 1 not settled |
+
+A file without an f-string settles the outer round in 1. A file with f-strings needs 2: one, and
+one to confirm that no interpolation ends open. A compiler can skip the confirming round in that
+case (`lexers/python.bitlex` §4).
+
+## 6. Next
+
+1. **NEON and Metal lowerings** of the same programs, in the block-parallel form of
+   `06-block-parallel.md`, checked against the evaluator.
+2. **The tree stages** of `01-branch-free-design.md` and `02-python.md`, from the token masks to
+   tapes, checked against `TapeImage::encode` the same way.

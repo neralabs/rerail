@@ -1,6 +1,9 @@
 # Parser generators: automata with many states
 
-Status: design, 2026-11-06. It follows `03-bitlex.md` §3.3, the data-parallel automaton.
+Status: design, 2026-11-06. It follows `03-bitlex.md` §3.3, the data-parallel automaton. The
+Python lexer no longer uses the machines this page takes as examples: `08-without-automata.md`
+replaces them with bit operations, and Python 3.12 quote reuse (§5 here) is handled by rounds.
+The methods remain for grammars whose machines do not decompose.
 
 ## Intro
 

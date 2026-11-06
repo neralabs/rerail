@@ -1,7 +1,8 @@
 # Parser generators: viability across the whole output
 
-Status: measurement, 2026-11-06. It covers the expanded lexers in `lexers/` and the tree stages of
-`02-python.md`.
+Status: measurement, 2026-11-06. It covers the lexers in `lexers/` and the tree stages of
+`02-python.md`. The lexers now run, in the reference evaluator `tools/bitlex`, and §1 and §3 give
+what running them measured.
 
 ## Intro
 
@@ -13,13 +14,9 @@ still go to tree-sitter? This document answers that in two parts.
 2. **Which nodes are covered.** Every node kind tree-sitter emitted on the corpora is listed with
    its count, and mapped to the lexer rule or tree stage that produces it.
 
-None of this has run as code yet. The fallback rates are exact for the conditions as written. Two
-things are not measured:
-
-- whether the lexers, once run, produce the same tokens as tree-sitter;
-- whether the tree stages produce the same nodes.
-
-The differential test of `00-problem.md` §6 settles both.
+The lexers have been run on all three corpora, and their tokens compared with tree-sitter's leaves
+(`03-bitlex.md` §5). Whether the tree stages produce the same nodes is not measured yet: they have
+not been written.
 
 ## 1. Files that fall back
 
@@ -27,21 +24,29 @@ Files tree-sitter itself parses with errors always go to tree-sitter: 46 of 13,0
 Python files, 61 of 2,054 CPython files, and 1 of 14,669 data-layer JSON files. The rates below are
 among the rest.
 
-| condition | data-layer Python | CPython 3.15 | first lexers | expanded lexers |
+The first lexers used machines; the lexers as run have none (`08-without-automata.md`). The
+counts per condition come from tree-sitter's trees. The last two rows are what running the lexers
+gave.
+
+| condition | data-layer Python | CPython 3.15 | first lexers | lexers as run |
 |---|---:|---:|---|---|
-| bracket depth 3–4 inside an interpolation | 38 | 7 | fallback | handled: depth bound 4 |
+| bracket depth 3–4 inside an interpolation | 38 | 7 | fallback | handled: a count, no bound |
 | f-string inside an interpolation | 17 | 5 | fallback | handled: instance `f2` |
-| comment inside an interpolation | 0 | 2 | fallback | handled: states `cm[d]` |
+| comment inside an interpolation | 0 | 2 | fallback | handled |
 | non-ASCII identifier | 0 | 6 | fallback | handled: `ucode` |
 | byte-order mark, U+FEFF / U+2060 / U+200B | 0 | 1 | fallback | handled: `uspace` |
-| f-string reusing its own quote (PEP 701) | 0 | 5 | fallback | fallback (`05-many-states.md` §5) |
-| triple-quoted string inside an interpolation | 0 | 1 | fallback | fallback (same file as PEP 701) |
-| backslash before `{{` in f-string text | 0 | 1 | not modelled | fallback (same file) |
-| number run into a word (`1if`) | 0 | 1 | fallback | fallback |
-| bracket depth > 4 inside an interpolation | 0 | 0 | | fallback |
+| f-string reusing its own quote (PEP 701) | 0 | 5 | fallback | handled: outer `rounds` |
+| newline in a one-line f-string's interpolation (PEP 701) | 0 | 2 | fallback | handled |
+| backslash before `{{` in f-string text | 0 | 1 | not modelled | handled: the `'\'` leaf |
+| triple-quoted string inside an interpolation | 0 | 1 | fallback | fallback |
+| number run into a word (`1or`) | 0 | 1 | fallback | fallback |
+| a quote run whose grouping does not settle | 0 | 1 | | fallback |
 | f-string nested three deep | 0 | 0 | | fallback |
-| **files falling back** | **50 → 0** | **21 → 6** | | |
-| **share** | **0.38% → 0%** | **1.05% → 0.30%** | | |
+| **files falling back, measured** | **0** | **3** | | |
+| **share** | **0%** | **0.15%** | | |
+
+All other files that tree-sitter parses get exactly tree-sitter's tokens: 13,042 of 13,042 in the
+data layer and 1,990 of 1,993 in CPython.
 
 These conditions occur often but need no fallback:
 
@@ -51,9 +56,9 @@ These conditions occur often but need no fallback:
 | backslash-newline in a string | 45 | 141 |
 | triple-quoted f-string | 76 | 87 |
 
-**JSON:** 0 of 14,668 files fall back, with or without comments. No data-layer JSON file has a
-comment. The comment rules were checked against tree-sitter-json on hand-written cases (§2), not
-on a corpus.
+**JSON:** 0 of 14,668 files fall back, and all 14,668 get exactly tree-sitter's tokens. No
+data-layer JSON file has a comment. The comment rules were checked against tree-sitter-json on
+hand-written cases (§2), with the same differential driver.
 
 **An earlier count was wrong.** It reported "non-ASCII whitespace between tokens" in 42 CPython
 files. Those were gaps between the escape children of a `string_content`, inside strings. With
@@ -92,7 +97,7 @@ listed here.
 |---|---:|---|
 | `identifier` | 7.29 M | words, with `ucode` for non-ASCII |
 | 44 operator and punctuation kinds, from `,` (1.89 M) to `<<=` (1) | 10.0 M | `munch op` |
-| `string_start`, `string_end` | 1.79 M | `strings` and `f1`/`f2` |
+| `string_start`, `string_end` | 1.79 M | `reflect` scans per line, and `f1`/`f2` |
 | `string_content`, `escape_sequence`, `escape_interpolation` | 0.91 M | masks over `s_text` |
 | `type_conversion` | 4,063 | `!` + letter in an interpolation |
 | 32 hard keywords, `def` (179 K) to `global` (152) | 1.63 M | `keywords` |
@@ -100,9 +105,9 @@ listed here.
 | `none`, `true`, `false` | 0.33 M | `keywords` |
 | `integer`, `float` | 0.17 M | number masks; 7 mask rules for the patterns |
 | `ellipsis` | 17,377 | `munch` |
-| `comment` | 79,758 | `strings` (and `cm[d]` inside interpolations) |
+| `comment` | 79,758 | a fill from `#` (and `cmt` inside interpolations) |
 | `line_continuation` | 0 here; 521 in CPython | mask `lcont` |
-| `'\'` inside `string_content` | 0 here; 9 in CPython | fallback |
+| `'\'` inside `string_content` | 0 here; 9 in CPython | a backslash that starts no escape |
 | `module` as a leaf: an empty file | 52 | the empty tape |
 
 `print`, `exec`, `<>` and `chevron` do not occur in either corpus. The lexer has them for
@@ -140,7 +145,7 @@ them. Shares are of all nodes.
 | part | lexer | tree stage |
 |---|---|---|
 | JSON | complete, with comments | designed (`01` §5); comment parents follow from extents |
-| Python tokens | every leaf kind seen: 96 in the data layer, 100 in CPython | |
+| Python tokens | every leaf kind seen: 96 in the data layer, 100 in CPython; tokens equal to tree-sitter's on every file that does not fall back | |
 | Python layout, brackets, blocks | | designed (`02` §4) |
 | Python expressions | | designed (`02` §6) |
 | Python soft keywords, targets, patterns | lexed as words | designed in outline (`02` §5) |
@@ -148,7 +153,7 @@ them. Shares are of all nodes.
 | supertype memberships, aliases | | from the grammar, as the cursor reports them; to be tested |
 
 The fallback rates above bound how many files can take the fast path: 100% of data-layer Python
-and JSON without syntax errors, and 99.7% of CPython. Whether they *do* take it depends on the
+and JSON without syntax errors, and 99.85% of CPython. Whether they *do* take it depends on the
 tree stages matching tree-sitter, and only the differential test shows that.
 
 The parts most likely to need fallback rules after testing:

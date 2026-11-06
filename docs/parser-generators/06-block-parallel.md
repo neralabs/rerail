@@ -1,7 +1,9 @@
 # Parser generators: blocks in parallel
 
 Status: design, 2026-11-06. It applies to the whole pipeline of `01-branch-free-design.md` and
-`02-python.md`, and to the lexers of `03-bitlex.md`.
+`02-python.md`, and to the lexers of `03-bitlex.md`. The Python lexer described here still had the
+`strings` and `fstrings` machines. Without them its carries are those of
+`08-without-automata.md` §6 and §8: parities, residues mod 3, counts and one map on three lanes.
 
 ## Intro
 
