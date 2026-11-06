@@ -1,0 +1,78 @@
+// php/format: the placeholders of printf- and scanf-style format strings, as PHP 8 parses them
+// (ext/standard/formatted_print.c and scanf.c), for PHPStan's argument.sprintf and argument.sscanf.
+//
+// printf: `%%` is a literal percent. Any other `%` starts a placeholder:
+//   %[argnum$][flags][width][.precision][l]specifier
+//   argnum     1$, 2$, …: the value to use; without it, values are taken in order
+//   flags      -  +  space  0  'c (pad with c)
+//   width      digits, or * (taken from the next value), or *N$ (from value N)
+//   precision  .digits, .* or .*N$; a bare `.` is precision 0
+//   specifier  b c d e E f F g G h H o s u x X, or %: `%5%` prints % but PHP still fetches a value for it
+// A placeholder needs value N for argnum N, and the next value in order otherwise; each * without N$ takes one
+// too. So a format needs max(the in-order count, the largest N) values:
+//   '%s %s'          2        '%2$s %1$s %s'   2        '%*d'   2        '%%s'   0
+// Anything else after a `%` is a ValueError: '%0$s', '%y', a trailing '%', a width or argnum of ten digits or
+// more (PHP's limit is INT_MAX; nine digits are read here).
+//
+// scanf: `%%` is a literal; `%[*][N$][width][h|l|L]conversion`, conversion one of d D i o x X u f e E g s c n or
+// a set `[…]` / `[^…]`. `*` reads without assigning. A format assigns one variable per placeholder without `*`.
+//   '%d%d'   2        '%20[^,],%d'   2        '%*d %d'   1        '%.E'   invalid
+//
+// What a rule gets from this library:
+//   printf_needs(s, k)    format s needs k values (none when an argnum is above 32: '%40$s' is left unknown)
+//   printf_invalid(s)     format s is a ValueError
+//   scanf_assigns(s, k)   format s assigns k variables
+//   scanf_invalid(s)      format s has a bad conversion
+// s is a format string's value, php_value(f, "string", s) of a format argument f: the first of sprintf() or
+// printf(), the second of sscanf() (php_format_arg). Each relation is tested once per distinct string. No match_all: each format is first reduced, by @replace_all, to its placeholders, one
+// short code each ("<argnum:width-star width-n:precision-star precision-n>"), and counted with @count_matches.
+//
+// Builds on php/values.rr (php_value).
+
+#include "php/values.rr"
+
+.decl php_format_arg(c: node, f: node, style: symbol)  // f is call c's format argument, style "printf" or "scanf"
+php_format_arg(c, f, "printf") :- (php_call(c, "sprintf") ; php_call(c, "printf")), php_arg(c, 0, f).
+php_format_arg(c, f, "scanf") :- php_call(c, "sscanf"), php_arg(c, 1, f).
+.decl php_format(s: symbol, style: symbol)  // the strings the relations below are computed for
+php_format(s, style) :- php_format_arg(_, f, style), php_value(f, "string", s).
+
+// ---- printf ----------------------------------------------------------------------------------------------------
+// format_re(name, re): the placeholder after its `%`, plain ("printf") and with groups ("printf_groups": 2 argnum,
+// 3/4 width * and N, 5/6 precision * and N; group 1 is the literal `%%`), and scanf's (group 2 its `*`).
+.decl format_re(name: symbol, re: symbol)
+format_re("printf", cat("(?:[1-9][0-9]{0,8}\\$)?(?:[-+ 0]|'[\\s\\S])*(?:[0-9]{1,9}|\\*(?:[1-9][0-9]{0,8}\\$)?)?",
+    "(?:\\.(?:[0-9]{1,9}|\\*(?:[1-9][0-9]{0,8}\\$)?)?)?l?[bcdeEfFgGhHosuxX%]")).
+format_re("printf_groups", cat("(?:([1-9][0-9]{0,8})\\$)?(?:[-+ 0]|'[\\s\\S])*(?:[0-9]{1,9}|(\\*)(?:([1-9][0-9]{0,8})\\$)?)?",
+    "(?:\\.(?:[0-9]{1,9}|(\\*)(?:([1-9][0-9]{0,8})\\$)?)?)?l?[bcdeEfFgGhHosuxX%]")).
+format_re("scanf", "(\\*)?(?:[1-9][0-9]*\\$)?[0-9]*[hlL]?(?:[dDioxXufeEgscn]|\\[\\^?\\]?[^\\]]*\\])").
+
+.decl printf_code(s: symbol, code: symbol)
+printf_code(s, @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"), cat("%(?:(%)|", g, ")"),
+    "<${1}${2}:${3}${4}:${5}${6}>")) :- php_format(s, "printf"), format_re("printf", ph), format_re("printf_groups", g).
+
+.decl printf_invalid(s: symbol)
+printf_invalid(s) :- php_format(s, "printf"), format_re("printf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).
+
+// In-order values: placeholders with no argnum (`<:`, a literal is `<%:`), and stars with no N (`*:`, `*>`).
+// Numbered: N appears as `<N:`, `*N:` or `*N>`.
+.decl printf_needs(s: symbol, k: number)
+printf_needs(s, max(seq, top)) :- printf_seq(s, seq), printf_numbered(s, _), top = max n : { printf_numbered(s, n) }.
+printf_needs(s, seq) :- printf_seq(s, seq), !printf_numbered(s, _).
+.decl printf_seq(s: symbol, k: number)
+printf_seq(s, @count_matches("<:", code) + @count_matches("\\*:", code) + @count_matches("\\*>", code)) :-
+    printf_code(s, code), !printf_invalid(s), !printf_far(s).
+.decl printf_numbered(s: symbol, n: number)
+printf_numbered(s, n) :- printf_code(s, code), php_argnum(n), @count_matches(cat("[<*]", to_string(n), "[:>]"), code) > 0.
+.decl printf_far(s: symbol)  // an argnum above 32: the format's need is not computed (no printf_needs)
+printf_far(s) :- printf_code(s, code), @count_matches("[<*](3[3-9]|[4-9][0-9]|[1-9][0-9]{2,})[:>]", code) > 0.
+.decl php_argnum(n: number)  // the argnums looked for: 1 to 32
+php_argnum(1).
+php_argnum(n + 1) :- php_argnum(n), n < 32.
+
+// ---- scanf -----------------------------------------------------------------------------------------------------
+.decl scanf_assigns(s: symbol, k: number)
+scanf_assigns(s, @count_matches("<>", @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"),
+    cat("%(?:(%)|", ph, ")"), "<${1}${2}>"))) :- php_format(s, "scanf"), !scanf_invalid(s), format_re("scanf", ph).
+.decl scanf_invalid(s: symbol)
+scanf_invalid(s) :- php_format(s, "scanf"), format_re("scanf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).

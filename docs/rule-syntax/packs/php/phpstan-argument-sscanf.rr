@@ -1,0 +1,29 @@
+.policy "phpstan-argument-sscanf" revision 2
+.description "Pass sscanf() exactly as many output variables as its format string assigns, and keep the format valid."
+.language php
+.mode steer
+.scope include "**/*.php"
+.scope exclude "**/*.blade.php"
+
+#include "php/format.rr"
+//   scanf_assigns(s, k), scanf_invalid(s)    what format string s assigns, as PHP 8 parses it
+//   (php/names) php_call, php_arg, php_arg_count, php_spread_call; (php/values) php_value
+
+// PHPStan's PrintfParametersRule, sscanf half (argument.sscanf, level 0): sscanf($str, $format, &$vars…) with
+// output variables, whose format is a known string, and the variables do not match what it assigns.
+//   sscanf($s, '%d%d', $a);           one variable missing
+//   sscanf($s, '%d', $a, $b);         one variable too many
+//   sscanf($s, '%.E', $n);            an invalid conversion
+//   sscanf($s, '%d%d');               not reported: without variables sscanf returns an array
+.violation argument_sscanf(at: node, msg: symbol) code "argument.sscanf" "{msg}"
+    suppress phpstan "argument.sscanf"
+argument_sscanf(c, "Pass sscanf() one output variable for each placeholder in its format, or remove the extra placeholders.") :-
+    sscanf_format(c, s, n), scanf_assigns(s, k), k > n.
+argument_sscanf(c, "Remove the extra output variables passed to sscanf(), or add placeholders to fill them.") :-
+    sscanf_format(c, s, n), scanf_assigns(s, k), k < n.
+argument_sscanf(c, "Fix the invalid placeholder in this sscanf() format, or write a literal percent sign as %%.") :-
+    sscanf_format(c, s, _), scanf_invalid(s).
+// sscanf_format(c, s, n): sscanf call c has format s and n > 0 output variables.
+.decl sscanf_format(c: node, s: symbol, n: number)
+sscanf_format(c, s, k - 2) :- php_call(c, "sscanf"), php_arg(c, 1, f), php_value(f, "string", s),
+    php_arg_count(c, k), k > 2, !php_spread_call(c).

@@ -1,0 +1,14 @@
+.policy "tlint-no-ray-directive" revision 3
+.description "Remove @ray directives from Blade templates; Ray debugging calls should not ship."
+.language blade
+.mode steer
+.scope include "**/*.blade.php"
+
+#include "blade/syntax.rr"
+//   blade_directive(d, x)   d is directive @x
+
+// tlint's NoRayDirective: a @ray directive (Spatie Ray's debugger) left in a template:
+//   @ray($user)                  reported, at the directive
+//   @@ray   {{-- @ray --}}       not reported
+.violation no_ray(at: node) code "NoRayDirective" "Do not use the @ray directive."
+no_ray(d) :- blade_directive(d, "ray").

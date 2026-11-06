@@ -1,0 +1,101 @@
+// php/names: which global function a PHP call names, and its arguments, on tree-sitter-php 0.24.
+//
+// PHP resolves a function name at run time, by these rules (php.net, "Name resolution rules"):
+//   strlen($s)          unqualified: a function of the current namespace if one exists, else the global one
+//   \strlen($s)         fully qualified: the global strlen
+//   Foo\strlen($s)      qualified: Foo\strlen relative to the namespace (or a `use Foo` alias), never global
+//   use function Foo\bar as baz;  baz()   an imported function; `use function strlen as len;` imports a global
+// Function names are case-insensitive, so names here are lowercase. Names of the current namespace that shadow a
+// global function are not followed: a namespace's own `function strlen()` is rare, and no tool ported here reads it.
+// `$f()`, `$o->m()`, `A::m()` and `$o?->m()` name no function: they are other kinds (member_call_expression, …).
+//
+// What a rule gets from this library:
+//   php_fn_written(f, x)   f is written as global function x: `x` or `\x` (PHP_CodeSniffer's token view)
+//   php_global_fn(f, x)    f names global function x, `use function` aliases followed (PHPStan's and Psalm's view)
+//   php_call(c, x)         c is a call of global function x (resolved, as php_global_fn)
+//   php_call_written(c, x) c is a call written as x(…) or \x(…) (as php_fn_written)
+//   php_arg(c, i, e)       e is the expression of c's i-th argument, from 0, positional and before any spread
+//   php_named_arg(c, p, e) e is the expression of c's named argument p: `random_int(max: 1, min: 2)`
+//   php_arg_count(c, k)    c has k arguments, `...$xs` and named ones included
+//   php_spread_call(c)     c has a `...$xs` argument
+//   php_first_arg(c, e)    e is c's first argument, comments skipped: the subject of count($a), mkdir($dir)
+//   php_this(n)            n is `$this`
+//   php_logical(b)         b is a `&&`, `||`, `and` or `or` expression
+//   php_fn_boundary(k)     the kinds that start a new function body: closures, arrow functions, functions, methods
+//
+// Builds on core only.
+
+.decl php_fn_written(f: node, x: symbol)
+php_fn_written(f, @lower(t)) :- kind(f, "name"), field(_, "function", f), text(f, t).
+php_fn_written(f, @lower(t)) :- kind(f, "qualified_name"), field(_, "function", f), text(f, q),
+    match("\\\\(?<t>[^\\\\]+)", q).
+
+// `use function A\b as c;` gives php_use_fn(d, "c", "a\b"); without `as`, the last segment is the alias.
+// tree-sitter-php puts the `function` keyword on the declaration's first clause only, or on a group's
+// declaration, or on one clause of a mixed group:
+//   use function Foo\bar as baz, Foo\qux;    use function Foo\{a, b};    use Foo\{function a, Bar};
+.decl php_use_fn(d: number, alias: symbol, q: symbol)
+php_use_fn(d, @lower(a), @lower(q)) :- php_fn_clause(u), docof(u, d), php_use_path(u, t), match("\\\\?(?<q>.*)", t),
+    (field(u, "alias", al), text(al, a) ; !field(u, "alias", _), match("(.*\\\\)?(?<a>[^\\\\]+)", t)).
+.decl php_fn_clause(u: node)
+php_fn_clause(u) :- kind(u, "namespace_use_clause"), op(u, "function").
+php_fn_clause(u) :- kind(u, "namespace_use_clause"), child(dc, u, _), kind(dc, "namespace_use_declaration"),
+    child(dc, u0, 0), op(u0, "function").
+php_fn_clause(u) :- kind(u, "namespace_use_clause"), child(g, u, _), kind(g, "namespace_use_group"), child(dc, g, _),
+    op(dc, "function").
+.decl php_use_path(u: node, t: symbol)  // the name clause u imports, a group's prefix joined on
+php_use_path(u, t) :- php_fn_clause(u), child(u, n, 0), text(n, t), child(p, u, _), kind(p, "namespace_use_declaration").
+php_use_path(u, cat(pt, "\\", t)) :- php_fn_clause(u), child(u, n, 0), text(n, t), child(g, u, _),
+    kind(g, "namespace_use_group"), child(dc, g, _), child(dc, pn, 0), kind(pn, "namespace_name"), text(pn, pt).
+
+.decl php_global_fn(f: node, x: symbol)
+php_global_fn(f, x) :- php_fn_written(f, x), kind(f, "name"), docof(f, d), !php_use_fn(d, x, _).
+php_global_fn(f, x) :- php_fn_written(f, x), kind(f, "qualified_name").
+php_global_fn(f, x) :- php_fn_written(f, a), kind(f, "name"), docof(f, d), php_use_fn(d, a, x), !contains("\\", x).
+
+.decl php_call(c: node, x: symbol)
+php_call(c, x) :- kind(c, "function_call_expression"), field(c, "function", f), php_global_fn(f, x).
+.decl php_call_written(c: node, x: symbol)
+php_call_written(c, x) :- kind(c, "function_call_expression"), field(c, "function", f), php_fn_written(f, x).
+
+// Arguments. An `argument` holds its expression, after an optional `name:` and `&`; `...$xs` is a
+// variadic_unpacking argument, after which positions are unknown.
+//   f($a, $b)            php_arg(c, 0, $a), php_arg(c, 1, $b)
+//   f(...$xs, $b)        no php_arg rows from the spread on
+//   f(min: 1)            php_named_arg(c, "min", 1)
+.decl php_arg_node(c: node, i: number, a: node)  // a is c's i-th `argument` node, comments not counted
+php_arg_node(c, i, a) :- field(c, "arguments", l), child(l, a, j), kind(a, "argument"),
+    i = count : { child(l, b, k), kind(b, "argument"), k < j }.
+.decl php_arg_expr(a: node, e: node)
+php_arg_expr(a, e) :- kind(a, "argument"), child(a, e, _), !field(a, "name", e), !kind(e, "comment"),
+    !kind(e, "reference_modifier").
+.decl php_arg(c: node, i: number, e: node)
+php_arg(c, i, e) :- php_arg_node(c, i, a), !field(a, "name", _), php_arg_expr(a, e), !kind(e, "variadic_unpacking"),
+    !php_spread_before(c, i).
+.decl php_spread_before(c: node, i: number)
+php_spread_before(c, i) :- php_arg_node(c, i, _), php_arg_node(c, j, a), j < i, php_arg_expr(a, e),
+    kind(e, "variadic_unpacking").
+.decl php_named_arg(c: node, p: symbol, e: node)
+php_named_arg(c, @lower(p), e) :- php_arg_node(c, _, a), field(a, "name", n), text(n, p), php_arg_expr(a, e).
+.decl php_arg_count(c: node, k: number)
+php_arg_count(c, k) :- field(c, "arguments", l), k = count : { child(l, a, _), php_arg_item(a) }.
+.decl php_arg_item(a: node)
+php_arg_item(a) :- kind(a, "argument").
+php_arg_item(a) :- kind(a, "variadic_placeholder").
+.decl php_first_arg(c: node, e: node)
+php_first_arg(c, e) :- php_arg_node(c, 0, a), php_arg_expr(a, e).
+
+.decl php_this(n: node)
+php_this(n) :- kind(n, "variable_name"), text(n, "$this").
+
+.decl php_fn_boundary(k: symbol)
+php_fn_boundary("anonymous_function"). php_fn_boundary("arrow_function"). php_fn_boundary("function_definition").
+php_fn_boundary("method_declaration").
+
+// php_logical(b): b is `a && b`, `a || b`, `a and b` or `a or b` (keywords in any case). Not xor, not `??`.
+.decl php_logical(b: node)
+php_logical(b) :- kind(b, "binary_expression"), op(b, o), (o = "&&" ; o = "||" ; iglob("and", o) ; iglob("or", o)).
+
+// php_spread_call(c): c passes `...$xs`, so its argument count is unknown.
+.decl php_spread_call(c: node)
+php_spread_call(c) :- php_arg_node(c, _, a), php_arg_expr(a, e), kind(e, "variadic_unpacking").
