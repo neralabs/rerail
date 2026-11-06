@@ -7,3 +7,9 @@
 
 #[cfg(test)]
 mod guards;
+
+// simdjson's `include/simdjson/arm64.h`: the arm64 implementation's headers.
+#[cfg(target_arch = "aarch64")]
+pub(in crate::code_rule_dsl) mod arm64;
+// simdjson's `include/simdjson/internal/`: tables shared by the implementations.
+pub(in crate::code_rule_dsl) mod internal;

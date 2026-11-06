@@ -19,6 +19,7 @@ pub(super) mod packed;
 pub(super) mod semantic_facts;
 // Bitlex lexers as stream programs over 64-byte blocks, in simdjson's structure
 // (`docs/parser-generators/09-compile-and-lower.md` §12).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(in crate::code_rule_dsl) mod stream;
 
 #[cfg(test)]

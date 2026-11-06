@@ -624,3 +624,43 @@ compares it with simdjson's own output on the data-layer JSON corpus.
 `json.bitlex` lowers to this structure. The gate also checks that the code generated from the
 lexer has the same structs, with the same carries, as the hand-written structure.
 The details of G2 are written when G1 closes.
+
+### 12.6 Status of G0 and G1
+
+G0 and G1 are closed (2026-11-06). The filter `stream::` runs 29 tests: the 8 guards on snippets
+that break their rules, the guards on the tree, and 20 tests of the layer against scalar oracles.
+All pass.
+
+The paths below are under `native/src/code_rule_dsl/transducer/stream/`.
+
+| item | where | status |
+|---|---|---|
+| G0.1–G0.8 | `guards.rs` | done; each guard also checked on snippets that break it |
+| macros | `guards.rs` (`visit_macro`) | added. `syn` does not expand macros, so G0.4 and G0.5 report every macro but `assert!` (and, above the layer, the panic forms) |
+| `simd8<bool>` | `arm64/simd.rs:223` | done |
+| `base_u8<T>` | `arm64/simd.rs:102–221`, a generic impl over `BaseU8` (`bool`, `u8`) | done |
+| `simd8<uint8_t>` | `arm64/simd.rs:270–547` | done |
+| `simd8<int8_t>` | `arm64/simd.rs:551–741` | done |
+| `simd8x64<T>` | `arm64/simd.rs:746–840`; `NUM_CHUNKS` checked at `:751` | done |
+| `prefix_xor` | `arm64/bitmask.rs:8` | done |
+| `bitmanipulation.h` | `arm64/bitmanipulation.rs` | done |
+| `simdprune_tables` | `internal/simdprune_tables.rs` | done |
+| tests first | `arm64/simd_tests.rs`, compiled against empty files first (73 errors), then the layer | done |
+
+Where the Rust differs from simdjson:
+
+- **`unsafe` in every body.** Rust asks for `unsafe` around NEON calls unless the function has
+  `#[target_feature]`, and that attribute cannot be combined with `#[inline(always)]`. Each body is
+  one `unsafe` block; the module's note says why that is sound.
+- **`get::<IDX>`** checks `IDX < 4` at compile time. simdjson returns zero past `NUM_CHUNKS`,
+  which matters only on one-register targets.
+- **`compress_halves`** is an `unsafe fn` taking raw pointers, because simdjson's two writes may
+  overlap.
+- **`lookup_16` and `apply_lookup_16_to`.** `lookup_16` is generic over a `Lookup16` table, which
+  is `Simd8<u8>` or `Simd8<i8>`. `lookup_16_values` takes values of the register's own lane type.
+- **`Simd8x64::load` and `store`** exist for `u8`, the only lane type stage 1 loads.
+- **Tables** are computed by `const fn` from their definitions. The tests check them entry by
+  entry, and against values copied from simdjson's listing.
+- **Not checked yet:** the generated instructions. The guards prove there are no loops, branches or
+  byte reads in the source. They do not prove that, for example, `to_bitmask` compiles to four
+  `addp`. A disassembly check belongs to G2, where the kernels are compiled in context.
