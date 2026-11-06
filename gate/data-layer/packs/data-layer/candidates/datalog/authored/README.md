@@ -101,6 +101,8 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   keeps `re`'s own `.` off line terminators (`(?s).*re.*` does not: it gives `re` the `s` flag too) and its
   alternatives inside the group; an inline flag of `re` stays inside `(?:…)`. Count lines with `line_count`
   (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`).
+- A pattern computed in the rule (`x = cat(s, "_[a-z]+"), match(x, t)`) is the same whole-string test, run per row,
+  each distinct pattern compiled once.
 - Text-only documents. A file no grammar reads (`.md`, `.rst`, `.txt`, `.toml`, …; not hidden, UTF-8) is a document
   read as text only (core.rr's `.scope text`): it has `doc` (path, and a module made of its path), `source`,
   `src_line` (split as `str.splitlines()`), `src_line_lf`, `tape_line`, `line_count` and `match_all`, and no `node`,
