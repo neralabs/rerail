@@ -216,3 +216,165 @@ fn set_census() {
     let pairs = sets * docs.len() as u64;
     println!("  (set, document) pairs with members: {} of {pairs} ({:.1}%)", all.docs, 100.0 * all.docs as f64 / pairs as f64);
 }
+
+/// One document's sets as positions: kind members and inside-scope runs.
+struct DocSets {
+    nodes: u32,
+    kinds: HashMap<String, Vec<u32>>,
+    inside: HashMap<String, Vec<(u32, u32)>>,
+}
+
+fn doc_sets(path: &Path, rel: &str, scopes: &[(String, u32)], names: &HashMap<u32, String>) -> Option<DocSets> {
+    let source = std::fs::read_to_string(path).ok()?;
+    let file = FileInput::new(rel.to_owned(), "python".to_owned(), Arc::new(source), None, None, "core").ok()?;
+    let Ok(Built::Facts(f)) = core::build(&file) else { return None };
+    let n = f.kind.len();
+    let keep: Vec<bool> = (0..n).map(|i| f.flags[i] & 1 == 1 && f.flags[i] & 2 == 0).collect();
+    let mut rank = vec![0u32; n + 1];
+    for i in 0..n {
+        rank[i + 1] = rank[i] + u32::from(keep[i]);
+    }
+    let mut kinds: HashMap<String, Vec<u32>> = HashMap::new();
+    for i in (0..n).filter(|&i| keep[i]) {
+        let name = names.get(&f.kind[i]).cloned().unwrap_or_default();
+        kinds.entry(name).or_default().push(rank[i]);
+    }
+    let mut inside = HashMap::new();
+    for (name, atom) in scopes {
+        let mut iv: Vec<(u32, u32)> =
+            (0..n).filter(|&i| keep[i] && f.kind[i] == *atom).map(|i| (rank[i] + 1, rank[f.subtree_end[i] as usize])).filter(|(a, b)| a < b).collect();
+        iv.sort_unstable();
+        let mut merged: Vec<(u32, u32)> = Vec::new();
+        for (a, b) in iv {
+            match merged.last_mut() {
+                Some(last) if a <= last.1 => last.1 = last.1.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        inside.insert(name.clone(), merged);
+    }
+    Some(DocSets { nodes: rank[n], kinds, inside })
+}
+
+fn thread_cpu() -> f64 {
+    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: a valid out-pointer for the calling thread's clock.
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+}
+
+/// Decision 0045 step 2: the operations the prefilter's set programs run, on the dense sets (0024)
+/// and on the containers (`space::NodeSet`), over the same repository. Thread CPU time, building
+/// excluded; every result is checked equal between the two.
+#[test]
+#[ignore = "a measurement over a repository on disk (RERAIL_SET_CENSUS_ROOT)"]
+fn set_operations() {
+    let root = PathBuf::from(std::env::var("RERAIL_SET_CENSUS_ROOT").expect("RERAIL_SET_CENSUS_ROOT"));
+    let mut files = Vec::new();
+    python_files(&root, &mut files);
+    files.sort();
+    let python = dialect_by_label("python").unwrap();
+    let (tag, catalog) = (tape_tag(python).unwrap(), python.kinds());
+    let mut names = HashMap::new();
+    for code in 0..catalog.kind_count() as u16 {
+        if let Some(name) = catalog.kind_name(code) {
+            names.insert(kind_atom(tag, code), name.to_owned());
+        }
+    }
+    let scopes: Vec<(String, u32)> =
+        ["function_definition", "class_definition", "except_clause"].iter().map(|s| ((*s).to_owned(), kind_atom(tag, catalog.kind_id(s)))).collect();
+    let docs: Vec<DocSets> = files.par_iter().filter_map(|p| doc_sets(p, &p.strip_prefix(&root).unwrap().to_string_lossy(), &scopes, &names)).collect();
+    // One space over the repository, and the runner's waves: files in order, up to 2^18 nodes each.
+    let mut waves: Vec<std::ops::Range<usize>> = Vec::new();
+    let (mut from, mut nodes) = (0, 0u32);
+    for (at, d) in docs.iter().enumerate() {
+        if nodes > 0 && nodes + d.nodes > 1 << 18 {
+            waves.push(from..at);
+            (from, nodes) = (at, 0);
+        }
+        nodes += d.nodes;
+    }
+    waves.push(from..docs.len());
+    for (label, spans) in [("one space", vec![0..docs.len()]), ("waves of 2^18 nodes", waves)] {
+        println!("\n{label}: {} spaces, files {} nodes {}", spans.len(), docs.len(), docs.iter().map(|d| u64::from(d.nodes)).sum::<u64>());
+        operations(&docs, &spans);
+    }
+}
+
+type Pair = (crate::code_rule_dsl::space::DenseSet, crate::code_rule_dsl::space::NodeSet);
+
+/// The operations on each space of `spans` (files of `docs`), summed over the spaces.
+fn operations(docs: &[DocSets], spans: &[std::ops::Range<usize>]) {
+    use crate::code_rule_dsl::space::{DenseSet, NodeSet, NodeSpace};
+    let names = ["call", "identifier", "raise_statement", "await", "decorator", "inside:function_definition", "inside:class_definition", "inside:except_clause"];
+    let built: Vec<(NodeSpace, Vec<Pair>)> = spans
+        .iter()
+        .map(|span| {
+            let docs = &docs[span.clone()];
+            let space = NodeSpace::new(docs.iter().map(|d| d.nodes).collect());
+            let sets = names
+                .iter()
+                .map(|name| {
+                    let (mut dense, mut chunked) = (DenseSet::empty(&space), NodeSet::empty(&space));
+                    for (f, d) in docs.iter().enumerate() {
+                        if let Some(scope) = name.strip_prefix("inside:") {
+                            let runs = &d.inside[scope];
+                            runs.iter().for_each(|&(a, b)| dense.fill(space.base(f) + a..space.base(f) + b));
+                            chunked.insert_runs(f, runs.iter().map(|&(a, b)| a..b));
+                        } else if let Some(ps) = d.kinds.get(*name) {
+                            ps.iter().for_each(|&p| dense.insert(space.base(f) + p));
+                            chunked.insert_file(f, ps.iter().copied());
+                        }
+                    }
+                    (dense, chunked)
+                })
+                .collect();
+            (space, sets)
+        })
+        .collect();
+    let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
+    println!("op\tresult\tdense ms\tcontainers ms\tdense/containers");
+    let rounds = 5;
+    let time = |label: &str, dense_op: &dyn Fn(&NodeSpace, &[Pair]) -> DenseSet, chunked_op: &dyn Fn(&NodeSpace, &[Pair]) -> NodeSet| {
+        let mut members = 0;
+        for (space, sets) in &built {
+            let (d, c) = (dense_op(space, sets), chunked_op(space, sets));
+            assert_eq!(&NodeSet::from_words(space, d.words()), &c, "{label}");
+            members += c.len();
+        }
+        let t = thread_cpu();
+        (0..rounds).for_each(|_| built.iter().for_each(|(space, sets)| drop(std::hint::black_box(dense_op(space, sets)))));
+        let dense = (thread_cpu() - t) / f64::from(rounds) * 1e3;
+        let t = thread_cpu();
+        (0..rounds).for_each(|_| built.iter().for_each(|(space, sets)| drop(std::hint::black_box(chunked_op(space, sets)))));
+        let chunked = (thread_cpu() - t) / f64::from(rounds) * 1e3;
+        println!("{label}\t{members}\t{dense:.2}\t{chunked:.2}\t{:.2}", dense / chunked);
+    };
+    for (a, b) in [
+        ("call", "inside:function_definition"),
+        ("raise_statement", "inside:except_clause"),
+        ("await", "inside:function_definition"),
+        ("identifier", "inside:class_definition"),
+        ("decorator", "call"),
+    ] {
+        let (a_, b_) = (at(a), at(b));
+        time(&format!("{a} ∩ {b}"), &|_, s| { let mut x = s[a_].0.clone(); x.intersect_with(&s[b_].0); x }, &|_, s| { let mut x = s[a_].1.clone(); x.intersect_with(&s[b_].1); x });
+        time(&format!("{a} − {b}"), &|_, s| { let mut x = s[a_].0.clone(); x.difference_with(&s[b_].0); x }, &|_, s| { let mut x = s[a_].1.clone(); x.difference_with(&s[b_].1); x });
+    }
+    for (a, b) in [("call", "await"), ("raise_statement", "decorator"), ("inside:function_definition", "inside:class_definition")] {
+        let (a_, b_) = (at(a), at(b));
+        time(&format!("{a} ∪ {b}"), &|_, s| { let mut x = s[a_].0.clone(); x.union_with(&s[b_].0); x }, &|_, s| { let mut x = s[a_].1.clone(); x.union_with(&s[b_].1); x });
+    }
+    for (a, b) in [("call", "raise_statement"), ("identifier", "await")] {
+        let (a_, b_) = (at(a), at(b));
+        time(&format!("{a} within files of {b}"), &|sp, s| { let mut x = s[a_].0.clone(); x.within_files(sp, &[&s[b_].0]); x }, &|sp, s| { let mut x = s[a_].1.clone(); x.within_files(sp, &[&s[b_].1]); x });
+    }
+    let c = at("call");
+    time("clone call", &|_, s| s[c].0.clone(), &|_, s| s[c].1.clone());
+    println!("set\tdense B\tcontainers B");
+    for (i, name) in names.iter().enumerate() {
+        let dense: usize = built.iter().map(|(space, _)| space.words() * 8).sum();
+        let chunked: usize = built.iter().map(|(_, sets)| sets[i].1.bytes()).sum();
+        println!("{name}\t{dense}\t{chunked}");
+    }
+}

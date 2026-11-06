@@ -336,26 +336,25 @@ pub(super) fn select(
                 if space.count(at) == 0 || gated.any.as_ref().is_some_and(|any| !any.contains(&file)) {
                     continue;
                 }
-                let base = space.base(at);
                 if let (false, Some(image)) = (wanted.is_empty(), store.working_set().kinds(file)) {
                     crate::code_rule_dsl::prof::count("working_set.kind_hits", 1);
                     for (&atom, &kind) in &wanted {
                         let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
                         let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        decode(postings, base, space.count(at), set)?;
+                        decode(postings, at, space.count(at), set)?;
                     }
                 } else if !wanted.is_empty() {
                     let mut rows = kinds.query([file])?;
                     while let Some(row) = rows.next()? {
                         let Some(&kind) = wanted.get(&row.get::<_, i64>(0)?) else { continue };
                         let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        decode(row.get_ref(1)?.as_blob()?, base, space.count(at), set)?;
+                        decode(row.get_ref(1)?.as_blob()?, at, space.count(at), set)?;
                     }
                 }
                 if reads_uncovered {
                     let mut rows = missing.query([file])?;
                     while let Some(row) = rows.next()? {
-                        decode(row.get_ref(0)?.as_blob()?, base, space.count(at), &mut uncovered)?;
+                        decode(row.get_ref(0)?.as_blob()?, at, space.count(at), &mut uncovered)?;
                     }
                 }
             }
@@ -378,7 +377,7 @@ pub(super) fn select(
                 let mut rows = postings.query(rusqlite::params![lang, term])?;
                 while let Some(row) = rows.next()? {
                     if let Some(&at) = index.get(&row.get::<_, i64>(0)?) {
-                        decode(row.get_ref(1)?.as_blob()?, space.base(at), space.count(at), &mut set)?;
+                        decode(row.get_ref(1)?.as_blob()?, at, space.count(at), &mut set)?;
                     }
                 }
             }
@@ -414,7 +413,7 @@ pub(super) fn select(
     for (set, gate) in outputs.iter_mut().zip(&gated.plans) {
         let Some(gate) = gate else { continue };
         let mut kept = NodeSet::empty(&space);
-        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| kept.fill(space.range(at)));
+        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| kept.fill_file(&space, at));
         set.intersect_with(&kept);
     }
     let ns_per_plan = started.elapsed().as_nanos() as f64 / outputs.len().max(1) as f64;
@@ -499,17 +498,19 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
     crate::code_rule_dsl::prof::count("set.withins", steps.iter().filter(|step| matches!(step, SetStep::Within { .. })).count());
     crate::code_rule_dsl::prof::count("set.programs", 1);
     let files = (0..space.files()).map(|file| (space.base(file), space.count(file))).collect::<Vec<_>>();
-    let leaves = leaves.iter().map(|(&id, set)| (id, set.words())).collect::<Vec<_>>();
+    let leaves = leaves.iter().map(|(&id, set)| (id, set.to_words(space))).collect::<Vec<_>>();
+    let leaves = leaves.iter().map(|(id, words)| (*id, words.as_slice())).collect::<Vec<_>>();
     let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
         .map_err(|error| crate::content_store::StoreError::Invalid(format!("the set steps failed on Metal: {error:?}")))?;
-    Ok(words.into_iter().map(|words| NodeSet::from_words(space, words)).collect())
+    Ok(words.into_iter().map(|words| NodeSet::from_words(space, &words)).collect())
 }
 
-/// Adds a posting segment's nodes (preorders as varint deltas, from 0) of a file of `count`
-/// nodes at `base` to `set`.
-fn decode(bytes: &[u8], base: u32, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
+/// Adds a posting segment's nodes (preorders as varint deltas, from 0) of the space's file `file`,
+/// of `count` nodes, to `set`.
+fn decode(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
     let invalid = || rusqlite::Error::UserFunctionError("invalid posting".into());
     let (mut at, mut pre) = (0, 0_u32);
+    let mut positions = Vec::new();
     while at < bytes.len() {
         let mut delta = 0_u32;
         let mut shift = 0;
@@ -529,7 +530,9 @@ fn decode(bytes: &[u8], base: u32, count: u32, set: &mut NodeSet) -> rusqlite::R
             }
         }
         pre = pre.checked_add(delta).filter(|&pre| pre < count).ok_or_else(invalid)?;
-        set.insert(base + pre);
+        positions.push(pre);
     }
+    positions.dedup();
+    set.insert_file(file, positions);
     Ok(())
 }

@@ -1,6 +1,6 @@
 # 0045: Node sets are chunked containers: arrays, bitmaps and runs
 
-Status: proposed (user agreed to the draft, 2026-11-06); step 1 measured (Evidence)
+Status: accepted (user agreed, 2026-11-06); step 1 measured, step 2 built (`space::NodeSet`)
 
 ## Intro
 
@@ -123,8 +123,48 @@ the engine's id space. 120 sets: every kind, and "inside a node of kind K" for `
 - So the common operation, a kind set inside a scope set, is an array against runs: a binary
   search per member over a few runs.
 
-Not measured yet: operation time, and the sets the data-layer programs actually build (label
-results, candidate roots, text slots). Step 2 measures both against `NodeSet`.
+## Evidence: operations on the host (step 2)
+
+`facts::set_census::set_operations` (ignored test), same repository: each operation on the dense
+bitmap (0024's `NodeSet`, kept as `space::DenseSet` for this comparison) and on the containers
+(the new `space::NodeSet`), with every result checked equal. Thread CPU time per operation, over
+the whole repository, mean of 5; set building excluded. Load 33-108 during the runs.
+
+| Operation (whole repository) | Result | Dense ms | Containers ms |
+|---|---|---|---|
+| call ∩ inside function | 999,607 | 0.14 | 1.24 |
+| call − inside function | 56,885 | 0.12 | 2.25 |
+| identifier ∩ inside class | 2,461,311 | 0.23 | 0.75 |
+| raise ∩ inside except | 2,002 | 0.12 | 0.13 |
+| await ∩ inside function | 24,312 | 0.15 | 0.31 |
+| decorator ∩ call | 0 | 0.14 | 0.24 |
+| inside function ∪ inside class | 16,489,891 | 0.12 | 0.63 |
+| call within files of raise | 675,330 | 1,251 | 0.51 |
+| clone call | 1,056,492 | 0.08 | 0.07 |
+
+In waves of 2^18 nodes (the runner's size, 72 spaces) the containers' times are the same; dense is
+the same except `within` (7 ms: one full mask per file).
+
+What this shows:
+
+- **On the host, dense words are at memory speed.** A set over 18.4 M nodes is 2.3 MB, and an `&`
+  over it is about 0.12 ms. Containers are 1 to 15 times slower on large sets and even on sparse
+  ones. Every operation is under 2.5 ms over the whole repository, so neither form is a cost the
+  runs notice.
+- **Containers win where work follows the members:** `within` (per-file tests), per-file reads
+  (`file_nodes`), and size. Sparse sets are 10-40 times smaller (raise: 133 KB against 2.3 MB);
+  dense-ish sets are the same size.
+- **Three choices came from the measurement**, each worth several times:
+  - a bitmap holds only the words up to its last member. Roaring's 8 KB is wrong here because a
+    document is mostly far smaller than a chunk: at 8 KB, `identifier` was 10.9 MB;
+  - a chunk is a bitmap once it has more members than words (density over 1/64), because word
+    operations beat per-member work. Runs are used when they are smallest;
+  - containers live in two shared buffers behind the directory, not one allocation per chunk (that
+    was 300 ns per chunk per operation). This is also the device's work list as it stands (§4).
+
+So the containers are the form for size, for per-file work, for the store (§5) and for the
+device (§4). On the host they do not make set algebra faster. The label results, candidate roots
+and text slots are not measured yet: they come with step 3's postings.
 
 ## Steps
 
@@ -132,7 +172,9 @@ results, candidate roots, text slots). Step 2 measures both against `NodeSet`.
    set and every `inside_<set>` result the data-layer programs use, per document chunk: the
    member count, the run count, and the size as array, bitmap and runs. Report the distribution
    and what Roaring's thresholds would choose.
-2. Host type and operations (§1-2), replacing `NodeSet`; set steps from SQL's plan run on it.
+2. Host type and operations (§1-2), replacing `NodeSet`; set steps from SQL's plan run on it (done:
+   `space/chunked.rs`; the prefilter's set programs run on it; Metal reads and writes dense words
+   through `to_words`/`from_words` until step 4).
 3. Postings as containers (§5); compare size and read cost with delta-varint.
 4. Device containers (§4) for the Metal set steps and label passes.
 
