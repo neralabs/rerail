@@ -136,7 +136,7 @@ children_slot(f, s) :- kind(s, "jsx_expression"), child(s, m, 0), kind(m, "membe
 // content(e, c): c is real content of element e: a child element or expression, or non-blank text.
 .decl content(e: node, c: node)
 content(e, c) :- kind(e, "jsx_element"), child(e, c, _), !field(e, "open_tag", c), !field(e, "close_tag", c),
-    count : { kind(c, "jsx_text"), match("\s*", c) } = 0.
+    count : { kind(c, "jsx_text"), match("\\s*", c) } = 0.
 
 // unwrap(e): replace element e by what it contains. `<A><B/></A>` becomes `<B/>`. With several children the tags
 // become a fragment, `<A><B/><C/></A>` → `<><B/><C/></>`, because a single expression is still needed where e was.
