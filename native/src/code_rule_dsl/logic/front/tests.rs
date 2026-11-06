@@ -228,6 +228,13 @@ fn value_cycles_bounded_by_the_data() {
     let spec = ".decl rest(v: symbol, r: symbol, i: number)\n.decl spec(v: symbol, i: number, r: symbol)\nrest(v, v, 0) :- text(_, v).\nrest(v, r, i + 1) :- spec(v, i, r).\n";
     ok(&format!("{spec}spec(v, i, r) :- rest(v, s, i), match(\"[^%]*%(?<r>.*)\", s).\n"));
     refused(&format!("{spec}spec(v, i, r) :- rest(v, s, i), match(\"[^%]*(?<r>.*)\", s).\n"));
+    // A count beside the key, up from a value of a lower stratum while the key stays (`tpl_upto`), with a relation
+    // of no count above it (`const_str`); not a count up from its own value, nor one a relation with no count
+    // gives back at the same key.
+    let tpl = ".decl tpl(t: node, i: number, v: symbol)\n.decl cs(n: node, v: symbol)\ntpl(t, 0, \"\") :- kind(t, \"template\").\ncs(n, v) :- tpl(n, i, v), !child(n, _, i).\n";
+    ok(&format!("{tpl}tpl(t, i + 1, @cat(v, w)) :- tpl(t, i, v), child(t, c, i), text(c, w).\ntpl(t, i + 1, @cat(v, w)) :- tpl(t, i, v), child(t, c, i), child(c, e, 0), cs(e, w).\n"));
+    refused(&format!("{tpl}tpl(t, i + 1, @cat(v, w)) :- tpl(t, i, v), text(t, w).\n"));
+    refused(&format!("{tpl}tpl(t, i + 1, @cat(v, w)) :- tpl(t, i, v), child(t, c, i), text(c, w).\ntpl(n, 0, v) :- cs(n, v).\n"));
 }
 
 /// The `cycles` gap of a regex group: the bytes a match has outside the group.

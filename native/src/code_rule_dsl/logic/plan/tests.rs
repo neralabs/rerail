@@ -643,8 +643,9 @@ fn("function_definition").
 // ---- recursion ----
 
 /// Recursion that makes values bounded by the data runs to its fixpoint: a count along a call's arguments in
-/// child order, a counter below a bound, and a text cut shorter at each step; and negated conjunctions run as
-/// their helper relations, with a variable shared, a shared one only tested, an alternative each, and none.
+/// child order, their text joined in that order, a counter below a bound, and a text cut shorter at each step;
+/// and negated conjunctions run as their helper relations, with a variable shared, a shared one only tested, an
+/// alternative each, and none.
 #[test]
 fn bounded_value_recursion_and_negated_conjunctions_run() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("recursion");
@@ -662,6 +663,11 @@ arg_at(c, b, k + 1) :- arg_at(c, a, k), child(c, a, i), child(c, b, i + 1).
 arg_pos(s, k) :- arg_at(_, a, k), text(a, s).
 .decl pos(s: symbol, k: number)
 pos(s, k) :- arg_pos(s, k).
+.decl joined(c: node, i: number, v: symbol)
+joined(c, 0, "") :- node(_, c, "argument_list", _, _).
+joined(c, i + 1, cat(v, w)) :- joined(c, i, v), child(c, a, i), text(a, w).
+.decl whole(v: symbol)
+whole(v) :- joined(c, i, v), !child(c, _, i).
 .decl up(x: number)
 up(1).
 up(x + 1) :- up(x), x < 4.
@@ -678,12 +684,13 @@ mid(s) :- arg_pos(s, k), !(k = 0 ; k = 2).
 none(s) :- arg_pos(s, 0), !(arg_pos(_, 5), text(_, _)).
 .decl gone(s: symbol)
 gone(s) :- arg_pos(s, 0), !(arg_pos(_, 2)).
-.output pos, up, rest, first, mid, none, gone
+.output pos, whole, up, rest, first, mid, none, gone
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("pos"), "x\t0\ny\t1\nz\t2\n");
+    assert_eq!(read("whole"), "xyz\n");
     assert_eq!(read("up"), "1\n2\n3\n4\n");
     assert_eq!(read("rest"), "join\t2\nos.path.join\t0\npath.join\t1\n");
     assert_eq!(read("first"), "x\n");
