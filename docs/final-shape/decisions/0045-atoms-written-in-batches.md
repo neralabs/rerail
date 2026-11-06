@@ -1,6 +1,7 @@
 # 0045: Atoms are stored as segments of the in-memory arena, written with the rows that use them
 
-Status: proposed (2026-11-06; amended the same day with the segment shape and crash recovery)
+Status: accepted (2026-11-06; amended the same day with the segment shape and crash recovery; built and measured,
+with the lease as file locks, §5)
 
 ## Intro
 
@@ -91,7 +92,7 @@ Every atom becomes durable. The rules are:
    once open item O4 makes spill files recoverable, a spill flushes first. Today spill files are
    discarded after a crash, so they don't count.
 2. **When enough is pending:** 256k atoms, or 16 MB of text, or 30 seconds since the first pending
-   atom. This bounds what a crash loses. A flush is now a sequential append, so this is cheap: on
+   atom. This is checked whenever atoms are interned. This bounds what a crash loses. A flush is now a sequential append, so this is cheap: on
    the full corpus, about 3 appends.
 3. **At the end of a run, when the store is closed, and when another process asks for the lease**
    (§5).
@@ -101,16 +102,23 @@ the mirror like every other writer, inside the store transaction that §4.1 cove
 
 ### 5. Other processes: a lease
 
-Pending ids are safe only while no other process gives out ids. A single row,
-`atom_lease(pid, host, heartbeat, wanted)`, says who may.
+Pending ids are safe only while no other process gives out ids. The lease is an exclusive file lock
+beside the database, `<db>-atoms.lock`.
 
-- A process takes the lease, in a short transaction, before it gives out its first pending id. It
-  refreshes the heartbeat at each flush, and at most every 5 seconds while it holds the lease.
-- A process that wants to give out ids sets `wanted`, then waits, up to its busy timeout. The holder
-  checks `wanted` at each chunk boundary, with one read. If it is set, the holder flushes and gives
-  the lease up.
-- A lease is taken over when its holder is gone. That is known at once on the same host, because the
-  pid no longer exists. Otherwise it is known when the heartbeat is more than 30 seconds old.
+- A process takes the lock before it gives out its first pending id, and then reads the segments
+  other processes wrote. It gives the lock back after the flush that leaves nothing pending.
+- A process that wants to give out ids and finds the lock held takes a shared lock on
+  `<db>-atoms.want`, then waits for the lease, up to 60 seconds (then `Busy`). The holder looks
+  for that shared lock when it interns, at most every 50 ms. If it is there, a flush is due: the
+  holder flushes and gives the lease back.
+- The operating system releases a file lock when its process dies. A dead holder's lease is
+  therefore free at once, with no heartbeat or staleness rule. That is safe: by §4, nothing
+  durable names the dead holder's pending ids, so they can be given out again. (SQLite in WAL
+  mode needs one host anyway.)
+
+(This replaces the first draft's lease row with a heartbeat: taking a row needs a write
+transaction, which can't be opened from inside another one, and a crashed holder would have
+needed a timeout.)
 
 ## Crash and restart
 
@@ -120,7 +128,7 @@ What is on disk after a crash at any point:
   transaction with the rows that use its atoms (§4.1), and a SQLite commit is atomic in WAL mode. A
   crash during a flush therefore rolls back the segment and those rows together. No committed row
   can name an id whose string is missing.
-- **The lease row, naming the dead process.**
+- **No lease.** The dead process's file lock was released by the operating system.
 
 What is lost:
 
@@ -130,8 +138,7 @@ What is lost:
 On restart:
 
 1. **Open** reads the segments and rebuilds the mirror. It holds exactly the committed atoms.
-2. **The lease** names a pid that no longer exists on this host, so it is taken over at once. On
-   another host it is taken over after the heartbeat goes stale.
+2. **The lease** is free: the operating system released the dead process's lock.
 3. **Ids from `stored` on are given out again.** They may now name different strings than before
    the crash. That is safe because nothing durable refers to the old meanings. In-memory
    structures that did refer to them were lost with the process.
@@ -177,7 +184,32 @@ lost range only, and no finding depends on an id (the findings contract is keys)
 5. Measure on the full corpus: commits, pages written, CPU and instructions retired for the batch
    phase. The replay's totals must stay identical.
 
-## Expected effect
+## Measured (2026-11-06)
+
+Built as above. On serverplan-quality over the 9,010-file corpus (104 chunks), with machine load 56–58:
+
+| | Before (bulk-tuned rows) | Now |
+|---|---|---|
+| Atom commits per run | 104 | 3 segments (639,214 atoms) |
+| Bytes written for atoms | about 200k pages (800 MB) | 29.6 MB (about 7k pages) |
+| Interning in the batch worker | 44% of the batch phase | 0.19 s of 3.7–4.0 s |
+| Batch phase (worker CPU) | 8.8 s before any tuning | 3.7–4.0 s |
+| Instructions retired, whole run | 415e9 | 387–394e9 |
+| Worker waits for the planner run | yes (`hold`) | no (`hold` removed) |
+
+The replay's totals are unchanged (3988 273 228 0, 1638 95 55 0, 2350 178 173 0). The tests in
+`content_store::atoms::tests` cover:
+
+- a crash in a child process: only pending atoms are lost, their ids are given out again, and the
+  lease is free at once;
+- the lease passing between two processes;
+- a refused commit;
+- SQL over pending atoms.
+
+The crash-recovery tests of the push path (`facts::observe::tests::recovery`) now read the atoms
+from the segments on disk.
+
+## Expected effect (the estimate before building)
 
 | | Now | Expected (A) |
 |---|---|---|

@@ -629,6 +629,12 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     phases.insert(2, ("batch (worker)", batch_cpu.0, batch_cpu.1, rss, 0));
     let (tested, text_cpu) = *vocabulary.tested.lock().unwrap();
     drop(statements);
+    // The run's atoms are written at its end (decision 0045 §4.3), and the profile says how often they were.
+    store.flush_atoms().map_err(|e| Error::Plan(e.to_string()))?;
+    let ((segments, atoms, bytes), pending) = store.atom_writes();
+    crate::code_rule_dsl::logic::profile::decision("atoms", || {
+        format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0045)", bytes as f64 / 1e6)
+    });
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
     if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
         let mut header = format!(

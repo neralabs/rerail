@@ -172,6 +172,8 @@ pub(crate) struct Atoms {
     flushed: Mutex<HashMap<usize, Arc<AtomicBool>>>,
     /// Every id, by string, for range scans of `atoms.value` (`vtab`); extended when read.
     sorted: Mutex<Vec<Sym>>,
+    /// Segments this process appended, their atoms and their bytes (the profile's `atoms` line).
+    written: Mutex<(u64, u64, u64)>,
 }
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
@@ -200,6 +202,7 @@ impl Atoms {
             reader: Mutex::new(None),
             flushed: Mutex::new(HashMap::new()),
             sorted: Mutex::new(Vec::new()),
+            written: Mutex::new((0, 0, 0)),
         }
     }
 
@@ -264,6 +267,12 @@ impl Atoms {
 
     pub(crate) fn len(&self) -> usize {
         self.state.read().atoms.len()
+    }
+
+    /// Segments this process appended so far: (segments, atoms, bytes), and the atoms pending now.
+    pub(crate) fn writes(&self) -> ((u64, u64, u64), usize) {
+        let state = self.state.read();
+        (*self.written.lock(), state.atoms.len() - state.stored.min(state.atoms.len()))
     }
 
     /// Heap bytes the arena holds.
@@ -458,9 +467,13 @@ impl Atoms {
             let (ends, bytes) = state.atoms.segment(end);
             (end, ends, bytes, len)
         };
+        let size = (ends.len() + bytes.len()) as u64;
         connection
             .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
             .execute(rusqlite::params![from as i64, ends, bytes])?;
+        // Counted when written; a transaction that then rolls back still counts.
+        let mut written = self.written.lock();
+        *written = (written.0 + 1, written.1 + (upto - from) as u64, written.2 + size);
         Ok(upto)
     }
 
@@ -635,6 +648,11 @@ impl super::ContentStore {
     /// The atom of `value`, if the store holds it.
     pub fn atom(&self, value: &str) -> StoreResult<Option<Sym>> {
         self.atoms.lookup(value)
+    }
+
+    /// The atoms' writes so far: (segments, atoms, bytes) appended, and the atoms pending now.
+    pub(crate) fn atom_writes(&self) -> ((u64, u64, u64), usize) {
+        self.atoms.writes()
     }
 
     /// Heap bytes the arena holds (counted against the fact pool, K1).
