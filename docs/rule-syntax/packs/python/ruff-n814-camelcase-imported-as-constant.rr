@@ -1,0 +1,18 @@
+.policy "ruff-n814-camelcase-imported-as-constant" revision 2
+.description "Keep the alias of an imported CamelCase name in CamelCase; an UPPER_CASE alias makes readers mistake a class for a constant."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff N814 (pep8-naming): a CamelCase name imported under an UPPER_CASE alias that is not its acronym (N817
+// reports those) and is longer than one character. Exempt when the name or the alias matches
+// `pep8-naming.ignore-names`.
+//   from mod import CamelCase as CAMELCASE    ← N814
+//   from mod import BananaFruit as B          not reported: one character
+#include "python/naming.rr"
+
+.violation N814(at: node, x: symbol, a: symbol) code "N814"
+    "Use a CamelCase alias instead of `{a}` for `{x}` and update its uses; leave it if `{x}` is really a constant despite its CamelCase name."
+    suppress ruff "N814"
+N814(i, x, a) :- alias_import(i, x, a), strlen(a) > 1, camel_name(x), cased_upper(a), !acronym_of(x, a),
+    !naming_ignored(x), !naming_ignored(a).

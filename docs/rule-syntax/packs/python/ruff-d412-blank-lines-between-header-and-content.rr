@@ -1,0 +1,24 @@
+.policy "ruff-d412-blank-lines-between-header-and-content" revision 2
+.description "Start each docstring section's content on the line right after its header, without blank lines in between, for a consistent docstring layout."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff D412 (pydocstyle): blank lines between a section header (or its dashed underline) and the section's
+// content. One blank line is allowed before an RST directive (`.. code-block::`). A section with no content is
+// D414's, not this rule's.
+//   Returns:
+//
+//       int                  ← D412 (at `Returns`)
+#include "python/docstrings-sections.rr"
+
+.violation D412(at: span, k: symbol) code "D412"
+    "Remove the blank lines between the `{k}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
+    suppress ruff "D412"
+D412(at, v) :- doc_section(s, i, v, _, _, _), content(s, i, c, k), k > 0, !(doc_sphinx(s, c), k = 1), doc_at(s, i, at).
+// content(s, i, c, k): the content of section i starts at line c, after k blank lines below the header (or below
+// its dashed underline). One blank line before a `.. ` directive is allowed.
+.decl content(s: node, i: number, c: number, k: number)
+content(s, i, c, k) :- doc_after(s, i, c, k), !doc_dashes(s, c, _).
+content(s, i, c, k) :- doc_after(s, i, f, _), doc_dashes(s, f, _), doc_section_end(s, i, e),
+    c = min j : { doc_line(s, j, _), j > f, j < e, !doc_blank(s, j) }, k = c - f - 1.
