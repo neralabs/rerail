@@ -115,7 +115,7 @@ candidate(i, 6, "circular-avoidance")  :- local_import(i), cycle(i).
 candidate(i, 7, "deferred-no-cycle")   :- local_import(i), workspace(i).
 // The package name alone or followed by a dot: numpy, numpy.linalg, not numpyx.
 candidate(i, 8, "heavy-dependency")    :- local_import(i), module_text(i, m),
-    match("(torch|tensorflow|numpy|pandas|scipy|matplotlib)(\..*)?", m).
+    match("(torch|tensorflow|numpy|pandas|scipy|matplotlib)(\\..*)?", m).
 candidate(i, 9, "other")               :- local_import(i).
 
 // ---- fixes ----------------------------------------------------------------------------------------------------------

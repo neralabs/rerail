@@ -83,7 +83,7 @@ retparam(f, i, r) :- retval(f, r), look(r, x, f), param(f, x, i).
 // posarg(c, i, a): a is the argument at child index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
 // The index counts all argument children, so it matches param's index only while no keyword or splat comes first.
 .decl posarg(c: node, i: number, a: node)
-posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", as), kind(as, "argument_list"), child(as, a, i), !kind(a, "keyword_argument"),
+posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, i), !kind(a, "keyword_argument"),
     !kind(a, "list_splat"), !kind(a, "dictionary_splat").
 // method_of(f, c): f is defined directly in the body of class c.
 .decl method_of(f: node, c: node)
@@ -353,7 +353,7 @@ call(c) :- kind(c, "call").
 // e.g. `open(p, mode="w")` gives (c, 0, "", <p>) and (c, -1, "mode", <"w">).
 .decl call_arg(c: node, i: number, keyword: symbol, v: node)
 call_arg(c, i, "", a) :- posarg(c, i, a).
-call_arg(c, -1, k, v) :- kind(c, "call"), field(c, "arguments", as), child(as, ka, _),
+call_arg(c, -1, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ka, _),
     kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k), field(ka, "value", v).
 // reach(f, g): f may call g, directly or through a chain of calls (transitive closure of calls; recursive).
 // Only the known side: a chain through a calls_open function may reach more.
