@@ -1366,3 +1366,13 @@ second requires that the module not export the name. So `from impl.common.query 
 rule, `resolve_export(q, q) :- export_query(q), split_dot(q, m, x), exports(m, x, q).`, takes it from 15 to 28
 of 37 events exact (tried with the replay's `RERAIL_REPLAY_EXTRA`; the copy is unchanged). **Closure:** the
 user decides whether the copy is corrected here or in its own branch.
+
+## O79. `op` of a comparison: `core.rr` has it, T's facts do not
+
+`core.rr`'s `op(n, s)` is every operator token (`op(binary, "+")`), and the library's `cmp` reads a comparison's
+operator from it (`op(c, "in")`). The engine's `op` is T's: binary, boolean and unary operators and augmented
+assignments, not comparisons (tree-sitter's `operators` field). Recording comparisons too takes
+post-op-no-internal-dispatch from 5 to 9 of its 10 runnable events, and breaks five tests that hold the engine's
+rows and T programs' outputs to T's (`relations_hold_t_exporters_rows`, `t_programs_*`). Not done.
+**Closure:** the user decides: `op` follows `core.rr` and the T parity tests (copies) change, or comparisons get a
+relation of their own and the library (a copy) reads it.
