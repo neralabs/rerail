@@ -196,7 +196,7 @@ That needs:
   unwritten atom.
 - an in-process reader of `atoms` by value (vocabulary SQL) flushing first.
 
-**Designed (2026-11-06):** decision 0045 (proposed) adds a lease for other processes and sorted flushes.
+**Designed (2026-11-06):** decision 0045 (proposed). Atoms are stored as segments of the arena with no value index, SQL reads them through a virtual table, a lease covers other processes, and the decision sets out recovery after a crash.
 
 ## O4. Spill files after a crash
 

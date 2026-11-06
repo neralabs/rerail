@@ -1,142 +1,179 @@
-# 0045: Atoms are allocated in memory and written in a few large commits
+# 0045: Atoms are stored as segments of the in-memory arena, written with the rows that use them
 
-Status: proposed (2026-11-06)
+Status: proposed (2026-11-06; amended the same day with the segment shape and crash recovery)
 
 ## Intro
 
-Every name, path and string in the engine is an atom: a dense integer id, stored in the `atoms`
-table (`atom`, `value`) with a unique index by value (`atoms_by_value`). Ids are given out in
-order. A process keeps a copy of the table in memory (a mirror), so it can find an atom without a
-query.
+Every name, path and string in the engine is an atom: a dense integer id. A process keeps all of
+them in memory (a mirror): the strings back to back in one byte arena, an end offset per atom, and a
+hash table from string to id. The database keeps them too, so ids survive the process.
 
-A corpus run builds its files in chunks. Each chunk's new strings are written to `atoms` in a
-transaction of their own, and committed, before the chunk's rules run. On the 9,010-file corpus
-that is 104 commits for 640k new strings. Each commit rewrites about 1,900 index pages, because
-the new strings are spread all over the index. That is about 200k pages, roughly 800 MB, written
-per run (open item O3; notes T10 §1b). The volume follows the number of commits, not the number
-of strings.
+Today the database copy is a row table plus an index:
 
-The per-chunk commit is not needed for correctness. It exists because the process has **two**
-mirrors that only meet through the table:
+```sql
+-- One row per string, and the string again in the index: about 2.7x the text on disk.
+CREATE TABLE atoms (atom INTEGER PRIMARY KEY, value TEXT NOT NULL) STRICT;
+CREATE UNIQUE INDEX atoms_by_value ON atoms(value);
+```
 
-- the store's (`content_store::atoms::Interner`), which interns the chunk's strings on the batch
-  worker thread;
-- the planner's symbols (`logic::native::setfix::Interner`), which the rules' SQL functions
-  (`sym_text`, `sym_atom`, `sym_cat`) read and extend on the main thread.
+A run store with 203k atoms (6.7 MB of text) measured: table 8.3 MB, index 9.8 MB, and almost
+nothing else. A corpus run builds its files in chunks and commits each chunk's new strings before
+the chunk's rules run: 104 commits for 640k strings on the 9,010-file corpus. Each commit
+rewrites about 1,900 index leaves, because new strings land all over the index. That is about 200k
+pages, roughly 800 MB, written per run (open item O3; notes T10 §1b).
 
-The planner's mirror learns the chunk's atoms by reading the table's tail. So they must be in the
-table first. And because both mirrors hand out ids, a thread-level lock (`atoms::hold`) makes a
-planner run the only writer while it runs, so the worker's next chunk waits for it.
+The per-chunk commit exists because the process has two mirrors that only meet through the table:
 
-This record proposes one mirror per database in a process, with ids allocated in memory and the
-rows written later, in a few large commits.
+- the store's (`content_store::atoms::Interner`), which interns a chunk's strings on the batch
+  worker;
+- the planner's symbols (`logic::native::setfix::Interner`), which learns them by reading the
+  table's tail.
+
+A thread-level lock (`atoms::hold`) also makes a planner run the table's only writer, so the worker
+waits for it.
+
+This record makes the in-memory arena the shape on disk too. One mirror is shared per database, and
+SQL reads atoms through it. Atoms are written in a few large appends, always before or with
+anything that refers to them.
 
 ## Decision
 
 ### 1. One mirror per database, shared
 
-A process holds one `Interner` per database file, found by canonical path (as `atoms::hold`
-finds its lock today). The store and the planner's symbols both use it, behind one reader–writer
-lock. An id is given out under the write lock, so the two can never give out the same id. This
-also removes the need for `hold`, and the worker no longer waits for the planner run.
+A process holds one mirror per database file, found by canonical path. The store and the planner's
+symbols both use it, behind one reader–writer lock. An id is given out under the write lock, so no
+two writers can give out the same id. `hold` goes away, and the worker no longer waits for a
+planner run. A failed planner run's symbols stay in the mirror: an unused atom is harmless.
 
-The mirror keeps a watermark, `stored`: ids below it are in the table, and ids from it on are
+The mirror keeps a watermark, `stored`. Ids below it are in the database; ids from it on are
 **pending**.
 
-```text
-// Ids 0 .. stored are in the table; stored .. len are pending (in memory only).
-struct Shared { atoms: Interner, stored: usize, lease: Option<Lease> }
+### 2. On disk: segments of the arena
+
+```sql
+-- Atoms first .. first + n - 1: n end offsets (u32, little-endian, relative to the segment)
+-- and their bytes. Segments are contiguous: each one's first is the previous first + n.
+CREATE TABLE atom_segment (first INTEGER PRIMARY KEY, ends BLOB NOT NULL, bytes BLOB NOT NULL) STRICT;
 ```
 
-A failed planner run's symbols are no longer truncated away. Strings in `atoms` that nothing refers
-to are harmless, since the table is append-only.
+- A flush appends one row: the pending range, copied from the arena. Its pages are written once,
+  in order. There is no index to maintain.
+- Opening reads the segments in order and rebuilds the arena and the hash table. It checks that
+  the segments are contiguous and the strings distinct, and fails as corrupt otherwise (as
+  `catch_up` does today).
+- Storage is about 1× the text. For the full corpus, about 21 MB of text, or about 6k pages written
+  per run against 200k (A).
 
-### 2. Nothing durable refers to a pending atom
+### 3. In SQL: `atoms` is a virtual table over the mirror
 
-Pending atoms are written (**flushed**) to the table before anything that could make them visible
-outside the mirror:
+The SQL that reads `atoms` keeps its text: vocabulary fill, prefilter lookups, statistics and
+derivations. `atoms(atom, value)` becomes an eponymous virtual table over the shared mirror, in
+the style of decision 0008:
 
-1. **In every write transaction on the database, first.** All of the store's writes go through
-   `immediate_transaction`, `immediate_transaction_once` and `immediate_transaction_no_wait`. Each
-   one flushes pending atoms at the start of its transaction. So the atoms and the rows that refer
-   to them commit together, in one commit, not two. A planner run's `flush_symbols` becomes this
-   same flush.
-2. **Before SQL that reads `atoms`.** The vocabulary fill (`prefilter/vocabulary-fill.sql`), the
-   prefilter's term lookups (`gates.rs`, `access.rs`, `sets.rs`), `text/vocabulary.rs`,
-   `stats/inputs.rs` and the derivations' joins all join `atoms` by value or id. Each one calls the
-   flush first. A debug assertion checks this: in test builds, a connection with pending atoms that
-   prepares a statement reading `atoms`, other than the flush, fails.
-3. **When enough is pending:** 256k atoms, or 16 MB of strings. This bounds the work lost in a
-   crash and the size of one flush's WAL. On the full corpus that is about 3 commits instead of
-   104 (A).
-4. **At the end of a run, and when the store is closed.**
-5. **When another process asks for the lease** (§4).
+- `atom = ?` is an array lookup;
+- `value = ?` is a hash probe;
+- a range on `value` (the vocabulary's prefix ranges) uses a sorted order of the ids, built the first
+  time it is asked for and extended as atoms are added.
 
-The prefilter's `Counts::flush` stops inserting into `atoms` itself (`INSERT … ON CONFLICT DO
-NOTHING`, with ids taken by SQLite). It interns its terms through the mirror like every other
-writer. It runs inside a store transaction, so the flush in point 1 covers it.
+SQL sees pending atoms as well, so no reader has to flush first.
 
-The corpus run's `cross.sqlite` is the run's scratch database, recreated at the start of every
-run. Its rows don't count as durable references.
+The derivation tables' `REFERENCES atoms(atom)` go: a foreign key can't point at a virtual table.
+§4's rule replaces the check, in the write path.
 
-### 3. A flush writes in value order
+### 4. When atoms become durable
 
-A flush inserts the pending rows sorted by value, each with its id. The ids are unchanged, so the
-order doesn't matter to anything else. The table's rows are appended in id order either way. The
-index then fills leaf by leaf: each leaf is written once per flush, not once per string. The flush
-keeps the bulk settings already in place (a 32 MB cache and a 16k-page checkpoint interval, for the
-transaction only).
+Every atom becomes durable. The rules are:
 
-The expected volume is about the new rows' and index entries' own size: 640k strings at about 30
-bytes is about 5–10k pages per run, against 200k (A).
+1. **With anything durable that refers to it.** Every write transaction on the database
+   (`immediate_transaction` and its `_once` and `_no_wait` forms, and a planner run's
+   `flush_symbols`) appends the pending segment first, in the same transaction. The atoms and the
+   rows that use them commit together, in one commit. A file meant to survive a crash counts too:
+   once open item O4 makes spill files recoverable, a spill flushes first. Today spill files are
+   discarded after a crash, so they don't count.
+2. **When enough is pending:** 256k atoms, or 16 MB of text, or 30 seconds since the first pending
+   atom. This bounds what a crash loses. A flush is now a sequential append, so this is cheap: on
+   the full corpus, about 3 appends.
+3. **At the end of a run, when the store is closed, and when another process asks for the lease**
+   (§5).
 
-### 4. Other processes: a lease
+The prefilter's `Counts::flush` stops inserting into `atoms` itself. It interns its terms through
+the mirror like every other writer, inside the store transaction that §4.1 covers.
 
-Pending ids are safe only while no other process appends to `atoms`. The rule is a lease: a single
-row, `atom_lease(holder, pid, heartbeat, wanted)`.
+### 5. Other processes: a lease
+
+Pending ids are safe only while no other process gives out ids. A single row,
+`atom_lease(pid, host, heartbeat, wanted)`, says who may.
 
 - A process takes the lease, in a short transaction, before it gives out its first pending id. It
-  gives the lease back at its flush, or keeps it and refreshes the heartbeat while it still has
-  work.
-- A process that wants to append and finds another holder sets `wanted`, then waits, up to its busy
-  timeout, the same as for SQLite's write lock.
-- The holder checks `wanted` at each chunk boundary, with one read. If it is set, the holder
-  flushes and releases the lease.
-- A lease whose holder's process is gone, or whose heartbeat is stale, can be taken over. That is
-  safe: by §2, nothing durable refers to the old holder's pending ids, so they can be given out
-  again.
+  refreshes the heartbeat at each flush, and at most every 5 seconds while it holds the lease.
+- A process that wants to give out ids sets `wanted`, then waits, up to its busy timeout. The holder
+  checks `wanted` at each chunk boundary, with one read. If it is set, the holder flushes and gives
+  the lease up.
+- A lease is taken over when its holder is gone. That is known at once on the same host, because the
+  pid no longer exists. Otherwise it is known when the heartbeat is more than 30 seconds old.
 
-On open, a process rebuilds its mirror from the table. Pending ids never outlive the process.
+## Crash and restart
+
+What is on disk after a crash at any point:
+
+- **Segments up to `stored`, and only rows that refer to ids below it.** A flush shares its
+  transaction with the rows that use its atoms (§4.1), and a SQLite commit is atomic in WAL mode. A
+  crash during a flush therefore rolls back the segment and those rows together. No committed row
+  can name an id whose string is missing.
+- **The lease row, naming the dead process.**
+
+What is lost:
+
+- The pending atoms: at most §4.2's bound (256k atoms, 16 MB, 30 seconds).
+- The in-memory work that used them, which died with the process anyway.
+
+On restart:
+
+1. **Open** reads the segments and rebuilds the mirror. It holds exactly the committed atoms.
+2. **The lease** names a pid that no longer exists on this host, so it is taken over at once. On
+   another host it is taken over after the heartbeat goes stale.
+3. **Ids from `stored` on are given out again.** They may now name different strings than before
+   the crash. That is safe because nothing durable refers to the old meanings. In-memory
+   structures that did refer to them were lost with the process.
+4. **The work is redone.** The strings that were pending are interned again when their sources are
+   read again, and become durable by §4's rules. A corpus run starts over anyway: it recreates its
+   store.
+
+Ids already depend on the order in which strings are first seen. A crash changes that order for the
+lost range only, and no finding depends on an id (the findings contract is keys).
 
 ## What the prior work says
 
 - **Process-held state.** The spike lost planning state that was held only in Python, so a
   reopened store planned differently. Its rule is that process-held state (interners, frequencies)
-  is rebuilt on attach (history index, DH L3319–3343, S174/S178). Pending atoms follow that rule:
-  they are only ever process-held, and nothing durable depends on them.
+  is rebuilt on attach, with a fingerprint check (history index, DH L3319–3343, S174/S178).
+  Pending atoms are exactly that kind of state. Open rebuilds the mirror from the segments, and
+  checks that they are contiguous and the strings distinct.
 - **Ids that depend on order.** In the spike, stored bytes depended on batch order because kinds
-  were interned at first sight (history index, S130; design index: "interning on first observation
-  made the bytes order-dependent"). Kinds and fields here are grammar codes, not atoms (decision
-  0009). Name atoms already depend on the order of chunks and runs. This record changes when
-  they're written, not which ids they get.
-- **Decision 0009.** Symbols are atoms, and strings exist only in `sym_text`, `sym_atom` and
-  `sym_cat` over the mirror. The shared mirror keeps that, with one mirror instead of two.
-- **Decision 0024 §6.** It sets 1 MB of page cache per connection at rest. The flush's larger
-  cache is for its transaction only, as it is now.
-- **Open item O3's closure note.** It proposed "intern ahead … with a reserved range and write the
-  atoms with the first layer that uses them". §2.1 is that rule. The lease replaces a reserved
-  range, because the table stays dense.
+  were interned at first sight (history index, S130). Here kinds and fields are grammar codes, not
+  atoms (decision 0009), and name ids already depend on order. This record doesn't change that.
+- **Decision 0008.** Base relations are served to SQL as virtual tables. `atoms` follows that.
+- **Decision 0009.** Strings exist only in `sym_text`, `sym_atom` and `sym_cat` over the mirror.
+  It is now one mirror, shared.
+- **Decision 0024 §6.** It sets 1 MB of page cache per connection. That is unaffected: atoms are no
+  longer read through SQLite's pages.
+- **Decision 0026.** Nothing is stored per node beside the tape. The segment row is per flush.
+- **Open item O3's closure note.** It proposed "intern ahead … and write the atoms with the first
+  layer that uses them". That is §4.1. The lease replaces the reserved range, because ids stay dense.
 
 ## Order of work
 
-1. Point the store and the planner's symbols at one shared mirror, and remove `hold`. Test: the
-   worker and a planner run intern at the same time and get distinct ids.
-2. Add the watermark and the flush, and call the flush in the three transaction helpers, the
-   reader sites and the end of a run. Change `Counts::flush`. Test: a write transaction after
-   pending atoms commits them with its rows; a reader site sees pending atoms.
-3. Sort the flush by value. Test: ids are unchanged, and the pages written are counted.
-4. Add the lease, and its takeover from a dead holder. Test: two connections acting as two
-   processes.
+1. One shared mirror for the store and the planner's symbols, and `hold` removed. Test: the worker
+   and a planner run intern at the same time and get distinct ids.
+2. The `atoms` virtual table over the mirror, with the readers unchanged. Test: the vocabulary's
+   and prefilter's existing tests.
+3. `atom_segment`, the watermark, and the flush in the write transactions, at the thresholds and at
+   close. `Counts::flush` through the mirror. A schema migration copies an existing `atoms` table
+   into one segment. Tests:
+   - a write transaction commits its pending atoms with its rows;
+   - reopening gives the same ids;
+   - a crash simulated after an uncommitted flush leaves no dangling ids.
+4. The lease, and its takeover from a dead holder. Test: two connections acting as two processes.
 5. Measure on the full corpus: commits, pages written, CPU and instructions retired for the batch
    phase. The replay's totals must stay identical.
 
@@ -144,7 +181,8 @@ On open, a process rebuilds its mirror from the table. Pending ids never outlive
 
 | | Now | Expected (A) |
 |---|---|---|
-| Commits of atoms per full-corpus run | 104 | about 3 |
-| Pages written | about 200k (800 MB) | about 5–10k |
+| Atom commits per full-corpus run | 104 | about 3 |
+| Pages written for atoms | about 200k (800 MB) | about 6k |
+| Size on disk | about 2.7× the text | about 1× |
 | Interning's share of the batch phase | 44% | under 5% |
 | Worker waits for the planner run | yes (`hold`) | no |
