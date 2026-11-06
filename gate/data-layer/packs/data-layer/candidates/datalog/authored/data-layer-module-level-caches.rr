@@ -1,0 +1,56 @@
+// data-layer-module-level-caches: the clauses the converter leaves (decision 0043).
+//
+// `decorator` (oracleAnalyzer false): a module-level function (not under a function or lambda, nor under a class
+// nested in a class) whose own decorated_definition carries a decorator whose expression is `cache`/`lru_cache`,
+// `functools.cache`/`functools.lru_cache`, or a call of one (recursively), outside the two paths the clause
+// skips (`\b\B` never matches, so the skip is exactly those two files).
+//
+// The rule's source gate (W's regex `Cache|cache|holder|lru_cache|memo|registry` over the module's text, or `^`
+// with sourceGate off) always holds for this clause: a match has a decorator identifier `cache` or `lru_cache` in
+// the module, and both contain `cache`. So the clause is exact under either sourceGate value, with no source text.
+//
+// The list clauses (`list_cache`, `named-list`, their `-file-N` forms, `raw-list_cache`, `raw-named-list`) need the
+// module's text for that gate (a regex over the module node's text sees comments and strings): they are in
+// `data-layer-module-level-caches.pending.rr`, awaiting `node_text`.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+// ---- decorator ----
+.decl decorator_fn_scopes(kind: symbol)
+decorator_fn_scopes("function_definition"). decorator_fn_scopes("lambda").
+.decl decorator_classes(kind: symbol)
+decorator_classes("class_definition").
+
+// The util `cache-decorator`.
+.decl decorator_cache(n: node)
+decorator_cache(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "cache" ; s = "lru_cache").
+decorator_cache(n) :- node(_, n, "attribute", _, _),
+    field(n, "object", o), node(_, o, "identifier", _, _), text(o, "functools"),
+    field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "cache" ; s = "lru_cache").
+decorator_cache(n) :- node(_, n, "call", _, _), field(n, "function", f), decorator_cache(f).
+
+// Under a function or lambda; under a class that is itself under a class.
+.decl decorator_in_function(n: node)
+decorator_in_function(n) :- node(_, n, "function_definition", _, _), inside(n, _, decorator_fn_scopes).
+.decl decorator_in_nested_class(n: node)
+decorator_in_nested_class(n) :- node(_, n, "function_definition", _, _), inside(n, c, decorator_classes), inside(c, _, decorator_classes).
+
+// The clause's file skip.
+.decl decorator_skipped(p: symbol)
+decorator_skipped(p) :- doc(_, p, _),
+    (p = "impl/common/l2100_sql_grammar/fast_params.py" ; p = "impl/common/l2070_server_plan/steps/intent_transaction.py").
+
+violation("data-layer-module-level-caches", "decorator", "lru_cache", p, l) :-
+    node(d, n, "function_definition", _, _), !decorator_in_function(n), !decorator_in_nested_class(n),
+    child(dd, n, _), node(_, dd, "decorated_definition", _, _),
+    child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, e, _), decorator_cache(e),
+    doc(d, p, _), !decorator_skipped(p), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
