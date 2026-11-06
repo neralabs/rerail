@@ -863,7 +863,9 @@ export type CompletionMetric = (typeof COMPLETION_METRICS)[number];
  */
 export const COMPLETION_SPECS: Readonly<Record<CompletionMetric, MetricSpec>> = {
   items_end: { kind: "plain", better: "lower", label: "conflict items violated after completion" },
-  usd: { kind: "log", better: "lower", label: "agent cost (USD)" },
+  // Tested on log(value + 1) like tokens and seconds, so in micro-dollars: at about $0.01 a task, dollars + 1 ≈ 1 and
+  // the test would see no difference whatever the costs were.
+  usd: { kind: "log", better: "lower", label: "agent cost (µUSD)" },
   agent_time: { kind: "log", better: "lower", label: "agent wall time" },
   adopted_end: { kind: "binary", better: "higher", label: "ended on the adopted design" },
   total_tokens: { kind: "log", better: "lower", label: "agent total tokens" },
@@ -878,7 +880,7 @@ export const completionFailed = (run: CompletionRunFields): boolean => run.error
 function completionMeasured(metric: CompletionMetric, run: CompletionRunFields): number {
   switch (metric) {
     case "items_end": return run.itemsAfterCompletion ?? run.items;
-    case "usd": return run.agent.usd;
+    case "usd": return run.agent.usd * 1e6;
     case "agent_time": return run.agent.wallMs / 1000;
     case "adopted_end": return run.adoptedAtEnd === true ? 1 : 0;
     case "total_tokens": return run.agent.total;

@@ -560,6 +560,11 @@ run to completion, as the session-focus comparison above did.
   --exclude encode-httpx-3304-3335 --arms none,git-conflict --trials 2`, split by pair across the build hosts.
 - **Known property of the test.** In the self-test (4,000 synthetic datasets at this size) the false-positive rate
   under no effect is 0.051–0.055 against a nominal 0.05; the per-look bar of 0.0221 is kept as is.
+- **Correction after look 1, logged with its reason.** H2's test, like the token and time tests, works on
+  log(value + 1). Cost was first passed in dollars; at about $0.01 a task that made every ratio ×1.00 with an
+  implausibly tight interval (×0.998–×1.004), whatever the costs. It is now in micro-dollars, so the transform does
+  what it does for tokens. Nothing else changed. Look 1 under the first unit read ×1.001; under the corrected one,
+  ×1.07 [×0.96, ×1.19].
 
 ## Steer strategies
 
