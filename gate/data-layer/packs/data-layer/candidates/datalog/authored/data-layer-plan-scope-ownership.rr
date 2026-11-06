@@ -1,7 +1,8 @@
-// Authored clauses of data-layer-plan-scope-ownership (decision 0043): those the converter cannot say.
-// Source of truth: candidates/rules-ast/data-layer-plan-scope-ownership.json. Every clause is authored here (the
-// converter's six re-authored without its approximate gate). Options as the run resolves them: sourceGate through
-// option_on (plan_scope_gate); oracleAnalyzer is read by no clause.
+// Authored clauses of data-layer-plan-scope-ownership (decision 0043).
+// Source of truth: candidates/rules-ast/data-layer-plan-scope-ownership.json. Every clause is authored here, the
+// ones the converter can convert included, so that the source gate is said once (plan_scope_gate) or left out
+// where the clause's own match implies it. Options as the run resolves them: sourceGate through option_on
+// (plan_scope_gate); oracleAnalyzer is read by no clause.
 //
 // The runner clauses' source gate (the module's text matching PlanScope|…|run_read_plan_scope_workflow|
 // run_write_plan_scope_workflow) is implied by their own match: the matched function's name, one of
@@ -84,11 +85,10 @@ violation("data-layer-plan-scope-ownership", "runner-nominal-true", "PSO001", p,
     field(n, "parameters", ps), runner_param(ps, q, _), !runner_before(q), !runner_nominal_type(q, "AsyncPlanScope"),
     node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
-// ---- Re-authored converted clauses: runner-no-parameter, runner-pso002, runner-pso003, versioned-terminal,
-// helper-base-call, callback-owner. As the converter has them, less the source gate, which each one's own match
-// implies (a runner name, AsyncVersionedPlanScope/SyncVersionedPlanScope, a runner name, _callback_versioned_txn
-// is in the module's text), so they hold for either sourceGate; the converter gaps them where an event sets
-// sourceGate = false, and tests the gate approximately (a module's text read as its file's names).
+// ---- runner-no-parameter, runner-pso002, runner-pso003, versioned-terminal, helper-base-call, callback-owner:
+// the policy's matchers without the source gate, which each one's own match implies (a runner name,
+// AsyncVersionedPlanScope/SyncVersionedPlanScope, a runner name, _callback_versioned_txn is in the module's
+// text, so the gate's regex finds it), so they hold, exactly, for either sourceGate.
 
 // runner-no-parameter: a runner with no positional-or-keyword parameter.
 .decl runner_has_param(n: node)
@@ -330,9 +330,8 @@ mode_pair_5_at(d, l) :- source(d, sp), match_group("(?<LOCATION>execute_write_pl
 violation("data-layer-plan-scope-ownership", "mode-pair-5", "PSO012", p, l) :-
     node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_5_at(d, _), l = min k : { mode_pair_5_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-// ---- nested-terminal (converted, re-authored for its gate): the converter tests the gate as "some name in the
-// file contains a gate word", which misses a word only in a comment or string; nothing in this clause's own
-// match implies the gate. Otherwise as converted: a call of a terminal name (or attribute) whose nearest
+// ---- nested-terminal: nothing in this clause's own match implies the gate, so it reads plan_scope_gate (the
+// module's whole text, comments and strings included). A call of a terminal name (or attribute) whose nearest
 // enclosing function's name contains nested_versioned (`inside` stopBy function_definition), in the listed files.
 .decl nested_terminal_fn(kind: symbol)
 nested_terminal_fn("function_definition").
