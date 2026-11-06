@@ -1,0 +1,39 @@
+.policy "eslint-sort-vars" revision 4
+.description "Sort variables declared in the same declaration statement alphabetically, case-sensitive."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+#include "tsx/statements.rr"
+//   var_decl, declarator
+
+// ESLint's sort-vars: in one declaration, the plain names (not destructuring patterns) must be in order. A name
+// is reported when an earlier name sorts after it; the order to beat stays the greatest name so far.
+//   var b, a;          → `a` reported
+//   var c, d, a, b;    → `a` and `b` reported
+//   var a, B;          → `B` reported: upper case sorts first ("B" < "a"), unless ignoreCase
+//   var a, [c, b] = x;   var {} = 1, a;   fine: patterns are skipped
+// Option ignoreCase (default false): compare lower-cased names.
+// Fix: write the names in order, each declarator moved whole, when every initialiser is a literal (moving a
+// computed one could change what it reads). ESLint makes the same fix, once per declaration.
+.violation sort_vars(at: node) code "sort-vars" "Variables within the same declaration block should be sorted alphabetically."
+    suppress eslint "sort-vars"
+    suppress oxlint "sort-vars"
+    fix safe sort_names "Sort the declared names"
+sort_vars(v) :- named(d, v, i, k), named(d, _, j, kj), j < i, k < kj.
+
+// named(d, v, i, k): declarator v of declaration d binds a plain name, the i-th declarator; k is its sort key.
+.decl named(d: node, v: node, i: number, k: symbol)
+named(d, v, i, k) :- var_decl(d, _), declarator(d, v, i), field(v, "name", n), kind(n, "identifier"), text(n, x),
+    (option("ignoreCase", "true"), k = @lower(x) ; !option("ignoreCase", "true"), k = x).
+
+// The fix puts the r-th name in sorted order in the r-th named slot; ties keep their order, as ESLint's sort.
+sort_names(v) :- named(d, v, _, _), !computed(d), slot(d, at, r), rank(d, w, r) => replace(at, `$w`).
+.decl slot(d: node, v: node, r: number)  // v is the r-th named declarator of d
+slot(d, v, r) :- named(d, v, i, _), r = count : { named(d, _, j, _), j < i }.
+.decl rank(d: node, v: node, r: number)  // v's place in sorted order
+rank(d, v, a + b) :- named(d, v, i, k), a = count : { named(d, _, _, k2), k2 < k },
+    b = count : { named(d, _, j, k), j < i }.
+.decl computed(d: node)  // some declarator of d (named or not) has an initialiser that is not a literal
+computed(d) :- var_decl(d, _), declarator(d, v, _), field(v, "value", e),
+    !kind(e, "string"), !kind(e, "number"), !kind(e, "true"), !kind(e, "false"), !kind(e, "null"), !kind(e, "regex").

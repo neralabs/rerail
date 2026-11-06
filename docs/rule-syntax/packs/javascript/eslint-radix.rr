@@ -1,0 +1,50 @@
+.policy "eslint-radix" revision 4
+.description "Pass a radix between 2 and 36 to every parseInt() call; without one, some inputs are parsed in an unexpected base."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-b-scope.rr"
+//   builtin_ref, called, member_call, arg_count, nth_arg
+
+// ESLint's radix: a call of the global parseInt, or of Number.parseInt with Number the global, needs a radix.
+//   parseInt()             → "missingParameters"
+//   parseInt(s)            → "missingRadix"
+//   parseInt(s, 37)        → "invalidRadix": a literal that is no integer from 2 to 36, `undefined`, or (as
+//   parseInt(s, -1)           ESLint 10 reads it) a number literal with a sign whose value is out of range
+//   parseInt(s, 10)   parseInt(s, radix)   parseInt(...args)   Number["parseInt"](s)   → not
+// ESLint 10 (the recorded tool) skips a call whose first or second argument is a spread, and reads
+// Number["parseInt"] and Number[`parseInt`] as Number.parseInt; ESLint 9 did neither.
+// The "always" mode only, as the policy; ESLint 9's "as-needed" is not offered.
+.violation radix(at: node, id: symbol) code "radix" "{id}"
+    suppress eslint "radix"
+    suppress oxlint "radix"
+    suppress biome "lint/correctness/useParseIntRadix"
+radix(c, "Pass the string to parse and a radix to this call, like parseInt(value, 10).") :- parse_int(c), call_arg_count(c, 0).
+radix(c, "Missing radix parameter.") :- parse_int(c), call_arg_count(c, 1), !spread_arg(c, 0).
+radix(c, "Invalid radix parameter, must be an integer between 2 and 36.") :- parse_int(c), call_arg_count(c, k), k >= 2,
+    !spread_arg(c, 0), !spread_arg(c, 1), call_arg(c, a, 1), bad_radix(a).
+.decl spread_arg(c: node, i: number)  // ESLint 10 skips a call whose string or radix is a spread: parseInt(...xs)
+spread_arg(c, i) :- call_arg(c, a, i), kind(a, "spread_element").
+
+.decl parse_int(c: node)  // parseInt(…) or Number.parseInt(…), both the globals
+parse_int(c) :- builtin_ref(r, "parseInt"), called(c, r).
+parse_int(c) :- builtin_ref(r, "Number"), member_call_static(c, r, "parseInt").
+// bad_radix(a): what isValidRadix rejects. Every literal but the numbers 2 … 36 (a string, null, true, a regex,
+// a BigInt); `undefined` when it is the global; `+37`, `-1`, `-0`, `+10.5`.
+.decl bad_radix(a: node)
+bad_radix(a) :- radix_literal(a), !radix_value(a).
+bad_radix(a) :- text(a, "undefined"), (kind(a, "undefined") ; kind(a, "identifier")), !local_undefined(a).
+.decl local_undefined(a: node)  // function f(undefined) { parseInt(s, undefined) }: a parameter, not the global
+local_undefined(a) :- text(a, "undefined"), decl_site(s, "undefined", _, _, "value"), within(a, s).
+// tree-sitter writes the parameter `undefined` as an `undefined` node, which names.rr does not bind.
+local_undefined(a) :- text(a, "undefined"), within(a, f), field(f, "parameters", ps), child(ps, p, _),
+    text(p, "undefined").
+bad_radix(a) :- kind(a, "unary_expression"), op(a, "+"), field(a, "argument", n), plain_number(n), !radix_value(n).
+bad_radix(a) :- kind(a, "unary_expression"), op(a, "-"), field(a, "argument", n), plain_number(n).
+.decl radix_literal(a: node)  // an ESTree Literal
+radix_literal(a) :- kind(a, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "regex").
+.decl plain_number(n: node)  // a Number literal, not a BigInt
+plain_number(n) :- kind(n, "number"), !suffix("n", n).
+.decl radix_value(n: node)  // a Number literal whose value is an integer from 2 to 36
+radix_value(n) :- plain_number(n), value(n, v), match("[0-9]+", v), to_number(v) >= 2, to_number(v) <= 36.

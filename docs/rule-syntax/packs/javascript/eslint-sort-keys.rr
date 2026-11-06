@@ -1,0 +1,90 @@
+.policy "eslint-sort-keys" revision 4
+.description "Sort object literal keys in ascending, case-sensitive alphabetical order, starting a new run after each spread."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+//   object_prop (static key names), deparen, id_value, natural_key, nat_ask
+
+// ESLint's sort-keys: in an object literal, each key must not sort before the named key just before it.
+//   ({ b: 1, a: 2 })                         → 'a' should be before 'b' (reported at a)
+//   ({ a: 1, ...rest, B: 2 })  ({ a, [k]: 1, b })   fine: a spread starts a new run; a key without a name is skipped
+// Options: the order, "asc" (default) or "desc"; caseSensitive (default true); natural (default false: a2 before
+// a10 by natural-compare); minKeys (default 2: objects with fewer properties, spreads counted, are not checked);
+// allowLineSeparatedGroups (default false: a blank line starts a new group); ignoreComputedKeys (default false:
+// a computed key starts a new run). Destructuring patterns are not checked.
+.violation sort_keys(at: node, x: symbol, y: symbol, what: symbol) code "sort-keys"
+    "Expected object keys to be in {what}ending order. '{x}' should be before '{y}'."
+    suppress eslint "sort-keys"
+    suppress oxlint "sort-keys"
+sort_keys(at, x, y, w) :- prev_name(p, q), pname(p, x, at), pname(q, y, _), sort_key(x, kx), sort_key(y, ky),
+    order(o), (o = "asc", kx < ky ; o = "desc", ky < kx), !grouped(p), large(p), wording(o, w).
+
+// entry(o, p, i): the properties of object literal o, in order (i the child index). Methods and accessors are
+// properties; spreads are members that reset the run.
+.decl entry(o: node, p: node, i: number)
+entry(o, p, i) :- kind(o, "object"), child(o, p, i), (kind(p, "pair") ; kind(p, "shorthand_property_identifier") ;
+    kind(p, "method_definition") ; kind(p, "spread_element")).
+// pname(p, x, at): ESLint's getPropertyName: the static name, else a computed key's identifier (`[a]` is "a");
+// at is where ESLint reports, the key without its brackets. A name's escapes are decoded: {\u0062: 1, a: 2} is b, a.
+.decl pname(p: node, x: symbol, at: node)
+pname(p, x, at) :- entry(o, p, _), object_prop(o, p, _, y, k), key_at(k, at), (id_kind(k), id_value(k, x) ;
+    !id_kind(k), x = y).
+pname(p, x, at) :- entry(o, p, _), !object_prop(o, p, _, _, _), field(p, _, k), kind(k, "computed_property_name"),
+    key_at(k, at), kind(at, "identifier"), id_value(at, x).
+.decl key_at(k: node, at: node)
+key_at(k, k) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k) ; p = k), !kind(k, "computed_property_name").
+key_at(k, x) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k)), kind(k, "computed_property_name"),
+    child(k, e, _), !kind(e, "comment"), deparen(e, x).
+// reset(p): a spread, or a computed key under ignoreComputedKeys; ESLint forgets the previous name there.
+.decl reset(p: node)
+reset(p) :- entry(_, p, _), kind(p, "spread_element").
+reset(p) :- ignored(p).
+.decl ignored(p: node)  // a computed key under ignoreComputedKeys
+ignored(p) :- computed(p), option("ignoreComputedKeys", "true").
+.decl computed(p: node)
+computed(p) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k)), kind(k, "computed_property_name").
+// prev_name(p, q): q is the last named property before p since the last reset; p is named and not a reset.
+.decl prev_name(p: node, q: node)
+prev_name(p, q) :- entry(o, p, i), pname(p, _, _), !reset(p), entry(o, q, j), pname(q, _, _), j < i, !reset(q),
+    count : { entry(o, r, k), j < k, k < i, marks(r) } = 0.
+.decl marks(r: node)  // a property that would end the search for the previous name: a reset or a named one
+marks(r) :- reset(r).
+marks(r) :- pname(r, _, _).
+
+// The comparison: as written, lower-cased, and/or as natural-compare reads it.
+.decl order(o: symbol)
+order(o) :- option("option", o).
+order("asc") :- !option("option", _).
+.decl sort_key(x: symbol, k: symbol)
+sort_key(x, k) :- named(x), !option("natural", "true"), cased(x, k).
+sort_key(x, k) :- named(x), option("natural", "true"), cased(x, c), natural_key(c, k).
+nat_ask(c) :- named(x), option("natural", "true"), cased(x, c).
+.decl cased(x: symbol, c: symbol)
+cased(x, x) :- named(x), !option("caseSensitive", "false").
+cased(x, @lower(x)) :- named(x), option("caseSensitive", "false").
+.decl named(x: symbol)
+named(x) :- pname(_, x, _).
+.decl wording(o: symbol, w: symbol)  // "natural insensitive asc"
+wording(o, cat(n, cat(i, o))) :- order(o), (option("natural", "true"), n = "natural " ; !option("natural", "true"), n = ""),
+    (option("caseSensitive", "false"), i = "insensitive " ; !option("caseSensitive", "false"), i = "").
+.decl large(p: node)  // the object has at least minKeys properties
+large(p) :- entry(o, p, _), k = count : { entry(o, _, _) }, (option("minKeys", m), k >= to_number(m) ;
+    !option("minKeys", _), k >= 2).
+
+// grouped(p): allowLineSeparatedGroups, and a blank line lies between p and the property before it (spreads in
+// between are crossed; ignored computed keys are not properties here). ESLint carries the blank over a property
+// without a name: in `a, ⏎⏎ [x]: 1, b` b counts as after a blank line too.
+.decl grouped(p: node)
+grouped(p) :- option("allowLineSeparatedGroups", "true"), prev_prop(p, q), blank_between(q, p).
+grouped(p) :- option("allowLineSeparatedGroups", "true"), prev_prop(p, q), grouped(q), !pname(q, _, _).
+.decl prev_prop(p: node, q: node)  // q is the property just before p, spreads skipped
+prev_prop(p, q) :- property(o, p, i), property(o, q, j), j < i, count : { property(o, _, k), j < k, k < i } = 0.
+.decl property(o: node, p: node, i: number)
+property(o, p, i) :- entry(o, p, i), !kind(p, "spread_element"), !ignored(p).
+.decl blank_between(q: node, p: node)  // a line with nothing on it, not inside a comment or a template
+blank_between(q, p) :- prev_prop(p, q), docof(p, d), end_line(q, a), line(p, b), src_line(d, l, sp), a < l, l < b,
+    match("\\s*", sp), !spanned(d, l).
+.decl spanned(d: number, l: number)  // line l is inside a multi-line comment or template string
+spanned(d, l) :- (kind(c, "comment") ; kind(c, "template_string")), docof(c, d), line(c, a), end_line(c, b), a < b,
+    src_line(d, l, _), a < l, l <= b.

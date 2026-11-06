@@ -1,0 +1,52 @@
+.policy "eslint-require-await" revision 4
+.description "Remove async from JavaScript functions that never await anything; it adds overhead and often hides a missing await."
+.language typescript
+.mode steer
+.scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-control.rr"
+//   fn_block, own_fn, fn_name_kind, fn_head, generator, holder_key;  semi_needed;  member_runs_on
+
+// ESLint's require-await: an async function, not a generator, whose own code has no `await`, no
+// `for await (… of …)` and no `await using`. An await in a nested function is that function's. A function with
+// an empty block body is allowed. Reported at the function's head, named as ESLint names it. No options.
+//   async function f() { g(); }                 → reported: "Async function 'f' has no 'await' expression."
+//   async () => g()                             → reported: "Async arrow function …"
+//   async function f() { for await (x of xs); } fine
+//   async function f() {}                       fine: empty
+//   async function* g() { yield 1; }            fine: async generators are out of scope
+// The suggestion removes `async`, writing `;` where the code after it would join the line before:
+//   foo⏎ async () => { return 0; }    →   foo⏎ ;() => { return 0; }
+.violation require_await(at: loc, name: symbol) code "require-await" "{name} has no 'await' expression."
+    suppress eslint "require-await"
+    suppress oxlint "require-await"
+    suppress biome "lint/suspicious/useAwait"
+    fix drop_async "Remove 'async'."
+require_await(at, x) :- unawaited(f), fn_head(f, at), fn_name_kind(f, x).
+
+.decl unawaited(f: node)
+unawaited(f) :- function_node(f), op(f, "async"), !generator(f), !empty_fn(f), !awaits(f).
+.decl empty_fn(f: node)  // `{}`: ESLint's isEmptyFunction (comments inside do not make it non-empty)
+empty_fn(f) :- fn_block(f, b), count : { child(b, s, _), !not_stmt(s) } = 0.
+.decl awaits(f: node)  // f's own code waits on something
+awaits(f) :- kind(a, "await_expression"), own_fn(a, f).
+awaits(f) :- kind(s, "for_in_statement"), op(s, "await"), own_fn(s, f).
+awaits(f) :- kind(d, "using_declaration"), op(d, "await"), own_fn(d, f).
+
+// The suggestion. ESLint's nodeWithAsyncKeyword is the method for a method, else the function; its `async`
+// token goes, and `;` takes its place when a `(` or `[` follows and the line before would run on.
+drop_async(at, _) :- fn_head(f, at), async_token(f, t, h), semi(f, h, s) => replace(t, `$s`).
+.decl async_token(f: node, t: span, h: node)
+async_token(m, t, m) :- unawaited(m), kind(m, "method_definition"), holder_key(m, k), token_before(k, t),
+    text(t, "async").
+async_token(f, t, f) :- unawaited(f), !kind(f, "method_definition"), first_token(f, t), text(t, "async").
+.decl semi(f: node, h: node, s: symbol)
+semi(f, h, ";") :- async_token(f, t, h), opens(t), run_on(h).
+semi(f, h, "") :- async_token(f, t, h), !(opens(t), run_on(h)).
+.decl opens(t: span)  // the token after `async` is `(` or `[`
+opens(t) :- token_after(t, u), (text(u, "(") ; text(u, "[")).
+.decl run_on(h: node)
+run_on(h) :- kind(h, "method_definition"), member_runs_on(h).
+run_on(h) :- !kind(h, "method_definition"), semi_needed(h).

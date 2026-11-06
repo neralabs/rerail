@@ -1,0 +1,20 @@
+.policy "eslint-no-self-compare" revision 4
+.description "Don't compare a value with itself; the result is always the same, except for NaN, which Number.isNaN() tests directly."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-literals.rr"
+//   compare_op; binop (tsx/eslint-a-expressions), token_text (tsx/eslint-a-common)
+
+// ESLint's no-self-compare: a comparison whose two sides are the same tokens, so its result is fixed (or it is
+// a NaN test in disguise). Comments, spacing and the operands' own parentheses do not count.
+//   x === x   a.b < a.b   f() == f()   (x) !== x        → reported
+//   x === y   a.b === a["b"]  (different tokens)       fine
+// No options.
+.violation no_self_compare(at: node) code "no-self-compare"
+    "Compare against the intended value instead of itself, or use Number.isNaN() to test for NaN."
+    suppress eslint "no-self-compare"
+    suppress oxlint "no-self-compare"
+    suppress biome "lint/suspicious/noSelfCompare"
+no_self_compare(n) :- binop(n, o, l, r), compare_op(o), token_text(l, s), token_text(r, s).
+token_text_ask(x) :- binop(_, o, l, r), compare_op(o), (x = l ; x = r).

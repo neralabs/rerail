@@ -1,0 +1,20 @@
+.policy "eslint-no-useless-call" revision 4
+.description "Call functions directly instead of through call() or apply() with the same this value they would get anyway."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-b-objects.rr"
+//   forwarding, natural_this, call_arg_count, call_arg, dotted_member, deparen
+
+// ESLint's no-useless-call: `f.call(t, …)` or `f.apply(t, [ … ])` where t is the `this` f gets anyway:
+//   foo.call(undefined, 1, 2)    foo.apply(null, [1, 2])     → reported: foo(1, 2) is the same
+//   obj.foo.call(obj, 1)         a[i].f.apply(a[i], [1])     → reported: the object is the receiver already
+//   obj.foo.call(other, 1)       foo.apply(null, args)       fine: another this; apply spreads an unknown list
+// The receiver is compared token by token, as ESLint's equalTokens: `a.b.c.call(a.b, x)` is reported. Only the
+// dotted `.call` / `.apply`; `.call` needs an argument, `.apply` exactly two, the second an array literal.
+// No options.
+.violation no_useless_call(at: node, x: symbol) code "no-useless-call" "Unnecessary '.{x}()'."
+    suppress eslint "no-useless-call"
+    suppress oxlint "no-useless-call"
+no_useless_call(c, x) :- forwarding(c, _, x, _), natural_this(c), field(c, "function", e), deparen(e, m),
+    dotted_member(m, _, _), (x = "call" ; x = "apply", call_arg_count(c, 2), call_arg(c, l, 1), deparen(l, r), kind(r, "array")).

@@ -1,0 +1,39 @@
+.policy "eslint-no-object-constructor" revision 2
+.description "Use an object literal instead of calling Object() or new Object() with no arguments."
+.language typescript
+.mode steer
+.scope include "**/*"
+#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-b-scope.rr"
+//   deparen, stmt_start, semi_needed, builtin_ref
+
+// ESLint's no-object-constructor: `Object()` or `new Object()` with no arguments, where Object is the global
+// and nothing in the file defines it (ESLint's `variable.identifiers.length === 0`). `{}` says the same.
+//   new Object()   Object()   new Object        → reported; suggestion {}
+//   new Object(x)  Object(x)                    fine: they convert x
+//   with `const Object = f;` in scope            fine: not the built-in
+//   /* global Object: off */   function Object() { Object(); }      fine: no global Object, a name of its own
+// The suggestion is ESLint's: `({})` where `{` would start a statement or an arrow body (`() => Object()`),
+// and `;({})` where that statement would also continue the one before it. No options.
+.violation no_object_constructor(at: node) code "no-object-constructor" "The object literal notation {} is preferable."
+    suppress eslint "no-object-constructor"
+    suppress oxlint "no-object-constructor"
+    fix to_literal "Replace with '{}'."
+no_object_constructor(n) :- object_call(n, c), builtin_ref(c, "Object").
+
+// object_call(n, c): a call or `new` with callee c, the identifier Object, parentheses aside. tree-sitter writes
+// the tagged template Object`x` as a call with a template for arguments; ESTree does not, so it is left out.
+.decl object_call(n: node, c: node)
+object_call(n, c) :- (kind(n, "call_expression"), field(n, "function", f) ; kind(n, "new_expression"),
+    field(n, "constructor", f)), deparen(f, c), kind(c, "identifier"), text(c, "Object"), !with_args(n).
+.decl with_args(n: node)  // arguments, or a template: Object`x`
+with_args(n) :- field(n, "arguments", a), child(a, x, _), !kind(x, "comment").
+with_args(n) :- field(n, "arguments", a), kind(a, "template_string").
+
+// The literal needs parentheses at the start of a statement or right after `=>`.
+.decl wrap(n: node)
+wrap(n) :- no_object_constructor(n), stmt_start(n).
+wrap(n) :- no_object_constructor(n), token_before(n, t), text(t, "=>").
+to_literal(n) :- wrap(n), semi_needed(n) => replace(n, `;({})`).
+to_literal(n) :- wrap(n), !semi_needed(n) => replace(n, `({})`).
+to_literal(n) :- no_object_constructor(n), !wrap(n) => replace(n, `{}`).
