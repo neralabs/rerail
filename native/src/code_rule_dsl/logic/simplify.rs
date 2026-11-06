@@ -18,6 +18,14 @@
 //! - **Two atoms of one keyed row are one.** `node($d, $n, _, _, _), node(_, $n, "call", _, _)` is
 //!   `node($d, $n, "call", _, _)`: a node's row is one (`KEYS`), so atoms with the same key term read the same row.
 //!   Columns merge where one is `_` or both are the same; two variables in one column are one variable.
+//! - **A part of a body that meets the rest only at a document is a relation of documents.**
+//!   `m($n) :- node($d, $n, "module", _, _), node($d, $y, _, _, _), name($y, $s), @contains($s, "cache")` asks
+//!   whether the file names something with `cache`, once per such name: every match multiplies the rest's rows. The
+//!   part `node($d, $y, …), name($y, $s), @contains(…)` shares only `$d` with the rest and the head, so it becomes
+//!   `exists_k($d) :- node($d, $y, _, _, _), name($y, $s), @contains($s, "cache")`, one row per file, and the rule reads
+//!   `exists_k($d)` (a semi-join). The same set of rows: the part's other variables appear nowhere else. A part moves
+//!   when it has two literals or more, a variable of its own, no aggregate, `nearest` or `ast`, and every variable
+//!   it names bound by a positive atom of its own. A document variable is one in `node`'s or `doc`'s first column.
 //! - **Relations no output reads go.** A derived relation that no output, demanded or kept relation reads,
 //!   directly or through others, is not computed.
 //! - **Identical relations merge.** Derived relations whose rules are equal once their heads and variables are
@@ -44,6 +52,8 @@ pub(in crate::code_rule_dsl) struct Report {
     pub(in crate::code_rule_dsl) keyed: usize,
     /// Relations nothing kept reads, dropped.
     pub(in crate::code_rule_dsl) unread: Vec<String>,
+    /// Parts of bodies that meet the rest only at a document, made relations of documents (`exists_k`).
+    pub(in crate::code_rule_dsl) existentials: Vec<String>,
 }
 
 pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
@@ -56,6 +66,7 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
         report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
         report.implied += drop_implied(rule);
     }
+    report.existentials = project_existentials(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
         for rule in &mut prog.rules {
@@ -65,12 +76,131 @@ pub(in crate::code_rule_dsl) fn simplify(prog: &mut Program) -> Report {
     report.unread = drop_unread(prog);
     if super::profile::on() {
         let (i, k, c, m, n) = (report.implied, report.kind_tests, report.constants, report.merged.len(), report.inlined.len());
-        let (w, y, u) = (report.singletons, report.keyed, report.unread.len());
+        let (w, y, u, x) = (report.singletons, report.keyed, report.unread.len(), report.existentials.len());
         super::profile::decision("simplified bodies (decision 0038)", || {
-            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one; {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {u} relations no output reads dropped")
+            format!("{n} tests of one node inlined into their readers; {i} implied atoms and {k} kind tests on set members dropped; {c} variables equal to a constant replaced by it; {m} relations merged into an identical one; {w} variables named once made `_`; {y} atoms merged into another of their keyed row; {x} parts of bodies that meet the rest only at a document made relations of documents; {u} relations no output reads dropped")
         });
     }
     report
+}
+
+/// Moves each part of a body that meets the rest only at a document variable into a relation of documents
+/// (`exists_<k>`, the module's list); returns the relations made.
+fn project_existentials(prog: &mut Program) -> Vec<String> {
+    let mut made = Vec::new();
+    let mut at = 0;
+    while at < prog.rules.len() {
+        let mut next = made.len();
+        let name = loop {
+            let name = format!("exists_{next}");
+            if !prog.decls.contains_key(&name) {
+                break name;
+            }
+            next += 1;
+        };
+        match existential(&mut prog.rules[at], &name, &prog.decls) {
+            // The same rule again: it may have another such part.
+            Some((rule, columns)) => {
+                prog.decls.insert(name.clone(), columns);
+                prog.rules.push(rule);
+                made.push(name);
+            }
+            None => at += 1,
+        }
+    }
+    made
+}
+
+/// The first part of `rule`'s body that meets the rest and the head only at one document variable, replaced by
+/// `name($d)`: that relation's rule and columns.
+fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<String, Vec<(String, String)>>) -> Option<(Rule, Vec<(String, String)>)> {
+    let mut head = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut head));
+    let docs: BTreeSet<String> = rule
+        .body
+        .iter()
+        .filter_map(|l| match l {
+            Literal::Atom(a) if (a.rel == "node" && a.args.len() == 5) || a.rel == "doc" => match a.args.first() {
+                Some(Term::Var(d)) => Some(d.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    let vars: Vec<BTreeSet<String>> = rule.body.iter().map(Literal::vars).collect();
+    for d in &docs {
+        // Parts: literals joined by a shared variable other than `$d`.
+        let mut part: Vec<usize> = (0..rule.body.len()).collect();
+        fn root(part: &mut [usize], i: usize) -> usize {
+            let mut r = i;
+            while part[r] != r {
+                r = part[r];
+            }
+            part[i] = r;
+            r
+        }
+        let mut first: HashMap<&str, usize> = HashMap::new();
+        for (i, vs) in vars.iter().enumerate() {
+            for v in vs.iter().filter(|v| *v != d) {
+                match first.get(v.as_str()) {
+                    Some(&j) => {
+                        let (a, b) = (root(&mut part, i), root(&mut part, j));
+                        part[a] = b;
+                    }
+                    None => {
+                        first.insert(v, i);
+                    }
+                }
+            }
+        }
+        let roots: BTreeSet<usize> = (0..rule.body.len()).map(|i| root(&mut part, i)).collect();
+        for r in roots {
+            let members: Vec<usize> = (0..rule.body.len()).filter(|&i| root(&mut part, i) == r).collect();
+            if members.len() < 2 || members.len() == rule.body.len() {
+                continue;
+            }
+            let own: BTreeSet<String> = members.iter().flat_map(|&i| vars[i].iter().cloned()).collect();
+            // Only `$d` may be shared with the rest or the head (it is: other shared variables join parts).
+            if own.iter().any(|v| v != d && head.contains(v)) || !own.contains(d) || own.len() < 2 {
+                continue;
+            }
+            let shares = head.contains(d) || (0..rule.body.len()).any(|i| !members.contains(&i) && vars[i].contains(d));
+            if !shares {
+                continue;
+            }
+            let lits: Vec<&Literal> = members.iter().map(|&i| &rule.body[i]).collect();
+            if lits.iter().any(|l| matches!(l, Literal::Agg { .. } | Literal::Nearest { .. } | Literal::Ast { .. })) {
+                continue;
+            }
+            let bound: BTreeSet<String> = lits.iter().filter_map(|l| match l {
+                Literal::Atom(a) if !a.neg => Some(a.vars()),
+                _ => None,
+            }).flatten().collect();
+            if !own.is_subset(&bound) {
+                continue;
+            }
+            // `$d`'s column type, from a positive atom of the part that names it.
+            let ty = lits.iter().find_map(|l| match l {
+                Literal::Atom(a) if !a.neg => a.args.iter().position(|t| matches!(t, Term::Var(v) if v == d)).and_then(|c| Some(decls.get(&a.rel)?.get(c)?.1.clone())),
+                _ => None,
+            })?;
+            let atom = |neg| Atom { rel: name.to_owned(), args: vec![Term::Var(d.clone())], neg, gated: false };
+            let body: Vec<Literal> = lits.into_iter().cloned().collect();
+            let at = members[0];
+            let mut kept = Vec::with_capacity(rule.body.len() - members.len() + 1);
+            for (i, l) in std::mem::take(&mut rule.body).into_iter().enumerate() {
+                if i == at {
+                    kept.push(Literal::Atom(atom(false)));
+                }
+                if !members.contains(&i) {
+                    kept.push(l);
+                }
+            }
+            rule.body = kept;
+            return Some((Rule { head: atom(false), body }, vec![("d".to_owned(), ty)]));
+        }
+    }
+    None
 }
 
 /// Replaces each variable the body equates to a constant (`$v = "s"`, `$v = 3`) by the constant, in the head and
@@ -702,6 +832,39 @@ mod tests {
         // is then read by nothing.
         assert_eq!(report.unread, vec!["deader".to_owned()]);
         assert!(prog.rules.iter().all(|r| r.head.rel != "dead" && r.head.rel != "deader"));
+    }
+
+    #[test]
+    fn a_part_meeting_the_rest_only_at_a_document_is_a_relation_of_documents() {
+        let mut prog = super::super::front::parse(
+            r#"
+            .decl node(d: int, n: node, kind: sym, start: int, end: int)
+            .decl name(n: node, s: sym)
+            .input node
+            .input name
+            .decl cached(n: node)
+            .output cached
+            cached($n) :- node(_, $n, "module", _, _), node($d, $n, _, _, _), node($d, $y, _, _, _), name($y, $s), @contains($s, "cache").
+            cached($n) :- node(_, $n, "class", _, _), node($e, $n, _, _, _), node($e, $z, _, _, _), name($z, $t), @contains($t, "cache").
+            .decl near(n: node)
+            .output near
+            near($n) :- node($d, $n, "call", _, _), node($d, $y, _, _, _), name($y, $s), name($n, $s).
+            "#,
+        )
+        .unwrap();
+        let report = simplify(&mut prog);
+        // One relation per rule, the second merged into the first (equal once renamed).
+        assert_eq!(report.existentials, vec!["exists_0".to_owned(), "exists_1".to_owned()]);
+        assert_eq!(report.merged, vec![("exists_0".to_owned(), "exists_1".to_owned())]);
+        let rules = |head: &str| prog.rules.iter().filter(|r| r.head.rel == head).map(|r| r.to_string()).collect::<Vec<_>>();
+        assert_eq!(rules("exists_0").len(), 1);
+        let exists = &rules("exists_0")[0];
+        assert!(exists.contains("name(") && exists.contains("contains") && !exists.contains("module"), "{exists}");
+        for cached in rules("cached") {
+            assert!(cached.contains("exists_0(") && !cached.contains("name("), "{cached}");
+        }
+        // `$s` joins the part to the head's node: it stays.
+        assert!(rules("near")[0].contains("name($y, $s)"), "{:?}", rules("near"));
     }
 
     #[test]
