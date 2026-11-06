@@ -717,7 +717,7 @@ clauses:
 
     it.each([
       [
-        "example-data-layer-layer-violations",
+        "example-layers-layer-violations",
         "impl/module.py",
         "# module header\nfrom impl.internal import Service\n",
         "layer_violations",
@@ -754,8 +754,8 @@ clauses:
       expect(result.violations[0]).toMatchObject({ code, path });
     });
 
-    it("limits eager resolve violations to explicit plan scope bodies", () => {
-      const compiled = compileCodeRuleFile("example-data-layer-plan-scope-side-effects");
+    it("limits eager resolve violations to explicit read and write scope bodies", () => {
+      const compiled = compileCodeRuleFile("example-layers-scope-side-effects");
       const unrelated = evaluate(
         compiled,
         snapshot([
@@ -766,24 +766,24 @@ clauses:
           },
         ]),
       );
-      const inPlanScope = evaluate(
+      const inScope = evaluate(
         compiled,
         snapshot([
           {
             language: "python",
-            path: "impl/common/plan.py",
+            path: "impl/common/scope.py",
             source:
-              "def load(conn, lazy):\n    with conn.session().open_write_plan() as scope:\n        value = lazy.resolve()\n        scope.execute()\n",
+              "def load(conn, lazy):\n    with conn.session().open_write_scope() as scope:\n        value = lazy.resolve()\n        scope.execute()\n",
           },
         ]),
       );
 
       expect(unrelated).toMatchObject({ status: "completed", violations: [], failures: [] });
-      expect(inPlanScope).toMatchObject({ status: "completed", failures: [] });
-      expect(inPlanScope.violations).toHaveLength(1);
-      expect(inPlanScope.violations[0]).toMatchObject({
-        code: "plan_scope_side_effects",
-        path: "impl/common/plan.py",
+      expect(inScope).toMatchObject({ status: "completed", failures: [] });
+      expect(inScope.violations).toHaveLength(1);
+      expect(inScope.violations[0]).toMatchObject({
+        code: "scope_side_effects",
+        path: "impl/common/scope.py",
       });
     });
 

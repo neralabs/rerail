@@ -22,8 +22,10 @@ Fixes #
 - [ ] Docs updated? A change to commands, coding agents or setup updates `README.md` and `docs/` in this pull request,
       and `context7.json` where it names what changed
 - [ ] A feature that enters, graduates from or leaves internal testing updates `docs/internal-testing.md`
-- [ ] No internal name, customer name, internal URL or old product name (such as "Tempo") in the code, the docs, the
-      commits or this description
+- [ ] It carries only approved Rerail context: the code, the docs, fixtures, comments, the commits, this description
+      and any agent session trace hold no private project names, customer names, old product names (such as "Tempo"),
+      internal tickets or URLs, private links (Notion, Slack, Orca shares, signed attachment URLs), personal paths or
+      research participant details (`npm run check:internal-refs` covers tracked files)
 - [ ] A change to what a package does keeps its npm page current: its `README.md`, and `keywords` and `repository` in
       its `package.json`
 - [ ] A change to a pack under `packs/` adds a changeset
