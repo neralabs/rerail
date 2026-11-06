@@ -80,18 +80,27 @@ fn resident_partitions_preserve_all_rows_and_original_relation_order() {
 
 #[test]
 fn one_repository_consumer_partitions_its_producer_without_splitting_its_sql_scope() {
-    let mut document:serde_json::Value=serde_json::from_str(&rule().inner.canonical).unwrap();
-    document["clauses"][0]["relational"]["partitionBy"]=json!("repository");
-    let rule=CodeRuleDslRuntime::compile(document.to_string(),"json".into(),include_str!("../../capabilities.json").into()).unwrap();
-    let inputs=files(12);
-    let make=|| {
-        let mut many=jobs(&rule,inputs.clone());let mut one=many.remove(0);one.inputs.snapshot.files=inputs.clone();vec![one]
+    let mut document: serde_json::Value = serde_json::from_str(&rule().inner.canonical).unwrap();
+    document["clauses"][0]["relational"]["partitionBy"] = json!("repository");
+    let rule = CodeRuleDslRuntime::compile(
+        document.to_string(),
+        "json".into(),
+        include_str!("../../capabilities.json").into(),
+    )
+    .unwrap();
+    let inputs = files(12);
+    let make = || {
+        let mut many = jobs(&rule, inputs.clone());
+        let mut one = many.remove(0);
+        one.inputs.snapshot.files = inputs.clone();
+        vec![one]
     };
-    let (expected,_)=run(make(),producer::MAX_RESIDENT_BYTES,usize::MAX);
-    assert!(expected[0].failures.is_empty());assert_eq!(expected[0].violations.len(),12);
-    let (actual,_)=run(make(),256,usize::MAX);
-    assert!(actual[0].failures.is_empty(),"{:?}",actual[0].failures);
-    assert_eq!(actual[0].violations,expected[0].violations);
+    let (expected, _) = run(make(), producer::MAX_RESIDENT_BYTES, usize::MAX);
+    assert!(expected[0].failures.is_empty());
+    assert_eq!(expected[0].violations.len(), 12);
+    let (actual, _) = run(make(), 256, usize::MAX);
+    assert!(actual[0].failures.is_empty(), "{:?}", actual[0].failures);
+    assert_eq!(actual[0].violations, expected[0].violations);
 }
 #[test]
 fn sqlite_storage_controls_admission_without_starting_every_session() {

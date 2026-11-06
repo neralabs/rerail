@@ -23,16 +23,18 @@ def candidate(source, policy, constant):
     }
     allowed = literals(constant(module, 'ALLOWED_PROJECTION_BUILDERS'))
     stages = [
-        S('frames', 'SELECT __path,__start,__end,coalesce(wrapper,__start) AS lexical_start,name,1 AS is_function FROM raw_functions UNION ALL SELECT __path,__start,__end,coalesce(wrapper,__start),name,0 FROM raw_classes', ('__path','__start')),
+        S('constructor_calls', "SELECT c.* FROM raw_calls c WHERE name='SqlVersionedMergedCte' OR EXISTS(SELECT 1 FROM raw_aliases a WHERE a.__path=c.__path AND a.alias=c.name)", ('__path','__start')),
+        S('constructor_files', 'SELECT DISTINCT __path FROM constructor_calls', ('__path',)),
+        S('frames', 'SELECT __path,__start,__end,coalesce(wrapper,__start) AS lexical_start,name,1 AS is_function FROM raw_functions WHERE __path IN (SELECT __path FROM constructor_files) UNION ALL SELECT __path,__start,__end,coalesce(wrapper,__start),name,0 FROM raw_classes WHERE __path IN (SELECT __path FROM constructor_files)', ('__path','__start')),
         S('parents', 'SELECT f.*,(SELECT p.__start FROM frames p WHERE p.__path=f.__path AND p.lexical_start<f.lexical_start AND p.__end>=f.__end ORDER BY p.lexical_start DESC LIMIT 1) AS parent FROM frames f', ('__path','__start')),
         S('contexts', '''WITH RECURSIVE scope(path,start,qualname) AS (
           SELECT __path,__start,name FROM parents WHERE parent IS NULL
           UNION ALL SELECT c.__path,c.__start,p.qualname||'.'||c.name FROM scope p JOIN parents c ON c.__path=p.path AND c.parent=p.start)
           SELECT * FROM scope''', ('path','start')),
         S('call_owners', '''SELECT c.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner,
-          coalesce((SELECT x.qualname FROM frames f JOIN contexts x ON x.path=f.__path AND x.start=f.__start WHERE f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1),'') AS qualname FROM raw_calls c''', ('__path','__start')),
-        S('constructors', "SELECT c.*,filename||':'||qualname AS caller FROM call_owners c WHERE name='SqlVersionedMergedCte' OR EXISTS(SELECT 1 FROM raw_aliases a WHERE a.__path=c.__path AND a.alias=c.name)", ('__path','__start')),
-        S('assignments', '''SELECT a.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=a.__path AND f.lexical_start<a.__start AND f.__end>=a.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner FROM raw_assignments a''', ('__path','owner','target','__end')),
+          coalesce((SELECT x.qualname FROM frames f JOIN contexts x ON x.path=f.__path AND x.start=f.__start WHERE f.__path=c.__path AND f.lexical_start<c.__start AND f.__end>=c.__end ORDER BY f.lexical_start DESC LIMIT 1),'') AS qualname FROM constructor_calls c''', ('__path','__start')),
+        S('constructors', "SELECT c.*,filename||':'||qualname AS caller FROM call_owners c", ('__path','__start')),
+        S('assignments', '''SELECT a.*,(SELECT f.__start FROM frames f WHERE f.is_function AND f.__path=a.__path AND f.lexical_start<a.__start AND f.__end>=a.__end ORDER BY f.lexical_start DESC LIMIT 1) AS owner FROM raw_assignments a WHERE a.__path IN (SELECT __path FROM constructor_files)''', ('__path','owner','target','__end')),
         S('versions', '''SELECT c.__path,c.__start AS site,a.target,a.value,a.value_kind,a.value_start FROM constructors c JOIN assignments a ON a.__path=c.__path AND a.owner=c.owner AND a.__end<c.__start
           WHERE NOT EXISTS(SELECT 1 FROM assignments later WHERE later.__path=a.__path AND later.owner=a.owner AND later.target=a.target AND later.__end>a.__end AND later.__end<c.__start)''', ('__path','site','target')),
         S('catalog_aliases', f'''WITH RECURSIVE catalog(path,site,name) AS (

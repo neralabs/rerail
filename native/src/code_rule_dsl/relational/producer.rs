@@ -6,6 +6,7 @@ use std::{
 };
 mod completed;
 pub(super) mod layout;
+pub(super) mod partition;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }

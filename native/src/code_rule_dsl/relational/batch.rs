@@ -253,21 +253,12 @@ fn run_prepared(
                 deferred = Some(ready);
                 break;
             }
-            if cohort.is_empty() && !footprint.admit_trees(&ready.session.syntax_trees, input_limit)
-            {
-                error(
-                    &mut results[ready.index],
-                    ready.clause,
-                    "relational-failed",
-                    "producer capacity exceeded",
-                );
-                observe(&mut results[ready.index], ready.clause, &ready.budget);
-                continue;
-            }
+            let oversized = cohort.is_empty()
+                && !footprint.admit_trees(&ready.session.syntax_trees, input_limit);
             sql_bytes = sql_bytes.max(ready.sql_bytes);
             cohort.push(ready);
             // One consumer may exceed this scheduling target; its existing work and output limits still apply.
-            if sql_bytes >= sql_limit {
+            if oversized || sql_bytes >= sql_limit {
                 break;
             }
         }
@@ -414,17 +405,30 @@ fn execute(
                 group.push(pending.pop_front().unwrap());
             }
             if group.is_empty() {
-                let Some((local, _)) = pending.pop_front() else {
+                let Some((local, demand)) = pending.pop_front() else {
                     break;
                 };
                 let (index, clause) = identities[local];
-                error(
-                    &mut results[index],
-                    clause,
-                    "relational-failed",
-                    "producer capacity exceeded",
+                let output = producer::partition::execute(
+                    local,
+                    demand,
+                    &mut contexts,
+                    allowance,
+                    input_limit,
                 );
-                sessions[local] = None;
+                let session = sessions[local].as_mut().unwrap();
+                match output.and_then(|out| contexts[local].run(|| session.publish(out))) {
+                    Ok(()) => next.push(local),
+                    Err(error) => {
+                        self::error(
+                            &mut results[index],
+                            clause,
+                            "relational-failed",
+                            &error.reason,
+                        );
+                        sessions[local] = None;
+                    }
+                }
                 continue;
             }
             let slots = group.iter().map(|(local, _)| *local).collect::<Vec<_>>();
