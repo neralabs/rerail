@@ -321,11 +321,13 @@ Findings replay (path, line, code), as `events / compared / exact / errors`:
 | 0043 and O72 | `2350 155 153 0` | `1638 20 16 0` |
 | After the base relations | `2350 178 176 0` | `1638 95 91 0` |
 | After the reader | `2350 178 171 0` | `1638 117 100 0` |
+| After the PSE fixes | `2350 178 177 0` | `1638 117 113 0` |
 
 The hand-written data-layer rules now lower, and are compared instead of the converted JSON. The drop of 5 was
 plan-scope-side-effects. The recorded findings spell its codes `PSE-050`, but `core.rr` names a violation's code
 after the violation. Its rule now gives each code with `code "PSE-…"`, and it sees through a parenthesized `if`
-test.
+test. The replay also drops `.mode log` codes on the suite plugin's events, as the plugin does. The check is then
+7 of 7 and 22 of 22. The last row adds that check's targeted replay to the reader run's other checks.
 
 ## 5. Scores before and after
 
