@@ -295,6 +295,48 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
+-- Corpus runs' roots (decision 0051, corpus_runs.rs). Each run of a root records a manifest: the sources it read
+-- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
+-- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the
+-- kept manifests' (source, grammar version, tape format): collection keeps those sources and tapes. A plan in
+-- `corpus_plans` that no kept manifest names (`live` 0) has its memo rows collected. Additive: an older binary's
+-- collection ignores these tables, which costs a corpus run a cache miss, never a wrong result.
+CREATE TABLE IF NOT EXISTS corpus_roots (
+    root_id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TABLE IF NOT EXISTS corpus_manifests (
+    manifest_id INTEGER PRIMARY KEY,
+    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+    last_run INTEGER NOT NULL,
+    last_time INTEGER NOT NULL,
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    sources BLOB NOT NULL,
+    UNIQUE (root_id, digest)
+) STRICT;
+CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+CREATE TABLE IF NOT EXISTS corpus_live (
+    source_id INTEGER NOT NULL,
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    PRIMARY KEY (source_id, grammar_version, tape_format)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS corpus_plans (
+    plan_digest BLOB PRIMARY KEY CHECK(length(plan_digest) = 32),
+    live INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS corpus_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    run INTEGER NOT NULL,
+    history_bytes INTEGER NOT NULL,
+    due INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
+
 -- The single interner (atoms.rs, decision 0047): dense, append-only; atom 0 is the empty string.
 -- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
 -- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
@@ -567,6 +609,12 @@ impl ContentStore {
     /// creation, a floor raise or a missing object (an index this build added) takes the
     /// exclusive lock and applies SCHEMA. Returns whether it created the store.
     pub(super) fn initialize(connection: &mut Connection) -> StoreResult<bool> {
+        // `auto_vacuum` takes only on an empty file before `journal_mode = WAL` writes its header: set after, inside
+        // the creating transaction, it was ignored, so no store returned freed pages (decision 0051 §4).
+        let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+        if pages == 0 {
+            connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+        }
         configure_connection(connection)?;
         if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
             return Ok(false);
@@ -574,9 +622,6 @@ impl ContentStore {
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
         // Another open may have created the store since the read above.
         let version = compatible_version(&transaction)?;
-        if version == 0 {
-            transaction.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
-        }
         transaction.execute_batch(SCHEMA)?;
         if version != SCHEMA_VERSION {
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
