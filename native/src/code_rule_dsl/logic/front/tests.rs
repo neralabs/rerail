@@ -197,6 +197,13 @@ q(n, s) :- node(_, n, \"identifier\", _, _), text(n, s).
     refused(format!("{decls}{parts}j(c, i + 1, s2) :- j(c, i, s), child(c, p, i + 1), part(p, t), s2 = cat(s, t).\nj(c, i - 1, s2) :- j(c, i, s), child(c, p, i - 1), part(p, t), s2 = cat(t, s).\n"));
 }
 
+/// `nearest(n, _, set)` holds where n has an ancestor in the set (it was "nearest: expected a variable, got Wild").
+#[test]
+fn positive_nearest_takes_a_wildcard() {
+    let p = parse(".decl k(kind: symbol)\nk(\"module\").\n.decl r(n: node)\nr(n) :- node(_, n, \"identifier\", _, _), nearest(n, _, k).\n").unwrap();
+    assert!(matches!(&p.rules[0].body[1], Literal::Nearest { a, kindset, .. } if a.starts_with("rr_near") && kindset == "k"));
+}
+
 #[test]
 fn comparisons_bind_like_t() {
     let bound = |vs: &[&str]| vs.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();

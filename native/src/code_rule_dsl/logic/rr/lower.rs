@@ -470,7 +470,9 @@ impl Lowerer {
         match (rel, args) {
             ("nearest", [n, a, set]) if !neg => {
                 let kindset = self.set_name(rel, set)?;
-                return Ok(Literal::Nearest { n: var(n)?, a: var(a)?, kindset });
+                // `nearest(n, _, set)`: n has such an ancestor; the engine's walk binds one, named apart.
+                let a = if matches!(a, STerm::Wild) { self.fresh("near") } else { var(a)? };
+                return Ok(Literal::Nearest { n: var(n)?, a, kindset });
             }
             // `!nearest(n, _, set)`: n has no ancestor in the set, which is `!inside(n, _, set)`.
             ("nearest", [n, STerm::Wild, set]) if neg => {
