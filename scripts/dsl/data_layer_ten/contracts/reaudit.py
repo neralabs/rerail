@@ -52,6 +52,8 @@ def record(source, output):
     observe('hnsw_architecture', 'clean', 'impl/common/probe.py', 'ordinary()\n')
     observe('hnsw_architecture', 'standalone-root-positive', 'vector_types.py', positive, standalone=True)
     observe('hnsw_architecture', 'standalone-root-clean', 'vector_types.py', 'ordinary()\n', standalone=True)
+    from data_layer_ten.contracts.adversarial import record as adversarial
+    records.extend(adversarial())
     output.write_text(json.dumps(dict(format='rerail.data-layer-batch-ten-reaudit/v1', sourcePin=PIN,
         sourceFilesChecked=verify_sources(source, source, PIN), cases={}, sources={}, records=records), indent=2) + '\n')
 
