@@ -16,31 +16,27 @@
 // `detail`/`message` texts: the findings are keys (path, line, code), so only the details that decide a finding
 // are kept (as flags: lazy.resolve, a *_async detail, the native_cursor. prefix).
 //
-// Order: W's visit_key (a string of zero-padded child ordinals, compared as text) orders an owned tree in preorder
-// with its own child order (lazy_vkid): a pair's children under a dictionary are the dictionary's (keys before
-// values), an argument_list lists positional arguments before keywords, a conditional_expression puts its test
-// first. "The first row by (visit_key, channel)" is a walk down that tree (lazy_apick, lazy_bpick: the first child
-// whose subtree holds a mark, until a marked node), so no rank is computed. APPROXIMATION (a tree walk cannot
-// merge two subtrees' keys): under a dictionary, a pair's child is keyed (child ordinal, pair ordinal) and a
-// `**x` by its ordinal alone, so in `{k: v, **x, …}` (a pair at ordinal 0, the splat at 1) W's keys of x and of v
-// are both …/1/0/ and their descendants interleave by their own ordinals; here the splat's subtree comes first,
-// as a block. Every other mix of pairs and splats orders the same in both. An event's visit_key is the owned node
-// with the event's span (the topmost such node; any of them orders the same against other events), '' when none.
+// Order: W's visit_key (a string of zero-padded child ordinals, compared as text) is built the same way, a node's
+// key its parent's and its own piece (lazy_vk: a pair's children keyed (child ordinal, pair ordinal), a
+// dictionary's pairs keyed as the dictionary, an argument_list's children (keyword?, ordinal), a conditional_expression's
+// test first), each component written as an order-preserving prefix-free code, so keys order and tie as W's. "The
+// first row by (visit_key, channel)" is the first 12 characters of a `join` of the rows' 12-digit locations ordered
+// by (visit_key, channel) (lazy_apick, lazy_bpick); rows tied in both, which W takes in SQLite's row order, are taken
+// by location. An event's visit_key is the owned node with the event's span (the topmost such node, W's first
+// owned_nodes row), '' when none.
 //
 // Reachability (graph_*, "memoized-first", ordered_first.rs): one graph per file (the edges' __path), nodes the
 // path-derived symbols, sinks shared. A root's result is its first edge, in visit order, into a sink or into a
 // node that reaches a sink without passing through the root; the location is that edge's call. That is the
 // search with a fresh memo per root, and the same as the shared memo on a graph without cycles.
-// APPROXIMATION (engine gap: dfs_first_memo is lowered but not executed): on a call-graph cycle the shared memo
-// can remember a node as reaching nothing (finished while the cycle was open) and a later root can miss a sink;
-// that poisoning is not modelled, so cycles can give more findings than W.
+// BLOCKED (dfs_first_memo, which is not available: lowered but not executed): on a call-graph cycle the shared
+// memo can remember a node as reaching nothing (finished while the cycle was open) and a later root can miss a
+// sink; that poisoning is not modelled, so cycles can give more findings than W.
 //
 // Other approximations, each named where it is used:
 // - SQL LIMIT 1 without ORDER BY (module_aliases' from-import of the token): SQLite's first row, which this
 //   program takes as the earliest import (the imports table's insertion order, read through its (__path, local)
 //   index); SQLite does not promise that order.
-// - terminal_values' depth cap 64 is not modelled (a chain of more than 64 bindings): counting recursion is not
-//   lowered (UnboundedValueCycle).
 // Findings are a set of keys: rows of one code on one line collapse (the SQL key is (issue, identity)).
 //
 // ==== deleted-cold-<k>, deleted-sidecar-<k> (forbid regex over file.content) ====
@@ -336,60 +332,56 @@ lazy_owned(f, n) :- lazy_owned(f, o), lazy_par(n, o, _), !lazy_kind(n, "class_de
 lazy_ownedk(f, n, k) :- lazy_owned(f, n), lazy_kind(n, k).
 
 // ---- visit order (visit_key) ----
-// The virtual tree: (function, parent, child, sibling key). The key is a * 1000000 + b + 1 for W's component (a, b),
-// b = -1 for a one-number component.
-.decl lazy_vkid(f: node, p: node, n: node, key: number)
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p),
-    !lazy_kind(p, "pair"), !lazy_kind(p, "argument_list"), !lazy_kind(p, "conditional_expression"), !lazy_kind(p, "dictionary"), key = i * 1000000.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "dictionary"), !lazy_kind(n, "pair"), key = i * 1000000.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "conditional_expression"), i = 0, key = 1000000.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "conditional_expression"), i = 1, key = 0.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "conditional_expression"), i > 1, key = i * 1000000.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "argument_list"), lazy_kind(n, "keyword_argument"), key = 1000000 + i + 1.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "argument_list"), !lazy_kind(n, "keyword_argument"), key = i + 1.
-// a pair's children: (child ordinal, pair ordinal); under a dictionary they are the dictionary's.
-lazy_vkid(f, q, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "pair"), lazy_par(p, q, j), lazy_kind(q, "dictionary"),
-    lazy_owned(f, q), key = i * 1000000 + j + 1.
-lazy_vkid(f, p, n, key) :- lazy_owned(f, n), lazy_par(n, p, i), lazy_owned(f, p), lazy_kind(p, "pair"), lazy_par(p, q, j), !lazy_kind(q, "dictionary"),
-    key = i * 1000000 + j + 1.
-// a dictionary's pairs share its key (they are not in the virtual tree).
-.decl lazy_tied(f: node, n: node, q: node)
-lazy_tied(f, n, q) :- lazy_owned(f, n), lazy_kind(n, "pair"), lazy_par(n, q, _), lazy_kind(q, "dictionary"), lazy_owned(f, q).
-.decl lazy_vhaskid(f: node, p: node)
-lazy_vhaskid(f, p) :- lazy_vkid(f, p, _, _).
+// W's visit_key, component for component (owned_nodes): a node's key is its parent's and the node's piece. Where W
+// writes a component c as printf('%020d/', c), this writes its digit count, then its digits:
+// cat(to_string(strlen(to_string(c))), to_string(c)). Both codes are prefix-free and order as the numbers do (for
+// c < 10^9), so two keys compare alike as text (by code point, as SQLite's ORDER BY and `join … by` order them) and
+// are equal together; a key that is another's prefix comes first in both.
+.decl lazy_vpiece(p: node, n: node, x: symbol)
+lazy_vpiece(p, n, "") :- lazy_par(n, p, _), lazy_kind(p, "dictionary"), lazy_kind(n, "pair").
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "dictionary"), !lazy_kind(n, "pair"), x = cat(to_string(strlen(to_string(i))), to_string(i)).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "pair"), lazy_par(p, _, j),
+    x = cat(cat(to_string(strlen(to_string(i))), to_string(i)), cat(to_string(strlen(to_string(j))), to_string(j))).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "argument_list"), lazy_kind(n, "keyword_argument"),
+    x = cat("11", cat(to_string(strlen(to_string(i))), to_string(i))).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "argument_list"), !lazy_kind(n, "keyword_argument"),
+    x = cat("10", cat(to_string(strlen(to_string(i))), to_string(i))).
+lazy_vpiece(p, n, "11") :- lazy_par(n, p, 0), lazy_kind(p, "conditional_expression").
+lazy_vpiece(p, n, "10") :- lazy_par(n, p, 1), lazy_kind(p, "conditional_expression").
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), lazy_kind(p, "conditional_expression"), i > 1, x = cat(to_string(strlen(to_string(i))), to_string(i)).
+lazy_vpiece(p, n, x) :- lazy_par(n, p, i), !lazy_kind(p, "dictionary"), !lazy_kind(p, "pair"), !lazy_kind(p, "argument_list"),
+    !lazy_kind(p, "conditional_expression"), x = cat(to_string(strlen(to_string(i))), to_string(i)).
+// keys are made only for the nodes a pick reads (A's marked nodes, B's edge calls) and their owned ancestors.
+.decl lazy_vneed(f: node, n: node)
+lazy_vneed(f, x) :- lazy_amark0(f, x, _, _, _).
+lazy_vneed(f, c) :- lazy_gedge(f, _, c, _).
+lazy_vneed(f, p) :- lazy_vneed(f, n), lazy_par(n, p, _), lazy_owned(f, p).
+.decl lazy_vk(f: node, n: node, k: symbol)
+lazy_vk(f, b, "") :- lazy_body(f, b, _), lazy_vneed(f, b).
+lazy_vk(f, n, k) :- lazy_vk(f, p, kp), lazy_vpiece(p, n, x), lazy_vneed(f, n), lazy_owned(f, n), k = cat(kp, x).
 // ---- "first by (visit_key, channel)" over events and other marks (A) ----
-// the topmost owned node with a span.
+// the topmost owned node with a span (W's LIMIT 1 over owned_nodes, in the recursion's breadth-first order).
 .decl lazy_spanned(f: node, x: node, s: number, e: number)
 lazy_spanned(f, x, s, e) :- lazy_owned(f, x), lazy_span(x, s, e).
 .decl lazy_spanunder(f: node, x: node)
 lazy_spanunder(f, x) :- lazy_spanned(f, x, s, e), lazy_par(x, p, _), lazy_spanned(f, p, s, e).
 .decl lazy_spantop(f: node, s: number, e: number, x: node)
-lazy_spantop(f, s, e, x) :- lazy_spanned(f, x0, s, e), !lazy_spanunder(f, x0), lazy_vnode(f, x0, x).
-// a node's place in the virtual tree: itself, or the dictionary of a pair.
-.decl lazy_vnode(f: node, x: node, v: node)
-lazy_vnode(f, x, x) :- lazy_owned(f, x), !lazy_tied(f, x, _).
-lazy_vnode(f, x, q) :- lazy_tied(f, x, q).
-// marks: (function, node, tag, channel, location); free: a mark with no owned node (visit_key ''), first of all.
+lazy_spantop(f, s, e, x) :- lazy_spanned(f, x, s, e), !lazy_spanunder(f, x).
+// marks: (function, node, tag, channel, location); free: a mark with no owned node (visit_key '').
 .decl lazy_amark0(f: node, x: node, tag: symbol, ch: number, loc: number)
 .decl lazy_afree(f: node, tag: symbol, ch: number, loc: number)
-.decl lazy_amarked(f: node, x: node, tag: symbol)
-lazy_amarked(f, x, tag) :- lazy_amark0(f, x, tag, _, _).
-.decl lazy_ahas(f: node, v: node, tag: symbol)
-lazy_ahas(f, x, tag) :- lazy_amarked(f, x, tag).
-lazy_ahas(f, v, tag) :- lazy_vkid(f, v, c, _), lazy_ahas(f, c, tag).
-.decl lazy_akidk(f: node, v: node, tag: symbol, k: number)
-lazy_akidk(f, v, tag, k) :- lazy_vkid(f, v, c, k), lazy_ahas(f, c, tag).
-.decl lazy_akid(f: node, v: node, tag: symbol, c: node)
-lazy_akid(f, v, tag, c) :- lazy_ahas(f, v, tag), !lazy_amarked(f, v, tag), k = min k2 : { lazy_akidk(f, v, tag, k2) }, lazy_vkid(f, v, c, k).
-.decl lazy_afirst(f: node, v: node, tag: symbol, x: node)
-lazy_afirst(f, v, tag, v) :- lazy_amarked(f, v, tag).
-lazy_afirst(f, v, tag, x) :- lazy_akid(f, v, tag, c), lazy_afirst(f, c, tag, x).
-.decl lazy_hasafree(f: node, tag: symbol)
-lazy_hasafree(f, tag) :- lazy_afree(f, tag, _, _).
+// rows: (function, tag, visit_key, channel, location as 12 digits, location): the digits make the first row of a
+// `join` its first 12 characters.
+.decl lazy_arow(f: node, tag: symbol, k: symbol, ch: number, x: symbol, loc: number)
+lazy_arow(f, tag, k, ch, x, loc) :- lazy_amark0(f, n, tag, ch, loc), lazy_vk(f, n, k),
+    x = substr(cat("000000000000", to_string(loc)), strlen(to_string(loc)), 12).
+lazy_arow(f, tag, "", ch, x, loc) :- lazy_afree(f, tag, ch, loc), x = substr(cat("000000000000", to_string(loc)), strlen(to_string(loc)), 12).
+.decl lazy_atag(f: node, tag: symbol)
+lazy_atag(f, tag) :- lazy_arow(f, tag, _, _, _, _).
+// the first row by (visit_key, channel); rows tied in both (W: SQLite's first) by location.
 .decl lazy_apick(f: node, tag: symbol, loc: number)
-lazy_apick(f, tag, loc) :- lazy_hasafree(f, tag), ch = min c2 : { lazy_afree(f, tag, c2, _) }, lazy_afree(f, tag, ch, loc).
-lazy_apick(f, tag, loc) :- lazy_body(f, b, _), lazy_afirst(f, b, tag, x), !lazy_hasafree(f, tag), ch = min c2 : { lazy_amark0(f, x, tag, c2, _) },
-    lazy_amark0(f, x, tag, ch, loc).
+lazy_apick(f, tag, loc) :- lazy_atag(f, tag), s = join x by (k, ch) : { lazy_arow(f, tag, k, ch, x, _) }, lazy_arow(f, tag, _, _, x, loc),
+    x = substr(s, 0, 12).
 .decl lazy_hasapick(f: node, tag: symbol)
 lazy_hasapick(f, tag) :- lazy_apick(f, tag, _).
 
@@ -482,15 +474,35 @@ lazy_nativecursor(f, name) :- lazy_annwalk(f, name, n), lazy_attr(n, at), lazy_o
 
 // ---- terminal values ----
 // The walk from an owned identifier, attribute, call or parenthesized expression: an identifier to its visible
-// binding's value, a call to its callee, parentheses to the first child (each node has one next, so the SQL's
-// cycle guard never cuts; its depth cap 64 is not modelled).
+// binding's value, a call to its callee, parentheses to the first child, at most 64 steps (the SQL's `t.depth<64`).
+// A node within 64 steps is one within 64 steps along a simple path (a shortest path), so the SQL's cycle guard
+// (`seen`) cuts nothing this misses. The cap without a counter: lazy_ts<k>(f, n, m) holds where m is within k
+// steps of n, squared from one step (ts1) to 32 (ts32), and lazy_tw is ts32 twice, over the nodes any walk visits
+// (lazy_tdom).
 .decl lazy_twroot(k: symbol)
 lazy_twroot("identifier"). lazy_twroot("attribute"). lazy_twroot("call"). lazy_twroot("parenthesized_expression").
+.decl lazy_tdom(f: node, n: node)
+lazy_tdom(f, r) :- lazy_ownedk(f, r, k), lazy_twroot(k).
+lazy_tdom(f, m) :- lazy_tdom(f, n), lazy_tstep(f, n, m).
+.decl lazy_tstep(f: node, n: node, m: node)
+lazy_tstep(f, n, v) :- lazy_tdom(f, n), lazy_kind(n, "identifier"), lazy_vbv(f, n, v).
+lazy_tstep(f, n, c) :- lazy_tdom(f, n), lazy_call(n, c, _).
+lazy_tstep(f, n, c) :- lazy_tdom(f, n), lazy_kind(n, "parenthesized_expression"), lazy_first(n, c).
+.decl lazy_ts1(f: node, n: node, m: node)
+lazy_ts1(f, n, n) :- lazy_tdom(f, n).
+lazy_ts1(f, n, m) :- lazy_tstep(f, n, m).
+.decl lazy_ts2(f: node, n: node, m: node)
+lazy_ts2(f, n, m) :- lazy_ts1(f, n, x), lazy_ts1(f, x, m).
+.decl lazy_ts4(f: node, n: node, m: node)
+lazy_ts4(f, n, m) :- lazy_ts2(f, n, x), lazy_ts2(f, x, m).
+.decl lazy_ts8(f: node, n: node, m: node)
+lazy_ts8(f, n, m) :- lazy_ts4(f, n, x), lazy_ts4(f, x, m).
+.decl lazy_ts16(f: node, n: node, m: node)
+lazy_ts16(f, n, m) :- lazy_ts8(f, n, x), lazy_ts8(f, x, m).
+.decl lazy_ts32(f: node, n: node, m: node)
+lazy_ts32(f, n, m) :- lazy_ts16(f, n, x), lazy_ts16(f, x, m).
 .decl lazy_tw(f: node, root: node, n: node)
-lazy_tw(f, r, r) :- lazy_ownedk(f, r, k), lazy_twroot(k).
-lazy_tw(f, r, v) :- lazy_tw(f, r, n), lazy_kind(n, "identifier"), lazy_vbv(f, n, v).
-lazy_tw(f, r, c) :- lazy_tw(f, r, n), lazy_call(n, c, _).
-lazy_tw(f, r, c) :- lazy_tw(f, r, n), lazy_kind(n, "parenthesized_expression"), lazy_first(n, c).
+lazy_tw(f, r, n) :- lazy_ownedk(f, r, k), lazy_twroot(k), lazy_ts32(f, r, x), lazy_ts32(f, x, n).
 // an identifier's value at its end: the module alias, else the latest from-import (module-level or in f), else its text.
 .decl lazy_fromof(f: node, d: number, local: symbol, s: number, full: symbol)
 lazy_fromof(f, d, local, s, full) :- lazy_af(f), lazy_nd(f, d), lazy_topfrom(d, local, s, full).
@@ -866,23 +878,15 @@ lazy_av(g, r, c, z) :- lazy_av(g, r, c, n), lazy_ge(g, n, z, _, _), z != r, !laz
 lazy_ok(g, r, c) :- lazy_ge(g, r, c, _, _), lazy_issink(g, c).
 lazy_ok(g, r, c) :- lazy_ge(g, r, c, _, _), c != r, !lazy_issink(g, c), !lazy_oncycle(g, r), lazy_nd(r, d), lazy_nd(c, d), lazy_live(g, c).
 lazy_ok(g, r, c) :- lazy_av(g, r, c, n), lazy_ge(g, n, t, _, _), lazy_issink(g, t).
-// the root's first successful edge in visit order (B: the walk of A over the root's own owned tree).
+// the root's first successful edge by the call's visit_key (the edge's ordinal); rows tied in it by location.
 .decl lazy_bmark(g: symbol, r: node, c: node, loc: number)
 lazy_bmark(g, r, c, loc) :- lazy_ok(g, r, t), lazy_ge(g, r, t, c, loc).
-.decl lazy_bhas(g: symbol, r: node, v: node)
-lazy_bhas(g, r, c) :- lazy_bmark(g, r, c, _).
-lazy_bhas(g, r, v) :- lazy_vkid(r, v, c, _), lazy_bhas(g, r, c).
-.decl lazy_bkidk(g: symbol, r: node, v: node, k: number)
-lazy_bkidk(g, r, v, k) :- lazy_vkid(r, v, c, k), lazy_bhas(g, r, c).
-.decl lazy_bmarked(g: symbol, r: node, v: node)
-lazy_bmarked(g, r, v) :- lazy_bmark(g, r, v, _).
-.decl lazy_bkid(g: symbol, r: node, v: node, c: node)
-lazy_bkid(g, r, v, c) :- lazy_bhas(g, r, v), !lazy_bmarked(g, r, v), k = min k2 : { lazy_bkidk(g, r, v, k2) }, lazy_vkid(r, v, c, k).
-.decl lazy_bfirst(g: symbol, r: node, v: node, x: node)
-lazy_bfirst(g, r, v, v) :- lazy_bmarked(g, r, v).
-lazy_bfirst(g, r, v, x) :- lazy_bkid(g, r, v, c), lazy_bfirst(g, r, c, x).
+.decl lazy_brow(g: symbol, r: node, k: symbol, x: symbol, loc: number)
+lazy_brow(g, r, k, x, loc) :- lazy_bmark(g, r, c, loc), lazy_vk(r, c, k), x = substr(cat("000000000000", to_string(loc)), strlen(to_string(loc)), 12).
+.decl lazy_bhasrow(g: symbol, r: node)
+lazy_bhasrow(g, r) :- lazy_brow(g, r, _, _, _).
 .decl lazy_bpick(g: symbol, r: node, loc: number)
-lazy_bpick(g, r, loc) :- lazy_body(r, b, _), lazy_bfirst(g, r, b, x), lazy_bmark(g, r, x, loc).
+lazy_bpick(g, r, loc) :- lazy_bhasrow(g, r), s = join x by k : { lazy_brow(g, r, k, x, _) }, lazy_brow(g, r, _, x, loc), x = substr(s, 0, 12).
 // the result per graph node: a node-mode sink is its own hit.
 .decl lazy_hit(g: symbol, r: node, loc: number)
 lazy_hit(g, r, loc) :- lazy_graph(g, "node"), lazy_gsink(g, r, loc).
