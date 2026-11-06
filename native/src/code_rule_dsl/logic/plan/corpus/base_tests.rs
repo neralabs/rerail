@@ -291,3 +291,29 @@ same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, 
     assert_eq!(got[2], csv(files.iter().map(|(p, _)| format!("{p}\t{p}"))));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A corpus with no documents (no files at all, or only files the runner skips) gives no rows, not an error; so
+/// does a program declaring an input no rule reads.
+#[test]
+fn no_documents_give_no_rows() {
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input doc, node, source, src_line, text
+.decl calls(p: symbol)
+calls(p) :- doc(d, p, _), node(d, _, "call", _, _).
+.decl lines(p: symbol, s: symbol)
+lines(p, s) :- doc(d, p, _), src_line(d, _, sp), text(sp, s).
+.output calls, lines
+"#;
+    let empty = corpus("no-docs-empty", &[]);
+    std::fs::create_dir_all(&empty).unwrap();
+    let skipped = corpus("no-docs-skipped", &[(".venv/lib/a.py", "f()\n"), (".git/hooks/b.py", "g()\n")]);
+    for dir in [&empty, &skipped] {
+        assert_eq!(run(dir, program, &["calls", "lines"]), ["", ""], "{}", dir.display());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

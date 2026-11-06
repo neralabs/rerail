@@ -265,8 +265,11 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
-    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
+    // An input no rule reads is never bound or measured: it is not an input of what runs.
+    let outputs = lowered.program.outputs.clone();
+    lowered.program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
+    let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -390,6 +393,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             };
             Ok(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts })
         };
+        let mut sent = false;
         while let Some((d, path)) = at.next() {
             match build(d, path) {
                 Ok(doc) => {
@@ -398,6 +402,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                 }
                 Err(e) => {
                     let _ = send.send(Err(e));
+                    sent = true;
                     break;
                 }
             }
@@ -411,10 +416,17 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
+            sent = true;
             if send.send(built.map(|sources| (n, sources))).is_err() {
                 break;
             }
             t = thread_usage();
+        }
+        // A corpus with no document still runs, over empty base relations: its outputs are what the program derives
+        // from none (no rows, for a rule that reads a document), not an error.
+        if !sent {
+            let built = syntax::with_nearest(&store, Vec::new(), &sets, &vocabulary, &read, binding).map_err(|e| Error::Plan(e.to_string()));
+            let _ = send.send(built.map(|sources| (0, sources)));
         }
         drop(send);
         (parse, batch)

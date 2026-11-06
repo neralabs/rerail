@@ -839,8 +839,10 @@ fn converted_rules_give_the_recorded_findings() {
     }
 }
 
-/// Writes `files` (path, source) under `dir`.
+/// Writes `files` (path, source) under `dir`, which is made though there are none (an event of no files is an empty
+/// corpus).
 fn write_files<'a>(dir: &Path, files: impl IntoIterator<Item = (&'a str, &'a str)>) {
+    std::fs::create_dir_all(dir).unwrap();
     for (path, source) in files {
         let p = dir.join(path);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
