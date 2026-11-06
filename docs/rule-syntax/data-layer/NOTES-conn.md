@@ -9,11 +9,11 @@ data-layer port's recorded linter calls. The reader column is the final-shape en
 | connection_mode_split | 390 | 92 | 12 / 13 | yes |
 | legacy_callback_quarantine | 515 | 92 | 11 / 11 | yes |
 | connection_structural_boundaries | 874 | 156 | 14 / 15 | yes |
-| connection_service_architecture | 923 | 335 | 32 / 32 | yes |
+| connection_service_architecture | 923 | 333 | 32 / 32 (see below) | yes |
 | graphql_plan_ownership | 446 | 81 | 43 / 50 | yes |
 | bounded_composed_graph_paths | 387 | 213 | 66 / 66 | yes |
 | graph_lazy_sql_plan | 862 | 160 | 115 / 115 | yes |
-| **total** | 4,397 | 1,129 | 293 / 302 | |
+| **total** | 4,397 | 1,127 | 293 / 302 | |
 
 The JSON port of bounded_composed_graph_paths is 380 KB. The `.rr` is 213 lines: it reads physical lines
 (`src_line`), as the linter's `(?m)^` regexes do, and keeps its text shapes (class blocks, four-space methods and
@@ -37,10 +37,10 @@ decorators, field lines).
 
 ## Deliberate differences
 
-- **connection_service_architecture, CONN601:** reported on `impl/read_through/connection.py` when the policy
-  reads that file. The linter's `lint()` reads that file only for CONN103, so its CONN601 check (gated on that
-  exact path) never fires in production. Its own test (`test_read_through_getattr_delegation_is_forbidden`)
-  shows the intent.
+- **connection_service_architecture, CONN601** is `.mode log`. The linter's `lint()` reads
+  `impl/read_through/connection.py` only for CONN103, so its CONN601 check never runs in production; on the real
+  file it would give 15 findings (`getattr(self._cache, name)` and others). As a log code, production drops it, and
+  the direct calls of the check (`test_read_through_getattr_delegation_is_forbidden`) still see it.
 - **connection_structural_boundaries, the options `connectionPath`, `lifecyclePath` and `sqlPath`:** the rule
   takes the three l2000/l2200 paths from these options, with the linter's constants as defaults, as the tests do
   when they move them.
@@ -75,7 +75,7 @@ None remain. Two forms were changed so that they lower:
 
 ## Library and core changes
 
-None requested. I added no library file. Each linter has its own variant of "a decorator's name" (Name only,
+One requested: `pos_arg`, at the end. I added no library file. Each linter has its own variant of "a decorator's name" (Name only,
 Name or Attribute, through calls or not), of "a class's methods" (first or last of a name, top-level classes
 only, merged across same-named classes) and of "a docstring-free body". So the rules keep short local helpers,
 with prefixes `cms_`, `lcb_`, `csb_`, `csa_`, `gpo_`, `bcgp_` and `glsp_`. If a later group needs the same
@@ -85,3 +85,42 @@ variants, these are candidates for a `lib/data-layer/conn-classes.rr`: `top_clas
 ## Not expressible
 
 Nothing. All seven checks are written in full.
+
+## Review fixes (connection_service_architecture)
+
+- CONN601 became `.mode log` (above).
+- Positional arguments come from `python/security.rr`'s `pos_arg`. The raw child index counted comments, so
+  `getattr(  # why\n self, "_current_schema_transaction")` and `vars(self).get(# c\n "…")` were missed.
+- An expression statement is one expression only (`!child(s, _, 1)`): `f(), g()` is a Tuple, not a delegate call,
+  so two such `table_exists` bodies give CONN300 and CONN301.
+- A slot name also counts inside an f-string's literal piece (`slot = f"_current_schema_transaction"`), through
+  `str_part`, as the linter's `ast.walk` meets the Constant.
+- `str_const` replaces the local `csa_str`.
+- Found on the way: with two `@legacy_sync(lazy_name=…)` decorators, the counterpart is the first one's, as in
+  `_legacy_lazy_name`, not each one's.
+
+Done (coordinator): `pos_arg` has the faster form below, and the rule as written scores 32 / 32 in 18 s.
+Before that, the 32 / 32 was scored on a scratch copy whose `pos_arg` had the faster form, the same rows. The rule itself
+runs the small events alike, but the one event over 100 repository files does not finish in 2 minutes in rrlab,
+because of `pos_arg`'s aggregate.
+
+## Library change request: `lib/python/security.rr`, `pos_arg`
+
+In rrlab's Soufflé the count inside `pos_arg` scans `child` with `in_call_args` per argument: 49 s CPU on 20
+repository files, against 1.8 s when the counted positions are a relation of their own. The rows are the same.
+Replace
+
+```
+pos_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a0, j),
+    in_call_args(a0), i = count : { child(l, b, k), k < j, in_call_args(b) }, unparen(a0, a).
+```
+
+with
+
+```
+// arg_at(l, k): child k of argument list l is in `call.args` (counted for pos_arg's index).
+.decl arg_at(l: node, k: number)
+arg_at(l, k) :- child(l, b, k), in_call_args(b).
+pos_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a0, j),
+    in_call_args(a0), i = count : { arg_at(l, k), k < j }, unparen(a0, a).
+```

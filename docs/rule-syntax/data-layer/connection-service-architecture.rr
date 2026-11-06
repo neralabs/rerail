@@ -2,6 +2,7 @@
 .description "Connection-layer service boundaries: no ambient schema-transaction probes, no twin or duplicate schema owners, canonical legacy wrappers."
 .language python
 .mode block
+.mode log CONN601                // the linter's lint() never runs it: reported, never blocking
 .scope include "l2000_connection/**/*.py", "impl/common/l2200_sql_dialect/**/*.py", "impl/sqlite/connection.py", "impl/postgres/connection.py", "impl/mariadb/connection.py", "impl/common/l5150_fts_polyfill/manager.py", "impl/remote/connection.py", "impl/read_through/connection.py"
 .scope exclude "**/tests/**", "**/test_*.py", "**/*_test.py"
 // Python linter: scripts/lint_connection_service_architecture.py. Over the connection surface (the files above,
@@ -27,11 +28,13 @@
 // twin checks read the last def, as the linter's dict does. Decorators are matched by bare name or call
 // (`@legacy_sync`, `@legacy_sync(…)`); `@module.legacy_sync` is not one, as in the linter. Statement counts skip
 // a leading docstring. A file that does not parse gets no findings.
-// Differs from the linter: CONN601 is reported on impl/read_through/connection.py when the policy reads it; the
-// linter's lint() never runs that check there (it reads the file for CONN103 only), so it is dead in production.
+// CONN601 is `.mode log`: the linter's lint() never runs it on impl/read_through/connection.py (it reads that
+// file for CONN103 only), so it never blocks; direct calls of its check still see it.
 
 #include "python/names.rr"
 #include "python/ast.rr"      // body_stmt, body_len, docstring, plain_str, expr_ctx, ast_name, def_frame, unparen
+#include "python/security.rr" // pos_arg: positional argument i of a call (comments, keywords, `**kw` left out)
+#include "python/security.rr" // pos_arg: positional argument i of a call (comments, keywords, `**kw` left out)
 
 .decl csa_slot(v: symbol)  // SCHEMA_TRANSACTION_SLOT_NAMES
 csa_slot("_current_schema_transaction"). csa_slot("_current_async_schema_transaction").
@@ -80,13 +83,6 @@ csa_dname(e, x) :- kind(e, "call"), field(e, "function", f), csa_dname(f, x).
 csa_dname(e, x) :- kind(e, "parenthesized_expression"), unparen(e, i), csa_dname(i, x).   // `@(d)`
 .decl csa_dec(f: node, x: symbol)  // def f has a decorator named x
 csa_dec(f, x) :- decorator(f, e), csa_dname(e, x).
-// csa_pos(c, i, a): positional argument i of call c (comments, keywords and `**kw` left out).
-.decl csa_pos(c: node, i: number, a: node)
-csa_pos(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, i),
-    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "comment").
-// csa_str(e, v): e is a whole str constant (adjacent literals once, at the concatenation).
-.decl csa_str(e: node, v: symbol)
-csa_str(e, v) :- plain_str(e, v), count : { child(p, e, _), kind(p, "concatenated_string") } = 0.
 
 // ---- classes, methods, bodies ----------------------------------------------------------------------------------
 // csa_class(d, c, x): top-level class c named x. csa_first_class: the first of that name (_class_by_name).
@@ -117,7 +113,7 @@ csa_stmt(f, s, i - 1) :- csa_method(_, f, _), field(f, "body", b), body_stmt(b, 
 csa_len(f, k) :- csa_method(_, f, _), k = count : { csa_stmt(f, _, _) }.
 // csa_expr(s, v): s is an expression statement (ast.Expr) of v. csa_calls(v): v is a call, or an await of one.
 .decl csa_expr(s: node, v: node)
-csa_expr(s, v) :- kind(s, "expression_statement"), child(s, v0, 0), unparen(v0, v),
+csa_expr(s, v) :- kind(s, "expression_statement"), child(s, v0, 0), !child(s, _, 1), unparen(v0, v),
     !kind(v, "assignment"), !kind(v, "augmented_assignment").
 .decl csa_calls(v: node)
 csa_calls(v) :- kind(v, "call").
@@ -144,17 +140,18 @@ csa_returns_call(s) :- kind(s, "return_statement"), child(s, v0, 0), unparen(v0,
 csa_alias(f, x, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x),
     field(a, "right", v), csa_holds_slot(v), def_frame(a, f).
 .decl csa_holds_slot(v: node)
-csa_holds_slot(v) :- csa_str(v, s), csa_slot(s).
-csa_holds_slot(v) :- kind(v, _), within(e, v), csa_str(e, s), csa_slot(s).
+// Any str Constant ast.walk meets: a whole literal, or an f-string's literal piece (`f"_current_…"`).
+csa_holds_slot(v) :- str_part(v, _, s, _, _), csa_slot(s).
+csa_holds_slot(v) :- kind(v, _), within(e, v), str_part(e, _, s, _, _), csa_slot(s).
 // csa_slot_ref(e, c, s): argument e of call c names slot s: the literal, or an alias assigned earlier in c's def.
 .decl csa_slot_ref(e: node, c: node, s: symbol)
-csa_slot_ref(e, c, s) :- csa_probe_arg(c, e), csa_str(e, s), csa_slot(s).
+csa_slot_ref(e, c, s) :- csa_probe_arg(c, e), str_const(e, s), csa_slot(s).
 csa_slot_ref(e, c, x) :- csa_probe_arg(c, e), kind(e, "identifier"), text(e, x), def_frame(c, f),
     csa_alias(f, x, a), earlier(a, c).
 .decl csa_probe_arg(c: node, e: node)  // getattr(_, e) / hasattr(_, e), or vars(_).get(e)
-csa_probe_arg(c, e) :- csa_call(c, g), (g = "getattr" ; g = "hasattr"), csa_pos(c, 1, e).
+csa_probe_arg(c, e) :- csa_call(c, g), (g = "getattr" ; g = "hasattr"), pos_arg(c, 1, e).
 csa_probe_arg(c, e) :- kind(c, "call"), field(c, "function", fn), kind(fn, "attribute"), field(fn, "attribute", a),
-    text(a, "get"), field(fn, "object", r), csa_call(r, "vars"), csa_pos(c, 0, e).
+    text(a, "get"), field(fn, "object", r), csa_call(r, "vars"), pos_arg(c, 0, e).
 
 .violation CONN100(at: node, slot: symbol) "probe of schema transaction slot {slot}; pass schema authority explicitly"
 CONN100(c, s) :- csa_slot_ref(_, c, s), csa_in(c, _).
@@ -178,7 +175,7 @@ CONN500(c) :- csa_call(c, "load_python_module"), csa_in(c, d), doc(d, p, _),
 .violation CONN600(at: node, x: symbol) "immediate bootstrap metadata reader {x} bypasses the interrogation plan"
 CONN600(f, x) :- kind(f, "function_definition"), def_name(f, x), csa_immediate(x), csa_in(f, _).
 .violation CONN601(at: node, x: symbol) "read-through getattr delegation to {x} treats connections as capability bags"
-CONN601(c, x) :- csa_call(c, "getattr"), csa_pos(c, 0, t), kind(t, "attribute"), field(t, "object", o),
+CONN601(c, x) :- csa_call(c, "getattr"), pos_arg(c, 0, t), kind(t, "attribute"), field(t, "object", o),
     kind(o, "identifier"), text(o, "self"), field(t, "attribute", a), text(a, x), (x = "_cache" ; x = "_upstream"),
     docof(c, d), csa_doc(d), doc(d, "impl/read_through/connection.py", _).
 
@@ -229,10 +226,13 @@ csa_legacy(c, cx, f, x, k) :- csa_class(d, c, cx), csa_surface(d), !csa_carrier(
 csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, _, k), csa_lazy_kw(f, k, y), y != "".
 csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, x, k), !csa_lazy_kw(f, k, _), csa_default_lazy(x, k, y).
 csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, x, k), csa_lazy_kw(f, k, ""), csa_default_lazy(x, k, y).
-.decl csa_lazy_kw(f: node, k: symbol, y: symbol)
-csa_lazy_kw(f, k, y) :- decorator(f, e), kind(e, "call"), field(e, "function", g), csa_dname(g, k),
+// csa_lazy_kw(f, k, y): the first @k(…) decorator of f with a str lazy_name="…" gives y (_legacy_lazy_name).
+.decl csa_lazy_kw_at(f: node, k: symbol, e: node, y: symbol)
+csa_lazy_kw_at(f, k, e, y) :- decorator(f, e), kind(e, "call"), field(e, "function", g), csa_dname(g, k),
     field(e, "arguments", al), child(al, ka, _), kind(ka, "keyword_argument"), field(ka, "name", n),
-    text(n, "lazy_name"), field(ka, "value", v), csa_str(v, y).
+    text(n, "lazy_name"), field(ka, "value", v), str_const(v, y).
+.decl csa_lazy_kw(f: node, k: symbol, y: symbol)
+csa_lazy_kw(f, k, y) :- csa_lazy_kw_at(f, k, e, y), count : { csa_lazy_kw_at(f, k, e2, _), e2 < e } = 0.
 .decl csa_default_lazy(x: symbol, k: symbol, y: symbol)
 csa_default_lazy(x, "legacy_async", cat(b, "_lazy")) :- csa_legacy(_, _, _, x, "legacy_async"),
     match("(?<b>.*)_async", x).
@@ -313,9 +313,7 @@ csa_async_ensure(d) :- csa_first_class(d, c, "AsyncSchemaTransaction"),
 // csa_lazy_kw0(f, y): the first lazy_name="…" keyword on a @legacy_async(…) decorator of f (any def, not only legacy
 // triples' methods).
 .decl csa_lazy_kw0(f: node, y: symbol)
-csa_lazy_kw0(f, y) :- decorator(f, e), kind(e, "call"), field(e, "function", g), csa_dname(g, "legacy_async"),
-    field(e, "arguments", al), child(al, ka, _), kind(ka, "keyword_argument"), field(ka, "name", n),
-    text(n, "lazy_name"), field(ka, "value", v), csa_str(v, y).
+csa_lazy_kw0(f, y) :- csa_lazy_kw(f, "legacy_async", y).
 
 // Backend cores: the core class exists, has no method but __init__, and some __init__ in the file assigns all
 // four service fields.

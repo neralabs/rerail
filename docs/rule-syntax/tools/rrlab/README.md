@@ -82,6 +82,9 @@ Scope and options:
 reports CODE, at its first error's line or at line 1. `@ed25519_ok` verifies with libsodium when it is installed
 (`brew install libsodium`); otherwise it is a stub that always gives 0, and rrlab warns.
 
+`dfs_first` and `dfs_first_memo` are computed between Soufflé rounds, as `core.rr` specifies them: Soufflé writes the
+edge, target and roots relations, rrlab searches them and feeds the answers back as `rr_dfs{k}`.
+
 `dl.py` has the details.
 
 ## Scores (2026-11-05)

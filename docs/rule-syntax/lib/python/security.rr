@@ -115,7 +115,11 @@ in_call_args(a) :- child(l, a, _), kind(l, "argument_list"), kind(a, k), k != "k
     k != "dictionary_splat", k != "comment".
 .decl pos_arg(c: node, i: number, a: node)
 pos_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a0, j),
-    in_call_args(a0), i = count : { child(l, b, k), k < j, in_call_args(b) }, unparen(a0, a).
+    in_call_args(a0), i = count : { arg_at(l, k), k < j }, unparen(a0, a).
+// arg_at(l, k): child k of argument list l is in `call.args` (pos_arg counts these; a relation of its own, so the
+// count reads one small table instead of child and in_call_args per argument).
+.decl arg_at(l: node, k: number)
+arg_at(l, k) :- child(l, b, k), in_call_args(b).
 pos_arg(c, 0, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").   // f(x for x in y)
 .decl arg_count(c: node, k: number)
 arg_count(c, k) :- kind(c, "call"), k = count : { pos_arg(c, _, _) }.

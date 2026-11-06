@@ -498,6 +498,7 @@ class Program:
         self.patterns = pattern_compiler
         self.parse_requests = False  # parsed(s, g, r) is served between rounds (Python)
         self.matches = {}          # k -> match spec, served by rrlab.py between souffle rounds (match_all, spans)
+        self.dfs = {}              # k -> (edge, target, roots or None): dfs_first(_memo), served between rounds
         self.pattern_report = []
         self.files = []
         self.load(os.path.join(LIB, "core.rr"))      # every rule's implicit base, as check_rr.py reads it
@@ -1096,6 +1097,19 @@ class Ctx:
                 self.capture_vars |= set(groups)
                 cols = [subj, ("wild",)] + [("wild",) if negated else ("var", g) for g in groups]
                 return [("atom", rel, cols)]
+        if name in ("dfs_first", "dfs_first_memo") and len(args) == (5 if name == "dfs_first" else 6) and \
+                all(a[0] == "var" for a in args[3:]):
+            # served between rounds: souffle writes the edge, target and roots relations, rrlab searches them
+            # (core.rr's order) and answers rr_dfs{k}(r, hit, first)
+            rels = [a[1] for a in args[3:]]
+            key = (name, *rels)
+            k = next((i for i, v in p.dfs.items() if v == key), len(p.dfs))
+            if k == len(p.dfs):
+                p.dfs[k] = key
+                p.decls[f"rr_dfs{k}"] = [("r", "number"), ("hit", "number"), ("first", "number")]
+                p.inputs.append(f"rr_dfs{k}")
+                p.outputs.update(rels)
+            return [("atom", f"rr_dfs{k}", [self.expr(x, pre) for x in args[:3]])]
         if name in ("dfs_first", "dfs_first_memo", "match_all", "string_annotation", "signed_list",
                     "git_tracked", "git_rev", "git_has", "git_commit", "tsconfig", "tsconfig_for", "tsconfig_path",
                     "package_export"):

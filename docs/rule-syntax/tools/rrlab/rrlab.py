@@ -405,6 +405,7 @@ class Run:
             rounds += 1
             served = self.serve_matches()
             served = self.serve_parsed() or served
+            served = self.serve_dfs() or served
             if not self.prog.ordered and not served:
                 break
             cur = {o: open(os.path.join(self.out, f"{o}.csv")).read() for o in self.prog.ordered}
@@ -420,6 +421,91 @@ class Run:
         self.souffle_cpu = cpu_children() - c0
         self.wall = time.time() - t0
         return self.findings()
+
+    # -- dfs_first / dfs_first_memo: souffle writes edge, target (and roots); rrlab searches and answers rr_dfs{k}
+    def serve_dfs(self):
+        """core.rr's dfs_first(r, hit, first, edge, target): from r, a node's edges are tried in increasing (ord,
+        dst), each node is entered once and a node on the current path is skipped; the first edge that reaches a
+        target gives hit, and first is the ord of r's edge that starts the path. r is never its own hit.
+        dfs_first_memo searches the roots in increasing order of their second column with one shared memo, and a
+        node finished while a cycle was open is remembered as reaching nothing. True if the answers changed."""
+        p = self.prog
+        if not p.dfs:
+            return False
+        if not hasattr(self, "_dserved"):
+            self._dserved = {}
+        def rows(rel):
+            f = os.path.join(self.out, f"{rel}.csv")
+            if not os.path.exists(f):
+                return []
+            with open(f, newline="") as fh:
+                return [r for r in csv.reader(fh, delimiter="\t", quotechar='"') if r]
+        num = lambda v: int(v) if re.fullmatch(r"-?\d+", v) else v
+        changed = False
+        for k, (name, edge, target, *roots) in p.dfs.items():
+            out = collections.defaultdict(list)
+            for src, dst, o in rows(edge):
+                out[src].append((num(o), num(dst), dst))
+            for v in out.values():
+                v.sort(key=lambda t: (t[0], t[1]))
+            tgt = {r[0] for r in rows(target)}
+            ans = []
+            if name == "dfs_first":
+                for r in out:
+                    seen = {r}
+                    stack = [(r, iter(out[r]), None)]
+                    hit = None
+                    while stack and hit is None:
+                        n, it, first = stack[-1]
+                        nxt = next(it, None)
+                        if nxt is None:
+                            stack.pop(); continue
+                        o, _, d = nxt
+                        f0 = o if n == r else first
+                        if d in tgt and d != r:
+                            hit = (d, f0); break
+                        if d not in seen:
+                            seen.add(d)
+                            stack.append((d, iter(out.get(d, [])), f0))
+                    if hit:
+                        ans.append((r, hit[0], hit[1]))
+            else:
+                order = sorted(rows(roots[0]), key=lambda t: (num(t[1]) if len(t) > 1 else 0, num(t[0])))
+                memo = {}
+                sys.setrecursionlimit(max(10000, sys.getrecursionlimit()))
+                def search(n, path):
+                    # (hit, cycle_open): the first target below n, and whether a node on the path was met
+                    if n in memo:
+                        return memo[n], False
+                    if n in path:
+                        return None, True
+                    path.add(n)
+                    res, cyc = None, False
+                    for o, _, d in out.get(n, []):
+                        if d in tgt and d not in path:
+                            res = d; break
+                        sub, c = search(d, path)
+                        cyc = cyc or c
+                        if sub is not None:
+                            res = sub; break
+                    path.discard(n)
+                    memo[n] = res if (res is not None or not cyc) else None
+                    return res, cyc
+                for row in order:
+                    r = row[0]
+                    path = {r}
+                    for o, _, d in out.get(r, []):
+                        if d in tgt and d != r:
+                            ans.append((r, d, o)); break
+                        sub, _ = search(d, path)
+                        if sub is not None:
+                            ans.append((r, sub, o)); break
+            text = tsv(sorted(set(ans)))
+            if self._dserved.get(k) != text:
+                self._dserved[k] = text
+                open(os.path.join(self.inp, f"rr_dfs{k}.facts"), "w").write(text)
+                changed = True
+        return changed
 
     # -- match_all, and match captures that are spans: souffle asks (rr_mreq{k}), rrlab answers (rr_mres{k})
     def serve_matches(self):

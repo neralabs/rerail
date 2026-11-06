@@ -86,7 +86,10 @@ retparam(f, i, r) :- retval(f, r), look(r, x, f), param(f, x, i).
 .decl posarg(c: node, i: number, a: node)
 posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, k), !kind(a, "keyword_argument"),
     !kind(a, "list_splat"), !kind(a, "dictionary_splat"), !kind(a, "comment"),
-    i = count : { child(al, b, j), j < k, !kind(b, "comment") }.
+    i = count : { arg_child_at(al, j), j < k }.
+// arg_child_at(l, k): child k of argument list l is not a comment (posarg counts these).
+.decl arg_child_at(l: node, k: number)
+arg_child_at(l, k) :- kind(l, "argument_list"), child(l, b, k), !kind(b, "comment").
 // method_of(f, c): f is defined directly in the body of class c.
 .decl method_of(f: node, c: node)
 method_of(f, c) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition").
