@@ -1,7 +1,7 @@
 {
   "format": "rerail.data-layer-dod-contracts/v1",
   "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
-  "sourceFilesChecked": 115,
+  "sourceFilesChecked": 116,
   "deployedPublicKey": "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6",
   "fixturePublicKey": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
   "fixtureKeyNotice": "Public deterministic test vector only; never trusted by the shipped pack.",
@@ -363,6 +363,40 @@
           "path": "scripts/lint_schema_introspection_data_paths.py",
           "line": 1,
           "message": "schema introspection data-path approval signature verification failed"
+        }
+      ]
+    }
+  ],
+  "matchingRootSources": [
+    {
+      "id": "utf8-bom",
+      "path": "consumers/probe.py",
+      "source": "\ufeffimport impl.common.hidden\n",
+      "expected": []
+    },
+    {
+      "id": "bare-cr",
+      "path": "consumers/probe.py",
+      "source": "# comment\rimport impl.common.hidden\r",
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 2,
+          "message": "Application matching code cannot import implementation modules"
+        }
+      ]
+    },
+    {
+      "id": "crlf",
+      "path": "consumers/probe.py",
+      "source": "# comment\r\nimport impl.common.hidden\r\n",
+      "expected": [
+        {
+          "code": "MA010",
+          "path": "consumers/probe.py",
+          "line": 2,
+          "message": "Application matching code cannot import implementation modules"
         }
       ]
     }

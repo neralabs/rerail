@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
@@ -28,5 +28,13 @@ for (const mode of ["snapshot", "workspace"] as const) it(`discovers and classif
       "--rules", options.ruleIds[0]!, "--application-root", "consumers", "--application-root", "second", "--json", "--check"],
       { write(chunk: string) { output += chunk; return true; } })).toBe(1);
     expect(JSON.parse(output).violations.map((row: { path: string }) => row.path).sort()).toEqual(["consumers/discovered.py", "consumers/probe.py", "second/probe.py"]);
+    const contracts = JSON.parse(await readFile("fixtures/host/data-layer-port/batch-10-dod-contracts.json", "utf8"));
+    for (const record of contracts.matchingRootSources) {
+      await writeFile(join(root, record.path), record.source);
+      const result = await runDataLayerAudit({ ...options, snapshot: { ...options.snapshot, files: [] } });
+      expect(result.failures).toEqual([]);
+      expect(result.violations.filter(row => row.path === record.path).map(row => ({ code: row.code, path: row.path,
+        line: row.span!.startLine + 1, message: row.message })), record.id).toEqual(record.expected);
+    }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

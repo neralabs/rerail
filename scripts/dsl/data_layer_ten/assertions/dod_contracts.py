@@ -70,9 +70,23 @@ def record(source, output):
     finally:
         schema.ROOT, schema.APPROVED_USER_SCHEMA_CHECK_CALLSITES, schema.APPROVED_USER_SCHEMA_CHECK_CALLSITES_SIGNATURE, signing.PUBLIC_KEY_HEX = old_root, old_entries, old_signature, old_key
     signer = '\n\n'.join(inspect.getsource(getattr(signing, name)) for name in ['compute_allowlist_message', 'sign_allowlist', 'update_signature_in_file', 'sign_and_update_allowlist'])
+    matching = importlib.import_module('scripts.lint_matching_architecture')
+    matching_sources = []
+    for label, text in [('utf8-bom', '\ufeffimport impl.common.hidden\n'),
+                        ('bare-cr', '# comment\rimport impl.common.hidden\r'),
+                        ('crlf', '# comment\r\nimport impl.common.hidden\r\n')]:
+        with tempfile.TemporaryDirectory(prefix='rerail-matching-text-') as directory:
+            root = Path(directory)
+            file = root / 'consumers/probe.py'
+            file.parent.mkdir()
+            file.write_bytes(text.encode())
+            findings = matching.lint(root, application_roots=(Path('consumers'),))
+            expected = [dict(code=row.code, path=row.path.as_posix(), line=row.line, message=row.message) for row in findings]
+            matching_sources.append(dict(id=label, path='consumers/probe.py', source=text, expected=expected))
     output.write_text(json.dumps(dict(format='rerail.data-layer-dod-contracts/v1', sourcePin=PIN, sourceFilesChecked=verify_sources(source, source, PIN),
                                      deployedPublicKey=old_key, fixturePublicKey=public, fixtureKeyNotice='Public deterministic test vector only; never trusted by the shipped pack.',
-                                     originalSignerFunctions=signer, originalSignerSha256=hashlib.sha256(signer.encode()).hexdigest(), approvalCases=cases), indent=2) + '\n')
+                                     originalSignerFunctions=signer, originalSignerSha256=hashlib.sha256(signer.encode()).hexdigest(), approvalCases=cases,
+                                     matchingRootSources=matching_sources), indent=2) + '\n')
 
 
 if __name__ == '__main__':
