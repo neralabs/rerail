@@ -122,6 +122,56 @@ No rule is an outlier any more: the most expensive does about 7e9 of its own wor
 the sweep is parsing and batching the same 200 files once per rule. The highest peak RSS is
 serverplan-grammar-surface's, 182 MB.
 
+### 2b. All rules in one run, and tapes kept between runs (2026-11-06)
+
+Running the rules one at a time pays the fixed cost (parse, batch, store) once per rule: 88% of the s200 sweep.
+Three changes remove most of it:
+
+- **One run for every rule.** The rules are combined into one program and run together. Each program's own
+  relations get a per-program prefix. The inputs and `violation` are shared, and so are kind sets with the same
+  kinds (`corpus::combine`, `run_all`).
+- **A parse cache.** The corpus runner used to delete its store and parse every file again on each run. It now
+  keeps tapes in a content store of their own, keyed by the source's content, the grammar version and the tape
+  format (`core::build_cached`). `RERAIL_TAPE_CACHE` names the store; `off` parses every file. The full corpus's
+  tapes take 103 MB.
+- **File-local joins pushed into the chunks.** In a combined program, `violation` is one relation. The split into
+  per-chunk and cross-file parts is decided per relation, so a single cross-file rule made every rule's violation
+  cross-file. Each such rule then read its base relations whole: every chunk's `within`, `node` and `child` rows
+  were kept for the cross-file part. On s1000 that was 629 MB of values (`within` alone: 256 MB), and the full
+  corpus didn't finish within 280 s.
+
+  The fix is one rule in the split (`file_local::push_local_joins`). It takes a cross-file rule's file-local part:
+  its positive base and file-local reads, joined by their variables, plus the comparisons and negated reads whose
+  variables they bind. That part becomes a relation the chunks derive and export, and the rule reads it instead:
+
+  ```text
+  // Before: runs once over all files, holding within, node, text for every file.
+  m($n) :- within($a, $n), node(_, $a, 1025, _, _), text($a, 522), !cross_file_test($a).
+  // After: the chunk joins the first three and exports the few rows that pass.
+  fl_m($a, $n) :- within($a, $n), node(_, $a, 1025, _, _), text($a, 522).
+  m($n) :- fl_m($a, $n), !cross_file_test($a).
+  ```
+
+  288 rules are rewritten this way. The cross-file part now holds no base relation.
+
+Every converted rule (100) in one run (M; load 17–55):
+
+| Corpus | Instructions retired | CPU | Peak RSS | Findings |
+|---|---|---|---|---|
+| s200, separate runs (2a) | 553e9 | | 182 MB (the largest) | 4 |
+| s200, one run, before the push | 57.3e9 | 4.7 s | 472 MB | 4 |
+| s1000, one run, before the push (warm) | 165e9 | 14.5 s | 1,529 MB | 24 |
+| s1000, one run (warm) | 115e9 | 9.7 s | 582 MB | 24 |
+| full, one run, cold (fills the cache) | 970e9 | 93 s | 695 MB | 252 |
+| full, one run, warm | 797e9 | 60 s | 739 MB | 252 |
+
+On the full corpus the parse phase is 26.9 s cold and 4.3 s warm. The rest is the file-local part (49 s warm);
+the cross-file part takes 0.01 s. The findings match the one rule that has any (callable-constructors, 252 when
+run alone). The replay's totals are unchanged.
+
+Encoding the tape now reads a node's field from the cursor-status call it already makes (one stack walk per node,
+not two). Parity with native tree-sitter holds on s1000's 997 Python files.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
