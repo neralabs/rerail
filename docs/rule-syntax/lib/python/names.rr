@@ -402,10 +402,6 @@ literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), w
 // re-exported through another module is therefore not recognised.
 type_checking_block(b) :- kind(i, "if_statement"), field(i, "condition", c), qn(c, q),
     (q = "typing.TYPE_CHECKING" ; q = "typing_extensions.TYPE_CHECKING"), field(i, "consequence", b).
-// A bare `TYPE_CHECKING` that resolves to nothing (no import of it in sight) counts too, as in the Python linter;
-// `typing.TYPE_CHECKING` with no `import typing` does not.
-type_checking_block(b) :- kind(i, "if_statement"), field(i, "condition", c), kind(c, "identifier"), !qn(c, _),
-    text(c, "TYPE_CHECKING"), field(i, "consequence", b).
 // catches(x, q): except clause x catches exception class q. A bare `except:` (no child other than the body block)
 // catches everything, modelled as builtins.BaseException.
 .decl catches(x: node, q: symbol)
