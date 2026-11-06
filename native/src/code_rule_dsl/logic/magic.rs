@@ -102,9 +102,13 @@ fn binds(l: &Literal, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
         Literal::Atom(a) if !a.neg => Some(a.vars()),
         Literal::Atom(a) => a.vars().is_subset(bound).then(BTreeSet::new),
         Literal::Cmp { l, op, r } => cmp_binds(l, op, r, bound),
-        Literal::Agg { var, atom, .. } => {
+        Literal::Agg { var, over, atom, .. } => {
+            // The aggregated variable is the aggregate's own, as in the planner's `ready`.
             let mut need = atom.vars();
             need.remove(var);
+            if let Some(o) = over {
+                need.remove(o);
+            }
             need.is_subset(bound).then(|| BTreeSet::from([var.clone()]))
         }
         Literal::Nearest { n, a, .. } => (bound.contains(n) || bound.contains(a)).then(|| l.vars()),

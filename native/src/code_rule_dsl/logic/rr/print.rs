@@ -87,10 +87,29 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
         Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(b @ (0 | 1)) } if is_test(f) && args.len() == 2 => test(f, &args[0], &args[1], *b == 0)?,
         Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l)?, term(r)?),
         Literal::Agg { var: v, op, over, atom: a } => {
+            let over = var(over.as_deref().unwrap_or("_"));
             let op = match op {
                 AggOp::Count => "count".to_owned(),
-                AggOp::Min => format!("min {}", var(over.as_deref().unwrap_or("_"))),
-                AggOp::Max => format!("max {}", var(over.as_deref().unwrap_or("_"))),
+                AggOp::Min => format!("min {over}"),
+                AggOp::Max => format!("max {over}"),
+                AggOp::Sum => format!("sum {over}"),
+                // The keys are the atom's columns: named where the atom has `_` (`rr_by0`, a name lowering never
+                // makes), so the printed body binds them.
+                AggOp::Join { by, sep } => {
+                    let mut a = a.clone();
+                    let keys = by
+                        .iter()
+                        .map(|&c| match &a.args[c] {
+                            Term::Wild => {
+                                let k = format!("rr_by{c}");
+                                a.args[c] = Term::Var(k.clone());
+                                Ok(var(&k))
+                            }
+                            t => term(t),
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    return Ok(format!("{} = join {over} by ({}) sep {} : {{ {} }}", var(v), keys.join(", "), quote(sep), atom(&a, kindsets)?));
+                }
             };
             format!("{} = {op} : {{ {} }}", var(v), atom(a, kindsets)?)
         }

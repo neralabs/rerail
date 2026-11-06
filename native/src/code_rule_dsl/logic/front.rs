@@ -137,18 +137,24 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
     Max,
+    /// Soufflé's `sum`: of nothing, 0.
+    Sum,
+    /// `join $over by … sep "…"` (`core.rr`, addition 5): the text of every row's `$over`, ordered by the atom's
+    /// columns `by` and then by `$over` itself, separated by `sep`; "" of nothing. The `by` columns are positions
+    /// in the aggregate's atom, where the atom has `_` unless the rule shares the variable.
+    Join { by: Vec<usize>, sep: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
-    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
+    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max`, `sum` and `join` likewise).
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
     Nearest { n: String, a: String, kindset: String },
@@ -236,8 +242,13 @@ impl fmt::Display for Literal {
             Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
             Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
             Literal::Agg { var, op, over, atom } => {
-                let op = if *op == AggOp::Min { "min" } else { "max" };
-                write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
+                let over = over.as_deref().unwrap_or_default();
+                match op {
+                    AggOp::Join { by, sep } => {
+                        write!(f, "${var} = join ${over} by {by:?} sep {} : {{ {atom} }}", serde_json::to_string(sep).expect("a string serializes"))
+                    }
+                    op => write!(f, "${var} = {} ${over} : {{ {atom} }}", if *op == AggOp::Min { "min" } else if *op == AggOp::Max { "max" } else { "sum" }),
+                }
             }
             Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
             Literal::Ast { document, node, matcher, captures } => {
@@ -560,6 +571,7 @@ impl Parser<'_> {
                 Tok::Id(s) if s == "count" => Some(AggOp::Count),
                 Tok::Id(s) if s == "min" => Some(AggOp::Min),
                 Tok::Id(s) if s == "max" => Some(AggOp::Max),
+                Tok::Id(s) if s == "sum" => Some(AggOp::Sum),
                 _ => None,
             };
             if let Some(op) = agg.filter(|_| matches!(self.peek_at(1), Tok::P("{") | Tok::Var(_) | Tok::P(":"))) {

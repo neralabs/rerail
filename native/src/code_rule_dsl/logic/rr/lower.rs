@@ -310,6 +310,8 @@ impl Lowerer {
             })
         }
         self.top_is_var = binds_top(body);
+        let (heads, body) = self.lift_head_aggregates(heads, body);
+        let (heads, body) = (heads.as_slice(), body.as_slice());
         let mut outer = Vec::new();
         heads.iter().flat_map(|h| &h.args).for_each(|a| a.vars(&mut outer));
         let bodies = self.conjunction(body, &outer.into_iter().collect())?;
@@ -329,6 +331,7 @@ impl Lowerer {
     /// A conjunction's alternatives (one per choice in its disjunctions).
     /// `context`: the variables used outside the conjunction.
     fn conjunction(&mut self, lits: &[Lit], context: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
+        let lits = &self.lift_aggregates(lits);
         let mut acc = vec![Vec::new()];
         for (k, lit) in lits.iter().enumerate() {
             // The variables used outside this literal, which an aggregate inside it is correlated on.
@@ -660,43 +663,66 @@ impl Lowerer {
 
     #[allow(clippy::too_many_arguments)]
     fn aggregate(&mut self, var: &str, agg: &str, over: Option<&STerm>, by: &[STerm], sep: &Option<String>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Vec<Literal>, Error> {
-        let op = match agg {
+        let mut op = match agg {
             "count" => AggOp::Count,
             "min" => AggOp::Min,
             "max" => AggOp::Max,
+            "sum" => AggOp::Sum,
+            "join" => AggOp::Join { by: Vec::new(), sep: sep.clone().ok_or_else(|| Error::Syntax("join needs its separator, `sep \"…\"`".to_owned()))? },
+            // Soufflé's mean is a decimal number, and the engine has none.
+            "mean" => return not_yet("the aggregate mean (a decimal number)"),
             other => return not_yet(format!("the aggregate {other}")),
         };
-        if !by.is_empty() || sep.is_some() {
-            return not_yet("`by` and `sep`");
+        if !matches!(op, AggOp::Join { .. }) && (!by.is_empty() || sep.is_some()) {
+            return Err(Error::Syntax(format!("`by` and `sep` are join's, not {agg}'s")));
         }
-        let over = match over {
-            None => None,
-            Some(STerm::Var(v)) => Some(v.clone()),
-            Some(other) => return not_yet(format!("an aggregate over {other:?}")),
-        };
         if op != AggOp::Count && over.is_none() {
             return Err(Error::Syntax(format!("{agg} needs the variable it aggregates")));
         }
+        // A value or key that is an expression is a variable the body computes: `sum strlen(x) - 1 : { … }` sums
+        // v over `{ …, v = strlen(x) - 1 }`.
+        let mut body = body.to_vec();
+        let over = over.map(|t| self.named(t, "over", &mut body));
+        let keys: Vec<String> = by.iter().map(|t| self.named(t, "key", &mut body)).collect();
+        let ours = |v: &str| !outer.contains(v);
         // One plain atom: the engine's aggregate reads it.
-        if let [Lit::Atom { rel, args, neg: false }] = body
+        if let [Lit::Atom { rel, args, neg: false }] = body.as_slice()
             && test_of(rel).is_none()
             && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast")
         {
             let Literal::Atom(mut atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
-            // A variable only the body uses is counted over, not grouped by: a wildcard to the engine.
-            for t in &mut atom.args {
-                if matches!(t, Term::Var(v) if !outer.contains(v) && over.as_ref() != Some(v)) {
-                    *t = Term::Wild;
+            let at = |v: &str| atom.args.iter().position(|t| matches!(t, Term::Var(w) if w == v));
+            // A variable of the body's own the atom repeats is an equality the engine's aggregate would not test, and
+            // a key or value the atom lacks is the helper's error below.
+            let repeated = atom.vars().iter().any(|v| ours(v) && atom.args.iter().filter(|t| matches!(t, Term::Var(w) if w == v)).count() > 1);
+            let placed = over.iter().chain(&keys).all(|v| at(v).is_some());
+            if !repeated && placed {
+                if let AggOp::Join { by, .. } = &mut op {
+                    *by = keys.iter().map(|k| at(k).expect("a key column")).collect();
                 }
+                // A variable only the body uses is counted over, not grouped by: a wildcard to the engine.
+                for t in &mut atom.args {
+                    if matches!(t, Term::Var(v) if ours(v) && over.as_ref() != Some(v)) {
+                        *t = Term::Wild;
+                    }
+                }
+                return Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom }]);
             }
-            return Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom }]);
         }
-        // Otherwise a helper relation of the body. `count` counts the body's distinct rows, so it keeps every
-        // variable; `min` and `max` keep the aggregated one and those the rule shares.
-        let inner = body_vars(body);
-        let cols: Vec<String> = inner.iter().filter(|v| op == AggOp::Count || over.as_ref() == Some(*v) || outer.contains(*v)).cloned().collect();
+        // Otherwise a helper relation of the body. `count`, `sum` and `join` read the body's rows, a multiset of
+        // the aggregated value, so the helper keeps every variable; `min` and `max` keep the aggregated one and
+        // those the rule shares.
+        let inner = body_vars(&body);
+        let multiset = !matches!(op, AggOp::Min | AggOp::Max);
+        let cols: Vec<String> = inner.iter().filter(|v| multiset || over.as_ref() == Some(*v) || outer.contains(*v)).cloned().collect();
+        if let Some(v) = over.iter().chain(&keys).find(|v| !cols.contains(v)) {
+            return Err(Error::Syntax(format!("{agg}: {v} is not bound in its body")));
+        }
+        if let AggOp::Join { by, .. } = &mut op {
+            *by = keys.iter().map(|k| cols.iter().position(|c| c == k).expect("a key column")).collect();
+        }
         let name = self.fresh("agg");
-        let mut bodies = self.conjunction(body, outer)?;
+        let mut bodies = self.conjunction(&body, outer)?;
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
         let bound: BTreeSet<String> = body_vars(
@@ -720,7 +746,62 @@ impl Lowerer {
         Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args, neg: false, gated: false } }])
     }
 
-    /// A helper column's type: the column it fills in the body's atoms.
+    /// An aggregate's value or key as a variable: itself, or one the body is given to compute it.
+    fn named(&mut self, t: &STerm, stem: &str, body: &mut Vec<Lit>) -> String {
+        if let STerm::Var(v) = t {
+            return v.clone();
+        }
+        let v = self.fresh(stem);
+        body.push(Lit::Cmp { l: STerm::Var(v.clone()), op: "=", r: t.clone() });
+        v
+    }
+
+    /// The aggregates inside terms, each a comparison `rr_aggN = agg` of its own before the literal that uses it
+    /// (`n = 1 + count : { … }` is `rr_agg1 = count : { … }, n = 1 + rr_agg1`), as `comparison` lowers it. An
+    /// aggregate a comparison has on one side stays where it is.
+    fn lift_aggregates(&mut self, lits: &[Lit]) -> Vec<Lit> {
+        let mut out = Vec::new();
+        for l in lits {
+            let mut lifted = Vec::new();
+            let l = match l {
+                Lit::Atom { rel, args, neg } => Lit::Atom { rel: rel.clone(), args: args.iter().map(|a| self.lift(a, false, &mut lifted)).collect(), neg: *neg },
+                Lit::Cmp { l, op, r } => {
+                    let l2 = self.lift(l, true, &mut lifted);
+                    let r2 = self.lift(r, !matches!(l2, STerm::Agg { .. }), &mut lifted);
+                    Lit::Cmp { l: l2, op, r: r2 }
+                }
+                l => l.clone(),
+            };
+            out.extend(lifted);
+            out.push(l);
+        }
+        out
+    }
+
+    /// A head's aggregates as `lift_aggregates` lifts them, into the body.
+    fn lift_head_aggregates(&mut self, heads: &[Head], body: &[Lit]) -> (Vec<Head>, Vec<Lit>) {
+        let mut body = body.to_vec();
+        let heads = heads.iter().map(|h| Head { args: h.args.iter().map(|a| self.lift(a, false, &mut body)).collect(), ..h.clone() }).collect();
+        (heads, body)
+    }
+
+    fn lift(&mut self, t: &STerm, top: bool, out: &mut Vec<Lit>) -> STerm {
+        match t {
+            STerm::Agg { .. } if top => t.clone(),
+            STerm::Agg { .. } => {
+                let v = self.fresh("agg");
+                out.push(Lit::Cmp { l: STerm::Var(v.clone()), op: "=", r: t.clone() });
+                STerm::Var(v)
+            }
+            STerm::Call { name, functor, args } => STerm::Call { name: name.clone(), functor: *functor, args: args.iter().map(|a| self.lift(a, false, out)).collect() },
+            STerm::Bin { op, l, r } => STerm::Bin { op, l: Box::new(self.lift(l, false, out)), r: Box::new(self.lift(r, false, out)) },
+            STerm::Named(n, v) => STerm::Named(n.clone(), Box::new(self.lift(v, false, out))),
+            t => t.clone(),
+        }
+    }
+
+    /// A helper column's type: the column it fills in the body's atoms, else the type of the aggregate or the
+    /// computation that assigns it (`k = 0 - i` is a number, which a `join` orders by value).
     fn type_of(&self, v: &str, bodies: &[Vec<Literal>]) -> String {
         for literal in bodies.iter().flatten() {
             match literal {
@@ -741,6 +822,29 @@ impl Lowerer {
                 Literal::Nearest { n, a, .. } if n == v || a == v => return "node".to_owned(),
                 Literal::Ast { document, .. } if document == v => return "int".to_owned(),
                 Literal::Ast { node, captures, .. } if node == v || captures.iter().any(|(_, c)| c == v) => return "node".to_owned(),
+                _ => {}
+            }
+        }
+        use crate::code_rule_dsl::logic::plan::lower::{Domain, functor_domains};
+        let number = |n: bool| if n { "int".to_owned() } else { "sym".to_owned() };
+        for literal in bodies.iter().flatten() {
+            match literal {
+                Literal::Agg { var, op, over, atom } if var == v => {
+                    return match op {
+                        AggOp::Count | AggOp::Sum => "int".to_owned(),
+                        AggOp::Join { .. } => "sym".to_owned(),
+                        AggOp::Min | AggOp::Max => {
+                            let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone())));
+                            col.and_then(|c| self.prog.decls.get(&atom.rel)?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
+                        }
+                    };
+                }
+                Literal::Cmp { l: Term::Var(x), op: "=", r } if x == v => match r {
+                    Term::Int(_) => return "int".to_owned(),
+                    Term::Str(_) => return "sym".to_owned(),
+                    Term::Call(f, args) if let (_, Some(d)) = functor_domains(f, args.len()) => return number(d == Domain::Int),
+                    _ => {}
+                },
                 _ => {}
             }
         }

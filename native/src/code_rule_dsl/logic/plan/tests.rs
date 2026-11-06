@@ -639,3 +639,64 @@ fn("function_definition").
     }
     let _ = std::fs::remove_dir_all(&out);
 }
+
+// ---- aggregates ----
+
+/// `join`, `sum` and aggregates inside terms, run over a corpus: join orders by its keys (numbers by value, symbols
+/// by code point, a tuple key by its parts in turn), ties by the value, and gives "" of nothing; sum adds every row
+/// of its body (two arguments of one length both count) and gives 0 of nothing.
+#[test]
+fn join_sum_and_aggregates_in_terms_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("aggregates");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Identifiers, whose `text` is their name: `é` sorts after `z` by code point, and `B` before both.
+    let m = (0..=10).map(|i| format!("a{i}")).collect::<Vec<_>>().join(", ");
+    std::fs::write(dir.join("a.py"), format!("f(bb, a, cc)\ng()\nh(é, z, B)\nm({m})\n")).unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl child(p: node, c: node, i: number)
+.input node, field, text, child
+.decl callee(c: node, s: symbol)
+callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
+.decl arg(c: node, t: symbol, i: number)
+arg(c, t, i) :- node(_, c, "call", _, _), field(c, "arguments", a), child(a, s, i), text(s, t).
+.decl in_order(f: symbol, j: symbol)
+in_order(f, j) :- callee(c, f), j = join t by i sep ", " : { arg(c, t, i) }.
+.decl by_text(f: symbol, j: symbol)
+by_text(f, j) :- callee(c, f), j = join t sep "|" : { arg(c, t, _) }.
+.decl reversed(f: symbol, j: symbol)
+reversed(f, j) :- callee(c, f), j = join t by k sep "" : { arg(c, t, i), k = 0 - i }.
+.decl numbers(f: symbol, j: symbol)
+numbers(f, j) :- callee(c, f), j = join i sep "+" : { arg(c, _, i) }.
+.decl tuple(f: symbol, j: symbol)
+tuple(f, j) :- callee(c, f), j = join t by (n, k) sep "," : { arg(c, t, i), n = strlen(t), k = 0 - i }.
+.decl total(f: symbol, s: number, w: number, g: number)
+total(f, s, w, g) :- callee(c, f), s = sum i : { arg(c, _, i) }, w = sum n : { arg(c, t, _), n = strlen(t) },
+    g = sum strlen(t) - 1 : { arg(c, t, _) }.
+.decl ccn(f: symbol, k: number)
+ccn(f, 10 * count : { arg(c, _, _) } + sum i : { arg(c, _, i) }) :- callee(c, f).
+.decl more(f: symbol)
+more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
+.output in_order, by_text, reversed, numbers, tuple, total, ccn, more
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let a = |order: &mut dyn Iterator<Item = i32>, sep: &str| order.map(|i| format!("a{i}")).collect::<Vec<_>>().join(sep);
+    let mut text_order: Vec<String> = (0..=10).map(|i| format!("a{i}")).collect();
+    text_order.sort();
+    assert_eq!(read("in_order"), format!("f\tbb, a, cc\ng\t\nh\té, z, B\nm\t{}\n", a(&mut (0..=10), ", ")));
+    assert_eq!(read("by_text"), format!("f\ta|bb|cc\ng\t\nh\tB|z|é\nm\t{}\n", text_order.join("|")));
+    assert_eq!(read("reversed"), format!("f\tccabb\ng\t\nh\tBzé\nm\t{}\n", a(&mut (0..=10).rev(), "")));
+    let numbers = (0..=10).map(|i| i.to_string()).collect::<Vec<_>>().join("+");
+    assert_eq!(read("numbers"), format!("f\t0+1+2\ng\t\nh\t0+1+2\nm\t{numbers}\n"));
+    // By length, then by position from the end: a (1), cc (2, -2), bb (2, 0); a9 … a0 (2), a10 (3).
+    assert_eq!(read("tuple"), format!("f\ta,cc,bb\ng\t\nh\tB,z,é\nm\t{},a10\n", a(&mut (0..=9).rev(), ",")));
+    // bb and cc have one length: both count in w.
+    assert_eq!(read("total"), "f\t3\t5\t2\ng\t0\t0\t0\nh\t3\t3\t0\nm\t55\t23\t12\n");
+    assert_eq!(read("ccn"), "f\t33\ng\t0\nh\t33\nm\t165\n");
+    assert_eq!(read("more"), "f\nh\nm\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
