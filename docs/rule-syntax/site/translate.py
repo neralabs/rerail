@@ -10,9 +10,11 @@ shares metavariables across utils) takes it as an extra column, and every call p
 
 from textglob import text_test
 import json
+import os
 import re
 
 from souffle import check_rule, whole
+from simplify import simplify
 
 LANG_LIB = {
     "python": "python",
@@ -219,6 +221,11 @@ def one_of(prog, vs, fmt, values, p, note):
 def lower(prog, rule, v, vs, skip=()):
     """Literals that hold when node v matches the rule object."""
     lits = []
+    if isinstance(rule, list):
+        # A list of rules is their conjunction (an option case's `default: [...]`); an empty list holds for any node.
+        for sub in rule:
+            lits.extend(lower(prog, sub, v, vs))
+        return lits or [f"node(_, {v}, _, _, _)"]
     if not isinstance(rule, dict):
         prog.untranslated += 1
         return [f"ast({v}, {compact(rule)})"]
@@ -233,6 +240,8 @@ def lower(prog, rule, v, vs, skip=()):
             lits.append(f"option({q(val['$option'])}, {o}), match({o}, {v})")
         elif k == "regex":
             lits.append(match(val, v))
+        elif k == "spread" and "$option" in rule:
+            continue  # `spread: true` on an `$option` splices the chosen list into the enclosing array
         elif k == "spread" and isinstance(val, bool):
             lits.append(f"spread({v})" if val else f"!spread({v})")
         elif k == "capture" and isinstance(val, str):
@@ -279,7 +288,7 @@ def lower(prog, rule, v, vs, skip=()):
                 else:
                     prog.untranslated += 1
                     lits.append(f"ast({v}, {compact({'value': {op: arg}})})")
-        elif k == "$option" and isinstance(val, str) and "cases" in rule:
+        elif k == "$option" and isinstance(val, str) and ("cases" in rule or "default" in rule):
             lits.extend(option_cases(prog, val, rule, v))
         elif k in ("cases", "default") and "$option" in rule:
             continue
@@ -306,7 +315,10 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(relation(prog, k, val, v, vs))
         elif k == "all" and isinstance(val, list):
             for sub in val:
-                lits.extend(lower(prog, sub, v, vs))
+                if isinstance(sub, dict) and "$option" in sub and sub.get("spread") is True:
+                    lits.extend(option_cases(prog, sub["$option"], sub, v, conj=True))  # spliced into the `all`
+                else:
+                    lits.extend(lower(prog, sub, v, vs))
         elif k == "any" and isinstance(val, list):
             lits.extend(alternatives(prog, val, v, vs))
         elif k == "not":
@@ -401,17 +413,26 @@ def site_filters(prog, filters, s, vs):
     return lits
 
 
-def option_cases(prog, name, rule, v):
+def option_cases(prog, name, rule, v, conj=False):
+    """`$option`: the configured value picks a case, else the default. A list value is spliced into the array that
+    holds the `$option` (`spread: true`), so it means what that array means: alternatives under `any` (an empty
+    list matches nothing), conjuncts under `all` (an empty list matches everything)."""
     rel = prog.helper("option", f"the JSON `$option` on {q(name)}: one rule per configured value, plus the default")
-    keys = []
-    for case, body in (rule.get("cases") or {}).items():
-        keys.append(case)
-        bodies = body if isinstance(body, list) else [body]
-        for b in bodies:
-            prog.rules.append((f"{rel}(n)", [f"option({q(name)}, {q(case)})"] + lower(prog, b, "n", Vars())))
+    keys = list((rule.get("cases") or {}))
+    guard = [f"!option({q(name)}, {q(k)})" for k in keys]
+    choices = [([f"option({q(name)}, {q(c)})"], b) for c, b in (rule.get("cases") or {}).items()]
     if "default" in rule:
-        guard = [f"!option({q(name)}, {q(k)})" for k in keys]
-        prog.rules.append((f"{rel}(n)", guard + lower(prog, rule["default"], "n", Vars())))
+        choices.append((guard, rule["default"]))
+    for when, body in choices:
+        if isinstance(body, list) and conj:
+            lits = [l for b in body for l in lower(prog, b, "n", Vars())]
+            prog.rules.append((f"{rel}(n)", when + (lits or ["node(_, n, _, _, _)"])))
+        else:
+            for b in (body if isinstance(body, list) else [body]):
+                prog.rules.append((f"{rel}(n)", when + lower(prog, b, "n", Vars())))
+    if not any(r[0] == f"{rel}(n)" for r in prog.rules):
+        prog.decls.pop(rel, None)
+        return ["false"]  # no case can match
     return [f"{rel}({v})"]
 
 
@@ -748,6 +769,100 @@ def violation_lines(viol, rel, cols, ast=False, numeric=(), symbolic=()):
     return lines
 
 
+# ---- one violation for clauses that differ only in their message -----------------------------------------------
+
+_VIOL_HEAD = re.compile(r'^\.violation (\w+)\((.*?)\)( code "(?:[^"\\]|\\.)*")? ("(?:[^"\\]|\\.)*")$')
+
+
+def fold_messages(body):
+    """Clauses with the same code, columns, suppressions, fix and options, whose messages differ, become one
+    violation: the words that differ are a `detail` column, and each clause's rules put theirs in the head.
+    Findings keep their keys (policy, code, path, line); only the relation's name and the message's spelling
+    change, and the message reads the same for every finding."""
+    rels_with_rules = {item["head"].split("(")[0] for kind, item in body if kind == "rule"}
+    viols = {}
+    for i, (kind, item) in enumerate(body):
+        if kind != "viol":
+            continue
+        m = _VIOL_HEAD.match(item[0])
+        if not m or m.group(1) not in rels_with_rules or "detail" in m.group(2):
+            continue
+        # the code a finding gets: the `code` line, or else the relation's own name
+        key = (m.group(2), m.group(3) or f' code "{m.group(1)}"', tuple(item[1:]))
+        viols.setdefault(key, []).append((i, m.group(1), json.loads(m.group(4))))
+    groups = [g for g in viols.values() if len(g) > 1]
+    if not groups:
+        return body
+    rename, drop, header = {}, set(), {}
+    for g in groups:
+        msgs = [x[2] for x in g]
+        pre = os.path.commonprefix(msgs)
+        suf = os.path.commonprefix([x[::-1] for x in msgs])[::-1]
+        short = min(len(x) for x in msgs)
+        if len(pre) + len(suf) > short:
+            suf = suf[len(pre) + len(suf) - short:]
+        if pre and not pre.endswith(" ") and any(len(x) > len(pre) and x[len(pre)] != " " for x in msgs):
+            pre = pre[:pre.rfind(" ") + 1]
+        if suf and not suf[0] in " ,.;:)" and any(len(x) > len(suf) and x[-len(suf) - 1] not in " " for x in msgs):
+            cut = min([suf.find(c) for c in " ,.;:)" if c in suf] or [len(suf)])
+            suf = suf[cut:]
+        holes = [x[len(pre):len(x) - len(suf) if suf else len(x)] for x in msgs]
+        if any("{" in h or "}" in h for h in holes) or any("{detail}" in x for x in msgs):
+            continue
+        same = len(set(msgs)) == 1  # one message: the clauses merge, with no column
+        name = min((x[1] for x in g), key=lambda r: (len(r), r))
+        first_i = g[0][0]
+        m = _VIOL_HEAD.match(body[first_i][1][0])
+        cols = m.group(2) + ("" if same else ", detail: symbol")
+        tmpl = msgs[0] if same else pre + "{detail}" + suf
+        cids, extra = [], []
+        for i, _, _ in g:
+            if i and body[i - 1][0] == "note":
+                lines = body[i - 1][1]
+                cids += re.findall(r"from clause `([^`]*)`", lines[0])
+                extra += [l for l in lines[2:] if l not in extra]
+        shown = ", ".join(f"`{c}`" for c in cids[:4]) + (f" and {len(cids) - 4} more" if len(cids) > 4 else "")
+        code = m.group(3) or f" code {q(g[0][1])}"  # implicit codes are the relation's name: keep it when renamed
+        header[first_i] = ([f".violation {name}({cols}){code if (m.group(3) or name != g[0][1]) else ''} {q(tmpl)}"] + body[first_i][1][1:],
+                           ([f"// {name}(n): findings from clauses {shown}, which say the same.",
+                             "// Each rule is one way a JSON `rule` can match."] if same else
+                            [f"// {name}(n, detail): findings from clauses {shown}. Their messages differ only in",
+                             "// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match."])
+                           + extra)
+        for (i, rel, _), h in zip(g, holes):
+            rename[rel] = (name, None if same else h)
+            if i != first_i:
+                drop.add(i)
+    if not rename:
+        return body
+    out, moved = [], set()
+    group_of = {rel: v[0] for rel, v in rename.items()}
+    for i, (kind, item) in enumerate(body):
+        if i in drop:
+            if out and out[-1][0] == "note":
+                out.pop()  # the dropped clause's own note
+            continue
+        if kind == "rule" and item["head"].split("(")[0] in rename:
+            if id(item) in moved:
+                continue
+        if i in header:
+            lines, note = header[i]
+            if out and out[-1][0] == "note":
+                out[-1] = ("note", note)
+            out.append(("viol", lines))
+            target = group_of[_VIOL_HEAD.match(item[0]).group(1)]
+            for k2, it2 in body:
+                if k2 == "rule" and group_of.get(it2["head"].split("(")[0]) == target:
+                    rel = it2["head"].split("(")[0]
+                    args = it2["head"].split("(", 1)[1][:-1]
+                    it2["head"] = f"{target}({args})" if rename[rel][1] is None else f"{target}({args}, {q(rename[rel][1])})"
+                    out.append(("rule", it2))
+                    moved.add(id(it2))
+            continue
+        out.append((kind, item))
+    return out
+
+
 # ---- shared metavariables -------------------------------------------------------------------------------------
 
 def _mask_ticks(s):
@@ -800,11 +915,12 @@ def share_metavariables(entries, helpers):
     variables belong to one rule. So a helper relation gets a column for each metavariable that crosses its
     boundary: one it reads but does not bind (passed in), and one it binds that a caller uses (passed out).
     Each call passes the caller's variable of that name, or `_` where the caller does not use it."""
+    helpers = sorted(helpers)  # one order everywhere below: the fixpoint must not depend on the hash seed
     rules = []
     for e in entries:
         text = ", ".join(e["lits"])
         masked = _mask_ticks(_strip_strings_keep(text))
-        calls = set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & helpers
+        calls = sorted(set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & set(helpers))
         rules.append({"e": e, "owner": e["head"].split("(")[0], "head": _upper_vars(e["head"].split("(", 1)[1]),
                       "up": _upper_vars(text) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
                       "binds": _binders(text), "calls": calls})
@@ -821,12 +937,16 @@ def share_metavariables(entries, helpers):
     iface = {h: set() for h in helpers}
     for _ in range(50):
         old = {h: (set(provides[h]), set(free_in[h]), set(needed[h])) for h in helpers}
+        # free_in is recomputed each round, not accumulated: a metavariable that looked free before a callee was
+        # found to pass it out is bound after all (accumulating left it an input the caller fills with `_`).
+        fresh = {h: set() for h in helpers}
         for h in helpers:
             for r in by_owner.get(h, ()):
                 bound = r["binds"] | set().union(*[provides[g] & iface[g] for g in r["calls"]] or [set()])
                 provides[h] |= r["binds"] | set().union(*[provides[g] for g in r["calls"]] or [set()])
                 use = r["up"] | set().union(*[free_in[g] for g in r["calls"]] or [set()])
-                free_in[h] |= use - bound
+                fresh[h] |= use - bound
+        free_in = fresh
         for h in helpers:
             for r in callers[h]:
                 own = iface.get(r["owner"], set()) | needed.get(r["owner"], set())
@@ -949,6 +1069,14 @@ def translate(doc):
         for h, lits in local:
             body.append(("rule", {"head": h, "lits": lits}))
 
+    # Remove what the construct-by-construct lowering alone put there (simplify.py): duplicate helpers, helpers
+    # used once, and grounding atoms that something else already provides.
+    entries = [item for kind, item in body if kind == "rule"]
+    protected = set(seen_rel) | {e["head"].split("(")[0] for e in entries if "," in e["head"]}
+    simplify(entries, prog, protected)
+    keep = set(map(id, entries))
+    body = [(kind, item) for kind, item in body if kind != "rule" or id(item) in keep]
+
     # Helper relations (utils, alternatives, stop sets) share the JSON's metavariables with their callers.
     entries = [item for kind, item in body if kind == "rule"]
     helper_entries = [{"head": r[0], "lits": r[1]} for r in prog.rules if r[0] != "#facts"]
@@ -967,6 +1095,7 @@ def translate(doc):
             if outs:
                 prog.notes.setdefault(name, []).append(f"//   {', '.join(outs)}: metavariable{'s' if len(outs) > 1 else ''} "
                                                        f"this relation binds for the calling rule")
+    body = fold_messages(body)
     hi = iter(helper_entries)
     helper_rules = [r if r[0] == "#facts" else (lambda e: (e["head"], e["lits"]))(next(hi)) for r in prog.rules]
 
@@ -1038,7 +1167,8 @@ def translate(doc):
                 emit_decl(name)
                 line = ""
                 for v in vals:
-                    f = f"{name}({q(v)})."
+                    args = ", ".join(map(q, v)) if isinstance(v, (tuple, list)) else q(v)
+                    f = f"{name}({args})."
                     if line and len(line) + len(f) + 1 > 88:
                         out.append(line)
                         line = ""

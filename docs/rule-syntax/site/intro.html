@@ -379,16 +379,24 @@ NESTED_ROUTER_JSX(inner) :- router_el(inner),
   <section style="display:grid;gap:10px">
     <h2>Where it stands</h2>
     <div class="stats">
-      <div class="stat"><b>{{rules}}</b><span>pack rules translated from JSON</span></div>
-      <div class="stat"><b>{{json_mb}} → {{rr_mb}}</b><span>pretty JSON → .rr, comments excluded</span></div>
-      <div class="stat"><b>{{atom_rules}}</b><span>rules still holding an untranslated JSON piece</span></div>
-      <div class="stat"><b>{{ungrounded}}</b><span>generated rules with an unbound variable, by the groundedness check</span></div>
+      <div class="stat"><b>{{hand_rules}} / {{rules}}</b><span>pack rules written by hand in .rr, each reviewed against its tool</span></div>
+      <div class="stat"><b>{{json_mb}} → {{hand_mb}}</b><span>pretty JSON → hand-written .rr, comments excluded</span></div>
       <div class="stat"><b>{{dl_py_lines}} → {{dl_rr_code}}</b><span>data-layer lines: Python → .rr logic</span></div>
     </div>
     <ul class="tight">
-      <li>Every pack rule has a machine translation. Where a JSON construct has no .rr form yet, it stays as an <code>ast(n, {…})</code> piece.</li>
-      <li>Six data-layer checks, function-level-imports and the router rule are written by hand in their final form, beside the Python they replace.</li>
-      <li>Nothing has been compiled or run: there is no .rr parser or engine yet. Known problems found by reading are listed in <code>docs/rule-syntax/OPEN-ISSUES.md</code>.</li>
+      <li>Every pack rule is written by hand on the shared libraries. A second person reviewed each batch against the
+        tool it ports (Ruff, Bandit, ESLint and its plugins, Clippy, sqlfluff, PHPStan, …), and the defects found were
+        fixed. Each rule's NOTES file lists where it still differs from the tool, and why.</li>
+      <li>The rules run in <code>tools/rrlab</code>, a lab harness on Soufflé, and are scored against the tool's own
+        findings on its test fixtures.</li>
+      <li>The engine reads <code>.rr</code> as its only rule format. With the reader work on its branch
+        <code>final-rerail-shape-rr-align</code> (not merged yet), 3,890 of the libraries' 3,906 clauses and 5,220
+        of the packs' 5,264 clauses lower. The rest are constructs it still refuses by
+        name, such as <code>ordered by</code>, a place used as a value, and recursion whose bound it cannot yet
+        prove. <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code> lists every difference and who changes
+        what.</li>
+      <li>The machine translation of the JSON is kept as a second tab, for comparison.</li>
+      <li>Six data-layer checks, function-level-imports and the router rule are also written in their final form, beside the Python they replace.</li>
     </ul>
   </section>
 
@@ -397,7 +405,7 @@ NESTED_ROUTER_JSX(inner) :- router_el(inner),
     <ul class="tight">
       <li><a href="#syntax">Syntax</a>: Datalog from the start, then what is added to Soufflé, each part of the format, fixes, and possible findings.</li>
       <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
-      <li><a href="#packs">Pack rules</a>: every shipped rule, today's JSON beside its .rr.</li>
+      <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rr beside today's JSON.</li>
       <li><a href="#data-layer">Data-layer rules</a>: the hand-written rules, each beside the JSON port and the Python linter.</li>
       <li>In any .rr code, relation names are links. Blue names come from a Datalog library, orange names are native, and names with a dotted underline are defined in the same file.</li>
     </ul>

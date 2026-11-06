@@ -596,7 +596,7 @@ w('''  <section class="sect">
       <p><b>What follows from it.</b></p>
       <ul class="tight">
         <li>Cost is in rows, not in lines of rule. A body that starts with <code>kind(n, "call")</code> and a name test touches a few rows; a body that starts with <code>within(n, a)</code> touches every ancestor pair.</li>
-        <li>Everything is per distinct value. A text test, a regex capture or a CPython request is made once per distinct string or node, however many rules ask.</li>
+        <li>Everything is per distinct value. A text test, a regex capture or a printed node is made once per distinct string or node, however many rules ask.</li>
         <li>Nothing scans text per node. Text tests are DFA, glob or literal-set passes over strings; only <code>.scope text</code> checks read a file's lines.</li>
         <li>A relation is complete before anything negates it, counts it or passes it as an argument. Deep chains of such strata add waves, not passes over the code.</li>
         <li>Asking for one answer is cheaper than asking for all: <code>nearest</code> rather than <code>within</code>, <code>dfs_first</code> rather than a closure, the magic-set pragma rather than a whole relation read for a few rows.</li>
@@ -620,7 +620,8 @@ w('''  <section class="sect">
       <tr><td><code>dfs_first</code></td><td>Set passes, then a search only where chains enter cycles. <b>Measured</b> (native spike, 1,000,000 functions, 5,000,000 calls): 0.2 s of set passes, 0.06 s for every root; steps 1-3 in 0.004 s on a GPU. On LEG-083's real call graph, 1 ms</td><td>Order edges by <code>visit_index</code>; leave out edges a check does not follow, so cycles stay small</td></tr>
       <tr><td><code>dfs_first_memo</code></td><td>As <code>dfs_first</code>, plus a search in root order for roots that enter cycles. <b>Measured</b>: 0.03 s for every root, against 0.32 s for the scripts' own search</td><td>For parity with a script only</td></tr>
       <tr><td><code>must, may</code></td><td>The relation, and what negates it, twice</td><td>Only where facts can be missing</td></tr>
-      <tr><td><code>@unparse</code>, <code>@ast_dump</code>, <code>str_part</code>, <code>syntax_error</code> messages</td><td>An isolated CPython worker, one batch per wave</td><td>Behind cheap filters, so few nodes are sent</td></tr>
+      <tr><td><code>str_part</code>, <code>syntax_error</code></td><td>Native, once per file: a string decoder and a parser that follows CPython's grammar. No CPython runs</td><td>Nothing to do: the cost is per file, whatever the rules ask</td></tr>
+      <tr><td><code>@unparse</code></td><td>A native printer, once per node asked</td><td>Use it in messages only; compare trees with <code>@tree_digest</code></td></tr>
       <tr><td><code>parsed(s, g, root)</code></td><td>Parses the string, once per distinct string</td><td>For annotations and embedded code, not every string literal</td></tr>
       <tr><td><code>.input</code> files, artifacts</td><td>Read once per run; an artifact is checked against the digest of its inputs</td><td>Keep allowlists and baselines as files, not as facts in rules</td></tr>
       <tr><td>Fixes</td><td>Asked per finding only</td><td>Put a costly safety argument in the fix, not in the finding rule</td></tr>
@@ -632,11 +633,11 @@ w('''  <section class="sect">
     <div class="txt">
       <h2>Where to look next</h2>
       <ul class="tight">
-        <li><a href="#packs">Pack rules</a>: every shipped rule, today's JSON beside the generated .rr.</li>
+        <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rr beside today's JSON.</li>
         <li><a href="#data-layer">Data-layer rules</a>: hand-written final forms of complex data-layer checks, and the router example in four forms. function-level-imports, missing-async-pairs and the router carry fixes.</li>
         <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
       </ul>
-      <p class="note" style="padding:0">Generated .rr is a display translation from today's JSON. It shows the shape; nothing here has been compiled or run against the engine.</p>
+      <p class="note" style="padding:0">The pack rules run in the rrlab harness (Soufflé), scored against each tool's own findings. They do not yet run on the engine. The generated tab is a display translation of today's JSON.</p>
     </div>
   </section>
 </div>
