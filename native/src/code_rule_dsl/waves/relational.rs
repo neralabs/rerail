@@ -24,6 +24,8 @@ use database::Database;
 pub(in crate::code_rule_dsl) mod deferred;
 mod forest;
 mod functions;
+#[cfg(test)]
+pub(in crate::code_rule_dsl) use functions::install_unbounded as install_regex_functions;
 mod inputs;
 mod insert;
 mod producer;

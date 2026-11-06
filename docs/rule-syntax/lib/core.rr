@@ -315,6 +315,9 @@
 // Transforms: today's JSON `transform` computes a metavariable from another one's text. Each kind is one functor.
 // @replace_all("a  b", "\\s+", " ") = "a b": every match of re becomes by; ${1} in by is group 1.
 .functor replace_all(s: symbol, re: symbol, by: symbol): symbol
+// @rx_replace("a  b", "\\s+", " ") = "a b": W's SQL rx_replace, the regex crate's replace_all ($1, $name, ${name},
+// $$ as it reads them: `$1x` is a group named 1x). Same argument order as replace_all.
+.functor rx_replace(s: symbol, re: symbol, by: symbol): symbol
 // @convert("max-age", "camelCase", "dash") = "maxAge". Cases: lowerCase, upperCase, capitalize, camelCase,
 // snakeCase, kebabCase, pascalCase. seps lists separators ("dash,underscore"); "" splits on all of them.
 .functor convert(s: symbol, to: symbol, seps: symbol): symbol
@@ -330,8 +333,9 @@
 // Text for keys and signatures.
 .functor count_matches(re: symbol, s: symbol): number    // non-overlapping matches of re anywhere in s
 .functor sha256(s: symbol): symbol                       // hex digest of s's UTF-8 bytes
-// @json_str(s): s as a JSON string literal, quotes included, escaped as Python's json.dumps does by default
-// (non-ASCII as \uXXXX, surrogate pairs above U+FFFF), so rebuilt messages match the bytes that were signed.
+// @json_str(s): s as a JSON string literal, quotes included, as W's signed-list stages write an element
+// (json_group_array: `"`, `\` and controls escaped, non-ASCII kept), so rebuilt messages match the bytes W checks.
+// Python's json.dumps (ensure_ascii) escapes non-ASCII too: a repository that signs non-ASCII entries needs that.
 .functor json_str(s: symbol): symbol
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8

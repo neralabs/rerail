@@ -173,6 +173,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.within_kinds();
     l.declare_core()?;
     l.kind_sets()?;
+    l.unit();
     crate::code_rule_dsl::logic::front::finish(l.prog)
 }
 
@@ -199,6 +200,26 @@ impl Lowerer {
     fn fresh(&mut self, stem: &str) -> String {
         self.next += 1;
         format!("rr_{stem}{}", self.next)
+    }
+
+    /// A rule that reads no relation (`ok(v) :- m = join …, v = @f(m).`, or an aggregate's helper of comparisons
+    /// only, `{ e = "a", q = @json_str(e) }`) holds once, as in Soufflé: it reads `rr_unit(0)`, one row, since the
+    /// planner starts every body from an atom.
+    fn unit(&mut self) {
+        const UNIT: &str = "rr_unit";
+        let mut used = false;
+        for rule in &mut self.prog.rules {
+            // A matcher atom (`ast(…)`) or a walk reads the tree itself.
+            let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. });
+            if !rule.body.iter().any(reads) {
+                rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned(), args: vec![Term::Int(0)], neg: false, gated: false }));
+                used = true;
+            }
+        }
+        if used {
+            self.prog.decls.insert(UNIT.to_owned(), vec![("x".to_owned(), "int".to_owned())]);
+            self.prog.facts.insert(UNIT.to_owned(), vec![vec![Value::Int(0)]]);
+        }
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
@@ -515,23 +536,36 @@ impl Lowerer {
 
     #[allow(clippy::too_many_arguments)]
     fn aggregate(&mut self, var: &str, agg: &str, over: Option<&STerm>, by: &[STerm], sep: &Option<String>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Vec<Literal>, Error> {
-        let op = match agg {
-            "count" => AggOp::Count,
-            "min" => AggOp::Min,
-            "max" => AggOp::Max,
-            other => return not_yet(format!("the aggregate {other}")),
-        };
-        if !by.is_empty() || sep.is_some() {
-            return not_yet("`by` and `sep`");
-        }
         let over = match over {
             None => None,
             Some(STerm::Var(v)) => Some(v.clone()),
             Some(other) => return not_yet(format!("an aggregate over {other:?}")),
         };
+        let op = match agg {
+            "count" => AggOp::Count,
+            "min" => AggOp::Min,
+            "max" => AggOp::Max,
+            "sum" => AggOp::Sum,
+            "join" => {
+                let by = by
+                    .iter()
+                    .map(|k| match k {
+                        STerm::Var(k) => Ok(k.clone()),
+                        other => Err(Error::Syntax(format!("join orders by variables, not {other:?}"))),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                AggOp::Join { by, sep: sep.clone().unwrap_or_default() }
+            }
+            other => return not_yet(format!("the aggregate {other}")),
+        };
+        if !matches!(op, AggOp::Join { .. }) && (!by.is_empty() || sep.is_some()) {
+            return Err(Error::Syntax(format!("`by` and `sep` belong to join, not {agg}")));
+        }
         if op != AggOp::Count && over.is_none() {
             return Err(Error::Syntax(format!("{agg} needs the variable it aggregates")));
         }
+        // The variables the aggregate reads from its body: the aggregated one and join's order.
+        let read: BTreeSet<String> = over.iter().cloned().chain(if let AggOp::Join { by, .. } = &op { by.clone() } else { Vec::new() }).collect();
         // One plain atom: the engine's aggregate reads it.
         if let [Lit::Atom { rel, args, neg: false }] = body
             && test_of(rel).is_none()
@@ -541,16 +575,17 @@ impl Lowerer {
             let Literal::Atom(mut atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
             // The body's own variables are `_`: the aggregate binds none of them.
             for t in &mut atom.args {
-                if matches!(t, Term::Var(v) if !outer.contains(v) && over.as_ref() != Some(v)) {
+                if matches!(t, Term::Var(v) if !outer.contains(v) && !read.contains(v)) {
                     *t = Term::Wild;
                 }
             }
             return Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom }]);
         }
-        // Otherwise a helper relation of the body. `count` counts the body's distinct rows, so it keeps every
-        // variable; `min` and `max` keep the aggregated one and those the rule shares.
+        // Otherwise a helper relation of the body. `count` and `sum` range over the body's distinct rows, so they
+        // keep every variable; `min`, `max` and `join` keep those they read and those the rule shares.
         let inner = body_vars(body);
-        let cols: Vec<String> = inner.iter().filter(|v| op == AggOp::Count || over.as_ref() == Some(*v) || outer.contains(*v)).cloned().collect();
+        let every = matches!(op, AggOp::Count | AggOp::Sum);
+        let cols: Vec<String> = inner.iter().filter(|v| every || read.contains(*v) || outer.contains(*v)).cloned().collect();
         let name = self.fresh("agg");
         // A variable the rule shares that no atom of the body binds (`b > o` in `min b : { r(n, b), b > o }`) has
         // its value from the rule, as in Soufflé: the helper reads it from the literals around that bind it.
@@ -562,9 +597,9 @@ impl Lowerer {
         for b in bodies {
             self.prog.rules.push(Rule { head: Atom { rel: name.clone(), args: args.clone(), neg: false, gated: false }, body: b });
         }
-        // The aggregate reads the helper at the rule's variables: the body's own (`count`'s) are `_` there.
-        let read = cols.iter().map(|c| if outer.contains(c) || over.as_ref() == Some(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
-        Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args: read, neg: false, gated: false } }])
+        // The aggregate reads the helper at the rule's variables and its own: the body's others (`count`'s) are `_`.
+        let args = cols.iter().map(|c| if outer.contains(c) || read.contains(c) { Term::Var(c.clone()) } else { Term::Wild }).collect();
+        Ok(vec![Literal::Agg { var: var.to_owned(), op, over, atom: Atom { rel: name, args, neg: false, gated: false } }])
     }
 
     /// The literals around an aggregate (`around`) that bind those of `shared` no positive atom of `body` binds:

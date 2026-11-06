@@ -6,7 +6,7 @@
 //! constants then become integers by the domain they meet: name atoms (interned), or kind and field atoms in the
 //! program's dialect (`-1`, which matches nothing, for a name the grammar lacks). Planning and SQL see only integers.
 
-use super::super::front::{Atom, Literal, Program, Term, Value};
+use super::super::front::{AggOp, Atom, Literal, Program, Term, Value};
 use super::{Error, Result};
 use crate::code_rule_dsl::facts::core::kind_atom;
 use crate::code_rule_dsl::facts::vtab::syntax::field_atom;
@@ -44,7 +44,9 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         "pkg_up" => (vec![Some(Name), Some(Int)], Some(Name)),
         "head" => (vec![Some(Name)], Some(Name)),
-        "replace_all" => (vec![Some(Name); 3], Some(Name)),
+        "replace_all" | "rx_replace" => (vec![Some(Name); 3], Some(Name)),
+        "json_str" => (vec![Some(Name)], Some(Name)),
+        "ed25519_ok" => (vec![Some(Name); 3], Some(Int)),
         "equals" => (vec![None; arity], None),
         f if crate::code_rule_dsl::logic::strings::is_test(f) => (vec![Some(Name); arity], None),
         _ => (vec![None; arity], None),
@@ -190,6 +192,9 @@ fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule:
                     changed |= vars.set(n, Domain::Node)?;
                     changed |= vars.set(a, Domain::Node)?;
                 }
+                // `join` makes a name; `count` and `sum` integers.
+                Literal::Agg { var, op: AggOp::Join { .. }, .. } => changed |= vars.set(var, Domain::Name)?,
+                Literal::Agg { var, op: AggOp::Count | AggOp::Sum, .. } => changed |= vars.set(var, Domain::Int)?,
                 _ => {}
             }
         }
