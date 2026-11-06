@@ -135,10 +135,17 @@ fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
         Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(b @ (0 | 1)) } if is_test(f) && args.len() == 2 => test(f, &args[0], &args[1], *b == 0)?,
         Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l)?, term(r)?),
         Literal::Agg { var: v, op, over, atom: a } => {
+            let over = || var(over.as_deref().unwrap_or("_"));
             let op = match op {
                 AggOp::Count => "count".to_owned(),
-                AggOp::Min => format!("min {}", var(over.as_deref().unwrap_or("_"))),
-                AggOp::Max => format!("max {}", var(over.as_deref().unwrap_or("_"))),
+                AggOp::Min => format!("min {}", over()),
+                AggOp::Max => format!("max {}", over()),
+                AggOp::Sum => format!("sum {}", over()),
+                AggOp::Join { by, sep } => {
+                    let by: Vec<String> = by.iter().map(|k| var(k)).collect();
+                    let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };
+                    format!("join {}{by} sep {}", over(), quote(sep))
+                }
             };
             format!("{} = {op} : {{ {} }}", var(v), atom(a, prog)?)
         }

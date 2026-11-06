@@ -177,7 +177,7 @@ fn unlowered_constructs_are_named() {
     for (src, what) in [
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
-        (".decl a(x: number)\na(x) :- a(y), x = sum z : { a(z) }.", "sum"),
+        (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
         (".decl a(x: symbol)\na(x) :- a(y), match(\"(?<x>.*)\", y).", "named groups"),
         (".violation v(at: span) \"m\"", "at a span"),
     ] {

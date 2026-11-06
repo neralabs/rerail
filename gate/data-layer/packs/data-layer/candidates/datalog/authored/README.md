@@ -7,7 +7,8 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
 `convert.rs` is the contract, summarized here.
 
 - Declare every relation the file reads or defines (core.rr's need not be: its declarations are the prelude, below,
-  "Base relations beyond the converter's"). The base relations use the converter's signatures:
+  "Base relations beyond the converter's"; an `.input` of a relation nothing declares is the error
+  `UndeclaredInput`). The base relations use the converter's signatures:
 
   ```
   .decl doc(d: number, path: symbol, module: symbol)
@@ -35,8 +36,8 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   The base relations the file reads are inputs whether or not it says `.input`. `in_scope` and `out_scope` are
   read, never derived (the replay changes them per event). The tree is read through `inside(n, a, set)` and
   `has(a, n, set)` (both: `a` is a strict ancestor of `n` whose kind is in `set`) and `nearest(n, a, set)` (the
-  nearest such `a`), `set` a relation of kind facts the file declares (`.decl lazy_loop_calls(kind: symbol)`,
-  `lazy_loop_calls("call").`).
+  nearest such `a`; `nearest(n, _, set)`: `n` has one), `set` a relation of kind facts the file declares
+  (`.decl lazy_loop_calls(kind: symbol)`, `lazy_loop_calls("call").`).
 - The report gate `report_when_gt(k)` is given by the converter, read, never derived, like `in_scope`: one row `k`
   where the policy, as the run configures it, has `report_when: {count: {gt: k}}` (the only form the compiler
   accepts, once per policy, on a define clause; in the pack only `data-layer-sql-grammar-escape-hatches`, gt 16),
@@ -242,6 +243,61 @@ corpus runner does not run, `list_len` a pattern's list variable, `string_annota
 here: the libraries' `.output`s are theirs, not the file's, and their fixes (`=> …`) are not run. What reads
 `str_part` (`str_const`, `docstring`, `ast_constant`), `parsed` (`ann_node`, `ann_name`) or `string_annotation`
 (`annotation`) fails until those are bound.
+
+### Functors and aggregates
+
+Lowered in the planner's SQL, over text symbols and over atoms (the corpus runner's); a component the native set
+engine cannot step through runs them in SQL. Beyond Soufflé's `cat`, `strlen`, `substr`, `to_string`, arithmetic,
+`count`, `min` and `max`:
+
+```
+@json_str(s: symbol): symbol                      // s as a JSON string literal, quotes included
+@ed25519_ok(key: symbol, message: symbol, sig: symbol): number   // 1 or 0
+@rx_replace(s: symbol, re: symbol, by: symbol): symbol           // every match of re in s replaced by by
+s = join x by (k, …) sep "," : { … }              // an ordered string aggregate
+s = sum x : { … }                                 // a number aggregate
+```
+
+- `@json_str(s)` is what W's signed-list stages write for one element (`json_group_array`'s, SQLite's `json_quote`):
+  `"` and `\` escaped, `\b \f \n \r \t`, other controls as `\u00XX`, everything else (non-ASCII included) as it
+  is. Python's `json.dumps` escapes non-ASCII as well: the two differ only on non-ASCII entries.
+- `@ed25519_ok(key, message, sig)` is W's `verify_ed25519` (`logic::crypto`): 1 when `sig`, standard base64 with
+  its padding, is the Ed25519 signature (`verify_strict`) of `message`'s UTF-8 bytes under the 64-digit hex public
+  key `key`; 0 otherwise, a malformed key or signature included (never an error). W's stages strip the signature to
+  `[A-Za-z0-9+/=]` first: `@rx_replace(s, "[^A-Za-z0-9+/=]", "")`.
+- `@rx_replace(s, re, by)` is W's SQL `rx_replace(s, re, by)`, argument order included: the `regex` crate's
+  `replace_all`, every non-overlapping match (empty ones too), `by` read as that crate reads it (`$1`, `$name`,
+  `${name}`, `$$` a dollar; `$1x` names a group `1x`, so write `${1}x`). `@replace_all(s, re, by)` is W's
+  `replace` transform, whose `$` reading differs.
+- `join x by (k, …) sep "sep" : { … }` (`by k` for one key; `by` and `sep` optional, `""` the default separator) is
+  the body's distinct `(k, …, x)` rows' `x`, ordered by `k, …` then `x`, numbers by value and symbols by code point
+  (as W's `ORDER BY` over text and Python's `sorted()` order them), joined by `sep`; `""` over no rows. A number `x`
+  is its decimal text. Rows equal in `k, …` and `x` are one: to keep duplicates, order by what tells them apart (W's
+  `json_group_array` over a registry keeps duplicate values: `join q by (v, n) sep "," : { reg(n, v), q =
+  @json_str(v) }`). W's canonical message is then
+  `cat("{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_surface\",\"version\":1}"))`.
+- `sum x : { … }` adds `x` over the body's distinct rows (rows that differ in another variable count apart), 0 over
+  none, as Soufflé's `sum`.
+- Like `count`, `join` and `sum` group by the rule's variables, and may not close a recursion.
+- A rule that reads no relation (`ok(v) :- m = join q by e sep "," : { e = "a", q = @json_str(e) }, v = …`, the
+  aggregate's body only comparisons too) holds once, as in Soufflé.
+
+### Recursion that makes values
+
+A recursion through a functor, arithmetic or `cat` that makes a value (`s = cat(cat(p, "."), x)`, `i + 1`) is
+refused (`UnboundedValueCycle`) unless it is bounded (`logic::front::cycles`, O11):
+
+- by the tree: one node column of each recursive relation moves one way along the tree, strictly in a rule that
+  makes a value. The moves are `child`, `field`, `nearest`, `inside`/`has`, and what a relation of a lower stratum
+  keeps in every row, recursive or not: strictly below (`desc(a, d) :- child(a, d, _). desc(a, d) :- child(a, c,
+  _), desc(c, d).`) or at or below (`unparen(e, m)`). So
+  `q(a, s) :- attr(a, x, v), q(v, p), s = cat(cat(p, "."), x).` is bounded where `attr(a, x, v) :- field(a,
+  "object", o), unparen(o, v), …` (`field` strictly, `unparen` at or below: strictly down). A relation with facts,
+  or an input, keeps nothing, nor does one over a graph (`e(a, b)`);
+- or by position: a node column and a number column, the node the same in every rule and the number moved by a
+  constant one way, strictly in a rule that makes a value, where the head's number is a child index of the node:
+  `j(c, i + 1, s2) :- j(c, i, s), child(c, p, i + 1), part(p, t), s2 = cat(s, t).` joins `c`'s parts in order
+  (or use `join … by i`).
 
 ### The reference graph
 

@@ -137,18 +137,23 @@ impl Atom {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::code_rule_dsl) enum AggOp {
     Count,
     Min,
     Max,
+    /// `sum x : { … }`: the sum of `x` over the body's rows, 0 when there are none.
+    Sum,
+    /// `join x by (k, …) sep "s" : { … }`: the distinct `(k, …, x)` rows' `x` texts ordered by `k, …` then `x`
+    /// (symbols by code point, numbers by value), separated by `sep`; `""` when there are none.
+    Join { by: Vec<String>, sep: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
-    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
+    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max`, `sum` and `join` likewise).
     Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
     /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
     Nearest { n: String, a: String, kindset: String },
@@ -235,8 +240,17 @@ impl fmt::Display for Literal {
             Literal::Atom(a) => write!(f, "{a}"),
             Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
             Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
+            Literal::Agg { var, op: AggOp::Join { by, sep }, over, atom } => {
+                let by: Vec<String> = by.iter().map(|k| format!("${k}")).collect();
+                let sep = serde_json::to_string(sep).expect("a string serializes");
+                write!(f, "${var} = join ${} by ({}) sep {sep} : {{ {atom} }}", over.as_deref().unwrap_or_default(), by.join(", "))
+            }
             Literal::Agg { var, op, over, atom } => {
-                let op = if *op == AggOp::Min { "min" } else { "max" };
+                let op = match op {
+                    AggOp::Min => "min",
+                    AggOp::Sum => "sum",
+                    _ => "max",
+                };
                 write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
             }
             Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
@@ -331,6 +345,8 @@ pub(in crate::code_rule_dsl) enum Error {
     /// A component creates values (`@cat`, …) without moving along the tree (`cycles`): `rule` is one it
     /// could not bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    UndeclaredInput { relation: String },
 }
 
 impl Error {
@@ -361,6 +377,7 @@ impl fmt::Display for Error {
                 let component = component.iter().cloned().collect::<Vec<_>>().join(", ");
                 write!(f, "unbounded value cycle: {{{component}}} creates values without moving along the tree ({rule})")
             }
+            Error::UndeclaredInput { relation } => write!(f, ".input {relation}: no .decl declares {relation}'s columns"),
         }
     }
 }
@@ -721,6 +738,10 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
             prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
             prog.inputs.push(rel);
         }
+    }
+    // An input's columns are its declaration's: the planner reads them.
+    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
+        return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
     cycles::check(&prog)?;
     Ok(prog)

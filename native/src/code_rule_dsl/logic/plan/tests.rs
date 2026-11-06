@@ -730,3 +730,193 @@ chained(a, top) :- child(a, b, _), child(b, top, _).
     assert!(!got[2].is_empty(), "{got:?}");
     assert_eq!(got[3], got[2]);
 }
+
+/// `s` as a `.rr` string literal (`rr::syntax`'s escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}`).
+fn rr_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 || c == '\u{7f}' => out.push_str(&format!("\\u{{{:x}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out + "\""
+}
+
+/// W's value of `sql`, a scalar query, in the SQLite its relational stages run (with its `rx_*` functions), over a
+/// table `t(n, value)` of `rows`, `n` their positions from 1.
+fn w_value(rows: &[&str], sql: &str, params: &[&str]) -> String {
+    let db = Connection::open_in_memory().unwrap();
+    crate::code_rule_dsl::waves::relational::install_regex_functions(&db).unwrap();
+    db.execute_batch("CREATE TABLE t(n INTEGER PRIMARY KEY, value TEXT)").unwrap();
+    for r in rows {
+        db.execute("INSERT INTO t(value) VALUES (?1)", [r]).unwrap();
+    }
+    db.query_row(sql, rusqlite::params_from_iter(params), |r| r.get::<_, rusqlite::types::Value>(0))
+        .map(|v| match v {
+            rusqlite::types::Value::Text(s) => s,
+            rusqlite::types::Value::Integer(i) => i.to_string(),
+            other => panic!("{other:?}"),
+        })
+        .unwrap()
+}
+
+/// `rels` of `src` by plain SQL over text symbols (`run_sql`) and by the corpus runner over atoms (`plan::lower`, its
+/// `sym_text`/`sym_atom`), as the runner writes them (tab-separated rows).
+fn on_both_paths(name: &str, src: &str, rels: &[&str]) -> [Vec<String>; 2] {
+    let text = run_sql(&parse(src).unwrap_or_else(|e| panic!("{e}")), &facts()).unwrap_or_else(|e| panic!("{e}"));
+    let text = rels.iter().map(|r| text.outputs.get(*r).map(|rows| rows.iter().map(|row| row.clone() + "\n").collect()).unwrap_or_default()).collect();
+    [text, corpus_outputs(name, &[("a.py", "x = 1\n")], src, rels)]
+}
+
+/// `join` and `@json_str` rebuild the messages W's signed-list stages sign (`data-layer-post-op-side-effects`'s
+/// `'{"allowlist":'||json_group_array(value ORDER BY value)||…`): quotes, backslashes, control characters, non-ASCII
+/// (kept, as `json_group_array` keeps it) and astral characters; duplicates kept by a key that tells them apart
+/// (`by (v, n)`), none ("[]"). `join` orders numbers by value and symbols by code point.
+#[test]
+fn join_and_json_str_rebuild_ws_signed_messages() {
+    let entries = ["b", "a\"q", "back\\slash", "tab\tnl\nret\r", "\u{1}\u{1f}\u{7f}", "é ü 中", "😀", "Z", "", "\u{2028}", "a"];
+    let registry = ["b", "a", "b", "é"];
+    let w = |rows: &[&str], linter: &str| {
+        let sql = format!("SELECT '{{\"allowlist\":'||coalesce((SELECT json_group_array(value) FROM (SELECT value FROM t ORDER BY value)),'[]')||',\"linter\":\"{linter}\",\"version\":1}}'");
+        w_value(rows, &sql, &[])
+    };
+    let facts = |rel: &str, rows: &[&str]| rows.iter().enumerate().map(|(i, e)| format!("{rel}({}, {}).\n", i + 1, rr_str(e))).collect::<String>();
+    let src = format!(
+        r#".decl entry(n: number, e: symbol)
+{}.decl reg(n: number, v: symbol)
+{}.decl none(n: number, v: symbol)
+none(n, v) :- reg(n, v), n < 0.
+.decl unit(x: number)
+unit(0).
+.decl msg(l: symbol, m: symbol)
+msg("surface", cat("{{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_surface\",\"version\":1}}"))) :- unit(0),
+    b = join q by e sep "," : {{ entry(_, e), q = @json_str(e) }}.
+msg("runtime", cat("{{\"allowlist\":[", cat(b, "],\"linter\":\"post_op_runtime_allowlist\",\"version\":1}}"))) :- unit(0),
+    b = join q by (v, n) sep "," : {{ reg(n, v), q = @json_str(v) }}.
+msg("none", cat("{{\"allowlist\":[", cat(b, "],\"linter\":\"none\",\"version\":1}}"))) :- unit(0),
+    b = join q by v sep "," : {{ none(_, v), q = @json_str(v) }}.
+.decl w(l: symbol, m: symbol)
+w("surface", {}).
+w("runtime", {}).
+w("none", {}).
+.decl same(l: symbol)
+same(l) :- msg(l, m), w(l, m).
+.decl num(k: number, x: symbol)
+num(10, "ten"). num(9, "nine"). num(100, "hundred"). num(9, "neuf").
+.decl by_number(s: symbol)
+by_number(s) :- unit(0), s = join x by k sep " " : {{ num(k, x) }}.
+.output same, msg, by_number
+"#,
+        facts("entry", &entries),
+        facts("reg", &registry),
+        rr_str(&w(&entries, "post_op_surface")),
+        rr_str(&w(&registry, "post_op_runtime_allowlist")),
+        rr_str(&w(&[], "none")),
+    );
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("join-json", &src, &["same", "msg", "by_number"])) {
+        assert_eq!(got[0], "none\nruntime\nsurface\n", "{path}: {}", got[1]);
+        assert_eq!(got[2], "neuf nine ten hundred\n", "{path}");
+    }
+}
+
+/// `@ed25519_ok` is W's `verify_ed25519`: RFC 8032's first vector verifies, a changed message or a malformed key or
+/// signature does not, never an error (integrated-compatibility.test.ts, "verifies detached signatures without
+/// treating malformed signatures as runtime failures"); and post-op-side-effects' reproducer gives 0.
+#[test]
+fn ed25519_ok_is_ws_verify_ed25519() {
+    use base64::Engine as _;
+    let key = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    let sig = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
+    let sig: Vec<u8> = (0..sig.len()).step_by(2).map(|i| u8::from_str_radix(&sig[i..i + 2], 16).unwrap()).collect();
+    let sig = base64::engine::general_purpose::STANDARD.encode(sig);
+    let src = format!(
+        r#".decl unit(x: number)
+unit(0).
+.decl ok(c: symbol, v: number)
+ok("rfc", v) :- unit(0), v = @ed25519_ok("{key}", "", "{sig}").
+ok("changed", v) :- unit(0), v = @ed25519_ok("{key}", "changed", "{sig}").
+ok("invalid", v) :- unit(0), v = @ed25519_ok("invalid", "", "invalid").
+ok("unpadded", v) :- unit(0), v = @ed25519_ok("{key}", "", "{}").
+.decl repro(v: number)
+repro(v) :- m = join q by e sep "," : {{ e = "a", q = @json_str(e) }},
+    v = @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", cat("[", cat(m, "]")), "AAAA").
+.output ok, repro
+"#,
+        sig.trim_end_matches('='),
+    );
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("ed25519", &src, &["ok", "repro"])) {
+        assert_eq!(got[0], "changed\t0\ninvalid\t0\nrfc\t1\nunpadded\t0\n", "{path}");
+        assert_eq!(got[1], "0\n", "{path}");
+    }
+}
+
+/// `@rx_replace(s, re, by)` is W's SQL `rx_replace`: every match replaced, `$1`, `$name`, `${name}` and `$$` as the
+/// `regex` crate reads them (`$1x` is the group named `1x`, absent: empty), empty matches included.
+#[test]
+fn rx_replace_is_ws_rx_replace() {
+    let cases = [
+        ("a  b\tc\n", r"\s+", ""),
+        ("x=1, y=2", r"(?P<k>\w)=(\d)", "$2$k"),
+        ("abc", "b", "$$"),
+        ("aaa", "a*", "-"),
+        ("pkg.mod.name", r"(?:\.[^.]+){1}$", ""),
+        ("cost 5", r"(\d)", "${1}0"),
+        ("a1b", r"(\d)", "$1x"),
+        ("AB+/=c-d", "[^A-Za-z0-9+/=]", ""),
+        ("é中😀", ".", "<$0>"),
+    ];
+    let mut src = String::from(".decl replacing(i: number, s: symbol, re: symbol, by: symbol)\n.decl w(i: number, v: symbol)\n");
+    for (i, (s, re, by)) in cases.iter().enumerate() {
+        let w = w_value(&[], "SELECT rx_replace(?1, ?2, ?3)", &[*s, *re, *by]);
+        src += &format!("replacing({i}, {}, {}, {}).\nw({i}, {}).\n", rr_str(s), rr_str(re), rr_str(by), rr_str(&w));
+    }
+    src += ".decl got(i: number, v: symbol)\ngot(i, @rx_replace(s, re, by)) :- replacing(i, s, re, by).\n";
+    src += ".decl differs(i: number)\ndiffers(i) :- got(i, v), !w(i, v).\ndiffers(i) :- w(i, v), !got(i, v).\n";
+    src += ".decl cases(k: number)\ncases(k) :- replacing(0, _, _, _), k = count : { got(_, _) }.\n.output differs, cases\n";
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("rx-replace", &src, &["differs", "cases"])) {
+        assert_eq!(got[0], "", "{path}");
+        assert_eq!(got[1], format!("{}\n", cases.len()), "{path}");
+    }
+}
+
+/// `sum x : { … }` is SQL's sum over the body's rows (rows that differ elsewhere count twice), grouped by the
+/// rule's variables, 0 over none (Soufflé's), as W's `coalesce(sum(x), 0)`.
+#[test]
+fn sum_adds_the_bodys_rows() {
+    let w = |rows: &[&str]| w_value(rows, "SELECT coalesce(sum(CAST(value AS INTEGER)), 0) FROM t", &[]);
+    let src = format!(
+        r#".decl r(g: symbol, k: number, x: number)
+r("a", 1, 5). r("a", 2, 5). r("a", 3, 7). r("b", 1, -2).
+.decl g(g: symbol)
+g("a"). g("b"). g("c").
+.decl total(g: symbol, s: number)
+total(g, s) :- g(g), s = sum x : {{ r(g, _, x) }}.
+.decl w(g: symbol, s: number)
+w("a", {}). w("b", {}). w("c", {}).
+.decl differs(g: symbol)
+differs(g) :- total(g, s), !w(g, s).
+differs(g) :- w(g, s), !total(g, s).
+.decl doubled(s: number)
+doubled(s) :- g("a"), s = sum y : {{ r("a", k, x), y = x * 2, k > 1 }}.
+.decl shown(g: symbol, s: number)
+shown(g, s) :- total(g, s).
+.output shown, differs, doubled
+"#,
+        w(&["5", "5", "7"]),
+        w(&["-2"]),
+        w(&[]),
+    );
+    // `shown`, not `total`: the corpus runner writes an empty file for an output another rule reads (`total` read
+    // by `differs` came out empty whatever derived it, `total(g, s) :- w(g, s)` too).
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("sum", &src, &["shown", "differs", "doubled"])) {
+        assert_eq!(got[0], "a\t17\nb\t-2\nc\t0\n", "{path}: {got:?}");
+        assert_eq!(got[1], "", "{path}");
+        assert_eq!(got[2], "24\n", "{path}");
+    }
+}
