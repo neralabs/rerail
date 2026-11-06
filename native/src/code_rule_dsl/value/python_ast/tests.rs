@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn coalesced_output_is_bounded_per_projection_and_parses_the_document_once() {
+    let source = format!("'{}'\n", "x".repeat(1024 * 1024));
+    let requests = (0..70).map(|_| Request { start:0, end:source.len(), kind:"module".into(), fields:vec!["dump".into()], columns:None }).collect();
+    let response = batch_with_metrics(&[Document { source, requests }]).unwrap_or_else(|error| panic!("{}",error.0));
+    assert_eq!(response.parses,1);
+    assert_eq!(response.module_walks,0);
+    assert_eq!(response.documents[0].len(),70);
+    assert!(response.documents[0][0]["dump"].len()>1024*1024);
+    assert_eq!(response.documents[0][0],response.documents[0][69]);
+}
+
+#[test]
 fn coalesced_python_demand_crosses_capacity_without_losing_rows_or_reparsing() {
     let documents: Vec<_> = ["pass\n", "if True:\n"]
         .into_iter()
