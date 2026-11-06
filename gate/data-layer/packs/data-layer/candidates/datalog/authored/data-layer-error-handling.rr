@@ -1,0 +1,77 @@
+// data-layer-error-handling, clause log-reraise (EH001), options at their defaults (sourceGate true; oracleAnalyzer
+// is read by no clause). admin-commit is the converter's.
+//
+// The clause: a raise_statement r
+//   - with no direct child of kind identifier/call/attribute/string/integer/none (`has`, stopBy neighbor);
+//   - that `follows` (stopBy `not comment`) an expression_statement e whose direct child is a call to
+//     `logger.error` / `logger.warning` (function field an attribute: object identifier `logger`, attribute
+//     identifier `error|warning`);
+//   - inside some block, and whose nearest except_clause / function_definition / lambda ancestor is an except_clause
+//     (`inside` with that stop rule: the stop node is tested, then the walk ends);
+//   - in a module whose full text matches `logger\.error|logger\.warning|txn\.commit` (the sourceGate), on a path
+//     starting api|impl|services, the file parsing.
+// `follows` walks r's previous siblings, anonymous ones included (tape prev_sibling), testing each and stopping at
+// the first that is not a comment. `child` numbers named non-comment children, so the walk reaches e exactly when
+// e is r's previous `child` and no anonymous token lies between them. The only anonymous token a block holds
+// between two statements is the `;` of `stmt; stmt`.
+// APPROXIMATION (named): a `;` is recognised by its line only. Two statements on one physical line need a `;`
+// (a backslash continuation cannot join statements), so r on the line where e's last node starts is rejected.
+// A trailing `;` after e with r on a later line (`logger.error(x);` NEWLINE `raise`), or a `;` after a closing
+// bracket that sits past e's last node's line, is not seen: those report where W does not.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl node_text(n: node, s: symbol)
+.input node_text
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+.decl log_reraise_value(kind: symbol)
+log_reraise_value("identifier"). log_reraise_value("call"). log_reraise_value("attribute").
+log_reraise_value("string"). log_reraise_value("integer"). log_reraise_value("none").
+.decl log_reraise_block(kind: symbol)
+log_reraise_block("block").
+.decl log_reraise_stop(kind: symbol)
+log_reraise_stop("except_clause"). log_reraise_stop("function_definition"). log_reraise_stop("lambda").
+.decl log_reraise_level(s: symbol)
+log_reraise_level("error"). log_reraise_level("warning").
+
+// e: an expression_statement whose direct child is a call of logger.error / logger.warning.
+.decl log_reraise_log(e: node)
+log_reraise_log(e) :- node(_, e, "expression_statement", _, _), child(e, c, _), node(_, c, "call", _, _),
+    field(c, "function", f), node(_, f, "attribute", _, _),
+    field(f, "object", o), node(_, o, "identifier", _, _), text(o, "logger"),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), log_reraise_level(s).
+
+// The lines e's nodes start on. r starts past e's end, so r's line is in this set exactly when it is the line
+// e's last node starts on.
+.decl log_reraise_stmt(kind: symbol)
+log_reraise_stmt("expression_statement").
+.decl log_reraise_line(e: node, l: number)
+log_reraise_line(e, l) :- log_reraise_log(e), line(e, l).
+log_reraise_line(e, l) :- log_reraise_log(e), inside(x, e, log_reraise_stmt), line(x, l).
+
+// A bare re-raise (no direct child of the listed kinds).
+.decl log_reraise_valued(r: node)
+log_reraise_valued(r) :- node(_, r, "raise_statement", _, _), child(r, c, _), node(_, c, k, _, _), log_reraise_value(k).
+
+// The sourceGate: the module's full text, comments and strings included.
+.decl log_reraise_gate(d: number)
+log_reraise_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("logger.error", s).
+log_reraise_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("logger.warning", s).
+log_reraise_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("txn.commit", s).
+
+violation("data-layer-error-handling", "log-reraise", "EH001", p, l) :-
+    node(d, r, "raise_statement", _, _), !log_reraise_valued(r),
+    child(b, r, i), child(b, e, j), i = j + 1, log_reraise_log(e),
+    line(r, l), !log_reraise_line(e, l),
+    inside(r, _, log_reraise_block),
+    nearest(r, x, log_reraise_stop), node(_, x, "except_clause", _, _),
+    doc(d, p, _), (prefix("api", p) ; prefix("impl", p) ; prefix("services", p)), log_reraise_gate(d),
+    in_scope(d), !out_scope(d), !syntax_error(d).
