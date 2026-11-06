@@ -1,10 +1,12 @@
 /**
  * The units of coordination one commit yields, read deterministically from its diff: hand-offs (open items and TODOs
- * that name a file or symbol), retirements (deleted and moved modules, removed exported declarations, and "remove /
- * retire / replace" statements), contract changes (an exported declaration's signature, a schema's tables, a format
- * file), the design-doc and commit-message passages a judge reads positions from, and the code fingerprints copy
- * provenance compares across refs. Each unit is anchored to the files and symbols it names; the ledger
- * (`./ledger.ts`) qualifies it by branch and the time it became visible.
+ * that name a file or symbol), retirements (deleted and moved modules and code, removed exported declarations, and
+ * "remove / retire / replace" statements), contract changes (an exported declaration's signature, a schema's tables, a
+ * format file, an entry appended to a registry list), artefacts (a harness or tool other work should run rather than
+ * rebuild), the design-doc and commit-message passages a judge reads positions from, the concept anchors a position
+ * reaches through (`subsystemAnchors`, `conceptIds`), and the code fingerprints copy provenance compares across refs.
+ * Each unit is anchored to the files and symbols it names; the ledger (`./ledger.ts`) qualifies it by branch and the
+ * time it became visible.
  */
 import { createHash } from "node:crypto";
 import type { CommitChange, FileChange, LineBlock } from "./commits.js";
@@ -156,40 +158,54 @@ export function namedAnchors(text: string, resolve: PathResolver): UnitAnchors {
 
 /** Words a subsystem's name carries that name no folder: "the SQL engine" lives in `sql/`. */
 const GENERIC_SUBSYSTEM_WORDS = new Set(["the", "a", "an", "engine", "subsystem", "layer", "module", "component", "system", "pipeline", "crate", "package", "service", "library"]);
-/** More folders than this at a subsystem name's shallowest depth name no one home. */
-const MAX_SUBSYSTEM_FOLDERS = 3;
+/** More anchors than this at a name's shallowest depth name no one home. */
+const MAX_SUBSYSTEM_ANCHORS = 3;
 
-/** A tree's folders by their own name folded (`content_store` → `contentstore`), each as a folder anchor (`a/b/`). */
-export type FolderIndex = ReadonlyMap<string, readonly string[]>;
+/**
+ * A tree's folders and files by their own name folded (`content_store/` and `content-store.ts` → `contentstore`): each
+ * folder as a folder anchor (`a/b/`), each file by its stem (`facts_memo.rs` → `factsmemo`).
+ */
+export type NameIndex = ReadonlyMap<string, readonly string[]>;
 
-export function folderIndex(paths: readonly string[]): FolderIndex {
-  const folders = new Map<string, Set<string>>();
+export function nameIndex(paths: readonly string[]): NameIndex {
+  const names = new Map<string, Set<string>>();
+  const add = (name: string, anchor: string): void => {
+    const key = name.toLowerCase().replace(/[^a-z0-9]/gu, "");
+    if (key.length < 3) return;
+    const set = names.get(key) ?? new Set<string>();
+    set.add(anchor);
+    names.set(key, set);
+  };
   for (const path of paths) {
     const parts = path.split("/");
-    for (let end = 1; end < parts.length; end += 1) {
-      const key = parts[end - 1]!.toLowerCase().replace(/[^a-z0-9]/gu, "");
-      if (key.length < 3) continue;
-      const set = folders.get(key) ?? new Set<string>();
-      set.add(`${parts.slice(0, end).join("/")}/`);
-      folders.set(key, set);
-    }
+    for (let end = 1; end < parts.length; end += 1) add(parts[end - 1]!, `${parts.slice(0, end).join("/")}/`);
+    add(parts.at(-1)!.replace(/\..*$/u, ""), path);
   }
-  return new Map([...folders].map(([key, set]) => [key, [...set].sort()]));
+  return new Map([...names].map(([key, set]) => [key, [...set].sort()]));
 }
 
 /**
- * The folders a subsystem's name names (`content store` → `native/src/content_store/`): those whose own name is its
- * words run together, generic words ("engine", "layer") dropped, at the shallowest depth; none when that is ambiguous.
+ * The folders and files a subsystem's name names (`content store` → `native/src/content_store/`, `data-layer quality
+ * policy` → `conformance/data-layer/`, `packs/data-layer/`): the first of its whole name, its name without generic
+ * words ("engine", "layer"), then its runs of two or more words, longest first, whose own name it is, at the shallowest
+ * depth. A run naming more than {@link MAX_SUBSYSTEM_ANCHORS} homes there is ambiguous and passed over. A single word
+ * counts only when it is the whole name.
  */
-export function subsystemFolders(name: string, folders: FolderIndex): string[] {
+export function subsystemAnchors(name: string, index: NameIndex): string[] {
   const words = name.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
-  const forms = [words.join(""), words.filter(word => !GENERIC_SUBSYSTEM_WORDS.has(word)).join("")].filter(form => form.length >= 3);
-  const found = [...new Set(forms.flatMap(form => folders.get(form) ?? []))];
-  if (found.length === 0) return [];
-  const depth = (folder: string): number => folder.split("/").length;
-  const shallowest = Math.min(...found.map(depth));
-  const home = found.filter(folder => depth(folder) === shallowest);
-  return home.length <= MAX_SUBSYSTEM_FOLDERS ? home : [];
+  const forms = [words.join(""), words.filter(word => !GENERIC_SUBSYSTEM_WORDS.has(word)).join("")];
+  for (let size = words.length - 1; size >= 2; size -= 1) {
+    for (let start = 0; start + size <= words.length; start += 1) forms.push(words.slice(start, start + size).join(""));
+  }
+  const depth = (anchor: string): number => anchor.replace(/\/$/u, "").split("/").length;
+  for (const form of new Set(forms)) {
+    const found = form.length >= 3 ? index.get(form) : undefined;
+    if (found === undefined) continue;
+    const shallowest = Math.min(...found.map(depth));
+    const home = found.filter(anchor => depth(anchor) === shallowest);
+    if (home.length <= MAX_SUBSYSTEM_ANCHORS) return home;
+  }
+  return [];
 }
 
 /**

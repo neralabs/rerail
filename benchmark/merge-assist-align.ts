@@ -42,11 +42,11 @@ import {
   consumerHits,
   extractUnits,
   type ExtractedUnit,
-  folderIndex,
   identifiers,
   isDesignDoc,
   type LedgerUnit,
   mergeTreeConflicts,
+  nameIndex,
   openRerailDatabase,
   type Passage,
   pathArea,
@@ -125,7 +125,7 @@ export interface Pair {
 /** Bumped whenever extraction changes, so cached commit records are rebuilt. */
 const EXTRACT_VERSION = 8;
 /** Bumped whenever position anchoring changes, so cached positions are read again. */
-const POSITION_ANCHORS_VERSION = 2;
+const POSITION_ANCHORS_VERSION = 3;
 /** The most files one decision or open-item id anchors a position to. */
 const MAX_REFERENCING_FILES = 12;
 export const JUDGE_REPOSITORY = "eval:merge-assist-align";
@@ -359,8 +359,9 @@ export class AlignmentContext {
     const cached = readJson<PositionsRecord>(path);
     if (cached?.key === key) return Object.values(cached.units).flat();
     const paths = treePaths(this.root, record.sha);
-    const tree = { folders: folderIndex(paths), referencing: (id: string) => this.#referencing(record.sha, paths, id) };
-    const outcome = await extractPositions(this.judge, { repositoryKey: JUDGE_REPOSITORY, source: record.subject, passages: record.passages, resolve: treeResolver(paths), tree });
+    const tree = { names: nameIndex(paths), referencing: (id: string) => this.#referencing(record.sha, paths, id) };
+    const changed = record.files.filter(file => file.status !== "deleted" && sourceLanguageOf(file.path) !== null).map(file => file.path);
+    const outcome = await extractPositions(this.judge, { repositoryKey: JUDGE_REPOSITORY, source: record.subject, passages: record.passages, resolve: treeResolver(paths), tree, changed });
     if (outcome.error !== null) {
       this.errors.push(`positions ${record.sha.slice(0, 10)}: ${outcome.error}`);
       return [];

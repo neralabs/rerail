@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { folderIndex, type LedgerUnit, type Passage } from "../../../src/engine/index.js";
+import { type LedgerUnit, nameIndex, type Passage } from "../../../src/engine/index.js";
 import { comparePositions, contestPositions, extractPositions, rankUnits } from "../../../src/runtime/index.js";
 import { FakeJudge } from "./support/merge-assist-workspace.js";
 
@@ -37,18 +37,22 @@ describe("extractPositions", () => {
     expect(judge.tasks[0]!.kind).toBe("positions");
   });
 
-  it("anchors a position to the folder its subsystem names and to the files that write the ids it belongs to", async () => {
+  it("anchors a position to what its subsystem names, the files that write its ids, and a focused commit's code", async () => {
     const judge = new FakeJudge(() => ({
       positions: [{ passageId: "p1", statement: "SQLite is the facts system of record.", quote: "SQLite is the system of record", files: [], symbols: [], subsystem: "content store", ids: ["0030", "O41", "O99", "decision 7"] }],
     }));
-    const folders = folderIndex(["native/src/content_store/schema.rs", "docs/decisions/0030.md", "docs/open-items.md"]);
+    const names = nameIndex(["native/src/content_store/schema.rs", "docs/decisions/0030.md", "docs/open-items.md"]);
     const referencing = (id: string): string[] => (id === "0030" ? ["docs/decisions/0030.md", "docs/plan.md"] : id === "O41" ? ["docs/open-items.md"] : []);
     const withIds = { ...passage, text: `${passage.text} It answers O41.` };
-    const outcome = await extractPositions(judge, { repositoryKey: "test", source: "s", passages: [withIds], resolve, tree: { folders, referencing } });
-    expect(outcome.units.get(passage.id)?.[0]?.anchors).toEqual({
-      files: ["docs/decisions/0030.md", "docs/decisions/", "native/src/content_store/", "docs/plan.md", "docs/open-items.md"],
+    const input = { repositoryKey: "test", source: "s", passages: [withIds], resolve, tree: { names, referencing } };
+    const focused = await extractPositions(judge, { ...input, changed: ["native/src/facts/store.rs"] });
+    expect(focused.units.get(passage.id)?.[0]?.anchors).toEqual({
+      files: ["docs/decisions/0030.md", "docs/decisions/", "native/src/facts/store.rs", "native/src/content_store/", "docs/plan.md", "docs/open-items.md"],
       symbols: ["O41"],
     });
+    // A commit touching more source files than a focused one says nothing about where one position applies.
+    const broad = await extractPositions(judge, { ...input, changed: Array.from({ length: 7 }, (_unused, index) => `src/a${index}.ts`) });
+    expect(broad.units.get(passage.id)?.[0]?.anchors.files).toEqual(["docs/decisions/0030.md", "docs/decisions/", "native/src/content_store/", "docs/plan.md", "docs/open-items.md"]);
   });
 
   it("rejects an answer naming a passage it was not given", async () => {

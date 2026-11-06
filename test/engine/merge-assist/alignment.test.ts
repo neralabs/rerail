@@ -11,16 +11,16 @@ import {
   declarations,
   extractUnits,
   type FileChange,
-  folderIndex,
   handoffUnits,
   movedCodeUnits,
   namedAnchors,
+  nameIndex,
   parseShow,
   positionPassages,
   type RefHistory,
   retirementUnits,
   sqlTables,
-  subsystemFolders,
+  subsystemAnchors,
   touchedAnchors,
   visibleUnits,
 } from "../../../src/engine/index.js";
@@ -406,23 +406,28 @@ describe("link-1 precision regressions", () => {
 });
 
 describe("concept anchors", () => {
-  const folders = folderIndex([
+  const names = nameIndex([
     "native/src/content_store/schema.rs",
+    "native/src/content_store/facts_memo.rs",
     "native/src/code_rule_dsl/sql/exec.rs",
     "native/src/code_rule_dsl/matcher/anchors/sql/lower.rs",
     "src/engine/merge-assist/candidate.ts",
     "src/runtime/merge-assist/capture.ts",
+    "conformance/data-layer/replay.ts",
+    "packs/data-layer/README.md",
     "a/sql/x.rs",
     "b/sql/x.rs",
     "c/sql/x.rs",
     "d/sql/x.rs",
   ]);
 
-  it("names a subsystem's home folders, shallowest first, and none when that is ambiguous", () => {
-    expect(subsystemFolders("content store", folders)).toEqual(["native/src/content_store/"]);
-    expect(subsystemFolders("Merge Assist engine", folders)).toEqual(["src/engine/merge-assist/", "src/runtime/merge-assist/"]);
-    expect(subsystemFolders("SQL engine", folders)).toEqual([]);
-    expect(subsystemFolders("", folders)).toEqual([]);
+  it("names a subsystem's home folders and files, shallowest first, and none when that is ambiguous", () => {
+    expect(subsystemAnchors("content store", names)).toEqual(["native/src/content_store/"]);
+    expect(subsystemAnchors("Merge Assist engine", names)).toEqual(["src/engine/merge-assist/", "src/runtime/merge-assist/"]);
+    expect(subsystemAnchors("data-layer quality policy", names)).toEqual(["conformance/data-layer/", "packs/data-layer/"]);
+    expect(subsystemAnchors("facts memo", names)).toEqual(["native/src/content_store/facts_memo.rs"]);
+    expect(subsystemAnchors("SQL engine", names)).toEqual([]);
+    expect(subsystemAnchors("", names)).toEqual([]);
   });
 
   it("keeps the decision and open-item ids a passage writes, canonical", () => {

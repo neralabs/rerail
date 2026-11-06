@@ -6,7 +6,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { comparablePositions, type LedgerUnit, pathArea } from "../../engine/merge-assist/alignment/ledger.js";
-import { conceptIds, distinctiveSymbol, type ExtractedUnit, type FolderIndex, MAX_UNIT_TEXT, type Passage, type PathResolver, subsystemFolders } from "../../engine/merge-assist/alignment/units.js";
+import { conceptIds, distinctiveSymbol, type ExtractedUnit, MAX_UNIT_TEXT, type NameIndex, type Passage, type PathResolver, subsystemAnchors } from "../../engine/merge-assist/alignment/units.js";
 import { stableJsonText } from "../../engine/stable-json.js";
 import type { AgentJudge } from "./agent-judge.js";
 import {
@@ -44,27 +44,31 @@ export interface PositionsOutcome {
   readonly rejected: number;
 }
 
-/** The ref's tree as concept anchors read it: its folders, and the files that write a decision or open-item id. */
+/** The ref's tree as concept anchors read it: its folders and files by name, and the files that write an id. */
 export interface ConceptTree {
-  readonly folders: FolderIndex;
+  readonly names: NameIndex;
   /** Files in the tree that write `id` (`O41`, or a decision number `0035`), at most a dozen, most direct first. */
   referencing(id: string): readonly string[];
 }
 
 /** The most files one position is anchored to. */
 const MAX_POSITION_FILES = 16;
+/** A commit changing at most this many source files is focused: the code its positions are about. */
+const MAX_FOCUSED_COMMIT_FILES = 6;
 
 /**
  * The positions `passages` take, as units anchored to the files and symbols each passage names (resolved by
- * `resolve`), to the doc it is in and that doc's area (`docs/final-shape/`), and, given the ref's `tree`, to concept
- * anchors: the folders its subsystem names and the files that write the decision and open-item ids it belongs to.
- * One judge call for all of them; `source` labels the commit they come from.
+ * `resolve`), to the doc it is in and that doc's area (`docs/final-shape/`), to the source files the commit changes
+ * (`changed`) when it is focused, and, given the ref's `tree`, to concept anchors: the folders and files its subsystem
+ * names and the files that write the decision and open-item ids it belongs to. One judge call for all of them;
+ * `source` labels the commit they come from.
  */
 export async function extractPositions(
   judge: AgentJudge,
-  input: { repositoryKey: string; source: string; passages: readonly Passage[]; resolve: PathResolver; tree?: ConceptTree },
+  input: { repositoryKey: string; source: string; passages: readonly Passage[]; resolve: PathResolver; tree?: ConceptTree; changed?: readonly string[] },
 ): Promise<PositionsOutcome> {
   if (input.passages.length === 0) return { units: new Map(), error: null, rejected: 0 };
+  const focused = input.changed !== undefined && input.changed.length <= MAX_FOCUSED_COMMIT_FILES ? input.changed : [];
   const byId = new Map(input.passages.map((passage, index) => [`p${index + 1}`, passage]));
   const prompted: PositionsInput = {
     passages: [...byId].map(([id, passage]) => ({ id, source: passage.path ?? `commit message (${input.source})`, heading: passage.heading, text: passage.text })),
@@ -99,13 +103,13 @@ export async function extractPositions(
     const ids = conceptIds(position.ids, `${passage.heading ?? ""}\n${passage.text}`);
     const area = passage.path === null ? "" : pathArea(passage.path);
     const tree = input.tree;
-    const concepts = tree === undefined ? [] : [...subsystemFolders(position.subsystem, tree.folders), ...ids.flatMap(id => tree.referencing(id))];
+    const concepts = tree === undefined ? [] : [...subsystemAnchors(position.subsystem, tree.names), ...ids.flatMap(id => tree.referencing(id))];
     const where = passage.path ?? `commit message: ${input.source}`;
     const unit: ExtractedUnit = {
       kind: "position",
       text: `${position.statement} ("${position.quote.replace(/\s+/gu, " ").trim()}", ${where})`.slice(0, MAX_UNIT_TEXT),
       anchors: {
-        files: [...new Set([...(passage.path === null ? [] : [passage.path]), ...files, ...(area === "" ? [] : [`${area}/`]), ...concepts])].slice(0, MAX_POSITION_FILES),
+        files: [...new Set([...(passage.path === null ? [] : [passage.path]), ...files, ...(area === "" ? [] : [`${area}/`]), ...focused, ...concepts])].slice(0, MAX_POSITION_FILES),
         // Open-item ids are names the later side writes too; a decision is reached through its record's files.
         symbols: [...new Set([...symbols, ...ids.filter(id => id.startsWith("O"))])],
       },
@@ -198,7 +202,8 @@ export async function comparePositions(
     prompt: positionComparePrompt(compare, randomBytes(16).toString("hex")),
     jsonSchema: compareJsonSchemaFor(compare),
     parse: value => compareVerdictSchema.parse(value),
-    cacheKey: cacheKey("compare:positions", compare),
+    // Keyed on the prompt's text (under a fixed nonce) too, so a change of instructions asks again.
+    cacheKey: cacheKey("compare:positions", { compare, prompt: positionComparePrompt(compare, "0".repeat(32)) }),
   });
   if (!outcome.ok) return { verdicts: [], error: `${outcome.reason}: ${outcome.detail}` };
   const verdicts = outcome.value.items.flatMap(item => {

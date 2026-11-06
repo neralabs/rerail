@@ -511,11 +511,11 @@ Answer exactly one item for each of theirs, by its id as candidateId. Two decisi
 The files Git reports as conflicting between the branches are context only: overlapping edits are not a contradiction by themselves.`;
 
 const POSITION_COMPARE_INSTRUCTIONS = `Another branch of this repository states design positions ("theirs"), read from its design documents, decision records and commit messages. Say how each of theirs relates to the positions on this branch ("mine"):
-- "contradicts": both cannot hold for the same system. They answer the same design question differently (a different owner, store, format, algorithm, budget, rule or scope for the same thing), or one rules out what the other relies on, or following theirs would break one of mine. mineId names that one of mine.
-- "duplicate": it states the same position as one of mine; mineId names that one.
-- "compatible": both can hold at once, including when they answer different questions.
-- "unsure": they answer the same question and you cannot tell whether both can hold.
-Positions written in different documents or folders can still contradict: two branches often write the same design in different places, in different words.
+- "contradicts": both cannot be the design of the same system. They answer the same design question differently (a different owner, store, executor, format, algorithm, budget, rule or scope for the same thing); or one allows what the other rules out (one sends, stores or runs something the other says is never sent, stored or run); or theirs changes a premise mine is built or measured against (a budget, limit or requirement); or following theirs would break one of mine. mineId names that one of mine.
+- "duplicate": it states the same position as one of mine, decided or built again; mineId names that one.
+- "compatible": both hold together for the same system: they are about different things, or one only adds detail to the other.
+- "unsure": you cannot tell what one of them means.
+Read each position as a claim about the whole system, not only about its own document. Positions written in different documents or folders can still contradict: two branches often write the same design in different places, in different words.
 explanation: at most ${MAX_COMPARE_EXPLANATION} characters, for the developer on this branch.
 message: for "contradicts", at most ${MAX_COMPARE_MESSAGE} characters to the author of theirs: name both positions and propose how to agree, politely. Otherwise null.
 Answer exactly one item for each of theirs, by its id as candidateId.`;
