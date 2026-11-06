@@ -1,11 +1,8 @@
 // data-layer-revision-ancestry-invariants: every clause is a `forbid.regex` over `file.content` (W: eval/query.rs,
 // query/mod.rs `regex_query_matches`): the file must match each `content.include` regex, its path the clause's
 // `paths`, and each match of the pattern (`find_iter`, leftmost-first, non-overlapping) is a finding at its anchor's
-// line. Here each is W's whole-file regex exactly: `source(d, sp)`, its matches with `line(m, l)` (or the capture's
-// span for a `capture.NAME` anchor), every pattern the policy's verbatim. The program reads them through
-// `match_group` only, a pattern without a group of its own wrapped whole in `(?P<w>…)` (the same matches, `w` the
-// match's span): awaiting the match_all print fix (an authored `match_all` beside `match_group` panics the replay at
-// plan.rs:2274), after which those are `match_all("re", sp, m)` over the bare pattern.
+// line. Here each is W's whole-file regex exactly: `source(d, sp)`, `match_all("re", sp, m)`, `line(m, l)` (or the
+// capture's span from `match_group` for a `capture.NAME` anchor), every pattern the policy's verbatim.
 //
 // Options: `oracleAnalyzer` (`option_on("oracleAnalyzer")`). Off (the default): `content.include` is
 // `revision|ancestry|stmt_ancestry_chain` and the descriptor and removed-surface anchors are their captures
@@ -32,7 +29,7 @@ revision_ancestry_file(d, p, sp) :- doc(d, p, _), in_scope(d), !out_scope(d), gl
 
 // `content.include`, every clause's: `revision|ancestry|stmt_ancestry_chain` off, `(?s).*` (every file) on.
 .decl revision_ancestry_content(d: number)
-revision_ancestry_content(d) :- revision_ancestry_file(d, _, sp), !option_on("oracleAnalyzer"), match_group("(?P<w>revision|ancestry|stmt_ancestry_chain)", sp, _, "w", _).
+revision_ancestry_content(d) :- revision_ancestry_file(d, _, sp), !option_on("oracleAnalyzer"), match_all("revision|ancestry|stmt_ancestry_chain", sp, _).
 revision_ancestry_content(d) :- revision_ancestry_file(d, _, _), option_on("oracleAnalyzer").
 
 // ---- descriptor-*: `\A[\s\S]*?(?P<DESCRIPTOR>(?m:^class\s+NAME\b))` -----------------------------------------------
@@ -86,11 +83,11 @@ violation("data-layer-revision-ancestry-invariants", "removed-surface", "removed
 // ---- stored-text-cast-0: a finding at each match's line (`witness.span`) ------------------------------------------
 violation("data-layer-revision-ancestry-invariants", "stored-text-cast-0", "stored_revision_text_cast", p, l) :-
   revision_ancestry_file(d, p, sp), revision_ancestry_content(d),
-  match_group("(?P<w>(?i)(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}::\\s*text)", sp, _, "w", m),
+  match_all("(?i)(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}::\\s*text", sp, m),
   line(m, l).
 
 // ---- stored-text-cast-1: a finding at each match's line (`witness.span`) ------------------------------------------
 violation("data-layer-revision-ancestry-invariants", "stored-text-cast-1", "stored_revision_text_cast", p, l) :-
   revision_ancestry_file(d, p, sp), revision_ancestry_content(d),
-  match_group("(?P<w>(?i)CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\))", sp, _, "w", m),
+  match_all("(?i)CAST\\([\\s\\S]{0,160}?(?:revision_sys_id|parent_revision_sys_id|sys_valid_from_revision_id|sys_valid_to_revision_id)[\\\"'`]?[\\s\\S]{0,80}?\\s+AS\\s+(?:TEXT|CHAR(?:\\s*\\(\\s*\\d+\\s*\\))?)\\s*\\)", sp, m),
   line(m, l).
