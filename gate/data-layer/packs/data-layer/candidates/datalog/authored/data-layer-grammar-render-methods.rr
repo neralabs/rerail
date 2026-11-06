@@ -1,16 +1,12 @@
 // data-layer-grammar-render-methods: every clause by hand (the converter gapped all six).
-//
-// INTERIM VERSION, one named approximation (APPROX, `rm_strlit`) and default options only, until the engine binds
-// `value_type_of` (EngineBase) and the converter gives the option facts `option_on` / `option_item`
-// (ConvertFoundation A9). The exact, option-aware program is data-layer-grammar-render-methods.pending.rr; it
-// replaces this file once both land.
 // Source of truth: candidates/rules-ast/data-layer-grammar-render-methods.json.
 //
 // Shared shape of every clause (W):
 //   all[ all[ <clause rule> as $CURRENT, not earlier-<clause>($CURRENT) ],
 //        inside module whose text matches the source gate ]
 // - <clause rule> needs the node inside (stopBy end) a `function_definition` named `render` whose nearest
-//   enclosing `class_definition` has a superclass matching `base-sql` (`rm_render`).
+//   enclosing `class_definition` has a superclass matching `base-sql` and a name not in LEGACY_ALLOWLISTED_CLASSES
+//   (`rm_render`).
 // - `earlier-<clause>($CURRENT)`: some node X of the same module matching the same <clause rule> lies wholly
 //   before $CURRENT and ends on $CURRENT's first line (`layout after: to capture.CURRENT, breaks eq 0`: X's end
 //   and $CURRENT's start on one line, $CURRENT starting at or after X's end). Since `violation` is a set of
@@ -19,17 +15,16 @@
 // - The source gate (option sourceGate, default true): the module's text, comments and strings included,
 //   matches `render\(|SqlFragment\.static|SF\.static|\.join\(|\.format\(|Template` (`rm_gate`).
 //
-// Options: the defaults are implemented. LEGACY_ALLOWLISTED_CLASSES and ALLOWLISTED_STATIC_CLASSES default to
-// [], which compiles to `^(?:)$`, matching only an empty class name: those `not has name` tests always hold and
-// are left out. sourceGate is true (the gate applies). oracleAnalyzer is read by no clause. The one configured
-// replay event with a non-default option (LEGACY_ALLOWLISTED_CLASSES=["LegacyFrag"]) needs the pending file.
+// Options, read from the converter's facts: sourceGate (`option_on`; false makes the gate `(?s).*`, always true),
+// LEGACY_ALLOWLISTED_CLASSES and ALLOWLISTED_STATIC_CLASSES (`option_item`; the regex `^(?:a|b)$` over the escaped,
+// joined items is membership of the class name, and the empty list, `^(?:)$`, matches no identifier).
+// oracleAnalyzer is read by no clause.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -38,10 +33,14 @@
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
-// Engine relations (authored/README.md): a node's full source text, the line of its end offset.
+// Engine relations (authored/README.md): a node's full source text, the line of its end offset, W's `value.type`;
+// the converter's option facts.
 .decl node_text(n: node, s: symbol)
 .decl end_line(n: loc, l: number)
-.input node_text, end_line
+.decl value_type_of(n: node, t: symbol)                 // the type of n's own semantic value (W's `value.type`)
+.input node_text, end_line, value_type_of
+.decl option_on(name: symbol)
+.decl option_item(name: symbol, v: symbol)
 
 // Kind sets for the tree built-ins.
 .decl rm_class_kind(kind: symbol)
@@ -70,27 +69,28 @@ rm_sql_class(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses"
 
 // A `render` def (sync or async: the regex is on the name only) whose nearest class is a grammar class.
 .decl rm_render(f: node)
-rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), nearest(f, c, rm_class_kind), rm_sql_class(c).
+rm_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "render"), nearest(f, c, rm_class_kind), rm_sql_class(c), !rm_listed(c, "LEGACY_ALLOWLISTED_CLASSES").
+
+// A class whose name is an item of the array option `o`.
+.decl rm_listed(c: node, o: symbol)
+rm_listed(c, o) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item(o, x).
 
 // A node inside (stopBy end) such a render def.
 .decl rm_in_render(n: node)
 rm_in_render(n) :- rm_render(f), inside(n, f, rm_fn_kind).
 
-// The source gate. `node_text` of the module is exactly the text W's regex reads. The second rule is a sound
-// sufficient condition that needs no source text: a render def whose name is followed at once by its
-// parameters (which start with `(`) puts `render(` in the text.
+// The source gate. `node_text` of the module is exactly the text W's regex reads; the alternatives are literal.
 .decl rm_gate(d: number)
 rm_gate(d) :- node(d, m, "module", _, _), node_text(m, s), (contains("render(", s) ; contains("SqlFragment.static", s) ; contains("SF.static", s) ; contains(".join(", s) ; contains(".format(", s) ; contains("Template", s)).
-rm_gate(d) :- rm_render(f), node(d, f, _, _, _), field(f, "name", i), node(_, i, _, _, e), field(f, "parameters", ps), node(_, ps, _, e, _).
+rm_gate(d) :- doc(d, _, _), !option_on("sourceGate").
 
 // `not inside {kind: concatenated_string, stopBy: neighbor}`: the parent is a concatenated string.
 .decl rm_in_cstr(n: node)
 rm_in_cstr(n) :- child(p, n, _), node(_, p, "concatenated_string", _, _).
 
-// `kind string, regex (?i)^[rub]*f` on a string's text is its prefix (lowercased) holding `f`: exact for every
-// prefix Python accepts (f, fr, rf); an invalid prefix mixing `t` and `f` is read by its `f` alone.
+// `kind string, regex (?i)^[rub]*f` on the string's text (W's regex searches; anchored at the start here).
 .decl rm_fstring_part(s: node)
-rm_fstring_part(s) :- node(_, s, "string", _, _), strprefix(s, p), contains("f", p).
+rm_fstring_part(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?i)[rub]*f(?s:.*)", t).
 
 // The f-string forms: an f-string not part of a concatenation, a concatenation with an f-string part, a format
 // specifier.
@@ -100,14 +100,12 @@ rm_fshape(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), rm_fstr
 rm_fshape(n) :- node(_, n, "format_specifier", _, _).
 
 // A str literal: a non-f string not part of a concatenation, or a concatenation with no f-string part, whose
-// `semantic value` is a str. APPROX (until `value_type_of`): read from the prefix, no b, f or t letter in any
-// part. W's decoder also gives no value, so no str, for a literal it rejects: a lone surrogate escape ("\ud800"),
-// a malformed escape, an invalid prefix, a value over its size cap; those count as str literals here.
+// `semantic value` is a str (bytes, t-strings and undecodable literals are not).
 .decl rm_strlit(n: node)
-rm_strlit(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p), !contains("t", p), !rm_in_cstr(n).
-rm_strlit(n) :- node(_, n, "concatenated_string", _, _), !rm_cstr_nonstr(n), !rm_in_cstr(n).
-.decl rm_cstr_nonstr(n: node)
-rm_cstr_nonstr(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), node(_, s, "string", _, _), strprefix(s, p), (contains("f", p) ; contains("b", p) ; contains("t", p)).
+rm_strlit(n) :- node(_, n, "string", _, _), !rm_fstring_part(n), !rm_in_cstr(n), value_type_of(n, "str").
+rm_strlit(n) :- node(_, n, "concatenated_string", _, _), !rm_cstr_fpart(n), !rm_in_cstr(n), value_type_of(n, "str").
+.decl rm_cstr_fpart(n: node)
+rm_cstr_fpart(n) :- node(_, n, "concatenated_string", _, _), child(n, s, _), rm_fstring_part(s).
 
 // ---- fstring -------------------------------------------------------------------------------------------------
 
@@ -117,11 +115,10 @@ fstring_in_gexc(n) :- rm_fshape(n), inside(n, c, rm_call_kind), field(c, "functi
 
 // A format specifier inside (stopBy end) a string (not part of a concatenation) whose `string_start` is on the
 // specifier's first line, or inside a concatenation whose first string's `string_start` is. (`layout after: to
-// FS_SELF, breaks eq 0` on the string_start: the specifier starts after it, on the line the token ends on; a
-// string_start is one line.)
+// FS_SELF, breaks eq 0` on the string_start: the specifier starts after it, on the line the token ends on.)
 .decl fstring_spec_sameline(n: node)
-fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, s, rm_string_kind), !rm_in_cstr(s), child(s, st, _), node(_, st, "string_start", _, _), line(st, l).
-fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, cs, rm_cstr_kind), fstring_first_part(cs, s), child(s, st, _), node(_, st, "string_start", _, _), line(st, l).
+fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, s, rm_string_kind), !rm_in_cstr(s), child(s, st, _), node(_, st, "string_start", _, _), end_line(st, l).
+fstring_spec_sameline(n) :- node(_, n, "format_specifier", _, _), line(n, l), inside(n, cs, rm_cstr_kind), fstring_first_part(cs, s), child(s, st, _), node(_, st, "string_start", _, _), end_line(st, l).
 
 // `nthChild: {position: 1, ofRule: {kind: string}}`: the first string child of a concatenation.
 .decl fstring_first_part(cs: node, s: node)
@@ -197,10 +194,9 @@ runtime_static_callee(f) :- node(_, f, "attribute", _, _), field(f, "attribute",
 
 // A named child of the call's `arguments` ($ARG, a single metavariable: named nodes only) that is no keyword
 // argument or `**` splat (comments are not in `node`, as the clause leaves them out) and no str literal.
-// The clause's `inside` the nearest class_definition (stopBy class_definition) holds for every node in a
-// render def, whose nearest class is a grammar class; its allowlist test is the empty default (above).
+// The call's nearest class (`inside` stopBy class_definition) is not named in ALLOWLISTED_STATIC_CLASSES.
 .decl runtime_static_cand(d: number, c: node)
-runtime_static_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), runtime_static_callee(f), rm_in_render(c), field(c, "arguments", args), child(args, a, _), !runtime_static_skip(a), !rm_strlit(a).
+runtime_static_cand(d, c) :- node(d, c, "call", _, _), field(c, "function", f), runtime_static_callee(f), rm_in_render(c), nearest(c, k, rm_class_kind), !rm_listed(k, "ALLOWLISTED_STATIC_CLASSES"), field(c, "arguments", args), child(args, a, _), !runtime_static_skip(a), !rm_strlit(a).
 .decl runtime_static_skip(a: node)
 runtime_static_skip(a) :- node(_, a, "keyword_argument", _, _).
 runtime_static_skip(a) :- node(_, a, "dictionary_splat", _, _).
