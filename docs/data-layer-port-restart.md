@@ -5,7 +5,9 @@ Thirty ship in the opt-in pack. Seventy earlier ports remain candidates; 42 chec
 
 The [batch-ten completion review](data-layer-batch-ten-dod-audit.md) exposed optimizer and production configuration gaps.
 Those repairs are implemented, including consumer roots, approvals, signature verification, phases, summaries, and persistent lifecycle coverage.
-The cumulative 100-rule gate now passes: 25,262 findings match over all 9,028 inputs, with zero engine failures.
+The historical 100-rule run matched 25,262 findings over all 9,028 inputs, with zero engine failures.
+The latest re-audit then exposed a configured HNSW scope defect outside those observed cases.
+The repair has separate full-domain HNSW revalidation and 324 fresh original-evaluated inputs across all ten ports.
 The 57-test production contract matrix also passes.
 Complete-process cost is 2,856.494 CPU seconds, 3,035.380 wall seconds, and 10,234,003,456 bytes peak RSS.
 Performance remains expensive; this result is a correctness baseline.

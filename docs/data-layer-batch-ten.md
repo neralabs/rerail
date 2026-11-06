@@ -3,9 +3,11 @@
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
 There are 100 authored ports out of 142 checks. Thirty documents ship in the private pack.
 The [completion review](data-layer-batch-ten-dod-audit.md) exposed optimizer, production configuration, lifecycle, and cumulative-validation gaps.
-The repairs pass the 57-test production contract matrix and the complete 100-rule repository gate.
-All 25,262 expected findings match over 9,021 code files and seven required documents, with zero engine failures.
-The [v7 completion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds the evidence and implementation files.
+The latest re-audit disproved the previous completion claim. Configured HNSW file discovery differed from the original reporter.
+The repair preserves its separate file and directory behavior. Standalone scanning still accepts an explicit regular file.
+The historical 100-rule run matched 25,262 findings over 9,021 code files and seven documents.
+That joint measurement predates this scope repair. Only the changed HNSW rule was rerun over its entire input domain.
+The [assertion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) separates current comparisons from historical measurements.
 The [measurement](performance-decisions/data-layer-batch-ten-20261106.json) records CPU, wall time, compilation, and RSS.
 Receipt metadata, disabled-evidence guards, and all 36 evidence-validator tests pass.
 Type checking, boundary checks, and Windows path checks pass.
@@ -110,7 +112,7 @@ A further 878 comparisons check the exact matching file selection, including its
 There are also 106 diagnostic-family removal controls, each checked through both APIs.
 These controls remove one diagnostic code at a time and require all other original findings to remain.
 
-The [v7 completion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, transferred assertions, and implementation hashes.
+The [assertion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) binds assertion results, disabled-detector controls, helper execution, transferred assertions, and implementation hashes.
 It also requires the complete union of focused assertions: 276 inputs, including 194 positives, through both APIs.
 All 67 rule-relevant helper cases require native traces and complete original results.
 Helper replay includes 15 original-evaluated controls, including positive path classification and clean matching modules.
@@ -118,6 +120,12 @@ The [repair regressions](../fixtures/host/data-layer-port/batch-10-repair-regres
 The [journal](data-layer-performance-journal.md) records failed attempts and subsequent verification.
 
 These finite tests provide regression evidence. They do not prove equivalence for every possible Python program.
+
+The [fresh re-audit corpus](../fixtures/host/data-layer-port/batch-10-reaudit.json) adds 324 original-evaluated inputs, including 251 positives.
+It moves declarations across guard, class, and function boundaries for all ten rules.
+The public audit API compares complete configured results through both execution APIs: 648 comparisons.
+Ten disabled-detector controls check both APIs. Four persistent revisions check HNSW file-to-directory transitions.
+These 660 tests supplement the original suite. They do not replace its assertions or establish universal equivalence.
 The complete DoD repair adds production consumer roots, approval validation and signature verification, verified suppression, and `SIDP000`.
 It also supplies matching phases, command summaries, and explicitly requested signing through the original signer.
 Tests use isolated fixture keys. The runner never searches for private keys.

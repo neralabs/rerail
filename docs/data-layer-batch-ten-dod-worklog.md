@@ -216,3 +216,45 @@ No Linear ticket was created.
 The cumulative 100-rule run is cold-only. Full-repository unchanged/edit phases were not run.
 Its empty incremental-difference array is not an incremental parity claim.
 The permanent 57-revision lifecycle matrix separately validates edits, restoration, removal, readdition, and dependencies for the latest ten rules.
+
+## Re-audit after the rejected batch-ten completion claim
+
+The previous claim of no remaining fixes was wrong. Fresh original execution exposed both a false positive and a false negative.
+The HNSW plugin supplies `vector_types.py` as a directory to FactEngine.
+FactEngine uses `os.walk`: it ignores a regular file but scans Python files inside a directory with that name.
+The port instead included only the regular file. Its standalone scanner has a different, explicit-file contract.
+
+Commit `8712eaa8a` records the failing tests before the fix: 14 pass and four fail across both APIs.
+Commit `7e2629be2` changes the configured scope to `vector_types.py/**/*.py` and makes all 18 tests pass.
+No engine change or Linear ticket is needed.
+
+The fresh audit moves declaration seeds into guards, classes, and functions for every batch-ten rule.
+Expected results come from the pinned configured Python reporters without detector mocks.
+The expanded corpus has 324 inputs, including 251 positives, and produces 648 complete public-API comparisons.
+Ten disabled-detector controls run through both APIs. Four persistent HNSW revisions exercise file-to-directory transitions.
+The 660-test matrix supplements the original assertions and earlier focused tests.
+Its fixture reproduces from original execution; CI requires exact fixture bytes and assertion identities.
+
+The changed HNSW rule also passes on all 9,028 historical repository inputs.
+That repository has zero original HNSW findings. Positive detection is therefore established by the source-backed cases separately.
+This execution is cold-only. It does not establish full-repository edit parity or a new joint 100-rule timing.
+The previous 100-rule measurement retains its old policy hashes. Ninety-nine policies and the engine remain unchanged.
+The current receipt must identify that joint run as historical and require separate revalidation for every changed policy.
+The evidence validator rejects narrowed file inventories, stale policies, changed engines, and failed kernel results.
+
+The final rerun passes all 1,098 original and supplementary cases in each source-suite API run.
+Each run contains 975 complete detector observations, including 870 positives, and 67 native helper cases.
+Original-detector fallback remains prohibited. The 57 host cases retain their separate assertion-transfer contracts.
+All 60 broader native groups pass: 4,317 assertions, including configured defaults, helpers, transferable assertions, diagnostic-family controls, and production contracts.
+The fresh audit adds 660 passing tests. Its fixture reproduces byte for byte from original execution.
+All 49 evidence-validator tests pass, including 13 new checks against incomplete or relabelled evidence.
+Type checking, boundary checks, Windows path checks, and all 45 CI shell syntax checks pass.
+The structure check retains exactly the same three pre-existing findings; this work adds none.
+These finite results do not establish equivalence for untested programs. They replace the previous unsupported completion statement with reproducible evidence.
+
+The fresh detector-removal run returns the expected failure status: 163 assertions fail and 935 pass.
+Its complete report rejects disabled detectors for all ten rules. This is a control result, not a failing normal run.
+The v8 receipt now requires the fresh audit and full-domain revalidation of every changed policy.
+The stale-receipt test fails before regeneration; the regenerated receipt passes all 14 metadata and detector-control tests.
+The transferable-assertion evidence guard also passes.
+No new joint 100-rule execution was performed after this repair, in accordance with the changed-kernel measurement limit.

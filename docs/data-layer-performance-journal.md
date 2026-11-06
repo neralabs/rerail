@@ -7396,3 +7396,31 @@ The completed repair does not claim all 142 ports or resolved CPU performance. F
 The cumulative 100-rule run is cold-only. Full-repository unchanged/edit phases were not run.
 Its empty incremental-difference array is not an incremental parity claim.
 The permanent 57-revision lifecycle matrix separately validates edits, restoration, removal, readdition, and dependencies for the latest ten rules.
+
+## 2026-11-06: Batch-ten completion re-audit
+
+The user rejected the completion claim. Fresh source-backed tests exposed configured HNSW discovery errors.
+The original plugin ignores a regular `vector_types.py` but scans a directory with that name.
+The previous scope arm inverted that behavior. The standalone scanner legitimately accepts the regular file.
+
+The red commit is `8712eaa8a`: 14 passing and four failing API comparisons.
+The repair commit is `7e2629be2`: all 18 pass.
+The expanded fresh audit contains 324 inputs, including 251 positives, across all ten rules.
+It compares configured reporters through the public audit API and retains standalone HNSW controls.
+
+Only the changed HNSW kernel was rerun over the historical full repository domain: 9,028 inputs, zero mismatches or engine failures.
+The final rerun took 72.570 seconds of cold wall time and 4.896 milliseconds of compilation.
+Peak parent RSS was 2,333,802,496 bytes.
+This was a correctness rerun beside other tests. Parent phase CPU excludes producer processes.
+It is not a controlled performance comparison, a process-family CPU measurement, or a new joint 100-rule benchmark.
+The historical 100-rule timing remains unchanged. The current evidence must distinguish its 99 unchanged policies from the revalidated HNSW policy.
+
+The first targeted recording inherited the old joint run's oracle timing metadata.
+That recording was rejected as a standalone measurement. The final recording explicitly sets the unmeasured oracle timing to null.
+Its files and original HNSW findings remain identical to the historical full-domain recording.
+
+Both original-suite API runs pass all 1,098 cases, with 975 complete detector observations and 870 positive observations per API.
+The 60 broader native groups pass all 4,317 assertions. The fresh audit passes 660 tests; evidence validators pass 49 tests.
+The detector-removal control run fails as required and proves rejection for all ten disabled detectors.
+The regenerated v8 receipt and its 14 metadata/control tests pass. The transfer-evidence guard also passes.
+The structure baseline remains unchanged at three existing findings. No new Linear issue was created.

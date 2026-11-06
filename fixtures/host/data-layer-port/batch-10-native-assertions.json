@@ -1,5 +1,5 @@
 {
-  "format": "rerail.data-layer-batch-ten-assertions/v7",
+  "format": "rerail.data-layer-batch-ten-assertions/v8",
   "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
   "engineSha256": "21554b9bf6df95211d14407ececdeb5657b0a861eb44cba11193b65feffc0910",
   "executionPaths": {
@@ -31840,7 +31840,64 @@
       "versioned_merged_identity": 0,
       "rust_sql_grammar_boundary": 0
     },
-    "note": "Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Repository measured phases are listed explicitly. An empty incrementalDifferences array does not establish unmeasured full-repository edit parity. Persistent lifecycle tests are a separate gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers."
+    "note": "Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Repository measured phases are listed explicitly. An empty incrementalDifferences array does not establish unmeasured full-repository edit parity. Persistent lifecycle tests are a separate gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers.",
+    "status": "historical-joint-run"
+  },
+  "reaudit": {
+    "inputs": 324,
+    "positiveInputs": 251,
+    "apiComparisons": 648,
+    "disabledDetectors": 10,
+    "disabledApiComparisons": 20,
+    "persistentRevisions": 4,
+    "assertions": 660,
+    "perRule": {
+      "hnsw_architecture": 29,
+      "bounded_composed_graph_paths": 29,
+      "conditional_architecture": 11,
+      "embedding_vector_orchestration": 26,
+      "generated_index_sources": 8,
+      "graph_lazy_sql_plan": 26,
+      "graphql_plan_ownership": 17,
+      "matching_architecture": 92,
+      "plan_optimizer_v2": 63,
+      "schema_introspection_data_paths": 23
+    },
+    "artifactSha256": {
+      ".rerail/data-layer-batch-ten/reaudit-20261106/adversarial-first.json": "36f9538733e5d542cd31d22d982dd1ce5c79807348c43079021d5dbbc6a47fde",
+      ".rerail/data-layer-batch-ten/reaudit-20261106/adversarial-controls.json": "225128be356df14760d709ee470cedd94460de42170882c82c82ea13b40e84b3",
+      ".rerail/data-layer-batch-ten/reaudit-20261106/scope-lifecycle.json": "964f242de497cf4e58482fee80abc04267d8ae2384c420e15763eade010b9e3b"
+    }
+  },
+  "repositoryRevalidation": {
+    "historicalUnchangedRules": 99,
+    "revalidatedRules": [
+      "data-layer-hnsw-architecture"
+    ],
+    "files": 9028,
+    "expected": 0,
+    "actual": 0,
+    "falsePositives": 0,
+    "falseNegatives": 0,
+    "engineFailures": 0,
+    "engineSha256": "21554b9bf6df95211d14407ececdeb5657b0a861eb44cba11193b65feffc0910",
+    "policyFileSha256": {
+      "data-layer-hnsw-architecture": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6"
+    },
+    "measuredPhases": [
+      "host-prepare",
+      "compile",
+      "cold"
+    ],
+    "coldMs": 72570.087667,
+    "compilationMs": 4.895750000000135,
+    "peakRssBytes": 2333802496,
+    "artifactSha256": {
+      ".rerail/data-layer-batch-ten/dod-completion-20261106/oracle-100.json": "33f61540f394079d5dab2dc315fbea762ad32226bd98cf3ba77128c65797076d",
+      ".rerail/data-layer-batch-ten/reaudit-20261106/oracle-hnsw-full-domain.json": "2554feb7748a74b929219a51391a2d7832c7639c817acb0baf9ad173d61f2a84",
+      ".rerail/data-layer-batch-ten/reaudit-20261106/native-hnsw-full-domain.json": "677d1b2b83b885dd968b544b3004b33db7fb59e3dd77da6bbfbe0de96b498618"
+    },
+    "note": "The historical joint 100-rule measurement is unchanged. Only changed rules were rerun over its entire file domain. These are separate executions; their timings cannot be combined into a new 100-rule measurement. Parent CPU excludes producer processes. Positive detection is covered by the fresh source-backed regression corpus."
   },
   "hostAssertionLedger": {
     "scripts/tests/test_lint_conditional_architecture.py::test_paths_are_under_repo_root": {
@@ -48016,7 +48073,7 @@
   },
   "fileSha256": {
     ".gitattributes": "3a94dea80784d86d3161b3df2ced5ea828708ec03c3d266f83dc9e59b198a811",
-    ".github/workflows/ci.yml": "df853e15c9d62c5fef42d3dffb2b5d586aaf0320c4b529705a4e7fc302703af5",
+    ".github/workflows/ci.yml": "3b94e2a5c2237411aea488c3a5804f473876a8ae84df08413a0c65e335e75e1b",
     "conformance/data-layer/batch-ten.ts": "2963b2688afcd72c5938d4d78f59b89ee83a8bb2e6386169d16a021a80c12c35",
     "conformance/data-layer/execution.ts": "77f8aa8b4d4926e67951482cd349d24f582bbe3d36fe3938678722c35ccb312a",
     "conformance/data-layer/helper-assertions.ts": "c1ff1d64794a763ae497e6af0816363f20f4241f5f679ff8e62b040a564d6aad",
@@ -48042,6 +48099,7 @@
     "fixtures/host/data-layer-port/batch-10-helper-contracts.json": "ed91ea15a14a3bd1c4ee426ee40c4f657ee8a6555b9ed0030685b3c2d46d5281",
     "fixtures/host/data-layer-port/batch-10-identity-inventory.json": "369a926d3cc0cf718758714f743170df184e6fcb0a62bd6592c08b7366af4233",
     "fixtures/host/data-layer-port/batch-10-lifecycle.json": "bd94f75c18928fe5b15a4db5c1272ead1bce3a014a798eab335582b06a73b5ed",
+    "fixtures/host/data-layer-port/batch-10-reaudit.json": "1cb45f3480452a85b0cdd15972d17036f68b60c865af71251b419f5e074b77e4",
     "fixtures/host/data-layer-port/batch-10-repair-regressions.json": "0efbb8da103038692ab563cc2ac943b65a3adfaa9402f2d69df0ba47a3483b8f",
     "fixtures/host/data-layer-port/batch-10-shape-seeds.json": "979e4a9a002c597bd3d288996c94b485d8dddb57bd95572f2a939d9d23dc7973",
     "fixtures/host/data-layer-port/batch-10-transferable-assertions.json": "905ba430e0f3d0528460112bfedfdce2655cd3817723e5274bfa4c670e6966e7",
@@ -48163,7 +48221,7 @@
     "packs/data-layer/rules/data-layer-generated-index-sources.json": "80fba2624934f3f927a0777746fe9af604c63c6df6391e532ef739c5c36e3f5f",
     "packs/data-layer/rules/data-layer-graph-lazy-sql-plan.json": "7430ecb2d14f80b16991b1b8c619a320f671cb936e2035009e589f73735f57b7",
     "packs/data-layer/rules/data-layer-graphql-plan-ownership.json": "74ec53e0178e02528a5d73ac12e77d6609ef0112ee64a3144678dddb3aadc17a",
-    "packs/data-layer/rules/data-layer-hnsw-architecture.json": "20d91fc8571030b2fb48e0a66de1ed6ec5a9409fbf2cf1da09bb8c47b5ab9a9b",
+    "packs/data-layer/rules/data-layer-hnsw-architecture.json": "c7545b1fb8197b746548e00b4318a65710dd54c39bee35790a1ebd8a7e80ebd6",
     "packs/data-layer/rules/data-layer-lazy-adapter-ownership.json": "09d019e2deb70ea8478e0f86d72cfc416d69b995ca764ce14a6ff6ddd554120f",
     "packs/data-layer/rules/data-layer-lazy-architecture.json": "aa6829187db40df122163b82441638f86d85ab5738e3220dc23422c900a05163",
     "packs/data-layer/rules/data-layer-lazy-sql-surface.json": "8899e4d9de0ce78a4f5f225c93fc8179dd15b9321f68b6489ac7f500b2e04d9a",
@@ -48276,20 +48334,24 @@
     "scripts/dsl/data_layer_ten/conditional.py": "c15a657122ea63fd944444a34970860e2aef3476533d91cbd9830ebec4934979",
     "scripts/dsl/data_layer_ten/conditional_shared.py": "693f868856c4d46f9b9128ec27fa922dd64bf050f3a1ad40f1c9ac62b777581a",
     "scripts/dsl/data_layer_ten/contracts/__init__.py": "1d6bd5bd9108b81ca436a81e31e74cb45da31bc7a5438bf9893e396b1f57e0d8",
+    "scripts/dsl/data_layer_ten/contracts/adversarial.py": "d2254f2d3d3f407373a9a5cd1840ecd25acd78690e578a01aacc3e8c5a9a6c83",
     "scripts/dsl/data_layer_ten/contracts/collectors.py": "102efcdd8b5c921fed19f5864e57d814eec15259b24fffb29cd48459be16ff62",
     "scripts/dsl/data_layer_ten/contracts/completion_cases.py": "7bb13dd2d9c52c5f3d77ee059110546b63eab1a60e0e3a30543683357314794e",
     "scripts/dsl/data_layer_ten/contracts/global_queries.py": "23b8abe09d2f561aa6b423691d9b0142b2e79a884d4b40b805507891288f61f8",
+    "scripts/dsl/data_layer_ten/contracts/reaudit.py": "babe8e4a224440c1bd5994016ee86d203e7ec4e658f05f151036e7c3c2db75cd",
+    "scripts/dsl/data_layer_ten/contracts/reaudit_cases.py": "ecb28a561e2ae999646ff13fe23a3d511f1a49782c603240d20435fd7eaf72d8",
+    "scripts/dsl/data_layer_ten/contracts/reaudit_evidence.py": "ed803e7d34507ca49830dd378580d2ab973a5c16f0c6d2b66fb17b47ab1bffe7",
     "scripts/dsl/data_layer_ten/contracts/recovery.py": "ff385043867fc379fe465a1f4571850752e808bcc7d193fba7afd5a228ab6ac6",
     "scripts/dsl/data_layer_ten/contracts/strings.py": "78b4ddff58f6e3efcd91ca992339197bf7c67b98ec219a9208186289677cff4d",
     "scripts/dsl/data_layer_ten/contracts/structures.py": "c9d4241eb34151f5ffe416149d3ecfcc399578c66d56c3f3c22eec5a6c06fae1",
     "scripts/dsl/data_layer_ten/embedding.py": "e3f40bee3a9067956e4c91cbdbff34fcff13e80f571ea1b87fe6226925d3905b",
-    "scripts/dsl/data_layer_ten/evidence.py": "ab8ae1a38cd4e26c14ed3962a4d5565b0d20f736e6967b4ba4f16e2aef67e632",
+    "scripts/dsl/data_layer_ten/evidence.py": "705ae4743e94cbe1e9c777868fac52becdba361b0d0b38e8bab67d68afed7186",
     "scripts/dsl/data_layer_ten/evidence_cases.py": "ac05d5ebf9d2bf5495a353126a246cc149ea4f0dc212d5b40ef50057bae1ec9a",
     "scripts/dsl/data_layer_ten/file_contracts.py": "d07c746a4da1452878b9b9adbd3923eea4cdfc124786d1bfe518bcf14d68f17b",
     "scripts/dsl/data_layer_ten/generated.py": "696017ae0760c47b0af84a10d155f523205c723e408ce95c965ac2f7b192ddb3",
     "scripts/dsl/data_layer_ten/graph.py": "74b7baf1e4134e6415780f0314b368c432a02b5a2e288bf9866fc71952ec58ae",
     "scripts/dsl/data_layer_ten/graphql.py": "a41eee7f225377da833ab672a96a2e3fedf0378db8c37e73fcc548b0fdbe30d2",
-    "scripts/dsl/data_layer_ten/hnsw.py": "e01be6fa914cbdc9ca8cdfae68e636ba7dc2f17d72fa1db33a99be0e220bd793",
+    "scripts/dsl/data_layer_ten/hnsw.py": "ed29d254d61e797826133c4f4a5acca2e9f9fb54b4b4e53f9ac7bb6f08dcc34a",
     "scripts/dsl/data_layer_ten/introspection.py": "260f96ea1aaba3cfca9452132b2c01d820ebe117e687eb0d157990d050e6a9da",
     "scripts/dsl/data_layer_ten/lifecycle.py": "f7b4cec42e860fa38994df2cf8968de4624563b2ad42fefc149dafbd83c21a3d",
     "scripts/dsl/data_layer_ten/matching.py": "a77ceb1f53faeda07008f821724358ff2fd0fedcde393b7382b42ee0bc853d3f",
@@ -48318,7 +48380,7 @@
     "test/conformance/data-layer/batch-ten-helpers.test.ts": "aaa4b0b548664000a262fb3a3cf803220279829ca52e1b52039d93a7413dec36",
     "test/conformance/data-layer/batch-ten-repair.test.ts": "556a0b343b8898f51fe322de7048989181772b239d3e5602e188ab8eb78f7b3d",
     "test/conformance/data-layer/batch-ten-transfer.test.ts": "59559d4c3c6c160eccc66ba6ac87bdc0b761ae6c9b1ef76bc48c4c296cf307fa",
-    "test/conformance/data-layer/batch-ten.test.ts": "aa963822c5144d02c61bcded5129cd3ca706b7bb68bdfce650517473e4eaa896",
+    "test/conformance/data-layer/batch-ten.test.ts": "38dbf3c146f52ed9b4649f659077481b2bc8c9c2f86d72c44116b18763225936",
     "test/conformance/data-layer/dod/approvals.test.ts": "5e5703e566319e516b692841cf609e4b847befe6e47f2e44b4df796a0856850c",
     "test/conformance/data-layer/dod/commands.test.ts": "271f321a5d0e385bc71b47a08c951400440deb882f0fe52bb9c178faaae516bc",
     "test/conformance/data-layer/dod/global-queries.test.ts": "a943c2bac23b17c0c00c8113ebb3dfa7bf5a4796afcf50bbc74fdba5f6c76806",
@@ -48327,6 +48389,7 @@
     "test/conformance/data-layer/dod/matching.test.ts": "ea93039b088ee961fd810866265dbb39557cd5d482437a7d98a90937ce49cb25",
     "test/conformance/data-layer/dod/optimizer.test.ts": "7749cd70311688a6306d61576714a1d898373dc056af741707ad1f55e8154941",
     "test/conformance/data-layer/production-runtime.test.ts": "bdb093d34feba879c88be9fdacf3c34b8eb876743a22263fe8522c26edf11411",
+    "test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts": "68f8ad35a16c0c97f2312ac8d28575ba6eeadc1d1ede28585d2891dc14c14012",
     "test/conformance/data-layer/regressions/bootstrap-inventory.test.ts": "767ab6f9cb036213f81992d3999e384355dcb07cce3fade52e6555b6582efb6b",
     "test/engine/native/data-layer-ten/import-level.test.ts": "6f1d40b1176e17351808812180aa5f5d0e9d831d5d0adcd03de8841b49561c12",
     "test/engine/native/data-layer-ten/invalid-expansion.test.ts": "a8d4db4c14230a5891298752261a025c64cb5465113f54df98988ee7d7edc4a5",

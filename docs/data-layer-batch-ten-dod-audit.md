@@ -4,8 +4,10 @@ Audited commit: `9ceb4c8ef`.
 Source pin: `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The review uses the per-batch and migration criteria in the [restart plan](data-layer-port-restart.md#resume-in-bounded-deliveries).
 This section records the failures at that audited commit.
-The repair now passes all 57 production-contract tests and the complete 100-rule repository gate.
-The [v7 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) and [work log](data-layer-batch-ten-dod-worklog.md) retain the repair evidence.
+The previous completion claim missed a configured HNSW scope defect. The subsequent re-audit records that failure and its repair.
+The 100-rule repository result remains a historical joint measurement. Current repository revalidation covers the changed HNSW rule separately.
+The [v8 receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) separates historical measurements from current revalidation.
+The [work log](data-layer-batch-ten-dod-worklog.md) retains the failures and repair evidence.
 Receipt metadata, disabled-evidence guards, and all 36 evidence-validator tests pass.
 Type checking, boundary checks, and Windows path checks pass.
 The structure check retains exactly three pre-existing flat-directory findings; this repair adds none.
@@ -98,9 +100,10 @@ Sixteen encoding API comparisons and 68,008 recorded Python decoder cases preser
 Matching phases and command summaries have production command tests.
 All ten rules have a permanent clean/positive/restored/removed/readded matrix, with 57 persistent revisions including dependency edits.
 
-The complete cumulative gate covers 100 current programs and all 9,028 inputs.
-It matches all 25,262 original findings by rule, path, line, and code, with zero engine failures.
-Complete latest-ten DTO, configured-default, helper, transferable-assertion, family-removal, and positive-control gates remain separate requirements in the v7 receipt.
+The historical cumulative gate covered 100 programs and all 9,028 inputs.
+It matched all 25,262 original findings by rule, path, line, and code, with zero engine failures.
+The HNSW scope repair has separate full-domain revalidation. The other 99 policies and the engine remain unchanged.
+Complete latest-ten DTO, configured-default, helper, transferable-assertion, family-removal, and positive-control gates remain separate requirements in the v8 receipt.
 The earlier sixty-rule observation gates also pass, including the final previously unrun `serverplan_target_architecture` check.
 
 Full migration remains separate: 42 configured checks are not yet ported, and seventy earlier ports remain candidates.

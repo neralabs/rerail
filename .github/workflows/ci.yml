@@ -543,6 +543,9 @@ jobs:
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.transfer \
             --source .rerail/data-layer-upstream --output "$reports/transferred-original.json"
           cmp fixtures/host/data-layer-port/batch-10-transferable-assertions.json "$reports/transferred-original.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.reaudit \
+            --source .rerail/data-layer-upstream --output "$reports/reaudit-original.json"
+          cmp fixtures/host/data-layer-port/batch-10-reaudit.json "$reports/reaudit-original.json"
           for part in 0 1 2 3 4 5 6 7; do
             PYTEST_ADDOPTS="-k 'not test_current_matching_architecture_is_clean_tdd_red'" \
             timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/suite.py \
@@ -608,6 +611,24 @@ jobs:
       - name: Verify batch-ten replay, defaults and disabled detectors
         if: matrix.mode == 'snapshot'
         run: |
+          set -euo pipefail
+          for check in graph_lazy_sql_plan bounded_composed_graph_paths graphql_plan_ownership plan_optimizer_v2 conditional_architecture schema_introspection_data_paths matching_architecture hnsw_architecture embedding_vector_orchestration generated_index_sources; do
+            timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts -t "$check" \
+              --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/reaudit-$check.json"
+          done
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts -t 'retains original|persistent workspace' \
+            --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/reaudit-inventory.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null scripts/dsl/data_layer_ten/contracts/reaudit_cases.py
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
+          import json,os
+          from pathlib import Path
+          from data_layer_ten.common import CHECKS
+          from data_layer_ten.contracts.reaudit_evidence import verify
+          reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
+          paths=[reports/f'reaudit-{check}.json' for check in CHECKS]+[reports/'reaudit-inventory.json']
+          summary=verify(json.loads(Path('fixtures/host/data-layer-port/batch-10-reaudit.json').read_text()),[json.loads(path.read_text()) for path in paths])
+          (reports/'reaudit-summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+          PY
           timeout 115s npx vitest run --dir test test/conformance/data-layer/batch-ten.test.ts -t '^(?!matches complete )'
           for check in graph_lazy_sql_plan bounded_composed_graph_paths graphql_plan_ownership plan_optimizer_v2 conditional_architecture schema_introspection_data_paths matching_architecture hnsw_architecture embedding_vector_orchestration generated_index_sources; do
             for mode in snapshot workspace; do

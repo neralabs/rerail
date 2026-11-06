@@ -2,14 +2,25 @@
 
 The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a`.
 This audit covers the ten batch-ten detectors and their shipped reporters.
-It does not extend the cumulative repository benchmark beyond 80 rules.
-The [later completion review](data-layer-batch-ten-dod-audit.md) records additional optimizer and production-configuration gaps that remain unfixed.
+The earlier audit below preceded the later 100-rule measurement and production-configuration repairs.
+The [completion review](data-layer-batch-ten-dod-audit.md) records those repairs and the latest HNSW scope counterexample.
+The joint 100-rule measurement remains historical. The changed HNSW rule has separate full-domain revalidation.
 
 ## Translation contracts
 
 The source links below identify the implementations that supply expected results.
 Some files also contain older helpers that their collectors no longer call.
 Those helpers do not define the current detector contract.
+Configured file discovery also forms part of each contract; matching detector bodies alone is insufficient.
+
+The latest HNSW audit found both directions of a scope mismatch.
+The original plugin walks `vector_types.py` as a directory. It ignores a regular file with that name.
+Its standalone scanner accepts the regular file. The port now preserves both behaviors.
+The source definitions are [the plugin](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_hnsw_architecture.py#L214)
+and [directory discovery](https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_lib/fact_engine.py#L1000).
+The former `vector_types.py` scope arm caused a false positive on the regular file and missed a nested file.
+The replacement arm is `vector_types.py/**/*.py`. Standalone replay retains its explicit-file scope.
+The new regression corpus compares actual configured reporters with the public Rerail API for all ten ports.
 
 | Rule and source | Required behavior | SQL implementation and focused evidence |
 | --- | --- | --- |
