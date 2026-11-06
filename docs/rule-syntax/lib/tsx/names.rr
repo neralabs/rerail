@@ -24,7 +24,7 @@
 .decl fn_scope(kind: symbol)
 fn_scope("program"). fn_scope("function_declaration"). fn_scope("function_expression").
 fn_scope("arrow_function"). fn_scope("method_definition").
-fn_scope("generator_function_declaration").
+fn_scope("generator_function_declaration"). fn_scope("generator_function").
 // block_scope: where let, const, class and function declarations live. `{ let x }` is invisible outside the braces;
 // `for (let i …)` binds i in the for statement; `catch (e)` binds e in the catch clause.
 .decl block_scope(kind: symbol)
@@ -59,6 +59,28 @@ decl_site(s, x, f, "function", "value") :- kind(f, "function_declaration"), fiel
 // `class C {}` declares C twice: as a value (the constructor, `new C()`) and as a type (`let c: C`).
 decl_site(s, x, c, "class", sp)     :- kind(c, "class_declaration"), field(c, "name", n), text(n, x),
     nearest(c, s, block_scope), (sp = "value" ; sp = "type").
+// `const f = function g() { g(); }`: g is bound inside the function only (eslint-scope's function-expression-name
+// scope, which sits outside the parameters). A parameter or var named g in the function shadows it, so then there
+// is no row: both would declare g in the same scope here.
+decl_site(f, x, f, "function", "value") :- kind(f, k), (k = "function_expression" ; k = "generator_function"),
+    field(f, "name", n), text(n, x), !fn_own_name(f, x).
+// `const C = class D { m() { D } }`: D is bound inside the class only, in its body.
+decl_site(b, x, c, "class", sp) :- kind(c, "class"), field(c, "name", n), text(n, x), field(c, "body", b),
+    (sp = "value" ; sp = "type").
+// fn_own_name(f, x): function f has a parameter or a var named x.
+.decl fn_own_name(f: node, x: symbol)
+fn_own_name(f, x) :- field(f, "parameters", ps), within(p, ps), nearest(p, f, fn_scope), param_name(p, x).
+fn_own_name(f, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x), child(v, d, _),
+    kind(v, "variable_declaration"), nearest(d, f, fn_scope).
+// `for (const x of xs)`, `for (let [k, v] in o)`: tree-sitter has no declarator here; the loop's "left" field is the
+// name or pattern, and the loop is its block scope. `for (var k in o)` declares k in the function. `for (k in o)`
+// with no keyword declares nothing: k is an assignment to an outer name. The site is the identifier, as for params.
+decl_site(l, x, n, "let", "value") :- for_binding(l, n, x), (op(l, "let") ; op(l, "const")).
+decl_site(s, x, n, "var", "value") :- for_binding(l, n, x), op(l, "var"), nearest(l, s, fn_scope).
+.decl for_binding(l: node, n: node, x: symbol)
+for_binding(l, n, x) :- kind(l, "for_in_statement"), field(l, "left", n), kind(n, "identifier"), text(n, x).
+for_binding(l, n, x) :- kind(l, "for_in_statement"), field(l, "left", pat), within(n, pat), bound_name(n, x),
+    nearest(n, f, fn_scope), nearest(l, f, fn_scope).
 // `type T = …` and `interface I {}` declare only in the type namespace; they vanish at runtime.
 decl_site(s, x, t, "type", "type")   :- kind(t, k), (k = "type_alias_declaration" ; k = "interface_declaration"),
     field(t, "name", n), text(n, x), nearest(t, s, block_scope).
@@ -107,7 +129,15 @@ binding_parent("object_assignment_pattern"). binding_parent("assignment_pattern"
 // In `const y = x + 1`: x is a value ref; y is not (it is the declared name). In `let v: Props`: Props is a type ref.
 .decl ref(r: node, x: symbol, space: symbol)
 // A plain identifier that is not itself being declared (not a parameter site, not the "name" of a declaration).
-ref(r, x, "value") :- kind(r, "identifier"), text(r, x), !decl_site(_, x, r, _, _), !field(_, "name", r).
+ref(r, x, "value") :- kind(r, "identifier"), text(r, x), !decl_site(_, x, r, _, _), !field(_, "name", r),
+    !type_qualifier(r).
+// `foo.Foo` and `a.b.C` in a type: the leftmost name is a namespace, looked up among types, so a parameter or
+// variable `foo` (a value only) does not shadow an imported or declared namespace `foo`.
+ref(r, x, "type")  :- type_qualifier(r), text(r, x).
+.decl type_qualifier(r: node)
+type_qualifier(r) :- kind(q, "nested_type_identifier"), field(q, "module", r), kind(r, "identifier").
+type_qualifier(r) :- kind(q, "nested_type_identifier"), field(q, "module", m), kind(m, "nested_identifier"),
+    within(r, m), kind(r, "identifier"), !field(_, "property", r).
 // Type names in annotations: `x: Props`, `Array<Item>`.
 ref(r, x, "type")  :- kind(r, "type_identifier"), text(r, x).
 // `{ a }` in an object literal reads the variable a: shorthand `{ a }` means `{ a: a }`.
@@ -119,12 +149,14 @@ ref(r, x, "value") :- kind(r, "shorthand_property_identifier_pattern"), text(r, 
 // via nearest, so the climb is a chain of tape lookups, one step per enclosing scope.
 // Example: `let x; function f() { x }` starts at f's body block, finds no x, climbs to f, then to program: found.
 .decl look(r: node, x: symbol, sp: symbol, s: node)
-// Start: the innermost block and the innermost function around r (the function holds params and vars).
-look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, block_scope).
-look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, fn_scope).
+// lex_scope: every scope, block or function. The climb walks one chain through both kinds, innermost first, so
+// `function f(fs) { fs }` stops at f and `{ let fs; fs }` at the block: the outer `fs` is never reached.
+.decl lex_scope(kind: symbol)
+lex_scope(k) :- fn_scope(k) ; block_scope(k).
+// Start at the innermost scope around r.
+look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, lex_scope).
 // Step outwards only while the current scope does not declare x; so the inner declaration shadows outer ones.
-look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, block_scope).
-look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, fn_scope).
+look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
 
 // ==== interface ===================================================================================================
 // ref_site(r, site): reference r resolves to declaration site. The lookup above stops at the first scope that
