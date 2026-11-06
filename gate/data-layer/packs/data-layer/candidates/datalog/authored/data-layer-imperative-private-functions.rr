@@ -1,5 +1,5 @@
-// data-layer-imperative-private-functions, all three clauses; `caller` reads W's reference graph through the
-// native `reference_edge(src, dst, via)`. Policy: candidates/rules-ast/data-layer-imperative-private-functions.json.
+// data-layer-imperative-private-functions, all three clauses; `caller` reads W's reference graph through
+// `reference_edge(src, dst, via)`. Policy: candidates/rules-ast/data-layer-imperative-private-functions.json.
 // Options (oracleAnalyzer, sourceGate) are read by no clause.
 //
 // The symbol (each clause's first `all`): a function_definition in no function. At module level it counts unless
@@ -13,9 +13,9 @@
 // comprehension) and name: def and class names (in the scope holding the definition), assignment, augmented and
 // annotated targets (identifiers through tuple/list patterns and splats), for/comprehension targets, with-as and
 // except-as names, walrus targets (in the nearest scope that is no comprehension, as PEP 572 binds them), import
-// names, global/nonlocal names and del targets.
-// Approximations (noted; no relation blocks them, none seen in the recorded events): match-statement captures and
-// `type X = …` aliases are not counted as bindings.
+// names, global/nonlocal names, del targets, `type X = …` aliases' names, and match-statement captures (W's
+// `case_pattern` walk, `scope::python`: a lone name, an `as` name, a splat's name, a class pattern's arguments and
+// keyword values, a mapping's values and `**rest`; `_` binds nothing).
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -90,6 +90,40 @@ direct_execution_bind(s, x, n) :- node(_, i, "import_from_statement", _, _), fie
 // global / nonlocal x: a binding of x in the declaring scope.
 direct_execution_bind(s, x, n) :- node(_, g, "global_statement", _, _), child(g, n, _), text(n, x), nearest(g, s, direct_execution_scope).
 direct_execution_bind(s, x, n) :- node(_, g, "nonlocal_statement", _, _), child(g, n, _), text(n, x), nearest(g, s, direct_execution_scope).
+// `type X = …` and `type X[T] = …`: X binds where the statement is.
+direct_execution_bind(s, x, n) :- node(_, t, "type_alias_statement", _, _), field(t, "left", l), direct_execution_alias_inner(l, n),
+    node(_, n, "identifier", _, _), text(n, x), nearest(t, s, direct_execution_scope).
+direct_execution_bind(s, x, n) :- node(_, t, "type_alias_statement", _, _), field(t, "left", l), direct_execution_alias_inner(l, i),
+    node(_, i, "generic_type", _, _), child(i, n, 0), node(_, n, "identifier", _, _), text(n, x), nearest(t, s, direct_execution_scope).
+.decl direct_execution_alias_inner(l: node, i: node)
+direct_execution_alias_inner(l, i) :- node(_, l, "type", _, _), child(l, i, 0).
+direct_execution_alias_inner(l, l) :- node(_, a, "type_alias_statement", _, _), field(a, "left", l), !node(_, l, "type", _, _).
+// Match captures: direct_execution_case(n), a node W's case-pattern walk visits, from a case clause's patterns;
+// direct_execution_capture(i), a name it captures.
+.decl direct_execution_case(n: node)
+.decl direct_execution_capture(i: node)
+.decl direct_execution_case_group(kind: symbol)
+direct_execution_case_group("case_pattern"). direct_execution_case_group("union_pattern"). direct_execution_case_group("list_pattern").
+direct_execution_case_group("tuple_pattern").
+direct_execution_case(c) :- node(_, cc, "case_clause", _, _), child(cc, c, _), node(_, c, k, _, _), direct_execution_case_group(k).
+// A group or an `as` pattern: each identifier child captured, every other child walked.
+direct_execution_capture(c) :- direct_execution_case(n), direct_execution_case_or_as(n), child(n, c, _), node(_, c, "identifier", _, _).
+direct_execution_case(c) :- direct_execution_case(n), direct_execution_case_or_as(n), child(n, c, _), !node(_, c, "identifier", _, _).
+.decl direct_execution_case_or_as(n: node)
+direct_execution_case_or_as(n) :- direct_execution_case(n), node(_, n, k, _, _), direct_execution_case_group(k).
+direct_execution_case_or_as(n) :- direct_execution_case(n), node(_, n, "as_pattern", _, _).
+// A dotted name of one part is a capture (more parts: a value pattern).
+direct_execution_capture(i) :- direct_execution_case(n), node(_, n, "dotted_name", _, _), child(n, i, 0), !child(n, _, 1).
+direct_execution_capture(n) :- direct_execution_case(n), node(_, n, "identifier", _, _).
+direct_execution_capture(i) :- direct_execution_case(n), node(_, n, "splat_pattern", _, _), child(n, i, _), node(_, i, "identifier", _, _).
+// A class pattern: the class is read; its arguments are walked.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "class_pattern", _, _), child(n, c, i), i > 0.
+// A keyword pattern: its first identifier names an attribute; the rest is walked.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "keyword_pattern", _, _), child(n, c, i), i > 0.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "keyword_pattern", _, _), child(n, c, 0), !node(_, c, "identifier", _, _).
+// A mapping pattern: its keys are read, everything else walked.
+direct_execution_case(c) :- direct_execution_case(n), node(_, n, "dict_pattern", _, _), child(n, c, _), !field(n, "key", c).
+direct_execution_bind(s, x, i) :- direct_execution_capture(i), text(i, x), x != "_", nearest(i, s, direct_execution_scope).
 // A name with more than one binding in a scope.
 .decl direct_execution_multi(s: node, x: symbol)
 direct_execution_multi(s, x) :- direct_execution_bind(s, x, _), k = count : { direct_execution_bind(s, x, _) }, k > 1.
@@ -218,7 +252,7 @@ violation("data-layer-imperative-private-functions", "eager-signature", "eager_s
     direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f),
     node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
 
-// ---- caller (awaiting the native `reference_edge`) ----
+// ---- caller ----
 // `calls: {graph: references, at: definition, through: any, siblingLinks, constructorFields}` over the inner rule
 // "an imperative symbol" (the symbol, and a direct execution in its body or an eager signature): the definition
 // reaches a seed through the reference graph, every definition after it (the callee on) a function, not a class
