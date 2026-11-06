@@ -550,7 +550,15 @@ pub(in crate::code_rule_dsl) type Plan = (Vec<Step>, f64, f64);
 impl Model {
     fn card(&self, rel: &str) -> f64 {
         // `node` is the corpus's nodes, except where a batch binds it: then its estimate is the batch's.
-        if rel == "node" && !self.inputs.batch.contains_key(rel) { self.stats.nodes } else { self.stats.card.get(rel).copied().unwrap_or(1000.0) }
+        if rel == "node" && !self.inputs.batch.contains_key(rel) {
+            self.stats.nodes
+        } else if rel.starts_with(super::strings::RELATION) {
+            // A text test empty in the chunk that plans is not empty in the chunks that reuse its plans (decision
+            // 0038): at least one string.
+            self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
+        } else {
+            self.stats.card.get(rel).copied().unwrap_or(1000.0)
+        }
     }
 
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
