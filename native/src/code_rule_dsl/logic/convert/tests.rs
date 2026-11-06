@@ -161,6 +161,25 @@ fn rule_files() -> Vec<PathBuf> {
 
 /// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
 /// it lowers. `RERAIL_REPLAY_CONVERTED` replays the converted JSON instead.
+/// The codes a hand-written rule reports in log mode (`.mode log A, B`): the suite plugin, the production entry,
+/// drops them, as it drops a linter's `audit` severity. A violation's code is its `code "X"`, else its name.
+fn log_codes(check: &str) -> Vec<String> {
+    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let Ok(text) = std::fs::read_to_string(path) else { return vec![] };
+    let code_of = |name: &str| {
+        text.lines()
+            .filter_map(|l| l.trim().strip_prefix(".violation "))
+            .find(|l| l.split('(').next() == Some(name))
+            .and_then(|l| l.split(" code \"").nth(1).and_then(|c| c.split('"').next()))
+            .unwrap_or(name)
+            .to_owned()
+    };
+    text.lines()
+        .filter_map(|l| l.split("//").next().unwrap().trim().strip_prefix(".mode log "))
+        .flat_map(|names| names.split(',').map(str::trim).filter(|n| !n.is_empty()).map(code_of).collect::<Vec<_>>())
+        .collect()
+}
+
 fn hand_written(check: &str) -> Option<String> {
     if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
         return None;
@@ -418,6 +437,7 @@ fn converted_rules_give_the_recorded_findings() {
         // `source_gate` is a prefilter of the JSON rules (a file mentioning `except`, say): it changes no finding,
         // so a hand-written rule, which has none, replays its events.
         let written = hand_written(&check);
+        let hand = written.is_some();
         let config = event.get("oracle_config").filter(|c| !c.is_null());
         let gate_only = config.and_then(|c| c.as_object()).is_some_and(|c| c.keys().all(|k| k == "source_gate"));
         if unread || (config.is_some() && !(written.is_some() && gate_only)) || event.get("path_skip_override").is_some_and(|v| v == true) {
@@ -478,6 +498,11 @@ fn converted_rules_give_the_recorded_findings() {
             eprintln!("{} {r}:\n{rows}", event["test"]);
         }
         let mut want: Vec<String> = event["findings"].as_array().unwrap().iter().map(|f| format!("{}:{}:{}", f["path"].as_str().unwrap(), f["line"], f["code"].as_str().unwrap())).collect();
+        // The suite plugin (a production event) drops a hand-written rule's log-mode codes.
+        if production && hand {
+            let log = log_codes(&check);
+            got.retain(|g| !log.iter().any(|c| g.ends_with(&format!(":{c}"))));
+        }
         // Findings are a set of keys (path, line, code): a key found twice is one finding.
         got.sort();
         got.dedup();

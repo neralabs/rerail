@@ -1320,17 +1320,27 @@ oracles and messages; the census counts 100.
 
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
-Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
-parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Still refused by name:
-`.violation` at a span or a source location (file-length, test-budget, noqa-sec-ratchet), `~` patterns,
-`must`/`may`, `=> edits`, `ordered by`, `dfs_first`, `sum`/`mean`/`join`, an aggregate over a join, kind
-sets of functions (tsx) and negated disjunctions. **Closure:** list step 30.
+Lowered now (decision 0046, reader section): `.violation` at a node, a span or a `@place`; `code "X"`,
+`code {c} in "re"`, `tag` and `suppress` lines; `match` captures, arithmetic, the string functions, Soufflé's
+`cat`/`max`/`min`/`to_number`/`to_float`/`%`, floats; `sum` and `join` (and aggregates over terms, inside
+terms, and compared with each other); `.input` with parameters; `within`, `within_stop`, `nearest` (a named
+ancestor negated too), `inside` and `has` over kind sets and over node-valued sets; `precedes_stop`; negated
+conjunctions (a helper relation); `must, may`; `unset`; recursion that makes values bounded by the tree, a
+count, a shrinking text or a function between rows (`front::cycles`). Still refused by name (census of
+2026-11-06, clauses alone): `ordered by` (37 clauses: eslint-one-var, the owner-code sketch), `@place` as a
+value outside a `.violation`'s head (3 clauses, 12 files), `dfs_first`/`dfs_first_memo` (2), `~` patterns
+(1), `mean`, `=> edits`. `UnboundedValueCycle` still stops 15 library clauses (73 files) whose bound is not
+one of those (`hex_place`, `norm`/`sci`, `unescape`, `slot_walk` over tokens, `b005_char`, `era_re`).
+**Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
 
 Each translated program declares the engine's base relations (`node`, `text`, `child` …) instead of
-`#include "core.rr"`. **Closure:** the engine's base relations and `core.rr` agree, and the programs
-include it.
+`#include "core.rr"`. Decision 0046 made `core.rr`'s base relations for a program that includes it; the
+translated programs are T's, and their recorded outputs are T's projection (comments not counted among
+children, `text` of identifiers, T's `op`), so including `core.rr` would change what they compute. They stay
+as they are until T's parity tests read T's view by its own names (as `op_t`). **Closure:** the programs
+include `core.rr` and their tests read T's view by name.
 
 ## O75. The `.rdl` copies and T's tools
 
@@ -1343,18 +1353,21 @@ reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/gene
 Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
 parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
 (`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
-since reading it is not written. **Closure:** these relations are built natively and the files are read.
+since reading it is not written. **Closure:** these relations are built natively and the files are read. (`option`, `option_item`, `file` and
+`package*` are made now, decision 0046; `parsed` and `string_annotation` are O80.)
 
 ## O77. Lowering shortcuts in `.rr`
 
 - A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
-  text test.
-- `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
+  text test; captures on a node or a span are symbols, not spans; `match_all` is not made (O80).
+- `unset(x)` is the id -1. Its text is "" (`text(x, t)` of it lowers to `t = ""`), and `!unset(x)` is
+  `x != -1` (decision 0046). Inside an aggregate, `nearest` or `ast` it is still refused.
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
   path has no range read yet.
-- The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
-  no new values; this extends O11's bound.
+- `earlier` and `visit_index` are preorder, not CPython's ast order.
+- The value-cycle check (`front::cycles`) accepts the bounds decision 0046 lists; a bound it does not know is
+  refused, never run.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
 ## O78. Where the `.rr` library and rules differ from the recorded findings
@@ -1377,15 +1390,47 @@ brought over as it lands. Hand-written rules on the recorded events: 97 of 98 ex
 
 Left: public-api's chainable-builder reads `text` of a return annotation. `core.rr` (and the rule-syntax pass's
 ALIGN-FINAL-SHAPE.md) give every node a `text`; the engine's is T's, identifiers only (1 event).
-**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests).
+**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests). Done for
+programs that include `core.rr` (decision 0046), up to 256 bytes or token-like (O80).
 
 `logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed once in the parallel `logic::` run
 at load 40-55 and passes alone: shared state between tests, not looked into.
 
 ## O79. `op` of a comparison: closed
 
+**Revised (decision 0046, the coordinator's choice):** `op` follows `core.rr`, every anonymous token of a node in
+every language, for programs that include `core.rr`. T's view below is `op_t` in both shapes, and `op` in T's
+shape; the parity test reads `op_t`. `op_at` is every non-punctuation token in order, so Rust's `&&` of a `let`
+chain has one.
+
+Before:
 `op` stays T's: one row per node, binary, boolean and unary operators, augmented assignments and `async`, so T's
 parity tests hold. A comparison has several operators in order (`a < b <= c`), so it has its own relation, the one
 `core.rr` already declares: `op_at(n, i, s)`, n's operator tokens (the `operator` and `operators` fields) from 0.
 The library's `cmp` reads `op_at(c, 0, o)`. Not yet: Rust's `&&` in a `let` chain (`complexity/rust.rr`), whose
 tokens have no field.
+
+## O80. `core.rr` base relations not made yet, or made with a bound (decision 0046)
+
+- `parsed` and `string_annotation` (O76) are still read as empty. A string parsed as code needs its tree grafted
+  into the batch's node space, on demand (rrlab answers requests in rounds); not built.
+- `match_all`, and `match` with captures on a node or span, need the lowering to call the text layer on the
+  bytes (0042 §3). (`docof` of a span is made: the lowering reads `core.rr`'s `docof` as an input.)
+- `text` of a node longer than 256 bytes that is not token-like has no row; a test on it is 0042 §3's file scan.
+- `syntax_error` for Python is tree-sitter's ERROR/MISSING, not a CPython-grammar verdict.
+- `static_value` is `value`: file-local constants are not followed.
+- `tsconfig*`, `package_export`, `git_*`, `signed_list`, `input_error` and `list_len` are not read.
+- `earlier` and `visit_index` are preorder, not CPython's ast order (as O77).
+**Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
+
+
+## O81. A program that derives a relation `core.rr` makes an input
+
+- Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
+  T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
+  `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
+  a derived table whose columns are `c0, c1`: "names no column in scope".
+- Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
+**Closure:** either the planner names columns by `input_columns` only for relations the program reads as
+inputs (a derived relation keeps `c0, c1`), or a program deriving an input relation is refused at reading and
+the T programs' copies read `core.rr`'s `docof`; the nine tests run again.

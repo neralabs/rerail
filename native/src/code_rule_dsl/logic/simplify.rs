@@ -139,7 +139,7 @@ fn canonical(rule: &Rule) -> String {
             Literal::Agg { var, op, over, atom: a } => {
                 let var = name(var);
                 let over = over.as_ref().map(|o| name(o));
-                Literal::Agg { var, op: *op, over, atom: atom(a, &mut name) }
+                Literal::Agg { var, op: op.clone(), over, atom: atom(a, &mut name) }
             }
             Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
             Literal::Ast { document, node, matcher, captures } => Literal::Ast {
