@@ -860,8 +860,8 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
             ("line", View::Loc(Place::Line)),
             ("end_line", View::Loc(Place::EndLine)),
             ("col", View::Loc(Place::Col)),
-            // `docof` is the lowering's projection of `node` (`rr::lower`); this view gives it for spans too, once
-            // the lowering reads it as an input.
+            // `core.rr`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
+            ("docof", View::Loc(Place::Docof)),
             ("visit_index", View::Visit),
             ("ast_depth", View::Depth),
         ]),

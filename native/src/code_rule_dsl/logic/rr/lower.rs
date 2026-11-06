@@ -30,7 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::syntax::{Code, Head, Item, Lit, Statement, Suppress, Term as STerm};
-use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AXIS, AggOp, DESCENDANTS, RESERVED, Atom, Error, LatticeDecl, Literal, Program, Rule, Term, Value};
 use crate::code_rule_dsl::logic::strings::SET;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -117,6 +117,12 @@ struct Lowerer {
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
+    /// Whether `docof` is declared over `loc`s, as `core.rr` declares it: an input that spans have rows in
+    /// (decision 0046), not the projection of `node`.
+    docof_of_locs: bool,
+    /// The relations declared `must, may`, and the rules a `must` or `may` head wrote (by index).
+    three: BTreeSet<String>,
+    modal: BTreeMap<usize, String>,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -175,6 +181,7 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             e => e,
         })?;
     }
+    l.three_valued();
     l.findings();
     l.projections();
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
@@ -217,9 +224,16 @@ impl Lowerer {
         let mut words = tail.iter();
         while let Some(w) = words.next() {
             match w.as_str() {
+                // `must, may`: three-valued (`three_valued`).
+                "must" | "may" | "," => {
+                    self.three.insert(name.clone());
+                }
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 other => return not_yet(format!("`{other}` on .decl {name}")),
             }
+        }
+        if name == "docof" {
+            self.docof_of_locs = cols.first().is_some_and(|(_, t)| t == "loc");
         }
         let mut out = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
@@ -245,12 +259,75 @@ impl Lowerer {
         Ok(())
     }
 
-    /// `core.rr`'s `kind(n, k)` and `docof(n, d)` are projections of `node`, as T's programs write them: rules, which
-    /// the planner reads from `node` in place, not inputs; `precedes` is a rule over `child`.
+    /// `.decl r(…) must, may` (core.rr 3): r is computed twice. Its may side, which keeps the name, holds what is
+    /// proven or unknown: every rule of r. Its must side (`rr_must_r`) holds what is proven: the rules with no
+    /// prefix or `must`. A relation that reads a three-valued one is three-valued too, with every rule on both
+    /// sides. In a must side's rule a positive atom of a three-valued relation reads its must side and a negated
+    /// one its may side; a may side's rule reads the other way. A finding is the may side: a definite one and a
+    /// possible one have the same key, and the possible tag is not made yet.
+    fn three_valued(&mut self) {
+        if self.three.is_empty() {
+            return;
+        }
+        let must = |rel: &str| format!("{RESERVED}must_{rel}");
+        let mut three = self.three.clone();
+        loop {
+            let before = three.len();
+            for rule in &self.prog.rules {
+                if rule.body.iter().any(|l| l.atom().is_some_and(|a| three.contains(&a.rel))) {
+                    three.insert(rule.head.rel.clone());
+                }
+            }
+            if three.len() == before {
+                break;
+            }
+        }
+        let side = |body: &[Literal], must_side: bool| -> Vec<Literal> {
+            body.iter()
+                .cloned()
+                .map(|mut l| {
+                    if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &mut l
+                        && three.contains(&a.rel)
+                        && (a.neg != must_side)
+                    {
+                        a.rel = must(&a.rel);
+                    }
+                    l
+                })
+                .collect()
+        };
+        let mut rules = Vec::new();
+        for (i, rule) in std::mem::take(&mut self.prog.rules).into_iter().enumerate() {
+            if !three.contains(&rule.head.rel) {
+                rules.push(rule);
+                continue;
+            }
+            let modal = self.modal.get(&i).map(String::as_str);
+            if modal != Some("may") {
+                let mut head = rule.head.clone();
+                head.rel = must(&head.rel);
+                rules.push(Rule { head, body: side(&rule.body, true) });
+            }
+            rules.push(Rule { head: rule.head.clone(), body: side(&rule.body, false) });
+        }
+        self.prog.rules = rules;
+        for rel in &three {
+            if let Some(cols) = self.prog.decls.get(rel).cloned() {
+                self.prog.decls.insert(must(rel), cols);
+            }
+            if let Some(rows) = self.prog.facts.get(rel).cloned() {
+                self.prog.facts.insert(must(rel), rows);
+            }
+        }
+    }
+
+    /// `core.rr`'s `kind(n, k)` is a projection of `node`, and so is `docof(n, d)` as T's programs declare it (over
+    /// nodes): rules, which the planner reads from `node` in place, not inputs; `precedes` is a rule over `child`.
+    /// `core.rr`'s `docof(x: loc, d)` stays an input, for spans have a document too.
     fn projections(&mut self) {
         let v = |s: &str| Term::Var(s.to_owned());
         for (rel, args) in [("kind", [Term::Wild, v("n"), v("k"), Term::Wild, Term::Wild]), ("docof", [v("d"), v("n"), Term::Wild, Term::Wild, Term::Wild])] {
-            if !self.prog.inputs.iter().any(|i| i == rel) || !self.prog.decls.contains_key("node") {
+            if !self.prog.inputs.iter().any(|i| i == rel) || !self.prog.decls.contains_key("node") || (rel == "docof" && self.docof_of_locs) {
                 continue;
             }
             self.prog.inputs.retain(|i| i != rel);
@@ -372,8 +449,10 @@ impl Lowerer {
         heads.iter().flat_map(|h| &h.args).for_each(|a| a.vars(&mut outer));
         let bodies = self.conjunction(&body, &outer.into_iter().collect())?;
         for head in heads {
-            if let Some(m) = &head.modal {
-                return not_yet(format!("`{m}` head {}", head.rel));
+            if let Some(m) = &head.modal
+                && !self.three.contains(&head.rel)
+            {
+                return Err(Error::Syntax(format!("`{m}` head {}: the relation is not declared `must, may`", head.rel)));
             }
             // `V(@place(path, line), …)` for a `.violation V`: a row of V's place relation.
             let mut rel = head.rel.clone();
@@ -395,6 +474,9 @@ impl Lowerer {
             let args = written.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
             for body in &bodies {
                 let (args, body) = unset(args.clone(), body.clone())?;
+                if let Some(m) = &head.modal {
+                    self.modal.insert(self.prog.rules.len(), m.clone());
+                }
                 self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args, neg: false, gated: false }, body });
             }
         }
@@ -534,6 +616,55 @@ impl Lowerer {
             self.prog.rules.push(Rule { head: head.clone(), body });
         }
         Ok(Literal::Atom(Atom { neg: true, ..head }))
+    }
+
+    /// `precedes_stop(a, b, S)` as a relation `rr_prec_<S>(a, b)`: a and b are children of one parent, a first,
+    /// and no child between them is in S (a kind, a relation of kinds, or a relation of nodes).
+    fn precedes_stop(&mut self, set: &STerm) -> String {
+        let label = match set {
+            STerm::Str(k) | STerm::Var(k) => k.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>(),
+            _ => "set".to_owned(),
+        };
+        let name = format!("{RESERVED}prec_{label}");
+        if self.prog.decls.contains_key(&name) {
+            return name;
+        }
+        let v = |s: &str| Term::Var(s.to_owned());
+        let atom = |rel: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: rel.to_owned(), args, neg, gated: false });
+        let cmp = |l: &str, r: &str| Literal::Cmp { l: v(l), op: "<", r: v(r) };
+        let member = match (set, self.node_set(set)) {
+            (_, Some(nodes)) => vec![atom(&nodes, vec![v("s")], false)],
+            (STerm::Str(k), _) => vec![atom("kind", vec![v("s"), Term::Str(k.clone())], false)],
+            (STerm::Var(kinds), _) => vec![atom("kind", vec![v("s"), v("sk")], false), atom(kinds, vec![v("sk")], false)],
+            _ => vec![],
+        };
+        // after(a, k): a later sibling of a at index k is in S; first(a, j): the first such.
+        let after = format!("{RESERVED}prec_after_{label}");
+        let first = format!("{RESERVED}prec_first_{label}");
+        let node_int = vec![("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
+        self.prog.decls.insert(after.clone(), node_int.clone());
+        self.prog.decls.insert(first.clone(), node_int);
+        self.prog.decls.insert(name.clone(), vec![("a".to_owned(), "node".to_owned()), ("b".to_owned(), "node".to_owned())]);
+        let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned(), args, neg: false, gated: false };
+        let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
+        body.extend(member);
+        self.prog.rules.push(Rule { head: head(&after, vec![v("a"), v("k")]), body });
+        self.prog.rules.push(Rule {
+            head: head(&first, vec![v("a"), v("j")]),
+            body: vec![
+                atom(&after, vec![v("a"), Term::Wild], false),
+                Literal::Agg { var: "j".to_owned(), op: AggOp::Min, over: Some("k".to_owned()), atom: head(&after, vec![v("a"), v("k")]) },
+            ],
+        });
+        let pair = || vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("b"), v("l")], false), cmp("i", "l")];
+        let mut none = pair();
+        none.push(atom(&after, vec![v("a"), Term::Wild], true));
+        self.prog.rules.push(Rule { head: head(&name, vec![v("a"), v("b")]), body: none });
+        let mut upto = pair();
+        upto.push(atom(&first, vec![v("a"), v("j")], false));
+        upto.push(Literal::Cmp { l: v("l"), op: "<=", r: v("j") });
+        self.prog.rules.push(Rule { head: head(&name, vec![v("a"), v("b")]), body: upto });
+        name
     }
 
     /// A set argument that names a relation of nodes (`.decl block_node(n: node)`), not of kinds.
@@ -814,6 +945,10 @@ impl Lowerer {
                 return Ok(Literal::Cmp { l: self.term(q)?, op: "=", r: Term::Call("cat".to_owned(), vec![self.term(m)?, self.term(x)?]) });
             }
             ("ast", _) if !neg => return self.ast(args),
+            ("precedes_stop", [a, b, set]) => {
+                let rel = self.precedes_stop(set);
+                return Ok(Literal::Atom(Atom { rel, args: vec![self.term(a)?, self.term(b)?], neg, gated: false }));
+            }
             _ => {}
         }
         if let Some((_, _)) = RELATION_ARG.iter().find(|(r, _)| *r == rel) {

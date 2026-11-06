@@ -109,6 +109,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "line_count" => &["d", "k"],
         "end_line" => &["n", "l"],
         "col" => &["n", "c"],
+        "docof" => &["n", "d"],
         "source" => &["d", "sp"],
         "src_line" => &["d", "l", "sp"],
         "str_part" => &["lit", "i", "v", "at", "spec"],

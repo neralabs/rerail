@@ -175,7 +175,6 @@ best(n, @dot("a", x)) :- name(n, x).
 fn unlowered_constructs_are_named() {
     for (src, what) in [
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
-        (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
     ] {
         let e = parse(src).unwrap_err().to_string();
@@ -476,4 +475,65 @@ fn hand_written_rules_lowering_report() {
         let result = parse_file(&f);
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
+}
+
+/// `must, may` (core.rr 3): two sides, negation reading the other one, and what reads them three-valued too.
+#[test]
+fn must_may_relations_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("mustmay");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl base(x: symbol)
+base("a"). base("b"). base("c").
+.decl known(x: symbol)
+known("a").
+.decl p(x: symbol) must, may
+must p(x) :- known(x).
+may p(x) :- base(x), !known(x), x != "c".
+.decl q(x: symbol)
+q(x) :- base(x), !p(x).
+// Read positively, p is three-valued in what reads it too (a relation the runner writes: p itself is negated).
+.decl seen(x: symbol)
+seen(x) :- p(x).
+.output seen, q, rr_must_seen, rr_must_q
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("seen"), "a\nb\n");
+    assert_eq!(read("rr_must_seen"), "a\n");
+    assert_eq!(read("q"), "b\nc\n");
+    assert_eq!(read("rr_must_q"), "c\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `precedes_stop(a, b, S)`: siblings in order with no child of S between them.
+#[test]
+fn precedes_stop_runs() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("precstop");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    a()\n    b()\n    return\n    c()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl kind(n: node, k: symbol)
+.input node, child, kind
+.decl stops(k: symbol)
+stops("return_statement").
+.decl pairs(x: number, y: number)
+pairs(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, "expression_statement", y, _), precedes_stop(a, b, "return_statement").
+.decl by_set(x: number, y: number)
+by_set(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, _, y, _), precedes_stop(a, b, stops).
+.output pairs, by_set
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("pairs"), "13\t21\n");
+    assert_eq!(read("by_set"), "13\t21\n13\t29\n21\t29\n");
+    let _ = std::fs::remove_dir_all(&dir);
 }
