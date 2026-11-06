@@ -185,6 +185,51 @@ pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path
     run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
+/// The functors only CPython gives (core.rr): its printer and its dump of a tree.
+const CPYTHON_FUNCTORS: [&str; 2] = ["unparse", "ast_dump"];
+
+/// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
+/// (`value`, `str_part`, …), or calls a functor only CPython gives: the planner would otherwise fail on its missing
+/// statistics (`no statistics for value.c0`). A program's own inputs are its business (facts it is given later).
+fn bound(prog: &front::Program) -> Result<()> {
+    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).chain(prog.facts.keys().map(String::as_str)).collect();
+    let cpython = "CPython (core.rr: the isolated `ast.parse` worker), which the corpus runner does not run";
+    for rule in &prog.rules {
+        for a in rule.body.iter().filter_map(front::Literal::atom) {
+            let rel = a.rel.as_str();
+            if derived.contains(rel) || super::super::sql::select::input_columns(rel).is_some() || !crate::code_rule_dsl::logic::rr::is_core(rel) {
+                continue;
+            }
+            let why = match rel {
+                "str_part" => format!("it needs {cpython}"),
+                "parsed" => format!("it needs the string's contents parsed, by {cpython}, or by a sub-grammar parse the runner does not do either"),
+                "list_len" => "it counts a pattern's list variable ($$$X), and patterns do not lower".to_owned(),
+                "string_annotation" => "it needs Ruff's table of the positions that hold a type (core.rr)".to_owned(),
+                _ => "the corpus runner has no producer of it (the relations it binds: candidates/datalog/authored/README.md)".to_owned(),
+            };
+            return Err(Error::Plan(format!("{rel} is read, and nothing derives it or binds it: {why}")));
+        }
+        let mut calls = Vec::new();
+        for l in &rule.body {
+            match l {
+                front::Literal::Atom(a) | front::Literal::Agg { atom: a, .. } => calls.extend(&a.args),
+                front::Literal::Cmp { l, r, .. } => calls.extend([l, r]),
+                _ => {}
+            }
+        }
+        calls.extend(&rule.head.args);
+        while let Some(t) = calls.pop() {
+            if let front::Term::Call(f, args) = t {
+                if CPYTHON_FUNCTORS.contains(&f.as_str()) {
+                    return Err(Error::Plan(format!("@{f} is called, and it needs {cpython}")));
+                }
+                calls.extend(args);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
@@ -262,6 +307,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     let vocabulary = crate::code_rule_dsl::logic::strings::as_relations(&mut prog).map_err(Error::Plan)?;
     let mut lowered = lower::lower(&prog, dialect, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())))?;
     let sets = lowered.transduce_nearest();
+    bound(&lowered.program)?;
     let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
     let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).collect();
     let part = |program: front::Program| lower::Lowered { program, domains: lowered.domains.clone(), ops: lowered.ops, dialect: lowered.dialect };
@@ -546,9 +592,10 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             .map(|row| {
                 row.split('\t')
                     .enumerate()
+                    // A node column holding no document's node (`unset`'s -1) is written as it is.
                     .map(|(i, v)| match v.parse::<i64>() {
-                        Ok(v) if node_columns.contains(&i) && own => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
-                        Ok(v) if node_columns.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+                        Ok(v) if node_columns.contains(&i) && own && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
+                        Ok(v) if node_columns.contains(&i) && !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         _ => v.to_owned(),
                     })
                     .collect::<Vec<_>>()
