@@ -5,20 +5,22 @@
 // The SQL reads CPython's `ast` (the `pythonAst` stage) over the files the gate passes. Here the same rows are read
 // on tree-sitter's tree (as data-layer-connection-mode-split.rr does):
 // - Name: an `identifier` in expression position (not an attribute's attr, a def/class/keyword/parameter name, an
-//   import's names, a global/nonlocal name, an `except … as` alias or inside a case pattern); its token its id.
+//   import's names, a global/nonlocal name, an `except … as` alias, inside a case pattern, or a PEP 695 type
+//   parameter's name, which CPython keeps as a string); its token its id.
 // - Attribute: `attribute`, its token the attr. Lines are tree-sitter start lines, which are CPython's for these.
 // - Constant str (`value_kind='str'`): a non-f, non-bytes `string`; a `concatenated_string` of such strings (one
-//   Constant, at its start line), and each literal part of an f-string (`string_content`), CPython 3.12's Constants.
+//   Constant, at its start line); and each literal of a JoinedStr (an f-string, a concatenation with an f-string
+//   part, a format spec), `fstring_piece`'s literal pieces, CPython 3.12's Constants: their decoded text, adjacent
+//   parts merged, a debug field's `x = ` in it, at the line where the piece's first part starts (CPython's lineno:
+//   a plain part, even an empty one, a part's text after the interpolation before, the debug text's `{`; in a spec
+//   right after its `:` or the nested field before).
 // - Import: its token every alias's dotted name; ImportFrom: its module as written (relative dots dropped) and every
 //   alias's name, none at all when the module is empty (`from . import x`: SQL's NULL || …).
 // - A docstring (excluded from HNSW007): a Constant that is the whole first statement of a module, class or def body.
 // A plain string's and a plain concatenation's value is `value`'s (escapes decoded, parts joined), exactly; parentheses
 // are seen through (CPython drops them) for a docstring and a Name receiver.
-// Approximations (noted), each blocked on `fstring_piece` (W's pythonFString parse, not bound): an f-string's literal
-// parts are its `string_content` children, valued by their `node_text` (escapes and `{{` not decoded, adjacent parts
-// not merged, format-spec parts not read), and in a concatenation with an f-string part (a JoinedStr) the plain
-// strings are tested one by one, not merged with their neighbours. Identifiers in PEP 695 type parameters are read as
-// Names (CPython: strings). CPython's own syntax verdict is tree-sitter's (`syntax_error`): CPython is not run.
+// Gap (noted): CPython's own syntax verdict is tree-sitter's (`syntax_error`): CPython's, a CPython-only fact, is not
+// bound.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -28,6 +30,8 @@
 .decl value(n: node, v: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)
+.decl end_line(n: node, l: number)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -77,6 +81,19 @@ hnsw_architecture_not_name(n) :- node(_, p, "global_statement", _, _), child(p, 
 hnsw_architecture_not_name(n) :- node(_, p, "nonlocal_statement", _, _), child(p, n, _).
 hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_imports).
 hnsw_architecture_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _, hnsw_architecture_patterns).
+// A PEP 695 type parameter's name (CPython's TypeVar, TypeVarTuple, ParamSpec `name`, a string): the item, or a
+// default's `name`; in a `type` its first child; an identifier, a splat's identifier, a bounded one's first part.
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(n), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "splat_type", _, _), child(i, n, _), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "constrained_type", _, _), child(i, n, 0), node(_, n, "identifier", _, _).
+hnsw_architecture_not_name(n) :- hnsw_architecture_tinner(i), node(_, i, "constrained_type", _, _), child(i, t, 0), node(_, t, "type", _, _),
+    child(t, n, 0), node(_, n, "identifier", _, _).
+.decl hnsw_architecture_tparam(p: node)
+hnsw_architecture_tparam(p) :- node(_, l, "type_parameter", _, _), child(l, p, _), !node(_, p, "type_default", _, _).
+hnsw_architecture_tparam(p) :- node(_, l, "type_parameter", _, _), child(l, t, _), node(_, t, "type_default", _, _), field(t, "name", p).
+.decl hnsw_architecture_tinner(i: node)
+hnsw_architecture_tinner(i) :- hnsw_architecture_tparam(p), node(_, p, "type", _, _), child(p, i, 0).
+hnsw_architecture_tinner(p) :- hnsw_architecture_tparam(p), !node(_, p, "type", _, _).
 .decl hnsw_architecture_params(p: node)
 hnsw_architecture_params(p) :- node(_, p, "parameters", _, _).
 hnsw_architecture_params(p) :- node(_, p, "lambda_parameters", _, _).
@@ -99,16 +116,71 @@ hnsw_architecture_ref(d, a, s) :- node(d, a, "attribute", _, _), field(a, "attri
 hnsw_architecture_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !contains("f", p), !contains("b", p).
 .decl hnsw_architecture_fstring(n: node)
 hnsw_architecture_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
-// hnsw_architecture_const(c, v): Constant c (a string, a concatenation, an f-string part) and a value it holds.
+// hnsw_architecture_const(c, v): Constant c (a plain string in no concatenation, a plain concatenation) and its value.
 .decl hnsw_architecture_const(c: node, v: symbol)
 hnsw_architecture_const(c, v) :- hnsw_architecture_plain(c), child(q, c, _), !node(_, q, "concatenated_string", _, _), value(c, v).
 hnsw_architecture_const(q, v) :- node(_, q, "concatenated_string", _, _), !hnsw_architecture_mixed(q), value(q, v).
-hnsw_architecture_const(c, v) :- hnsw_architecture_fstring(f), child(f, c, _), node(_, c, "string_content", _, _), node_text(c, v).
-// A concatenation with an f-string part is a JoinedStr: its literal parts are the f-string parts above, and its
-// plain strings' parts, approximately, the plain strings themselves.
+// A concatenation with an f-string part is one JoinedStr.
 .decl hnsw_architecture_mixed(q: node)
 hnsw_architecture_mixed(q) :- node(_, q, "concatenated_string", _, _), child(q, c, _), hnsw_architecture_fstring(c).
-hnsw_architecture_const(c, v) :- hnsw_architecture_mixed(q), child(q, c, _), hnsw_architecture_plain(c), value(c, v).
+
+// ---- JoinedStr Constants: hnsw_architecture_piece_const(d, l, v) ----
+// The hosts: an f-string in no concatenation, a concatenation with an f-string part (string hosts), a format spec.
+.decl hnsw_architecture_part_of(h: node)
+hnsw_architecture_part_of(h) :- child(q, h, _), node(_, q, "concatenated_string", _, _).
+.decl hnsw_architecture_host_str(h: node)
+hnsw_architecture_host_str(h) :- hnsw_architecture_fstring(h), !hnsw_architecture_part_of(h).
+hnsw_architecture_host_str(q) :- hnsw_architecture_mixed(q).
+.decl hnsw_architecture_host_spec(h: node)
+hnsw_architecture_host_spec(h) :- node(_, h, "format_specifier", _, _).
+// A string host's f-string parts.
+.decl hnsw_architecture_fpart(h: node, p: node)
+hnsw_architecture_fpart(h, h) :- hnsw_architecture_host_str(h), hnsw_architecture_fstring(h).
+hnsw_architecture_fpart(q, p) :- hnsw_architecture_mixed(q), child(q, p, _), hnsw_architecture_fstring(p).
+// Its interpolations (a spec's nested fields), each with its rank by start: the k-th is the k-th interpolation piece.
+.decl hnsw_architecture_interp(h: node, x: node, s: number)
+hnsw_architecture_interp(h, x, s) :- hnsw_architecture_fpart(h, p), child(p, x, _), node(_, x, "interpolation", s, _).
+hnsw_architecture_interp(h, x, s) :- hnsw_architecture_host_spec(h), child(h, x, _), node(_, x, "format_expression", s, _).
+.decl hnsw_architecture_interp_k(h: node, x: node, k: number)
+hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { hnsw_architecture_interp(h, _, t), t < s }.
+.decl hnsw_architecture_host(h: node)
+hnsw_architecture_host(h) :- hnsw_architecture_host_str(h).
+hnsw_architecture_host(h) :- hnsw_architecture_host_spec(h).
+.decl hnsw_architecture_piece_node(h: node, i: number, x: node)
+hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _),
+    k = count : { fstring_piece(h, j, "interpolation", _), j < i }, hnsw_architecture_interp_k(h, x, k).
+.decl hnsw_architecture_lit(h: node, i: number, v: symbol)
+hnsw_architecture_lit(h, i, v) :- hnsw_architecture_host(h), fstring_piece(h, i, "literal", v).
+// A string host: the literal's first part, between the interpolation before (or the host's start) and the one after
+// (or the host's end): a plain part, a text child of an f-string part, or the next interpolation when its debug text
+// is in the literal.
+.decl hnsw_architecture_frag(h: node, f: node, s: number)
+hnsw_architecture_frag(q, p, s) :- hnsw_architecture_mixed(q), child(q, p, _), node(_, p, "string", s, _), !hnsw_architecture_fstring(p).
+hnsw_architecture_frag(h, f, s) :- hnsw_architecture_fpart(h, p), child(p, f, _), node(_, f, k, s, _), k != "interpolation",
+    k != "string_start", k != "string_end".
+.decl hnsw_architecture_lo(h: node, i: number, a: number)
+hnsw_architecture_lo(h, 0, a) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_str(h), node(_, h, _, a, _).
+hnsw_architecture_lo(h, i, a) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), i > 0, j = i - 1,
+    hnsw_architecture_piece_node(h, j, x), node(_, x, _, _, a).
+.decl hnsw_architecture_hi(h: node, i: number, b: number)
+hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = i + 1,
+    hnsw_architecture_piece_node(h, j, x), node(_, x, _, b, _).
+hnsw_architecture_hi(h, i, b) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = i + 1, !fstring_piece(h, j, _, _),
+    node(_, h, _, _, b).
+.decl hnsw_architecture_run(h: node, i: number, f: node, s: number)
+hnsw_architecture_run(h, i, f, s) :- hnsw_architecture_lo(h, i, a), hnsw_architecture_hi(h, i, b), hnsw_architecture_frag(h, f, s),
+    s >= a, s < b.
+hnsw_architecture_run(h, i, x, s) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_str(h), j = i + 1,
+    fstring_piece(h, j, "debug", _), hnsw_architecture_piece_node(h, j, x), node(_, x, _, s, _).
+.decl hnsw_architecture_run_line(h: node, i: number, l: number)
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_run(h, i, f, s), s = min t : { hnsw_architecture_run(h, i, _, t) }, line(f, l).
+// A spec: its literal text cannot hold a line break, so a literal starts on the line of the `:` (the spec's start)
+// or of the nested field before it ends.
+hnsw_architecture_run_line(h, 0, l) :- hnsw_architecture_lit(h, 0, _), hnsw_architecture_host_spec(h), line(h, l).
+hnsw_architecture_run_line(h, i, l) :- hnsw_architecture_lit(h, i, _), hnsw_architecture_host_spec(h), i > 0, j = i - 1,
+    hnsw_architecture_piece_node(h, j, x), end_line(x, l).
+.decl hnsw_architecture_piece_const(d: number, l: number, v: symbol)
+hnsw_architecture_piece_const(d, l, v) :- hnsw_architecture_lit(h, i, v), hnsw_architecture_run_line(h, i, l), node(d, h, _, _, _).
 // x with its parentheses taken off: `((x))` is x.
 .decl hnsw_architecture_unparen(o: node, x: node)
 hnsw_architecture_unparen(x, x) :- node(_, x, _, _, _), !node(_, x, "parenthesized_expression", _, _).
@@ -182,13 +254,21 @@ hnsw_architecture_row(d, c, "HNSW005") :- node(d, c, "call", _, _), field(c, "fu
 hnsw_architecture_row(d, c, "HNSW002") :- hnsw_architecture_const(c, s), node(d, c, _, _, _),
     (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
 
+// The rows at their lines; a JoinedStr's Constants have a line, not a node.
+.decl hnsw_architecture_found(d: number, l: number, issue: symbol)
+hnsw_architecture_found(d, l, issue) :- hnsw_architecture_row(d, n, issue), line(n, l).
+hnsw_architecture_found(d, l, "HNSW007") :- hnsw_architecture_piece_const(d, l, s), hnsw_architecture_module(d),
+    match("(?s:.*)(?i:sqljson\\w*|\\bjsonb?(?:_\\w+)?\\b)(?s:.*)", s).
+hnsw_architecture_found(d, l, "HNSW002") :- hnsw_architecture_piece_const(d, l, s),
+    (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).
+
 // The outer WHERE: not rust_bridge/generated_*.
 .decl hnsw_architecture_generated(d: number)
 hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).
 
 violation("data-layer-hnsw-architecture", "hnsw-architecture", issue, p, l) :-
-    hnsw_architecture_row(d, n, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d),
-    in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+    hnsw_architecture_found(d, l, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d),
+    in_scope(d), !out_scope(d), doc(d, p, _).
 
 // hnsw-forbidden-files: every file (a file.content regex: parsed or not) at a forbidden path, at line 1; at any
 // other entry point the query ends `WHERE 0`: no rows.
