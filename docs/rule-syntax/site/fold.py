@@ -112,7 +112,7 @@ def fold(rs, decls, notes, allowed=None):
     cands -= _nested_calls(rs, cands)
     # Signature of each candidate: its rules with strings, candidate calls and local names abstracted.
     info = {}
-    for n in cands:
+    for n in sorted(cands):
         rows = []
         for r in defs[n]:
             tl = [_template(l, cands) for l in rs.lits(r)]

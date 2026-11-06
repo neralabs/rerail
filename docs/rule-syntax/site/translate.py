@@ -915,11 +915,12 @@ def share_metavariables(entries, helpers):
     variables belong to one rule. So a helper relation gets a column for each metavariable that crosses its
     boundary: one it reads but does not bind (passed in), and one it binds that a caller uses (passed out).
     Each call passes the caller's variable of that name, or `_` where the caller does not use it."""
+    helpers = sorted(helpers)  # one order everywhere below: the fixpoint must not depend on the hash seed
     rules = []
     for e in entries:
         text = ", ".join(e["lits"])
         masked = _mask_ticks(_strip_strings_keep(text))
-        calls = set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & helpers
+        calls = sorted(set(re.findall(r"(?<![\w.])([a-z_]\w*)\(", masked)) & set(helpers))
         rules.append({"e": e, "owner": e["head"].split("(")[0], "head": _upper_vars(e["head"].split("(", 1)[1]),
                       "up": _upper_vars(text) | set(re.findall(r"\$\$?\$?([A-Z_][A-Z0-9_]*)", " ".join(e.get("edits") or []))),
                       "binds": _binders(text), "calls": calls})
