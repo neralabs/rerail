@@ -920,10 +920,11 @@ impl Lowerer {
         let over = over.map(|t| self.named(t, "over", &mut body));
         let keys: Vec<String> = by.iter().map(|t| self.named(t, "key", &mut body)).collect();
         let ours = |v: &str| !outer.contains(v);
-        // One plain atom: the engine's aggregate reads it.
+        // One plain atom: the engine's aggregate reads it. The built-ins lowering writes out (axes, `within`,
+        // `earlier`, …) are no relations of the program, so a body of one of them goes through the helper.
         if let [Lit::Atom { rel, args, neg: false }] = body.as_slice()
             && test_of(rel).is_none()
-            && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast")
+            && !matches!(rel.as_str(), "nearest" | "inside" | "has" | "split_dot" | "ast" | "within" | "within_stop" | "earlier" | "precedes_stop")
         {
             let Literal::Atom(mut atom) = self.atom(rel, args, false)? else { unreachable!("a plain atom") };
             let at = |v: &str| atom.args.iter().position(|t| matches!(t, Term::Var(w) if w == v));

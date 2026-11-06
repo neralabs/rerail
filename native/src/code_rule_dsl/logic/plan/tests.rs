@@ -971,3 +971,36 @@ not_split2(s) :- q(s), !split_dot(s, "os", "path.join").
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An aggregate whose body is one built-in the lowering writes out (`within`, `earlier`) counts its rows: the
+/// built-in is no relation the aggregate could read in place.
+#[test]
+fn aggregates_over_one_built_in_count_its_rows() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("agg-builtin");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f():\n    g(1)\n    h()\ndef e():\n    pass\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.decl child(p: node, c: node, i: number)
+.input node, field, text, docof, child
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+.decl below(s: symbol, k: number)
+below(s, k) :- fname(f, s), k = count : { within(n, f) }.
+.decl after(s: symbol, k: number)
+after(s, k) :- fname(f, s), k = count : { earlier(f, n) }.
+.output below, after
+"#;
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let rows = |rel: &str| read(rel).lines().map(|l| l.split('\t').map(str::to_owned).collect::<Vec<_>>()).collect::<Vec<_>>();
+    let count = |rel: &str, s: &str| rows(rel).iter().find(|r| r[0] == s).map(|r| r[1].parse::<u32>().unwrap());
+    // f's subtree has more nodes than e's, and e comes after f, so fewer nodes follow it.
+    assert!(count("below", "f").unwrap() > count("below", "e").unwrap(), "{}", read("below"));
+    assert!(count("after", "f").unwrap() > count("after", "e").unwrap(), "{}", read("after"));
+    assert!(count("below", "e").unwrap() > 0, "{}", read("below"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
