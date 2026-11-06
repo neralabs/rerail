@@ -1,0 +1,216 @@
+// data-layer-render-raw-strings, authored (decision 0043): all four clauses, which the converter leaves
+// (semantic value, parse, arguments).
+//
+// String values without `value`: a literal's value is its parts' string_content nodes decoded, and each
+// content's decoded length is classed 0, 1 or 2+ by whole-string regexes over its exact source text
+// (`node_text`), one per prefix mode (plain, f, raw, raw f): escapes as W's decoder takes them (offsets.rs,
+// value/python.rs): `\<newline>` is nothing, `\\ \' \" \a…\v`, octal, `\x..`, `\u....`, `\U........` and
+// `\N{…}` one character, an unknown escape two, universal newlines, `{{`/`}}` one character in an f-part.
+// A content that no escape reading covers (bad `\x`, `\u`, `\U` digits, a surrogate) is a value W refuses.
+// Approximations (named): a `\N{name}` is taken as one character whatever the name (W refuses names it does not
+// know); W's MAX_STRING_BYTES cap is not applied.
+//
+// The source gate (`inside module` with `render|'|"|Template\(|SqlFragment\.static\(`, or `(?s).*` with
+// sourceGate off) always holds here: every candidate is a string literal, so its module's text has a quote.
+// The options (oracleAnalyzer, sourceGate) therefore change nothing; none is read.
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl strprefix(n: node, s: symbol)
+.decl node_text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.decl end_line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// ---- shared by the clauses ----------------------------------------------------------------------------------
+.decl literal_fdef(kind: symbol)
+literal_fdef("function_definition").
+.decl literal_raise(kind: symbol)
+literal_raise("raise_statement").
+literal_raise("assert_statement").
+// A function named `^render(?:_|$)`.
+.decl literal_render(f: node)
+literal_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, "render").
+literal_render(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), prefix("render_", s).
+.decl literal_in_render(n: node)
+literal_in_render(n) :- inside(n, f, literal_fdef), literal_render(f).
+.decl literal_in_raise(n: node)
+literal_in_raise(n) :- inside(n, _, literal_raise).
+.decl literal_in_concat(n: node)
+literal_in_concat(n) :- child(p, n, _), node(_, p, "concatenated_string", _, _).
+// A string part's prefix mode: "p" plain, "f" formatted, "rp" raw, "rf" raw formatted; bytes and template
+// strings are no `str` (literal_nostr).
+.decl literal_mode(s: node, m: symbol)
+literal_mode(s, "p") :- node(_, s, "string", _, _), strprefix(s, x), !contains("r", x), !contains("f", x).
+literal_mode(s, "f") :- node(_, s, "string", _, _), strprefix(s, x), !contains("r", x), contains("f", x).
+literal_mode(s, "rp") :- node(_, s, "string", _, _), strprefix(s, x), contains("r", x), !contains("f", x).
+literal_mode(s, "rf") :- node(_, s, "string", _, _), strprefix(s, x), contains("r", x), contains("f", x).
+.decl literal_nostr(s: node)
+literal_nostr(s) :- strprefix(s, x), contains("b", x).
+literal_nostr(s) :- strprefix(s, x), contains("t", x).
+// A part's string_content nodes, classed by decoded length (0, 1, 2 for two or more), or refused (literal_bad).
+.decl literal_content(s: node, c: node, m: symbol, t: symbol)
+literal_content(s, c, m, t) :- literal_mode(s, m), child(s, c, _), node(_, c, "string_content", _, _), node_text(c, t).
+.decl literal_bad(c: node)
+literal_bad(c) :- literal_content(_, c, "p", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\r\\n|[^\\\\])*", t).
+literal_bad(c) :- literal_content(_, c, "f", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\{\\{|\\}\\}|\\r\\n|[^\\\\])*", t).
+.decl literal_cls(c: node, k: number)
+literal_cls(c, 1) :- literal_content(_, c, "p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
+literal_cls(c, 2) :- literal_content(_, c, "p", t), match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\r\\n|[^\\\\])*", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t).
+literal_cls(c, 1) :- literal_content(_, c, "f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\{\\{|\\}\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*", t).
+literal_cls(c, 2) :- literal_content(_, c, "f", t), match("(?:\\\\(?:\\r\\n|\\n|\\r)|\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\\\[^\\r\\n\\\\\\x27\\x22abfnrtv0-7xuUN]|\\{\\{|\\}\\}|\\r\\n|[^\\\\])*", t), !match("(?:\\\\(?:\\r\\n|\\n|\\r))*(?:(?:\\\\[\\\\\\x27\\x22abfnrtv]|\\\\[0-7]{1,3}|\\\\x[0-9a-fA-F]{2}|\\\\u(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|\\\\U(?:0000(?:[0-9a-cA-CeEfF][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2})|000[1-9a-fA-F][0-9a-fA-F]{4}|0010[0-9a-fA-F]{4})|\\\\N\\{[^}]+\\}|\\{\\{|\\}\\}|\\r\\n|[^\\\\])(?:\\\\(?:\\r\\n|\\n|\\r))*)?", t).
+literal_cls(c, 1) :- literal_content(_, c, "rp", t), match("(?s)(?:\\r\\n|.)?", t).
+literal_cls(c, 2) :- literal_content(_, c, "rp", t), !match("(?s)(?:\\r\\n|.)?", t).
+literal_cls(c, 1) :- literal_content(_, c, "rf", t), match("(?s)(?:\\r\\n|\\{\\{|\\}\\}|.)?", t).
+literal_cls(c, 2) :- literal_content(_, c, "rf", t), !match("(?s)(?:\\r\\n|\\{\\{|\\}\\}|.)?", t).
+
+// A str literal (the policy's repeated `any [string not f, concatenated_string with no f part]`, not inside
+// a concatenated_string, `value: {type: str}`): no part formatted, bytes or template, no content refused.
+.decl literal_part(n: node, s: node)
+literal_part(n, n) :- node(_, n, "string", _, _), !literal_in_concat(n).
+literal_part(n, s) :- node(_, n, "concatenated_string", _, _), !literal_in_concat(n), child(n, s, _), node(_, s, "string", _, _).
+.decl literal_notlit(n: node)
+literal_notlit(n) :- literal_part(n, s), literal_mode(s, "f").
+literal_notlit(n) :- literal_part(n, s), literal_mode(s, "rf").
+literal_notlit(n) :- literal_part(n, s), literal_nostr(s).
+literal_notlit(n) :- literal_part(n, s), child(s, c, _), literal_bad(c).
+.decl literal_str(n: node)
+literal_str(n) :- literal_part(n, _), !literal_notlit(n).
+// Its value has two characters or more (`value: {regex: (?s)^.{2}}`).
+.decl literal_long(n: node)
+literal_long(n) :- literal_str(n), literal_part(n, s), child(s, c, _), literal_cls(c, 2).
+literal_long(n) :- literal_str(n), literal_part(n, s), child(s, c, _), literal_cls(c, 1), literal_part(n, s2), child(s2, c2, _), literal_cls(c2, 1), c != c2.
+
+// A call's first positional argument as `arguments` (mode syntactic, Ruff's find_argument) binds it: the first
+// named argument that is no keyword and no `**`, unless a `*` comes first.
+.decl literal_kwkind(kind: symbol)
+literal_kwkind("keyword_argument").
+literal_kwkind("dictionary_splat").
+.decl literal_earlier(al: node, i: number)
+literal_earlier(al, i) :- node(_, al, "argument_list", _, _), child(al, _, i), child(al, b, j), j < i, node(_, b, k, _, _), !literal_kwkind(k).
+.decl literal_first_pos(al: node, a: node)
+literal_first_pos(al, a) :- node(_, al, "argument_list", _, _), child(al, a, i), node(_, a, k, _, _), !literal_kwkind(k), k != "list_splat", k != "parenthesized_list_splat", !literal_earlier(al, i).
+// `Template(…)` and `SqlFragment.static(…)`.
+.decl literal_template_fn(f: node)
+literal_template_fn(f) :- node(_, f, "identifier", _, _), text(f, "Template").
+.decl literal_static_fn(f: node)
+literal_static_fn(f) :- node(_, f, "attribute", _, _), field(f, "object", o), node(_, o, "identifier", _, _), text(o, "SqlFragment"),
+    field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, "static").
+.decl literal_special_fn(f: node)
+literal_special_fn(f) :- literal_template_fn(f).
+literal_special_fn(f) :- literal_static_fn(f).
+
+// ---- literal ------------------------------------------------------------------------------------------------
+// A docstring of an outermost render function: the first statement of its body block.
+.decl literal_docstring(n: node)
+literal_docstring(n) :- child(es, n, _), node(_, es, "expression_statement", _, _), child(b, es, 0), node(_, b, "block", _, _),
+    child(f, b, _), literal_render(f), !literal_in_render(f).
+// An argument of an allowed call (`str(…)`, `x.replace(…)`, …).
+.decl literal_allowed_name(s: symbol)
+literal_allowed_name("SqlAliasName"). literal_allowed_name("SqlColumnName"). literal_allowed_name("SqlIndexName").
+literal_allowed_name("SqlIntegerLiteral"). literal_allowed_name("SqlQualifiedIdentifier"). literal_allowed_name("SqlQuotedIdentifier").
+literal_allowed_name("SqlTableName"). literal_allowed_name("append"). literal_allowed_name("endswith"). literal_allowed_name("format").
+literal_allowed_name("join"). literal_allowed_name("replace"). literal_allowed_name("repr"). literal_allowed_name("startswith").
+literal_allowed_name("str").
+.decl literal_allowed_fn(f: node)
+literal_allowed_fn(f) :- node(_, f, "identifier", _, _), text(f, s), literal_allowed_name(s).
+literal_allowed_fn(f) :- node(_, f, "attribute", _, _), field(f, "attribute", x), node(_, x, "identifier", _, _), text(x, s), literal_allowed_name(s).
+.decl literal_allowed(n: node)
+literal_allowed(n) :- child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _), field(c, "function", f), literal_allowed_fn(f).
+// The argument a Template/static call reports itself (its first positional, a str literal: `compare CURRENT eq
+// FIRST` by node, the `has … pattern $ARG` holding at it).
+.decl literal_special_arg(n: node)
+literal_special_arg(n) :- child(al, n, _), node(_, al, "argument_list", _, _), child(c, al, _), node(_, c, "call", _, _),
+    field(c, "function", f), literal_special_fn(f), literal_first_pos(al, n).
+violation("data-layer-render-raw-strings", "literal", "string_literal", p, l) :-
+    literal_long(n), literal_in_render(n), !literal_docstring(n), !literal_in_raise(n), !literal_allowed(n), !literal_special_arg(n),
+    node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+
+// ---- fstring-literal ----------------------------------------------------------------------------------------
+// The f-strings parsed (`parse: pythonFString`): an f-string not in a concatenation, a concatenation with an f
+// part, and a format_specifier; each in a render function and not in raise/assert. A part that is bytes or a
+// template, or a content refused, gives no parse.
+.decl fstring_literal_cand(n: node)
+fstring_literal_cand(n) :- literal_part(n, s), literal_mode(s, "f").
+fstring_literal_cand(n) :- literal_part(n, s), literal_mode(s, "rf").
+.decl fstring_literal_refused(n: node)
+fstring_literal_refused(n) :- fstring_literal_cand(n), literal_part(n, s), literal_nostr(s).
+fstring_literal_refused(n) :- fstring_literal_cand(n), literal_part(n, s), child(s, c, _), literal_bad(c).
+.decl fstring_literal_parsed(n: node)
+fstring_literal_parsed(n) :- fstring_literal_cand(n), !fstring_literal_refused(n), literal_in_render(n), !literal_in_raise(n).
+// The parse's literal parts: runs of literal text between interpolations, across the parts of a concatenation.
+// A run's items: each string_content (classed as above; empty ones add nothing) and the debug text of a
+// `{expr=}` field (its expression source and `=`: two characters or more), each with its run's key (the start
+// of the interpolation that ends it, or the string's end), its offset and its line.
+.decl fstring_literal_bound(n: node, b: number)
+fstring_literal_bound(n, b) :- fstring_literal_parsed(n), literal_part(n, s), child(s, i, _), node(_, i, "interpolation", b, _).
+.decl fstring_literal_content(n: node, c: node, o: number)
+fstring_literal_content(n, c, o) :- fstring_literal_parsed(n), literal_part(n, s), child(s, c, _), literal_cls(c, _), node(_, c, _, o, _).
+// Debug fields: `=` after the expression (an anonymous token), read from the field's text. Approximation: with
+// a format spec, a `=` in the expression's own text directly before `:`, outside brackets that hold it (a
+// string `"=:"`), would be taken for the debug `=`.
+.decl fstring_literal_debug(i: node)
+fstring_literal_debug(i) :- node(_, i, "interpolation", _, _), !field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*=\\s*(?:![a-zA-Z]+\\s*)?\\}", t).
+fstring_literal_debug(i) :- node(_, i, "interpolation", _, _), field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*[^=!<>]=\\s*(?:![a-zA-Z]+\\s*)?:.*\\}", t).
+fstring_literal_debug(i) :- node(_, i, "format_expression", _, _), !field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*=\\s*(?:![a-zA-Z]+\\s*)?\\}", t).
+fstring_literal_debug(i) :- node(_, i, "format_expression", _, _), field(i, "format_specifier", _), node_text(i, t), match("(?s)\\{.*[^=!<>]=\\s*(?:![a-zA-Z]+\\s*)?:.*\\}", t).
+// Items: (string, run key, offset, class, line). A content's line is its first byte's, a debug text's its
+// field's. Approximation: W's is the first decoded character's, a line later where a content starts with
+// `\<newline>` or a field with a newline after `{`.
+.decl fstring_literal_item(n: node, k: number, o: number, c: number, l: number)
+// The interpolations after a content, and the first of them (its run's key).
+.decl fstring_literal_later(n: node, c: node, b: number)
+fstring_literal_later(n, c, b) :- fstring_literal_content(n, c, o), fstring_literal_bound(n, b), b > o.
+.decl fstring_literal_not_next(n: node, c: node, b: number)
+fstring_literal_not_next(n, c, b) :- fstring_literal_later(n, c, b), fstring_literal_later(n, c, b2), b2 < b.
+fstring_literal_item(n, k, o, x, l) :- fstring_literal_content(n, c, o), fstring_literal_later(n, c, k), !fstring_literal_not_next(n, c, k),
+    literal_cls(c, x), line(c, l).
+fstring_literal_item(n, e, o, x, l) :- fstring_literal_content(n, c, o), !fstring_literal_later(n, c, _), node(_, n, _, _, e), literal_cls(c, x), line(c, l).
+fstring_literal_item(n, b, b, 2, l) :- fstring_literal_parsed(n), literal_part(n, s), child(s, i, _), node(_, i, "interpolation", b, _), fstring_literal_debug(i), line(i, l).
+// A format_specifier: its literal text is the raw slices between its format_expression fields, after its `:`.
+// Approximation: a slice's length is read in bytes (exact for ASCII without backslashes, which is every format
+// spec in practice), and its escapes are not decoded.
+.decl fstring_literal_spec(n: node, s: number, e: number)
+fstring_literal_spec(n, s, e) :- node(d, n, "format_specifier", s, e), literal_in_render(n), !literal_in_raise(n), !syntax_error(d).
+.decl fstring_literal_field(n: node, f: node, s: number, e: number)
+fstring_literal_field(n, f, s, e) :- fstring_literal_spec(n, _, _), child(n, f, _), node(_, f, "format_expression", s, e).
+// Slices: (spec, start, line); each ends at the next field's start or the spec's end.
+.decl fstring_literal_slice(n: node, a: number, l: number)
+fstring_literal_slice(n, a, l) :- fstring_literal_spec(n, s, _), a = s + 1, line(n, l).
+fstring_literal_slice(n, a, l) :- fstring_literal_field(n, f, _, a), end_line(f, l).
+.decl fstring_literal_slice_after(n: node, a: number, b: number)
+fstring_literal_slice_after(n, a, b) :- fstring_literal_slice(n, a, _), fstring_literal_field(n, _, b, _), b >= a.
+.decl fstring_literal_slice_not_end(n: node, a: number, b: number)
+fstring_literal_slice_not_end(n, a, b) :- fstring_literal_slice_after(n, a, b), fstring_literal_slice_after(n, a, b2), b2 < b.
+.decl fstring_literal_slice_end(n: node, a: number, b: number)
+fstring_literal_slice_end(n, a, b) :- fstring_literal_slice_after(n, a, b), !fstring_literal_slice_not_end(n, a, b).
+fstring_literal_slice_end(n, a, b) :- fstring_literal_slice(n, a, _), !fstring_literal_slice_after(n, a, _), fstring_literal_spec(n, _, b).
+fstring_literal_item(n, b, a, 1, l) :- fstring_literal_slice_end(n, a, b), b - a = 1, fstring_literal_slice(n, a, l).
+fstring_literal_item(n, b, a, 2, l) :- fstring_literal_slice_end(n, a, b), b - a >= 2, fstring_literal_slice(n, a, l).
+fstring_literal_item(n, b, b, 2, l) :- fstring_literal_field(n, f, b, _), fstring_literal_debug(f), line(f, l).
+// A run of two characters or more is a PART (`value: {regex: (?s)^.{2}}`), reported at its first item's line.
+.decl fstring_literal_long(n: node, k: number)
+fstring_literal_long(n, k) :- fstring_literal_item(n, k, _, 2, _).
+fstring_literal_long(n, k) :- fstring_literal_item(n, k, o1, _, _), fstring_literal_item(n, k, o2, _, _), o1 < o2.
+.decl fstring_literal_not_first(n: node, k: number, o: number)
+fstring_literal_not_first(n, k, o) :- fstring_literal_item(n, k, o, _, _), fstring_literal_item(n, k, o2, _, _), o2 < o.
+.decl fstring_literal_at(n: node, l: number)
+fstring_literal_at(n, l) :- fstring_literal_long(n, k), fstring_literal_item(n, k, o, _, l), !fstring_literal_not_first(n, k, o).
+violation("data-layer-render-raw-strings", "fstring-literal", "string_literal", p, l) :-
+    fstring_literal_at(n, l), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+
+// ---- template, static ---------------------------------------------------------------------------------------
+// A Template(…) / SqlFragment.static(…) call in a render function whose first positional argument is a str
+// literal.
+.decl template_call(c: node, f: node)
+template_call(c, f) :- node(_, c, "call", _, _), field(c, "function", f), field(c, "arguments", al), literal_first_pos(al, a), literal_str(a), literal_in_render(c).
+violation("data-layer-render-raw-strings", "template", "template_call", p, l) :-
+    template_call(c, f), literal_template_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
+violation("data-layer-render-raw-strings", "static", "static_call", p, l) :-
+    template_call(c, f), literal_static_fn(f), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
