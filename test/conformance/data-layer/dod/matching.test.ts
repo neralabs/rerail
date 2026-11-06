@@ -29,6 +29,7 @@ for (const mode of ["snapshot", "workspace"] as const) it(`discovers and classif
       { write(chunk: string) { output += chunk; return true; } })).toBe(1);
     expect(JSON.parse(output).violations.map((row: { path: string }) => row.path).sort()).toEqual(["consumers/discovered.py", "consumers/probe.py", "second/probe.py"]);
     const contracts = JSON.parse(await readFile("fixtures/host/data-layer-port/batch-10-dod-contracts.json", "utf8"));
+    expect(contracts.matchingRootSources.map((row: { id: string }) => row.id)).toEqual(["utf8-bom", "bare-cr", "crlf"]);
     for (const record of contracts.matchingRootSources) {
       await writeFile(join(root, record.path), record.source);
       const result = await runDataLayerAudit({ ...options, snapshot: { ...options.snapshot, files: [] } });

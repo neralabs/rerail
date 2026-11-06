@@ -20,7 +20,9 @@ def verify_contracts(reports):
     expected.update(f'preserves {check} across clean, positive, restored, removed and readded revisions' for check in CHECKS)
     expected.add('preserves optimizer-document-dependency across clean, positive, restored, removed and readded revisions')
     expected.add('preserves constructor positives and clean results beside unrelated lexical inventory')
+    expected.update(f'preserves original {check} results with dense global inventory' for check in ['lazy_architecture', 'pure_lazy_runtime_purity'])
     expected.update(['preserves the original signing canonicalization and deployed trust root',
+                     'matches original Python Base64 decoding for malformed and padded approval signatures',
                      'routes original matching phases and summary-only output through the production command',
                      'reads live source approvals and delegates only explicit signing to the original signer',
                      'retains all ten production programs and every lifecycle state'])
@@ -38,7 +40,11 @@ def verify_contracts(reports):
     for case in lifecycle['cases']:
         if [state['name'] for state in case['states']] != ['clean', 'positive', 'restored', 'removed', 'readded']: raise ValueError('Incomplete lifecycle transitions')
         if case['states'][0]['expected'] or not case['states'][1]['expected']: raise ValueError('Missing clean or positive lifecycle state')
+    if [row['id'] for row in approvals['matchingRootSources']] != ['utf8-bom', 'bare-cr', 'crlf']: raise ValueError('Incomplete matching source-decoding cases')
+    if len(approvals['approvalEncodingCases']) != 8: raise ValueError('Incomplete approval encoding cases')
     return dict(assertions=len(seen), assertionIds=sorted(seen), approvalApiComparisons=2*len(approvals['approvalCases']),
+                approvalEncodingComparisons=2*len(approvals['approvalEncodingCases']),
+                matchingRootSourceComparisons=2*len(approvals['matchingRootSources']),
                 lifecycleRules=10, lifecycleRevisions=57, transportPartitionsPreserveRuleDomains=True)
 
 

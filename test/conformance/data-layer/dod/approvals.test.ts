@@ -4,8 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { expect, it } from "vitest";
-import { runDataLayerAudit } from "../../../../src/cli/index.js";
-import { decodePythonBase64 } from "../../../../src/cli/data-layer/base64.js";
+import { decodeSchemaApprovalSignature, runDataLayerAudit } from "../../../../src/cli/index.js";
 const oracle = JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-dod-contracts.json", "utf8"));
 type Case = { id: string; entries: string[]; signature: string; trustedPublicKey: string; files: { path: string; source: string; language: string }[]; expected: unknown[] };
 const canonical = (value: unknown[]) => value.map(row => JSON.stringify(row)).sort();
@@ -14,7 +13,7 @@ it("matches original Python Base64 decoding for malformed and padded approval si
   expect(fixture.cases).toHaveLength(68008);
   for (const row of fixture.cases as { text: string; expected: string | null }[]) {
     let actual = null;
-    try { actual = decodePythonBase64(row.text).toString("hex"); } catch { /* Preserve original decoding failures. */ }
+    try { actual = decodeSchemaApprovalSignature(row.text).toString("hex"); } catch { /* Preserve original decoding failures. */ }
     expect(actual, JSON.stringify(row.text)).toBe(row.expected);
   }
 });

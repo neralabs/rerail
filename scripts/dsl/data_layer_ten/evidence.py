@@ -121,6 +121,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_
  files|={Path('src/cli/index.ts'),Path('conformance/data-layer/suite.ts'),Path('scripts/dsl/data_layer_suite_record.py'),cumulative_path}
  files|=set(Path('src/cli/data-layer').glob('*.ts'))|set(Path('packs/data-layer/runtime').glob('*'))|set(Path('test/conformance/data-layer/dod').glob('*.ts'))
  files|={Path('fixtures/host/data-layer-port')/name for name in ['batch-10-dod-audit-20261106.json','batch-10-dod-contracts.json','batch-10-lifecycle.json']}
+ files|={Path('fixtures/host/data-layer-port/batch-10-base64-decoding.json.gz')}
  files|={Path('scripts/profiling/data_layer/measure.py'),Path('test/scripts/data_layer/test_complete_measurement.py')}
  files|={Path('packs/data-layer/pack.json'),Path('packs/data-layer/package.json'),Path('fixtures/host/data-layer-port/batch-08-native-assertions.json'),Path('fixtures/host/data-layer-port/batch-09-native-assertions.json')}
  files|={Path('docs/performance-decisions/data-layer-batch-ten-global-recovery-20261106.json'),Path('docs/performance-decisions/data-layer-batch-ten-validation-20261106.json')}

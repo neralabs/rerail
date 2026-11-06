@@ -30,3 +30,4 @@ export { type DashboardPage, type SetupEnvironment, startRerail } from "./reposi
 export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";
 export { configureDataLayerAudit, prepareDataLayerAudit, runDataLayerAudit, runDataLayerCommand, type DataLayerAuditOptions, type DataLayerAuditResult } from "./data-layer-audit.js";
 export { schemaApprovalMessage, type SchemaApprovals } from "./data-layer/approvals.js";
+export { decodePythonBase64 as decodeSchemaApprovalSignature } from "./data-layer/base64.js";

@@ -579,6 +579,8 @@ jobs:
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.dod_contracts \
             --source .rerail/data-layer-upstream --output "$reports/dod-contracts-original.json"
           cmp fixtures/host/data-layer-port/batch-10-dod-contracts.json "$reports/dod-contracts-original.json"
+          python3 -c 'import gzip,sys; assert gzip.decompress(open(sys.argv[1],"rb").read()) == gzip.decompress(open(sys.argv[2],"rb").read()), "Changed original fixture payload"' \
+            fixtures/host/data-layer-port/batch-10-base64-decoding.json.gz "$reports/batch-10-base64-decoding.json.gz"
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.lifecycle \
             --source .rerail/data-layer-upstream --output "$reports/lifecycle-original.json"
           cmp fixtures/host/data-layer-port/batch-10-lifecycle.json "$reports/lifecycle-original.json"
@@ -590,7 +592,8 @@ jobs:
           cmp fixtures/host/data-layer-port/batch-10-global-queries.json "$reports/global-queries-original.json"
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_nine.audit.inventory \
             --source .rerail/data-layer-upstream --output "$reports/bootstrap-inventory-original.json.gz"
-          cmp fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz "$reports/bootstrap-inventory-original.json.gz"
+          python3 -c 'import gzip,sys; assert gzip.decompress(open(sys.argv[1],"rb").read()) == gzip.decompress(open(sys.argv[2],"rb").read()), "Changed original fixture payload"' \
+            fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz "$reports/bootstrap-inventory-original.json.gz"
           timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/bootstrap-inventory.test.ts \
             --reporter=json --outputFile="$reports/bootstrap-inventory.json"
           timeout 115s npx vitest run --dir test test/conformance/data-layer/dod/ \
