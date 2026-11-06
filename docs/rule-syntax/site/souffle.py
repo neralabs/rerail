@@ -571,9 +571,31 @@ def check_rule(stmt, bound_heads=(), bound_vars=()):
     for l in pending:   # could not be satisfied: everything it needs counts as unbound
         b, n, _ = _literal(l, bound, force=True)
         need |= n
-    need |= _vars(head[1:])
+    need |= _vars(_drop_aggregates(head[1:]))
     need |= _vars(edits)
     return sorted(v for v in need if v not in bound)
+
+
+def _drop_aggregates(toks):
+    """Head tokens without aggregates: `count : { … }` (and min/max/sum/join/mean x : { … }) is a value whose body
+    binds its own variables, so only the tokens outside it can need a binding."""
+    out, i = [], 0
+    while i < len(toks):
+        if toks[i] in ("count", "min", "max", "sum", "join", "mean") and "{" in toks[i:]:
+            j = toks.index("{", i)
+            if ":" in toks[i:j]:
+                depth = 0
+                while j < len(toks):
+                    depth += toks[j] == "{"
+                    depth -= toks[j] == "}"
+                    j += 1
+                    if depth == 0:
+                        break
+                i = j
+                continue
+        out.append(toks[i])
+        i += 1
+    return out
 
 
 def _literal(l, bound, force=False):
