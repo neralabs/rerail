@@ -21,7 +21,10 @@ the set of (path, line, code) keys.
   events, which also drop the rule's `.mode log` codes.
 - A record with no code (an internal entry's plain dict) gets the check's name, or `--codeless CODE`. A record whose
   call raised is left out.
-- Events that the upstream run did not pass, retained ones, and ones that compare messages or fields are left out.
+- A file with a syntax error is withheld, as core.rr says: only `.on syntax_error`'s finding is kept for it.
+- Events with more than `--max-files` files (500) are not run: rrlab's facts grow with the whole tree.
+- Events the upstream run did not pass, and retained ones, are left out. Events that compare messages or
+  fields are compared on their keys.
 """
 import ast, collections, concurrent.futures, glob, gzip, json, os, re, shutil
 
@@ -38,14 +41,15 @@ def events(fixtures, check):
         for e in rec.get("events", []):
             if e.get("check") != check or e.get("retained_reason") or e.get("upstream_passed") is not True:
                 continue
-            if any(e.get(k) for k in ("compare_message", "compare_fields")) or e.get("path_skip_override"):
+            # compare_message / compare_fields events are compared on their keys only, like every other
+            if e.get("path_skip_override"):
                 continue
             files = e.get("files") or rec.get("files") or []
             out.append({"batch": os.path.basename(p).split(".")[0], "test": e["test"], "entry": e.get("entry", ""),
                         "options": (e.get("oracle_config") or {}).get("options") or {},
                         "production": bool(e.get("production_scope")),
                         "files": [(f["path"], f["source"]) for f in files],
-                        "want": {(f["path"], int(f["line"]), f["code"]) for f in e["findings"]}})
+                        "want": wanted(e["findings"], [f["path"] for f in files], check)})
     for p in sorted(glob.glob(os.path.join(fixtures, "batch-*-complete-api.json*"))):
         d = _load(p)
         ok = {t for t, phases in d.get("cases", {}).items() if all(x.get("outcome") == "passed" for x in phases)}
@@ -54,14 +58,34 @@ def events(fixtures, check):
             if r.get("check") != check or (ok and r["test"] not in ok):
                 continue
             lit = lambda v: ast.literal_eval(v) if isinstance(v, str) else v
-            if not isinstance(lit(r["expected"]), list):   # the call raised ({"exception": …}): nothing to compare
+            exp = lit(r["expected"])
+            if not isinstance(exp, list):   # the call raised ({"exception": …}): nothing to compare
                 continue
             files = [(f["path"], src[f["sourceSha256"]]) for f in lit(r["files"]) if f.get("sourceSha256") in src]
             params = r.get("parameters") or "{}"
             out.append({"batch": os.path.basename(p).split(".")[0], "test": r["test"], "entry": r.get("entry", ""),
                         "options": json.loads(params) if isinstance(params, str) else params, "production": False,
-                        "files": files, "want": {(f.get("path", f.get("file_path")), int(f.get("line", f.get("line_number")) or 1),
-                                           f.get("code", check)) for f in lit(r["expected"])}})
+                        "files": files, "want": wanted(exp, [f for f, _ in files], check)})
+    return out
+
+
+def wanted(findings, paths, check):
+    """The keys of recorded findings, whatever shape the entry function returned them in: dicts keyed path, file or
+    file_path, line or line_number (None is line 1), code or rule; or "path:line: [CODE: ]message" strings. A
+    finding with no code gets the check's name (see --codeless). A recorded path that ends with one of the event's
+    file paths is that file (some entries report absolute paths)."""
+    def norm(fp):
+        return next((f for f in paths if fp == f or fp.endswith("/" + f)), fp)
+    out = set()
+    for x in findings:
+        if isinstance(x, str):
+            m = re.match(r"(.*?):(\d+): (?:([A-Z][A-Z0-9_-]*\d+): )?", x)
+            if m:
+                out.add((norm(m.group(1)), int(m.group(2)), m.group(3) or check))
+            continue
+        fp = x.get("path") or x.get("file") or x.get("file_path") or "?"
+        line = x.get("line", x.get("line_number"))
+        out.add((norm(fp), int(line or 1), x.get("code") or x.get("rule") or check))
     return out
 
 
@@ -86,6 +110,8 @@ def score(args, Run, here):
     reported = collections.defaultdict(set)   # entry -> the codes it reports in any event, before the filters
     for e in evs:
         reported[e["entry"]] |= {c for _, _, c in e["want"]}
+    big = [e for e in evs if len(e["files"]) > args.max_files]
+    evs = [e for e in evs if len(e["files"]) <= args.max_files]
     if args.entry:
         evs = [e for e in evs if e["entry"] == args.entry]
     if args.test:
@@ -112,7 +138,10 @@ def score(args, Run, here):
         try:
             run = Run(rule, rels, root, options=e["options"] or None)
             run.use_scope = e["production"]
-            got = {(f["path"], int(f["line"]), f["code"]) for f in run.execute()}
+            found = run.execute()
+            # core.rr: a document that does not parse is withheld; only `.on syntax_error`'s finding is left
+            on = run.prog.on_syntax[0] if run.prog.on_syntax else None
+            got = {(f["path"], int(f["line"]), f["code"]) for f in found if not f["syntax_error"] or f["code"] == on}
             return k, got, None
         except SystemExit as x:
             return k, set(), str(x)[:300]
@@ -141,6 +170,9 @@ def score(args, Run, here):
     for b, r in sorted(per.items()):
         print(f"{b:34} {r[0]:4} events {r[1]:4} exact {r[2]:3} errors")
     print(f"{'total':34} {tot[0]:4} events {tot[1]:4} exact {tot[2]:3} errors   ({rule})")
+    if big:
+        print(f"  {len(big)} event(s) with more than {args.max_files} files not run (--max-files): "
+              + ", ".join(e["test"] for e in big[:3]))
     for m in misses[:args.show]:
         print("  " + m)
     if not args.keep:

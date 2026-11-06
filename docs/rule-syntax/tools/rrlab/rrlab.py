@@ -1289,6 +1289,7 @@ def main():
     dl.add_argument("--entry"); dl.add_argument("--test"); dl.add_argument("--show", type=int, default=25)
     dl.add_argument("--jobs", type=int, default=4); dl.add_argument("--keep", action="store_true")
     dl.add_argument("--codeless", help="the code for records that carry none")
+    dl.add_argument("--max-files", type=int, default=500, help="skip events with more files than this")
     lw = sp.add_parser("lower", help="print the Soufflé program"); lw.add_argument("rule")
     pt = sp.add_parser("pattern", help="compile a backtick pattern")
     pt.add_argument("lang"); pt.add_argument("pattern"); pt.add_argument("kind", nargs="?")
