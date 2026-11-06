@@ -27,10 +27,11 @@
 //   contexts' qualname of a frame is the names of its containing frames by lexical_start, then its own, joined by
 //   '.'. Value-building recursion (the CTE's `||`) is refused, so a caller is never built: it is compared with each
 //   expected item e (constructors_caller), e split at its last ':' (a qualname has none) into the file name (W's
-//   `file.name`, the path after its last '/') and the qualname, the qualname into its '.'-segments; a call's caller
-//   is e iff the file names agree and the frames containing it (call_owners' qualname frame and its chain) are as
-//   many as e's segments, the frame of depth j (j frames contain it) named e's segment j; a call no frame contains
-//   has qualname '' (the coalesce). call_owners' owner / assignments' owner: the innermost containing
+//   `file.name`, the path after its last '/': `file_name`) and the qualname q; a call's caller is e iff the file names
+//   agree and the frames containing it (call_owners' qualname frame and its chain) are as many as q's '.'-segments,
+//   the frame of depth j (j frames contain it) named q's segment j (a whole-string regex over q with the depth as its
+//   repeat count, the frame's name, an identifier, as its literal); a call no frame contains has qualname '' (the
+//   coalesce). call_owners' owner / assignments' owner: the innermost containing
 //   function_definition frame (classes skipped), NULL where none; `a.owner = c.owner` never holds for NULL.
 //   versions: per constructor, each target's assignment of the same owner ending before the constructor starts with
 //   no same-target assignment of that owner ending strictly between (constructors_later); catalog_aliases its
@@ -41,8 +42,7 @@
 //   `NOT coalesce(…, 0)` reports a NULL projection too. VMI001 an expected item no constructor's caller is, at the
 //   policy's location `impl/common/l2070_server_plan/steps` (start/end 0: W's default span, line 1).
 //
-// Approximation (named where made):
-//   A1 an expected item is read to character 1048576 (constructors_pos's 16^5 positions: no counter recursion).
+// Exact: no approximation.
 // W's error on duplicate relational identities (key caller+issue with the finding id) is not modelled: it needs two
 // rows at one span, which these inputs cannot produce.
 
@@ -50,10 +50,10 @@
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
-.decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl node_text(n: node, s: symbol)
-.input node_text
+.decl file_name(d: number, s: symbol)
+.input node_text, file_name
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl option_item(name: symbol, v: symbol)
@@ -132,62 +132,19 @@ constructors_afn(a, f, ls) :- constructors_asg(d, a, s, e, _, _), constructors_f
 constructors_aown(a, f) :- constructors_afn(a, f, ls), ls = max x : { constructors_afn(a, _, x) }.
 
 // ---- the expected callers, split ---------------------------------------------------------------------------------
-.decl constructors_hex(x: number)
-constructors_hex(0). constructors_hex(1). constructors_hex(2). constructors_hex(3). constructors_hex(4). constructors_hex(5).
-constructors_hex(6). constructors_hex(7). constructors_hex(8). constructors_hex(9). constructors_hex(10). constructors_hex(11).
-constructors_hex(12). constructors_hex(13). constructors_hex(14). constructors_hex(15).
-.decl constructors_len(e: symbol, n: number)
-constructors_len(e, n) :- option_item("expectedCallers", e), n = strlen(e).
-// A1: positions 0 .. min(len, 16^5) - 1 of each item.
-.decl constructors_p1(e: symbol, x: number)
-constructors_p1(e, a) :- constructors_len(e, n), constructors_hex(a), a * 65536 < n.
-.decl constructors_p2(e: symbol, x: number)
-constructors_p2(e, x) :- constructors_p1(e, a), constructors_hex(b), x = a * 16 + b, constructors_len(e, n), x * 4096 < n.
-.decl constructors_p3(e: symbol, x: number)
-constructors_p3(e, x) :- constructors_p2(e, a), constructors_hex(b), x = a * 16 + b, constructors_len(e, n), x * 256 < n.
-.decl constructors_p4(e: symbol, x: number)
-constructors_p4(e, x) :- constructors_p3(e, a), constructors_hex(b), x = a * 16 + b, constructors_len(e, n), x * 16 < n.
-.decl constructors_pos(e: symbol, x: number)
-constructors_pos(e, x) :- constructors_p4(e, a), constructors_hex(b), x = a * 16 + b, constructors_len(e, n), x < n.
-
-.decl constructors_colon(e: symbol, i: number)
-constructors_colon(e, i) :- constructors_pos(e, i), substr(e, i, 1) = ":".
-.decl constructors_lastcolon(e: symbol, k: number)
-constructors_lastcolon(e, k) :- constructors_colon(e, _), k = max i : { constructors_colon(e, i) }.
-// The file name: the item before its last ':', a name without '/' that the path is or ends with after a '/'.
-.decl constructors_fname(e: symbol, f: symbol)
-constructors_fname(e, f) :- constructors_lastcolon(e, k), f = substr(e, 0, k), !contains("/", f).
-.decl constructors_fok(e: symbol, d: number)
-constructors_fok(e, d) :- constructors_fname(e, f), constructors_doc(d, p), p = f.
-constructors_fok(e, d) :- constructors_fname(e, f), constructors_doc(d, p), suffix(cat("/", f), p).
-// The qualname: after the last ':', its '.'-segments by index.
-.decl constructors_qempty(e: symbol)
-constructors_qempty(e) :- constructors_lastcolon(e, k), constructors_len(e, n), k + 1 = n.
-.decl constructors_dot(e: symbol, i: number)
-constructors_dot(e, i) :- constructors_lastcolon(e, k), constructors_pos(e, i), i > k, substr(e, i, 1) = ".".
-.decl constructors_dot_le(e: symbol, i: number, j: number)
-constructors_dot_le(e, i, j) :- constructors_dot(e, i), constructors_dot(e, j), j <= i.
-.decl constructors_segstart(e: symbol, j: number, s: number)
-constructors_segstart(e, 0, s) :- constructors_lastcolon(e, k), s = k + 1.
-constructors_segstart(e, j, s) :- constructors_dot(e, i), j = count : { constructors_dot_le(e, i, _) }, s = i + 1.
-.decl constructors_bound(e: symbol, b: number)
-constructors_bound(e, i) :- constructors_dot(e, i).
-constructors_bound(e, n) :- constructors_lastcolon(e, _), constructors_len(e, n).
-.decl constructors_after(e: symbol, s: number, b: number)
-constructors_after(e, s, b) :- constructors_segstart(e, _, s), constructors_bound(e, b), b >= s.
-.decl constructors_seg(e: symbol, j: number, x: symbol)
-constructors_seg(e, j, x) :- constructors_segstart(e, j, s), b = min y : { constructors_after(e, s, y) }, x = substr(e, s, b - s).
-.decl constructors_nseg(e: symbol, k: number)
-constructors_nseg(e, k) :- constructors_lastcolon(e, _), c = count : { constructors_dot(e, _) }, k = c + 1.
+// fok(e, d, q): e is d's file name, ':', and q holding no ':' (so the file name is all before e's last ':').
+.decl constructors_fok(e: symbol, d: number, q: symbol)
+constructors_fok(e, d, q) :- option_item("expectedCallers", e), constructors_doc(d, _), file_name(d, f), k = strlen(f),
+    n = strlen(e), n > k, substr(e, 0, k) = f, substr(e, k, 1) = ":", q = substr(e, k + 1, n - k - 1), !contains(":", q).
 
 // caller(c) = e.
 .decl constructors_mis(c: node, e: symbol)
-constructors_mis(c, e) :- constructors_cframe(c, f), constructors_fdepth(f, j), constructors_frame(_, f, _, _, nm, _),
-    constructors_seg(e, j, x), x != nm.
+constructors_mis(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_cframe(c, f), constructors_fdepth(f, j),
+    constructors_frame(_, f, _, _, nm, _), x = cat("(?:[^.]*\\.){", cat(to_string(j), cat("}", cat(nm, "(?:\\.[^.]*)*")))), !match(x, q).
 .decl constructors_caller(c: node, e: symbol)
-constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d), constructors_nframe(c, 0), constructors_qempty(e).
-constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d), constructors_nframe(c, k), k > 0,
-    constructors_nseg(e, k), !constructors_mis(c, e).
+constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, ""), constructors_nframe(c, 0).
+constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_nframe(c, k), k > 0,
+    x = cat("[^.]*(?:\\.[^.]*){", cat(to_string(k - 1), "}")), match(x, q), !constructors_mis(c, e).
 .decl constructors_reviewed(c: node)
 constructors_reviewed(c) :- constructors_caller(c, _).
 .decl constructors_found(e: symbol)
