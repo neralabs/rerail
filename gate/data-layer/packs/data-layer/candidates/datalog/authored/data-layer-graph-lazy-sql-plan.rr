@@ -20,9 +20,8 @@
 //   - mention: a Name (by id) or Attribute (by attr) in the method's ast subtree: its decorators, parameters
 //     (annotations, defaults), return annotation and body.
 // Set semantics: rows of one clause with one (path, line, code) are one finding here (W keeps each identity).
-// Approximations (named): a parenthesized assignment target `(a) = v` is not read as a Name target; in `mention`,
-// identifiers of match-statement capture/keyword patterns and PEP 695 type-parameter names count as Names (CPython
-// keeps them as strings).
+
+#include "python/ast.rr"
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -33,6 +32,7 @@
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -68,9 +68,8 @@ graph_plan_contracts_in_fn(n) :- inside(n, _, graph_plan_contracts_fdef).
 graph_plan_contracts_tclass(d, x, c, s) :- node(d, c, "class_definition", s, _), !graph_plan_contracts_nested(c),
     field(c, "name", nm), text(nm, x).
 .decl graph_plan_contracts_class(d: number, x: symbol, c: node)
-graph_plan_contracts_class(d, x, c) :- graph_plan_contracts_tclass(d, x, c, s), !graph_plan_contracts_class_after(d, x, s).
-.decl graph_plan_contracts_class_after(d: number, x: symbol, s: number)
-graph_plan_contracts_class_after(d, x, s) :- graph_plan_contracts_tclass(d, x, _, s), graph_plan_contracts_tclass(d, x, _, t), t < s.
+graph_plan_contracts_class(d, x, c) :- graph_plan_contracts_tclass(d, x, c, s),
+    s = min t : { graph_plan_contracts_tclass(d, x, _, t) }.
 .decl graph_plan_contracts_has_class(d: number, x: symbol)
 graph_plan_contracts_has_class(d, x) :- graph_plan_contracts_tclass(d, x, _, _).
 
@@ -79,9 +78,8 @@ graph_plan_contracts_has_class(d, x) :- graph_plan_contracts_tclass(d, x, _, _).
 graph_plan_contracts_cand(d, o, x, f, s) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_in_fn(f),
     nearest(f, c, graph_plan_contracts_cdef), graph_plan_contracts_tclass(d, o, c, _), field(f, "name", nm), text(nm, x).
 .decl graph_plan_contracts_method(d: number, o: symbol, x: symbol, f: node)
-graph_plan_contracts_method(d, o, x, f) :- graph_plan_contracts_cand(d, o, x, f, s), !graph_plan_contracts_method_before(d, o, x, s).
-.decl graph_plan_contracts_method_before(d: number, o: symbol, x: symbol, s: number)
-graph_plan_contracts_method_before(d, o, x, s) :- graph_plan_contracts_cand(d, o, x, _, s), graph_plan_contracts_cand(d, o, x, _, t), t > s.
+graph_plan_contracts_method(d, o, x, f) :- graph_plan_contracts_cand(d, o, x, f, s),
+    s = max t : { graph_plan_contracts_cand(d, o, x, _, t) }.
 .decl graph_plan_contracts_has_method(d: number, o: symbol, x: symbol)
 graph_plan_contracts_has_method(d, o, x) :- graph_plan_contracts_cand(d, o, x, _, _).
 
@@ -122,6 +120,19 @@ graph_plan_contracts_not_name(n) :- node(_, n, "identifier", _, _), inside(n, _,
 graph_plan_contracts_not_name(n) :- (node(_, g, "global_statement", _, _) ; node(_, g, "nonlocal_statement", _, _)), child(g, n, _).
 graph_plan_contracts_not_name(n) :- node(_, x, "except_clause", _, _), child(x, ap, _), node(_, ap, "as_pattern", _, _),
     field(ap, "alias", t), child(t, n, _).
+// Match patterns: a capture (`case x`, a lone name), `case … as x`, `*rest`/`**rest` and a keyword pattern's
+// keyword are strings in CPython (MatchAs/MatchStar/MatchMapping.rest, MatchClass.kwd_attrs); a value pattern's
+// dotted name (`case A.B`) and a class pattern's class are Names/Attributes.
+graph_plan_contracts_not_name(n) :- node(_, cp, "case_pattern", _, _), child(cp, dn, 0), node(_, dn, "dotted_name", _, _),
+    child(dn, n, 0), !child(dn, _, 1).
+graph_plan_contracts_not_name(n) :- node(_, cp, "case_pattern", _, _), child(cp, ap, 0), node(_, ap, "as_pattern", _, _),
+    child(ap, n, 1), node(_, n, "identifier", _, _).
+graph_plan_contracts_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, 0).
+graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, dn, 1), node(_, dn, "dotted_name", _, _),
+    child(dn, n, 0), !child(dn, _, 1).
+// PEP 695 type parameters' names are strings (TypeVar/TypeVarTuple/ParamSpec.name): python/ast.rr type_param.
+graph_plan_contracts_not_name(n) :- type_param(_, _, n, _, _, _, _).
 
 // The names the mention checks look for.
 .decl graph_plan_contracts_wanted(x: symbol)
@@ -155,9 +166,14 @@ graph_plan_contracts_chain(a, a) :- node(_, a, "assignment", _, _), !field(a, "t
 graph_plan_contracts_chain(a, c) :- graph_plan_contracts_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).
 .decl graph_plan_contracts_inner(a: node)
 graph_plan_contracts_inner(a) :- node(_, b, "assignment", _, _), field(b, "right", a).
-// assign_target(a, t): Name t is a direct target of Assign a.
+// assign_target(a, t): Name t is a direct target of Assign a; `(t) = v` (a tuple_pattern of one, no comma) is a
+// Name target too.
 .decl graph_plan_contracts_target(a: node, t: node)
-graph_plan_contracts_target(a, t) :- graph_plan_contracts_chain(a, b), field(b, "left", t), node(_, t, "identifier", _, _).
+graph_plan_contracts_target(a, t) :- graph_plan_contracts_chain(a, b), field(b, "left", l), graph_plan_contracts_bare(l, t).
+.decl graph_plan_contracts_bare(l: node, t: node)
+graph_plan_contracts_bare(l, l) :- node(_, l, "identifier", _, _).
+graph_plan_contracts_bare(l, t) :- node(_, l, "tuple_pattern", _, _), child(l, c, 0), !child(l, _, 1),
+    !token(l, _, ",", _, _), graph_plan_contracts_bare(c, t).
 graph_plan_contracts_topdef(d, x, s, "assign", l) :- node(d, a, "assignment", s, _), !graph_plan_contracts_nested(a),
     graph_plan_contracts_target(a, t), text(t, x), line(a, l).
 // TypeAlias: `type X = …` or `type X[T] = …`.
@@ -172,9 +188,8 @@ graph_plan_contracts_topdef(d, x, s, "typealias", l) :- node(d, o, "type_alias_s
     graph_plan_contracts_alias_name(o, i), text(i, x), line(o, l).
 // top_symbols: per name, the last definition.
 .decl graph_plan_contracts_symbol(d: number, x: symbol, k: symbol, l: number)
-graph_plan_contracts_symbol(d, x, k, l) :- graph_plan_contracts_topdef(d, x, s, k, l), !graph_plan_contracts_symbol_before(d, x, s).
-.decl graph_plan_contracts_symbol_before(d: number, x: symbol, s: number)
-graph_plan_contracts_symbol_before(d, x, s) :- graph_plan_contracts_topdef(d, x, s, _, _), graph_plan_contracts_topdef(d, x, t, _, _), t > s.
+graph_plan_contracts_symbol(d, x, k, l) :- graph_plan_contracts_topdef(d, x, s, k, l),
+    s = max t : { graph_plan_contracts_topdef(d, x, t, _, _) }.
 .decl graph_plan_contracts_defkind(k: symbol)
 graph_plan_contracts_defkind("class"). graph_plan_contracts_defkind("function").
 .decl graph_plan_contracts_has_def(d: number, x: symbol)
@@ -273,11 +288,7 @@ graph_plan_contracts_req_mention("graph-plan-contracts-8", "impl/common/l2070_se
 .decl graph_plan_contracts_alias(y: symbol, x: symbol)
 graph_plan_contracts_alias("legacy", "_legacy_delegate_stub"). graph_plan_contracts_alias("legacy", "_txn_legacy_delegate_body").
 graph_plan_contracts_alias("legacy", "_versioned_legacy_delegate_body").
-// Facts only: a relation given both facts and rules loses its facts in the corpus runner (engine gap, reported).
-graph_plan_contracts_alias("SqlColumnTypeHints", "SqlColumnTypeHints"). graph_plan_contracts_alias("uuid_columns", "uuid_columns").
-graph_plan_contracts_alias("_binding_node_sys_id_alias", "_binding_node_sys_id_alias").
-graph_plan_contracts_alias("_binding_edge_alias", "_binding_edge_alias"). graph_plan_contracts_alias("text_columns", "text_columns").
-graph_plan_contracts_alias("integer_columns", "integer_columns").
+graph_plan_contracts_alias(y, y) :- graph_plan_contracts_req_mention(_, _, _, _, y, _), y != "legacy".
 .decl graph_plan_contracts_mentions(f: node, y: symbol)
 graph_plan_contracts_mentions(f, y) :- graph_plan_contracts_alias(y, x), graph_plan_contracts_mention(f, x).
 graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_mention(c, p, o, x, y, code),

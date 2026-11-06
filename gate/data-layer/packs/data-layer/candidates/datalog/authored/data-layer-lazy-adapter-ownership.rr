@@ -15,14 +15,14 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)          // a node's exact source text
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)              // a literal's static value, escapes decoded (W's `value: true`)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input node_text
+.input node_text, value
 .output violation
 
 // The syntax gate (`requireNonemptyInput: syntax_gate`): a valid module in scope.
@@ -91,16 +91,11 @@ lao_base(f, n) :- lao_legacy(d, f, _, "legacy_module_sync"), lao_owned(d, f, n, 
 
 // target_values: a keyword_argument named lazy_name whose value is a string or concatenated_string with no prefix
 // other than r/u (`(?i)^[ru]*["']` on its text), inside a decorator; the row's start is the keyword argument's.
-// APPROXIMATION (awaiting `value`): DECODED is W's decoded value (`substring`, `value: true`); until the runner
-// binds `value(n, v)` this reads `str`, the raw content between the quotes. Exact for a plain string with no
-// escapes; a string with escapes keeps them undecoded, and a concatenated_string (no `str` row) gives no row, so
-// its function falls back to the default target. The exact form, `value(s, v)`, is in
-// data-layer-lazy-adapter-ownership.pending.rr.
 .decl lao_decorator(kind: symbol)
 lao_decorator("decorator").
 .decl lao_kw(dec: node, start: number, v: symbol)
 lao_kw(dec, k, v) :- lao_legacy(d, _, dec, _), inside(kw, dec, lao_decorator), node(d, kw, "keyword_argument", k, _),
-  field(kw, "name", ni), node(d, ni, "identifier", _, _), text(ni, "lazy_name"), field(kw, "value", s), lao_kw_string(s), str(s, v).
+  field(kw, "name", ni), node(d, ni, "identifier", _, _), text(ni, "lazy_name"), field(kw, "value", s), lao_kw_string(s), value(s, v).
 .decl lao_kw_string(s: node)
 lao_kw_string(s) :- node(_, s, "string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
 lao_kw_string(s) :- node(_, s, "concatenated_string", _, _), node_text(s, t), match("(?is)[ru]*[\"'].*", t).

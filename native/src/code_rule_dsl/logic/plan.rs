@@ -1282,6 +1282,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "value" | "static_value" => &[&["n"], &["v", "n"]],
         "value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
+        "fstring_piece" => &[&["n"], &["v", "n"]],
+        "fstring_template" => &[&["n"], &["v", "n"]],
         "intval" | "op" | "tape" | "line" | "end_line" | "col" | "reference_open" => &[&["n"]],
         "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],

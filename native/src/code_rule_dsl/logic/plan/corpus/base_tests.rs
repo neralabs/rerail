@@ -1179,3 +1179,226 @@ args(p, l, c) :- kind(call, "call"), field(call, "arguments", as), kind(as, "arg
     assert_eq!(run(&dir, program, &["args"])[0], csv(w_at(json!({ "kind": "argument_list", "inside": { "kind": "call" } }), &files)));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// F-strings W's `pythonFString` reads: escapes, a raw prefix with `{{`, a debug field, an f-string beside a plain
+/// literal (both orders), a triple-quoted multiline one with a conversion and a nested spec field, a spec, a string
+/// nested in a spec, `\N{…}`; and what has no tree: plain literals, bytes.
+const FSTRINGS: &str = r#"x = y = w = 1
+a = f'\x53ELECT {x} FROM t'
+b = rf'SELECT {{name}} {x} FROM t'
+c = f'{SELECT = } FROM t'
+d = (f'SELECT {x}' ' FROM t')
+e = f"""SELECT {x}
+  FROM t
+ WHERE {y!r:>{w}} = 1"""
+g = f'a{x!r:>10}b{y=}'
+h = 'plain' "also"
+i = b'bytes'
+j = f'{x:{"nested"}}'
+k = f"é{x}\N{BULLET}"
+l = 'plain' f'{x}'
+"#;
+
+/// Rows of `width` cells whose last is a symbol that may hold line terminators: each row starts with `numbers`
+/// numbers, a line that does not continues the row before it.
+fn rows_with_text(csv: &str, numbers: usize, width: usize) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> = Vec::new();
+    for line in csv.lines() {
+        let cells: Vec<&str> = line.splitn(width, '\t').collect();
+        let starts = cells.len() == width && cells[..numbers].iter().all(|c| !c.is_empty() && c.bytes().all(|b| b.is_ascii_digit()));
+        match out.last_mut() {
+            Some(row) if !starts => {
+                let last = row.last_mut().unwrap();
+                last.push('\n');
+                last.push_str(line);
+            }
+            _ => out.push(cells.iter().map(|c| (*c).to_owned()).collect()),
+        }
+    }
+    out
+}
+
+/// W's `parse: {grammar: pythonFString, …}` at its hosts, `inner` the parse's rule: the spans it finds, each anchored
+/// at `anchor` (the host, or `capture.NAME`).
+fn w_fstring(inner: Value, anchor: &str) -> BTreeSet<(usize, usize)> {
+    let hosts = json!({ "any": [{ "kind": "string" }, { "kind": "concatenated_string" }, { "kind": "format_specifier" }] });
+    let mut parse = json!({ "grammar": "pythonFString" });
+    parse.as_object_mut().unwrap().extend(inner.as_object().unwrap().clone());
+    let forbid = json!({ "ast": { "language": "python", "rule": { "all": [hosts, { "parse": parse }] } } });
+    let v = if anchor == "host" { violation() } else { json!({ "anchor": anchor, "code": "X", "message": "x" }) };
+    w_reporting(forbid, v, "python", "a.py", FSTRINGS)
+        .iter()
+        .map(|f| (f["span"]["startByte"].as_u64().unwrap() as usize, f["span"]["endByte"].as_u64().unwrap() as usize))
+        .collect()
+}
+
+/// `fstring_template(n, marker, v)` is the root value of W's `parse: {grammar: pythonFString, interpolation: marker}`
+/// and `fstring_piece(n, i, kind, v)` its root's children in order, at exactly the hosts W gets a tree at.
+#[test]
+fn fstrings_are_ws_python_fstring_trees() {
+    let dir = corpus("fstring", &[("a.py", FSTRINGS)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+.decl fstring_template(n: node, marker: symbol, v: symbol)
+.decl pieces(s: number, e: number, i: number, k: symbol, v: symbol)
+pieces(s, e, i, k, v) :- fstring_piece(n, i, k, v), node(_, n, _, s, e).
+.decl dots(s: number, e: number, v: symbol)
+dots(s, e, v) :- fstring_template(n, "{...}", v), node(_, n, _, s, e).
+.decl braces(s: number, e: number, v: symbol)
+braces(s, e, v) :- fstring_template(n, "{}", v), node(_, n, _, s, e).
+.decl from_t(s: number, e: number)
+from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][.][.][}] FROM t)(?s:.*)", v), node(_, n, _, s, e).
+.output pieces, dots, braces, from_t
+"#;
+    let got = run(&dir, program, &["pieces", "dots", "braces", "from_t"]);
+    let span = |row: &[String]| (row[0].parse::<usize>().unwrap(), row[1].parse::<usize>().unwrap());
+    let hosts = w_fstring(json!({ "kind": "template" }), "host");
+    for (csv, marker) in [(&got[1], "{...}"), (&got[2], "{}")] {
+        let rows = rows_with_text(csv, 2, 3);
+        assert_eq!(rows.iter().map(|r| span(r)).collect::<BTreeSet<_>>(), hosts, "{marker}: {csv}");
+        for row in &rows {
+            let at = w_fstring(json!({ "interpolation": marker, "value": { "eq": row[2] } }), "host");
+            assert!(at.contains(&span(row)), "{marker}: {:?} is not W's root value at {:?}", row[2], &FSTRINGS[span(row).0..span(row).1]);
+        }
+    }
+    let dots: Vec<(String, String)> = rows_with_text(&got[1], 2, 3).into_iter().map(|r| (FSTRINGS[span(&r).0..span(&r).1].to_owned(), r[2].clone())).collect();
+    let template = |source: &str| dots.iter().filter(|(s, _)| s == source).map(|(_, v)| v.as_str()).collect::<Vec<_>>();
+    assert_eq!(template(r"f'\x53ELECT {x} FROM t'"), ["SELECT {...} FROM t"]);
+    assert_eq!(template("rf'SELECT {{name}} {x} FROM t'"), ["SELECT {name} {...} FROM t"]);
+    assert_eq!(template("f'{SELECT = } FROM t'"), ["SELECT = {...} FROM t"]);
+    assert_eq!(template("(f'SELECT {x}' ' FROM t')"), Vec::<&str>::new(), "the parenthesized expression is no host");
+    assert_eq!(template("f'SELECT {x}' ' FROM t'"), ["SELECT {...} FROM t"]);
+    assert_eq!(template("f'SELECT {x}'"), ["SELECT {...}"]);
+    assert_eq!(template("f\"\"\"SELECT {x}\n  FROM t\n WHERE {y!r:>{w}} = 1\"\"\""), ["SELECT {...}\n  FROM t\n WHERE {...} = 1"]);
+    assert_eq!(template(":>{w}"), [">{...}"]);
+    assert_eq!(template("f'a{x!r:>10}b{y=}'"), ["a{...}by={...}"]);
+    assert_eq!(template("'plain' f'{x}'"), ["plain{...}"]);
+    for none in ["'plain' \"also\"", "'plain'", "b'bytes'", "\"nested\"", "' FROM t'"] {
+        assert_eq!(template(none), Vec::<&str>::new(), "{none}");
+    }
+    // The text test over the template reads the batch's strings.
+    let from_t: BTreeSet<&str> = got[3].lines().map(|l| l.split('\t').collect::<Vec<_>>()).map(|c| &FSTRINGS[c[0].parse::<usize>().unwrap()..c[1].parse::<usize>().unwrap()]).collect();
+    assert_eq!(from_t, BTreeSet::from([r"f'\x53ELECT {x} FROM t'", "f'SELECT {x}' ' FROM t'"]));
+
+    // Pieces: at each host W has a tree at, W's root child with i siblings before it (W has no `nthChild` in a parse)
+    // is the row's kind (a literal with the row's value, an interpolation standing for the field the row's expression
+    // opens), and no child has more siblings before it than the last row's i.
+    let pieces = rows_with_text(&got[0], 3, 5);
+    let mut last: std::collections::BTreeMap<(usize, usize), usize> = Default::default();
+    for row in &pieces {
+        let (s, e) = span(row);
+        let i: usize = row[2].parse().unwrap();
+        let (kind, v) = (row[3].as_str(), row[4].as_str());
+        let host = &FSTRINGS[s..e];
+        let at_most = last.entry((s, e)).or_default();
+        *at_most = (*at_most).max(i);
+        let nth = json!({ "count": { "follows": { "stopBy": "end", "any": [{ "kind": "literal" }, { "kind": "interpolation" }] }, "min": i, "max": i } });
+        match kind {
+            "literal" => {
+                let at = w_fstring(json!({ "has": { "all": [{ "kind": "literal" }, nth, { "value": { "eq": v } }] } }), "host");
+                assert!(at.contains(&(s, e)), "{host}: child {i} is not W's literal {v:?}");
+            }
+            "interpolation" => {
+                let fields = w_fstring(json!({ "has": { "all": [{ "kind": "interpolation" }, nth], "capture": "I" } }), "capture.I");
+                let field = fields.iter().filter(|(fs, fe)| s <= *fs && *fe <= e).map(|&(fs, fe)| &FSTRINGS[fs..fe]).find(|f| f.starts_with(&format!("{{{v}")));
+                assert!(field.is_some(), "{host}: child {i} is no W interpolation over a field of {v:?} ({fields:?})");
+            }
+            "debug" => {
+                let before = pieces.iter().find(|r| span(r) == (s, e) && r[2] == (i - 1).to_string() && r[3] == "literal").unwrap();
+                assert!(before[4].ends_with(v), "{host}: W's literal before child {i} holds the debug text {v:?}");
+            }
+            "format_spec" => {
+                let interpolation = pieces.iter().find(|r| span(r) == (s, e) && r[2] == i.to_string() && r[3] == "interpolation").unwrap();
+                assert!(host.contains(&format!("{{{}", interpolation[4])) && host.contains(&format!(":{v}}}")), "{host}: spec {v:?}");
+            }
+            other => panic!("kind {other}"),
+        }
+    }
+    assert_eq!(last.keys().copied().collect::<BTreeSet<_>>(), hosts);
+    for (&(s, e), &i) in &last {
+        let later = json!({ "count": { "follows": { "stopBy": "end", "any": [{ "kind": "literal" }, { "kind": "interpolation" }] }, "min": i + 1 } });
+        let past = w_fstring(json!({ "has": later }), "host");
+        assert!(!past.contains(&(s, e)), "{}: W's root has a child past {i}", &FSTRINGS[s..e]);
+    }
+    let of = |source: &str| pieces.iter().filter(|r| &FSTRINGS[span(r).0..span(r).1] == source).map(|r| format!("{} {} {}", r[2], r[3], r[4])).collect::<Vec<_>>();
+    assert_eq!(of("f'a{x!r:>10}b{y=}'"), ["0 literal a", "1 format_spec >10", "1 interpolation x", "2 literal by=", "3 debug y=", "3 interpolation y"]);
+    assert_eq!(of("f'{SELECT = } FROM t'"), ["0 literal SELECT = ", "1 debug SELECT = ", "1 interpolation SELECT", "2 literal  FROM t"]);
+    assert_eq!(of(":>{w}"), ["0 literal >", "1 interpolation w"]);
+    assert_eq!(of("f'{x:{\"nested\"}}'"), ["0 format_spec {\"nested\"}", "0 interpolation x"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// internal-dead-code's decorator names: a decorator's line (`tape_line`) and column, the `match_group` whose match `m`
+/// is at that column (`col(m, c)` joined on a bound `c`), and the group's text. W: the `lines` regex's capture at
+/// each decorator's line and column.
+#[test]
+fn match_group_joined_on_its_match_column() {
+    let source = "@app.route('/x')\ndef f(): pass\n\nclass C:\n    @ staticmethod\n    def g(): pass\n    x = '@notadeco'\n";
+    let dir = corpus("match-group-col", &[("a.py", source)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl child(p: node, c: node, i: number)
+.decl tape_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl deco_at(o: node, d: number, l: number, c: number)
+deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
+.decl deco(l: number, x: symbol)
+deco(l, x) :- deco_at(_, d, l, c), tape_line(d, l, sp), match_all("@\\s*(?P<n>[^\\s(]+)", sp, m), match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+.output deco
+"#;
+    let got = run(&dir, program, &["deco"]);
+    let decorators: BTreeSet<(u64, u64)> = w(json!({ "ast": { "language": "python", "rule": { "kind": "decorator" } } }), "a.py", source)
+        .iter()
+        .map(|v| (v["span"]["startLine"].as_u64().unwrap(), v["span"]["startColumn"].as_u64().unwrap()))
+        .collect();
+    let regex = json!({ "regex": { "source": "file.content", "pattern": "@\\s*(?P<n>[^\\s(]+)", "lines": {} } });
+    let at = json!({ "anchor": "capture.n", "code": "X", "message": "x" });
+    let whole = w_as(regex.clone(), "python", "a.py", source);
+    let groups = w_reporting(regex, at, "python", "a.py", source);
+    let want = csv(whole.iter().zip(&groups).filter(|(m, _)| decorators.contains(&(m["span"]["startLine"].as_u64().unwrap(), m["span"]["startColumn"].as_u64().unwrap()))).map(|(_, g)| {
+        let at = |k: &str| g["span"][k].as_u64().unwrap() as usize;
+        format!("{}\t{}", at("startLine") + 1, &source[at("startByte")..at("endByte")])
+    }));
+    assert_eq!(want, "1\tapp.route\n5\tstaticmethod\n");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// internal-dead-code's dynamic imports: two groups of one match (`match_group` twice on `m`), the match's `line` and
+/// `col`, and a disjunction over them (one rule per alternative, each reading the match relations).
+#[test]
+fn match_groups_of_one_match_and_a_disjunction() {
+    let re = r#"(?:\bimport_module|\bimportlib\.import_module)\(\s*['"](?P<module>[^'"]+)['"]\s*\)\.(?P<attr>[A-Za-z_][A-Za-z0-9_]*)"#;
+    let source = "import importlib\nx = importlib.import_module('pkg.mod').run\n  y = import_module( \"a.b\" ).c\n";
+    let dir = corpus("match-groups-disjunction", &[("a.py", source)]);
+    let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
+    let program = r#"
+.decl source(d: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl dyn_at(fq: symbol, l: number, c: number)
+dyn_at(fq, l, c) :- source(_, sp), match_group("RE", sp, m, "module", gm), match_group("RE", sp, m, "attr", ga), line(m, l), col(m, c), text(gm, mn), text(ga, an), fq = cat(mn, cat(".", an)).
+.decl late(fq: symbol)
+late(fq) :- source(_, sp), match_all("RE", sp, m), match_group("RE", sp, m, "module", gm), text(gm, fq), (line(m, l), l > 2 ; col(m, c), c < 5).
+.output dyn_at, late
+"#
+    .replace("RE", &quoted);
+    let got = run(&dir, &program, &["dyn_at", "late"]);
+    let regex = json!({ "regex": { "source": "file.content", "pattern": re } });
+    let whole = w_as(regex.clone(), "python", "a.py", source);
+    let group = |g: &str| w_reporting(regex.clone(), json!({ "anchor": format!("capture.{g}"), "code": "X", "message": "x" }), "python", "a.py", source);
+    let text = |v: &Value| &source[v["span"]["startByte"].as_u64().unwrap() as usize..v["span"]["endByte"].as_u64().unwrap() as usize];
+    let (modules, attrs) = (group("module"), group("attr"));
+    let want = csv(whole.iter().zip(modules.iter().zip(&attrs)).map(|(m, (gm, ga))| {
+        format!("{}.{}\t{}\t{}", text(gm), text(ga), m["span"]["startLine"].as_u64().unwrap() + 1, m["span"]["startColumn"])
+    }));
+    assert_eq!(want, "a.b.c\t3\t6\npkg.mod.run\t2\t4\n");
+    assert_eq!(got[0], want);
+    assert_eq!(got[1], "a.b\npkg.mod\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

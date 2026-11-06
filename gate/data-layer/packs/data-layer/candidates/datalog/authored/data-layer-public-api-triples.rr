@@ -21,9 +21,9 @@
 // - A2 text order: SQL orders text bytewise; here a character table of ASCII (9, 10, 13, 32-126) compares the
 //   first differing character. Two strings that first differ at a character outside it are not ordered (both
 //   kept, as A1). Names, modules and paths are ASCII in practice; routes are compared as ordinal sequences.
-// - A3 `__all__` names: W's TEXT is the string's decoded value. Without `value` (pending) a string's value is its
-//   content as written where that has no backslash, or the string is raw; an escaped non-raw string gives no name,
-//   nor does a concatenation of more than four parts. The .pending.rr reads `value(n, v)` instead.
+// - (A3, exact since round 2) `__all__` names: W's TEXT is the string's decoded value (replace with value: true),
+//   `value(n, v)`, escapes decoded and a concatenation's parts joined. An unknown value reads as "" there, a name
+//   no export has, so it is left out.
 // - A4 import items: SQL splits the statement text at commas (after `#` comments), trims ` ()\n\r` and takes the
 //   first non-space run (and `\s+as\s+(\S+)$`); here the items are the statement's `name` children. They differ
 //   only where an item is preceded by a tab or a backslash continuation inside the list (SQL drops or garbles that
@@ -44,12 +44,11 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)
 .input node_text
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl value(n: node, v: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -425,28 +424,13 @@ ef_has_all(d) :- ef_all(d, _, _).
 .decl ef_all_first(d: number, a: node)
 ef_all_first(d, a) :- ef_all(d, a, st), st = min t : { ef_all(d, _, t) }.
 // ARRAY: the right side, a list or tuple; raw_all_names: its string / concatenated_string children (VALUE),
-// named by their value (A3).
+// named by their value.
 .decl ef_all_array(a: node, v: node)
 ef_all_array(a, v) :- ef_all_first(_, a), field(a, "right", r), node(_, r, "list", _, _), child(r, v, _).
 ef_all_array(a, v) :- ef_all_first(_, a), field(a, "right", r), node(_, r, "tuple", _, _), child(r, v, _).
-.decl ef_strval(v: node, s: symbol)
-ef_strval(v, s) :- str(v, s), !contains("\\", s).
-ef_strval(v, s) :- str(v, s), strprefix(v, p), contains("r", p).
-// A concatenated_string's value: its parts' values in order. A recursion that builds it (cat along the
-// siblings) moves along no tree edge, which is not allowed: two to four parts are written out; A3: more give no
-// name.
-.decl ef_parts(cs: node, k: number)
-ef_parts(cs, k) :- ef_all_array(_, cs), node(_, cs, "concatenated_string", _, _), k = count : { child(cs, _, _) }.
-.decl ef_part(cs: node, i: number, s: symbol)
-ef_part(cs, i, s) :- ef_parts(cs, _), child(cs, c, i), ef_strval(c, s).
-.decl ef_catval(cs: node, s: symbol)
-ef_catval(cs, s) :- ef_parts(cs, 2), ef_part(cs, 0, a), ef_part(cs, 1, b), s = cat(a, b).
-ef_catval(cs, s) :- ef_parts(cs, 3), ef_part(cs, 0, a), ef_part(cs, 1, b), ef_part(cs, 2, c), s = cat(cat(a, b), c).
-ef_catval(cs, s) :- ef_parts(cs, 4), ef_part(cs, 0, a), ef_part(cs, 1, b), ef_part(cs, 2, c), ef_part(cs, 3, e),
-    s = cat(cat(cat(a, b), c), e).
 .decl ef_all_name(d: number, name: symbol)
-ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "string", _, _), ef_strval(v, s).
-ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), ef_catval(v, s).
+ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "string", _, _), value(v, s).
+ef_all_name(d, s) :- ef_all_first(d, a), ef_all_array(a, v), node(_, v, "concatenated_string", _, _), value(v, s).
 
 // ---- stages export_names, exported_roots ----
 .decl ef_export(d: number, module: symbol, name: symbol, target: symbol)

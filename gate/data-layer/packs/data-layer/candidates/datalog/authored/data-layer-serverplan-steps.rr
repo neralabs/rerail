@@ -4,19 +4,19 @@
 // native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.*.rr, their matcher atoms lowered to the base
 // relations.
 //
-// Options at their defaults: entryPoint "all" (every matcher's `$option: entryPoint` file filter passes every file, and
-// each relational query is its "all" case, every detector's branch), strictModulesOnly true (`relaxed` matches no file;
-// no stage reads it), oracleAnalyzer false (read by nothing). Each detector (W's entry point) is gated by
-// `sps_on(entry)`: at the defaults every entry point is on. An event configured with another entryPoint runs only that
-// entry point's branch in W; the gate on the converter's option facts is in the .pending.rr copy of this file.
+// Options, read from the converter's option facts: entryPoint (default "all": every matcher's `$option: entryPoint`
+// file filter passes every file, and each relational query is its "all" case, every detector's branch; another entry
+// point runs only its own detector), strictModulesOnly true (`relaxed` matches no file; no stage reads it),
+// oracleAnalyzer false (read by nothing). Each detector (W's entry point) is gated by `sps_on(entry)`.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl name(n: node, s: symbol)
@@ -37,9 +37,12 @@ sps_entry("check_closed_post_op_runtime_builder_no_callable_escape_hatches").
 sps_entry("check_compiled_result_builders_do_not_fail_closed"). sps_entry("check_legacy_postop_user_callable_escape_hatches").
 sps_entry("check_runtime_ref_closed_post_op_consumption_guardrail"). sps_entry("check_helper_anchored_runtime_ref_post_op_guardrail").
 sps_entry("check_runtime_refs_post_op_requires_runtime_refs_guardrail").
-// entryPoint "all" (the default; "_scan_source" and "_scan_file" are the same case): every entry point on.
+// entryPoint "all" (the default; "_scan_source" and "_scan_file" are the same case): every entry point on; else only
+// the configured one (an entry point of no case: none).
+.decl option_value(name: symbol, v: symbol)
 .decl sps_on(e: symbol)
-sps_on(e) :- sps_entry(e).
+sps_on(e) :- sps_entry(e), option_value("entryPoint", v), (v = "all" ; v = "_scan_source" ; v = "_scan_file").
+sps_on(e) :- sps_entry(e), option_value("entryPoint", e).
 
 // ---- a node's source text ------------------------------------------------------------------------------------------
 // sps_text(n, s): n's full source text (comments and strings included), what W's regexes and `capture.X` text
@@ -69,34 +72,22 @@ sps_step_method(f) :- node(_, f, "function_definition", _, _), child(dd, f, _), 
 
 // ---- side-effect-tags (STEP-022) ------------------------------------------------------------------------------------
 // `def step_tags` in a ServerPlanStep class whose body holds, at any depth, a string or concatenated string whose value
-// matches ^side_effect$. The `not compare CLASS_NAME ne CLASS_NAME` conjunct holds always (a node equals itself).
-// APPROXIMATION: W's `value` decodes escapes; `str` is the literal's source content. A `string` is "side_effect" when its
-// content is that and its prefix makes a str (no b, no t; no interpolation, else `str` is absent): exact but for a
-// literal spelling the name with escapes ("\x73ide_effect"). A concatenated string joins its parts (all str literals);
-// APPROXIMATION: only concatenations of 2 or 3 parts are joined (the engine refuses `cat` in recursion).
+// matches ^side_effect$ (W's `value.regex` reads strings only: a str value, escapes decoded, adjacent literals joined).
+// The `not compare CLASS_NAME ne CLASS_NAME` conjunct holds always (a node equals itself).
 .decl side_effect_block(kind: symbol)
 side_effect_block("block").
-.decl side_effect_str_prefix(p: symbol)
-side_effect_str_prefix(""). side_effect_str_prefix("r"). side_effect_str_prefix("u"). side_effect_str_prefix("f").
-side_effect_str_prefix("fr"). side_effect_str_prefix("rf").
-.decl side_effect_part(n: node, s: symbol)
-side_effect_part(n, s) :- node(_, n, "string", _, _), str(n, s), strprefix(n, p), side_effect_str_prefix(p).
-.decl side_effect_parts(c: node, k: number)
-side_effect_parts(c, k) :- node(_, c, "concatenated_string", _, _), k = count : { child(c, _, _) }.
+.decl side_effect_kind(kind: symbol)
+side_effect_kind("string"). side_effect_kind("concatenated_string").
 .decl side_effect_value(n: node)
-side_effect_value(n) :- side_effect_part(n, "side_effect").
-side_effect_value(c) :- side_effect_parts(c, 2), child(c, p0, 0), side_effect_part(p0, s0), child(c, p1, 1),
-    side_effect_part(p1, s1), cat(s0, s1) = "side_effect".
-side_effect_value(c) :- side_effect_parts(c, 3), child(c, p0, 0), side_effect_part(p0, s0), child(c, p1, 1),
-    side_effect_part(p1, s1), child(c, p2, 2), side_effect_part(p2, s2), cat(cat(s0, s1), s2) = "side_effect".
+side_effect_value(n) :- node(_, n, k, _, _), side_effect_kind(k), value(n, "side_effect"), value_type_of(n, "str").
 violation("data-layer-serverplan-steps", "side-effect-tags", "STEP-022", p, l) :-
     node(d, n, "function_definition", _, _), field(n, "name", x), node(_, x, "identifier", _, _), text(x, "step_tags"),
     sps_step_method(n), field(n, "body", b), inside(s, b, side_effect_block), side_effect_value(s),
     in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l), sps_on("check_side_effect_tag_allowlist").
 
 // ---- runtime-builder-string-name (STEP-031), anchored at VALUE -----------------------------------------------------
-// nthChild position 2 of `not kind comment`: the base relations hold no comments, so `child` counts exactly those
-// siblings (index 1). The third branch's callee regex is \b\B (matches nothing): left out.
+// nthChild position 2 of `not kind comment` counts the named children that are not comments: `child`'s index 1 (`child`
+// holds no comments). The third branch's callee regex is \b\B (matches nothing): left out.
 .decl runtime_builder_callee(c: node, name: symbol)
 runtime_builder_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, s).
 runtime_builder_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _),
@@ -142,23 +133,21 @@ rrs_valid(d) :- doc(d, _, _), !syntax_error(d).
 // functions: every function_definition with a name.
 .decl rrs_functions(f: node, name: symbol)
 rrs_functions(f, s) :- node(d, f, "function_definition", _, _), rrs_valid(d), field(f, "name", x), text(x, s).
-// empty-refs (util): None; an empty str literal (prefix letters r/u only) or an all-empty concatenation of str literals;
-// an empty tuple/list/set; parentheses around one of these.
-// APPROXIMATION: W's `value` decodes escapes; `str` is the source content, so a literal whose escapes decode to ""
-// ("\<newline>") is not seen as empty. `has` neighbor is read over named children (a tuple with no named child).
-.decl rrs_empty_str_prefix(p: symbol)
-rrs_empty_str_prefix(""). rrs_empty_str_prefix("r"). rrs_empty_str_prefix("u").
-.decl rrs_part_prefix(p: symbol)
-rrs_part_prefix(""). rrs_part_prefix("r"). rrs_part_prefix("u"). rrs_part_prefix("f"). rrs_part_prefix("fr"). rrs_part_prefix("rf").
-.decl rrs_nonempty_part(c: node)
-rrs_nonempty_part(c) :- node(_, c, "concatenated_string", _, _), child(c, p, _), !str(p, "").
-rrs_nonempty_part(c) :- node(_, c, "concatenated_string", _, _), child(c, p, _), strprefix(p, x), !rrs_part_prefix(x).
+// empty-refs (util): None; a string whose text starts with r/u prefix letters only and a quote (regex
+// `(?i)^[ru]*["']`), or a concatenated_string with no interpolation at any depth, either with W's value the empty str;
+// an empty tuple/list/set (no child but comments: `child` holds none); parentheses around one of these.
+.decl rrs_k_concat(kind: symbol)
+rrs_k_concat("concatenated_string").
+.decl rrs_interpolated(c: node)
+rrs_interpolated(c) :- node(_, i, "interpolation", _, _), inside(i, c, rrs_k_concat).
+.decl rrs_empty_str(n: node)
+rrs_empty_str(n) :- node(_, n, "string", _, _), sps_text(n, s), match("(?i:[ru]*[\"'])(?s:.*)", s).
+rrs_empty_str(n) :- node(_, n, "concatenated_string", _, _), !rrs_interpolated(n).
 .decl rrs_has_child(n: node)
 rrs_has_child(n) :- child(n, _, _).
 .decl rrs_empty_refs(n: node)
 rrs_empty_refs(n) :- node(_, n, "none", _, _).
-rrs_empty_refs(n) :- node(_, n, "string", _, _), str(n, ""), strprefix(n, x), rrs_empty_str_prefix(x).
-rrs_empty_refs(n) :- node(_, n, "concatenated_string", _, _), !rrs_nonempty_part(n).
+rrs_empty_refs(n) :- rrs_empty_str(n), value(n, ""), value_type_of(n, "str").
 rrs_empty_refs(n) :- node(_, n, "tuple", _, _), !rrs_has_child(n).
 rrs_empty_refs(n) :- node(_, n, "list", _, _), !rrs_has_child(n).
 rrs_empty_refs(n) :- node(_, n, "set", _, _), !rrs_has_child(n).
@@ -310,7 +299,7 @@ violation("data-layer-serverplan-steps", "runtime-reference-summaries", code, p,
 // its full text (see sc5_full_callee).
 // Not lowered (read by nothing in the query): nonempty_keywords and compiled's grammarless/refs/sql_surface columns,
 // attributes.object/object_text, calls.callee_id/receiver, parameters.annotation/position, edges.ordinal.
-// Options: entryPoint at the default (all), gated by sps_on; `relaxed` (strictModulesOnly) is read by no stage.
+// Options: entryPoint gated by sps_on; `relaxed` (strictModulesOnly) is read by no stage.
 
 // ---- raw_nodes selector (converter output, verbatim) ----
 .decl sc5_selected(n: node)
@@ -543,10 +532,10 @@ violation("data-layer-serverplan-steps", "step-contracts-5", "STEP-041", p, l) :
 // ---- step-contracts-2 (STEP-026, STEP-019) ------------------------------------------------------------------------
 // check_compile_callbacks_no_runtime_authority (STEP-026), check_postop_no_resolved_data_manipulation (STEP-019).
 // Lowered from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_2.rr to the base
-// relations. Options at their defaults (entryPoint "all": each detector gated by sps_on; strictModulesOnly true).
+// relations. Options: entryPoint gates each detector (sps_on); strictModulesOnly feeds only `relaxed`, read by no stage.
 
-// ---- raw_nodes: the selector (converter output, /tmp/w32frag-sc2-selector.rr), its regex over the RETURN_TYPE node
-// (a `type` node, not an identifier) reading sps_text instead of name ----
+// ---- raw_nodes: the selector (converter output), its regex over the RETURN_TYPE node (a `type` node, not an
+// identifier) reading sps_text instead of name ----
 .decl sc2_selected(n: node)
 .decl sc2_k0(kind: symbol)
 sc2_k0("function_definition").
@@ -822,13 +811,9 @@ violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-019", p, l) :
     sps_on("check_postop_no_resolved_data_manipulation").
 
 // ==== step-contracts-1 (31 stages; STEP-016 018 023 024 025 033 034 036 040 045 046 047 048 049 050) ==============
-// Source: /tmp/sps/step-contracts-1.txt; guide: native/.../serverplan_steps.step_contracts_1.rr. Options: strictModulesOnly
-// (`relaxed`) is read by no stage; every query branch is gated by sps_on(its entry).
-// APPROXIMATIONS (each also at its rule): levels reads `intval` for CAST(text AS INTEGER) (they differ only for a
-// non-zero 0x/0o/0b literal); comments are no nodes, so a list/tuple/set holding only a comment counts as empty here
-// (W: a selected comment child makes it non-empty); LIKE's ASCII case folding is `isuffix`.
-// Base relation the main file does not declare yet:
-.decl intval(n: node, v: number)
+// Guide: native/.../serverplan_steps.step_contracts_1.rr. Options: strictModulesOnly (`relaxed`) is read by no stage;
+// every query branch is gated by sps_on(its entry). levels' CAST(text AS INTEGER) reads the literal's leading decimal
+// digits (sc1_level0); `nodes` holds the selector's comments (sc1_sel_comment); LIKE folds ASCII only (sc1_derived).
 // ---- raw_nodes selector (the converter's lowering; sc1_m68 reads sps_text for the function's regex) ----
 .decl sc1_selected(n: node)
 .decl sc1_k0(kind: symbol)
@@ -964,9 +949,40 @@ sc1_none(v) :- node(_, v, "none", _, _).
 // A selected node with a selected child.
 .decl sc1_sel_child(p: node)
 sc1_sel_child(p) :- sc1_selected(x), child(p, x, _).
-// A selected list/tuple/set with no selected child. APPROXIMATION: comments are no nodes (W counts a selected comment).
+// A list/tuple/set with a selected comment child (`nodes` holds the comments the selector takes; `child` none). A
+// comment is the parent's `token` whose text starts with `#` (no other child of these kinds can). The selector's
+// branches that take a comment whose parent is a list/tuple/set (sc1_m172's, the comment's ancestors being the
+// parent's and the parent itself): the parent a return value in a named step function (sc1_m61's), or frozenset's
+// argument there, or the comment in such a function's return type; inside a cte_column_type_hints that sc1_m68
+// takes; in the condition of an if/elif in compile; the parent a CompiledStep keyword's value; inside a
+// RuntimeBuilderSpec/runtime_builder_post_op/scalar_column_post_op call; inside a raise in compile.
+.decl sc1_cmt_fn(f: node)
+sc1_cmt_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, s),
+    (s = "cte_column_type_hints" ; s = "cte_output_columns" ; s = "emits_sql_for_accounting" ; s = "execution_role" ;
+     s = "is_executor_owned_runtime_step" ; s = "level" ; s = "step_tags" ; s = "supports_sql_batch_transport" ;
+     s = "tables_read" ; s = "tables_written").
+.decl sc1_compile_fn(f: node)
+sc1_compile_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), node(_, x, "identifier", _, _), text(x, "compile").
+.decl sc1_comment_at(p: node, s: number, e: number)
+sc1_comment_at(p, s, e) :- node(_, p, k, _, _), sc1_seq_kind(k), token(p, _, t, s, e), prefix("#", t).
+.decl sc1_sel_comment(p: node)
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), child(r, p, _), node(_, r, "return_statement", _, _), inside(r, f, sc1_k0), sc1_cmt_fn(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), child(a, p, _), node(_, a, "argument_list", _, _), child(c, a, _), node(_, c, "call", _, _),
+    field(c, "function", x), sc1_m52(x), inside(p, f, sc1_k0), sc1_cmt_fn(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, s, e), inside(p, f, sc1_k0), sc1_cmt_fn(f), field(f, "return_type", t),
+    node(_, t, _, ts, te), ts <= s, e <= te.
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), inside(p, f, sc1_k0), field(f, "name", x), node(_, x, "identifier", _, _),
+    text(x, "cte_column_type_hints"), sc1_m68(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, s, e), inside(p, i, sc1_k1), field(i, "condition", c), node(_, c, _, cs, ce), cs <= s,
+    e <= ce, sc1_m114(i), inside(i, f, sc1_k0), sc1_compile_fn(f).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), field(w, "value", p), node(_, w, "keyword_argument", _, _), child(a, w, _),
+    node(_, a, "argument_list", _, _), child(c, a, _), node(_, c, "call", _, _), field(c, "function", x), sc1_m153(x).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), inside(p, c, sc1_k2), node(_, c, "call", _, _), field(c, "function", x), sc1_m164(x).
+sc1_sel_comment(p) :- sc1_comment_at(p, _, _), inside(p, r, sc1_k3), node(_, r, "raise_statement", _, _), inside(r, f, sc1_k0),
+    sc1_compile_fn(f).
+// A selected list/tuple/set with no selected child, comments included.
 .decl sc1_empty_seq(x: node)
-sc1_empty_seq(x) :- sc1_selected(x), node(_, x, k, _, _), sc1_seq_kind(k), !sc1_sel_child(x).
+sc1_empty_seq(x) :- sc1_selected(x), node(_, x, k, _, _), sc1_seq_kind(k), !sc1_sel_child(x), !sc1_sel_comment(x).
 // A string or concatenated_string and its text.
 .decl sc1_string(v: node, s: symbol)
 sc1_string(v, s) :- node(_, v, "string", _, _), sps_text(v, s).
@@ -1076,14 +1092,14 @@ sc1_role(c, "SQL") :- sc1_method_return(_, c, "execution_role", _, v), node(_, v
 sc1_role(c, "SQL") :- sc1_method_return(_, c, "execution_role", _, v), !sc1_is_attribute(v), sps_text(v, s),
     match("['\"]*[sS][qQ][lL]['\"]*", s).
 // levels: the first (least __start) integer returned directly in a step method `level` of the class; level 0.
-// APPROXIMATION: CAST(text AS INTEGER) reads the leading decimal digits, `intval` the literal's value: they differ for a
-// non-zero hex/octal/binary literal (0x5: CAST 0, intval 5).
+// CAST(text AS INTEGER) reads the text's longest leading decimal integer: 0 where the literal's text is zeros then
+// nothing or a non-digit (`0`, `00`, `0x5`, `0_1`, `0j`).
 .decl sc1_level_int(c: node, x: node, s: number)
 sc1_level_int(c, x, s) :- sc1_step_method(m, c, "level"), sc1_method_desc(m, x), node(_, x, "integer", s, _), sc1_return(_, x).
 .decl sc1_level_first(c: node, s: number)
 sc1_level_first(c, s) :- sc1_level_int(c, _, _), s = min t : { sc1_level_int(c, _, t) }.
 .decl sc1_level0(c: node)
-sc1_level0(c) :- sc1_level_first(c, s), sc1_level_int(c, x, s), intval(x, 0).
+sc1_level0(c) :- sc1_level_first(c, s), sc1_level_int(c, x, s), sps_text(x, t), match("0+(?:[^0-9](?s:.*))?", t).
 
 // ---- nonempty_keywords, compiled, compile_surfaces, zero_io ----
 .decl sc1_empty_value(v: node)
@@ -1130,7 +1146,8 @@ sc1_alias(m, nm, s) :- sc1_step_method(m, _, "compile"), sc1_assign(a, l), sc1_o
 // ancestor of a derived node, and the names reading a local binding whose value is derived. The walk goes up `child`
 // (every ancestor): the selected ones are exactly SQL's walk up `edges`, and every reader below needs a selected node.
 .decl sc1_derived(x: node)
-sc1_derived(c) :- sc1_full_callee(c, s), isuffix("cte_output_columns", s).
+// full_callee LIKE '%cte_output_columns': `_` is any one character, letters fold ASCII only.
+sc1_derived(c) :- sc1_full_callee(c, s), match("(?s:.*)[cC][tT][eE](?s:.)[oO][uU][tT][pP][uU][tT](?s:.)[cC][oO][lL][uU][mM][nN][sS]", s).
 sc1_derived(p) :- sc1_derived(c), child(p, c, _).
 sc1_derived(n) :- sc1_derived(v), sc1_local_binding(f, nm, v), node(_, n, "identifier", _, _), text(n, nm), sc1_selected(n), sc1_owner(n, f).
 
@@ -1198,7 +1215,7 @@ sc1_row("STEP-025", n) :- sps_on("check_zero_io_l0_execution_role_enum_semantics
 // STEP-034: cte_output_columns without cte_column_type_hints and without a `return ()` within it.
 .decl sc1_returns_empty_tuple(m: node)
 sc1_returns_empty_tuple(m) :- sc1_first(m, _, "cte_output_columns"), sc1_method_desc(m, r), sc1_return(r, v), node(_, v, "tuple", _, _),
-    !sc1_sel_child(v).
+    !sc1_sel_child(v), !sc1_sel_comment(v).
 sc1_row("STEP-034", n) :- sps_on("check_sql_visible_steps_declare_cte_type_hints"), sc1_first(n, c, "cte_output_columns"),
     !sc1_has_first(c, "cte_column_type_hints"), !sc1_returns_empty_tuple(n).
 // STEP-036: a VIRTUAL step's execute_runtime whose compile builds a grammarless CompiledStep.
@@ -1454,11 +1471,11 @@ violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :
 // `nodes` (raw_nodes) is sc4_selected; a stage joining `nodes` on a captured id needs that node in it. PARENT is
 // `child`, a field capture (NAME, LEFT, RIGHT, VALUE, FUNCTION, ARGUMENTS, OBJECT, ATTRIBUTE, BODY) is `field`.
 // `ownership.fn` is the nearest function_definition strictly above (every function_definition is selected, so the
-// SQL's walk down `edges` carries exactly that). `ordinal` counts a node's earlier selected siblings.
-// APPROXIMATION: W's rows include comment nodes (when selected) in `ordinal`; the base relations hold none, so a
-// comment before a pair's key, a pair's value or a subscript's value shifts W's ordinal and not this one.
+// SQL's walk down `edges` carries exactly that). `ordinal` counts a node's earlier selected siblings, selected comments
+// included (sc4_sel_comment, from `token`).
 // Text columns (`target_text`, `full_callee`, `text`, a literal key) read sps_text (node_text, the full source text).
-// Every regex here is a set of ASCII words over `lower(text)` (rx_matches searches), so a word test is `icontains`.
+// Every regex here is a set of ASCII words over `lower(text)` (rx_matches searches; SQLite's lower() folds ASCII only),
+// so a word test is a search with each letter a two-case class.
 .decl sc4_k_fn(kind: symbol)
 sc4_k_fn("function_definition").
 .decl sc4_k_ordp(kind: symbol)
@@ -1529,26 +1546,33 @@ sc4_m320(n) :- inside(n, v309, sc4_k2), sc4_m319(v309).
 sc4_selected(n) :- sc4_m320(n).
 
 // ---- the callable-name words of the kind/escape-name/literal-key tests ----
-// callable|callback|closure|function|lambda|partial over the text of a (selected) identifier, attribute, string or
-// concatenated_string: every node the tests read is one of these, checked by the caller.
+// rx_matches(lower(text), 'callable|callback|closure|function|lambda|partial') over the text of a (selected) identifier,
+// attribute, string or concatenated_string: every node the tests read is one of these, checked by the caller. SQLite's
+// lower() folds ASCII only, so each word is searched with its letters as two-case classes.
 .decl sc4_k_named(kind: symbol)
 sc4_k_named("identifier"). sc4_k_named("attribute"). sc4_k_named("string"). sc4_k_named("concatenated_string").
 .decl sc4_named2(n: node)
 sc4_named2(n) :- sc4_selected(n), node(_, n, k, _, _), sc4_k_named(k), sps_text(n, s),
-    (icontains("callable", s) ; icontains("callback", s) ; icontains("closure", s) ; icontains("function", s) ;
-     icontains("lambda", s) ; icontains("partial", s)).
+    match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][lL][oO][sS][uU][rR][eE]|[fF][uU][nN][cC][tT][iI][oO][nN]|[lL][aA][mM][bB][dD][aA]|[pP][aA][rR][tT][iI][aA][lL])(?s:.*)", s).
 
 // ---- ordinal, functions, classes ----
-// sc4_sel_child: a selected child of a node whose children's ordinal is read; sc4_sel_before: an earlier one.
+// `ordinal` numbers a parent's selected rows by start, comments included: W's rows hold a comment wherever the selector
+// takes it. A comment child of a node of an ordinal-read kind (pair, tuple, list, subscript, parenthesized_expression)
+// is selected only by the selector's last branch (inside a builder or registering call: any ancestor; the others take
+// a comment only under an argument_list or an assignment). A comment is the parent's `token` whose text starts with `#`
+// (no other child of these kinds can). sc4_sel_start: the starts of a parent's selected children, comments included.
 .decl sc4_sel_child(p: node, n: node, i: number)
 sc4_sel_child(p, n, i) :- child(p, n, i), sc4_selected(n), node(_, p, k, _, _), sc4_k_ordp(k).
-.decl sc4_sel_before(p: node, i: number, j: number)
-sc4_sel_before(p, i, j) :- sc4_sel_child(p, _, i), sc4_sel_child(p, _, j), j < i.
-.decl sc4_has_before(p: node, i: number)
-sc4_has_before(p, i) :- sc4_sel_before(p, i, _).
+.decl sc4_sel_comment(p: node, s: number)
+sc4_sel_comment(p, s) :- node(_, p, k, _, _), sc4_k_ordp(k), token(p, _, t, s, _), prefix("#", t), inside(p, c, sc4_k2), sc4_m319(c).
+.decl sc4_sel_start(p: node, s: number)
+sc4_sel_start(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _).
+sc4_sel_start(p, s) :- sc4_sel_comment(p, s).
+.decl sc4_sel_before(p: node, s: number)
+sc4_sel_before(p, s) :- sc4_sel_start(p, s), sc4_sel_start(p, t), t < s.
 .decl sc4_ord(n: node, o: number)
-sc4_ord(n, 0) :- sc4_sel_child(p, n, i), !sc4_has_before(p, i).
-sc4_ord(n, o) :- sc4_sel_child(p, n, i), sc4_has_before(p, i), o = count : { sc4_sel_before(p, i, _) }.
+sc4_ord(n, 0) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), !sc4_sel_before(p, s).
+sc4_ord(n, o) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s), o = count : { sc4_sel_start(p, t), t < s }.
 .decl sc4_fn_name(f: node, s: symbol)
 sc4_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
 .decl sc4_class(c: node, s: symbol)
@@ -1614,9 +1638,7 @@ sc4_callable_edge(c, n) :- sc4_selected(n), node(_, n, k, _, _), sc4_k_callable_
 .decl sc4_user_callable(n: node)
 sc4_user_callable(n) :- sc4_selected(n), node(_, n, "lambda", _, _).
 sc4_user_callable(n) :- sc4_selected(n), node(_, n, "identifier", _, _), text(n, s),
-    (icontains("callable", s) ; icontains("callback", s) ; icontains("decoder", s) ; icontains("fn", s) ;
-     icontains("function", s) ; icontains("hook", s) ; icontains("mapper", s) ; icontains("picker", s) ;
-     icontains("processor", s) ; icontains("projector", s) ; icontains("transform", s)).
+    match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[dD][eE][cC][oO][dD][eE][rR]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[mM][aA][pP][pP][eE][rR]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
 sc4_user_callable(t) :- sc4_user_callable(s), sc4_callable_edge(s, t).
 .decl sc4_lambda_target(d: number, s: symbol)
 sc4_lambda_target(d, s) :- sc4_asg_value(a, r), node(_, r, "lambda", _, _), sc4_asg(a, l), sps_text(l, s), node(d, a, _, _, _).
@@ -1641,15 +1663,15 @@ sc4_literal_kwargs(v) :- sc4_kw(c, "literal_kwargs", v), sc4_builder(c, "Runtime
 .decl sc4_literal_pair(root: node, key: node, value: node)
 sc4_literal_pair(v, kn, x) :- sc4_literal_kwargs(v), child(v, p, _), sc4_selected(p), node(_, p, pk, _, _), sc4_k_pair(pk),
     child(p, kn, _), sc4_ord(kn, 0), node(_, kn, kk, _, _), sc4_k_str(kk), child(p, x, _), sc4_ord(x, 1).
-// lower(trim(key, '"' and "'")) = 'builder': the key's text is `builder` in any case between runs of quote characters.
+// lower(trim(key, '"' and "'")) = 'builder': the key's text is `builder` in any ASCII case between runs of quote characters.
 .decl sc4_key_builder(kn: node)
-sc4_key_builder(kn) :- sc4_literal_pair(_, kn, _), sps_text(kn, s), match("(?i)['\"]*builder['\"]*", s).
+sc4_key_builder(kn) :- sc4_literal_pair(_, kn, _), sps_text(kn, s), match("['\"]*[bB][uU][iI][lL][dD][eE][rR]['\"]*", s).
 
 // ---- the query: STEP-029 ----
 .decl sc4_hit(n: node)
 // '' || n.id: an identifier/attribute assignment target naming a runtime callable/effect/hook.
-sc4_hit(n) :- sc4_asg(n, l), node(_, l, k, _, _), sc4_k_target(k), sps_text(l, s), icontains("runtime", s),
-    (icontains("callback", s) ; icontains("callable", s) ; icontains("effect", s) ; icontains("function", s) ; icontains("hook", s)).
+sc4_hit(n) :- sc4_asg(n, l), node(_, l, k, _, _), sc4_k_target(k), sps_text(l, s), match("(?s:.*)[rR][uU][nN][tT][iI][mM][eE](?s:.*)", s),
+    match("(?s:.*)(?:[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][aA][lL][lL][aA][bB][lL][eE]|[eE][fF][fF][eE][cC][tT]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK])(?s:.*)", s).
 // 'kind:': an assignment statement of RuntimeBuilderKind's body naming a callable (target identifier, or string value).
 .decl sc4_kind_member(n: node)
 sc4_kind_member(n) :- sc4_asg(n, _), child(e, n, _), sc4_selected(e), node(_, e, "expression_statement", _, _), child(b, e, _),
@@ -1657,9 +1679,8 @@ sc4_kind_member(n) :- sc4_asg(n, _), child(e, n, _), sc4_selected(e), node(_, e,
 sc4_hit(n) :- sc4_kind_member(n), sc4_asg(n, l), node(_, l, "identifier", _, _), sc4_named2(l).
 sc4_hit(n) :- sc4_kind_member(n), sc4_asg_value(n, r), node(_, r, k, _, _), sc4_k_str(k), sc4_named2(r).
 // 'registry:': a call registering a runtime callable.
-sc4_hit(n) :- sc4_call_full(n, s), icontains("runtime", s), icontains("register", s),
-    (icontains("callback", s) ; icontains("callable", s) ; icontains("effect", s) ; icontains("function", s) ;
-     icontains("hook", s) ; icontains("processor", s) ; icontains("transform", s)).
+sc4_hit(n) :- sc4_call_full(n, s), match("(?s:.*)[rR][uU][nN][tT][iI][mM][eE](?s:.*)", s), match("(?s:.*)[rR][eE][gG][iI][sS][tT][eE][rR](?s:.*)", s),
+    match("(?s:.*)(?:[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][aA][lL][lL][aA][bB][lL][eE]|[eE][fF][fF][eE][cC][tT]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
 // 'escape-name:': a builder call naming its builder a callable, by position or keyword.
 sc4_hit(n) :- sc4_builder(n, "runtime_builder_post_op"), sc4_argpos(n, a, 0), node(_, a, k, _, _), sc4_k_target(k),
     sc4_named2(a).
@@ -1671,12 +1692,10 @@ sc4_hit(n) :- sc4_builder(n, _), sc4_kw(n, "builder_name", v), node(_, v, k, _, 
 // 'keyword:': a builder call keyword's value that is named as, or is, a callable, or (but literal_kwargs) is mutable.
 .decl sc4_builder_kw(s: symbol, v: node)
 sc4_builder_kw(s, v) :- sc4_kw(c, s, v), sc4_builder(c, _).
-sc4_hit(n) :- sc4_builder_kw(s, n), match("(?i)builder", s).
+sc4_hit(n) :- sc4_builder_kw(s, n), match("[bB][uU][iI][lL][dD][eE][rR]", s).
+// The SQL's word list less the words another holds (callable_id holds callable, row_decoder decoder, …).
 sc4_hit(n) :- sc4_builder_kw(s, n),
-    (icontains("callable", s) ; icontains("callback", s) ; icontains("closure", s) ; icontains("decoder", s) ;
-     icontains("effect_id", s) ; icontains("fn", s) ; icontains("function", s) ; icontains("hook", s) ;
-     icontains("lambda", s) ; icontains("mapper", s) ; icontains("partial", s) ; icontains("picker", s) ;
-     icontains("processor", s) ; icontains("projector", s) ; icontains("registry_id", s) ; icontains("transform", s)).
+    match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[cC][lL][oO][sS][uU][rR][eE]|[dD][eE][cC][oO][dD][eE][rR]|[eE][fF][fF][eE][cC][tT]_[iI][dD]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[lL][aA][mM][bB][dD][aA]|[mM][aA][pP][pP][eE][rR]|[pP][aA][rR][tT][iI][aA][lL]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[rR][eE][gG][iI][sS][tT][rR][yY]_[iI][dD]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
 sc4_hit(n) :- sc4_builder_kw(_, n), sc4_user_callable(n).
 sc4_hit(n) :- sc4_builder_kw(_, n), sc4_direct_callable(n).
 sc4_hit(n) :- sc4_builder_kw(s, n), s != "literal_kwargs", sc4_mutable(n).
@@ -1700,15 +1719,16 @@ violation("data-layer-serverplan-steps", "step-contracts-4", "STEP-029", p, l) :
 // one (or any call under post_op_with_refs), and a user-callable call inside the function a legacy post-op names.
 // Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_6.rr.
 //
-// Options: strictModulesOnly true (the default): `nodes` keeps the strict modules' nodes (sc6_sel), and `relaxed`
-// matches no file, so the `EXISTS relaxed` opt-in is never taken and is not lowered.
+// Options: strictModulesOnly (`option_on`, default true): true keeps the strict modules' nodes in `nodes` (sc6_sel)
+// and `relaxed` matches no file; false keeps every selected node and `relaxed` holds every valid module, whose
+// `EXISTS relaxed` opts every document in.
 // `nodes` (raw_nodes) is sc6_sel; a stage joining `nodes` on a captured id needs that node in it. PARENT is `child`,
 // a field capture (NAME, LEFT, RIGHT, VALUE, TYPE, FUNCTION, ARGUMENTS, OBJECT, ATTRIBUTE) is `field`.
 // descendants(r, n) is "r and n selected, n inside r or n = r" (the nearest-selected-ancestor chain from n passes
 // every selected ancestor). `ordinal` (read for a subscript's/parenthesized expression's first child) counts a node's
-// earlier selected siblings. APPROXIMATION: W's rows include comment nodes (when selected) in `ordinal`; the base
-// relations hold none, so a comment before a subscript's value shifts W's ordinal and not this one.
-// Text columns (`full_callee`, `target_text`) read sps_text (node_text).
+// earlier selected siblings, selected comments included (sc6_sel_comment, from `token`).
+// Text columns (`full_callee`, `target_text`) read sps_text (node_text); rx_matches(lower(text), …) is a search with
+// each letter a two-case class (SQLite's lower() folds ASCII only).
 .decl sc6_k_fn(kind: symbol)
 sc6_k_fn("function_definition").
 .decl sc6_k_module(kind: symbol)
@@ -1812,22 +1832,42 @@ sc6_m515(n) :- child(v512, n, _), node(_, v512, "assignment", _, _), field(v512,
 .decl sc6_u494(n: node)
 sc6_u494(n) :- sc6_m508(n).
 sc6_selected(n) :- sc6_m515(n).
-// strictModulesOnly true: the node is a strict module (`step-strict-module`) or inside one (converter output).
+// strictModulesOnly true: the node is a strict module (`step-strict-module`) or inside one (converter output); false:
+// every selected node.
+.decl option_on(name: symbol)
 .decl sc6_strict_selected(n: node)
 .decl sc6_strict_u516(n: node)
 sc6_strict_u516(n) :- node(_, n, "module", _, _), child(n, v517, _), node(_, v517, "expression_statement", _, _), child(v517, v518, _), node(_, v518, "assignment", _, _), field(v518, "left", v519), node(_, v519, "identifier", _, _), text(v519, v520), v520 = "CLOSED_POST_OP_STRICT", field(v518, "right", v521), node(_, v521, "true", _, _).
 sc6_strict_selected(n) :- node(_, n, "module", _, _), sc6_strict_u516(n).
+// sc6_strict(n): n is a strict module or inside one.
+.decl sc6_strict(n: node)
+sc6_strict(n) :- sc6_strict_selected(n).
+sc6_strict(n) :- inside(n, m, sc6_k_module), sc6_strict_selected(m).
 .decl sc6_sel(n: node)
-sc6_sel(n) :- sc6_selected(n), sc6_strict_selected(n).
-sc6_sel(n) :- sc6_selected(n), inside(n, m, sc6_k_module), sc6_strict_selected(m).
+sc6_sel(n) :- sc6_selected(n), option_on("strictModulesOnly"), sc6_strict(n).
+sc6_sel(n) :- sc6_selected(n), !option_on("strictModulesOnly").
 
 // ---- ordinal, functions, attributes, calls, arguments, keywords ----
+// `ordinal` (read at 0 only, for a subscript's/parenthesized expression's children) numbers a parent's selected rows by
+// start, comments included. A comment child of either kind is selected only by the selector's branch "inside a
+// user-callable call" (any ancestor; the others take a comment only under a call, an argument_list, a keyword_argument
+// or an assignment), and kept as its parent is (same module). A comment is the parent's `token` whose text starts with
+// `#` (no other child of these kinds can).
 .decl sc6_sel_child(p: node, n: node, i: number)
 sc6_sel_child(p, n, i) :- child(p, n, i), sc6_sel(n), node(_, p, k, _, _), sc6_k_callable_wrap(k).
-.decl sc6_has_before(p: node, i: number)
-sc6_has_before(p, i) :- sc6_sel_child(p, _, i), sc6_sel_child(p, _, j), j < i.
+.decl sc6_sel_comment(p: node, s: number)
+.decl sc6_comment_at(p: node, s: number)
+sc6_comment_at(p, s) :- node(_, p, k, _, _), sc6_k_callable_wrap(k), token(p, _, t, s, _), prefix("#", t),
+    inside(p, c, sc6_k2), node(_, c, "call", _, _), sc6_u494(c).
+sc6_sel_comment(p, s) :- sc6_comment_at(p, s), option_on("strictModulesOnly"), sc6_strict(p).
+sc6_sel_comment(p, s) :- sc6_comment_at(p, s), !option_on("strictModulesOnly").
+.decl sc6_sel_start(p: node, s: number)
+sc6_sel_start(p, s) :- sc6_sel_child(p, n, _), node(_, n, _, s, _).
+sc6_sel_start(p, s) :- sc6_sel_comment(p, s).
+.decl sc6_has_before(p: node, s: number)
+sc6_has_before(p, s) :- sc6_sel_start(p, s), sc6_sel_start(p, t), t < s.
 .decl sc6_ord0(n: node)
-sc6_ord0(n) :- sc6_sel_child(p, n, i), !sc6_has_before(p, i).
+sc6_ord0(n) :- sc6_sel_child(p, n, _), node(_, n, _, s, _), !sc6_has_before(p, s).
 .decl sc6_fn_name(f: node, s: symbol)
 sc6_fn_name(f, s) :- sc6_sel(f), node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
 .decl sc6_attr(a: node)
@@ -1854,15 +1894,15 @@ sc6_callable_edge(c, n) :- sc6_sel(n), node(_, n, k, _, _), sc6_k_callable_wrap(
 .decl sc6_user_callable(n: node)
 sc6_user_callable(n) :- sc6_sel(n), node(_, n, "lambda", _, _).
 sc6_user_callable(n) :- sc6_sel(n), node(_, n, "identifier", _, _), text(n, s),
-    (icontains("callable", s) ; icontains("callback", s) ; icontains("decoder", s) ; icontains("fn", s) ;
-     icontains("function", s) ; icontains("hook", s) ; icontains("mapper", s) ; icontains("picker", s) ;
-     icontains("processor", s) ; icontains("projector", s) ; icontains("transform", s)).
+    match("(?s:.*)(?:[cC][aA][lL][lL][aA][bB][lL][eE]|[cC][aA][lL][lL][bB][aA][cC][kK]|[dD][eE][cC][oO][dD][eE][rR]|[fF][nN]|[fF][uU][nN][cC][tT][iI][oO][nN]|[hH][oO][oO][kK]|[mM][aA][pP][pP][eE][rR]|[pP][iI][cC][kK][eE][rR]|[pP][rR][oO][cC][eE][sS][sS][oO][rR]|[pP][rR][oO][jJ][eE][cC][tT][oO][rR]|[tT][rR][aA][nN][sS][fF][oO][rR][mM])(?s:.*)", s).
 sc6_user_callable(t) :- sc6_user_callable(s), sc6_callable_edge(s, t).
 
 // ---- legacy_postops, legacy_callbacks ----
-// The document opts in: a selected assignment `CLOSED_POST_OP_STRICT` (target text) = a selected `true` RIGHT, with no
-// TYPE, whose parent is selected and whose grandparent is a selected module.
+// The document opts in: under strictModulesOnly false, `relaxed` holds every valid Python module; else a selected
+// assignment `CLOSED_POST_OP_STRICT` (target text) = a selected `true` RIGHT, with no TYPE, whose parent is selected and
+// whose grandparent is a selected module.
 .decl sc6_opt_in(d: number)
+sc6_opt_in(d) :- !option_on("strictModulesOnly"), node(d, _, "module", _, _), !syntax_error(d).
 sc6_opt_in(d) :- sc6_sel(a), node(d, a, "assignment", _, _), field(a, "left", l), sc6_sel(l), sps_text(l, "CLOSED_POST_OP_STRICT"),
     field(a, "right", r), sc6_sel(r), node(_, r, "true", _, _), !field(a, "type", _), child(p, a, _), sc6_sel(p),
     child(m, p, _), sc6_sel(m), node(_, m, "module", _, _).

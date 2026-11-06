@@ -1,13 +1,14 @@
 // data-layer-render-fstrings, hand-written (decision 0043): the clause `fstring` of
-// candidates/rules-ast/data-layer-render-fstrings.json, default options (sourceGate = true; oracleAnalyzer unused).
+// candidates/rules-ast/data-layer-render-fstrings.json, for every value of its options (oracleAnalyzer is not read;
+// sourceGate, below).
 //
 // An f-string literal (a `string` whose prefix matches `(?i)^[rub]*f`, not a part of a concatenated_string), a
 // concatenated_string with an f-string part, or a format_specifier, inside (to the end) a function_definition whose
-// name matches `^render(?:_|$)`, in a module whose text matches `render|f"|f'` (sourceGate).
+// name matches `^render(?:_|$)`, in a module whose text matches `render|f"|f'` (sourceGate on) or `(?s).*` (off).
 //
-// The module gate is implied, not tested: the enclosing definition's name is an identifier of the module's text
-// that starts with `render`, so the module's text always matches `render`. Dropping it is exact, not an
-// approximation.
+// The module gate holds under either value of sourceGate, so it is not tested: the enclosing definition's name is
+// an identifier of the module's text that starts with `render`, so the module's text always matches `render`, and
+// `(?s).*` matches every text.
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)

@@ -2,8 +2,9 @@
 // operator, regex: ...}`, the operator token, which is `op` here).
 // Source of truth: candidates/rules-ast/data-layer-grammar-str-params.json.
 //
-// Options: the defaults are implemented. ALLOWLISTED_STR_CLASSES is its 14-name default (`str_params_allowed_class`).
-// oracleAnalyzer (default false) is read by no clause. sourceGate (default true): the module's text must match
+// Options: ALLOWLISTED_STR_CLASSES from the converter's `option_item` (the regex `^(?:a|b)$` over the escaped,
+// joined items is membership of the class name; the empty list, `^(?:)$`, matches no identifier).
+// oracleAnalyzer is read by no clause. sourceGate (default true): the module's text must match
 // `__init__|render\(|str|Sql`. Every clause implies it, so it is left out exactly: `parameter` needs a def whose
 // name identifier is `__init__`, and `str-call` / `str-concat` a call whose function identifier is `str`, and
 // either text is in the module's text. sourceGate=false (`(?s).*`) gives the same.
@@ -20,6 +21,9 @@
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
+.decl option_item(name: symbol, v: symbol)
+.decl node_text(n: node, s: symbol)
+.input node_text
 
 .decl str_params_class_kind(kind: symbol)
 str_params_class_kind("class_definition").
@@ -38,9 +42,9 @@ str_params_ann(n) :- node(_, n, "union_type", _, _), child(n, c, _), str_params_
 str_params_ann(n) :- node(_, n, "type", _, _), child(n, c, _), str_params_ann(c).
 str_params_ann(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), str_params_ann(c).
 
-// A sync def (`regex: ^def\s` on a function_definition: no `async`) and its name.
+// A sync def (`regex: ^def\s` on the function_definition's text: `async def` fails it) and its name.
 .decl str_params_def(f: node, x: symbol)
-str_params_def(f, x) :- node(_, f, "function_definition", _, _), !op(f, "async"), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
+str_params_def(f, x) :- node(_, f, "function_definition", _, _), node_text(f, t), match("def\\s(?s:.*)", t), field(f, "name", i), node(_, i, "identifier", _, _), text(i, x).
 // A body statement that is such a def, or a decorated one; `f` the def.
 .decl str_params_member(st: node, f: node, x: symbol)
 str_params_member(st, st, x) :- str_params_def(st, x).
@@ -102,23 +106,6 @@ str_params_allow_pair("definition", "sql_schema_view_definition").
 .decl str_params_allowed(n: node)
 str_params_allowed(n) :- child(n, i, _), node(_, i, "identifier", _, _), text(i, x), str_params_allow_pair(x, cls), inside(n, f, str_params_fn_kind), str_params_def(f, "__init__"), nearest(f, c, str_params_class_kind), field(c, "name", ci), node(_, ci, "identifier", _, _), text(ci, cls).
 
-// ALLOWLISTED_STR_CLASSES, the option's default.
-.decl str_params_allowed_class(x: symbol)
-str_params_allowed_class("CheckExpressionLexer").
-str_params_allowed_class("SqlAdminToolRawStatement").
-str_params_allowed_class("SqlColumnConstraint").
-str_params_allowed_class("SqlColumnType").
-str_params_allowed_class("SqlEscapedLiteral").
-str_params_allowed_class("SqlExplain").
-str_params_allowed_class("SqlFragment").
-str_params_allowed_class("SqlHybridSearchQuery").
-str_params_allowed_class("SqlIntegerLiteral").
-str_params_allowed_class("SqlPreRenderedFragment").
-str_params_allowed_class("SqlQuotedIdentifier").
-str_params_allowed_class("SqlTypeRef").
-str_params_allowed_class("ViewDefinition").
-str_params_allowed_class("sql_ddl_comment").
-
 // A grammar class: not allowlisted by name, and a superclass child that is an identifier starting `Sql`/`_Sql`
 // (or an attribute whose `attribute` does), or a body statement that is a sync `render` def, bare or decorated.
 .decl str_params_sql_name(s: symbol)
@@ -126,7 +113,7 @@ str_params_sql_name(s) :- text(_, s), (prefix("Sql", s) ; prefix("_Sql", s)).
 .decl str_params_grammar_class(c: node)
 str_params_grammar_class(c) :- node(_, c, "class_definition", _, _), !str_params_listed_class(c), str_params_grammarish(c).
 .decl str_params_listed_class(c: node)
-str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), str_params_allowed_class(x).
+str_params_listed_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), node(_, i, "identifier", _, _), text(i, x), option_item("ALLOWLISTED_STR_CLASSES", x).
 .decl str_params_grammarish(c: node)
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "identifier", _, _), text(b, s), str_params_sql_name(s).
 str_params_grammarish(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), node(_, b, "attribute", _, _), field(b, "attribute", i), text(i, s), str_params_sql_name(s).

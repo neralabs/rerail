@@ -1,25 +1,27 @@
 // Authored clauses of data-layer-plan-scope-ownership (decision 0043): those the converter cannot say.
 // Source of truth: candidates/rules-ast/data-layer-plan-scope-ownership.json. Every clause is authored here (the
-// converter's six re-authored without its approximate gate). Options at their defaults (sourceGate = true;
-// oracleAnalyzer is read by no clause). The .pending.rr file holds the sourceGate = false form of the gate
-// (awaiting `option_on`) and the exact lifecycle-reflection (awaiting `value`; the one here reads `str`).
+// converter's six re-authored without its approximate gate). Options as the run resolves them: sourceGate through
+// option_on (plan_scope_gate); oracleAnalyzer is read by no clause.
 //
 // The runner clauses' source gate (the module's text matching PlanScope|…|run_read_plan_scope_workflow|
 // run_write_plan_scope_workflow) is implied by their own match: the matched function's name, one of
-// run_{read,write}_plan_scope_workflow[_async], is in the module's text. It is left out, exactly.
+// run_{read,write}_plan_scope_workflow[_async], is in the module's text. It is left out, exactly, for either
+// sourceGate (false makes the gate "^", which every module matches).
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl node_text(n: node, s: symbol)
-.decl tape_line(d: number, l: number, sp: span)
+.decl source(d: number, sp: span)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_on(name: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -62,12 +64,15 @@ runner_before(q) :- runner_param(ps, q, i), runner_param(ps, _, j), j < i.
 runner_before2(q) :- runner_param(ps, q, i), runner_param(ps, _, j), runner_param(ps, _, k), j < k, k < i.
 
 // ---- runner-nominal-false / runner-nominal-true ----
-// The first positional parameter's `type` is not an annotation-atom whose text is exactly SyncPlanScope
-// (AsyncPlanScope for the _async runners). The `type` field's child is a `type` node; for its text to be exactly
-// the name, its child is that identifier (a parenthesized one has the parentheses in its text), so the test is
-// on the identifier. Not exact only where tree-sitter puts a comment inside the `type` node.
+// The first positional parameter's `type` (field) is not [annotation-atom whose text is exactly SyncPlanScope]
+// (AsyncPlanScope for the _async runners): the `type` node's whole text, and annotation-atom = an identifier, or a
+// type / parenthesized_expression with an annotation-atom child (neighbor).
+.decl runner_atom(a: node)
+runner_atom(a) :- node(_, a, "identifier", _, _).
+runner_atom(a) :- node(_, a, "type", _, _), child(a, b, _), runner_atom(b).
+runner_atom(a) :- node(_, a, "parenthesized_expression", _, _), child(a, b, _), runner_atom(b).
 .decl runner_nominal_type(q: node, s: symbol)
-runner_nominal_type(q, s) :- runner_param(_, q, _), field(q, "type", t), node(_, t, "type", _, _), child(t, a, _), node(_, a, "identifier", _, _), text(a, s).
+runner_nominal_type(q, s) :- runner_param(_, q, _), field(q, "type", t), runner_atom(t), node_text(t, s).
 
 violation("data-layer-plan-scope-ownership", "runner-nominal-false", "PSO001", p, l) :-
     runner_function(n, s), !suffix("_async", s),
@@ -149,12 +154,13 @@ violation("data-layer-plan-scope-ownership", "callback-owner", "PSO010", p, l) :
     callback_store(n), !callback_owner_fn(n),
     in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
-// The source gate, at sourceGate's default (true; the option-gated form is in the .pending.rr file): `any[module & regex G, inside module & regex G]` holds at a node of d iff
-// d's module text matches G, a regex of plain alternatives: a substring test on the module node's whole text
-// (comments and strings included), exact.
+// The source gate: `any[module & regex G, inside module & regex G]` holds at a node of d iff d's module text
+// matches G. At sourceGate = true G is a regex of plain alternatives: a substring test on the module node's whole
+// text (comments and strings included), exact; at sourceGate = false G is "^", which every module matches.
 .decl plan_scope_gate(d: number)
-plan_scope_gate(d) :- node(d, m, "module", _, _), node_text(m, s),
+plan_scope_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s),
     (contains("PlanScope", s) ; contains("VersionedPlanScope", s) ; contains("_callback_versioned_txn", s) ; contains("execute_read_workflow", s) ; contains("execute_write_workflow", s) ; contains("imported_contract", s) ; contains("run_read_plan_scope_workflow", s) ; contains("run_write_plan_scope_workflow", s)).
+plan_scope_gate(d) :- !option_on("sourceGate"), node(d, _, "module", _, _).
 
 // ---- runner-generic: the runner has a positional parameter, and its second positional parameter's `type` is
 // not generic: `any[kind generic_type, has subscript (stopBy end), regex "\\["]` on the `type` field's child.
@@ -218,20 +224,22 @@ violation("data-layer-plan-scope-ownership", "workflow-AsyncWritePlanWorkflow", 
     node(d, a, _, _, _), plan_scope_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(a, l).
 
 // ---- lifecycle-reflection: getattr/hasattr (a name or an attribute's `attribute`) called with any of the
-// lifecycle words in a descendant identifier's text or a descendant string's semantic value, in the listed files.
-// APPROXIMATION until `value` lands (the exact form is in the .pending.rr file): a string's value is read as its
-// source content `str` (escapes not decoded; an interpolated string has none), and a concatenated_string's value
-// through its parts (each a descendant string), so a word split across parts is missed.
+// lifecycle words in a descendant identifier's text or a descendant string's / concatenated_string's value
+// (`value: {regex}`, which reads str values only: value_type_of "str"), in the listed files.
 .decl lifecycle_call(kind: symbol)
 lifecycle_call("call").
 .decl lifecycle_reflect(f: node)
 lifecycle_reflect(f) :- node(_, f, "identifier", _, _), text(f, s), (s = "getattr" ; s = "hasattr").
 lifecycle_reflect(f) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "getattr" ; s = "hasattr").
+.decl lifecycle_text(x: node, s: symbol)
+lifecycle_text(x, s) :- node(_, x, "identifier", _, _), text(x, s).
+lifecycle_text(x, s) :- node(_, x, "string", _, _), value(x, s), value_type_of(x, "str").
+lifecycle_text(x, s) :- node(_, x, "concatenated_string", _, _), value(x, s), value_type_of(x, "str").
+.decl lifecycle_word(x: node)
+lifecycle_word(x) :- lifecycle_text(x, s),
+    (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
 .decl lifecycle_mentions(c: node)
-lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), node(_, x, "identifier", _, _), text(x, s),
-    (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
-lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), node(_, x, "string", _, _), str(x, s),
-    (contains("_base_scope", s) ; contains("_callback_versioned_txn", s) ; contains("_executed", s) ; contains("_plan_owner", s) ; contains("did_publish_branch", s) ; contains("is_active", s) ; contains("is_committed", s) ; contains("is_rolled_back", s)).
+lifecycle_mentions(c) :- node(_, c, "call", _, _), has(c, x, lifecycle_call), lifecycle_word(x).
 violation("data-layer-plan-scope-ownership", "lifecycle-reflection", "PSO007", p, l) :-
     node(_, c, "call", _, _), field(c, "function", f), lifecycle_reflect(f), lifecycle_mentions(c),
     node(d, c, _, _, _), doc(d, p, _), (p = "conform/versioned_plan_scope_helpers.py" ; p = "data_layer_testing/versioning/query_helpers.py" ; p = "l2000_connection/connection_callback_results.py" ; p = "l2000_connection/connection_plan_workflows.py" ; p = "l2000_connection/plan_scopes.py" ; p = "l7000_versioned_schema/versioned_connection.py" ; p = "l9900_auto_api/_versioning_helpers.py"), plan_scope_gate(d), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
@@ -273,75 +281,54 @@ violation("data-layer-plan-scope-ownership", "invent-contract", "PSO013", p, l) 
     invent_candidate(c), invent_function(c), invent_cte(c), node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
 
 // ---- terminal-state / contract-fallback / mode-pair-*: regexes on the module's text, reported at the line of
-// the first match's LOCATION group (W reports one finding per module, at `captures`' first match). Each
-// single-line literal holds in the module text iff it holds in a line (tape_line, which drops no
-// character a literal holds), and the first match starts on the least such line. tape_line numbers lines as
-// line(n) and W do (\r\n, \r and \n), so the line is W's.
+// the first match's LOCATION group (W reports one finding per module, at `captures`' first match, the least
+// line). The module's text runs from its first token to the file's end; each regex starts with a non-space
+// character, so its matches in the module text are its matches in the file's `source`: match_group over
+// `source` is exact, line breaks as written (a \r\n file does not match a \n in the regex, as in W).
 .decl terminal_state_at(d: number, l: number)
-terminal_state_at(d, l) :- tape_line(d, l, a), text(a, s), contains("if not txn.is_committed and not txn.is_rolled_back and not txn.did_publish_branch", s).
+terminal_state_at(d, l) :- source(d, sp), match_group("(?<LOCATION>if not txn\\.is_committed and not txn\\.is_rolled_back and not txn\\.did_publish_branch)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "terminal-state", "PSO011", p, l) :-
     node(d, _, "module", _, _), plan_scope_gate(d), terminal_state_at(d, _), l = min k : { terminal_state_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
 // contract-fallback: the module text contains `imported_contract = imported_contract_fn` and `else None`; the gate
 // is implied (imported_contract).
 .decl contract_fallback_at(d: number, l: number)
-contract_fallback_at(d, l) :- tape_line(d, l, a), text(a, s), contains("imported_contract = imported_contract_fn", s).
+contract_fallback_at(d, l) :- source(d, sp), match_group("(?<LOCATION>imported_contract = imported_contract_fn)", sp, _, "LOCATION", g), line(g, l).
 .decl contract_fallback_else(d: number)
-contract_fallback_else(d) :- tape_line(d, _, a), text(a, s), contains("else None", s).
+contract_fallback_else(d) :- node(d, m, "module", _, _), node_text(m, s), contains("else None", s).
 violation("data-layer-plan-scope-ownership", "contract-fallback", "PSO013", p, l) :-
     node(d, _, "module", _, _), contract_fallback_else(d), contract_fallback_at(d, _), l = min k : { contract_fallback_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-// mode-pair-k: `A(\n<indent>B,\n<indent>C` in the module text (tested whole on the module's text, so the line
-// breaks are \n), at the first line l that ends with `A(`, l+1 being `<indent>B,` and l+2 starting `<indent>C`.
-// Not exact where a file mixes \r\n and \n line ends (an earlier \r\n occurrence would give the line).
-
-.decl mode_pair_0_text(d: number)
-mode_pair_0_text(d) :- node(d, m, "module", _, _), node_text(m, s), contains("execute_read_plan_workflow_async(\n            conn,\n            SyncReadPlanWorkflow", s).
+// mode-pair-k: `A(\n<indent>B,\n<indent>C` in the module text, at its first match's line.
 .decl mode_pair_0_at(d: number, l: number)
-mode_pair_0_at(d, l) :- mode_pair_0_text(d), tape_line(d, l, x), text(x, s0), suffix("execute_read_plan_workflow_async(", s0),
-    tape_line(d, l1, y), l1 = l + 1, text(y, "            conn,"), tape_line(d, l2, z), l2 = l + 2, text(z, s2), prefix("            SyncReadPlanWorkflow", s2).
+mode_pair_0_at(d, l) :- source(d, sp), match_group("(?<LOCATION>execute_read_plan_workflow_async\\(\n            conn,\n            SyncReadPlanWorkflow)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "mode-pair-0", "PSO012", p, l) :-
-    mode_pair_0_text(d), plan_scope_gate(d), mode_pair_0_at(d, _), l = min k : { mode_pair_0_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+    node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_0_at(d, _), l = min k : { mode_pair_0_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-.decl mode_pair_1_text(d: number)
-mode_pair_1_text(d) :- node(d, m, "module", _, _), node_text(m, s), contains("execute_write_plan_workflow_async(\n            conn,\n            SyncWritePlanWorkflow", s).
 .decl mode_pair_1_at(d: number, l: number)
-mode_pair_1_at(d, l) :- mode_pair_1_text(d), tape_line(d, l, x), text(x, s0), suffix("execute_write_plan_workflow_async(", s0),
-    tape_line(d, l1, y), l1 = l + 1, text(y, "            conn,"), tape_line(d, l2, z), l2 = l + 2, text(z, s2), prefix("            SyncWritePlanWorkflow", s2).
+mode_pair_1_at(d, l) :- source(d, sp), match_group("(?<LOCATION>execute_write_plan_workflow_async\\(\n            conn,\n            SyncWritePlanWorkflow)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "mode-pair-1", "PSO012", p, l) :-
-    mode_pair_1_text(d), plan_scope_gate(d), mode_pair_1_at(d, _), l = min k : { mode_pair_1_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+    node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_1_at(d, _), l = min k : { mode_pair_1_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-.decl mode_pair_2_text(d: number)
-mode_pair_2_text(d) :- node(d, m, "module", _, _), node_text(m, s), contains("run_read_plan_workflow_async(\n            self._async_conn(),\n            SyncReadPlanWorkflow", s).
 .decl mode_pair_2_at(d: number, l: number)
-mode_pair_2_at(d, l) :- mode_pair_2_text(d), tape_line(d, l, x), text(x, s0), suffix("run_read_plan_workflow_async(", s0),
-    tape_line(d, l1, y), l1 = l + 1, text(y, "            self._async_conn(),"), tape_line(d, l2, z), l2 = l + 2, text(z, s2), prefix("            SyncReadPlanWorkflow", s2).
+mode_pair_2_at(d, l) :- source(d, sp), match_group("(?<LOCATION>run_read_plan_workflow_async\\(\n            self\\._async_conn\\(\\),\n            SyncReadPlanWorkflow)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "mode-pair-2", "PSO012", p, l) :-
-    mode_pair_2_text(d), plan_scope_gate(d), mode_pair_2_at(d, _), l = min k : { mode_pair_2_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+    node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_2_at(d, _), l = min k : { mode_pair_2_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-.decl mode_pair_3_text(d: number)
-mode_pair_3_text(d) :- node(d, m, "module", _, _), node_text(m, s), contains("run_write_plan_workflow_async(\n            self._async_conn(),\n            SyncWritePlanWorkflow", s).
 .decl mode_pair_3_at(d: number, l: number)
-mode_pair_3_at(d, l) :- mode_pair_3_text(d), tape_line(d, l, x), text(x, s0), suffix("run_write_plan_workflow_async(", s0),
-    tape_line(d, l1, y), l1 = l + 1, text(y, "            self._async_conn(),"), tape_line(d, l2, z), l2 = l + 2, text(z, s2), prefix("            SyncWritePlanWorkflow", s2).
+mode_pair_3_at(d, l) :- source(d, sp), match_group("(?<LOCATION>run_write_plan_workflow_async\\(\n            self\\._async_conn\\(\\),\n            SyncWritePlanWorkflow)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "mode-pair-3", "PSO012", p, l) :-
-    mode_pair_3_text(d), plan_scope_gate(d), mode_pair_3_at(d, _), l = min k : { mode_pair_3_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+    node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_3_at(d, _), l = min k : { mode_pair_3_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-.decl mode_pair_4_text(d: number)
-mode_pair_4_text(d) :- node(d, m, "module", _, _), node_text(m, s), contains("execute_read_plan_workflow(\n        conn,\n        AsyncReadPlanWorkflow", s).
 .decl mode_pair_4_at(d: number, l: number)
-mode_pair_4_at(d, l) :- mode_pair_4_text(d), tape_line(d, l, x), text(x, s0), suffix("execute_read_plan_workflow(", s0),
-    tape_line(d, l1, y), l1 = l + 1, text(y, "        conn,"), tape_line(d, l2, z), l2 = l + 2, text(z, s2), prefix("        AsyncReadPlanWorkflow", s2).
+mode_pair_4_at(d, l) :- source(d, sp), match_group("(?<LOCATION>execute_read_plan_workflow\\(\n        conn,\n        AsyncReadPlanWorkflow)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "mode-pair-4", "PSO012", p, l) :-
-    mode_pair_4_text(d), plan_scope_gate(d), mode_pair_4_at(d, _), l = min k : { mode_pair_4_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+    node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_4_at(d, _), l = min k : { mode_pair_4_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
-.decl mode_pair_5_text(d: number)
-mode_pair_5_text(d) :- node(d, m, "module", _, _), node_text(m, s), contains("execute_write_plan_workflow(\n        conn,\n        AsyncWritePlanWorkflow", s).
 .decl mode_pair_5_at(d: number, l: number)
-mode_pair_5_at(d, l) :- mode_pair_5_text(d), tape_line(d, l, x), text(x, s0), suffix("execute_write_plan_workflow(", s0),
-    tape_line(d, l1, y), l1 = l + 1, text(y, "        conn,"), tape_line(d, l2, z), l2 = l + 2, text(z, s2), prefix("        AsyncWritePlanWorkflow", s2).
+mode_pair_5_at(d, l) :- source(d, sp), match_group("(?<LOCATION>execute_write_plan_workflow\\(\n        conn,\n        AsyncWritePlanWorkflow)", sp, _, "LOCATION", g), line(g, l).
 violation("data-layer-plan-scope-ownership", "mode-pair-5", "PSO012", p, l) :-
-    mode_pair_5_text(d), plan_scope_gate(d), mode_pair_5_at(d, _), l = min k : { mode_pair_5_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
+    node(d, _, "module", _, _), plan_scope_gate(d), mode_pair_5_at(d, _), l = min k : { mode_pair_5_at(d, k) }, in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _).
 
 // ---- nested-terminal (converted, re-authored for its gate): the converter tests the gate as "some name in the
 // file contains a gate word", which misses a word only in a comment or string; nothing in this clause's own

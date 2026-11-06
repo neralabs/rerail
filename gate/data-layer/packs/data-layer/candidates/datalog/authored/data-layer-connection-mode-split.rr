@@ -17,9 +17,11 @@
 // The finding's code is the `issue` column, 'connection_mode_split'; the key is (path, line, code).
 // The gate (`syntax: valid`, module text matching Async|Connection|…|Sync|…) is !syntax_error(d): every finding is
 // a name whose text holds one of the gate's words (Connection, SessionHandle, VersionHandle, Sync, Async), so a file
-// with a finding always passes the regex. The outer WHERE reads `parameters` (default "{}": no probeSource, true);
-// options (entryPoint, parameters) are at their defaults: the probeSource case is in
-// data-layer-connection-mode-split.pending.rr (awaiting option_value).
+// with a finding always passes the regex. The outer WHERE, `json_extract(parameters,'$.probeSource') IS NULL OR
+// rx_matches(probeSource, <the gate's regex>)`, reads option_json("parameters", "/probeSource", v): no such leaf, or
+// the leaf `null`, is NULL; else the regex searches v. (A probeSource that is an object or array, whose JSON text
+// json_extract would give, has leaves below the pointer only: it is read as NULL, noted. A JSON string "null" and
+// JSON null are one leaf text, both read as NULL.) `entryPoint` is read by no stage.
 // Approximations (noted): identifiers inside `case` patterns (MatchClass's cls is a Name, a capture's name is a
 // string) are not read as Names; PEP 695 type parameter names are read as Names (CPython: strings); CPython
 // NFKC-normalizes identifiers, this reads the source spelling.
@@ -35,6 +37,14 @@
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
+.decl mode_split_probe(v: symbol)
+mode_split_probe(v) :- option_json("parameters", "/probeSource", v), v != "null".
+.decl mode_split_enabled(k: number)
+mode_split_enabled(1) :- option_value("parameters", _), !mode_split_probe(_).
+mode_split_enabled(1) :- mode_split_probe(v),
+    match("(?s:.*)(?:Async|Connection|DatabaseConnection|DoltDBConnection|MariaDBConnection|MongoConnection|Neo4jConnection|PostgresConnection|ReadThroughConnection|SessionHandle|SqlConnection|SqliteConnection|Sync|VersionHandle|VersionedDatabaseConnection|_DatabaseConnectionCore|_SessionHandleCore|_SqlConnectionCore|_VersionHandleCore|_VersionedDatabaseConnectionCore)(?s:.*)", v).
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .output violation
 
@@ -161,4 +171,4 @@ mode_split_hit(d, m) :- mode_split_method(_, cn, m, mn), prefix("Async", cn), mo
     !mode_split_private(mn), !mode_split_async_named(mn), !mode_split_async_allowed(mn), node(d, m, _, _, _).
 
 violation("data-layer-connection-mode-split", "mode-split", "connection_mode_split", p, l) :-
-    mode_split_hit(d, n), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+    mode_split_hit(d, n), mode_split_enabled(_), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

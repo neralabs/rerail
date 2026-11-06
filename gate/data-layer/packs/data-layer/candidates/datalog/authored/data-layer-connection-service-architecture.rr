@@ -2,12 +2,12 @@
 // `schema-transaction-facades` (relational, per file), by hand. (`source-syntax` is the converter's.)
 // Source: gate/data-layer/packs/data-layer/rules/data-layer-connection-service-architecture.json.
 //
-// Options: entryPoint is `connection_entry`, its default "all" (each clause's final query is the case it selects:
-// for connection-services the `default` case, service_sql + service_backend + service_analysis on the connection
-// paths + service_cross + CONN103 on the remote/read-through files; for schema-transaction-facades the "all"
-// case). Every case of both final queries is written here, keyed by the entry, so only the fact changes when the
-// option is read (data-layer-connection-service-architecture.pending.rr, awaiting option_value). `parameters`
-// (fileOrder, displayPaths) shapes only messages and order, never a key.
+// Options: entryPoint is `connection_entry`, read from option_value("entryPoint", e) (default "all"; the replay's
+// `lint` is "all"). Each clause's final query is the case it selects: for connection-services an entry no case
+// names takes the `default` case, service_sql + service_backend + service_analysis on the connection paths +
+// service_cross + CONN103 on the remote/read-through files; for schema-transaction-facades only "all" has rows.
+// Every case of both final queries is written, keyed by the entry. `parameters` (fileOrder, displayPaths) shapes
+// only messages and order, never a key.
 // The SQL reads CPython's `ast` rows (`pythonAst`, columns as
 // native/src/code_rule_dsl/value/python_ast/metadata.py at 40e7b6cac builds them); here on tree-sitter's tree:
 // - Module rows sit at line 1 (a Module has no lineno); a def's/class's lineno is its def/async/class line;
@@ -20,16 +20,18 @@
 //   keyword arguments, `**` splats and comments;
 // - Name: an identifier in expression position (`connection_not_name` lists the others, mirrors python/ast.rr
 //   not_name); Attribute's ast_name its `attribute`; Load is neither a store target nor a `del` target;
-// - Constant str: a string literal with no f/b prefix, its `str` content (escapes not decoded: the values compared
-//   here are identifiers); concatenated literals (one CPython Constant) are not read as a Constant (noted);
+// - Constant str: a `string` that is no part of a `concatenated_string`, or a `concatenated_string` (one CPython
+//   Constant), with no f-prefixed part, whose value is a str (value_type_of): its `value`, escapes decoded, the
+//   parts joined;
 // - a function's `body` is its block's statements less comments; the docstring (position 0, an Expr of a Constant
 //   str) is left out of `body`; Expr is an expression_statement that is not an assignment, Return return_statement,
 //   Raise raise_statement, Pass pass_statement; Await is `await`, ellipsis `ellipsis`;
 // - `decorators`: a decorator's expression (root), then through Call.func; a Name there is `name_decorators`;
-// - `fn`: the innermost function_definition holding the node (nearest). CPython also counts a def's decorators,
-//   defaults and annotations as its own; here decorators are outside the def (approximation, noted: a call or
-//   name in a decorator of m is not in m, and the preorder `s.id < c.id` is start order, which differs only for a
-//   call in a decorator or return annotation);
+// - `fn`: the innermost FunctionDef holding the node, a def's decorators its own as CPython has them (tree-sitter
+//   puts them in the decorated_definition, outside the def): the nearest function_definition or decorator, a
+//   decorator standing for its definition when that is a def, for the def around it when a class; the preorder
+//   `s.id < c.id` is visit_index's (`earlier`), an Assign's the outermost assignment of a chain (`a = b = v` is one
+//   Assign; tree-sitter's inner `b = v` has no CPython node of its own);
 // - `x.id BETWEEN m.id AND m.last` (m's subtree) is a descendant of the function_definition, or of its decorators.
 // The gate (`syntax: valid`, requireNonemptyInput) is !syntax_error(d). The finding's code is the `issue` column.
 // Not reproduced: a method with both legacy_sync and legacy_async decorators makes W's query fail (the
@@ -43,8 +45,10 @@
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl name(n: node, s: symbol)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
@@ -54,7 +58,7 @@
 .output violation
 
 .decl connection_entry(e: symbol)
-connection_entry("all").
+connection_entry(e) :- option_value("entryPoint", e).
 
 // ---- documents and kind sets -------------------------------------------------------------------------------
 .decl connection_doc(d: number, p: symbol)
@@ -154,11 +158,18 @@ connection_single(s, e) :- node(_, s, "return_statement", _, _), child(s, e, _),
 .decl connection_several(s: node)
 connection_several(s) :- child(s, a, i), child(s, b, j), i < j, !node(_, a, "comment", _, _), !node(_, b, "comment", _, _),
     (node(_, s, "expression_statement", _, _) ; node(_, s, "return_statement", _, _)).
-// A Constant str literal.
+// A Constant str: a string literal (no part of a concatenation) or a concatenation, no part f-prefixed, of str value.
 .decl connection_plain(n: node)
-connection_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !match("(?s).*[fFbB].*", p).
+connection_plain(n) :- node(_, n, "string", _, _), !connection_part(n), !connection_fstring(n), value_type_of(n, "str").
+connection_plain(n) :- node(_, n, "concatenated_string", _, _), !connection_fpart(n), value_type_of(n, "str").
+.decl connection_part(n: node)
+connection_part(n) :- node(_, c, "concatenated_string", _, _), child(c, n, _).
+.decl connection_fstring(n: node)
+connection_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), match("(?s:.*)[fF](?s:.*)", p).
+.decl connection_fpart(c: node)
+connection_fpart(c) :- node(_, c, "concatenated_string", _, _), child(c, n, _), connection_fstring(n).
 .decl connection_str_const(n: node, v: symbol)
-connection_str_const(n, v) :- connection_plain(n), str(n, v).
+connection_str_const(n, v) :- connection_plain(n), value(n, v).
 .decl connection_docstring(f: node, s: node)
 connection_docstring(f, s) :- connection_first_index(f, i), connection_stmt(f, s, i), node(_, s, "expression_statement", _, _),
     connection_single(s, e0), connection_un(e0, e), connection_plain(e).
@@ -214,10 +225,24 @@ connection_arg_at(c, 1, x) :- connection_arg1_index(c, i), connection_arg(c, x0,
 connection_arg_later(c, j) :- connection_arg0_index(c, i0), connection_arg(c, _, j), j > i0.
 .decl connection_arg1_index(c: node, i: number)
 connection_arg1_index(c, i) :- connection_arg_later(c, _), i = min j : { connection_arg_later(c, j) }.
-// fn: the innermost function_definition holding the node.
+// fn: the innermost FunctionDef holding the node, its decorators included (CPython's): the nearest def or decorator.
+.decl connection_fn_kind(kind: symbol)
+connection_fn_kind("function_definition"). connection_fn_kind("decorator").
+.decl connection_fn_at(n: node)
+connection_fn_at(c) :- node(_, c, "call", _, _).
+connection_fn_at(a) :- node(_, a, "assignment", _, _).
 .decl connection_fn(n: node, f: node)
-connection_fn(c, f) :- node(_, c, "call", _, _), nearest(c, f, connection_fdef).
-connection_fn(a, f) :- node(_, a, "assignment", _, _), nearest(a, f, connection_fdef).
+connection_fn(n, f) :- connection_fn_at(n), nearest(n, f, connection_fn_kind), node(_, f, "function_definition", _, _).
+connection_fn(n, f) :- connection_fn_at(n), nearest(n, dc, connection_fn_kind), node(_, dc, "decorator", _, _), child(dd, dc, _),
+    field(dd, "definition", f), node(_, f, "function_definition", _, _).
+connection_fn(n, f) :- connection_fn_at(n), nearest(n, dc, connection_fn_kind), node(_, dc, "decorator", _, _), child(dd, dc, _),
+    field(dd, "definition", k), node(_, k, "class_definition", _, _), nearest(dd, f, connection_fdef).
+// The Assign an assignment is part of: the outermost of its chain (`a = b = v`), CPython's node, for `earlier`.
+.decl connection_chain_top(a: node, t: node)
+connection_chain_top(a, a) :- node(_, a, "assignment", _, _), !connection_chained(a).
+connection_chain_top(a, t) :- node(_, p, "assignment", _, _), field(p, "right", a), node(_, a, "assignment", _, _), connection_chain_top(p, t).
+.decl connection_chained(a: node)
+connection_chained(a) :- node(_, p, "assignment", _, _), field(p, "right", a), node(_, a, "assignment", _, _).
 
 // ---- names: mirrors python/ast.rr ast_name / not_name, and expr_ctx's store and del -------------------------
 .decl connection_not_name(n: node)
@@ -384,8 +409,8 @@ connection_assign_value(a, v) :- node(_, a, "assignment", _, _), field(a, "right
 connection_assign_value(a, v) :- node(_, a, "assignment", _, _), field(a, "right", r), node(_, r, "assignment", _, _), connection_assign_value(r, v).
 .decl connection_slot_string(d: number, s: number, e: number)
 connection_slot_string(d, s, e) :- connection_str_const(n, v), connection_slot_name(v), node(d, n, _, s, e).
-.decl connection_slot_alias(f: node, x: symbol, st: number)
-connection_slot_alias(f, x, st) :- node(d, a, "assignment", st, _), connection_fn(a, f), field(a, "left", t), node(_, t, "identifier", _, _),
+.decl connection_slot_alias(f: node, x: symbol, s: node)
+connection_slot_alias(f, x, s) :- node(d, a, "assignment", _, _), connection_fn(a, f), connection_chain_top(a, s), field(a, "left", t), node(_, t, "identifier", _, _),
     text(t, x), connection_assign_value(a, v), node(d, v, _, vs, ve), connection_slot_string(d, ks, ke), vs <= ks, ke <= ve.
 // slot_probes: getattr/hasattr(x, slot) (args[1]) or vars(x).get(slot) (args[0]), slot a Constant str slot name or
 // a Name of an earlier slot alias in the same function.
@@ -393,8 +418,8 @@ connection_slot_alias(f, x, st) :- node(d, a, "assignment", st, _), connection_f
 connection_probe_arg(c, v) :- connection_call(c, _, s), (s = "getattr" ; s = "hasattr"), connection_arg_at(c, 1, v).
 connection_probe_arg(c, v) :- connection_call(c, "Attribute", "get"), connection_receiver(c, r), connection_call(r, _, "vars"), connection_arg_at(c, 0, v).
 .decl connection_probe(c: node)
-connection_probe(c) :- connection_probe_arg(c, v), node(_, v, "identifier", _, _), text(v, x), connection_fn(c, f), node(_, c, _, cs, _),
-    connection_slot_alias(f, x, st), st < cs.
+connection_probe(c) :- connection_probe_arg(c, v), node(_, v, "identifier", _, _), text(v, x), connection_fn(c, f),
+    connection_slot_alias(f, x, s), earlier(s, c).
 connection_probe(c) :- connection_probe_arg(c, v), connection_str_const(v, s), connection_slot_name(s).
 
 // owners: non-abstract service methods owning a schema name, not delegates.

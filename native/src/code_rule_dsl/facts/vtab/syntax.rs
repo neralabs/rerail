@@ -41,13 +41,14 @@ pub(crate) struct Document {
     pub core: String,
     pub digest: [u8; 32],
     pub facts: Arc<Facts>,
-    /// The tape the facts were read off and the file it parsed, which W's values read (`Extra`: `VALUES`); kept only
-    /// for a program that reads one of them, else `None`.
+    /// The tape the facts were read off and the file it parsed, which W's values and f-string trees read (`TAPED`);
+    /// kept only for a program that reads one of them, else `None`.
     pub(in crate::code_rule_dsl) tape: Option<(crate::code_rule_dsl::tape::TapeDoc, crate::code_rule_dsl::model::FileInput)>,
 }
 
-/// The relations of W's values (`Extra`), for which a batch's documents keep their tapes (`Document::tape`).
-pub(crate) const VALUES: [&str; 4] = ["value", "static_value", "value_type_of", "value_type"];
+/// The relations read off a document's tape, for which a batch's documents keep their tapes (`Document::tape`): W's
+/// values (`Extra`) and its f-string trees (`fstring`).
+pub(crate) const TAPED: [&str; 6] = ["value", "static_value", "value_type_of", "value_type", fstring::RELATIONS[0], fstring::RELATIONS[1]];
 
 /// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
 /// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
@@ -774,6 +775,7 @@ impl Batch {
         documents: Vec<Document>,
         reads: &BTreeSet<String>,
         matches: &[Arc<regex::Regex>],
+        markers: &[String],
     ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, (Vec<String>, Vec<u32>))> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
@@ -798,6 +800,7 @@ impl Batch {
         let mut errors = Vec::new();
         let mut extra = Extra::new(reads, matches);
         let mut tree = tree::Tree::new(reads);
+        let mut fstrings = fstring::FStrings::new(reads, markers);
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
@@ -872,6 +875,7 @@ impl Batch {
             // A text document's lines split as W's `lines` regexes split any file's.
             extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
             tree.document(&p, dialect, &d.path, python == Some(tag), &mut string);
+            fstrings.document(&p, d, dialect, python == Some(tag), &mut string)?;
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
@@ -905,6 +909,7 @@ impl Batch {
         let (read, matched) = extra.relations(&atom);
         relations.extend(read);
         relations.extend(tree.relations(&atom));
+        relations.extend(fstrings.relations(&atom));
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
             docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
@@ -1137,7 +1142,7 @@ pub(crate) fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
-    let (batch, relations, _, _) = Batch::build(store, documents, &BTreeSet::new(), &[])?;
+    let (batch, relations, _, _) = Batch::build(store, documents, &BTreeSet::new(), &[], &[])?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
         relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
     out.extend(views(&batch));
@@ -1343,7 +1348,7 @@ pub(crate) fn with_nearest(
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::typing::file_local;
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
-    let (batch, relations, matched, (strings, symbols)) = Batch::build(store, documents, reads, &tests.matches)?;
+    let (batch, relations, matched, (strings, symbols)) = Batch::build(store, documents, reads, &tests.matches, &tests.markers)?;
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
@@ -1433,4 +1438,5 @@ pub(crate) fn bind(modules: &Modules, db: &Connection, graph: &(impl Graph + ?Si
 
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;
+mod fstring;
 mod tree;

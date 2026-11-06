@@ -110,20 +110,28 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
     }
 }
 
-fn atom(a: &Atom, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
+/// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
+/// declares no relation of that name (a `.rr` program cannot): they print as themselves, where a relation of a
+/// reserved name gets a trailing `_` (`translate::relation`).
+fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
     let bang = if a.neg { "!" } else { "" };
     if let Some(set) = a.rel.strip_prefix(AXIS)
-        && kindsets.contains(&set.to_owned())
+        && prog.kindsets.contains_key(set)
         && let [n, x] = a.args.as_slice()
     {
         return Ok(format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?));
     }
-    Ok(format!("{bang}{}({})", relation(&a.rel), terms(&a.args)?))
+    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(&a.rel);
+    let name = if builtin { a.rel.clone() } else { relation(&a.rel) };
+    Ok(format!("{bang}{name}({})", terms(&a.args)?))
 }
 
-fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
+/// The built-in constraints that read like relations (`atom`).
+const BUILTINS: [&str; 2] = ["match_all", "match_group"];
+
+fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
     Ok(match l {
-        Literal::Atom(a) => atom(a, kindsets)?,
+        Literal::Atom(a) => atom(a, prog)?,
         Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(b @ (0 | 1)) } if is_test(f) && args.len() == 2 => test(f, &args[0], &args[1], *b == 0)?,
         Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l)?, term(r)?),
         Literal::Agg { var: v, op, over, atom: a } => {
@@ -139,7 +147,7 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
                     format!("join {}{by} sep {}", over(), quote(sep))
                 }
             };
-            format!("{} = {op} : {{ {} }}", var(v), atom(a, kindsets)?)
+            format!("{} = {op} : {{ {} }}", var(v), atom(a, prog)?)
         }
         Literal::Nearest { n, a, kindset } => format!("nearest({}, {}, {kindset})", var(n), var(a)),
         Literal::Ast { document, node, matcher, captures } => {
@@ -155,7 +163,6 @@ fn literal(l: &Literal, kindsets: &BTreeSet<&String>) -> Result<String, Error> {
 /// The program's `.rr` text.
 pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
     let mut out = String::new();
-    let kindsets: BTreeSet<&String> = prog.kindsets.keys().collect();
     for p in &prog.policies {
         writeln!(out, ".policy {p}").expect("a string");
     }
@@ -218,8 +225,8 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
         }
     }
     for rule in &prog.rules {
-        let body = rule.body.iter().map(|l| literal(l, &kindsets)).collect::<Result<Vec<_>, _>>()?;
-        let head = atom(&rule.head, &kindsets)?;
+        let body = rule.body.iter().map(|l| literal(l, prog)).collect::<Result<Vec<_>, _>>()?;
+        let head = atom(&rule.head, prog)?;
         if body.is_empty() {
             writeln!(out, "{head}.").expect("a string");
         } else {

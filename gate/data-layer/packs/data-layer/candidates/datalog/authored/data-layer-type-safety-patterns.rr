@@ -18,12 +18,10 @@
 .decl syntax_error(d: number)
 .decl node_text(n: node, s: symbol)
 .decl tape_line(d: number, l: number, sp: span)
-.input node_text, tape_line
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
+.input node_text, tape_line, token
 .decl in_scope(d: number)
 .decl out_scope(d: number)
-.decl option_on(name: symbol)
-.decl option_value(name: symbol, v: symbol)
-.decl option_item(name: symbol, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 
 // ---- text-str_union_expression, text-str_union_field (TSP001): `str | Expression`, `Expression | str` (Field alike) ----
@@ -51,20 +49,10 @@ violation("data-layer-type-safety-patterns", "text-expression_any_any", "TSP001"
 // ---- text-deprecated_comparison_op (TSP001): `_lt=`, `_lt:`, `_lt ==`, `_lt :=`, `x._lt =` … ----
 // W: an identifier `_lt|_gt|_le|_ge|_eq|_ne` (m = the identifier), or one that is the `attribute` field of an
 // attribute (m = that attribute), where `precedes {stopBy: neighbor, regex: ^(?:=|==|:|:=)$}` holds of m: m's next
-// sibling in the tree, among ALL its parent's children (anonymous tokens, comments, line continuations), has that text.
-// Tokens are not nodes here, so the next sibling is read from the text: the gap between m's end (the identifier's end
-// in both branches) and its next named sibling x's start (child index + 1), or its parent p's end where m is the last
-// named child, cut out of p's node_text. Every Python token starting with `=` or `:` is one of `=`, `==`, `:`, `:=`, so
-// m's next sibling is such a token iff the gap's first non-whitespace character is `=` or `:`; a comment (`#`) or a
-// line continuation (`\`) first is W's next sibling, no match.
-// The gap is cut exactly where its char offset in p's text is known (substr counts characters, offsets are bytes):
-// m starts where p starts (the offset is strlen of m's text), or p's text before m's end is ASCII (bytes = chars).
-// Its length is taken as the gap's byte length g: the whitespace before the first non-whitespace character is
-// ASCII, so that character is within the first g characters; an all-ASCII-whitespace gap is exactly g characters.
-// The empty-gap case: x is a format_specifier whose text is exactly `:` (`f"{_lt:}"`: W's next sibling is that node).
-// Approximations (misses only, never extra findings): (1) p's text before m's end holds a non-ASCII character and m is
-// not p's first child (no offset); (2) whitespace other than ASCII [ \t\n\v\f\r] (U+00A0, U+FEFF, …, which
-// tree-sitter skips) before the token.
+// sibling among ALL its parent's children (anonymous tokens, comments, line continuations) has that text. That is
+// `token`'s next row after m's own (m's row: the child of p with m's byte range), its text tested whole (the regex is
+// anchored, `$` the text's end); a named next sibling (`f"{_lt:}"`'s format_specifier `:`) is a row with its text
+// too. Exact.
 .decl text_deprecated_comparison_op_name(n: node)
 text_deprecated_comparison_op_name(n) :- node(_, n, "identifier", _, _), text(n, s),
     (s = "_lt" ; s = "_gt" ; s = "_le" ; s = "_ge" ; s = "_eq" ; s = "_ne").
@@ -72,27 +60,9 @@ text_deprecated_comparison_op_name(n) :- node(_, n, "identifier", _, _), text(n,
 .decl text_deprecated_comparison_op_m(n: node, m: node)
 text_deprecated_comparison_op_m(n, n) :- text_deprecated_comparison_op_name(n).
 text_deprecated_comparison_op_m(n, a) :- text_deprecated_comparison_op_name(n), field(a, "attribute", n), node(_, a, "attribute", _, _).
-.decl text_deprecated_comparison_op_next(m: node, x: node)
-text_deprecated_comparison_op_next(m, x) :- text_deprecated_comparison_op_m(_, m), child(p, m, i), j = i + 1, child(p, x, j).
-.decl text_deprecated_comparison_op_has_next(m: node)
-text_deprecated_comparison_op_has_next(m) :- text_deprecated_comparison_op_next(m, _).
-// g: the gap's byte length, up to the next named sibling or the parent's end.
-.decl text_deprecated_comparison_op_gap(m: node, p: node, g: number)
-text_deprecated_comparison_op_gap(m, p, g) :- text_deprecated_comparison_op_next(m, x), child(p, m, _), node(_, m, _, _, me), node(_, x, _, xs, _), g = xs - me.
-text_deprecated_comparison_op_gap(m, p, g) :- text_deprecated_comparison_op_m(_, m), !text_deprecated_comparison_op_has_next(m), child(p, m, _), node(_, m, _, _, me), node(_, p, _, _, pe), g = pe - me.
-// k: the char offset of m's end in p's node_text, where exact.
-.decl text_deprecated_comparison_op_off(m: node, p: node, k: number)
-text_deprecated_comparison_op_off(m, p, k) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, _), node(_, p, _, s, _), node_text(m, mt), k = strlen(mt).
-text_deprecated_comparison_op_off(m, p, k) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, _, me), node(_, p, _, ps, _), node_text(p, pt), k = me - ps,
-    k <= strlen(pt), match("[\\x00-\\x7f]*", substr(pt, 0, k)).
-// r: the gap's first g characters (fewer where p's text ends first).
-.decl text_deprecated_comparison_op_gaptext(m: node, r: symbol)
-text_deprecated_comparison_op_gaptext(m, r) :- text_deprecated_comparison_op_gap(m, p, g), g > 0, text_deprecated_comparison_op_off(m, p, k), node_text(p, pt), g <= strlen(pt) - k, r = substr(pt, k, g).
-text_deprecated_comparison_op_gaptext(m, r) :- text_deprecated_comparison_op_gap(m, p, g), g > 0, text_deprecated_comparison_op_off(m, p, k), node_text(p, pt), g > strlen(pt) - k, r = substr(pt, k, strlen(pt) - k).
 .decl text_deprecated_comparison_op_hit(m: node)
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_gaptext(m, r), match("[ \\t\\n\\x0b\\f\\r]*[=:](?s:.*)", r).
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_next(m, x), node(_, x, "format_specifier", _, _), node_text(x, ":"), text_deprecated_comparison_op_gap(m, _, 0).
-text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_next(m, x), node(_, x, "format_specifier", _, _), node_text(x, ":"), text_deprecated_comparison_op_gaptext(m, r), match("[ \\t\\n\\x0b\\f\\r]*", r).
+text_deprecated_comparison_op_hit(m) :- text_deprecated_comparison_op_m(_, m), child(p, m, _), node(_, m, _, s, e), token(p, i, _, s, e),
+    j = i + 1, token(p, j, t, _, _), match("=|==|:|:=", t).
 violation("data-layer-type-safety-patterns", "text-deprecated_comparison_op", "TSP001", p, l) :- text_deprecated_comparison_op_m(n, m), text_deprecated_comparison_op_hit(m), node(d, n, _, _, _), doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), line(n, l).
 
 // ---- signature-where, signature-select, signature-group_by (TSP001): a def of that name whose text (body included)

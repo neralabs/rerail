@@ -1,7 +1,6 @@
-// data-layer-imperative-private-functions: clauses `direct-execution` and `eager-signature`. The clause `caller`
-// reads W's reference graph (`calls`), awaiting the native `reference_edge`: it is in the .pending.rr, which is this
-// file plus `caller`. Policy: candidates/rules-ast/data-layer-imperative-private-functions.json. Options
-// (oracleAnalyzer, sourceGate) are read by no clause.
+// data-layer-imperative-private-functions, all three clauses; `caller` reads W's reference graph through the
+// native `reference_edge(src, dst, via)`. Policy: candidates/rules-ast/data-layer-imperative-private-functions.json.
+// Options (oracleAnalyzer, sourceGate) are read by no clause.
 //
 // The symbol (each clause's first `all`): a function_definition in no function. At module level it counts unless
 // its name has more than one binding in its scope (`binds bindings max 1`) and a later top-level def has its name
@@ -13,9 +12,10 @@
 // Bindings (Ruff's scope.get_all, deletions included) are counted per scope (module, class, def, lambda,
 // comprehension) and name: def and class names (in the scope holding the definition), assignment, augmented and
 // annotated targets (identifiers through tuple/list patterns and splats), for/comprehension targets, with-as and
-// except-as names, walrus targets, import names, global/nonlocal names and del targets.
-// Approximations (noted): match-statement captures and PEP 695 type parameters are not counted as bindings; a walrus
-// in a comprehension is counted in the comprehension's scope (Python: the enclosing one).
+// except-as names, walrus targets (in the nearest scope that is no comprehension, as PEP 572 binds them), import
+// names, global/nonlocal names and del targets.
+// Approximations (noted; no relation blocks them, none seen in the recorded events): match-statement captures and
+// `type X = …` aliases are not counted as bindings.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -53,7 +53,7 @@ direct_execution_target(t) :- node(_, a, "assignment", _, _), field(a, "left", t
 direct_execution_target(t) :- node(_, a, "augmented_assignment", _, _), field(a, "left", t).
 direct_execution_target(t) :- node(_, a, "for_statement", _, _), field(a, "left", t).
 direct_execution_target(t) :- node(_, a, "for_in_clause", _, _), field(a, "left", t).
-direct_execution_target(t) :- node(_, a, "named_expression", _, _), field(a, "name", t).
+direct_execution_walrus(t) :- node(_, a, "named_expression", _, _), field(a, "name", t).
 direct_execution_target(t) :- node(_, a, "as_pattern", _, _), field(a, "alias", t).
 direct_execution_target(t) :- node(_, a, "except_clause", _, _), field(a, "alias", t).
 direct_execution_target(t) :- node(_, a, "delete_statement", _, _), child(a, t, _).
@@ -69,7 +69,15 @@ direct_execution_pattern(t) :- node(_, t, "expression_list", _, _).
 direct_execution_pattern(t) :- node(_, t, "parenthesized_expression", _, _).
 direct_execution_pattern(t) :- node(_, t, "as_pattern_target", _, _).
 direct_execution_pattern(t) :- node(_, t, "list_splat", _, _).
-direct_execution_bind(s, x, t) :- direct_execution_target(t), node(_, t, "identifier", _, _), text(t, x), nearest(t, s, direct_execution_scope).
+direct_execution_bind(s, x, t) :- direct_execution_target(t), !direct_execution_walrus(t), node(_, t, "identifier", _, _), text(t, x),
+    nearest(t, s, direct_execution_scope).
+// A walrus target binds in the nearest scope that is no comprehension.
+.decl direct_execution_walrus(t: node)
+direct_execution_bind(s, x, t) :- direct_execution_walrus(t), node(_, t, "identifier", _, _), text(t, x),
+    nearest(t, s, direct_execution_wscope).
+.decl direct_execution_wscope(kind: symbol)
+direct_execution_wscope("module"). direct_execution_wscope("function_definition"). direct_execution_wscope("class_definition").
+direct_execution_wscope("lambda").
 // Imports: `import a.b` binds a, `import a.b as c` c, `from m import y [as z]` y [z].
 direct_execution_bind(s, x, n) :- node(_, i, "import_statement", _, _), field(i, "name", dn), node(_, dn, "dotted_name", _, _),
     child(dn, n, 0), text(n, x), nearest(i, s, direct_execution_scope).
@@ -208,4 +216,31 @@ eager_signature_eager(f) :- eager_signature_private(f), !eager_signature_lazy(f)
 
 violation("data-layer-imperative-private-functions", "eager-signature", "eager_signature", p, l) :-
     direct_execution_symbol(f), !direct_execution_direct(f), eager_signature_eager(f),
+    node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).
+
+// ---- caller (awaiting the native `reference_edge`) ----
+// `calls: {graph: references, at: definition, through: any, siblingLinks, constructorFields}` over the inner rule
+// "an imperative symbol" (the symbol, and a direct execution in its body or an eager signature): the definition
+// reaches a seed through the reference graph, every definition after it (the callee on) a function, not a class
+// (`through: any` allows async ones). The caller itself is a symbol that is neither imperative form.
+// reference_edge(src, dst, via): definition src (function_definition or class_definition) references definition
+// dst, by the link kind `via`; the graph is W's `references` graph as this policy configures it:
+//   siblingLinks: a def decorated `(?:legacy_sync|legacy_module_sync|direct_legacy_module_sync)$` links to its name
+//     + "_lazy"; one decorated `(?:legacy_async|legacy_module_async|direct_legacy_module_async)$` to its name with
+//     `(?:_async)?$` replaced by "_lazy";
+//   constructorFields: fieldToParameter, a self field's name with `^_+` removed names the constructor parameter
+//     whose declared type types the field.
+// Every edge counts (EngRefs builds the graph with this policy's config; via names the link kind). An open
+// definition (`reference_open`) makes W's term Unknown only where no seed is reached: no finding either way.
+.decl reference_edge(src: node, dst: node, via: symbol)
+.decl caller_seed(f: node)
+caller_seed(f) :- direct_execution_imperative(f).
+caller_seed(f) :- direct_execution_symbol(f), eager_signature_eager(f).
+// A function from which a seed is reachable, the seed included, through functions only.
+.decl caller_reaches(g: node)
+caller_reaches(g) :- caller_seed(g), node(_, g, "function_definition", _, _).
+caller_reaches(g) :- node(_, g, "function_definition", _, _), reference_edge(g, h, _), caller_reaches(h).
+violation("data-layer-imperative-private-functions", "caller", "calls_imperative", p, l) :-
+    direct_execution_symbol(f), !direct_execution_direct(f), !eager_signature_eager(f),
+    reference_edge(f, g, _), caller_reaches(g),
     node(d, f, _, _, _), in_scope(d), !out_scope(d), !syntax_error(d), doc(d, p, _), line(f, l).

@@ -62,7 +62,7 @@ pub(in crate::code_rule_dsl) const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 18] = [
+pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 20] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -81,6 +81,8 @@ pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 18] = [
     ("value_type_of", &[1]),
     ("value_type", &[0, 1]),
     ("comment", &[1]),
+    ("fstring_piece", &[2, 3]),
+    ("fstring_template", &[1, 2]),
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
@@ -184,13 +186,16 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
     Some((op.as_str(), s.as_str(), patterns(p)?, *v == 1))
 }
 
-/// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher; and the
+/// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher; the
 /// regexes of `match_all` and `match_group` the batches find in their spans, regex `k`'s matches in
-/// `matchall_<k>(sp, m)` and their groups in `matchgroup_<k>(sp, m, g, gsp)`.
+/// `matchall_<k>(sp, m)` and their groups in `matchgroup_<k>(sp, m, g, gsp)`; and the interpolation markers the
+/// batches make `fstring_template(n, marker, v)` rows for.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
     pub(in crate::code_rule_dsl) matches: Vec<Arc<regex::Regex>>,
+    /// The constant markers of the program's `fstring_template` atoms, distinct, in order.
+    pub(in crate::code_rule_dsl) markers: Vec<String>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -257,6 +262,9 @@ impl Vocabulary {
 /// `match_group("re", sp, m, g, gsp)` (`gsp` the span of named group `g` in match `m`) into one over
 /// `matchgroup_<k>(sp, m, g, gsp)`, `k` the regex's (one per distinct regex, so the two agree on `m`), which the
 /// batches fill (`facts::vtab::syntax`). The regex is a constant, in Rust `regex` syntax (W's).
+///
+/// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
+/// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
     let mut tests = Vec::new();
@@ -299,12 +307,22 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             *literal = Literal::Atom(Atom { rel, args: vec![Term::Var(s.to_owned())], neg: !holds, gated: false });
         }
     }
+    let mut markers: Vec<String> = Vec::new();
     let mut regexes: BTreeMap<String, usize> = BTreeMap::new();
     let mut matches = Vec::new();
     let mut made = BTreeMap::new();
     for rule in &mut prog.rules {
         for literal in &mut rule.body {
             let (Literal::Atom(a) | Literal::Agg { atom: a, .. }) = literal else { continue };
+            if a.rel == "fstring_template" {
+                let [_, Term::Str(marker), _] = a.args.as_slice() else {
+                    return Err(format!("fstring_template takes a constant marker: fstring_template(n, \"{{...}}\", v), not {a}"));
+                };
+                if !markers.contains(marker) {
+                    markers.push(marker.clone());
+                }
+                continue;
+            }
             let (args, group) = match (a.rel.as_str(), a.args.as_slice()) {
                 ("match_all", [Term::Str(_), sp, m]) => (vec![sp.clone(), m.clone()], false),
                 ("match_group", [Term::Str(_), sp, m, g, gsp]) => (vec![sp.clone(), m.clone(), g.clone(), gsp.clone()], true),
@@ -344,7 +362,7 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel);
         }
     }
-    Ok(Vocabulary { tests, matches, seen: Mutex::default(), tested: Mutex::default() })
+    Ok(Vocabulary { tests, matches, markers, seen: Mutex::default(), tested: Mutex::default() })
 }
 
 #[cfg(test)]

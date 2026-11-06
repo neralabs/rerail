@@ -2,24 +2,23 @@
 // candidates/rules/data-layer-declared-fact-interrogation.json; it declares no options.
 //
 // Notes against W:
-// - contract-attribute: `value: {regex}` is read from the literal's raw content (APPROX: a name spelled with
-//   escapes, `"defin\x65s"`, is not seen); `nthChild: 2` counts named children without comments (APPROX: W counts
-//   a comment before the string among the arguments).
-// - override-identity: W's `has: {regex: "^(?:==|!=|…)$"}` tests every child token, the operators included. No
-//   relation holds a comparison's operators (`op` has none for comparison_operator, whose tokens are in field
-//   `operators`; op_at is not bound), so each operator is read from the comparison's text: the text between two
-//   operands, cut with `substr` at byte offsets (APPROX: only where the comparison's text is ASCII; a non-ASCII
-//   one reads as `is` only).
-//   The op_at form is in data-layer-declared-fact-interrogation.pending.rr.
+// - contract-attribute: `value: {regex: "^(?:…)$"}` on a string is value(s, v) with value_type_of(s, "str"), v
+//   one of the names (the regex is anchored at both ends). `nthChild: 2` counts the argument list's named
+//   children, comments included (matcher/nth_child.rs: `is_named`); `child` has no comments, so the position is
+//   the string's child index plus the comments before it (token rows whose text starts with `#`).
+// - override-identity: W's `has: {regex: "^(?:==|!=|…)$"}` tests every child of the comparison, anonymous ones
+//   (the operators) and comments included: token rows, by their text (a `not in` with a comment or more than one
+//   space inside is no `not in` to W, nor here).
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
-.decl strprefix(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
@@ -45,35 +44,36 @@ contract_attribute_name("reads_outside_itself").
 contract_attribute_name("relation_role").
 contract_attribute_name("relation_scope").
 contract_attribute_name("source_tables").
-// The prefixes of a `str` literal: valid, neither bytes nor template.
-.decl contract_attribute_str_prefix(p: symbol)
-contract_attribute_str_prefix("").
-contract_attribute_str_prefix("r").
-contract_attribute_str_prefix("u").
-contract_attribute_str_prefix("f").
-contract_attribute_str_prefix("fr").
-contract_attribute_str_prefix("rf").
+// The arguments of a getattr/hasattr call.
+.decl contract_attribute_args(n: node, a: node)
+contract_attribute_args(n, a) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _),
+  text(f, x), (x = "getattr" ; x = "hasattr"), field(n, "arguments", a).
+// A comment among the arguments, by its end.
+.decl contract_attribute_comment(a: node, e: number)
+contract_attribute_comment(a, e) :- contract_attribute_args(_, a), token(a, _, t, _, e), match("#(?s:.*)", t).
+// The string that is the arguments' second named child, comments counted.
+.decl contract_attribute_second(a: node, s: node)
+contract_attribute_second(a, s) :- contract_attribute_args(_, a), child(a, s, i), node(_, s, "string", b, _),
+  k = count : { contract_attribute_comment(a, e), e <= b }, i + k = 1.
 violation("data-layer-declared-fact-interrogation", "contract-attribute", "CONTRACT_ATTR_PROBE", p, l) :-
-  node(d, n, "call", _, _), field(n, "function", f), node(_, f, "identifier", _, _), text(f, x),
-  (x = "getattr" ; x = "hasattr"),
-  field(n, "arguments", a), child(a, s, 1), node(_, s, "string", _, _),
-  strprefix(s, q), contract_attribute_str_prefix(q), str(s, v), contract_attribute_name(v),
+  contract_attribute_args(n, a), contract_attribute_second(a, s), value_type_of(s, "str"), value(s, v),
+  contract_attribute_name(v), node(d, n, _, _, _),
   in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
 
 // ---- override-identity: `type(x).m is Base.m` (either way round), x not self ----
-// override_identity_sep(n, x): the text between two adjacent operands (an operator, spaces, line continuations,
-// comments), cut at byte offsets, which are character offsets where the comparison's text is ASCII (its length in
-// characters is its length in bytes). APPROX: a comparison whose text is not ASCII has no separators here, so it
-// reads as `is` only.
-.decl override_identity_ascii(n: node, s: symbol, ns: number)
-override_identity_ascii(n, s, ns) :- node(_, n, "comparison_operator", ns, ne), node_text(n, s), strlen(s) = ne - ns.
-.decl override_identity_sep(n: node, x: symbol)
-override_identity_sep(n, x) :- override_identity_ascii(n, s, ns), child(n, c, i), node(_, c, _, _, e),
-  j = i + 1, child(n, c2, j), node(_, c2, _, b, _), x = substr(s, e - ns, b - e).
-// A comparison with an operator other than `is` / `is not`.
+.decl override_identity_op(s: symbol)
+override_identity_op("==").
+override_identity_op("!=").
+override_identity_op("<").
+override_identity_op(">").
+override_identity_op("<=").
+override_identity_op(">=").
+override_identity_op("<>").
+override_identity_op("in").
+override_identity_op("not in").
+// A comparison with a child (an operator, an operand or a comment) whose text is one of those.
 .decl override_identity_other_op(n: node)
-override_identity_other_op(n) :- override_identity_sep(n, x),
-  !match("(?:\s|\\\\|#[^\n]*)*is(?:(?:\s|\\\\|#[^\n]*)+not)?(?:\s|\\\\|#[^\n]*)*", x).
+override_identity_other_op(n) :- node(_, n, "comparison_operator", _, _), token(n, _, s, _, _), override_identity_op(s).
 // `^\(\s*self(?:\s*,)?\s*\)$` on the arguments' text: `type(self)`, `type(self,)`.
 .decl override_identity_self_args(g: node)
 override_identity_self_args(g) :- node(_, g, "argument_list", _, _), node_text(g, s),

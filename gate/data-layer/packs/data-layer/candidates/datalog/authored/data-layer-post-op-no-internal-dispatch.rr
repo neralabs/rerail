@@ -10,17 +10,18 @@
 //
 // Shared shapes (relations `pod_*`, used by several clauses):
 // - `$LEFT == $RIGHT` / `$LEFT is $RIGHT` / `$KEY in $CONTAINER`: a comparison_operator of two operands whose one
-//   operator token is that one (`pod_binary_cmp`, read from the text between the operands). `is not` / `not in`
-//   are other tokens, never matched.
-// - ENUMCMP: the left operand (nthChild 1) is `E.M` with E one of the enum names, capturing ENUM = E, MEMBER = M;
-//   else, the left operand not being one, the right operand (nthChild 2) is. APPROXIMATION: W's `nthChild` counts
-//   comments among the named siblings; `child` does not (comments are not nodes), so a comment inside a comparison
-//   before an operand shifts W's positions and not these. Not seen in the recordings.
+//   operator token is that one (`pod_binary_cmp`: `op_at(c, 0, s)`, no second). `is not` / `not in` are other
+//   tokens, never matched.
+// - `nthChild: k` (no ofRule) counts every named child of the parent from 1, comments included (matcher/
+//   nth_child.rs); `child` leaves comments out, so a child's position is its `child` index + 1 + the comments
+//   (`token` rows of the parent whose text starts with `#`) before it (`pod_nth`). Exact.
+// - ENUMCMP: the operand at nthChild 1 is `E.M` with E one of the enum names, capturing ENUM = E, MEMBER = M;
+//   else, the child at nthChild 1 not being one, the one at nthChild 2 is.
 // - IN_FN / the materializer test: `inside` a function_definition with `stopBy: {kind: function_definition}` is the
 //   nearest function_definition (ast-grep's stop node is tested, inclusive), `nearest(n, f, pod_fdef)`.
 // - A string operand `(?i)^[ru]*["']` with `value: {regex: "(?s).*"}`: a `string` node whose prefix letters are only
-//   r/u (strprefix, lowercased) and that has a static value; the value regex accepts any value, so a literal without
-//   interpolation (`str(n, _)`, always present for an r/u-only prefix) is exactly it.
+//   r/u (strprefix, lowercased) whose value is a str (W's regex reads strings only; it accepts any):
+//   `value_type_of(n, "str")`.
 //
 // Replay: 18 of 18 recorded events exact (batch-07 recording and probes).
 
@@ -29,15 +30,17 @@
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
-.decl str(n: node, s: symbol)
 .decl strprefix(n: node, s: symbol)
+.decl value_type_of(n: node, t: symbol)
+.decl op_at(n: node, i: number, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
 .decl node_text(n: node, s: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-.input doc, node, child, field, text, str, strprefix, line, syntax_error, node_text
+.input doc, node, child, field, text, strprefix, line, syntax_error, node_text
 .output violation
 
 // ---- shared ----------------------------------------------------------------------------------------------------
@@ -49,17 +52,19 @@ pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !syntax_er
 .decl pod_fdef(kind: symbol)
 pod_fdef("function_definition").
 
-// A comparison of two operands (named children 0 and 1, no third) with operator s: the text between the operands
-// (the comparison's text less its operands', counted in characters of the node's own text, never byte offsets) is the
-// operator with only blanks, line continuations and comments around it. Exact; `op_at(c, 0, s), !op_at(c, 1, _)` once
-// `op_at` binds comparison operators.
-.decl pod_binary_sep(c: node, sep: symbol)
-pod_binary_sep(c, sep) :- node(_, c, "comparison_operator", _, _), child(c, l, 0), child(c, r, 1), !child(c, _, 2),
-    node_text(c, t), node_text(l, lt), node_text(r, rt), sep = substr(t, strlen(lt), strlen(t) - strlen(lt) - strlen(rt)).
+// A comparison of two operands (named children 0 and 1, no third) with the one operator s.
 .decl pod_binary_cmp(c: node, s: symbol)
-pod_binary_cmp(c, "==") :- pod_binary_sep(c, sep), match("(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*==(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*", sep).
-pod_binary_cmp(c, "is") :- pod_binary_sep(c, sep), match("(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*is(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*", sep).
-pod_binary_cmp(c, "in") :- pod_binary_sep(c, sep), match("(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*in(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*", sep).
+pod_binary_cmp(c, s) :- node(_, c, "comparison_operator", _, _), child(c, _, 0), child(c, _, 1), !child(c, _, 2),
+    op_at(c, 0, s), !op_at(c, 1, _), (s = "==" ; s = "is" ; s = "in").
+
+// pod_nth(p, x, k): x is p's k-th named child counting comments, as `nthChild: k` counts (comparisons, a call's
+// `arguments`: the parents the clauses' nthChild tests read).
+.decl pod_nth_parent(p: node)
+pod_nth_parent(c) :- pod_binary_cmp(c, _).
+pod_nth_parent(a) :- field(c, "arguments", a), node(_, c, "call", _, _).
+.decl pod_nth(p: node, x: node, k: number)
+pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _),
+    j = count : { token(p, _, t, s, _), prefix("#", t), s < xs }, k = i + 1 + j.
 
 // `E.M`, E one of the dispatch enums: ENUM e, MEMBER m (the attribute field's identifier).
 .decl pod_enum_name(s: symbol)
@@ -71,11 +76,13 @@ pod_enum_attr(a, e, m) :- node(_, a, "attribute", _, _), field(a, "object", o), 
 pod_is_enum_attr(a) :- pod_enum_attr(a, _, _).
 
 // ENUMCMP with IN_FN and MODULE_RX: comparison c in document d, its nearest function f, ENUM e, MEMBER m.
+.decl pod_first_enum(c: node)
+pod_first_enum(c) :- pod_nth(c, a, 1), pod_is_enum_attr(a).
 .decl pod_enum_cmp(d: number, c: node, f: node, e: symbol, m: symbol)
-pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), child(c, a, 0), pod_enum_attr(a, e, m),
+pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), pod_nth(c, a, 1), pod_enum_attr(a, e, m),
     nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
-pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), child(c, l, 0), !pod_is_enum_attr(l),
-    child(c, a, 1), pod_enum_attr(a, e, m), nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
+pod_enum_cmp(d, c, f, e, m) :- pod_binary_cmp(c, s), (s = "==" ; s = "is"), !pod_first_enum(c),
+    pod_nth(c, a, 2), pod_enum_attr(a, e, m), nearest(c, f, pod_fdef), node(d, c, _, _, _), pod_doc(d).
 
 // A function named ^(?:materialize_result|materialize_runtime_builder|materialize_.*builder)$ (its `name`, an
 // identifier).
@@ -90,9 +97,9 @@ pod_materializer_fn(f) :- pod_builder_fn(f).
 pod_materializer_fn(f) :- node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x),
     text(x, s), prefix("_materialize_", s).
 
-// A string literal with an r/u-only prefix and a static value.
+// A string literal with an r/u-only prefix whose value is a str.
 .decl pod_plain_string(n: node)
-pod_plain_string(n) :- node(_, n, "string", _, _), strprefix(n, p), match("[ru]*", p), str(n, _).
+pod_plain_string(n) :- node(_, n, "string", _, _), strprefix(n, p), match("[ru]*", p), value_type_of(n, "str").
 
 // `"…" in X` with X kwargs/literal_kwargs or a `….keys()` call, in the nearest function, a materializer: the shape
 // literal-kwargs flags and payload-aliases' key_calls and direct_membership give.
@@ -103,7 +110,7 @@ pod_keys_call(n) :- node(_, n, "call", _, _), field(n, "function", g), node(_, g
 pod_kwargs_container(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "kwargs" ; s = "literal_kwargs").
 pod_kwargs_container(n) :- pod_keys_call(n).
 .decl pod_key_membership(d: number, c: node)
-pod_key_membership(d, c) :- pod_binary_cmp(c, "in"), child(c, k, 0), pod_plain_string(k), child(c, x, 1), pod_kwargs_container(x),
+pod_key_membership(d, c) :- pod_binary_cmp(c, "in"), pod_nth(c, k, 1), pod_plain_string(k), pod_nth(c, x, 2), pod_kwargs_container(x),
     nearest(c, f, pod_fdef), pod_materializer_fn(f), node(d, c, _, _, _), pod_doc(d).
 
 // ---- duplicate-enum (POSTOPDISPATCH001): budget, group (path, function, ENUM, MEMBER), count <= 1 ----------------
@@ -199,15 +206,15 @@ payload_aliases_alias(f, "literal_payload", -1) :- node(d, f, "function_definiti
 payload_aliases_alias(f, t, s) :- payload_aliases_assign(_, a, f, t, s, _), payload_aliases_payload(a).
 payload_aliases_alias(f, t, s) :- payload_aliases_assign(_, _, f, t, s, v), node(_, v, "identifier", _, _), text(v, w),
     payload_aliases_alias(f, w, s0), s0 <= s.
-// probes, in the nearest function, a materializer: `R.get("…", …)` (the arguments' first named child a plain string),
+// probes, in the nearest function, a materializer: `R.get("…", …)` (the arguments' nthChild 1 a plain string),
 // `R["…"]` (a plain string in the subscript field), `"…" in R`; R an identifier.
 .decl payload_aliases_probe(d: number, n: node, r: symbol)
 payload_aliases_probe(d, n, r) :- node(d, n, "call", _, _), field(n, "function", g), node(_, g, "attribute", _, _),
     field(g, "object", o), node(_, o, "identifier", _, _), text(o, r), field(g, "attribute", x), node(_, x, "identifier", _, _),
-    text(x, "get"), field(n, "arguments", args), child(args, k, 0), pod_plain_string(k).
+    text(x, "get"), field(n, "arguments", args), pod_nth(args, k, 1), pod_plain_string(k).
 payload_aliases_probe(d, n, r) :- node(d, n, "subscript", _, _), field(n, "value", o), node(_, o, "identifier", _, _), text(o, r),
     field(n, "subscript", k), pod_plain_string(k).
-payload_aliases_probe(d, n, r) :- pod_binary_cmp(n, "in"), child(n, k, 0), pod_plain_string(k), child(n, o, 1),
+payload_aliases_probe(d, n, r) :- pod_binary_cmp(n, "in"), pod_nth(n, k, 1), pod_plain_string(k), pod_nth(n, o, 2),
     node(_, o, "identifier", _, _), text(o, r), node(d, n, _, _, _).
 .decl payload_aliases_owned_probe(d: number, n: node, f: node, r: symbol, s: number)
 payload_aliases_owned_probe(d, n, f, r, s) :- payload_aliases_probe(d, n, r), pod_doc(d), nearest(n, f, pod_fdef), pod_materializer_fn(f),

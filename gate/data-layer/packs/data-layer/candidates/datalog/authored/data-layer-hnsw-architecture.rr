@@ -12,18 +12,20 @@
 // - Import: its token every alias's dotted name; ImportFrom: its module as written (relative dots dropped) and every
 //   alias's name, none at all when the module is empty (`from . import x`: SQL's NULL || …).
 // - A docstring (excluded from HNSW007): a Constant that is the whole first statement of a module, class or def body.
-// Approximations (noted): a Constant's value is its literal text between the quotes (`str`, escapes not decoded;
-// an f-string part's `node_text`), and a concatenation is tested part by part, at the concatenation's line; W's
-// `value` would decode and join them. A parenthesized receiver `(SqlFragment).x()` is not read as a Name receiver.
-// Identifiers in PEP 695 type parameters are read as Names (CPython: strings). CPython's own syntax verdict is
-// tree-sitter's (`syntax_error`).
+// A plain string's and a plain concatenation's value is `value`'s (escapes decoded, parts joined), exactly; parentheses
+// are seen through (CPython drops them) for a docstring and a Name receiver.
+// Approximations (noted), each blocked on `fstring_piece` (W's pythonFString parse, not bound): an f-string's literal
+// parts are its `string_content` children, valued by their `node_text` (escapes and `{{` not decoded, adjacent parts
+// not merged, format-spec parts not read), and in a concatenation with an f-string part (a JoinedStr) the plain
+// strings are tested one by one, not merged with their neighbours. Identifiers in PEP 695 type parameters are read as
+// Names (CPython: strings). CPython's own syntax verdict is tree-sitter's (`syntax_error`): CPython is not run.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .decl text(n: node, s: symbol)
 .decl name(n: node, s: symbol)
-.decl str(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl node_text(n: node, s: symbol)
 .decl op(n: node, s: symbol)
@@ -99,18 +101,23 @@ hnsw_architecture_plain(n) :- node(_, n, "string", _, _), strprefix(n, p), !cont
 hnsw_architecture_fstring(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
 // hnsw_architecture_const(c, v): Constant c (a string, a concatenation, an f-string part) and a value it holds.
 .decl hnsw_architecture_const(c: node, v: symbol)
-hnsw_architecture_const(c, v) :- hnsw_architecture_plain(c), child(q, c, _), !node(_, q, "concatenated_string", _, _), str(c, v).
-hnsw_architecture_const(q, v) :- node(_, q, "concatenated_string", _, _), !hnsw_architecture_mixed(q), child(q, c, _), str(c, v).
+hnsw_architecture_const(c, v) :- hnsw_architecture_plain(c), child(q, c, _), !node(_, q, "concatenated_string", _, _), value(c, v).
+hnsw_architecture_const(q, v) :- node(_, q, "concatenated_string", _, _), !hnsw_architecture_mixed(q), value(q, v).
 hnsw_architecture_const(c, v) :- hnsw_architecture_fstring(f), child(f, c, _), node(_, c, "string_content", _, _), node_text(c, v).
 // A concatenation with an f-string part is a JoinedStr: its literal parts are the f-string parts above, and its
 // plain strings' parts, approximately, the plain strings themselves.
 .decl hnsw_architecture_mixed(q: node)
 hnsw_architecture_mixed(q) :- node(_, q, "concatenated_string", _, _), child(q, c, _), hnsw_architecture_fstring(c).
-hnsw_architecture_const(c, v) :- hnsw_architecture_mixed(q), child(q, c, _), hnsw_architecture_plain(c), str(c, v).
+hnsw_architecture_const(c, v) :- hnsw_architecture_mixed(q), child(q, c, _), hnsw_architecture_plain(c), value(c, v).
+// x with its parentheses taken off: `((x))` is x.
+.decl hnsw_architecture_unparen(o: node, x: node)
+hnsw_architecture_unparen(x, x) :- node(_, x, _, _, _), !node(_, x, "parenthesized_expression", _, _).
+hnsw_architecture_unparen(o, x) :- node(_, o, "parenthesized_expression", _, _), child(o, i, 0), !child(o, _, 1),
+    hnsw_architecture_unparen(i, x).
 // A docstring: the whole first statement of a module, class or function body.
 .decl hnsw_architecture_docstring(c: node)
-hnsw_architecture_docstring(c) :- hnsw_architecture_const(c, _), child(e, c, 0), node(_, e, "expression_statement", _, _),
-    !child(e, _, 1), child(b, e, 0), hnsw_architecture_body(b).
+hnsw_architecture_docstring(c) :- hnsw_architecture_const(c, _), hnsw_architecture_unparen(w, c), child(e, w, 0),
+    node(_, e, "expression_statement", _, _), !child(e, _, 1), child(b, e, 0), hnsw_architecture_body(b).
 .decl hnsw_architecture_body(b: node)
 hnsw_architecture_body(b) :- node(_, b, "module", _, _).
 hnsw_architecture_body(b) :- node(_, o, "class_definition", _, _), field(o, "body", b).
@@ -169,7 +176,8 @@ hnsw_architecture_row(d, i, "HNSW003") :- hnsw_architecture_imported(d, i, s), h
 hnsw_architecture_row(d, f, "HNSW004") :- node(d, f, "function_definition", _, _), !op(f, "async"), field(f, "name", x), text(x, "render"),
     hnsw_architecture_algorithm(d).
 hnsw_architecture_row(d, c, "HNSW005") :- node(d, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _),
-    field(a, "object", o), node(_, o, "identifier", _, _), text(o, "SqlFragment"), hnsw_architecture_algorithm(d).
+    field(a, "object", w), hnsw_architecture_unparen(w, o), node(_, o, "identifier", _, _), text(o, "SqlFragment"),
+    hnsw_architecture_algorithm(d).
 // HNSW002: forbidden state words in str Constants.
 hnsw_architecture_row(d, c, "HNSW002") :- hnsw_architecture_const(c, s), node(d, c, _, _, _),
     (contains("in_beam", s) ; contains("beam_iteration_limit", s) ; contains("original_cosine", s) ; contains("recovery_epoch", s) ; contains("route_partition", s)).

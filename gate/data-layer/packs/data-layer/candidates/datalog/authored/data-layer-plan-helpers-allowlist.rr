@@ -1,18 +1,13 @@
 // data-layer-plan-helpers-allowlist, authored clause `plan-helper-aliases` (relational, partitionBy file,
 // requireNonemptyInput syntax_gate: documents without syntax errors). One relation per SQL stage that matters, the
-// stage's name after `helpers_`. Option entryPoint at its default (`scan_repo`, the only case; its query and
-// the default query differ only in the path filter, which is the scan_repo one here).
+// stage's name after `helpers_`. Option entryPoint as the run resolves it: its one case, `scan_repo` (the default),
+// adds a path filter to the final query; any other entry point runs the default query, without it.
 // W's syntax table `nodes` is the tape less comments and string pieces; `parent` is `child`, `X_id`/`X_source` are
 // `field` and `text`. A finding is (issue, path, line of start_byte): the issue (the reason text) is the code.
-// APPROXIMATIONS, each named where it is used:
-// - module_names: the SQL's dotted path (path less `.py`, `/` as `.`) is rebuilt from doc's module (which drops
-//   a final `.__init__`) and only tested against the module names the query compares with (the callsite
-//   allowlist and plan_helpers itself), by globs; a path holding `\`, `//` or a doubled `.py.py` suffix differs.
-// - resolved: the lookup's `row_number() … ORDER BY priority DESC` is the lexicographic maximum over paths of
-//   fixed-width segments, chosen greedily hop by hop; two bindings of one name at the same start (one statement)
-//   tie in SQL (one arbitrary row) and give both helpers here.
-// - the callsite allowlist: `callsite NOT IN (…)` compares the group_concat of the enclosing regions' names;
-//   every allowlisted callsite is `M::f` or `M::C.f`, so it is tested as "exactly these regions enclose it".
+// APPROXIMATION (blocked: SQL's choice among tied rows is not a function of the data): the lookup's
+// `row_number() … ORDER BY priority DESC` is the lexicographic maximum over paths of fixed-width segments, chosen
+// greedily hop by hop; two bindings of one name at the same start (one statement, `from m import a as x, b as x`)
+// tie in SQL (one arbitrary row) and give both helpers here.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -20,22 +15,27 @@
 .decl text(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl option_value(name: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
 .input doc, node, child, field, text, line, syntax_error
 .output violation
 
-// ---- documents: the syntax gate and the final query's path filter ----
+// ---- documents: the syntax gate and, for scan_repo, the final query's path filter ----
 // `substr(__path,-3)='.py' AND NOT rx_matches(__path,'(?:^|/)\.py$') AND rx_matches(__path,'(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_')
 // AND NOT rx_matches(__path,'(?:^|/)(?:\.git|\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$)')`;
-// rx_matches searches, so each is `match` with `.*` around it.
+// rx_matches searches, so each is `match` with `.*` around it. The syntax table's documents are the Python ones.
 .decl helpers_doc(d: number)
 helpers_doc(d) :-
-    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _),
+    option_value("entryPoint", "scan_repo"),
     suffix(".py", p), !match("(?:.*/)?\\.py", p),
     match(".*(?:(?:^|/)(?:impl|api)(?:/|$)|(?:^|/)l[0-9]{4}_).*", p),
     !match(".*(?:^|/)(?:\\.git|\\.venv|conform|data_layer_testing|docs|services|terminals|tests|tmp)(?:/|$).*", p).
+helpers_doc(d) :-
+    doc(d, _, _), in_scope(d), !out_scope(d), !syntax_error(d), node(d, _, "module", _, _),
+    option_value("entryPoint", e), e != "scan_repo".
 
 // ---- helper_names (name, public, lazy, legacy) ----
 .decl helpers_name(x: symbol, public: number, lazy: number, legacy: number)
@@ -55,33 +55,41 @@ helpers_name("scalar_via_plan", 1, 0, 0).
 .decl helpers_known(x: symbol)
 helpers_known(x) :- helpers_name(x, _, _, _).
 
-// ---- module_names: see the approximation above. helpers_dotted: the SQL's dotted path ----
-.decl helpers_dotted(d: number, s: symbol)
-helpers_dotted(d, s) :- helpers_doc(d), doc(d, p, m), suffix("/__init__.py", p), s = cat(m, ".__init__").
-helpers_dotted(d, m) :- helpers_doc(d), doc(d, p, m), !suffix("/__init__.py", p).
-// The name is the dotted path from its first `impl` component, else after its first `api` component, else from its
-// first `l[0-9]{4}_…` component, else all of it. helpers_module(d, M): the name is M, for the M the query reads.
-.decl helpers_impl_module(m: symbol)
-helpers_impl_module("impl.common.l2070_server_plan.plan_helpers").
-helpers_impl_module("impl.common.l2200_sql_dialect.sql_connection").
-helpers_impl_module("impl.doltdb.versioned_operations_read").
-.decl helpers_l_module(m: symbol)
-helpers_l_module("l8000_admin.tools.sql_execution").
-helpers_l_module("l8000_admin.tools.versioning_tools").
+// ---- module_names: the name the query compares, for the names it compares with ----
+// The SQL: D = __path with `\` as `/`, runs of `/` as one, `/` trimmed from both ends, a final `.py` dropped, `/` as
+// `.`; the name is D from its first `impl` component (D's components split at `.`), else D after its first `api`
+// component, else D from its first component starting `l[0-9]{4}_`, else D. Without rx_replace the name is not
+// built; helpers_module(d, M) instead tests the path against each M the query compares with (the callsite allowlist
+// and plan_helpers itself) by a regex that says exactly that, a component of D being a run of characters other than
+// `.`, `/` and `\` in the path, and a separator `.` or a run of `/` and `\` (checked against the SQL's expression on
+// 300,000 generated paths). "impl": [/\\]*, components other than `impl`, then M's components, `.py`, [/\\]*;
+// "api": the same through the first `api` component (D has no `impl` one); "l": components not starting
+// `l[0-9]{4}_`, then M's (D has no `impl` or `api` one).
+.decl helpers_name_re(m: symbol, how: symbol, re: symbol)
+helpers_name_re("impl.common.l2070_server_plan.plan_helpers", "impl",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,3}|[^./\\\\]{5,}|[^i./\\\\][^./\\\\]{3}|i[^m./\\\\][^./\\\\]{2}|im[^p./\\\\][^./\\\\]|imp[^l./\\\\])(?:[/\\\\]+|\\.))*impl(?:[/\\\\]+|\\.)common(?:[/\\\\]+|\\.)l2070_server_plan(?:[/\\\\]+|\\.)plan_helpers(?:\\.py)?[/\\\\]*").
+helpers_name_re("impl.common.l2200_sql_dialect.sql_connection", "impl",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,3}|[^./\\\\]{5,}|[^i./\\\\][^./\\\\]{3}|i[^m./\\\\][^./\\\\]{2}|im[^p./\\\\][^./\\\\]|imp[^l./\\\\])(?:[/\\\\]+|\\.))*impl(?:[/\\\\]+|\\.)common(?:[/\\\\]+|\\.)l2200_sql_dialect(?:[/\\\\]+|\\.)sql_connection(?:\\.py)?[/\\\\]*").
+helpers_name_re("impl.doltdb.versioned_operations_read", "impl",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,3}|[^./\\\\]{5,}|[^i./\\\\][^./\\\\]{3}|i[^m./\\\\][^./\\\\]{2}|im[^p./\\\\][^./\\\\]|imp[^l./\\\\])(?:[/\\\\]+|\\.))*impl(?:[/\\\\]+|\\.)doltdb(?:[/\\\\]+|\\.)versioned_operations_read(?:\\.py)?[/\\\\]*").
+helpers_name_re("l8000_admin.tools.sql_execution", "api",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,2}|[^./\\\\]{4,}|[^a./\\\\][^./\\\\]{2}|a[^p./\\\\][^./\\\\]|ap[^i./\\\\])(?:[/\\\\]+|\\.))*api(?:[/\\\\]+|\\.)l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)sql_execution(?:\\.py)?[/\\\\]*").
+helpers_name_re("l8000_admin.tools.sql_execution", "l",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,5}|[^l./\\\\][^./\\\\]*|l[^0-9./\\\\][^./\\\\]*|l[0-9]{1}[^0-9./\\\\][^./\\\\]*|l[0-9]{2}[^0-9./\\\\][^./\\\\]*|l[0-9]{3}[^0-9./\\\\][^./\\\\]*|l[0-9]{4}[^_./\\\\][^./\\\\]*)(?:[/\\\\]+|\\.))*l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)sql_execution(?:\\.py)?[/\\\\]*").
+helpers_name_re("l8000_admin.tools.versioning_tools", "api",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,2}|[^./\\\\]{4,}|[^a./\\\\][^./\\\\]{2}|a[^p./\\\\][^./\\\\]|ap[^i./\\\\])(?:[/\\\\]+|\\.))*api(?:[/\\\\]+|\\.)l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)versioning_tools(?:\\.py)?[/\\\\]*").
+helpers_name_re("l8000_admin.tools.versioning_tools", "l",
+    "[/\\\\]*(?:(?:[^./\\\\]{0,5}|[^l./\\\\][^./\\\\]*|l[^0-9./\\\\][^./\\\\]*|l[0-9]{1}[^0-9./\\\\][^./\\\\]*|l[0-9]{2}[^0-9./\\\\][^./\\\\]*|l[0-9]{3}[^0-9./\\\\][^./\\\\]*|l[0-9]{4}[^_./\\\\][^./\\\\]*)(?:[/\\\\]+|\\.))*l8000_admin(?:[/\\\\]+|\\.)tools(?:[/\\\\]+|\\.)versioning_tools(?:\\.py)?[/\\\\]*").
+.decl helpers_has_impl(d: number)
+helpers_has_impl(d) :- helpers_doc(d), doc(d, p, _), match("(?:.*[./\\\\])?impl(?:[./\\\\].*)?", p).
+.decl helpers_has_api(d: number)
+helpers_has_api(d) :- helpers_doc(d), doc(d, p, _), match("(?:.*[./\\\\])?api(?:[./\\\\].*)?", p).
 .decl helpers_module(d: number, m: symbol)
-// `impl.…`: D is M, or X.M where X has no `impl` component.
-helpers_module(d, m) :- helpers_impl_module(m), helpers_dotted(d, m).
+helpers_module(d, m) :- helpers_doc(d), doc(d, p, _), helpers_name_re(m, "impl", re), match(re, p).
 helpers_module(d, m) :-
-    helpers_impl_module(m), helpers_dotted(d, s), x = cat("*.", m), glob(x, s),
-    i1 = cat("impl.", m), s != i1, i2 = cat("impl.*.", m), !glob(i2, s), i3 = cat("*.impl.", m), !glob(i3, s),
-    i4 = cat("*.impl.*.", m), !glob(i4, s).
-// `l8000_…`: D has no `impl` or `api` component, and is M or X.M where X has no `l[0-9]{4}_` component.
-.decl helpers_impl_or_api(d: number)
-helpers_impl_or_api(d) :- helpers_dotted(d, s), match("(?:.*\\.)?(?:impl|api)(?:\\..*)?", s).
-helpers_module(d, m) :- helpers_l_module(m), helpers_dotted(d, m), !helpers_impl_or_api(d).
+    helpers_doc(d), doc(d, p, _), !helpers_has_impl(d), helpers_name_re(m, "api", re), match(re, p).
 helpers_module(d, m) :-
-    helpers_l_module(m), helpers_dotted(d, s), !helpers_impl_or_api(d), x = cat("*.", m), glob(x, s),
-    l1 = cat("l[0-9][0-9][0-9][0-9]_*.", m), !glob(l1, s), l2 = cat("*.l[0-9][0-9][0-9][0-9]_*.", m), !glob(l2, s).
+    helpers_doc(d), doc(d, p, _), !helpers_has_impl(d), !helpers_has_api(d), helpers_name_re(m, "l", re), match(re, p).
 
 // ---- imports (statement n, name node x, its name and local name; `module` for a from-import) ----
 .decl helpers_import_kind(k: symbol)
@@ -226,30 +234,29 @@ helpers_self_call(d, h) :-
     helpers_raw(d, _, "call", h, _), helpers_module(d, "impl.common.l2070_server_plan.plan_helpers"), helpers_legacy_or_via(h).
 
 // ---- regions and the callsite allowlist ----
-.decl helpers_class_region(d: number, c: node, name: symbol, s: number, e: number)
-helpers_class_region(d, c, x, s, e) :-
+// regions: classes (kind 'class', rank 0) and functions (kind 'function', rank 1, starting at their
+// decorated_definition's start when decorated). callsite = M::group_concat of the enclosing regions' names by
+// (kind, start), '.'-joined (`<module>` for none). A name holds no `.`, so the callsite is an allowlisted `M::f` when
+// exactly one region encloses the issue and it is named f, and `M::C.f` when exactly two do, C's first by (kind,
+// start) and f's second (two regions of one kind never share a start).
+.decl helpers_region(d: number, r: node, name: symbol, rank: number, s: number, e: number)
+helpers_region(d, c, x, 0, s, e) :-
     helpers_doc(d), node(d, c, "class_definition", s, e), field(c, "name", y), text(y, x).
-.decl helpers_fn_region(d: number, f: node, name: symbol, s: number, e: number)
-helpers_fn_region(d, f, x, s, e) :-
-    helpers_doc(d), node(d, f, "function_definition", s0, e), field(f, "name", y), text(y, x),
-    child(p, f, _), node(_, p, "decorated_definition", s, _), s0 >= s.
-helpers_fn_region(d, f, x, s, e) :-
+helpers_region(d, f, x, 1, s, e) :-
+    helpers_doc(d), node(d, f, "function_definition", _, e), field(f, "name", y), text(y, x),
+    child(p, f, _), node(_, p, "decorated_definition", s, _).
+helpers_region(d, f, x, 1, s, e) :-
     helpers_doc(d), node(d, f, "function_definition", s, e), field(f, "name", y), text(y, x),
     !helpers_decorated(f).
 .decl helpers_decorated(f: node)
 helpers_decorated(f) :- node(_, f, "function_definition", _, _), child(p, f, _), node(_, p, "decorated_definition", _, _).
 
-// Regions enclosing an issue's span.
-.decl helpers_in_class(n: node, c: node, name: symbol)
-helpers_in_class(n, c, x) :- helpers_reason(d, n, _), node(d, n, _, s, e), helpers_class_region(d, c, x, cs, ce), cs <= s, ce >= e.
-.decl helpers_in_fn(n: node, f: node, name: symbol)
-helpers_in_fn(n, f, x) :- helpers_reason(d, n, _), node(d, n, _, s, e), helpers_fn_region(d, f, x, fs, fe), fs <= s, fe >= e.
-.decl helpers_two_classes(n: node)
-helpers_two_classes(n) :- helpers_in_class(n, c1, _), helpers_in_class(n, c2, _), c1 != c2.
-.decl helpers_two_fns(n: node)
-helpers_two_fns(n) :- helpers_in_fn(n, f1, _), helpers_in_fn(n, f2, _), f1 != f2.
-.decl helpers_some_class(n: node)
-helpers_some_class(n) :- helpers_in_class(n, _, _).
+// Regions enclosing an issue's span, and how many.
+.decl helpers_encl(n: node, r: node, name: symbol, rank: number, s: number)
+helpers_encl(n, r, x, k, rs) :-
+    helpers_reason(d, n, _), node(d, n, _, s, e), helpers_region(d, r, x, k, rs, re), rs <= s, re >= e.
+.decl helpers_encl_count(n: node, k: number)
+helpers_encl_count(n, k) :- helpers_reason(_, n, _), k = count : { helpers_encl(n, _, _, _, _) }.
 
 // The allowlist: module, class ("" for none), function.
 .decl helpers_allow(m: symbol, c: symbol, f: symbol)
@@ -267,11 +274,11 @@ helpers_allow("l8000_admin.tools.versioning_tools", "", "_fetch_plan_rows").
 
 .decl helpers_allowed(n: node)
 helpers_allowed(n) :-
-    helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, "", f), !helpers_some_class(n),
-    helpers_in_fn(n, _, f), !helpers_two_fns(n).
+    helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, "", f), helpers_encl_count(n, 1),
+    helpers_encl(n, _, f, _, _).
 helpers_allowed(n) :-
-    helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, c, f), c != "", helpers_in_class(n, _, c),
-    !helpers_two_classes(n), helpers_in_fn(n, _, f), !helpers_two_fns(n).
+    helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, c, f), c != "", helpers_encl_count(n, 2),
+    helpers_encl(n, _, c, k1, s1), helpers_encl(n, _, f, k2, s2), (k1 < k2 ; k1 = k2, s1 < s2).
 
 violation("data-layer-plan-helpers-allowlist", "plan-helper-aliases", r, p, l) :-
     helpers_reason(d, n, r), !helpers_allowed(n), doc(d, p, _), line(n, l).
