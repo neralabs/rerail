@@ -1,2 +1,181 @@
+.decl cs_fdef(kind: symbol)
+cs_fdef("function_definition").
+.decl child(p: node, c: node, i: number)
+.decl cs_assign_kind(kind: symbol)
+.decl cs_backend(p: symbol)
+.decl cs_backend_class(s: symbol)
+.decl cs_base(c: node, b: node, name: symbol)
+.decl cs_base_slot(c: node, b: node)
+.decl cs_big_backend(p: symbol)
+.decl cs_connect_method(s: symbol)
+.decl cs_def(n: node, k: symbol, name: symbol)
+.decl cs_doc(d: number, p: symbol)
+.decl cs_func(c: node, f: node)
+.decl cs_good_base(s: symbol)
+.decl cs_hit(d: number, issue: symbol, l: number)
+.decl cs_last_class(d: number, c: node, name: symbol)
+.decl cs_lifecycle_method(s: symbol)
+.decl cs_lifecycle_path(p: symbol)
+.decl cs_method(d: number, c: node, cn: symbol, m: node, mn: symbol)
+.decl cs_mixin(s: symbol)
+.decl cs_present(p: symbol)
+.decl cs_receiver(o: node, r: node)
+.decl cs_residual(s: symbol)
+.decl cs_self_connect(m: node)
+.decl cs_self_connect_call(c: node)
+.decl cs_sequence(kind: symbol)
+.decl cs_sql_residual(s: symbol)
+.decl cs_sync_target(m: node)
+.decl cs_target(m: node, t: node)
+.decl cs_top(d: number, n: node, k: symbol, name: symbol)
+.decl cs_top_start(d: number, k: symbol, name: symbol, st: number)
+.decl cs_valid(d: number, p: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl line_count(d: number, k: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, child, field, text, line_count, line
 .output violation
+cs_assign_kind("assignment").
+cs_assign_kind("augmented_assignment").
+cs_backend("impl/mariadb/connection.py").
+cs_backend("impl/mongodb/connection.py").
+cs_backend("impl/neo4j/connection.py").
+cs_backend("impl/postgres/connection.py").
+cs_backend("impl/sqlite/connection.py").
+cs_big_backend("impl/sqlite/connection.py").
+cs_big_backend("impl/postgres/connection.py").
+cs_big_backend("impl/mariadb/connection.py").
+cs_connect_method("connect").
+cs_connect_method("connect_async").
+cs_connect_method("ensure_connected_async").
+cs_connect_method("ensure_connected_sync").
+cs_good_base("ConnectionPayloadOpaqueMarker").
+cs_good_base("_ConnectionStateCore").
+cs_good_base("_LazyConnectionBase").
+cs_lifecycle_method("__aenter__").
+cs_lifecycle_method("__aexit__").
+cs_lifecycle_method("__enter__").
+cs_lifecycle_method("__exit__").
+cs_mixin("_MariaDBCoreSupportMixin").
+cs_mixin("_MariaDBExecutionSupportMixin").
+cs_mixin("_MariaDBLifecycleExecutionMixin").
+cs_mixin("_MariaDBMetadataSchemaMixin").
+cs_mixin("_MariaDBVersioningMixin").
+cs_mixin("_PostgresBootstrapFeatureMixin").
+cs_mixin("_PostgresCoreSupportMixin").
+cs_mixin("_PostgresExecutionSupportMixin").
+cs_mixin("_PostgresLargeColumnMixin").
+cs_mixin("_PostgresLifecycleExecutionMixin").
+cs_mixin("_PostgresMetadataSchemaMixin").
+cs_mixin("_PostgresVersioningMixin").
+cs_mixin("_SqliteCoreSupportMixin").
+cs_mixin("_SqliteExecutionSupportMixin").
+cs_mixin("_SqliteInstrumentationSupportMixin").
+cs_mixin("_SqliteLargeColumnMixin").
+cs_mixin("_SqliteLifecycleExecutionMixin").
+cs_mixin("_SqliteMetadataSchemaMixin").
+cs_mixin("_SqliteVersioningMixin").
+cs_residual("AsyncSchemaBootstrapEvidence").
+cs_residual("AsyncTableExistsAuthority").
+cs_residual("ReadPlanWorkflow").
+cs_residual("SchemaBootstrapEvidence").
+cs_residual("SingleIntentPlanWorkflow").
+cs_residual("WritePlanWorkflow").
+cs_residual("_ConnectionMetadataMixin").
+cs_residual("_PlanScopeFetchToken").
+cs_residual("_plan_scope_fetch_template").
+cs_residual("_resolve_bootstrap_scope_exists_in_schema_transaction_lazy").
+cs_residual("_resolve_plan_scope_fetch_template").
+cs_residual("execute_read_plan_workflow").
+cs_residual("execute_read_plan_workflow_async").
+cs_residual("execute_single_intent_plan_workflow").
+cs_residual("execute_single_intent_plan_workflow_async").
+cs_residual("execute_write_plan_workflow").
+cs_residual("execute_write_plan_workflow_async").
+cs_sequence("pattern_list").
+cs_sequence("tuple_pattern").
+cs_sequence("list_pattern").
+cs_sql_residual("AttributedSqlRenderable").
+cs_sql_residual("ContentStoreManifest").
+cs_sql_residual("PreparedTerminalExecution").
+cs_sql_residual("_DirectGrammarExecutionPlan").
+cs_sql_residual("_DirectGrammarExecutionRequest").
+cs_sql_residual("_LargeColumnHydrationRuntimeStep").
+cs_sql_residual("_PolymorphicCheckReconciliationPlan").
+cs_sql_residual("_PolymorphicRegistryBootstrapRead").
+cs_sql_residual("_SchemaDdlTransaction").
+cs_sql_residual("_SqlDirectLazyContext").
+cs_sql_residual("_annotation_is_nullable").
+cs_sql_residual("_model_field_nullable").
+cs_sql_residual("_sql_types_compatible").
+cs_sql_residual("_sqlcoresupport__flush_polymorphic_metadata_batch_lazy").
+cs_sql_residual("_sqlcoresupport__schema_ensure_model_table_lazy").
+cs_sql_residual("_sqlcoresupport_ensure_polymorphic_columns_exist_lazy").
+cs_sql_residual("_sqlexecution__replay_cached_schema_ddl_effects_lazy").
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("l2000_connection/connection_lifecycle.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/common/l2200_sql_dialect/sql_connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/sqlite/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/postgres/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mariadb/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/mongodb/connection.py", p).
+in_scope(d) :- doc(d, p, _), glob("impl/neo4j/connection.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/conform/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
+cs_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d).
+cs_valid(d, p) :- cs_doc(d, p), !syntax_error(d).
+cs_top(d, n, k, s) :- node(d, m, "module", _, _), child(m, n, _), cs_def(n, k, s).
+cs_top(d, n, k, s) :- node(d, m, "module", _, _), child(m, dd, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", n), cs_def(n, k, s).
+cs_def(n, "class", s) :- node(_, n, "class_definition", _, _), field(n, "name", x), text(x, s).
+cs_def(n, "def", s) :- node(_, n, "function_definition", _, _), field(n, "name", x), text(x, s).
+cs_top_start(d, k, s, st) :- cs_top(d, n, k, s), node(_, n, _, st, _).
+cs_last_class(d, c, s) :- cs_top(d, c, "class", s), node(_, c, _, st, _), st = max t : { cs_top_start(d, "class", s, t) }.
+cs_base_slot(c, b) :- node(_, c, "class_definition", _, _), field(c, "superclasses", al), child(al, b, _), !node(_, b, "keyword_argument", _, _), !node(_, b, "comment", _, _).
+cs_base_slot(c, x) :- cs_base_slot(c, b), node(_, b, "parenthesized_expression", _, _), child(b, x, _), !node(_, x, "comment", _, _).
+cs_base(c, b, s) :- cs_base_slot(c, b), node(_, b, "identifier", _, _), text(b, s).
+cs_base(c, b, s) :- cs_base_slot(c, b), node(_, b, "attribute", _, _), field(b, "attribute", x), text(x, s).
+cs_method(d, c, cn, m, mn) :- cs_last_class(d, c, cn), field(c, "body", b), child(b, m, _), cs_def(m, "def", mn).
+cs_method(d, c, cn, m, mn) :- cs_last_class(d, c, cn), field(c, "body", b), child(b, dd, _), node(_, dd, "decorated_definition", _, _), field(dd, "definition", m), cs_def(m, "def", mn).
+cs_func(c, f) :- node(_, c, "call", _, _), field(c, "function", f).
+cs_func(c, x) :- cs_func(c, f), node(_, f, "parenthesized_expression", _, _), child(f, x, _), !node(_, x, "comment", _, _).
+cs_receiver(o, o) :- cs_func(_, f), node(_, f, "attribute", _, _), field(f, "object", o).
+cs_receiver(o, x) :- cs_receiver(o, p), node(_, p, "parenthesized_expression", _, _), child(p, x, _), !node(_, x, "comment", _, _).
+cs_self_connect_call(c) :- cs_func(c, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s), (s = "connect" ; s = "connect_async"), field(f, "object", o), cs_receiver(o, r), node(_, r, "identifier", _, _), text(r, "self").
+cs_self_connect(m) :- cs_method(_, _, _, m, _), cs_self_connect_call(c), inside(c, m, cs_fdef).
+cs_target(m, t) :- cs_method(_, _, _, m, _), node(_, a, k, _, _), cs_assign_kind(k), inside(a, m, cs_fdef), field(a, "left", t).
+cs_target(m, e) :- cs_target(m, t), node(_, t, k, _, _), cs_sequence(k), child(t, e, _), !node(_, e, "comment", _, _).
+cs_sync_target(m) :- cs_target(m, t), node(_, t, "attribute", _, _), field(t, "object", o), node(_, o, "identifier", _, _), text(o, "self"), field(t, "attribute", x), text(x, s), (s = "_conn" ; s = "_cursor" ; s = "_introspector" ; s = "_validator").
+cs_backend_class(s) :- cs_method(_, _, s, _, _), suffix("Connection", s).
+cs_backend_class(s) :- cs_method(_, _, s, _, _), suffix("ConnectionCore", s).
+cs_present(p) :- cs_doc(_, p).
+cs_lifecycle_path("l2000_connection/connection_lifecycle.py") :- cs_present("l2000_connection/connection_lifecycle.py").
+cs_lifecycle_path("l2000_connection/connection.py") :- cs_doc(_, _), !cs_present("l2000_connection/connection_lifecycle.py").
+cs_hit(d, "CSB001", 1) :- cs_valid(d, "l2000_connection/connection.py"), line_count(d, k), k > 900.
+cs_hit(d, "CSB010", 1) :- cs_valid(d, "impl/common/l2200_sql_dialect/sql_connection.py"), line_count(d, k), k > 6000.
+cs_hit(d, "CSB020", 1) :- cs_valid(d, p), cs_big_backend(p), line_count(d, k), k > 3000.
+cs_hit(d, "CSB002", l) :- cs_valid(d, "l2000_connection/connection.py"), cs_top(d, n, _, s), cs_residual(s), line(n, l).
+cs_hit(d, "CSB012", l) :- cs_valid(d, "impl/common/l2200_sql_dialect/sql_connection.py"), cs_top(d, n, _, s), cs_sql_residual(s), line(n, l).
+cs_hit(d, "CSB021", l) :- cs_valid(d, p), cs_big_backend(p), cs_top(d, n, _, s), cs_mixin(s), line(n, l).
+cs_hit(d, "CSB003", l) :- cs_valid(d, "l2000_connection/connection.py"), cs_last_class(d, c, "_DatabaseConnectionCore"), cs_base(c, _, s), !cs_good_base(s), line(c, l).
+cs_hit(d, "CSB011", 1) :- cs_valid(d, "impl/common/l2200_sql_dialect/sql_connection.py"), k = count : { cs_top(d, _, _, _) }, k > 90.
+cs_hit(d, "CSB013", l) :- cs_valid(d, "impl/common/l2200_sql_dialect/sql_connection.py"), cs_last_class(d, c, "_SqlConnectionCore"), k = count : { cs_base(c, _, _) }, k > 6, line(c, l).
+cs_hit(d, "CSB030", l) :- cs_lifecycle_path(p), cs_valid(d, p), cs_method(d, _, "_ConnectionLifecycleMixin", m, mn), (mn = "__enter__" ; mn = "__aenter__"), cs_self_connect(m), line(m, l).
+cs_hit(d, "CSB031", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), cs_lifecycle_method(mn), line(m, l).
+cs_hit(d, "CSB032", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, "connect_async"), cs_backend_class(cn), cs_sync_target(m), line(m, l).
+cs_hit(d, "CSB033", l) :- cs_valid(d, p), cs_backend(p), cs_method(d, _, cn, m, mn), cs_backend_class(cn), !cs_connect_method(mn), cs_self_connect(m), line(m, l).
+violation("data-layer-connection-structural-boundaries", "connection-structure", code, p, l) :- cs_hit(d, code, l), doc(d, p, _).

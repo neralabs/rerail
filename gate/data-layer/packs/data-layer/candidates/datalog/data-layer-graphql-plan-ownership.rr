@@ -1,2 +1,79 @@
+.decl graphql_authority_frame(kind: symbol)
+graphql_authority_frame("function_definition"). graphql_authority_frame("decorator").
+.decl graphql_authority_type(kind: symbol)
+graphql_authority_type("type").
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl graphql_authority_arg0(c: node, a: node)
+.decl graphql_authority_auth(f: node, x: symbol)
+.decl graphql_authority_chain(a: node, b: node)
+.decl graphql_authority_decorator(c: node, x: symbol)
+.decl graphql_authority_edge(f: node, s: symbol, t: symbol)
+.decl graphql_authority_file(d: number, p: symbol)
+.decl graphql_authority_fn(n: node, f: node)
+.decl graphql_authority_inner(a: node)
+.decl graphql_authority_pos(c: node, a: node, i: number)
+.decl graphql_authority_pos_after(c: node, i: number)
+.decl graphql_authority_ref(e: node, x: symbol)
+.decl graphql_authority_root(e: node, x: symbol)
+.decl graphql_authority_seed(f: node, x: symbol)
+.decl graphql_authority_unparen(e: node, m: node)
+.decl graphql_authority_word(ty: node)
+.decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl out_scope(d: number)
+.decl reported_parser_error_invalid(d: number)
+.decl reported_parser_error_stmt(b: node)
+.decl source(d: number, sp: node)
+.decl str(n: node, s: symbol)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, source, node, child, field, text, str, line, syntax_error
 .output violation
+in_scope(d) :- doc(d, p, _), glob("l9750_graphql/**/*.py", p).
+in_scope(d) :- doc(d, p, _), glob("l9900_auto_api/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+graphql_authority_file(d, p) :- node(d, _, "module", _, _), in_scope(d), !reported_parser_error_invalid(d), !out_scope(d), doc(d, p, _).
+graphql_authority_fn(n, f) :- nearest(n, f, graphql_authority_frame), node(_, f, "function_definition", _, _).
+graphql_authority_fn(n, f) :- nearest(n, dc, graphql_authority_frame), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f), node(_, f, "function_definition", _, _).
+graphql_authority_fn(n, f) :- nearest(n, dc, graphql_authority_frame), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", c), node(_, c, "class_definition", _, _), graphql_authority_fn(c, f).
+graphql_authority_word(ty) :- node(_, i, "identifier", _, _), text(i, s), inside(i, ty, graphql_authority_type), match("(?s)(?:[^A-Za-z_]*[A-Za-z_][\\p{L}\\p{N}_]*[^\\p{L}\\p{N}_])*[^A-Za-z_]*(?:ServerPlan|BaseServerPlan|_GraphQLServerPlan|LazyResult|(?:[A-Za-z_][\\p{L}\\p{N}_]*)?(?:Transaction|PlanScope))(?:[^\\p{L}\\p{N}_].*)?", s).
+graphql_authority_word(ty) :- str(i, s), inside(i, ty, graphql_authority_type), match("(?s)(?:[^A-Za-z_]*[A-Za-z_][\\p{L}\\p{N}_]*[^\\p{L}\\p{N}_])*[^A-Za-z_]*(?:ServerPlan|BaseServerPlan|_GraphQLServerPlan|LazyResult|(?:[A-Za-z_][\\p{L}\\p{N}_]*)?(?:Transaction|PlanScope))(?:[^\\p{L}\\p{N}_].*)?", s).
+graphql_authority_seed(f, x) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, nm, 0), node(_, nm, "identifier", _, _), text(nm, x), field(p, "type", ty), graphql_authority_word(ty).
+graphql_authority_seed(f, x) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_default_parameter", _, _), field(p, "name", nm), text(nm, x), field(p, "type", ty), graphql_authority_word(ty).
+graphql_authority_root(e, x) :- node(_, e, "identifier", _, _), text(e, x).
+graphql_authority_root(e, x) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graphql_authority_root(i, x).
+graphql_authority_root(e, x) :- node(_, e, "attribute", _, _), field(e, "object", o), graphql_authority_root(o, x).
+graphql_authority_root(e, x) :- node(_, e, "call", _, _), field(e, "function", g), graphql_authority_root(g, x).
+graphql_authority_inner(a) :- node(_, b, "assignment", _, _), field(b, "right", a), node(_, a, "assignment", _, _).
+graphql_authority_chain(a, a) :- node(_, a, "assignment", _, _), !graphql_authority_inner(a).
+graphql_authority_chain(a, c) :- graphql_authority_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).
+graphql_authority_edge(f, s, t) :- graphql_authority_chain(a, b), field(b, "right", v), !node(_, v, "assignment", _, _), graphql_authority_root(v, s), graphql_authority_chain(a, b2), field(b2, "left", tn), node(_, tn, "identifier", _, _), text(tn, t), graphql_authority_fn(a, f).
+graphql_authority_auth(f, x) :- graphql_authority_seed(f, x).
+graphql_authority_auth(f, t) :- graphql_authority_auth(f, s), graphql_authority_edge(f, s, t).
+violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO001", p, l) :- node(d, n, "attribute", _, _), field(n, "attribute", at), text(at, x), prefix("_", x), field(n, "object", o), graphql_authority_fn(n, f), graphql_authority_root(o, r), graphql_authority_auth(f, r), graphql_authority_file(d, p), line(n, l).
+graphql_authority_pos(c, a, i) :- node(_, c, "call", _, _), field(c, "arguments", al), node(_, al, "argument_list", _, _), child(al, a, i), node(_, a, k, _, _), k != "keyword_argument", k != "dictionary_splat".
+graphql_authority_arg0(c, a) :- graphql_authority_pos(c, a, i), !graphql_authority_pos_after(c, i).
+graphql_authority_pos_after(c, i) :- graphql_authority_pos(c, _, i), graphql_authority_pos(c, _, j), j < i.
+graphql_authority_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
+graphql_authority_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graphql_authority_unparen(i, m).
+violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO002", p, l) :- node(d, n, "call", _, _), field(n, "function", g0), graphql_authority_unparen(g0, g), node(_, g, "identifier", _, _), text(g, "getattr"), graphql_authority_arg0(n, a), graphql_authority_fn(n, f), graphql_authority_root(a, r), graphql_authority_auth(f, r), graphql_authority_file(d, p), line(n, l).
+violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO003", p, l) :- node(d, n, "call", _, _), field(n, "function", g0), graphql_authority_unparen(g0, g), node(_, g, "attribute", _, _), field(g, "attribute", at), text(at, "__getattribute__"), field(g, "object", o0), graphql_authority_unparen(o0, o), node(_, o, "identifier", _, _), text(o, "object"), graphql_authority_arg0(n, a), graphql_authority_fn(n, f), graphql_authority_root(a, r), graphql_authority_auth(f, r), graphql_authority_file(d, p), line(n, l).
+graphql_authority_ref(e, x) :- node(_, e, "identifier", _, _), text(e, x).
+graphql_authority_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
+graphql_authority_decorator(c, x) :- field(dd, "definition", c), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e0, 0), graphql_authority_unparen(e0, e), !node(_, e, "call", _, _), graphql_authority_ref(e, x).
+graphql_authority_decorator(c, x) :- field(dd, "definition", c), child(dd, dc, _), node(_, dc, "decorator", _, _), child(dc, e0, 0), graphql_authority_unparen(e0, e), node(_, e, "call", _, _), field(e, "function", g0), graphql_authority_unparen(g0, g), graphql_authority_ref(g, x).
+violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO004", p, l) :- node(d, c, "class_definition", _, _), graphql_authority_decorator(c, "reusable_template"), field(c, "body", b), child(b, es, _), node(_, es, "expression_statement", _, _), child(es, a, 0), node(_, a, "assignment", _, _), field(a, "type", ty), graphql_authority_word(ty), graphql_authority_file(d, p), line(a, l).
+reported_parser_error_stmt(b) :- node(_, b, "block", _, _), child(b, c, _), node(_, c, _, _, _).
+reported_parser_error_invalid(d) :- syntax_error(d).
+reported_parser_error_invalid(d) :- node(d, b, "block", _, _), !reported_parser_error_stmt(b).
+violation("data-layer-graphql-plan-ownership", "reported-parser-error", "GPO000", p, 1) :- reported_parser_error_invalid(d), in_scope(d), !out_scope(d), source(d, sp), text(sp, s), (contains("ServerPlan", s) ; contains("PlanScope", s) ; contains("Transaction", s) ; contains("LazyResult", s)), doc(d, p, _).
