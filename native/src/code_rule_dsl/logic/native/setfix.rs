@@ -882,28 +882,58 @@ impl RowRef<'_> {
 /// Over a view whose source indexes the one key column, the source's index serves (`source`), and nothing is built.
 /// Over an unfiltered view of a source with a sorted index (`sorted`), a probe is a slice of that index.
 /// Over a moved relation whose waves kept an index on the key columns (`chain`), a probe walks that index's chain.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize> }
+/// An input's index on key columns: its own hash table, or (`sorted`, `source`) the source's index on one key column,
+/// `cols[lead]`, whose candidates the step checks against every key.
+pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32>, source: bool, sorted: bool, chain: Option<usize>, lead: usize }
 impl Csr {
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
-        let key = |id: usize| cols.iter().map(move |&c| rel.at(id).at(c));
-        let same = |a: usize, b: usize| cols.iter().all(|&c| rel.at(a).at(c) == rel.at(b).at(c));
-        let hashes: Vec<u64> = (0..rel.n).map(|id| hash_vals(key(id))).collect();
-        let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
+        // Each row's key read once (a view's values go through its source), then hashed once.
+        let k = cols.len();
+        let mut keys: Vec<i64> = Vec::with_capacity(rel.n * k);
         for id in 0..rel.n {
-            match table.find_mut(hashes[id], |&(rep, _, _)| same(rep as usize, id)) {
-                Some(e) => e.2 += 1,
-                None => { table.insert_unique(hashes[id], (id as u32, 0, 1), |&(rep, _, _)| hashes[rep as usize]); }
+            let row = rel.at(id);
+            keys.extend(cols.iter().map(|&c| row.at(c)));
+        }
+        let key = |id: usize| &keys[id * k..][..k];
+        let hashes: Vec<u64> = (0..rel.n).map(|id| hash_vals(key(id).iter().copied())).collect();
+        // First pass: each key's group (its entry's `.1`, for now) and size; each row's group.
+        let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
+        let mut group = vec![0u32; rel.n];
+        let mut groups = 0u32;
+        for id in 0..rel.n {
+            match table.find_mut(hashes[id], |&(rep, _, _)| key(rep as usize) == key(id)) {
+                Some(e) => {
+                    e.2 += 1;
+                    group[id] = e.1;
+                }
+                None => {
+                    table.insert_unique(hashes[id], (id as u32, groups, 1), |&(rep, _, _)| hashes[rep as usize]);
+                    group[id] = groups;
+                    groups += 1;
+                }
             }
         }
+        // Each group's start; then the rows placed by their group, in row order.
+        let mut start = vec![0u32; groups as usize];
+        for e in table.iter() {
+            start[e.1 as usize] = e.2;
+        }
         let mut at = 0;
-        for e in table.iter_mut() { e.1 = at; at += e.2; e.2 = 0; }
+        for s in &mut start {
+            let len = *s;
+            *s = at;
+            at += len;
+        }
+        for e in table.iter_mut() {
+            e.1 = start[e.1 as usize];
+        }
         let mut ids = vec![0u32; rel.n];
         for id in 0..rel.n {
-            let e = table.find_mut(hashes[id], |&(rep, _, _)| same(rep as usize, id)).expect("a key seen in the first pass");
-            ids[(e.1 + e.2) as usize] = id as u32;
-            e.2 += 1;
+            let g = &mut start[group[id] as usize];
+            ids[*g as usize] = id as u32;
+            *g += 1;
         }
-        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None }
+        Csr { cols: cols.to_vec(), table, ids, source: false, sorted: false, chain: None, lead: 0 }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
@@ -1006,13 +1036,31 @@ impl InRel {
     fn at(&self, id: usize) -> RowRef<'_> {
         match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Flat(&self.rows[id * self.k..][..self.k]) }
     }
+    /// For a key of several columns over a view, the most selective column the source indexes (sorted, or by its
+    /// lookup) with at most `LEAD_MATCHES` rows a value: its position in `cols`, and whether sorted.
+    fn lead(&self, cols: &[usize]) -> Option<(usize, bool)> {
+        const LEAD_MATCHES: usize = 8;
+        let v = self.view.as_ref().filter(|_| cols.len() > 1)?;
+        cols.iter()
+            .enumerate()
+            .filter_map(|(j, &c)| {
+                let sc = v.cols[c];
+                let sorted_source = v.src.sorted_rows(sc, 0).is_some();
+                let sorted = sorted_source && v.ids.is_none() && v.eqs.is_empty();
+                let source = !sorted_source && v.ids.is_none() && v.src.indexed(sc);
+                (sorted || source).then(|| (v.src.estimated_matches(sc, false), j, sorted))
+            })
+            .filter(|&(m, _, _)| m <= LEAD_MATCHES)
+            .min()
+            .map(|(_, j, sorted)| (j, sorted))
+    }
     fn index(&self, cols: &[usize]) -> Arc<Csr> {
         let mask = cols.iter().fold(0u64, |m, &c| m | 1 << c);
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None };
+            let empty = |source, sorted| Csr { cols: cols.to_vec(), table: HashTable::new(), ids: Vec::new(), source, sorted, chain: None, lead: 0 };
             let m = if cols.is_empty() {
                 empty(false, false)
             } else if let Some(i) = self.chains.iter().position(|ix| ix.cols == cols) {
@@ -1022,6 +1070,11 @@ impl InRel {
             } else if let (Some(v), [c]) = (&self.view, cols) && v.src.indexed(v.cols[*c]) && v.src.sorted_rows(v.cols[*c], 0).is_none() {
                 // (A source's lookup allocates each probe's rows; over a sorted source a filtered view builds its own.)
                 empty(true, false)
+            } else if let Some((lead, sorted)) = self.lead(cols) {
+                // A key of several columns, one of them selective in the source's own index (a node column of
+                // `inside_<set>`, `node`, `name`): its candidates, checked against the other keys by the step, not a
+                // hash table of every row.
+                Csr { lead, ..empty(!sorted, sorted) }
             } else {
                 Csr::build(self, cols)
             };
@@ -1391,8 +1444,8 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
                         let index = &rel.chains[i];
                         (Rows::In(rel), index.get(&rel.rows, rel.k, key).map_or(Cands::Slice(&[]), |p| Cands::Chain { head: p.head, next: &index.next, stop: 0 }))
                     }
-                    else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[0]], key[0]).unwrap_or(&[]))) }
-                    else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[0], key[0]))) }
+                    else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }
+                    else if ix.source && let Some(v) = &rel.view { (Rows::Source(v), Cands::Owned(v.find(ix.cols[ix.lead], key[ix.lead]))) }
                     else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
                 }
                 Src::FullMulti(r, cols) => {
