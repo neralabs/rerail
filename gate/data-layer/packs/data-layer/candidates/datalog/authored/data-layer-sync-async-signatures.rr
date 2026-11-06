@@ -1,5 +1,6 @@
-// data-layer-sync-async-signatures: transaction-connection by hand (the converter's gap: the `later-signature`
-// utility call with arguments, and its `layout` gap to a capture).
+// data-layer-sync-async-signatures: transaction-connection by hand, exact under the default options. The converter
+// gaps it on the `later-signature` utility call with arguments (`layout.before` to the capture $CURRENT) and on
+// `compare` ($SYNC_NAME eq the transform's $BASE).
 //
 // The clause: an `X_async` def whose first positional parameter is annotated with a connection type, while the
 // module also defines `X` whose first positional parameter is annotated with a transaction type; each def the
