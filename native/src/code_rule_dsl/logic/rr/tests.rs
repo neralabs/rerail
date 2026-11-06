@@ -269,7 +269,12 @@ fl(t, to_string(to_float(t) * 2.0)) :- f(t), to_float(t) > 0.0.
 neg(t) :- f(t), to_float(t) < 0.
 .decl assigns(d: number, k: number)
 assigns(d, 1 + count : { node(d, _, "assignment", _, _) }) :- doc(d, _, _).
-.output joined, num, fl, neg, assigns
+.decl kv(k: number, v: symbol)
+kv(2, "b"). kv(1, "a"). kv(3, "c"). kv(4, "a").
+.decl agg(s: symbol, t: number, l: number, e: symbol)
+agg(s, t, l, e) :- kv(4, _), s = join v by k sep "," : { kv(k, v) }, t = sum k : { kv(k, _) },
+    l = sum strlen(v) * 2 : { kv(_, v) }, e = join v by k sep "," : { kv(k, v), k > 9 }.
+.output joined, num, fl, neg, assigns, agg
 "#;
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -279,6 +284,49 @@ assigns(d, 1 + count : { node(d, _, "assignment", _, _) }) :- doc(d, _, _).
     assert_eq!(read("fl"), "1.5\t3\n1e3\t2000\n");
     assert_eq!(read("neg"), "-2.25\n");
     assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
+    assert_eq!(read("agg"), "a,b,c,a\t10\t6\t\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The axes over a relation of nodes (climbs up the tree), and a negated conjunction (a helper relation).
+#[test]
+fn node_sets_and_negated_conjunctions_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nodesets");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def outer():\n    for x in y:\n        def inner():\n            g()\n        f()\nh()\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input node, field, text
+.decl callee(c: node, s: symbol)
+callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
+.decl fname(f: node, s: symbol)
+fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+// The bodies of for loops, and functions: a relation of nodes.
+.decl stop(n: node)
+stop(b) :- node(_, l, "for_statement", _, _), field(l, "body", b).
+stop(f) :- node(_, f, "function_definition", _, _).
+.decl near(c: symbol, k: symbol)
+near(c, k) :- callee(n, c), nearest(n, s, stop), node(_, s, k, _, _).
+.decl out_of_loop(c: symbol)
+out_of_loop(c) :- callee(n, c), !inside(n, _, stop).
+.decl fn_with_call(f: symbol)
+fn_with_call(f) :- fname(a, f), has(a, n, stop), node(_, n, "block", _, _).
+.decl own(c: symbol, f: symbol)
+own(c, f) :- callee(n, c), fname(a, f), within_stop(n, a, stop).
+.decl lonely(c: symbol)
+lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f")).
+.output near, out_of_loop, fn_with_call, own, lonely
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("near"), "f\tblock\ng\tfunction_definition\n");
+    assert_eq!(read("out_of_loop"), "h\n");
+    assert_eq!(read("fn_with_call"), "outer\n");
+    assert_eq!(read("own"), "g\tinner\n");
+    assert_eq!(read("lonely"), "f\ng\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

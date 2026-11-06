@@ -457,8 +457,14 @@ impl Lowerer {
                 if let Some(Literal::Cmp { l, op, .. }) = self.test_set(alts)? {
                     return Ok(vec![vec![Literal::Cmp { l, op, r: Term::Int(if *neg { 0 } else { 1 }) }]]);
                 }
+                // `!(a, b)`: no row of the conjunction, through a helper relation of the variables it shares with the
+                // rule; `!(a ; b)` is `!a, !b`.
                 if *neg {
-                    return not_yet("a negated disjunction");
+                    let mut out = Vec::new();
+                    for alt in alts {
+                        out.push(self.negated_conjunction(alt, outer)?);
+                    }
+                    return Ok(vec![out]);
                 }
                 let mut out = Vec::new();
                 for alt in alts {
@@ -467,6 +473,9 @@ impl Lowerer {
                 out
             }
             Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
+            Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => {
+                self.node_axis(rel, args, *neg, outer)?
+            }
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within(rel, args, *neg)?,
             Lit::Atom { rel, args, neg } if rel == "earlier" => self.earlier(args, *neg)?,
             Lit::Atom { rel, args, neg: false } if rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) => self.captures(args)?,
@@ -488,6 +497,146 @@ impl Lowerer {
             }
             Lit::Cmp { l, op, r } => self.comparison(l, op, r, outer)?,
         })
+    }
+
+    /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (bound inside
+    /// it by a context relation where the conjunction only tests them), negated.
+    fn negated_conjunction(&mut self, lits: &[Lit], outer: &BTreeSet<String>) -> Result<Literal, Error> {
+        let shared: Vec<String> = body_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
+        let bound: BTreeSet<String> = body_vars(
+            &lits.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "within" | "within_stop" | "earlier"))).cloned().collect::<Vec<_>>(),
+        );
+        let needed: Vec<String> = shared.iter().filter(|v| !bound.contains(*v)).cloned().collect();
+        let siblings = self.siblings.clone();
+        let mut bodies = self.conjunction(lits, &shared.iter().cloned().collect())?;
+        self.siblings = siblings.clone();
+        if !needed.is_empty() {
+            let ctx = self.context(&needed)?;
+            for b in &mut bodies {
+                b.insert(0, Literal::Atom(ctx.clone()));
+            }
+        }
+        self.siblings = siblings;
+        self.negate(bodies, &shared)
+    }
+
+    /// A helper relation `rr_not<k>(shared)` of the bodies, negated; `rr_not<k>(0)` when nothing is shared.
+    fn negate(&mut self, bodies: Vec<Vec<Literal>>, shared: &[String]) -> Result<Literal, Error> {
+        let name = self.fresh("not");
+        let (cols, args): (Vec<(String, String)>, Vec<Term>) = if shared.is_empty() {
+            (vec![("unit".to_owned(), "int".to_owned())], vec![Term::Int(0)])
+        } else {
+            (shared.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), shared.iter().map(|c| Term::Var(c.clone())).collect())
+        };
+        self.prog.decls.insert(name.clone(), cols);
+        let head = Atom { rel: name, args, neg: false, gated: false };
+        for body in bodies {
+            self.prog.rules.push(Rule { head: head.clone(), body });
+        }
+        Ok(Literal::Atom(Atom { neg: true, ..head }))
+    }
+
+    /// A set argument that names a relation of nodes (`.decl block_node(n: node)`), not of kinds.
+    fn node_set(&self, set: &STerm) -> Option<String> {
+        let STerm::Var(name) = set else { return None };
+        let cols = self.prog.decls.get(name)?;
+        (cols.len() == 1 && cols[0].1 == "node").then(|| name.clone())
+    }
+
+    /// `tape(n, par, size, depth)`, read by the tree's ranges and climbs.
+    fn need_tape(&mut self) {
+        self.prog.decls.entry("tape".to_owned()).or_insert_with(|| ["n", "par", "size", "depth"].iter().map(|c| ((*c).to_owned(), "int".to_owned())).collect());
+        if !self.prog.inputs.iter().any(|i| i == "tape") {
+            self.prog.inputs.push("tape".to_owned());
+        }
+    }
+
+    /// A climb up the tree from the nodes `seed` gives (in its variable `x`): `rr_up<k>(n, a)` for each strict
+    /// ancestor a of n, up to and including the first node of `stop` where one is given. Its work is each seed's
+    /// path up (to the stop), from the tape's parent column.
+    fn climb(&mut self, seed: Vec<Literal>, x: &str, stop: Option<&str>) -> String {
+        self.need_tape();
+        let rel = self.fresh("up");
+        self.prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        let v = |s: &str| Term::Var(s.to_owned());
+        let atom = |r: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: r.to_owned(), args, neg, gated: false });
+        let up = |p: &str, q: &str| atom("tape", vec![v(p), v(q), Term::Wild, Term::Wild], false);
+        let real = |q: &str| Literal::Cmp { l: v(q), op: ">=", r: Term::Int(0) };
+        let mut first = seed;
+        first.extend([up(x, "rr_p"), real("rr_p")]);
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v(x), v("rr_p")], neg: false, gated: false }, body: first });
+        let mut next = vec![atom(&rel, vec![v("rr_n"), v("rr_p")], false)];
+        if let Some(stop) = stop {
+            next.push(atom(stop, vec![v("rr_p")], true));
+        }
+        next.extend([up("rr_p", "rr_q"), real("rr_q")]);
+        self.prog.rules.push(Rule { head: Atom { rel: rel.clone(), args: vec![v("rr_n"), v("rr_q")], neg: false, gated: false }, body: next });
+        rel
+    }
+
+    /// The nodes a climb starts from: the values the rule gives `n` (`context`), or every node.
+    fn climb_seed(&mut self, n: &str) -> Result<Vec<Literal>, Error> {
+        if self.bound_beside(n) {
+            let siblings = self.siblings.clone();
+            let ctx = self.context(&[n.to_owned()]);
+            self.siblings = siblings;
+            return Ok(vec![Literal::Atom(ctx?)]);
+        }
+        Ok(vec![Literal::Atom(Atom { rel: "node".to_owned(), args: vec![Term::Wild, Term::Var(n.to_owned()), Term::Wild, Term::Wild, Term::Wild], neg: false, gated: false })])
+    }
+
+    /// The axes over a set of nodes S (`core.rr`: a set may be a relation of nodes), as climbs up the tree:
+    /// - `inside(n, a, S)`: a is an ancestor of n, and S(a);
+    /// - `nearest(n, a, S)`: the climb from n stops at the first node of S, which is a;
+    /// - `has(a, n, S)`: the climb from each node of S, n, passes a;
+    /// - `within_stop(n, a, S)`: n is below a, and the climb from n meets no node of S before a.
+    ///
+    /// Negated, each is a helper relation (`negate`).
+    fn node_axis(&mut self, rel: &str, args: &[STerm], neg: bool, outer: &BTreeSet<String>) -> Result<Vec<Vec<Literal>>, Error> {
+        let set = self.node_set(&args[2]).expect("a node set");
+        let atom = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.to_owned(), args, neg: false, gated: false });
+        let named = |me: &mut Self, t: &STerm| -> Result<String, Error> {
+            match t {
+                STerm::Var(v) => Ok(v.clone()),
+                STerm::Wild => Ok(me.fresh("w")),
+                other => Err(Error::Syntax(format!("{rel}: expected a variable, got {other:?}"))),
+            }
+        };
+        let (first, second) = (named(self, &args[0])?, named(self, &args[1])?);
+        let v = |s: &str| Term::Var(s.to_owned());
+        let positive = match rel {
+            "inside" | "nearest" => {
+                let (n, a) = (first.clone(), second.clone());
+                let seed = self.climb_seed(&n)?;
+                let up = self.climb(seed, &n, (rel == "nearest").then_some(set.as_str()));
+                vec![vec![atom(&up, vec![v(&n), v(&a)]), atom(&set, vec![v(&a)])]]
+            }
+            "has" => {
+                let (a, n) = (first.clone(), second.clone());
+                let up = self.climb(vec![atom(&set, vec![v(&n)])], &n, None);
+                vec![vec![atom(&up, vec![v(&n), v(&a)])]]
+            }
+            _ => {
+                let (n, a) = (first.clone(), second.clone());
+                let below = self.within("within", &[STerm::Var(n.clone()), STerm::Var(a.clone())], false)?;
+                let seed = self.climb_seed(&n)?;
+                let up = self.climb(seed, &n, Some(&set));
+                let s = self.fresh("stop");
+                let hit = vec![atom(&up, vec![v(&n), v(&s)]), atom(&set, vec![v(&s)])];
+                let none = self.negate(vec![hit.clone()], std::slice::from_ref(&n))?;
+                let mut out = Vec::new();
+                for b in below {
+                    out.push(b.iter().cloned().chain([none.clone()]).collect());
+                    out.push(b.into_iter().chain(hit.iter().cloned()).chain([Literal::Cmp { l: v(&s), op: "<=", r: v(&a) }]).collect());
+                }
+                out
+            }
+        };
+        if !neg {
+            return Ok(positive);
+        }
+        let shared: Vec<String> = [&first, &second].into_iter().filter(|x| outer.contains(*x)).cloned().collect();
+        Ok(vec![vec![self.negate(positive, &shared)?]])
     }
 
     /// `within(n, a)`: n is strictly below a. A node is `d << 32 | its preorder index` and its subtree the ids
