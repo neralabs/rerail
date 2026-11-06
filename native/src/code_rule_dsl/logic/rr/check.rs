@@ -89,11 +89,18 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             (none(), vs, ready)
         }
         Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all") => {
-            let g = match args.first() {
+            let mut g = match args.first() {
                 Some(Term::Str(re)) => groups(re),
                 _ => none(),
             };
-            let subject: BTreeSet<String> = args.iter().skip(1).flat_map(vars_of).collect();
+            // `match_all("re", sp, m)`: the match `m` is bound by it, the span `sp` needed.
+            let (subject, binds) = match args.as_slice() {
+                [_, sp, m] if rel == "match_all" => (std::slice::from_ref(sp), std::slice::from_ref(m)),
+                [_, rest @ ..] => (rest, &[][..]),
+                [] => (&[][..], &[][..]),
+            };
+            g.extend(binds.iter().flat_map(vars_of));
+            let subject: BTreeSet<String> = subject.iter().flat_map(vars_of).collect();
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }

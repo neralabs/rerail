@@ -464,7 +464,10 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             let measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
             let measured = syntax::statistics(source.as_ref());
             drop(measure);
-            if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
+            let made_here = |rel: &str| {
+                rel.starts_with("nearest_") || [crate::code_rule_dsl::logic::front::AXIS, crate::code_rule_dsl::logic::strings::RELATION, crate::code_rule_dsl::logic::strings::MATCHES].iter().any(|p| rel.starts_with(p))
+            };
+            if split.base.contains(&rel) && (own || made_here(&rel)) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
