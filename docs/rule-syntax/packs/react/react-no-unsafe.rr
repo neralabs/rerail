@@ -1,0 +1,47 @@
+.policy "react-no-unsafe" revision 2
+.description "Avoid the UNSAFE_componentWillMount, UNSAFE_componentWillReceiveProps and UNSAFE_componentWillUpdate lifecycle methods in class components; they break under async rendering."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-unsafe: a class component or createReactClass spec that declares UNSAFE_componentWillMount,
+// UNSAFE_componentWillReceiveProps or UNSAFE_componentWillUpdate, as a method, field or spec property.
+//   class Foo extends React.Component { UNSAFE_componentWillMount() {} }     reported, at the member
+//   class Foo { UNSAFE_componentWillMount() {} }                             not: not a component
+// The option checkAliases (also the unprefixed names) is not in the JSON. A member with decorators is reported
+// where its first decorator starts, as ESTree's range includes them.
+#include "tsx/react-class.rr"
+
+.violation will_mount(at: node)
+    code "react/no-unsafe"
+    "Move the work in UNSAFE_componentWillMount to componentDidMount (side effects, subscriptions) or the constructor (initial state); it is unsafe with async rendering."
+    suppress eslint "react/no-unsafe"
+    suppress oxlint "no-unsafe"
+.violation will_receive_props(at: node)
+    code "react/no-unsafe"
+    "Replace UNSAFE_componentWillReceiveProps: derive state from props in static getDerivedStateFromProps, and react to prop changes in componentDidUpdate."
+    suppress eslint "react/no-unsafe"
+    suppress oxlint "no-unsafe"
+.violation will_update(at: node)
+    code "react/no-unsafe"
+    "Move the work in UNSAFE_componentWillUpdate to componentDidUpdate, reading any DOM values it needs from before the update in getSnapshotBeforeUpdate."
+    suppress eslint "react/no-unsafe"
+    suppress oxlint "no-unsafe"
+will_mount(at) :- unsafe_member("UNSAFE_componentWillMount", at).
+will_receive_props(at) :- unsafe_member("UNSAFE_componentWillReceiveProps", at).
+will_update(at) :- unsafe_member("UNSAFE_componentWillUpdate", at).
+
+// The plugin reports the first member with the name (getPropertyName: the key's name, so #x and [x] count).
+.decl unsafe_member(x: symbol, at: node)
+unsafe_member(x, at) :- react_component(k), member_named(k, x, m), unsafe_name(x), docof(k, d), react_doc(d),
+    vi = min i : { member_named(k, x, m2), visit_index(m2, i) }, visit_index(m, vi), member_at(m, at).
+.decl unsafe_name(x: symbol)
+unsafe_name("UNSAFE_componentWillMount"). unsafe_name("UNSAFE_componentWillReceiveProps").
+unsafe_name("UNSAFE_componentWillUpdate").
+// member_at(m, at): m, or the first of the decorators just before it (tree-sitter makes them m's siblings).
+.decl member_at(m: node, at: node)
+member_at(m, m) :- member_named(_, x, m), unsafe_name(x), !decorated(m, _).
+member_at(m, a) :- decorated(m, a), count : { next_sibling(b, a), kind(b, "decorator") } = 0.
+.decl decorated(m: node, a: node)
+decorated(m, a) :- member_named(_, x, m), unsafe_name(x), next_sibling(a, m), kind(a, "decorator").
+decorated(m, b) :- decorated(m, a), next_sibling(b, a), kind(b, "decorator").

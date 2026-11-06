@@ -1,0 +1,23 @@
+.policy "react-no-is-mounted" revision 2
+.description "Avoid this.isMounted() in components; it is deprecated, so cancel pending work when the component unmounts instead."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/no-is-mounted: a call of this.isMounted() anywhere inside a method or an object property (ESTree's
+// MethodDefinition or Property), so in a class or a createReactClass spec, at any depth.
+//   class A extends Component { m() { if (this.isMounted()) {} } }     reported, at the callee
+//   function f() { this.isMounted(); }                                not: in no method or property
+#include "tsx/react-class.rr"
+
+.violation no_is_mounted(at: node)
+    code "react/no-is-mounted"
+    "Remove this isMounted() check, and cancel the pending work when the component unmounts instead."
+    suppress eslint "react/no-is-mounted"
+    suppress oxlint "no-is-mounted"
+no_is_mounted(f) :- this_call(c, "isMounted", f), kind(f, "member_expression"), inside(c, _, property_kind),
+    docof(c, d), react_doc(d).
+// ESTree's Property is an object literal's `a: v` or `m() {}`, and a destructuring pattern's `a: b = v` or `c = v`.
+.decl property_kind(k: symbol)
+property_kind("pair"). property_kind("method_definition"). property_kind("pair_pattern").
+property_kind("object_assignment_pattern").

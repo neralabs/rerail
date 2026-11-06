@@ -1,0 +1,41 @@
+.policy "react-jsx-no-undef" revision 2
+.description "Declare or import every component used in JSX."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react/jsx-no-undef: a component tag names a variable no enclosing scope declares. A member tag is checked by its
+// leftmost name; DOM tags (<div>), namespaced tags (<svg:path>) and `this` are not variables. In a module, globals
+// do not count (the allowGlobals option is off), so <Foo/> needs a declaration or an import even if Foo is global.
+//   <Foo />                         reported if no Foo is declared or imported
+//   import { Bar } from "x"; <Bar.Item />    not reported
+//   function f(Icon) { return <Icon /> }      not reported: a parameter
+#include "tsx/react.rr"
+
+.violation undefined_tag(at: node, x: symbol)
+    code "react/jsx-no-undef"
+    "'{x}' is not defined."
+    suppress eslint "react/jsx-no-undef"
+    suppress oxlint "jsx-no-undef"
+undefined_tag(n, x) :- react_open(_, o), field(o, "name", t), tag_root(t, n), text(n, x), x != "this",
+    !declared_at(n, x),
+    (kind(t, "member_expression") ; !dom_open(o)).
+// tag_root(t, n): the name to look up: the tag itself, or the leftmost identifier of <A.B.C>.
+.decl tag_root(t: node, n: node)
+tag_root(t, t) :- kind(t, "identifier").
+tag_root(t, n) :- kind(t, "member_expression"), field(t, "object", o), (kind(o, "identifier"), n = o ;
+    kind(o, "member_expression"), tag_root(o, n)).
+// declared_at(n, x): some scope around n declares x (names.rr's decl_site: variables, functions, classes,
+// parameters, imports, catch and loop bindings, a function or class expression's own name; types and interfaces
+// too, since ESLint's scope manager for TypeScript knows them). JSX tag names are not names.rr references, so this
+// looks the name up directly in the enclosing scopes.
+.decl declared_at(n: node, x: symbol)
+declared_at(n, x) :- tag_root(_, n), text(n, x), (inside(n, s, block_scope) ; inside(n, s, fn_scope)),
+    decl_site(s, x, _, _, _).
+// TypeScript's other declarations: `enum E {}`, `namespace N {}` and `module M {}` in their block, and a type
+// parameter (`function f<T>()`, `class C<T>`) anywhere inside what declares it.
+declared_at(n, x) :- tag_root(_, n), text(n, x), (inside(n, s, block_scope) ; inside(n, s, fn_scope)),
+    kind(d, k), (k = "enum_declaration" ; k = "internal_module" ; k = "module"), field(d, "name", m), text(m, x),
+    nearest(d, s, block_scope).
+declared_at(n, x) :- tag_root(_, n), text(n, x), kind(p, "type_parameter"), field(p, "name", m), text(m, x),
+    child(ps, p, _), field(o, "type_parameters", ps), within(n, o).

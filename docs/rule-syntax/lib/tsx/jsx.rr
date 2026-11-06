@@ -105,7 +105,7 @@ render_attr(c, e, @dot(q, x)) :- jsx_el(c), nearest(c, at, "jsx_attribute"), chi
 // The returned expression of a return statement, attributed to the function the statement is in.
 .decl fn_kind(kind: symbol)
 fn_kind("function_declaration"). fn_kind("function_expression"). fn_kind("arrow_function").
-returned(f, x) :- kind(r, "return_statement"), nearest(r, f, fn_kind), child(r, x, 0).
+returned(f, x) :- kind(r, "return_statement"), nearest(r, f, fn_kind), child(r, x, _), !kind(x, "comment").
 // An expression-bodied arrow returns its body: `() => <A/>`.
 returned(f, x) :- kind(f, "arrow_function"), field(f, "body", x), !kind(x, "statement_block").
 .decl render_root(f: node, e: node)

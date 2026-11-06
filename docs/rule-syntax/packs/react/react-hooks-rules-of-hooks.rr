@@ -1,0 +1,76 @@
+.policy "react-hooks-rules-of-hooks" revision 2
+.description "Call React hooks only at the top level of components and custom hooks, never in conditions, loops, nested callbacks, async functions or after an early return."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+
+// react-hooks/rules-of-hooks: React matches Hook calls to state by call order, so every render must make the same
+// Hook calls in the same order. A Hook call (useX(…), React.useX(…), use(…)) is reported when
+//   it is in a component or Hook but runs conditionally:   if (a) { useState(); }   or after   if (a) return;
+//   it may run more than once (a loop, a do-while):          for (…) { useEffect(…); }
+//   its component or Hook is async:                          async function useData() { useState(); }
+//   it is in a class method, a plain named function, the top level, or a callback inside a component:
+//     class A extends Component { m() { useState(); } }      function helper() { useState(); }
+//     useState();                                            function C() { xs.map(() => useState()); }
+//   use() is the exception for conditions and loops, but not try/catch:  try { use(p); } catch {}
+// And useEffectEvent's functions are only called from effects:
+//   const onTick = useEffectEvent(f);  useEffect(() => onTick(), []);   fine
+//   <button onClick={onTick}>                                           reported: passed down
+//   doLater(useEffectEvent(f))                                          reported: not stored in a variable
+// The rule's option additionalHooks (more effect Hooks for useEffectEvent) is not in the JSON.
+#include "tsx/react-hooks.rr"
+
+.violation rules_of_hooks(at: node, msg: symbol)
+    code "react-hooks/rules-of-hooks" "{msg}"
+    suppress eslint "react-hooks/rules-of-hooks"
+    suppress oxlint "rules-of-hooks"
+    suppress biome "lint/correctness/useHookAtTopLevel"
+rules_of_hooks(f, m) :- report(c, w), hook_call(c, f), says(w, m), docof(c, d), react_doc(d), !flow_fixme(c),
+    !hook_dead(c).
+rules_of_hooks(at, m) :- effect_event(at, w), says(w, m), docof(at, d), react_doc(d).
+
+// report(c, why): the plugin's checks in its order. Each Hook call takes the first that applies to its code path p.
+.decl report(c: node, why: symbol)
+report(c, "try") :- hook_use(c), inside(c, _, "try_statement").
+report(c, "try") :- hook_use(c), inside(c, _, "catch_clause").
+report(c, "loop") :- hook_call(c, _), !hook_use(c), (hook_cycled(c) ; hook_in_do(c)).
+report(c, "async") :- hook_path(c, p), hook_direct(p), op(p, "async").
+report(c, "placement") :- hook_path(c, p), hook_direct(p), !hook_use(c), !hook_cycled(c), !hook_in_do(c),
+    (hook_branch(c) ; hook_after_exit(c)).
+// Not in a component or Hook: wrong everywhere but in an unnamed callback outside any component.
+report(c, "placement") :- hook_path(c, p), !hook_direct(p), (class_fn(p) ; hook_fn_name(p, _) ; kind(p, "program")).
+report(c, "placement") :- hook_path(c, p), !hook_direct(p), !class_fn(p), hook_anon(p), hook_somewhere(p),
+    !hook_use(c).
+.decl class_fn(f: node)  // a class method, or a function stored in a class field
+class_fn(f) :- kind(f, "method_definition"), child(b, f, _), kind(b, "class_body").
+class_fn(f) :- hook_anon(f), child(m, f, _), kind(m, "field_definition"), field(m, "value", f).
+// `// $FlowFixMe[react-rule-hook]` on the line above silences the call.
+.decl flow_fixme(c: node)
+flow_fixme(c) :- hook_call(c, _), line(c, l), docof(c, d), kind(k, "comment"), docof(k, d), end_line(k, l - 1),
+    contains("$FlowFixMe[react-rule-hook]", k).
+
+// useEffectEvent(f) returns a function for effects only. The call must be stored (`const x = …`) or stand alone.
+.decl effect_event(at: node, why: symbol)
+effect_event(c, "passed") :- event_call(c), child(p, c, _), !kind(p, "variable_declarator"),
+    !kind(p, "expression_statement").
+// Every other use of a variable a component or Hook (a declaration or an arrow) stores it in, outside an effect
+// call's arguments, is reported.
+effect_event(r, "reference") :- event_site(v), ref_site(r, v), !field(v, "name", r), !in_effect(r).
+.decl event_call(c: node)
+event_call(c) :- kind(c, "call_expression"), field(c, "function", f), deps_name(f, "useEffectEvent").
+// The declarator sits directly in the function's body: the function's own scope.
+.decl event_site(v: node)
+event_site(v) :- kind(v, "variable_declarator"), field(v, "value", c), event_call(c), field(c, "function", f),
+    kind(f, "identifier"), child(dl, v, _), child(b, dl, _), field(g, "body", b),
+    (kind(g, "function_declaration") ; kind(g, "arrow_function")), hook_somewhere(g).
+.decl in_effect(r: node)  // r is inside an effect (or useEffectEvent) call with arguments
+in_effect(r) :- ref_site(r, _), kind(c, "call_expression"), within(r, c), field(c, "function", f), deps_name(f, x),
+    (effect_hook(x) ; x = "useEffectEvent"), field(c, "arguments", l), child(l, _, _).
+
+.decl says(why: symbol, msg: symbol)  // the JSON's messages
+says("placement", "Move this hook call to the top level of the component or custom hook, before any condition or early return.").
+says("loop", "React Hook may be executed more than once. Possibly because it is called in a loop.").
+says("async", "React Hook cannot be called in an async function.").
+says("try", "Move this use() call out of the try/catch block, and handle its errors with an error boundary.").
+says("reference", "A function created with React Hook \"useEffectEvent\" can only be called from Effects and Effect Events in the same component.").
+says("passed", "React Hook \"useEffectEvent\" can only be called at the top level of your component. It cannot be passed down.").
