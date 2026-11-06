@@ -9,23 +9,44 @@
 //!   are the engine's tests (`logic::strings`), pattern first; a disjunction of one test over several patterns
 //!   `(glob("a", s) ; glob("b", s))` is one test of the set, and so are adjacent negations of one test;
 //!   `(s = "a" ; s = "b")` is one membership test;
-//! - a relation of facts given to `nearest`, `inside` or `has` is a kind set;
-//! - `@dot` is the engine's `@cat`, and `split_dot(q, m, x)` is `q = @dot(m, x)` (it runs either way);
-//! - `count : { … }`, `min x : { … }`, `max x : { … }` are aggregates; a body of more than one atom gets a helper
-//!   relation; an aggregate inside a comparison gets a variable;
+//! - a relation of facts given to `nearest`, `inside` or `has` is a kind set, which the transducer answers:
+//!   `inside(n, a, s)` is `inside_<s>(n, a)`, and `has(a, n, s)` is `inside_rr_has_<s>(n, a)`, the set tested on n;
+//!   a set of nodes, or of kinds rules derive, is read as rules over `child` instead (`Lowerer::derived_axes`),
+//!   which read the set negated, so it is complete first;
+//! - `@dot` is the engine's `@cat`, and `split_dot(q, m, x)` is `q = @dot(m, x)` with x dot-free (it runs either
+//!   way);
+//! - `count : { … }`, `min x : { … }`, `max x : { … }`, `sum x : { … }` and `join x by k sep "s" : { … }` are
+//!   aggregates; a body of more than one atom, or of one built-in the lowering writes out, gets a helper relation
+//!   (count, sum and join keep every variable: they read a multiset of rows); a value or key that is an
+//!   expression is a variable the body computes; join's keys are columns of its atom, ordered by text for symbols
+//!   and by value for numbers, ties by the value;
+//! - an aggregate inside a term (`1 + count : { … }`, in a head or a comparison) is an aggregate of its own whose
+//!   variable the term uses; an aggregate on one side of a comparison gets a variable;
+//! - `!(a, b)` is a helper relation of the variables it shares with the rule, negated (`Lowerer::negated`);
+//!   `!(a ; b)` is one per alternative;
 //! - other disjunctions are one rule per alternative.
 //!
-//! - `.violation V(at: node, …)` declares V as an output, and each row of V is a finding
-//!   `violation(policy, V, code, path, line)` at `at`'s line (the code is V, or the `code {c}` column);
+//! - `.violation V(at: loc, …)` declares V as an output, and each row of V is a finding
+//!   `violation(policy, V, code, path, line)`: at a node, its document's path and its line; at a
+//!   `@place(path, line)` (the loc value `-2 - (path << 32 | line)`), that path and line. The code is V,
+//!   `code "X"`, or the `code {c}` column. `suppress TOOL "rule", … [over {c}]` and `fix [safe] F "title"` are kept
+//!   as the settings `suppress V …` and `fix V …` for the findings layer, which applies them;
 //! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
-//! - `within(n, a)` and `within_stop(n, a, stop)` are ranges over the tape's preorder ids (`Lowerer::within`);
-//! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `+ - * /` and Soufflé's `cat`,
-//!   `strlen`, `to_string`, `substr` are functors.
+//! - `within(n, a)` and `within_stop(n, a, stop)` are ranges over the tape's preorder ids (`Lowerer::within`), and
+//!   so are their negations; `!nearest(n, a, s)` is "none, or another"; `!earlier` is `m >= n` or another
+//!   document; `precedes` and `next_sibling` are rules over `child`, and `precedes_stop` walks the siblings to the
+//!   next stop (`rr_next_stop_<s>`);
+//! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `+ - * / %` and Soufflé's `cat` of
+//!   any arity (`concat` folded from the left), `strlen`, `to_string`, `substr`, `to_number`, `max/2` and `min/2`
+//!   are functors. `to_number` reads as Soufflé's `symbol2numeric`; where Soufflé stops with an error (no digits,
+//!   out of range, `x % 0`) there is no value, and so no row. `@lower` is Unicode lowercase; `@dot("", b)` is b.
 //!
-//! Not lowered yet, each a named error: patterns (``n ~ `…` ``), `must`/`may`, a `.violation` at a span or place,
-//! `ordered by`, `sum`/`mean`/`join`,
-//! negated disjunctions other than test sets, and the built-ins that take a relation besides the kind-set ones.
+//! Not lowered yet, each a named error: patterns (``n ~ `…` ``), `must`/`may`, a `.violation` at a span or loc
+//! that can hold a span the engine does not make (a regex capture, a token: `Lowerer::origins`), `ordered by`,
+//! `mean`, `to_float` and decimal numbers (the engine has no decimal values), `dfs_first`/`dfs_first_memo`, and a
+//! negated axis with its other node unnamed (`!within(n, _)`, `!earlier(m, _)`, `!precedes_stop(a, _, s)`,
+//! `!split_dot(q, _, x)`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -854,11 +875,10 @@ impl Lowerer {
         let mut out = Vec::new();
         for alt in alts {
             self.siblings = siblings.clone();
-            let cols: Vec<String> = body_vars(alt).into_iter().filter(|v| outer.contains(v)).collect();
+            // An aggregate inside the conjunction correlates on the rule's variables too (`aggregate`'s `outer`).
+            let cols: Vec<String> = shared_vars(alt).into_iter().filter(|v| outer.contains(v)).collect();
             let mut bodies = self.conjunction(alt, outer)?;
-            let bound: BTreeSet<String> = body_vars(
-                &alt.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "within" | "within_stop" | "earlier"))).cloned().collect::<Vec<_>>(),
-            );
+            let bound: BTreeSet<String> = body_vars(&alt.iter().filter(|l| binds_columns(l)).cloned().collect::<Vec<_>>());
             let needed: Vec<String> = cols.iter().filter(|v| !bound.contains(*v)).cloned().collect();
             if !needed.is_empty() {
                 let ctx = self.context(&needed)?;
@@ -1002,7 +1022,7 @@ impl Lowerer {
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
         let bound: BTreeSet<String> = body_vars(
-            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && !matches!(rel.as_str(), "within" | "within_stop" | "earlier"))).cloned().collect::<Vec<_>>(),
+            &body.iter().filter(|l| binds_columns(l)).cloned().collect::<Vec<_>>(),
         );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {
@@ -1440,6 +1460,33 @@ fn body_vars(lits: &[Lit]) -> BTreeSet<String> {
         }
     }
     out
+}
+
+/// `body_vars`, with the variables of aggregates inside comparisons too: what a group shares with its rule when an
+/// aggregate in it is correlated on the rule's variables (`count : { b(x, _) } > 2` shares x).
+fn shared_vars(lits: &[Lit]) -> BTreeSet<String> {
+    let mut out = body_vars(lits);
+    for l in lits {
+        match l {
+            Lit::Cmp { l, r, .. } => {
+                let mut vs = Vec::new();
+                l.vars(&mut vs);
+                r.vars(&mut vs);
+                out.extend(vs);
+            }
+            Lit::Group { alts, .. } => alts.iter().for_each(|a| out.extend(shared_vars(a))),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether a literal binds every variable of its columns: a positive atom of a relation, not a text test nor a
+/// built-in the lowering writes out as tests or computations of variables bound elsewhere (`within`, `earlier`,
+/// `split_dot`, `nearest`, `precedes_stop`, …).
+fn binds_columns(l: &Lit) -> bool {
+    matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none()
+        && !matches!(rel.as_str(), "within" | "within_stop" | "earlier" | "split_dot" | "nearest" | "precedes_stop" | "dfs_first" | "dfs_first_memo" | "unset"))
 }
 
 /// Adjacent negations of one test of one string, `!glob("a", s), !glob("b", s)`, as one negated test of the set.

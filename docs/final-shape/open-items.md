@@ -1321,10 +1321,34 @@ oracles and messages; the census counts 100.
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
 Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
-parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Still refused by name:
-`.violation` at a span or a source location (file-length, test-budget, noqa-sec-ratchet), `~` patterns,
-`must`/`may`, `=> edits`, `ordered by`, `dfs_first`, `sum`/`mean`/`join`, an aggregate over a join, kind
-sets of functions (tsx) and negated disjunctions. **Closure:** list step 30.
+parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Added on
+`final-rerail-shape-lowering` (2026-11-06):
+- `.violation … code "X"` (a constant code), its `suppress TOOL "rule", … [over {c}]` and `fix [safe] F "title"`
+  lines, kept as findings-layer settings and not applied yet; `.violation` at a `loc` or `span` whose values are
+  nodes or `@place(path, line)`s (file-length, test-budget). A place is the loc value `-2 - (path << 32 | line)`;
+  its finding is at that path and line.
+- `sum` (0 of nothing), `join x by k sep "s"` (keys ordered by text for symbols, by value for numbers, ties by the
+  value; `""` of nothing), an aggregate inside a term, and an aggregate over an expression.
+- Soufflé's `cat` of any arity, `max/2`, `min/2`, `to_number` (Soufflé's `symbol2numeric`; no value where Soufflé
+  errors) and `%` (C's remainder; none for `% 0`); `@lower` as Unicode lowercase; `@dot("", b) = b`, in SQL,
+  native and the splits of a bound whole. A function with no value gives no row.
+- `has(a, n, set)` tests the set on n, as `core.rr` says (it was tested on a); sets of nodes, or of kinds rules
+  derive, in every axis; `precedes_stop`; `next_sibling`; `!nearest` with the ancestor named, `!within_stop`,
+  `!earlier`, `!split_dot`; `split_dot` at the last dot only.
+- Negated conjunctions and disjunctions: each alternative of `!( … )` is a helper relation over the variables it
+  shares with the rule, negated.
+- Recursion that makes values, where the data bounds it (`front/cycles.rs`): parts of values, values made from
+  lower strata, counters below a fixed bound, and keys that move one way along document order or shorten a
+  string, optionally with a count beside the key.
+
+Still refused by name: `.violation` at a span or loc that can hold a span the engine does not make (regex-capture
+spans: noqa-sec-ratchet, ruff TD00x; tokens; `match_all`), `~` patterns, `must`/`may`, `ordered by`,
+`dfs_first`, `mean`, `to_float` and decimals (the engine has no decimal values), a negated axis with its other
+node unnamed, and value recursion the check cannot bound: `negate`/`number` in `lib/python/pyflakes.rr` (the
+first error of 321 pack files), token-order walks (`slot_walk`, `elem_start`), `hex_place`, `unescape`,
+`norm`/`sci`. `=> edits` are left out (no applier). `hand_written_rules_lowering_report` (with
+`RERAIL_RR_REPORT_EXTRA`): this branch's 118 files, 75 lower (21 before); More-ergonomic-rule-syntax's 949 packs,
+393 (19 before). **Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
 
@@ -1353,8 +1377,14 @@ since reading it is not written. **Closure:** these relations are built natively
 - `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
   `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
   path has no range read yet.
-- The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
-  no new values; this extends O11's bound.
+- The cycle check (`front/cycles.rs`) accepts value-making recursion the data bounds (parts of values, values
+  from lower strata, guarded counters, keys moving one way along document order or shortening a string); this
+  extends O11's bound. It cannot see an involution such as pyflakes' `negate`, whose values stay two per input.
+- An axis over a set of nodes or of derived kinds, and `precedes_stop`, are recursions over `child`
+  (`rr_near_`/`rr_inside_`/`rr_has_`/`rr_above_`/`rr_next_stop_<set>`), not the transducer's tape pass.
+- `join` reads its symbol columns through the symbol table's text (`sym_text`), so a kind or field atom as a
+  join value or key would read the wrong text; no library join uses one.
+- `@place` needs symbols stored as atoms: text-mode SQL refuses it by name.
 **Closure:** each is lowered as `core.rr` describes, or the description changed.
 
 ## O78. Where the `.rr` library and rules differ from the recorded findings

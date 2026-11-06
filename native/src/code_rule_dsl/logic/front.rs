@@ -9,7 +9,7 @@
 //!   node, or the text of a regex group or a transform); a match that leaves one unbound gives no row;
 //! - JSON strings, and `.policy { … }` for lint-rule documents (`yaml`, the second syntax of B12);
 //! - named errors for aggregation in recursion (unless the head is a monotone lattice) and unbounded lattices;
-//! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must move along the tree.
+//! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must be bounded by the data.
 //!
 //! §12's other named errors are not here: a non-interned cross-document join needs column types, and the cost gate
 //! is the planner's (row 5).
@@ -339,8 +339,8 @@ pub(in crate::code_rule_dsl) enum Error {
     UnboundedLattice { relation: String },
     /// A demanded relation is used with its key unbound: its demand would be everything (magic sets).
     UnboundDemand { message: String, relation: String },
-    /// A component creates values (`@cat`, …) without moving along the tree (`cycles`): `rule` is one it
-    /// could not bound.
+    /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
+    /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
 }
 
@@ -370,7 +370,7 @@ impl fmt::Display for Error {
             }
             Error::UnboundedValueCycle { component, rule } => {
                 let component = component.iter().cloned().collect::<Vec<_>>().join(", ");
-                write!(f, "unbounded value cycle: {{{component}}} creates values without moving along the tree ({rule})")
+                write!(f, "unbounded value cycle: {{{component}}} creates values the data does not bound ({rule})")
             }
         }
     }

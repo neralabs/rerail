@@ -1064,3 +1064,51 @@ gone(s) :- arg_pos(s, 0), !(arg_pos(_, 2)).
     assert_eq!(read("gone"), "");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A negated conjunction is correlated on a rule variable its aggregate reads, or that a built-in in it only tests
+/// (`split_dot`); and a regex group of a string the regex does not match is no value, so a negation over it gives
+/// no row, on both the SQL and the native paths.
+#[test]
+fn negations_over_aggregates_built_ins_and_missing_groups() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("negations");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "f(1, 2, 3)\ng(1)\nos.path.join\nos.sep\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl name(n: node, s: symbol)
+.input node, field, child, text, name
+.decl callee(c: node, f: symbol)
+callee(c, f) :- node(_, c, "call", _, _), field(c, "function", x), text(x, f).
+.decl arg(c: node, a: node)
+arg(c, a) :- callee(c, _), field(c, "arguments", l), child(l, a, _).
+// Calls with at most two arguments.
+.decl short(f: symbol)
+short(f) :- callee(c, f), !(count : { arg(c, _) } > 2).
+.decl attr(q: symbol)
+attr(q) :- node(_, n, "attribute", _, _), name(n, q).
+.decl keyword(x: symbol)
+keyword("sep").
+// Dotted names whose last segment is no keyword.
+.decl plain(q: symbol)
+plain(q) :- attr(q), !(split_dot(q, m, x), keyword(x)).
+// Names with no `.`-separated tail that is a keyword; `g` has no tail, so it is kept.
+.decl untailed(s: symbol)
+untailed(s) :- callee(_, s), match("(?<t>[a-z]+)\\.(?<u>[a-z]+)", s), !keyword(u).
+.decl tailless(s: symbol)
+tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$", "u")).
+.output short, plain, untailed, tailless
+"#;
+    for modes in ["", "program"] {
+        let out = dir.join(format!("out{modes}"));
+        super::corpus::run(program, &dir, None, &out, modes, crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+        assert_eq!(read("short"), "g\n", "{modes}");
+        assert_eq!(read("plain"), "os.path\nos.path.join\n", "{modes}");
+        assert_eq!(read("untailed"), "", "{modes}");
+        assert_eq!(read("tailless"), "", "{modes}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
