@@ -1,0 +1,32 @@
+.policy "ruff-perf401-manual-list-comprehension" revision 2
+.description "Use a list comprehension or extend instead of appending to a list inside a for loop; it is shorter and faster."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PERF401 (perflint): a for loop whose target is a plain name and whose body is only `L.append(expr)`, or
+// only `if test: L.append(expr)` with no elif or else, where L is a name for a list (its only binding is one, python/misc2-perf). Reported at the
+// append call. Not when:
+//   - the item is the loop variable itself with no test (that is PERF402's copy), except under `async for`;
+//   - the item or the test reads L;
+//   - the loop variable is global or nonlocal, or read after the loop.
+//   result = []
+//   for x in xs:
+//       if x % 2: result.append(x * 2)     ← PERF401: `result = [x * 2 for x in xs if x % 2]`
+//   for x in xs: result.append(x)          not reported here: PERF402
+#include "python/misc2-perf.rr"
+//   perf_for, perf_body, perf_call_stmt, perf_method_call, perf_mentions, perf_only_binding, perf_list_site,
+//   perf_used_after
+
+.violation PERF401(at: node, l: node) code "PERF401"
+    "Replace this loop with a list comprehension; if `{l}` is not a fresh empty list assigned just before the loop, use `{l}.extend(...)` of a generator (of a list comprehension under `async for`)."
+    suppress ruff "PERF401"
+PERF401(c, o) :- perf_for(f, t, _), kind(t, "identifier"), text(t, x), perf_body(f, st, test), perf_call_stmt(st, c),
+    perf_method_call(c, o, "append", a), kind(o, "identifier"), text(o, l),
+    !copy_only(f, test, a, x), !perf_mentions(a, l), !perf_mentions(test, l),
+    perf_only_binding(o, site), perf_list_site(site),
+    scope_node(f, s), !decl(s, x, _), !perf_used_after(f, t).
+// The item is the loop variable, with no test, in a synchronous loop: a plain copy.
+.decl copy_only(f: node, test: loc, a: node, x: symbol)
+copy_only(f, test, a, x) :- perf_body(f, _, test), unset(test), !op(f, "async"), perf_method_call(_, _, _, a),
+    kind(a, "identifier"), text(a, x).

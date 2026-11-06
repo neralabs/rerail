@@ -1,0 +1,25 @@
+.policy "ruff-tc005-empty-type-checking-block" revision 2
+.description "Remove type-checking blocks that contain only a pass statement; an empty block does nothing and confuses readers."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TC005 (flake8-type-checking): an `if TYPE_CHECKING:` block whose whole body is `pass`, with no elif or
+// else. Reported at the `pass`; the fix deletes the block (safe).
+//   if TYPE_CHECKING:
+//       pass                     ← TC005
+//   if TYPE_CHECKING:
+//       pass                     not reported: the else clause does something
+//   else:
+//       import x
+#include "python/misc2-typecheck.rr"
+//   tc_block(i, b)
+
+.violation TC005(at: node, i: node) code "TC005"
+    "Delete this `if TYPE_CHECKING:` block; its body is only `pass`, so it does nothing."
+    suppress ruff "TC005"
+    fix safe drop_block "Delete the empty type-checking block"
+TC005(p, i) :- tc_block(i, b), body_len(b, 1), body_stmt(b, p, 0), kind(p, "pass_statement"),
+    !py_orelse(i, _).
+// The applier drops the fix if the block was its parent's only statement (Ruff writes `pass` there).
+drop_block(_, i) => delete(i).

@@ -1,0 +1,17 @@
+.policy "ruff-ann002-missing-type-args" revision 2
+.description "Annotate variadic positional parameters with the type of each extra argument so type checkers can verify calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ANN002 (flake8-annotations): a def's `*args` with no annotation. The annotation gives the type of each
+// extra positional argument. The implementation after an @overload is not checked. Ruff's suppress-dummy-args
+// option is not supported (its default, false, is what this rule does).
+//   def foo(*args): ...          ← ANN002
+//   def foo(*args: int): ...     not reported
+#include "python/annotations.rr"
+
+.violation ANN002(at: node, name: symbol) code "ANN002"
+    "Add a type annotation to `*{name}` giving the type of each extra positional argument."
+    suppress ruff "ANN002"
+ANN002(nm, x) :- ann_def(f), ann_param(f, nm, x, "vararg", a), unset(a).

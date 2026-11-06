@@ -1,0 +1,18 @@
+.policy "ruff-async105-trio-sync-call" revision 2
+.description "Await calls to trio's async functions such as trio.sleep; without await the call only creates a coroutine that never runs."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC105 (flake8-async): a call of one of trio's async functions (`trio.sleep`, `trio.open_file`,
+// `trio.lowlevel.checkpoint`, …) that is not the operand of `await`. It only builds a coroutine, which never
+// runs. Inside an async def the fix (unsafe) adds the `await`.
+//   async def f(): trio.sleep(1)           ← ASYNC105, fix: `await trio.sleep(1)`
+//   async def f(): await trio.sleep(1)     not reported
+#include "python/misc2-async.rr"
+
+.violation ASYNC105(at: node, callee: symbol) code "ASYNC105" "Call to `{callee}` is not immediately awaited"
+    suppress ruff "ASYNC105"
+    fix add_await "Add `await`"
+ASYNC105(c, q) :- async_call(c, _, q), async_trio_coro(q), !async_awaited(c).
+add_await(c, _) :- async_ctx(c), field(c, "function", f) => insert_before(f, `await `).

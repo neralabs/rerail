@@ -1,0 +1,16 @@
+.policy "ruff-async250-blocking-input-in-async-function" revision 2
+.description "Don't call input() inside async functions; it blocks the event loop while waiting for the user."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC250 (flake8-async): the builtin `input()` inside an async def, which blocks the event loop while it
+// waits for the user. A local `input` that shadows the builtin is not reported.
+//   async def f(): input("name: ")          ← ASYNC250
+//   async def f(): await asyncio.to_thread(input)   not reported: not a call of input
+#include "python/misc2-async.rr"
+
+.violation ASYNC250(at: node) code "ASYNC250"
+    "Read input in a worker thread, such as `await asyncio.to_thread(input)`, instead of calling `input()` directly."
+    suppress ruff "ASYNC250"
+ASYNC250(f) :- async_blocking(_, f, "builtins.input").

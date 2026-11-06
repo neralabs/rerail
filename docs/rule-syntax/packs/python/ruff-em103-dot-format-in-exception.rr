@@ -1,0 +1,19 @@
+.policy "ruff-em103-dot-format-in-exception" revision 2
+.description "Assign a formatted exception message to a variable before raising instead of calling format on a literal inline; the traceback otherwise shows the message twice."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff EM103 (flake8-errmsg): the raised exception's first positional argument is `<literal>.format(…)`. The
+// traceback prints the raise line, so the message appears twice. The receiver must be a literal (str, bytes,
+// number, bool, None or `...`); `typing.cast(…)` is not an exception call.
+//   raise RuntimeError("This is an {example} exception".format(example="example"))   ← EM103
+//   raise RuntimeError(("a " "{b}").format(b=1))                                    ← EM103
+//   raise RuntimeError(template.format(x))                                          not reported
+#include "python/misc2-messages.rr"
+
+.violation EM103(at: node) code "EM103"
+    "Assign the result of this `.format()` call to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
+    suppress ruff "EM103"
+EM103(a) :- msg_raised_call(_, c), field(c, "function", f), !msg_typing_cast(f), msg_arg(c, 0, a),
+    msg_form(a, "format"), field(a, "function", g), attr_of(g, o, "format"), msg_literal(o).

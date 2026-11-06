@@ -1,0 +1,18 @@
+.policy "ruff-async115-async-zero-sleep" revision 2
+.description "Use lowlevel.checkpoint() instead of sleep(0) in trio and anyio code; it states the intent of yielding to the scheduler."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff ASYNC115 (flake8-async): `trio.sleep(0)` or `anyio.sleep(0)`, written to yield to the scheduler. The
+// library's `lowlevel.checkpoint()` says so. Only a call with exactly one argument, the int literal 0, given
+// positionally or as `seconds=` (trio) / `delay=` (anyio). `0.0` is not reported.
+//   await trio.sleep(0)            ← ASYNC115
+//   await anyio.sleep(delay=0)     ← ASYNC115
+//   await trio.sleep(0.0)          not reported
+#include "python/misc2-async.rr"
+
+.violation ASYNC115(at: node, m: symbol) code "ASYNC115"
+    "Use `{m}.lowlevel.checkpoint()` instead of `{m}.sleep(0)`"
+    suppress ruff "ASYNC115"
+ASYNC115(c, m) :- async_call(c, _, q), async_sleep_arg(q, m, x), async_one_arg(c, x, a), ruff_int(a, "0").

@@ -1,0 +1,18 @@
+.policy "ruff-pgh003-blanket-type-ignore" revision 2
+.description "Give type-ignore comments specific error codes instead of silencing every type error on the line; a blanket ignore hides new, unrelated problems."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PGH003 (pygrep-hooks): a `# type: ignore` or `# pyright: ignore` with no `[codes]`. Any `#` of the
+// comment may start it; `type` and the colon must touch.
+//   x = 1  # type: ignore                 ← PGH003
+//   x = 1  # noqa # pyright:ignore        ← PGH003
+//   x = 1  # type: ignore[attr-defined]   not reported
+//   x = 1  # type :ignore                 not reported: not a type comment
+#include "python/misc2-noqa.rr"
+
+.violation PGH003(at: node) code "PGH003"
+    "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface."
+    suppress ruff "PGH003"
+PGH003(c) :- type_ignore_blanket(c).

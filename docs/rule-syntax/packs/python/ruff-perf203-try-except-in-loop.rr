@@ -1,0 +1,32 @@
+.policy "ruff-perf203-try-except-in-loop" revision 2
+.description "Avoid wrapping each loop iteration in its own try-except before Python 3.11; move the loop into one try block or check the condition first."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PERF203 (perflint): a for (not async for) or while loop whose whole body is one `try` with a handler.
+// Before Python 3.11 entering a try block costs time on each iteration; from 3.11 it is free, so the rule is
+// silent there (pythonVersion). Reported at the first `except`. Not when the try body has a `break` or
+// `continue` (outside nested defs and classes): moving the loop inside would change it.
+//   for i in xs:
+//       try: f(i)
+//       except ValueError: pass      ← PERF203 (Python 3.10)
+#include "python/misc2-perf.rr"
+#include "python/version.rr"
+//   targets(m)
+
+.violation PERF203(at: node) code "PERF203"
+    "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure."
+    suppress ruff "PERF203"
+PERF203(x) :- !targets(11), loop_body(l, b), body_len(b, 1), body_stmt(b, t, 0), kind(t, "try_statement"),
+    first_handler(t, x), field(t, "body", tb), !jumps(tb).
+.decl loop_body(l: node, b: node)
+loop_body(l, b) :- kind(l, "for_statement"), !op(l, "async"), field(l, "body", b).
+loop_body(l, b) :- kind(l, "while_statement"), field(l, "body", b).
+.decl first_handler(t: node, x: node)
+first_handler(t, x) :- child(t, x, i), kind(x, "except_clause"),
+    count : { child(t, y, j), kind(y, "except_clause"), j < i } = 0.
+.decl jump_stop(k: symbol)
+jump_stop("function_definition"). jump_stop("class_definition").
+.decl jumps(b: node)  // a break or continue in b, not inside a nested def or class
+jumps(b) :- kind(j, k), (k = "break_statement" ; k = "continue_statement"), within_stop(j, b, jump_stop).

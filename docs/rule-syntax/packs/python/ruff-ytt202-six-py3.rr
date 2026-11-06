@@ -1,0 +1,21 @@
+.policy "ruff-ytt202-six-py3" revision 2
+.description "Use not six.PY2 instead of six.PY3; six.PY3 is false on Python 4 and later."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT202 (flake8-2020): a reference to `six.PY3`, which is false on Python 4. `not six.PY2` stays true.
+// Any name or attribute that resolves to six.PY3 through an import (so six is imported, Ruff's seen_module).
+//   import six; if six.PY3: …              ← YTT202 at six.PY3
+//   from six import PY3; if PY3: …         ← YTT202 at PY3
+//   match v:
+//       case six.PY3: …                    ← YTT202: a value pattern reads six.PY3
+//   from six import PY3                    not reported: the import itself is not an expression
+#include "python/misc2-version.rr"
+#include "python/misc2-case.rr"   // case_value_name(e, q)
+
+.violation YTT202(at: node) code "YTT202"
+    "Replace `{at}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."
+    suppress ruff "YTT202"
+YTT202(e) :- (kind(e, "attribute") ; ast_name(e, _)), ruff_qual(e, "six.PY3").
+YTT202(e) :- case_value_name(e, "six.PY3").

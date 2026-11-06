@@ -1,0 +1,17 @@
+.policy "ruff-ytt103-sys-version-cmp-str3" revision 2
+.description "Compare sys.version_info to a tuple instead of comparing sys.version to a string; string order misjudges a two-digit minor version."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff YTT103 (flake8-2020): `sys.version` ordered against a string of more than one character. As strings,
+// "3.10" < "3.9". A one-character string is YTT302. Only a single comparison (`a < b`, not `a < b < c`).
+//   sys.version >= "3.5"     ← YTT103 at sys.version
+//   sys.version >= "3"       not this rule (YTT302)
+//   sys.version == "3.5"     not reported: an equality
+#include "python/misc2-version.rr"
+
+.violation YTT103(at: node) code "YTT103"
+    "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3, 9)` instead of ordering `sys.version` against a string; string order misjudges 3.10 as older than 3.9."
+    suppress ruff "YTT103"
+YTT103(l) :- ytt_single_cmp(_, l, o, r), ytt_order(o), ytt_sys(l, "version"), plain_str(r, v), strlen(v) != 1.
