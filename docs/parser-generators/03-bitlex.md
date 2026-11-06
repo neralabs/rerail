@@ -29,9 +29,8 @@ Not as it is usually run. There are three ways to run a deterministic automaton:
    data-dependent branch, and Python's quotes and comments make those branches unpredictable.
    This is what Bitlex rules out.
 2. **A table walk.** `state = T[symbol][state]`. There is no conditional jump, but each step needs
-   the previous state, so the steps form a serial chain of dependent loads. It is branch-free and
-   still not data-parallel. `02-python.md` §2 called this "branch-free" without saying that it is
-   serial, and that was misleading.
+   the previous state, so the steps form a serial chain of dependent loads. It is branch-free but
+   not data-parallel, so "branch-free" alone overstates it.
 3. **A data-parallel automaton** (Mytkowicz, Musuvathi and Schulte, "Data-Parallel Finite-State
    Machines", ASPLOS 2014).
    - Instead of one state, carry the whole map: "if this stretch started in state *s*, it ends in
