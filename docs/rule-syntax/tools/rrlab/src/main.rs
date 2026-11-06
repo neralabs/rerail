@@ -414,7 +414,8 @@ fn module_name(lang: &str, path: &str) -> (String, String) {
 }
 
 fn python_lines(s: &str) -> Vec<&str> {
-    // str.splitlines(): \r\n, \n, \r, \v, \f, \x1c-\x1e, \x85,  ,   end lines.
+    // The line terminators of CPython's tokenizer and Ruff's line index: \r\n, \n and a lone \r. A form feed
+    // or \v is whitespace inside a line, so line numbers agree with the tools' (str.splitlines() would not).
     let mut out = Vec::new();
     let mut start = 0;
     let b: Vec<(usize, char)> = s.char_indices().collect();
