@@ -104,6 +104,24 @@ Most rules take 0.36–0.73 s, and parsing is most of that (M). The exceptions a
 The first two cannot run on the full corpus at all. They grow with file size squared (P1) and with the file's nodes
 times its matches (P3).
 
+### 2a. After P1 and P3 (2026-11-06, after merging final-rerail-shape)
+
+Every converted rule (100) over s200, one measure run each, at machine load 74–108. All 100 ran, none panicked.
+
+| | Instructions retired |
+|---|---|
+| The cheapest rule (the fixed cost: parse, batch, store) | 4.86e9 |
+| The median rule | 4.90e9 |
+| serverplan-quality, the most | 11.9e9 (0.91 s CPU) |
+| module-level-caches | 9.4e9 (was over 60 s) |
+| grammar-callable-constructors | 9.3e9, peak RSS 136 MB (was 690 MB) |
+| transaction-closures | 4.9e9 (was 71.3 s) |
+| All 100 | 553e9, of which 486e9 is the fixed cost paid 100 times |
+
+No rule is an outlier any more: the most expensive does about 7e9 of its own work above the fixed cost. 88% of
+the sweep is parsing and batching the same 200 files once per rule. The highest peak RSS is
+serverplan-grammar-surface's, 182 MB.
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
