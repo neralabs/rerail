@@ -23,6 +23,7 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   .decl syntax_error(d: number)
   .decl in_scope(d: number)                       // the policy's scope, given by the converter
   .decl out_scope(d: number)
+  .decl report_when_gt(k: number)                 // the report gate, given by the converter
   .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
   ```
 
@@ -31,12 +32,26 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   `has(a, n, set)` (both: `a` is a strict ancestor of `n` whose kind is in `set`) and `nearest(n, a, set)` (the
   nearest such `a`), `set` a relation of kind facts the file declares (`.decl lazy_loop_calls(kind: symbol)`,
   `lazy_loop_calls("call").`).
+- The report gate `report_when_gt(k)` is given by the converter, read, never derived, like `in_scope`: one row `k`
+  where the policy, as the run configures it, has `report_when: {count: {gt: k}}` (the only form the compiler
+  accepts, once per policy, on a define clause; in the pack only `data-layer-sql-grammar-escape-hatches`, gt 16),
+  and no row where it has none or the run drops it (the replay does for the escape-hatch analyzer calls). The rule
+  then reports nothing unless its findings, every clause and file together, number more than `k`. The converter
+  cannot gate its own clauses, so in a gated policy they are gaps: the file gives every reporting clause, gated:
+
+  ```
+  .decl usage_0_witness(p: symbol, l: number)
+  usage_0_witness(p, l) :- …                       // every clause's findings, for the count
+  .decl usage_0_quiet(k: number)                   // an aggregate's rule needs a positive atom: the gate's
+  usage_0_quiet(k) :- report_when_gt(k), c = count : { usage_0_witness(_, _) }, c <= k.
+  violation("data-layer-sql-grammar-escape-hatches", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !usage_0_quiet(_).
+  ```
 - Each clause derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, the rule and clause constants and
   the clause one of the policy's.
 - Name helper relations and kind sets after their clause (`lazy_loop_…`). Names the converter makes are errors:
-  `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope` (other than as read);
-  `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`. So are a relation both programs derive and one name
-  declared with other column types.
+  `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope`, `report_when_gt` (other
+  than as read); `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`. So are a relation both programs derive
+  and one name declared with other column types.
 - A clause the file derives counts as authored, whatever the converter made of it: its rules replace the
   converter's. A clause the replay leaves out for an event is dropped from both.
 

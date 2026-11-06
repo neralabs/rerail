@@ -125,6 +125,14 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     }
     let excludes = !exclude.is_empty();
     e.decls.insert("violation".into(), "rule: sym, clause: sym, code: sym, path: sym, line: int".into());
+    // The report gate (`report_when: {count: {gt: k}}`, once, on a define clause, as the run configures it): a fact
+    // the authored file reads; the converter's own clauses cannot be gated by it, which counts every clause's
+    // findings, so in a gated policy they are gaps.
+    let report_when_gt = document["clauses"].as_array().into_iter().flatten().find_map(|c| c["define"]["report_when"]["count"]["gt"].as_u64());
+    e.decls.insert("report_when_gt".into(), "k: int".into());
+    if let Some(k) = report_when_gt {
+        e.facts.push(format!("report_when_gt({k})."));
+    }
     let mut clauses: Vec<(String, Result<Origin, Gap>)> = relational
         .into_iter()
         .filter(|c| adjust.keep.as_ref().is_none_or(|keep| keep(c)))
@@ -189,6 +197,9 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
                 body.push(format!("line({at}, $l)"));
                 "$l".to_owned()
             };
+            if report_when_gt.is_some() {
+                return gap("report_when (a gate on the count of all the rule's findings)");
+            }
             e.rules.push(format!("violation({}, {}, {}, $p, {line}) :- {}.", quote(&id), quote(&clause.id), quote(&clause.violation.code), body.join(", ")));
             Ok(())
         });
@@ -905,7 +916,7 @@ fn a_failed_clause_leaves_nothing() {
 fn converted_programs_hold_only_what_violation_reaches() {
     let mut failed = 0;
     for path in rule_files() {
-        let c = convert(&path, &Adjust::default()).unwrap();
+        let c = convert_over(&path, &Adjust::default(), None).unwrap();
         failed += c.clauses.iter().filter(|(_, r)| r.is_err()).count();
         let prog = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
         let (mut reached, mut todo) = (BTreeSet::new(), vec!["violation".to_owned()]);
@@ -1005,6 +1016,7 @@ fn overlay_errors_are_named() {
         (format!("{head}in_scope(d) :- doc(d, _, _).\n{}", ok("in_scope(d)")), "read it only"),
         (format!("{head}{}", ok("executor_parameters_undeclared(n)")), "is read and not declared"),
         (format!("{head}.decl executor_parameters_empty(n: node)\n{}", ok("executor_parameters_empty(n)")), "nothing derives or inputs it"),
+        (format!("{head}.decl report_when_gt(k: number)\nreport_when_gt(3).\n{}", ok("report_when_gt(_)")), "read it only"),
     ];
     for (text, error) in cases {
         let authored = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
@@ -1013,6 +1025,57 @@ fn overlay_errors_are_named() {
             Err(e) => assert!(e.contains(error), "{e}, wanted {error:?}:\n{text}"),
         }
     }
+}
+
+/// The report gate: `report_when_gt(k)` holds `k` where the policy, as the run configures it, has
+/// `report_when: {count: {gt: k}}`, and nothing where the run drops it; an authored file gates on it, and the
+/// converter leaves a gated policy's clauses to the file.
+#[test]
+fn the_report_gate_is_given() {
+    const ID: &str = "data-layer-sql-grammar-escape-hatches";
+    let authored = format!(
+        r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: node, l: number)
+.decl in_scope(d: number)
+.decl report_when_gt(k: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.decl usage_0_witness(p: symbol, l: number)
+usage_0_witness(p, l) :- node(d, n, "call", _, _), in_scope(d), doc(d, p, _), line(n, l).
+.decl usage_0_quiet(k: number)
+usage_0_quiet(k) :- report_when_gt(k), c = count : {{ usage_0_witness(_, _) }}, c <= k.
+violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !usage_0_quiet(_).
+"#
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("report-gate");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
+    let run = dir.join("run");
+    write_files(&run, [("impl/a.py", "f()\ng()\n")]);
+    let rule = rule_file("sql_grammar_escape_hatches").unwrap();
+    let everywhere = || Some((vec!["**/*".to_owned()], Vec::new()));
+    // As the policy is: the gate is 16, two findings are under it, and the converter gives no clause of its own.
+    let gated = convert_over(&rule, &Adjust { scope: everywhere(), ..Adjust::default() }, Some(&dir)).unwrap();
+    assert!(gated.program.contains("report_when_gt(16)."), "{}", gated.program);
+    assert!(gated.clauses.iter().all(|(c, r)| c == "usage-0" || r.is_err()), "{:?}", gated.clauses);
+    assert_eq!(findings(&gated.program, &run).unwrap(), Vec::<String>::new());
+    // As the escape-hatch analyzer calls run it, without the gate: the declaration and no row.
+    let drop: Box<dyn Fn(&mut Json) -> Result<bool, String>> = Box::new(|document| {
+        for clause in document["clauses"].as_array_mut().unwrap() {
+            if let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) {
+                define.remove("report_when");
+            }
+        }
+        Ok(true)
+    });
+    let open = convert_over(&rule, &Adjust { scope: everywhere(), policy: Some(drop), ..Adjust::default() }, Some(&dir)).unwrap();
+    assert!(open.program.contains(".decl report_when_gt(k: number)") && !open.program.contains("report_when_gt(16)"), "{}", open.program);
+    let mut got = findings(&open.program, &run).unwrap();
+    got.sort();
+    assert_eq!(got, ["impl/a.py:1:escape_hatch", "impl/a.py:2:escape_hatch"]);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus

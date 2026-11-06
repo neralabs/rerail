@@ -30,15 +30,20 @@
 //!   `str(n: node, s: symbol)`, `strprefix(n: node, s: symbol)`, `intval(n: node, v: number)`,
 //!   `op(n: node, s: symbol)`, `line(n: node, l: number)`, `syntax_error(d: number)`; those it reads are inputs,
 //!   `.input` or not. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's (the policy's,
-//!   or the replay's per event): read, never derived. The tree: `inside(n, a, set)` and `has(a, n, set)` (`a` a
-//!   strict ancestor of `n` of a kind in `set`), `nearest(n, a, set)` (the nearest one), `set` a relation of kind
-//!   facts the file declares (`.decl calls(kind: symbol)`, `calls("call").`);
+//!   or the replay's per event): read, never derived. So is the report gate, `report_when_gt(k: number)`: one row
+//!   `k` where the policy (as the run configures it) has `report_when: {count: {gt: k}}`, the only form the compiler
+//!   accepts (once per policy, on a define clause): the rule reports nothing unless its findings, all files and
+//!   clauses together, number more than `k`; no row where it has none. The tree: `inside(n, a, set)` and
+//!   `has(a, n, set)` (`a` a strict ancestor of `n` of a kind in `set`), `nearest(n, a, set)` (the nearest one),
+//!   `set` a relation of kind facts the file declares (`.decl calls(kind: symbol)`, `calls("call").`). The
+//!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give;
 //! - each clause it gives derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, declared
 //!   `.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)`, the rule and clause
 //!   constant and the clause one of the policy's;
 //! - its helper relations and kind sets start with a prefix of their clause's. A name the converter makes is an
-//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`; `strtest_*`, `magic_*`,
-//!   `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name declared with other columns;
+//!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`;
+//!   `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name
+//!   declared with other columns;
 //! - a clause it derives is authored, whatever the converter made of it: its rules replace the converter's. A
 //!   clause the run leaves out (the replay's `keep`) is dropped from both. The merge, less what `violation` does not
 //!   reach, is printed with `rr::print`.
@@ -819,6 +824,9 @@ pub(in crate::code_rule_dsl) enum Origin {
 /// The columns of `violation(rule, clause, code, path, line)`.
 const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
 
+/// What the converter gives an authored file to read, each one `number` column: the scope and the report gate.
+pub(in crate::code_rule_dsl) const GIVEN: [&str; 3] = ["in_scope", "out_scope", "report_when_gt"];
+
 /// A base relation's column types (`BASE`), where `rel` is one.
 fn base_types(rel: &str) -> Option<Vec<String>> {
     BASE.lines().find_map(|line| {
@@ -831,7 +839,8 @@ fn base_types(rel: &str) -> Option<Vec<String>> {
 fn converter_name(rel: &str) -> bool {
     let numbered = |stem: &str| rel.strip_prefix(stem).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
     ["m", "u", "t", "k", "blocked"].into_iter().any(numbered)
-        || ["never", "in_scope", "out_scope"].contains(&rel)
+        || ["never"].contains(&rel)
+        || GIVEN.contains(&rel)
         || ["strtest_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
 }
 
@@ -885,7 +894,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
         }
         let want = match name.as_str() {
             "violation" => Some(VIOLATION.map(str::to_owned).to_vec()),
-            "in_scope" | "out_scope" => Some(vec!["int".to_owned()]),
+            _ if GIVEN.contains(&name.as_str()) => Some(vec!["int".to_owned()]),
             _ => base_types(name),
         };
         match want {
@@ -904,7 +913,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
     // What it derives: never a base relation or the scope; each relation declared, each one read given by
     // something; each `violation` at a constant clause of this rule.
     let derived: BTreeSet<&str> = authored.rules.iter().map(|r| r.head.rel.as_str()).chain(authored.facts.keys().map(String::as_str)).collect();
-    if let Some(rel) = derived.iter().find(|r| base_types(r).is_some() || matches!(**r, "in_scope" | "out_scope")) {
+    if let Some(rel) = derived.iter().find(|r| base_types(r).is_some() || GIVEN.contains(*r)) {
         return err(format!("{rel} is derived here, but the corpus or the converter gives it: read it only"));
     }
     if let Some(rel) = derived.iter().find(|r| !authored.decls.contains_key(**r)) {
@@ -917,7 +926,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
-            if !(derived.contains(rel) || base_types(rel).is_some() || matches!(rel, "in_scope" | "out_scope") || authored.inputs.iter().any(|i| i == rel)) {
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }
