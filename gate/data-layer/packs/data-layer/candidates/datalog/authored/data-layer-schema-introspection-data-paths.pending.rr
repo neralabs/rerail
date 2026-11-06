@@ -1,0 +1,38 @@
+// data-layer-schema-introspection-data-paths, pending.
+//
+// 1. Awaiting `value(n, v)` (a string literal's decoded value, W's semantic value). Once bound, append this to
+// data-layer-schema-introspection-data-paths.rr (it uses its introspection_* relations): it adds what the main
+// file's as-written string rule misses, a marker made by escapes or split across adjacent literals.
+.decl value(n: node, v: symbol)
+.decl introspection_const(n: node, v: symbol)
+introspection_const(s, v) :- node(d, s, "string", _, _), introspection_doc(d, _), !introspection_fb(s),
+    !introspection_in_run(s), value(s, v).
+introspection_const(c, v) :- node(d, c, "concatenated_string", _, _), introspection_doc(d, _),
+    !introspection_fb_run(c), value(c, v).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_const(n, v), introspection_sql_marker(m), icontains(m, v), !introspection_stmt_string(n),
+    !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p), introspection_text_doc(d), line(n, l).
+
+// 2. Awaiting the converter's option facts (`option_value`, A9). entryPoint `_collect_violations` gates every
+// valid module of the scope (no text test) and drops the data-path filter; every other value (the default "all"
+// included) is the main file. Once option facts are given: add `option_value("entryPoint", v),
+// v != "_collect_violations"` to introspection_doc's rule; add the rules below; and in the main file's (and
+// part 1's) string rules and raw/const seeds, read introspection_any_doc(d, p) for `introspection_doc(d, p),
+// introspection_text_doc(d)`, and introspection_all_doc(d) for the seeds' `introspection_doc(d, _)`.
+.decl option_value(name: symbol, v: symbol)
+.decl introspection_collect_doc(d: number, p: symbol)
+introspection_collect_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !syntax_error(d),
+    option_value("entryPoint", "_collect_violations").
+.decl introspection_any_doc(d: number, p: symbol)
+introspection_any_doc(d, p) :- introspection_doc(d, p), introspection_text_doc(d).
+introspection_any_doc(d, p) :- introspection_collect_doc(d, p).
+.decl introspection_all_doc(d: number)
+introspection_all_doc(d) :- introspection_doc(d, _).
+introspection_all_doc(d) :- introspection_collect_doc(d, _).
+introspection_peel(c, g) :- node(d, c, "call", _, _), introspection_collect_doc(d, _), field(c, "function", g).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_callee(c, x), (x = "flush_schema_plan" ; x = "flush_schema_plan_async"), node(d, c, _, _, _),
+    introspection_collect_doc(d, p), prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c),
+    !introspection_primitive_call(c), node(d, c, _, _, _), introspection_collect_doc(d, p), line(c, l).
