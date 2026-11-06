@@ -10,10 +10,10 @@
 // less keyword-argument and lambda-parameter names. A string annotation (`x: "SyncSchemaTransaction"`, adjacent
 // literals joined) is parsed by the script; here its names are found by `word` tests of the names the clause asks
 // about in the string's value (W's `value`: escapes decoded, parts joined).
-// Approximations, all in string annotations, none in the scoped files today, until CPython's parse of a string
-// annotation (core.rr's `parsed` / `string_annotation`) is bound: a string that does not parse (the script takes
-// the whole string as one name) is read word by word; strings nested in the parsed string count; a string slice
-// of `Sequence[…]` always has a name.
+// Approximations, all in string annotations, none in the scoped files today, blocked on CPython's parse of a string
+// annotation (core.rr's `parsed`: it needs core.rr's isolated `ast.parse` worker, which the corpus runner does not
+// run): a string that does not parse (the script takes the whole string as one name) is read word by word; strings
+// nested in the parsed string count; a string slice of `Sequence[…]` always has a name.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
