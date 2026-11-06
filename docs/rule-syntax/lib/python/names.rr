@@ -275,11 +275,11 @@ qn(n, q) :- look(n, x, s), ibind(s, x, q).
 qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q).
 
 // ---- comparisons ---------------------------------------------------------------------------------------------------
-// cmp(c, op, l, r): c is a comparison with exactly one operator. op is the operator's text, two-token operators
-// ("not in", "is not") joined by op/2. Chained comparisons (a < b < c) have no row.
+// cmp(c, op, l, r): c is a comparison with exactly one operator. op is the operator's text, two-word operators
+// ("not in", "is not") one token. Chained comparisons (a < b < c) have no row; cmp_pair (ast) has their links.
 // e.g. `x is None` gives cmp(c, "is", <x>, <None>).
 .decl cmp(c: node, op: symbol, l: node, r: node)
-cmp(c, o, l, r) :- kind(c, "comparison_operator"), child(c, l, 0), child(c, r, 1), !child(c, _, 2), op(c, o).
+cmp(c, o, l, r) :- kind(c, "comparison_operator"), child(c, l, 0), child(c, r, 1), !child(c, _, 2), op_at(c, 0, o).
 
 // ==== interface ===================================================================================================
 // scope_node(n, s): s is the innermost scope (module, def, class or lambda) containing n.
