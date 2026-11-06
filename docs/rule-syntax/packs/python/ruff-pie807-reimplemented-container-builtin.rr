@@ -1,0 +1,19 @@
+.policy "ruff-pie807-reimplemented-container-builtin" revision 2
+.description "Use list or dict directly instead of a lambda that returns an empty list or dict, such as for a default factory."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PIE807 (flake8-pie): `lambda: []` or `lambda: {}`, typically a default factory. The builtin `list` or
+// `dict` is the same callable. Only a lambda without parameters, returning an empty list or dict display.
+//   field(default_factory=lambda: [])   ← PIE807 "Prefer `list` …"
+//   lambda *args: []                    not reported
+//   lambda: {**unwrap}                  not reported
+#include "python/ast.rr"
+
+.violation PIE807(at: node, c: symbol) code "PIE807" "Prefer `{c}` over useless lambda"
+    suppress ruff "PIE807"
+PIE807(l, c) :- kind(l, "lambda"), !field(l, "parameters", _), field(l, "body", b), unparen(b, m), kind(m, k),
+    empty_kind(k, c), count : { child(m, e, _), !kind(e, "comment") } = 0.
+.decl empty_kind(k: symbol, c: symbol)
+empty_kind("list", "list"). empty_kind("dictionary", "dict").

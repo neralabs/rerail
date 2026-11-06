@@ -1,0 +1,28 @@
+.policy "ruff-b015-useless-comparison" revision 2
+.description "Remove comparisons whose result is discarded; assign, return or assert the result if it was meant to be used."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B015 (flake8-bugbear): a comparison as a statement of its own. Its result is thrown away: the author
+// meant an assignment, an assert or a return. As the last statement of a function's body it is most likely a
+// missing `return`, and the message says so.
+//   1 in (1, 2)                ← B015 "Pointless comparison. Did you mean to assign …"
+//   def test():
+//       1 in (1, 2)            ← B015 "… at end of function scope. Did you mean to return …"
+//   assert 1 in (1, 2)         not reported
+#include "python/ast.rr"
+
+.violation B015(at: node, msg: symbol) code "B015" "{msg}"
+    suppress ruff "B015"
+B015(e, m) :- useless(st, e), !function_end(st),
+    m = "Pointless comparison. Did you mean to assign a value? Otherwise, prepend `assert` or remove it.".
+B015(e, m) :- useless(st, e), function_end(st),
+    m = "Pointless comparison at end of function scope. Did you mean to return the expression result?".
+.decl useless(st: node, e: node)
+useless(st, m) :- kind(st, "expression_statement"), child(st, e, 0), !child(st, _, 1), unparen(e, m),
+    kind(m, "comparison_operator").
+// function_end(st): st is the last statement of a def's own body.
+.decl function_end(st: node)
+function_end(st) :- useless(st, _), kind(f, "function_definition"), field(f, "body", b), body_len(b, k),
+    body_stmt(b, st, i), i = k - 1.

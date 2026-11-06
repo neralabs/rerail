@@ -1,0 +1,21 @@
+.policy "ruff-b023-function-uses-loop-variable" revision 2
+.description "Pass loop variables into functions and lambdas defined inside a loop as arguments or defaults; otherwise they all see the variable's last value."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B023 (flake8-bugbear): a def or lambda made in a loop reads a variable the loop rebinds. Closures read
+// free variables when called, so each one sees the variable's last value, not the value of its own iteration.
+// Loops are for and while statements and comprehensions; the variable is rebound by an assignment or a for
+// target in the loop (outside nested closures). A closure's own parameters and locals are not free; a lambda
+// consumed on the spot (called, passed to map/filter/reduce, `key=`, returned) is trusted. Reported at the read.
+//   for x in range(3):
+//       fns.append(lambda: x)                  ← B023 at the `x` in the lambda
+//       fns.append(lambda x=x: x)              not reported: x is a parameter
+//       sorted(ys, key=lambda y: y + x)        not reported: consumed now
+#include "python/bugbear-loops.rr"
+
+.violation B023(at: node, x: symbol) code "B023"
+    "Bind `{x}` as a default argument, such as `{x}={x}`, so the function keeps this iteration's value."
+    suppress ruff "B023"
+B023(n, x) :- closure_reads(l, _, n, x), loop_assigns(l, x).

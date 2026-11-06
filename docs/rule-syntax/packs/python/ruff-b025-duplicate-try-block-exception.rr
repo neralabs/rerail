@@ -1,0 +1,24 @@
+.policy "ruff-b025-duplicate-try-block-exception" revision 2
+.description "Remove exception types repeated across handlers of the same try block; only the first handler that names one can ever run."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B025 (flake8-bugbear): an exception named again in a later handler of the same try. Only the first
+// handler that names it can run. Names are spellings (a Name or an attribute chain); a handler's type is one
+// name or a tuple of them. Reported at the repeat: the later handler's type, or the first place the name is in
+// its tuple. `except*` too.
+//   except ValueError: …
+//   except ValueError: …              ← B025 at the second `ValueError`
+//   except (ValueError, TypeError): …
+//   except (OSError, TypeError): …    ← B025 at `TypeError`
+#include "python/bugbear.rr"
+
+.violation B025(at: node, e: symbol) code "B025" "try-except block with duplicate exception `{e}`"
+    suppress ruff "B025"
+B025(e, n) :- try_handler(t, x, i), b025_names(x, n, e), try_handler(t, y, j), j < i, b025_names(y, n, _).
+// b025_names(x, n, e): handler x names n, first at e.
+.decl b025_names(x: node, n: symbol, e: node)
+b025_names(x, n, t) :- handler_type(x, t), exc_name(t, n).
+b025_names(x, n, e) :- handler_elt(x, e, i), exc_name(e, n),
+    count : { handler_elt(x, o, k), k < i, exc_name(o, n) } = 0.

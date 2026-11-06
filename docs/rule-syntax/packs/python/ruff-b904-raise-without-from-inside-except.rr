@@ -1,0 +1,35 @@
+.policy "ruff-b904-raise-without-from-inside-except" revision 2
+.description "Use raise ... from err (or from None) when raising a new exception inside an except block; it keeps the cause chain clear instead of looking like a bug in the handler."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff B904 (flake8-bugbear): `raise X` inside an except clause without `from`. The new exception then shows
+// the caught one as "during handling … another exception occurred", which reads like a bug in the handler;
+// `from err` or `from None` says what was meant. The raises looked at are those the handler's body reaches
+// through if/elif/else, the bodies of for, while and with (not their else), and match cases; a nested def,
+// class or try is not entered. A bare `raise` and `raise e` of the handler's own name are re-raises.
+//   except ValueError:
+//       raise TypeError()          ← B904
+//   except ValueError as e:
+//       raise e                    not reported
+//       raise TypeError() from e   not reported
+#include "python/bugbear.rr"
+
+.violation B904(at: node) code "B904" "Raise this exception with `from err` or `from None` so the cause chain is clear."
+    suppress ruff "B904"
+B904(r) :- reached(x, r), kind(r, "raise_statement"), child(r, e0, 0), !field(r, "cause", _),
+    unparen(e0, e), !reraise(x, e).
+// reached(x, s): statement s runs as part of handler x's body, as Ruff's RaiseStatementVisitor walks it.
+.decl reached(x: node, s: node)
+reached(x, s) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block"), child(b, s, _).
+reached(x, s) :- reached(x, p), walked(p, b), child(b, s, _).
+.decl walked(p: node, b: node)  // block b of statement p is entered
+walked(p, b) :- kind(p, "if_statement"), field(p, "consequence", b).
+walked(p, b) :- kind(p, "if_statement"), field(p, "alternative", c), kind(c, "elif_clause"), field(c, "consequence", b).
+walked(p, b) :- kind(p, "if_statement"), field(p, "alternative", c), kind(c, "else_clause"), field(c, "body", b).
+walked(p, b) :- kind(p, k), (k = "for_statement" ; k = "while_statement" ; k = "with_statement"), field(p, "body", b).
+walked(p, b) :- kind(p, "match_statement"), field(p, "body", mb), child(mb, c, _), field(c, "consequence", b).
+.decl reraise(x: node, e: node)
+reraise(x, e) :- reached(x, r), child(r, e0, 0), unparen(e0, e), kind(e, "identifier"), text(e, a),
+    field(x, "value", v), kind(v, "as_pattern"), field(v, "alias", t), child(t, n, 0), text(n, a).
