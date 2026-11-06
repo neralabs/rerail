@@ -191,5 +191,6 @@ export async function runDataLayerCommand(args: readonly string[], stdout: Pick<
     else if (!result.failures.length) stdout.write("Data-layer linter: clean.\n");
     for (const failure of result.failures) stdout.write(`ERROR ${failure.code}: ${failure.message}\n`);
   }
-  return result.failures.length ? 2 : flags.has("--check") && result.violations.some(row => row.mode !== "log") ? 1 : 0;
+  return result.failures.length ? 2 : result.violations.some(row => row.code === "SIDP000")
+    || flags.has("--check") && result.violations.some(row => row.mode !== "log") ? 1 : 0;
 }
