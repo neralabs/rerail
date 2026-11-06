@@ -30,7 +30,7 @@ These are settled. Each row cites where.
 |---|---|---|
 | program kind | a **stream transducer**: a second program kind beside the tape transducers, in the same lowering pipeline. It reads bytes and writes a tape | `01` §4, §8; `09` §7 |
 | what it shares | plan ids, interpreted first with the JIT built in the background, backend selection, the Metal pipeline cache, the launch budget, residency slabs; the set program's slot layout and barrier pattern | `09` §7; decision 0012 |
-| executors | as for tape transducers: one verified program is the only semantic input. The CPU and Metal interpreters read it directly. One ephemeral native IR is emitted by both Cranelift and MSL, with one control-flow structure, no host callbacks and one packed ABI. Every op exists on every backend, with no Metal-to-CPU fallback | t6 §6 (`transducer-native-jit-design.md`); `final-shape/03-architecture.md` §88–90 |
+| executors | as for tape transducers: one verified program is the only semantic input. The CPU and Metal interpreters read it directly. One ephemeral native IR is emitted by both Cranelift and MSL, with one control-flow structure, no host callbacks and one packed ABI. Every op exists on every backend, with no Metal-to-CPU fallback | t6 §6 (`transducer-native-jit-design.md`); `final-shape/03-architecture.md` lines 88–90 |
 | what "no branching" allows | loops whose trip count is a size; selects, table lookups, gathers, scatters; one decision per file (the error bit) | `01` §1 |
 | masks | `class`: nibble lookups (`vqtbl1q_u8`), up to 8 classes per pair. `toggle`: carry-less multiply (`vmull_p64`), or `simd_prefix_exclusive_xor` on Metal. `fill`: the borrow form. `back_fill`: `fill` on bit-reversed words. `after_odd_run`: simdjson's add-with-carry. `prev`, `next`: shifts with the neighbouring word | `03` §3.1 |
 | carries | each carry has a summary, an associative combine and an apply. Only summaries cross blocks; masks are recomputed, not stored | `06` §2 |
@@ -54,7 +54,7 @@ decision of §1's sources.
 |---|---|---|---|
 | `count` | a prefix sum in bytes; the floor as a composed map | **bit-planes**: `w = ⌈log2(max + 2)⌉` planes, a Hillis–Steele scan of a `w`-bit adder, with clamps as composed maps where needed. Bounded by the declared `max` | the same method as `08` §2.2's mod-3 planes |
 | `frame`, `since` | matching by depth, a `last[depth]` vector of positions | one `fill` per depth level up to `max + 1`, from `c == L` on the planes | bit operations, no positions |
-| `machine` | compacted events, 16-byte maps composed by `TBL` (`03` §3.2) | Krohn–Rhodes only (`08` §2.1). JSON's `lex` is a `Z2` (`q` swaps code and string) with resets (comments), so it is `toggle`s and `fill`s | removes the event list |
+| `machine` | compacted events, 16-byte maps composed by `TBL` (`03` §3.2) | Krohn–Rhodes only (`08` §2.1). JSON's `lex` looks like a `Z2` (`q` swaps code and string) with resets (comments), so `toggle`s and `fill`s; the generator confirms it | removes the event list |
 | `keywords` | a perfect hash per token (`03` §3.3) | shift-and over the keyword texts: each byte's class, shifted and ANDed | removes the token list |
 | `munch` | three fixed applications over candidates | the same, as masks | unchanged |
 | rounds over gathered lines and bodies | rounds over a compacted list of the lines and bodies that need them (`08` §7) | rounds over every block, fixed work | removes the gather; costs the round work on every block (Q3) |
