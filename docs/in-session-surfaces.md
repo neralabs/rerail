@@ -200,7 +200,7 @@ Slower checks steer at the next hook, reply or poll. The waits are fixed, not pe
 
 A steer never becomes your message, before or after the agent compacts its context:
 
-- **OMP and Pi:** a steer from an edit's own check goes into that tool result. Later ones are Rerail messages, which compaction summaries label automated rule checks, not your messages.
+- **OMP and Pi:** a steer from an edit's own check goes into that tool result. Later ones are Rerail messages, which compaction summaries label automated rule checks, not your messages. Pi hands the model such a message as one of yours, so in Pi it opens with a line saying it is an automated note from Rerail, advice rather than a new task, and that the agent carries on with your request.
 - **Claude Code and Cursor:** context beside a tool result or at session start, never with your prompt.
 - **Codex:** a developer message, which can arrive with your next prompt but is not part of it.
 

@@ -25,6 +25,7 @@ import Database from "better-sqlite3";
 import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
+  messageSteer,
   steerBlock,
   steerOrigin,
   steerRules,
@@ -171,7 +172,7 @@ describe("Pi conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock({ kind: "tool" }, findings),
+          content: messageSteer(steerBlock({ kind: "tool" }, findings)),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String), rules: steerRules(findings, steerOrigin) },
         },
@@ -344,7 +345,7 @@ describe("Pi conversation-rules extension", () => {
         expect(harness.messages).toEqual([{
           message: {
             customType: RULE_MESSAGE_TYPE,
-            content: "Rerail found 1 problem in your last edit.",
+            content: messageSteer("Rerail found 1 problem in your last edit."),
             display: true,
             details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session", rules: [{ id: "no-any", state: "steered" }] },
           },
@@ -371,7 +372,7 @@ describe("Pi conversation-rules extension", () => {
           await harness.handlers.get("turn_end")!({ type: "turn_end", turnIndex: 0, message: { role: "assistant", timestamp: 101, responseId, content: [] }, toolResults: [] }, harness.context);
         }
         expect(registered).toEqual(["rerail_fix"]);
-        const steer = { message: expect.objectContaining({ content: "Delegate the fix with `rerail_fix`." }), options: { deliverAs: "steer" } };
+        const steer = { message: expect.objectContaining({ content: messageSteer("Delegate the fix with `rerail_fix`.") }), options: { deliverAs: "steer" } };
         expect(harness.messages).toEqual([steer, steer]);
       } finally {
         spy.mockRestore();
