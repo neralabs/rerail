@@ -125,7 +125,9 @@ All documents share one id space, and id 0 is `unset`. Every relation below is w
   - Also: spread, unset.
 - **Approximate:**
   - value / str / strprefix / value_type: string literals unescaped, JS templates without `${}`, JS numbers
-    normalised, Python and Rust integers, and the boolean, None, null and undefined keywords.
+    normalised, Python and Rust integers, and the boolean, None, null and undefined keywords. A literal with
+    interpolations (a Python f-string with `{x}`, a PHP "…$x…") has strprefix but no str or value, as core.rr
+    and the engine have it.
   - name: identifier-like nodes and dotted chains.
   - comment: the text without its marker.
   - static_value: the same as value (no constant following).

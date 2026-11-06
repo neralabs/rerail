@@ -18,7 +18,10 @@
     suppress eslint "no-warning-comments"
     suppress oxlint "no-warning-comments"
 no_warning_comments(c, term, shown) :- js_comment(c, _, v), warn_term(term, re), match(re, v),
-    !(eslint_directive(c), match("[\\s\\S]*\\bno-warning-comments\\b[\\s\\S]*", v)), shown_text(v, shown).
+    !names_this_rule(c), shown_text(v, shown).
+// names_this_rule(c): c is an ESLint directive that names this rule (`/* eslint-disable no-warning-comments */`).
+.decl names_this_rule(c: node)
+names_this_rule(c) :- eslint_directive(c), js_comment(c, _, v), match("[\\s\\S]*\\bno-warning-comments\\b[\\s\\S]*", v).
 
 // warn_term(t, re): ESLint's convertToRegExp, as a whole-text match: the term with regex characters escaped,
 // \b on a word-character end, and at "start" only spaces and decoration before it.

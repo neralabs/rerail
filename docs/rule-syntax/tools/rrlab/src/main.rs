@@ -408,12 +408,22 @@ impl<'a> Doc<'a> {
         };
         match (lang, k) {
             (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
+                // A literal with interpolations (a Python f-string with `{x}`, a PHP "…$x…") has no str or value:
+                // its text is not one constant (core.rr; the engine's str is the same).
+                let mut cursor = n.walk();
+                let interpolated = n.named_children(&mut cursor).any(|c| match (lang, k) {
+                    ("python", _) => c.kind() == "interpolation",
+                    ("php", "encapsed_string") => !matches!(c.kind(), "string_content" | "escape_sequence"),
+                    _ => false,
+                });
                 if let Some((prefix, body)) = string_contents(lang, text) {
-                    self.out.row("str", &[&id, &body]);
                     self.out.row("strprefix", &[&id, &prefix]);
                     let t = if lang == "python" { "str" } else { "string" };
-                    if !prefix.contains('f') {
-                        val(self.out, &body, t);
+                    if !interpolated {
+                        self.out.row("str", &[&id, &body]);
+                        if !prefix.contains('f') {
+                            val(self.out, &body, t);
+                        }
                     }
                 }
             }
