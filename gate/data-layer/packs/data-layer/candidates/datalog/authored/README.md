@@ -50,8 +50,8 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   the clause one of the policy's.
 - Name helper relations and kind sets after their clause (`lazy_loop_…`). Names the converter makes are errors:
   `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope`, `report_when_gt` (other
-  than as read); `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`. So are a relation both programs derive
-  and one name declared with other column types.
+  than as read); `strtest_*`, `matchall_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`, and `match_all` is a
+  built-in. So are a relation both programs derive and one name declared with other column types.
 - A clause the file derives counts as authored, whatever the converter made of it: its rules replace the
   converter's. A clause the replay leaves out for an event is dropped from both.
 
@@ -63,7 +63,7 @@ The converted programs beside this directory (`../<rule-id>.rr`) are the merge, 
 The corpus runner binds these too (core.rr's, `facts::vtab::syntax::Extra`), each only for a program that reads it;
 declare them as written. `span` and `loc` lower to `node`, so `text(n: loc, s: symbol)` and `text(n: node, s:
 symbol)` are the same declaration. A span is a piece of a document's text, with an id of its own (never a node of
-`node`).
+`node`). A base relation a program reads is an input whether or not it says `.input`, in the runner too.
 
 ```
 .decl source(d: number, sp: span)                 // the whole file, raw (CRLF kept)
@@ -76,6 +76,8 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl end_line(n: loc, l: number)                 // the line holding the end offset
 .decl col(n: loc, c: number)                      // the start's byte column, from 0 (0 on a span)
 .decl node_text(n: node, s: symbol)               // a node's source text, exactly (W's `regex` on a node)
+// built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
+// match_all(re: symbol, sp: span, m: span)
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -86,9 +88,21 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   U+2028 and U+2029 too: the two agree in a file with none of those. A span's `line` and `end_line` are in its own
   relation's numbering (a line span's are its number). A node's `end_line` is the line of its end offset, as W's
   `layout` counts: its last character's, but for a node that ends with a terminator (a module), the line after.
-- A `lines` regex (`forbid.regex` with `lines`) is `src_line(d, l, sp), text(sp, s), match(".*re.*", s)` at line `l`
-  (`match` is whole-string; `lines.exclude` a negated `match`), exactly, `first` or not (findings are a set of keys).
-  W's whole-file regex at the line of each match is the same over `tape_line` where every match lies within one line:
-  the regex matches no line terminator (no `\n`, `\s`, `[^…]` or `(?s).` that could reach one) and has no `^`, `$`,
-  `\A` or `\z`. Otherwise read `source(d, sp), text(sp, s)` and test the whole text (`match("(?s).*re.*", s)`), and
-  count lines with `line_count` (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`). There is no `match_all`.
+- `match_all("re", sp, m)` is W's `regex` over a file, match for match: `re` a constant in W's dialect (Rust
+  `regex`), its matches found as `find_iter` finds them (`aa` in `aaaaa` twice, at 0 and 2), over any span of
+  `source`, `src_line`, `src_line_lf` or `tape_line` (not over a match or a node). The match `m` is a span: `text(m, s)`
+  is what it matched, and `line`, `end_line` and `col` are W's finding's. In `source` that is the tape's lines and the
+  byte column (a match may cross lines); in a line span, that line and the column in it (a `lines` regex's).
+  `!match_all("re", sp, _)`: no match. The runner makes one input `matchall_<k>(sp, m)` per regex.
+  - W's whole-file regex: `source(d, sp), match_all("re", sp, m), line(m, l)`, exactly, whatever the regex.
+  - A `lines` regex (`forbid.regex` with `lines`): `src_line(d, l, sp), match_all("re", sp, _)` (or `src_line_lf`
+    for `terminators: "lf"`), at line `l`; `lines.exclude` and `include` test the line's text.
+- `match(re, s)` is whole-string. To search a text without match spans: `match("(?s:.*)(?:re)(?s:.*)", s)`, which
+  keeps `re`'s own `.` off line terminators (`(?s).*re.*` does not: it gives `re` the `s` flag too) and its
+  alternatives inside the group; an inline flag of `re` stays inside `(?:…)`. Count lines with `line_count`
+  (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`).
+- Text-only documents. A file no grammar reads (`.md`, `.rst`, `.txt`, `.toml`, …; not hidden, UTF-8) is a document
+  read as text only (core.rr's `.scope text`): it has `doc` (path, and a module made of its path), `source`,
+  `src_line` (split as `str.splitlines()`), `src_line_lf`, `tape_line`, `line_count` and `match_all`, and no `node`,
+  so the scope's globs and `doc(d, "docs/x.rst", _)` see it. Its `tape_line`s, and the lines and columns of a match in
+  its `source`, are W's for a file of no language: `\r\n`, `\r`, `\n`, U+2028 and U+2029 end a line.
