@@ -302,6 +302,11 @@ function sourceOfBytes(location: SourceLocation, source: Buffer, info: Stats): S
   };
 }
 
+/** Whether the file was read, and still holds what the edit left there. */
+function isAsEditLeft(current: Source | undefined, digest: string | undefined): current is Source {
+  return current !== undefined && current.readError === undefined && current.digest === digest;
+}
+
 /** Whether `scope` lies within the captured paths and every preimage was read; a preimage withheld for secrets throws. */
 function mayRollBack(preimages: RewindableEdit["preimages"], scope: readonly string[]): boolean {
   if (scope.length === 0 || scope.some(path => !preimages.has(path))) return false;
@@ -501,15 +506,10 @@ export class CodeRuleBridge {
   async #rollbackTarget(root: string, path: string, preimage: Preimage, digest: string | undefined): Promise<RollbackTarget | undefined> {
     const location = this.#sourceLocation(root, path);
     const current = await this.#readSource(root, path);
-    if (location === undefined || current === undefined || current.readError !== undefined) return undefined;
-    if (current.digest !== digest) return undefined;
-    if (!await this.#mayRestore(root, location, preimage, current)) return undefined;
+    if (location === undefined || !isAsEditLeft(current, digest)) return undefined;
+    // A deleted file comes back only into a folder this checkout owns. Only such a file waits to learn that.
+    if (current.deleted && preimage.text !== undefined && !await this.#ownsFolder(root, location)) return undefined;
     return { location, preimage, current };
-  }
-
-  /** A deleted file comes back only into a folder this checkout owns. */
-  async #mayRestore(root: string, location: SourceLocation, preimage: Preimage, current: Source): Promise<boolean> {
-    return !current.deleted || preimage.text === undefined || await this.#ownsFolder(root, location);
   }
 
   /** Puts the preimages back: what was written, or undefined when nothing stays rolled back after a failure. */

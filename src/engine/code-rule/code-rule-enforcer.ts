@@ -538,6 +538,11 @@ function overlayOf(edit: CodeRuleEdit): SourceOverlay {
   return { path: edit.path, source: edit.deleted ? undefined : edit.generatedText };
 }
 
+/** Whether an edit has text of its own to send: it neither deletes its source nor lacks generated text. */
+function hasGeneratedText(edit: CodeRuleEdit): edit is CodeRuleEdit & { generatedText: string } {
+  return !edit.deleted && edit.generatedText !== undefined;
+}
+
 /** What the workspace now holds: the facts each file was sent with. */
 function recordSentPackages(packages: Map<string, string>, edit: CodeRuleEdit, files: readonly WorkspaceFile[]): void {
   if (edit.deleted) packages.delete(edit.path);
@@ -1167,8 +1172,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#recordPublished(path, stored, edit, own, base);
     this.#evaluation = result;
     this.#storeReadyViolations(path, stored, edit, own, reported);
-    await this.#steerAgainForReported(stored, reported);
-    if (this.#pending.size === 0) await this.#publishReady();
+    await this.#steerAgainThenPublish(stored, reported);
   }
 
   /**
@@ -1226,12 +1230,16 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
 
   /**
    * A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each such
-   * steer whole, so the other sources it spoke for are steered again with the findings they last reported.
+   * steer whole, so the other sources it spoke for are steered again with the findings they last reported. Then what is
+   * ready is published, once nothing is pending: with nothing reported again, that is decided without a wait, so an
+   * edit queued meanwhile cannot put the publishing off.
    */
-  async #steerAgainForReported(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
-    if (reported.size === 0 || this.#sessionId === undefined) return;
-    const revised = [...reported.keys()].map(source => this.#presentPath(source));
-    await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
+  async #steerAgainThenPublish(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
+    if (reported.size > 0 && this.#sessionId !== undefined) {
+      const revised = [...reported.keys()].map(source => this.#presentPath(source));
+      await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
+    }
+    if (this.#pending.size === 0) await this.#publishReady();
   }
 
   /**
@@ -1785,7 +1793,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const serverGraph = workspace.readsServerGraph();
     const cache = pass ?? sourceFactsCache();
     const overlay = pass === undefined ? overlayOf(edit) : undefined;
-    const files = await this.#filesOfEdit(edit, cache, serverGraph, overlay);
+    // An edit that deletes its source, or has no generated text, sends no file of its own and waits for no facts.
+    const files: WorkspaceFile[] = hasGeneratedText(edit)
+      ? [{
+          path: edit.path,
+          language: edit.language,
+          source: edit.generatedText,
+          ...(await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlay)),
+        }]
+      : [];
     const repackaged: CodeRuleEdit[] = [];
     const directory = this.#recheckedFolder(edit, serverGraph, pass);
     if (directory !== undefined) await this.#addRepackaged(edit, directory, { packages, cache, serverGraph, overlay, files, repackaged });
@@ -1805,17 +1821,6 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       removed: edit.deleted ? [edit.path] : [],
       ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
     });
-  }
-
-  /** The file an edit sends, none for one that deletes its source or has no generated text. */
-  async #filesOfEdit(edit: CodeRuleEdit, cache: SourceFactsCache, serverGraph: boolean, overlay: SourceOverlay | undefined): Promise<WorkspaceFile[]> {
-    if (edit.deleted || edit.generatedText === undefined) return [];
-    return [{
-      path: edit.path,
-      language: edit.language,
-      source: edit.generatedText,
-      ...(await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlay)),
-    }];
   }
 
   /**
