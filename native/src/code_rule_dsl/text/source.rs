@@ -67,6 +67,9 @@ impl Source {
             }
             Spelling::Glob(glob) | Spelling::PathGlob(glob) => {
                 let path = matches!(self.spelling, Spelling::PathGlob(_));
+                // globset refuses nested alternatives (`{{versioned,}x,y}`): they are expanded to one level first.
+                let flat = flatten_braces(glob);
+                let glob = flat.as_deref().unwrap_or(glob);
                 let built = globset::GlobBuilder::new(glob)
                     .literal_separator(path)
                     .case_insensitive(self.fold_case)
@@ -84,6 +87,82 @@ impl Source {
         };
         parse(&regex, self.fold_case).map(Parsed::Regular)
     }
+}
+
+/// A glob with nested `{…}` as one level of alternatives: `{{a,}b,c}d` is `{abd,bd,cd}`. `None` when no braces
+/// nest (or they do not balance), so the glob is used as written. `[…]` and `\x` are copied as they are.
+fn flatten_braces(glob: &str) -> Option<String> {
+    let (mut depth, mut deepest, mut class) = (0usize, 0usize, false);
+    let mut chars = glob.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '[' if !class => class = true,
+            ']' if class => class = false,
+            '{' if !class => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            '}' if !class => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    if deepest < 2 || depth != 0 {
+        return None;
+    }
+    // Each alternative of `s` (`{…}` expanded), read up to the end or an unmatched `,`/`}` when `inner`.
+    fn expand(s: &[char], i: &mut usize, inner: bool) -> Vec<String> {
+        let mut alts = vec![String::new()];
+        let mut out: Vec<String> = Vec::new();
+        let mut class = false;
+        while *i < s.len() {
+            let c = s[*i];
+            match c {
+                '\\' => {
+                    let esc: String = s[*i..(*i + 2).min(s.len())].iter().collect();
+                    alts.iter_mut().for_each(|a| a.push_str(&esc));
+                    *i += 2;
+                    continue;
+                }
+                '[' if !class => class = true,
+                ']' if class => class = false,
+                '{' if !class => {
+                    *i += 1;
+                    let mut choices = Vec::new();
+                    loop {
+                        choices.extend(expand(s, i, true));
+                        let end = s.get(*i).copied();
+                        *i += 1;
+                        if end != Some(',') {
+                            break;
+                        }
+                    }
+                    alts = alts.iter().flat_map(|a| choices.iter().map(move |ch| format!("{a}{ch}"))).collect();
+                    continue;
+                }
+                ',' | '}' if inner && !class => {
+                    out.extend(alts);
+                    return out;
+                }
+                // A bare `,` outside every `{…}` is a literal one, escaped once the alternatives are joined.
+                ',' if !class => {
+                    alts.iter_mut().for_each(|a| a.push_str("\\,"));
+                    *i += 1;
+                    continue;
+                }
+                _ => {}
+            }
+            alts.iter_mut().for_each(|a| a.push(c));
+            *i += 1;
+        }
+        out.extend(alts);
+        out
+    }
+    let chars: Vec<char> = glob.chars().collect();
+    let alts = expand(&chars, &mut 0, false);
+    Some(format!("{{{}}}", alts.join(",")))
 }
 
 fn parse(pattern: &str, fold_case: bool) -> Result<Hir, Error> {

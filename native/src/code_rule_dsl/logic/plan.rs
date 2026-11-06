@@ -1283,7 +1283,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "value" => &[&["n"], &["s", "n"]],
-        "intval" | "op" | "tape" | "line" => &[&["n"]],
+        "intval" | "op" | "op_at" | "tape" | "line" => &[&["n"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         "doc" | "pkg" | "syntax_error" => &[&["d"]],
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
