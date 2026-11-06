@@ -1273,6 +1273,7 @@ def main():
     dl.add_argument("check"); dl.add_argument("rule", nargs="?"); dl.add_argument("--fixtures")
     dl.add_argument("--entry"); dl.add_argument("--test"); dl.add_argument("--show", type=int, default=25)
     dl.add_argument("--jobs", type=int, default=4); dl.add_argument("--keep", action="store_true")
+    dl.add_argument("--codeless", help="the code for records that carry none")
     lw = sp.add_parser("lower", help="print the Soufflé program"); lw.add_argument("rule")
     pt = sp.add_parser("pattern", help="compile a backtick pattern")
     pt.add_argument("lang"); pt.add_argument("pattern"); pt.add_argument("kind", nargs="?")

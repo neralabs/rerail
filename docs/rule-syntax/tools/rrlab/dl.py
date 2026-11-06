@@ -1,6 +1,6 @@
 """rrlab dl: score a hand-written data-layer rule against the data-layer port's recorded events.
 
-  rrlab dl CHECK [RULE.rr] [--fixtures DIR] [--entry NAME] [--test TEXT] [--show N] [--jobs N]
+  rrlab dl CHECK [RULE.rr] [--fixtures DIR] [--entry NAME] [--test TEXT] [--show N] [--jobs N] [--codeless CODE]
 
 CHECK is the linter's name (`bootstrap_cache_health`). RULE defaults to docs/rule-syntax/data-layer/<check-with-
 hyphens>.rr. The events come from the Data-layer-rule-expressivity worktree's fixtures/host/data-layer-port:
@@ -19,6 +19,8 @@ the set of (path, line, code) keys.
   ports. They are passed to the rule as `option` rows; a rule may ignore them.
 - **Scope.** A direct call takes the files it is given, so `.scope` is ignored, except on production (plugin)
   events, which also drop the rule's `.mode log` codes.
+- A record with no code (an internal entry's plain dict) gets the check's name, or `--codeless CODE`. A record whose
+  call raised is left out.
 - Events that the upstream run did not pass, retained ones, and ones that compare messages or fields are left out.
 """
 import ast, collections, concurrent.futures, glob, gzip, json, os, re, shutil
@@ -52,11 +54,14 @@ def events(fixtures, check):
             if r.get("check") != check or (ok and r["test"] not in ok):
                 continue
             lit = lambda v: ast.literal_eval(v) if isinstance(v, str) else v
+            if not isinstance(lit(r["expected"]), list):   # the call raised ({"exception": …}): nothing to compare
+                continue
             files = [(f["path"], src[f["sourceSha256"]]) for f in lit(r["files"]) if f.get("sourceSha256") in src]
             params = r.get("parameters") or "{}"
             out.append({"batch": os.path.basename(p).split(".")[0], "test": r["test"], "entry": r.get("entry", ""),
                         "options": json.loads(params) if isinstance(params, str) else params, "production": False,
-                        "files": files, "want": {(f["path"], int(f["line"]), f["code"]) for f in lit(r["expected"])}})
+                        "files": files, "want": {(f.get("path", f.get("file_path")), int(f.get("line", f.get("line_number")) or 1),
+                                           f.get("code", check)) for f in lit(r["expected"])}})
     return out
 
 
@@ -75,6 +80,9 @@ def score(args, Run, here):
     fixtures = args.fixtures or os.path.join(here, "..", "..", "..", "..", "..", "Data-layer-rule-expressivity",
                                              "fixtures", "host", "data-layer-port")
     evs = events(fixtures, check)
+    if args.codeless:   # a record that carries no code: the code the linter's plugin gives every finding
+        for e in evs:
+            e["want"] = {(p, l, args.codeless if c == check else c) for p, l, c in e["want"]}
     if args.entry:
         evs = [e for e in evs if e["entry"] == args.entry]
     if args.test:
@@ -82,7 +90,7 @@ def score(args, Run, here):
     if not evs:
         raise SystemExit(f"rrlab dl: no events for {check} under {fixtures}")
     reported = collections.defaultdict(set)
-    for e in events(fixtures, check):
+    for e in evs:
         reported[e["entry"]] |= {c for _, _, c in e["want"]}
     text = open(rule).read()
     codes_of = dict(re.findall(r'^\.violation\s+(\w+)\([^)]*\)\s*code\s+"([^"]+)"', text, re.M))

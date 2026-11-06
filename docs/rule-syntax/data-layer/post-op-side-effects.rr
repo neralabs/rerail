@@ -1,0 +1,214 @@
+.policy "data-layer:post-op-side-effects" revision 1
+.description "The Python post-op surface stays narrow and signed: no runtime refs, exact signed runtime authority, classified enum members."
+.language python
+.mode block
+.scope include "l2070_batching/post_op.py", "l2070_batching/post_op_specs.py", "l2070_batching/post_op_domain_decoders.py", "l2070_batching/post_op_allowlist.py"
+// Python linter: scripts/lint_post_op_side_effects.py, as its suite plugin reports. Four files of l2070_batching/ (post_op.py,
+// post_op_specs.py, post_op_domain_decoders.py, post_op_allowlist.py) are read as one surface, and every finding is
+// reported at line 1 of post_op.py.
+//   POSTOP200  a surface file (not the allowlist) names a runtime-ref token (runtime_refs, ResolvedRefs, …) as a
+//              name, a parameter, an attribute or a string: `def probe(runtime_refs): …`
+//   POSTOP203  the runtime verifier can be bypassed: a module-level ENFORCE_POST_OP_RUNTIME_ALLOWLIST flag; no
+//              module-level assert_post_op_symbol_signed; no verification call in it; or a `return` above the first one
+//   POSTOP204  SIGNED_POST_OP_SYMBOLS grants broad authority: an entry outside assertion.*, materializer.* and
+//              decoder.DomainPostOpDecoderKind.*, or a generic materializer (materializer.generic, …)
+//   POSTOP205  an exact operation the interpreter can reach is not signed: a "assertion.…" / "materializer.…" string
+//              in post_op_runtime_symbol(), or decoder.<member of DomainPostOpDecoderKind>
+//   POSTOP206  a signed entry that no such operation has
+//   POSTOP202  SIGNED_POST_OP_SYMBOLS's ALLOWLIST_SIGNATURE does not verify
+//   POSTOP201  the post-op surface (enum members, *_post_op factories, @dataclass *Spec classes) has changed since it
+//              was signed
+//   POSTOP001  a signed fate override names an enum member that no longer exists
+//   POSTOP002  a PostOpKind / PostOpBehavior member whose fate is debt: not overridden, or the fate record does not
+//              verify (then no override is trusted)
+//   POSTOP000  the fate record does not verify and nothing else is wrong
+// Not ported: the _RuntimeOpBehaviorVisitor taint analysis (POSTOP103 … POSTOP113). The linter defines it but
+// never runs it on the repository; only its unit tests call it, on snippets.
+//
+// How to read this file
+//   1. pos_file names the four files; pos_top, pos_class and pos_member read their module-level statements.
+//   2. Each code is then a set comparison between what the files declare and what the policy signed.
+//   3. The three signatures are checked by lib/data-layer/signing.rr. The signed values that live in the linter
+//      itself (POST_OP_FATE_OVERRIDES, POST_OP_FATES_SIGNATURE, POST_OP_SURFACE_SIGNATURE) are tables here, and the
+//      options fateOverrides, fatesSignature and surfaceSignature replace them.
+
+#include "python/ast.rr"            // asgstmt, assign_target, assign_value, unparen, str_const, ast_name, sig_param
+#include "data-layer/signing.rr"   // allow_entry, allow_sig -> allow_status
+
+// ---- the four files and their module-level statements ---------------------------------------------------------------
+.decl pos_file(d: number, role: symbol)
+pos_file(d, "post_op") :- doc(d, "l2070_batching/post_op.py", _).
+pos_file(d, "specs") :- doc(d, "l2070_batching/post_op_specs.py", _).
+pos_file(d, "decoders") :- doc(d, "l2070_batching/post_op_domain_decoders.py", _).
+pos_file(d, "allowlist") :- doc(d, "l2070_batching/post_op_allowlist.py", _).
+// pos_top(r, s): s is a module-level statement of file r; a decorated def or class is the def or class itself.
+.decl pos_top(r: symbol, s: node)
+pos_top(r, s) :- pos_file(d, r), modnode(d, m), child(m, s, _), !kind(s, "decorated_definition").
+pos_top(r, s) :- pos_file(d, r), modnode(d, m), child(m, w, _), kind(w, "decorated_definition"), field(w, "definition", s).
+// pos_class(r, c, x): a module-level class x of file r.
+.decl pos_class(r: symbol, c: node, x: symbol)
+pos_class(r, c, x) :- pos_top(r, c), kind(c, "class_definition"), def_name(c, x).
+// pos_member(r, "PostOpKind.X"): enum member X of a module-level class: `X = …` or `X: T …` in its body.
+.decl pos_member(r: symbol, enum: symbol, m: symbol)
+pos_member(r, e, @dot(e, x)) :- pos_class(r, c, e), field(c, "body", b), child(b, st, _), asgstmt(a, st),
+    assign_target(a, t), kind(t, "identifier"), text(t, x).
+// pos_top_assign(r, a, x): module-level `x = …` or `x: T = …`.
+.decl pos_top_assign(r: symbol, a: node, x: symbol)
+pos_top_assign(r, a, x) :- pos_top(r, st), asgstmt(a, st), assign_target(a, t), kind(t, "identifier"), text(t, x).
+
+// ---- POSTOP200: runtime refs ----------------------------------------------------------------------------------------
+.decl pos_ref_token(x: symbol)
+pos_ref_token("runtime_ref"). pos_ref_token("runtime_refs"). pos_ref_token("runtime_ref_ids").
+pos_ref_token("RuntimeReferenceField"). pos_ref_token("RuntimeStructuredResultSpec").
+pos_ref_token("RebaseResultCollectorSpec"). pos_ref_token("require_runtime_ref"). pos_ref_token("source_ref").
+pos_ref_token("source_ref_id"). pos_ref_token("lookup_ref"). pos_ref_token("visible_rows_ref").
+pos_ref_token("sys_id_ref"). pos_ref_token("validation_state_holder").
+pos_ref_token("validated_expires_at_holder"). pos_ref_token("ResolvedRefs").
+// pos_ref(n, x): n is an ast Name, parameter, attribute or str constant spelling token x.
+.decl pos_ref(n: node, x: symbol)
+pos_ref(n, x) :- ast_name(n, x), pos_ref_token(x).
+pos_ref(n, x) :- sig_param(_, _, n, _, _, _, _), text(n, x), pos_ref_token(x).
+pos_ref(n, x) :- attr_of(n, _, x), pos_ref_token(x).
+pos_ref(n, x) :- str_part(n, _, x, _, _), pos_ref_token(x).
+// pos_ref_at(w, x): token x at "path:line" w of a surface file.
+.decl pos_ref_at(w: symbol, x: symbol)
+pos_ref_at(cat(p, ":", to_string(l)), x) :- pos_ref(n, x), line(n, l), docof(n, d), pos_file(d, r), r != "allowlist",
+    doc(d, p, _).
+.violation POSTOP200(at: loc, where: symbol, token: symbol)
+    "{where}: post-op implementation references '{token}'; runtime refs must never reach post-ops"
+POSTOP200(@place("l2070_batching/post_op.py", 1), w, x) :- pos_ref_at(w, x).
+
+// ---- POSTOP203: the runtime verifier cannot be bypassed ---------------------------------------------------------------
+// The plugin reads the allowlist file only when it holds SIGNED_POST_OP_SYMBOLS or ALLOWLIST_SIGNATURE.
+.decl pos_allow_read(d: number)
+pos_allow_read(d) :- pos_file(d, "allowlist"), source(d, sp), text(sp, s),
+    match("(?s).*(SIGNED_POST_OP_SYMBOLS|ALLOWLIST_SIGNATURE).*", s).
+.decl pos_verifier(f: node)
+pos_verifier(f) :- pos_top("allowlist", f), kind(f, "function_definition"), def_name(f, "assert_post_op_symbol_signed").
+// pos_verify_line(f, l): a call of _post_op_allowlist_signature_valid or verify_allowlist at line l inside f.
+.decl pos_verify_line(f: node, l: number)
+pos_verify_line(f, l) :- pos_verifier(f), within(c, f), call_name(c, x),
+    (x = "_post_op_allowlist_signature_valid" ; x = "verify_allowlist"), line(c, l).
+.decl pos_bypass(why: symbol)
+pos_bypass("boolean opt-out") :- pos_top_assign("allowlist", _, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST").
+pos_bypass("verifier missing") :- !pos_verifier(_).
+pos_bypass("no signature verification") :- pos_verifier(f), !pos_verify_line(f, _).
+pos_bypass("early return") :- pos_verifier(f), pos_verify_line(f, _), v = min l : { pos_verify_line(f, l) },
+    within(r, f), kind(r, "return_statement"), line(r, k), k < v.
+.violation POSTOP203(at: loc, why: symbol) "assert_post_op_symbol_signed: runtime post-op signature enforcement: {why}"
+POSTOP203(@place("l2070_batching/post_op.py", 1), w) :- pos_bypass(w), pos_allow_read(_).
+
+// ---- the signed runtime registry ------------------------------------------------------------------------------------
+// pos_signed(e): an entry of the first module-level SIGNED_POST_OP_SYMBOLS assignment: a set, list or tuple of
+// strings, or one passed to a call (frozenset({…})).
+.decl pos_signed_value(v: node)
+pos_signed_value(v) :- pos_signed_assign(v1), !kind(v1, "call"), v = v1.
+pos_signed_value(v) :- pos_signed_assign(c), kind(c, "call"), field(c, "arguments", al), child(al, w, i),
+    !kind(w, "comment"), count : { child(al, z, j), j < i, !kind(z, "comment") } = 0, unparen(w, v).
+.decl pos_signed_assign(v: node)
+pos_signed_assign(v) :- pos_top_assign("allowlist", a, "SIGNED_POST_OP_SYMBOLS"),
+    !pos_earlier_assign(a, "SIGNED_POST_OP_SYMBOLS"), assign_value(a, v0), unparen(v0, v).
+.decl pos_earlier_assign(a: node, x: symbol)
+pos_earlier_assign(a, x) :- pos_top_assign(r, a, x), pos_top_assign(r, b, x), earlier(b, a).
+.decl pos_signed(e: symbol)
+pos_signed(e) :- pos_signed_value(v), (kind(v, "set") ; kind(v, "list") ; kind(v, "tuple")), child(v, c, _),
+    str_const(c, e), pos_allow_read(_).
+
+// POSTOP204: broad authority.
+.decl pos_broad(e: symbol)
+pos_broad("materializer.generic"). pos_broad("materializer.materialize_result").
+pos_broad("materializer.terminal_array"). pos_broad("materializer.terminal_object").
+pos_broad("materializer.terminal_scalar").
+.violation POSTOP204(at: loc, entry: symbol)
+    "{entry}: runtime post-op authority must name one exact assertion, decoder, or materializer operation"
+POSTOP204(@place("l2070_batching/post_op.py", 1), e) :- pos_signed(e),
+    ( !glob("{assertion.,decoder.DomainPostOpDecoderKind.,materializer.}**", e) ; pos_broad(e) ).
+
+// POSTOP205 / POSTOP206: the registry equals the closed interpreter's symbols.
+.decl pos_reachable(e: symbol)
+pos_reachable(e) :- pos_top("post_op", f), kind(f, "function_definition"), def_name(f, "post_op_runtime_symbol"),
+    within(s, f), str_part(s, _, e, _, _), glob("{assertion.,materializer.}**", e).
+pos_reachable(cat("decoder.", m)) :- pos_member("specs", "DomainPostOpDecoderKind", m).
+.violation POSTOP205(at: loc, entry: symbol) "{entry}: reachable exact post-op operation is absent from the signed runtime registry"
+POSTOP205(@place("l2070_batching/post_op.py", 1), e) :- pos_reachable(e), !pos_signed(e).
+.violation POSTOP206(at: loc, entry: symbol) "{entry}: signed runtime symbol has no reachable closed interpreter operation"
+POSTOP206(@place("l2070_batching/post_op.py", 1), e) :- pos_signed(e), !pos_reachable(e).
+
+// ---- the three signatures -------------------------------------------------------------------------------------------
+// Python's base64.b64decode drops characters outside the alphabet, so "…==\n\t!!!" still verifies: strip them.
+// POSTOP202: the runtime registry, signed as "post_op_runtime_allowlist" with ALLOWLIST_SIGNATURE: the first
+// module-level `ALLOWLIST_SIGNATURE: str = "…"` (or `= NEEDS_SIGNING` / `= UNSIGNED`); none reads as unsigned.
+allow_entry("pos_runtime", e) :- pos_signed(e).
+.decl pos_runtime_sig(s: symbol, i: number)
+pos_runtime_sig(s, i) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
+    assign_value(a, v), str_const(v, s), visit_index(a, i), pos_allow_read(_).
+pos_runtime_sig(x, i) :- pos_top_assign("allowlist", a, "ALLOWLIST_SIGNATURE"), field(a, "type", _),
+    assign_value(a, v), kind(v, "identifier"), text(v, x), (x = "NEEDS_SIGNING" ; x = "UNSIGNED"), visit_index(a, i),
+    pos_allow_read(_).
+allow_sig("pos_runtime", "post_op_runtime_allowlist", @replace_all(s, "[^A-Za-z0-9+/=]", "")) :- pos_runtime_sig(s, i),
+    i = min j : { pos_runtime_sig(_, j) }.
+allow_sig("pos_runtime", "post_op_runtime_allowlist", "NEEDS_SIGNING") :- !pos_runtime_sig(_, _).
+.violation POSTOP202(at: loc) "runtime post-op allowlist signature is invalid; exact executable post-op symbols require the maintainer signing key"
+POSTOP202(@place("l2070_batching/post_op.py", 1)) :- !allow_status("pos_runtime", "valid").
+
+// POSTOP201: the post-op surface, signed as "post_op_surface" with POST_OP_SURFACE_SIGNATURE.
+.decl pos_surface(e: symbol)
+pos_surface(m) :- pos_member("post_op", e, m), (e = "PostOpKind" ; e = "PostOpBehavior").
+pos_surface(m) :- pos_member("specs", "DomainPostOpDecoderKind", m).
+pos_surface(cat("post_op_factory.", x)) :- pos_top("post_op", f), kind(f, "function_definition"), !op(f, "async"),
+    def_name(f, x), suffix("_post_op", x).
+pos_surface(cat("post_op_spec.", x)) :- pos_class("specs", c, x), suffix("Spec", x), pos_dataclass(c).
+// pos_dataclass(c): decorated `@dataclass` or `@dataclass(…)`, by bare name.
+.decl pos_dataclass(c: node)
+pos_dataclass(c) :- field(w, "definition", c), child(w, dc, _), kind(dc, "decorator"), child(dc, e, 0),
+    ( kind(e, "identifier"), text(e, "dataclass") ;
+      kind(e, "call"), field(e, "function", f), kind(f, "identifier"), text(f, "dataclass") ).
+allow_entry("pos_surface", e) :- pos_surface(e).
+allow_sig("pos_surface", "post_op_surface", s) :- option("surfaceSignature", s).
+allow_sig("pos_surface", "post_op_surface",
+    "emKOwGOeajpPhSrYX3SEMcDDgJEjK05SpABfUYhg2WFXVJH4GzV55DwdK9Ddy6zisH4M5r1bh1T8OOkaWQYqBg==") :-
+    !option("surfaceSignature", _).
+.violation POSTOP201(at: loc) "post-op surface signature is invalid; additions to the post-op surface require the maintainer signing key"
+POSTOP201(@place("l2070_batching/post_op.py", 1)) :- !allow_status("pos_surface", "valid").
+
+// POSTOP001 / POSTOP002: every PostOpKind / PostOpBehavior member (of post_op.py or post_op_specs.py) has a fate.
+// The signed record is "member=fate" for every member, signed as "post_op_side_effects". A member without an
+// override is audit_required. When the record does not verify, no override is trusted.
+.decl pos_enum_member(m: symbol)
+pos_enum_member(m) :- pos_member(r, e, m), (r = "post_op" ; r = "specs"), (e = "PostOpKind" ; e = "PostOpBehavior").
+// POST_OP_FATE_OVERRIDES, or the option fateOverrides ("member=fate" items).
+.decl pos_override(m: symbol, fate: symbol)
+pos_override(m, f) :- option("fateOverrides", s), match("(?<m>[^=]*)=(?<f>.*)", s).
+pos_override(m, f) :- pos_default_override(m, f), !option("fateOverrides", _).
+.decl pos_default_override(m: symbol, fate: symbol)
+pos_default_override("PostOpBehavior.EXCEPTION_ONLY", "exception_only").
+pos_default_override("PostOpBehavior.TERMINAL_ARRAY", "keep_terminal").
+pos_default_override("PostOpBehavior.TERMINAL_OBJECT", "keep_terminal").
+pos_default_override("PostOpBehavior.TERMINAL_SCALAR", "keep_terminal").
+pos_default_override("PostOpKind.ASSERT_RESULT", "exception_only").
+pos_default_override("PostOpKind.MATERIALIZE_RESULT", "keep_terminal").
+.decl pos_debt(fate: symbol)
+pos_debt("audit_required"). pos_debt("delete_after_inline"). pos_debt("move_to_domain_step").
+pos_debt("move_to_plan_effect"). pos_debt("move_to_sql").
+.decl pos_fate(m: symbol, fate: symbol)   // under the overrides as written
+pos_fate(m, f) :- pos_enum_member(m), pos_override(m, f).
+pos_fate(m, "audit_required") :- pos_enum_member(m), !pos_override(m, _).
+allow_entry("pos_fates", cat(m, "=", f)) :- pos_fate(m, f).
+allow_sig("pos_fates", "post_op_side_effects", s) :- option("fatesSignature", s).
+allow_sig("pos_fates", "post_op_side_effects",
+    "O5p2GYtRWESKK6seL21Gfmhwt2BbRXEnKngA04J0vENAIfu6AjtJFZ19ohuzcRF5cudla5PLEZiRVdCvwyGKAw==") :-
+    !option("fatesSignature", _).
+.decl pos_trusted(m: symbol, fate: symbol)
+pos_trusted(m, f) :- pos_override(m, f), allow_status("pos_fates", "valid").
+.violation POSTOP001(at: loc, member: symbol) "{member}: post-op fate override no longer exists; remove it and re-sign"
+POSTOP001(@place("l2070_batching/post_op.py", 1), m) :- pos_trusted(m, _), !pos_enum_member(m).
+.violation POSTOP002(at: loc, member: symbol, fate: symbol) "{member}: post-op fate is {fate}; burn it down before approving"
+POSTOP002(@place("l2070_batching/post_op.py", 1), m, f) :- pos_enum_member(m), pos_trusted(m, f), pos_debt(f).
+POSTOP002(@place("l2070_batching/post_op.py", 1), m, "audit_required") :- pos_enum_member(m), !pos_trusted(m, _).
+
+// POSTOP000: the record does not verify, and nothing above fired. Untrusted overrides make every member debt, so
+// this is the case of no members at all.
+.violation POSTOP000(at: loc) "allowlist signature is invalid; rerun the signing command before treating this as clean"
+POSTOP000(@place("l2070_batching/post_op.py", 1)) :- !allow_status("pos_fates", "valid"), !pos_enum_member(_),
+    !pos_ref_at(_, _), !pos_bypass(_), !pos_signed(_), !pos_reachable(_), allow_status("pos_runtime", "valid"),
+    allow_status("pos_surface", "valid").
