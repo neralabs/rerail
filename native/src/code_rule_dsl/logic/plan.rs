@@ -3175,7 +3175,7 @@ fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::
     // 0046); in a corpus run only (kept plans), so T's golden plans are unchanged.
     let split;
     let corpus = PLANS.with(|p| p.borrow().is_some());
-    let prog: &Program = match if corpus { demand::split_negations(prog) } else { None } {
+    let prog: &Program = match if corpus { demand::split_negations(prog, &model) } else { None } {
         Some((p, demanded)) => {
             super::profile::decision("demand (decision 0046)", || {
                 format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))

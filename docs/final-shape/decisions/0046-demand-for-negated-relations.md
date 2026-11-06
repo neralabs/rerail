@@ -95,3 +95,54 @@ On s1000, serverplan_quality, with CPU = user + sys at load 32:
 
 - Converter: a `has` from a node whose kinds lie in the stop kinds converts to `nearest`. This is
   deferred.
+
+## Extension (2026-11-06): positive reads, and large scans
+
+In a combined run of all 100 converted rules, most join CPU went to relations built whole for every node of a kind
+and read in one place, where the reader already binds the key. For example:
+
+```text
+// 6.0M rows on the full corpus, read only here:
+m131($n) :- child($n, $c, _), node(_, $c, 1025, _, _), text($c, _).
+// m126 has 242k rows, so the result has at most 242k.
+m132($n) :- m126($n), m131($n).
+```
+
+These weren't demanded for two reasons: the read is positive, and `m131` doesn't start "from every node". The
+rewrite now covers both (`plan::demand`, module doc).
+
+**Which relations.** Relations as before, and also relations whose every rule is a scan: a base atom binds the key.
+The scan must be large. Its base atoms must reach at least 1/32 of the chunk's nodes, counted from the measured
+counts of the base relations and of the program's constants. A split adds strata (`pre_<i>`, `demand_<r>`), and
+each is opened in every chunk. Demanding every scan gave 264 relations, 1,288 strata and more instructions
+(742e9). Only the base counts are used, never estimates of derived relations, so the lesson "a structural guard,
+not statistics" still holds where it applied: derived cardinalities stay unjudged.
+
+**Which reads.** A negation is cut as before. A positive read is cut only where both hold:
+
+- a kept anchor binds all its variables;
+- every kept positive atom is an anchor, or the reader is itself demanded.
+
+An anchor is a derived relation, or a base atom with fewer than 1/32 of the nodes. A negation only filters, so the
+body less it is no larger than the reader's work. A positive read can be what kept the body small. This was
+measured: cutting `exists_10` from `x(n) :- inside_ks5(n, v), node(d, v, 1132, …), exists_10(d)` left
+`inside_ks5` from the rare kind 1132, which reached 18.4M rows in each of four `pre_<i>` (839e9 instructions). A
+text test isn't an anchor: `*[a-z]*` was estimated at 61k and matched 7.2M. Nor is a common kind (1025: 6M
+identifiers).
+
+**Retries.** A split that fails drops only the candidates that caused the failure, then retries. One component
+closing a cycle through a negation (`p65_m41`) had left all 100 rules without any demand.
+
+Full corpus (9,010 files), 100 rules in one run, memo off. Instructions retired, at load 35–50:
+
+| | instructions | relations demanded | strata |
+|---|---|---|---|
+| before (demand off: the cycle) | 748e9 | 0 | 645 |
+| retries | 690e9 | 33 | 781 |
+| retries, plus the two per-stratum fixes (T10 §2d) | 669e9 | 33 | 781 |
+| positive reads and large scans | 609e9 | 94 | 907 |
+
+There were 252 findings each time. The replay is unchanged (3988 273 266 0).
+
+Open: a relation keyed by a document (`exists_10`'s readers bind a document) still reads every node of each
+demanded document. Its demand saves only the documents not asked about.
