@@ -61,6 +61,22 @@ function releaseVersion({ root }) {
   execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe" });
 }
 
+describe("release-version.mjs, the pull request's description", () => {
+  it("ends what it releases with the checklist to tick before merging, every box unticked", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    const checklist = body.slice(body.indexOf("## Before merging"));
+    expect(body.indexOf(`\`${packName("fresh")}\``)).toBeLessThan(body.indexOf("## Before merging"));
+    expect(checklist.match(/^- \[ \] \*\*.+$/gmu)).toHaveLength(7);
+    for (const item of ["End-user testing", "Release notes", "Documentation", "`context7.json`", "`docs/internal-testing.md`", "Scrub", "npm package pages"]) {
+      expect(checklist).toContain(`- [ ] **${item}.**`);
+    }
+  });
+});
+
 describe("release-version.mjs, each released pack's rules", () => {
   it("lists every rule of a pack never released as added", () => {
     const repo = repository();

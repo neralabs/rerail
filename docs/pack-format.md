@@ -849,8 +849,8 @@ Core's `v*` release (`release.yml`) is separate.
   Changed), then the changesets' entries in file-name order. A `removed-` changeset opening with a rule replaces that
   rule's generated entry, so the notes say why it left. Sections already released keep the format they went out in. A pending changeset with no
   type fails the run, naming the file: one `changeset version` bumps every pack, so no pack can wait for its rename.
-- Its description lists every package and version it releases, with changelog entries. Review it like any pull
-  request.
+- Its description lists every package and version it releases, with changelog entries, then the checklist to tick
+  before merging ([release.md](release.md#before-merging)). Review it like any pull request.
 - A newer push cancels an older run; with nothing releasable, an open Release pull request is closed.
 - CI runs only licence and lint jobs on it: `release-packs.yml` validates and packs every published pack on it, and
   `main` runs everything after merge.

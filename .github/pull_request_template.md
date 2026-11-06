@@ -18,7 +18,14 @@ Fixes #
       fix with its test)
 - [ ] `npm run check` and `npm test` pass (`npm run build` first)
 - [ ] `npm run check:licenses` and `reuse lint` pass
-- [ ] Tests cover the behavior this changes, and the docs that describe it are updated
+- [ ] Tests cover the behavior this changes
+- [ ] Docs updated? A change to commands, coding agents or setup updates `README.md` and `docs/` in this pull request,
+      and `context7.json` where it names what changed
+- [ ] A feature that enters, graduates from or leaves internal testing updates `docs/internal-testing.md`
+- [ ] No internal name, customer name, internal URL or old product name (such as "Tempo") in the code, the docs, the
+      commits or this description
+- [ ] A change to what a package does keeps its npm page current: its `README.md`, and `keywords` and `repository` in
+      its `package.json`
 - [ ] A change to a pack under `packs/` adds a changeset
 - [ ] A change to what the core package ships adds an entry file in `.changelog/`, named for its change type
 - [ ] The rule-file format, the API and installed packs keep working, or this says above what changes and how
