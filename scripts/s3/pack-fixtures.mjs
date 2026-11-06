@@ -1067,6 +1067,60 @@ export function reportArchives(lines, { env = {}, summary = true } = {}) {
   }
 }
 
+/** Where one tool-pack's archive comes from: nothing (publish/ alone), the cache or S3; undefined when a dry run would fetch it. */
+function fetchArchive(root, { toolPack, lock, published }, { dryRun, aws, log, signIn, discarded }) {
+  if (lock === undefined) return { toolPack, lock, entries: [], source: "publish/", published };
+  const fromCache = cachedArchive(root, toolPack, lock, dryRun);
+  if (fromCache.discarded !== undefined) discarded.push(fromCache.discarded);
+  if (fromCache.entries !== undefined) return { toolPack, lock, entries: fromCache.entries, source: "cache", published };
+  if (dryRun) {
+    log(`${fromCache.discarded === undefined ? "" : `would delete ${fromCache.discarded}, which is not the archive ${lock.label} names, and `}would fetch s3://${BUCKET}/${archiveKey(toolPack, lock.sha256)} (${lock.label})`);
+    return undefined;
+  }
+  signIn();
+  return { toolPack, lock, entries: downloadArchive(root, aws, toolPack, lock), source: "S3", published };
+}
+
+/** No write may go through a symlink: every check runs before the first write. Returns what each tool directory holds now. */
+function checkExtractionPaths(root, fetched) {
+  const onDisk = new Map();
+  const directories = new Set();
+  for (const { toolPack, entries, published } of fetched) {
+    onDisk.set(toolPack.directory, toolPackFiles(root, toolPack.directory));
+    for (const entry of [...entries, ...published.entries]) {
+      const path = `${toolPack.directory}/${entry.path}`;
+      directories.add(path.slice(0, path.lastIndexOf("/")));
+    }
+  }
+  for (const directory of [...directories].sort(byBytes)) refuseSymlinkedDirectories(root, directory);
+  return onDisk;
+}
+
+function extractionNotes(published, stale, kept) {
+  return [
+    ...(published.entries.length > 0 ? [`${published.entries.length} file(s) from ${PUBLISH_DIRECTORY}/ laid over it`] : []),
+    ...(published.foreign.length > 0 ? [`left out ${published.foreign.length} ${PUBLISH_DIRECTORY}/ file(s) that are no pack test data, which publishing refuses: ${published.foreign.slice(0, 5).join(", ")}`] : []),
+    ...(stale.length > kept.length ? [`deleted ${stale.length - kept.length} stale derived file(s) the archive lacks`] : []),
+    ...(kept.length > 0 ? [`kept ${kept.length} authored file(s) the archive lacks (stage them with npm run fixtures:stage to publish them, or delete them): ${kept.slice(0, 5).join(", ")}`] : []),
+  ];
+}
+
+/** Writes one tool-pack's archive and publish/ into its tool directory, and deletes the derived files neither holds. */
+function extractFetched(root, { toolPack, lock, entries, source, published }, { onDisk, authored, log }) {
+  const extracted = new Map([...entries, ...published.entries].map((entry) => [entry.path, entry.bytes]));
+  const stale = onDisk.get(toolPack.directory).filter((path) => !extracted.has(path));
+  const kept = stale.filter((path) => packFixtureKind(`${toolPack.directory}/${path}`, authored) === "authored");
+  for (const path of stale) if (!kept.includes(path)) rmSync(join(root, toolPack.directory, path));
+  for (const [path, bytes] of extracted) {
+    const absolute = join(root, toolPack.directory, path);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, bytes);
+  }
+  const notes = extractionNotes(published, stale, kept);
+  const from = lock === undefined ? `no archive (no ${TEST_DATA_LOCK} yet)` : `archive ${lock.sha256.slice(0, 12)} (${source})`;
+  log(`${toolPack.directory}: ${entries.length} file(s) from ${from}${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
+}
+
 /**
  * Fetches the archive each selected tool-pack's test-data.lock names (from ARCHIVE_CACHE when a verified copy is there,
  * otherwise from S3 into it), verifies it against the lock, and extracts it into the tool directory, then lays the
@@ -1089,65 +1143,14 @@ export function pull({ root = ROOT, pack, tool, dryRun = false, aws = runAws, lo
   });
   const discarded = [];
   const signIn = signer(aws, discarded, "archive");
-  const fetched = [];
-  for (const { toolPack, lock, published } of locked) {
-    if (lock === undefined) {
-      fetched.push({ toolPack, lock, entries: [], source: "publish/", published });
-      continue;
-    }
-    const fromCache = cachedArchive(root, toolPack, lock, dryRun);
-    if (fromCache.discarded !== undefined) discarded.push(fromCache.discarded);
-    let entries = fromCache.entries;
-    let source = "cache";
-    if (entries === undefined) {
-      source = "S3";
-      if (dryRun) {
-        log(`${fromCache.discarded === undefined ? "" : `would delete ${fromCache.discarded}, which is not the archive ${lock.label} names, and `}would fetch s3://${BUCKET}/${archiveKey(toolPack, lock.sha256)} (${lock.label})`);
-        continue;
-      }
-      signIn();
-      entries = downloadArchive(root, aws, toolPack, lock);
-    }
-    fetched.push({ toolPack, lock, entries, source, published });
-  }
+  const fetched = locked.flatMap((item) => fetchArchive(root, item, { dryRun, aws, log, signIn, discarded }) ?? []);
   const fetchedSamples = fetchSamples(root, selected, { dryRun, aws, signIn, discarded, log });
   if (dryRun) {
     log(`dry run: ${fetched.length} of ${locked.length} archive(s) and ${fetchedSamples.filter(({ entries }) => entries !== undefined).length} of ${fetchedSamples.length} samples archive(s) are in ${ARCHIVE_CACHE}; nothing was extracted`);
     return { toolPacks: [], samples: [] };
   }
-
-  // No write may go through a symlink: every check runs before the first write.
-  const onDisk = new Map();
-  const directories = new Set();
-  for (const { toolPack, entries, published } of fetched) {
-    onDisk.set(toolPack.directory, toolPackFiles(root, toolPack.directory));
-    for (const entry of [...entries, ...published.entries]) {
-      const path = `${toolPack.directory}/${entry.path}`;
-      directories.add(path.slice(0, path.lastIndexOf("/")));
-    }
-  }
-  for (const directory of [...directories].sort(byBytes)) refuseSymlinkedDirectories(root, directory);
-
-  const authored = authoredListing(root);
-  for (const { toolPack, lock, entries, source, published } of fetched) {
-    const extracted = new Map([...entries, ...published.entries].map((entry) => [entry.path, entry.bytes]));
-    const stale = onDisk.get(toolPack.directory).filter((path) => !extracted.has(path));
-    const kept = stale.filter((path) => packFixtureKind(`${toolPack.directory}/${path}`, authored) === "authored");
-    for (const path of stale) if (!kept.includes(path)) rmSync(join(root, toolPack.directory, path));
-    for (const [path, bytes] of extracted) {
-      const absolute = join(root, toolPack.directory, path);
-      mkdirSync(dirname(absolute), { recursive: true });
-      writeFileSync(absolute, bytes);
-    }
-    const notes = [
-      ...(published.entries.length > 0 ? [`${published.entries.length} file(s) from ${PUBLISH_DIRECTORY}/ laid over it`] : []),
-      ...(published.foreign.length > 0 ? [`left out ${published.foreign.length} ${PUBLISH_DIRECTORY}/ file(s) that are no pack test data, which publishing refuses: ${published.foreign.slice(0, 5).join(", ")}`] : []),
-      ...(stale.length > kept.length ? [`deleted ${stale.length - kept.length} stale derived file(s) the archive lacks`] : []),
-      ...(kept.length > 0 ? [`kept ${kept.length} authored file(s) the archive lacks (stage them with npm run fixtures:stage to publish them, or delete them): ${kept.slice(0, 5).join(", ")}`] : []),
-    ];
-    const from = lock === undefined ? `no archive (no ${TEST_DATA_LOCK} yet)` : `archive ${lock.sha256.slice(0, 12)} (${source})`;
-    log(`${toolPack.directory}: ${entries.length} file(s) from ${from}${notes.length > 0 ? `; ${notes.join("; ")}` : ""}`);
-  }
+  const extraction = { onDisk: checkExtractionPaths(root, fetched), authored: authoredListing(root), log };
+  for (const item of fetched) extractFetched(root, item, extraction);
   extractSamples(root, fetchedSamples, { dryRun, log });
   reportArchives(archiveLines([
     ...fetched.filter(({ lock }) => lock !== undefined).map(({ toolPack, lock }) => ({ toolPack, kind: "test-data", sha256: lock.sha256 })),
@@ -1545,32 +1548,13 @@ function checkProvenance(toolPack, entries, at) {
 export const PUBLISH_MANIFEST_FORMAT = "rerail.pack-data-publish/v1";
 
 /**
- * The publish workflow's prep (`pack --from <commit>`): archives every tool-pack's publish/ in the commit `from` names,
- * reading nothing of it but blobs (git plumbing in the trusted checkout at `root`, main's; the commit is never checked
- * out and none of its code runs). Per tool-pack and kind present in its publish/, and, for an overlay, per tool-pack
- * with a test-data.lock whose UPSTREAM.md lists files as Rerail's at the merge base that the commit no longer lists
- * (.github/workflows/pack-data-publish-request.yml mirrors this trigger):
- *
- * - test data (`publish/<path>`): overlay (default): the archive the commit's test-data.lock names, less the files the
- *   merge base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; `replace`:
- *   publish/ alone;
- * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, each checked against
- *   its repository's licence files at its commit (checkLicenceTexts, reading GitHub through `gh` into the checkout's
- *   `.rerail/pack-data/licences/`), then laid over the archive the commit's samples.lock names, or alone with `replace`.
- *
- * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
- * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
- * takes (licenceAllowed): test data by sourcesAt, and samples by their labels' `source.license`; a failure lists every
- * file and licence before anything is written. Then each archive is written compressed under `out` (its key less
- * ARCHIVE_PREFIX), the manifest (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to
- * `summary`, when given. A commit with neither a publish/ nor a removed UPSTREAM.md row fails: nothing to publish.
+ * The commit `pack --from` reads, through git plumbing in the trusted checkout at `root`, and the base archives it lays
+ * its publish/ over.
  */
-export async function packFrom({ root = ROOT, from, replace = false, out, manifest, summary, aws = runAws, log = console.log } = {}) {
-  if (out === undefined) throw new Error("pack --from needs --out <dir>, where the archives are written");
+function publishCommit({ root, from, aws, log }) {
   const commit = resolveCommit(root, from);
   const at = `${from} (${commit.slice(0, 12)})`;
   const tree = treeEntries(root, commit);
-  const requests = publishRequests(tree, at);
   const blob = (path) => {
     const { mode, oid } = tree.get(path);
     if (!REGULAR_FILE_MODES.has(mode)) throw new Error(`${path} at ${at} is not a regular file (mode ${mode})`);
@@ -1579,7 +1563,6 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
   const lockAt = (label) => (tree.has(label) ? { label: `${label} at ${at}`, ...parseLock(blob(label).toString("utf8"), `${label} at ${at}`) } : undefined);
   const discarded = [];
   const signIn = signer(aws, discarded, "archive");
-  const licensed = sourcesAt(tree, blob);
 
   let mergeBase;
   /** The tree of the merge base of HEAD and the commit, read once. */
@@ -1605,19 +1588,6 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
     const kept = new Set(listing(tree));
     return new Set(listing(baseTree()).filter((path) => !kept.has(path) && path.startsWith(`${toolPack.directory}/`)));
   };
-  // An overlay drops what a removed UPSTREAM.md row listed, so a commit that only removes rows is a request too: for
-  // each tool directory with a test-data.lock whose UPSTREAM.md lists fewer authored files than at the merge base.
-  if (!replace) {
-    for (const path of new Set([...tree.keys(), ...baseTree().keys()])) {
-      const match = TOOL_RECORD.exec(path);
-      if (match === null || !TOOL_ID.test(match[1]) || !TOOL_ID.test(match[2])) continue;
-      const toolPack = namedToolPack(match[1], match[2]);
-      if (requests.has(toolPack.directory) || !tree.has(`${toolPack.directory}/${TEST_DATA_LOCK}`) || unlisted(toolPack).size === 0) continue;
-      requests.set(toolPack.directory, { toolPack, testData: [], samples: [], paths: [] });
-    }
-  }
-  if (requests.size === 0) throw new Error(`${at} has no ${PUBLISH_DIRECTORY}/ in any packs/<pack>/upstream/<tool>/ and removes no UPSTREAM.md row: nothing to publish`);
-
   /** The verified entries of the base archive `lock` names (from ARCHIVE_CACHE, else S3); [] with `optional` when S3 lacks a test data archive. */
   const baseEntries = (toolPack, lock, kind, optional) => {
     if (kind === "samples") return samplesArchive(root, toolPack, lock, { dryRun: false, aws, signIn, discarded, log }).entries;
@@ -1631,80 +1601,162 @@ export async function packFrom({ root = ROOT, from, replace = false, out, manife
     }
     return downloadArchive(root, aws, toolPack, lock);
   };
+  return { root, commit, at, tree, blob, lockAt, baseTree, unlisted, baseEntries };
+}
 
-  const allowed = licenceAllowlist();
-  const builds = [];
-  const refused = [];
-  for (const { toolPack, testData, samples } of [...requests.values()].sort((a, b) => byBytes(a.toolPack.directory, b.toolPack.directory))) {
-    const kinds = [
-      ...(testData.length > 0 || (!replace && unlisted(toolPack).size > 0) ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData }] : []),
-      ...(samples.length > 0 ? [{ kind: "samples", name: SAMPLES_LOCK, files: samples }] : []),
-    ];
-    for (const { kind, name, files } of kinds) {
-      const label = `${toolPack.directory}/${name}`;
-      const lock = lockAt(label);
-      const base = new Map(lock === undefined ? [] : baseEntries(toolPack, lock, kind, replace).map((entry) => [entry.path, entry.bytes]));
-      const blobs = gitBlobs(root, files.map(({ oid }) => oid));
-      let published = files.map(({ path, oid }) => ({ path, bytes: blobs.get(oid) }));
-      if (kind === "samples") {
-        const { checkLicenceTexts, licenceCache, publishedSamples } = await import("../samples/publish.ts");
-        published = publishedSamples(published);
-        checkLicenceTexts(published, licenceCache(root));
-      }
-      const next = new Map();
-      if (!replace) {
-        const gone = kind === "test-data" && base.size > 0 ? unlisted(toolPack) : new Set();
-        for (const [path, bytes] of base) if (!gone.has(`${toolPack.directory}/${path}`)) next.set(path, bytes);
-      }
-      for (const { path, bytes } of published) next.set(path, bytes);
-      const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
-      if (kind === "test-data") checkProvenance(toolPack, entries, at);
-      const archive = buildArchive(entries);
-      const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
-      const compressed = compressArchive(archive.tar);
-      // The archive passes the check upload and confirm make, before anything asks for approval.
-      if (kind === "samples") verifiedSamples(compressed, { label, ...archive }, key);
-      else verifiedEntries(compressed, { label, ...archive }, key, toolPack.directory);
-      const { licenceOf, sources } = kind === "samples" ? sampleLicences(entries) : { licenceOf: (path) => licensed(toolPack.directory, path), sources: undefined };
-      const licences = {};
-      for (const { path } of entries) {
-        const licence = licenceOf(path);
-        licences[licence] = (licences[licence] ?? 0) + 1;
-        if (!licenceAllowed(licence, allowed)) refused.push(`${toolPack.directory}/${kind === "samples" ? `${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/` : ""}${path}: ${licence}`);
-      }
-      builds.push({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes: archiveChanges(base, next) });
-    }
+/** The tool-pack an UPSTREAM.md's path names, if it is one and its names are tool ids. */
+function toolPackOfRecord(path) {
+  const match = TOOL_RECORD.exec(path);
+  return match === null || !TOOL_ID.test(match[1]) || !TOOL_ID.test(match[2]) ? undefined : namedToolPack(match[1], match[2]);
+}
+
+/**
+ * An overlay drops what a removed UPSTREAM.md row listed, so a commit that only removes rows is a request too: for each
+ * tool directory with a test-data.lock whose UPSTREAM.md lists fewer authored files than at the merge base.
+ */
+function addRowRemovalRequests({ tree, baseTree, unlisted }, requests) {
+  for (const path of new Set([...tree.keys(), ...baseTree().keys()])) {
+    const toolPack = toolPackOfRecord(path);
+    if (toolPack === undefined) continue;
+    if (requests.has(toolPack.directory) || !tree.has(`${toolPack.directory}/${TEST_DATA_LOCK}`) || unlisted(toolPack).size === 0) continue;
+    requests.set(toolPack.directory, { toolPack, testData: [], samples: [], paths: [] });
   }
+}
+
+/** The archives one tool-pack's request makes: test data, then samples. */
+function publishedKinds({ unlisted }, { toolPack, testData, samples }, replace) {
+  return [
+    ...(testData.length > 0 || (!replace && unlisted(toolPack).size > 0) ? [{ kind: "test-data", name: TEST_DATA_LOCK, files: testData }] : []),
+    ...(samples.length > 0 ? [{ kind: "samples", name: SAMPLES_LOCK, files: samples }] : []),
+  ];
+}
+
+/** The files of a request at the commit, samples validated and checked against their repositories' licence files. */
+async function publishedEntriesOf(root, kind, files) {
+  const blobs = gitBlobs(root, files.map(({ oid }) => oid));
+  const published = files.map(({ path, oid }) => ({ path, bytes: blobs.get(oid) }));
+  if (kind !== "samples") return published;
+  const { checkLicenceTexts, licenceCache, publishedSamples } = await import("../samples/publish.ts");
+  const checked = publishedSamples(published);
+  checkLicenceTexts(checked, licenceCache(root));
+  return checked;
+}
+
+/** What an overlay keeps of the base archive: all but the files a removed UPSTREAM.md row listed. */
+function overlaidBase({ unlisted }, toolPack, kind, base) {
+  const gone = kind === "test-data" && base.size > 0 ? unlisted(toolPack) : new Set();
+  return [...base].filter(([path]) => !gone.has(`${toolPack.directory}/${path}`));
+}
+
+/** The archive compressed, after the check upload and confirm make, before anything asks for approval. */
+function verifiedPublishArchive(toolPack, kind, label, archive) {
+  const key = kind === "samples" ? samplesKey(toolPack, archive.sha256) : archiveKey(toolPack, archive.sha256);
+  const compressed = compressArchive(archive.tar);
+  if (kind === "samples") verifiedSamples(compressed, { label, ...archive }, key);
+  else verifiedEntries(compressed, { label, ...archive }, key, toolPack.directory);
+  return { key, compressed };
+}
+
+/** Each licence's file count, refusing into `checks.refused` every file under one the allowlist does not take. */
+function publishLicences(toolPack, kind, entries, { licensed, allowed, refused }) {
+  const { licenceOf, sources } = kind === "samples" ? sampleLicences(entries) : { licenceOf: (path) => licensed(toolPack.directory, path), sources: undefined };
+  const shownUnder = kind === "samples" ? `${PUBLISH_DIRECTORY}/${SAMPLES_IN_PUBLISH}/` : "";
+  const licences = {};
+  for (const { path } of entries) {
+    const licence = licenceOf(path);
+    licences[licence] = (licences[licence] ?? 0) + 1;
+    if (!licenceAllowed(licence, allowed)) refused.push(`${toolPack.directory}/${shownUnder}${path}: ${licence}`);
+  }
+  return { licences, sources };
+}
+
+/** One archive of one tool-pack, built and checked but not yet written. */
+async function buildPublishArchive(source, toolPack, { kind, name, files }, { replace, ...checks }) {
+  const label = `${toolPack.directory}/${name}`;
+  const lock = source.lockAt(label);
+  const base = new Map(lock === undefined ? [] : source.baseEntries(toolPack, lock, kind, replace).map((entry) => [entry.path, entry.bytes]));
+  const published = await publishedEntriesOf(source.root, kind, files);
+  const next = new Map(replace ? [] : overlaidBase(source, toolPack, kind, base));
+  for (const { path, bytes } of published) next.set(path, bytes);
+  const entries = [...next].map(([path, bytes]) => ({ path, bytes }));
+  if (kind === "test-data") checkProvenance(toolPack, entries, source.at);
+  const archive = buildArchive(entries);
+  const { key, compressed } = verifiedPublishArchive(toolPack, kind, label, archive);
+  const { licences, sources } = publishLicences(toolPack, kind, entries, checks);
+  return { kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes: archiveChanges(base, next) };
+}
+
+/** Every request's archives; a file under a licence the allowlist does not take fails them all, listing every such file. */
+async function buildPublishArchives(source, requests, { licensed, replace }) {
+  const checks = { licensed, replace, allowed: licenceAllowlist(), refused: [] };
+  const builds = [];
+  for (const request of [...requests.values()].sort((a, b) => byBytes(a.toolPack.directory, b.toolPack.directory))) {
+    for (const kind of publishedKinds(source, request, replace)) builds.push(await buildPublishArchive(source, request.toolPack, kind, checks));
+  }
+  const { refused } = checks;
   if (refused.length > 0) {
     throw new Error(`${refused.length} file(s) going to S3 are under a licence ${LICENCE_ALLOWLIST} does not take (an \`A OR B\` passes when either side is on it), so nothing was packed and no approval is asked:\n${refused.map((line) => `  ${line}`).join("\n")}`);
   }
+  return builds;
+}
 
-  const objects = builds.map(({ kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes }) => {
-    const file = join(out, key.slice(ARCHIVE_PREFIX.length));
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, compressed);
-    return {
-      kind,
-      pack: toolPack.pack,
-      tool: toolPack.tool,
-      lock: label,
-      key,
-      sha256: archive.sha256,
-      files: archive.files,
-      bytes: archive.bytes,
-      compressedBytes: compressed.length,
-      lockText: lockText(archive),
-      base: lock?.sha256 ?? null,
-      licences: Object.fromEntries(Object.entries(licences).sort(([a], [b]) => byBytes(a, b))),
-      ...(sources === undefined ? {} : { sources }),
-      ...changes,
-    };
-  });
+/** Writes one archive under `out` (its key less ARCHIVE_PREFIX) and returns its row of the manifest. */
+function writePublishObject(out, { kind, toolPack, label, lock, key, archive, compressed, licences, sources, changes }) {
+  const file = join(out, key.slice(ARCHIVE_PREFIX.length));
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, compressed);
+  return {
+    kind,
+    pack: toolPack.pack,
+    tool: toolPack.tool,
+    lock: label,
+    key,
+    sha256: archive.sha256,
+    files: archive.files,
+    bytes: archive.bytes,
+    compressedBytes: compressed.length,
+    lockText: lockText(archive),
+    base: lock?.sha256 ?? null,
+    licences: Object.fromEntries(Object.entries(licences).sort(([a], [b]) => byBytes(a, b))),
+    ...(sources === undefined ? {} : { sources }),
+    ...changes,
+  };
+}
+
+/**
+ * The publish workflow's prep (`pack --from <commit>`): archives every tool-pack's publish/ in the commit `from` names,
+ * reading nothing of it but blobs (git plumbing in the trusted checkout at `root`, main's; the commit is never checked
+ * out and none of its code runs). Per tool-pack and kind present in its publish/, and, for an overlay, per tool-pack
+ * with a test-data.lock whose UPSTREAM.md lists files as Rerail's at the merge base that the commit no longer lists
+ * (.github/workflows/pack-data-publish-request.yml mirrors this trigger):
+ *
+ * - test data (`publish/<path>`): overlay (default): the archive the commit's test-data.lock names, less the files the
+ *   merge base's UPSTREAM.md listed as Rerail's and the commit's no longer lists, overlaid with publish/; `replace`:
+ *   publish/ alone;
+ * - samples (`publish/samples/<path>`): validated by scripts/samples/publish.ts's publishedSamples, each checked against
+ *   its repository's licence files at its commit (checkLicenceTexts, reading GitHub through `gh` into the checkout's
+ *   `.rerail/pack-data/licences/`), then laid over the archive the commit's samples.lock names, or alone with `replace`.
+ *
+ * Base archives come from ARCHIVE_CACHE or S3 (a read). A test data archive must carry a provenance.json whose `files`
+ * keys are its other paths, and a LICENSES.md (checkProvenance). Every file going to S3 must be under a licence the allowlist
+ * takes (licenceAllowed): test data by sourcesAt, and samples by their labels' `source.license`; a failure lists every
+ * file and licence before anything is written. Then each archive is written compressed under `out` (its key less
+ * ARCHIVE_PREFIX), the manifest (PUBLISH_MANIFEST_FORMAT) to `manifest` and the approver's summary (publishSummary) to
+ * `summary`, when given. A commit with neither a publish/ nor a removed UPSTREAM.md row fails: nothing to publish.
+ */
+export async function packFrom({ root = ROOT, from, replace = false, out, manifest, summary, aws = runAws, log = console.log } = {}) {
+  if (out === undefined) throw new Error("pack --from needs --out <dir>, where the archives are written");
+  const source = publishCommit({ root, from, aws, log });
+  const requests = publishRequests(source.tree, source.at);
+  const licensed = sourcesAt(source.tree, source.blob);
+  if (!replace) addRowRemovalRequests(source, requests);
+  if (requests.size === 0) throw new Error(`${source.at} has no ${PUBLISH_DIRECTORY}/ in any packs/<pack>/upstream/<tool>/ and removes no UPSTREAM.md row: nothing to publish`);
+  const builds = await buildPublishArchives(source, requests, { licensed, replace });
   const result = {
     format: PUBLISH_MANIFEST_FORMAT,
-    commit,
+    commit: source.commit,
     replace,
-    objects,
+    objects: builds.map((build) => writePublishObject(out, build)),
     remove: [...requests.values()].flatMap(({ paths }) => paths).sort(byBytes),
   };
   if (manifest !== undefined) {

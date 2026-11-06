@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { chooseEngineSocketPath, ingestEngineEvent, preparePrivateDirectory, startEngineService } from "../../src/runtime/engine-service.js";
@@ -33,6 +35,49 @@ describe.runIf(process.platform !== "win32")("engine service socket directory", 
     } finally {
       await service.close();
     }
+  });
+
+  it("clears the socket file a killed daemon left behind, and listens there", async () => {
+    const directory = join(await temporaryRoot(), "run");
+    await mkdir(directory, { mode: 0o700 });
+    const socketPath = join(directory, "engine.sock");
+    // A daemon killed with SIGKILL never closes its server, so its socket file outlives it.
+    const killed = spawnSync(process.execPath, [
+      "-e",
+      "require('node:net').createServer().listen(process.argv[1], () => process.kill(process.pid, 'SIGKILL'))",
+      socketPath,
+    ]);
+    expect(killed.signal).toBe("SIGKILL");
+    expect((await lstat(socketPath)).isSocket()).toBe(true);
+    const service = await startEngineService({ socketPath, storageRoot: join(directory, "state") });
+    try {
+      await expect(ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "end", sessionId: "s" })).rejects.toThrow(/\(400\)/u);
+    } finally {
+      await service.close();
+    }
+  });
+
+  it("leaves a socket a live process answers on alone, and names it as a running daemon's", async () => {
+    const directory = join(await temporaryRoot(), "run");
+    await mkdir(directory, { mode: 0o700 });
+    const socketPath = join(directory, "engine.sock");
+    const live = createServer(socket => socket.end());
+    await new Promise<void>(resolve => live.listen(socketPath, resolve));
+    try {
+      await expect(startEngineService({ socketPath, storageRoot: join(directory, "state") })).rejects.toThrow(/in use by a running daemon/u);
+      expect((await lstat(socketPath)).isSocket()).toBe(true);
+    } finally {
+      await new Promise<void>(resolve => live.close(() => resolve()));
+    }
+  });
+
+  it("leaves a file that is not a socket alone, and says so", async () => {
+    const directory = join(await temporaryRoot(), "run");
+    await mkdir(directory, { mode: 0o700 });
+    const socketPath = join(directory, "engine.sock");
+    await writeFile(socketPath, "not a socket");
+    await expect(startEngineService({ socketPath, storageRoot: join(directory, "state") })).rejects.toThrow(/not a socket/u);
+    expect((await lstat(socketPath)).isFile()).toBe(true);
   });
 
   it("refuses a directory that others may write, and listens nowhere", async () => {

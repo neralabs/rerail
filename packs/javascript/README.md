@@ -353,7 +353,7 @@ Relational operators (<, >, <=, >=) are only checked when enforceForOrderingRela
 
 ### `eslint-no-unsafe-optional-chaining`
 
-Short-circuit propagates through parentheses, await, ||/??/&& operands, the last sequence element and ternary branches. Unsafe positions: callee, member object, tagged template, new, destructuring source, extends, for-of, non-object spread, in/instanceof, with. Arithmetic on optional chains only with disallowArithmeticOperators (off by default).
+Short-circuit propagates through parentheses, await, ||/??/&& operands, the last sequence element and ternary branches. Unsafe positions: callee, member object, tagged template, new, destructuring source, extends, for-of, spread outside an object literal or JSX spread attribute, in/instanceof, with. Arithmetic on optional chains only with disallowArithmeticOperators (off by default).
 
 ### `eslint-no-unused-expressions`
 

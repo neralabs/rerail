@@ -33,7 +33,9 @@ body[data-page="sessions"] #content,body[data-page="sessions"] #content > div{fl
 .sess > section .shead{position:sticky;top:0;z-index:2;background:var(--card)}
 .sess > section .scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .spick{display:none}
-@media (max-width:900px){
+/* Under 1180px the sidebar and the 300px list leave the transcript too little room (at 901px a message got about 20px
+ * and split every word), so the list folds into the Session picker, as it does beside an open sheet. */
+@media (max-width:1180px){
   .sess{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
   .sess > aside,.sess > section{min-width:0}
   .sess > aside .ssearch,.sess > aside .chips,.sess > aside .slist,.sess > aside .empty{display:none}
@@ -113,7 +115,7 @@ body[data-panel="open"] .sess > aside{display:none}
 .turn{display:block;padding:8px 0}
 .msgrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:0 10px;align-items:start;padding:3px 0}
 .msgrow .who{font-size:12px;font-weight:600;color:var(--muted-foreground);line-height:22px;white-space:nowrap}
-.msgrow .msg{font-size:14px;line-height:22px;max-width:74ch;min-width:0;overflow-wrap:anywhere;white-space:pre-line}
+.msgrow .msg{font-size:14px;line-height:22px;max-width:74ch;min-width:0;overflow-wrap:break-word;white-space:pre-line}
 .msgrow.u .msg{background:var(--brand-subtle);border-radius:var(--radius-lg);padding:5px 10px;font-weight:500;margin:-1px 0}
 .msgrow .mt{font-family:var(--font-mono);font-size:11px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;padding-right:8px}
 .corr{margin:6px 0 6px 58px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}

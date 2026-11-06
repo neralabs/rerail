@@ -64,21 +64,40 @@ export function analyse(repo) {
   function runCommand(cwd, tokens, stack) {
     let [program, ...args] = tokens;
     if (program === "npx" || program === "exec") [program, ...args] = args;
-    if (program === undefined) return [];
-    if (program === "npm") return runNpm(cwd, args, stack);
-    if (program === "vitest") return [vitest(cwd, args)];
-    if (program === "playwright" && args[0] === "test") return [playwright(cwd, args.slice(1))];
-    if (program === "node" || program === "tsx") return runNode(cwd, args);
-    if (program === "pytest" || ((program === "python" || program === "python3") && args[0] === "-m" && args[1] === "pytest")) {
-      const paths = program === "pytest" ? args : args.slice(2);
-      return paths.filter((arg) => !arg.startsWith("-")).map((arg) => ({ kind: "tests", path: join(cwd, arg) }));
+    return program === undefined ? [] : runProgram(cwd, program, args, stack);
+  }
+
+  function runProgram(cwd, program, args, stack) {
+    switch (program) {
+      case "npm":
+        return runNpm(cwd, args, stack);
+      case "vitest":
+        return [vitest(cwd, args)];
+      case "playwright":
+        return args[0] === "test" ? [playwright(cwd, args.slice(1))] : [];
+      case "node":
+      case "tsx":
+        return runNode(cwd, args);
+      case "pytest":
+        return pytestPaths(cwd, args);
+      case "python":
+      case "python3":
+        return args[0] === "-m" && args[1] === "pytest" ? pytestPaths(cwd, args.slice(2)) : scriptFile(cwd, args);
+      case "bash":
+      case "sh":
+        return scriptFile(cwd, args);
+      default:
+        return program.includes("/") ? [{ kind: "file", path: join(cwd, program) }] : [];
     }
-    if (program === "python" || program === "python3" || program === "bash" || program === "sh") {
-      const file = args.find((arg) => !arg.startsWith("-"));
-      return file ? [{ kind: "file", path: join(cwd, file) }] : [];
-    }
-    if (program.startsWith("./") || program.includes("/")) return [{ kind: "file", path: join(cwd, program) }];
-    return [];
+  }
+
+  function pytestPaths(cwd, paths) {
+    return paths.filter((arg) => !arg.startsWith("-")).map((arg) => ({ kind: "tests", path: join(cwd, arg) }));
+  }
+
+  function scriptFile(cwd, args) {
+    const file = args.find((arg) => !arg.startsWith("-"));
+    return file ? [{ kind: "file", path: join(cwd, file) }] : [];
   }
 
   /** The directory `playwright test` collects specs from: the config's `testDir`, relative to the config. */

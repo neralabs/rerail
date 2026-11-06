@@ -526,69 +526,83 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
   const args = rawArgs.slice(positionals.length);
   const io = setupIo(args);
   try {
-    if (command === "start" && args.includes(JSON_FLAG)) {
+    if (command === "stop") return runStopCommand(args, positionals, io);
+    if (args.includes(JSON_FLAG)) {
       const step = await startStep(args, context, machinePlace(context));
       io.say(JSON.stringify(step));
       return step.step === "error" ? 1 : 0;
     }
-    const { flags, options } = parseArguments(
-      args,
-      {
-        flags: command === "start" ? ["--repository", SETUP_FLAGS.relay] : ["--repository"],
-        options: command === "start" ? ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] : ["--repo", "--database"],
-      },
-      argument => `Unknown ${command} option: ${argument}\n\n${usage()}`,
-    );
-    const workspace = resolve(options.get("--repo") ?? process.cwd());
-    const database = options.get("--database");
-    const databasePath = database === undefined ? undefined : resolve(database);
-    const repository = flags.has("--repository");
-    if (command === "stop") {
-      const session = stopSession(positionals);
-      stopRerail(workspace, io, {
-        ...(databasePath === undefined ? {} : { databasePath }),
-        repository,
-        ...(session === undefined ? {} : { session }),
-      });
-      return 0;
-    }
-    // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.
-    if (isPreSetupHealthCheck(args, io.lane, workspace)) {
-      startForPreSetupHealthCheck(workspace, io);
-      return 0;
-    }
-    const answer = checkSetupAnswer(options.get("--answer"));
-    const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
-    const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
-    const setupCommand = setupAnswerCommand(context, {
-      ...(databasePath === undefined ? {} : { databasePath }),
-      repository,
-      ...(io.lane === "agent" ? { relay: true } : {}),
-      ...(agents === undefined ? {} : { agents }),
-    });
-    const environment = setupEnvironment(context);
-    // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
-    // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the
-    // releases that run it expect Rerail on there, and it fetches nothing from npm.
-    const healthCheck = skipsSessionsApproval(args, io.lane, workspace, () => environment.agentsFound());
-    const report = await startRerail(workspace, io, {
-      ...(databasePath === undefined ? {} : { databasePath }),
-      ...(agents === undefined ? {} : { agents }),
-      ...(agentsError === undefined ? {} : { agentsError }),
-      ...(healthCheck ? { packs: [] } : packs),
-      ...(answer === undefined ? {} : { answer }),
-      ...(setupCommand === undefined ? {} : { setupCommand }),
-      repository,
-      environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
-    });
-    // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
-    if (report.setUpRan) return report.cancelled ? 1 : 0;
-    const page = await readRulesDashboard({ cwd: workspace });
-    if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
-    return 0;
+    return await runStartCommand(args, context, io);
   } finally {
     io.close();
   }
+}
+
+/** The options that have a value: `startRerail`'s, `stopRerail`'s and `setupAnswerCommand`'s take none as absent, not `undefined`. */
+function definedOnly<T extends object>(options: T): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)) as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
+/** `databasePath` when `--database` names one, as `startRerail` and `stopRerail` take it. */
+function databasePathOption(options: ReadonlyMap<string, string>): { databasePath?: string } {
+  const database = options.get("--database");
+  return database === undefined ? {} : { databasePath: resolve(database) };
+}
+
+function runStopCommand(args: readonly string[], positionals: readonly string[], io: ReturnType<typeof setupIo>): number {
+  const { flags, options } = parseArguments(args, { flags: ["--repository"], options: ["--repo", "--database"] }, argument => `Unknown stop option: ${argument}\n\n${usage()}`);
+  const workspace = resolve(options.get("--repo") ?? process.cwd());
+  const session = stopSession(positionals);
+  stopRerail(workspace, io, {
+    ...databasePathOption(options),
+    repository: flags.has("--repository"),
+    ...definedOnly({ session }),
+  });
+  return 0;
+}
+
+async function runStartCommand(args: readonly string[], context: SetupContext, io: ReturnType<typeof setupIo>): Promise<number> {
+  const { flags, options } = parseArguments(
+    args,
+    { flags: ["--repository", SETUP_FLAGS.relay], options: ["--repo", "--agents", SETUP_FLAGS.packs, "--answer", "--database"] },
+    argument => `Unknown start option: ${argument}\n\n${usage()}`,
+  );
+  const workspace = resolve(options.get("--repo") ?? process.cwd());
+  // A release from before set-up checks an update with a bare `start`, which set-up would only ask a question of.
+  if (isPreSetupHealthCheck(args, io.lane, workspace)) {
+    startForPreSetupHealthCheck(workspace, io);
+    return 0;
+  }
+  const report = await startRerail(workspace, io, startOptions(args, flags.has("--repository"), options, context, { lane: io.lane, workspace }));
+  // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
+  if (report.setUpRan) return report.cancelled ? 1 : 0;
+  const page = await readRulesDashboard({ cwd: workspace });
+  if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
+  return 0;
+}
+
+/** What `rerail start` passes to `startRerail`: the answers given so far, and how the set-up may ask for the rest. */
+function startOptions(
+  args: readonly string[], repository: boolean, options: ReadonlyMap<string, string>, context: SetupContext,
+  { lane, workspace }: { lane: ReturnType<typeof setupIo>["lane"]; workspace: string },
+): Parameters<typeof startRerail>[2] {
+  const answer = checkSetupAnswer(options.get("--answer"));
+  const { agents, agentsError } = setupAgents(options.get("--agents"), answer);
+  const packs = setupPacks(options.get(SETUP_FLAGS.packs), answer);
+  const database = databasePathOption(options);
+  const setupCommand = setupAnswerCommand(context, { ...database, repository, ...(lane === "agent" ? { relay: true } : {}), ...definedOnly({ agents }) });
+  const environment = setupEnvironment(context);
+  // An update's health check (`skipsSessionsApproval`) reads no one's sessions, so it is not asked to allow it, and
+  // its "I'll pick rule packs myself" starts with none, as `--packs none` does: no pack fits its empty folder, the
+  // releases that run it expect Rerail on there, and it fetches nothing from npm.
+  const healthCheck = skipsSessionsApproval(args, lane, workspace, () => environment.agentsFound());
+  return {
+    ...database,
+    ...definedOnly({ agents, agentsError, answer, setupCommand }),
+    ...(healthCheck ? { packs: [] } : packs),
+    repository,
+    environment: healthCheck ? { ...environment, sessionsApproved: () => true } : environment,
+  };
 }
 
 /**
@@ -714,31 +728,42 @@ async function runAccountCommand(command: string, args: readonly string[], conte
   return undefined;
 }
 
-async function runProjectCommand(command: string, args: readonly string[], context: CommandContext): Promise<number | undefined> {
-  const { home, updater } = context;
-  if (command === "setup") return await runSetupCommand(args, { home, packageRoot, updater });
-  if (command === "install") return await runInstallCommand(args, { home, packageRoot, updater });
-  if (command === "session") return await runSessionCommand(args);
-  if (command === "seed") return runSeedCommand(args);
-  if (command === "rules" && (args[0] === "test" || args[0] === "add")) return await runRuleDraftCommand(args[0], args.slice(1), usage);
-  if (command === "rules" && args[0] === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
-  if (command === "rules" && args[0] === "approve") return runRuleApproveCommand(args.slice(1), usage);
-  if (command === "rules") return runRulesCommand(args, usage);
-  if (command === "show-me") return runShowMeCommand(args, usage);
-  if (command === "support-bundle") return await runSupportBundleCommand(args, usage, { packageVersion: context.packageVersion });
-  if (command === "packs") return await runPacksCommand(args, usage);
-  if (command === "reset") return runResetCommand(args, usage);
-  if (command === "feedback") return await runFeedbackCommand(args, usage, { packageVersion: context.packageVersion });
-  if (command === "scrub") return await runScrubCommand(args, usage);
-  const daemonExit = await runDaemonCommand(command, args, home);
-  if (daemonExit !== undefined) return daemonExit;
-  if (command === "start" || command === "stop") return await runRepositoryCommand(command, args, { home, packageRoot, updater });
-  if (command === "state") return runStateCommand(args);
-  // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
-  if (command === "scan" || command === "settings") return await runAuditCommand(command, args, { home, version: context.packageVersion });
-  // Internal testing: the remote sink.
-  if (command === "remote") return await runRemoteCommand(args, { home });
-  return undefined;
+/** `rerail rules` and its subcommands. */
+async function runRulesFamilyCommand(args: readonly string[]): Promise<number> {
+  const [subcommand] = args;
+  if (subcommand === "test" || subcommand === "add") return await runRuleDraftCommand(subcommand, args.slice(1), usage);
+  if (subcommand === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
+  if (subcommand === "approve") return runRuleApproveCommand(args.slice(1), usage);
+  return runRulesCommand(args, usage);
+}
+
+/** Every command that runs without the signed update policy; undefined for a word that is none of them. */
+async function runProjectCommand(command: string, args: readonly string[], { home, updater, packageVersion }: CommandContext): Promise<number | undefined> {
+  switch (command) {
+    case "setup": return await runSetupCommand(args, { home, packageRoot, updater });
+    case "install": return await runInstallCommand(args, { home, packageRoot, updater });
+    case "session": return await runSessionCommand(args);
+    case "seed": return runSeedCommand(args);
+    case "rules": return await runRulesFamilyCommand(args);
+    case "show-me": return runShowMeCommand(args, usage);
+    case "support-bundle": return await runSupportBundleCommand(args, usage, { packageVersion });
+    case "packs": return await runPacksCommand(args, usage);
+    case "reset": return runResetCommand(args, usage);
+    case "feedback": return await runFeedbackCommand(args, usage, { packageVersion });
+    case "scrub": return await runScrubCommand(args, usage);
+    case "start":
+    case "stop":
+      return await runRepositoryCommand(command, args, { home, packageRoot, updater });
+    case "state": return runStateCommand(args);
+    // Internal testing: `scan`, explicit full-repository and git-diff audits. Whether `settings` ships is still open.
+    case "scan":
+    case "settings":
+      return await runAuditCommand(command, args, { home, version: packageVersion });
+    // Internal testing: the remote sink.
+    case "remote": return await runRemoteCommand(args, { home });
+    // `daemon`, `status` and `manage`.
+    default: return await runDaemonCommand(command, args, home);
+  }
 }
 
 /** Commands gated by the signed update policy, plus help; anything else is unknown. */

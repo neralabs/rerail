@@ -22,7 +22,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { CodeRuleDslOptionDeclaration, CodeRuleDslValue } from "../../code-rule/code-rule.js";
 import { stableJsonText } from "../../stable-json.js";
-import { folderOfGlob, readEslintFlatConfig, type FlatConfigRead } from "./eslint-flat-config.js";
+import { folderOfGlob, readEslintFlatConfig, type FlatConfigEntry, type FlatConfigRead } from "./eslint-flat-config.js";
 import { LintConfigFormatError, parseJsonc, readTomlStringLists } from "./lint-config-formats.js";
 import type { RuleCatalog, RuleConfig } from "../repository-model.js";
 import { configureBundledCodeRule } from "../rule-config.js";
@@ -394,6 +394,77 @@ function withEarlierOptions(earlier: unknown, later: unknown): unknown {
   return [Array.isArray(later) ? later[0] : later, ...earlier.slice(1)];
 }
 
+/** A flat config applied so far: `rules` and `scoped` as they stand, and what they may not say for sure. */
+interface FlatRulesState {
+  readonly rules: Record<string, unknown>;
+  readonly unresolved: Map<string, UnreadEntry>;
+  readonly shadowed: Map<string, string>;
+  readonly optionsUnknown: Map<string, string>;
+  /** Per rule key, the unread entries for some files that no later entry has replaced, with how the config names the files. */
+  readonly scopedUnresolved: Map<string, { readonly files: string; readonly entry: UnreadEntry }[]>;
+  scoped: ScopedRule[];
+}
+
+const unreadEntryOf = (why: string, by: string | undefined): UnreadEntry => (by === undefined ? { why } : { why, shadowedBy: by });
+
+/** An entry limited to some files: kept apart, and a value in full replaces the unread entries for the same files. */
+function applyScopedEntry(state: FlatRulesState, { key, value, shadowedBy }: FlatConfigEntry, scope: Exclude<FlatConfigEntry["scope"], { kind: "all" }>): void {
+  const unreadBefore = state.scopedUnresolved.get(key) ?? [];
+  if (!value.ok) {
+    state.scopedUnresolved.set(key, [...unreadBefore, { files: scope.files, entry: unreadEntryOf(`${value.why} (for ${scope.files})`, shadowedBy) }]);
+    return;
+  }
+  state.scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files, ...(shadowedBy === undefined ? {} : { shadowedBy }) });
+  if (!severityAlone(value.value) || severityOf(value.value, "eslint")?.off === true) {
+    state.scopedUnresolved.set(key, unreadBefore.filter(entry => entry.files !== scope.files));
+  }
+}
+
+/**
+ * What an entry every file gets does to the earlier entries for some files. A severity alone ("off" included, as
+ * ESLint's rulesSchema.merge does) keeps the earlier options, for every file and for the files an earlier entry limited
+ * to some files set them for; a severity with options replaces them.
+ */
+function replaceScopedEntries(state: FlatRulesState, key: string, value: FlatConfigEntry["value"]): void {
+  if (value.ok && severityAlone(value.value)) {
+    state.scoped = state.scoped.flatMap(entry => (entry.key !== key ? [entry]
+      : severityAlone(entry.value) ? []
+      : [{ ...entry, value: withEarlierOptions(entry.value, value.value) }]));
+  } else {
+    state.scoped = state.scoped.filter(entry => entry.key !== key);
+    state.scopedUnresolved.delete(key);
+  }
+}
+
+/** A value every file gets replaces what `rules` held for the key, and says what may still be uncertain about it. */
+function setEveryFileRule(state: FlatRulesState, key: string, value: unknown, earlier: UnreadEntry | undefined, shadowedBy: string | undefined): void {
+  state.unresolved.delete(key);
+  // What an unread element after the earlier entry may have set: its severity is now this entry's, its options not.
+  const uncertain = severityAlone(value) ? state.shadowed.get(key) ?? state.optionsUnknown.get(key) ?? earlier?.why : undefined;
+  Object.defineProperty(state.rules, key, { value: withEarlierOptions(state.rules[key], value), enumerable: true, writable: true, configurable: true });
+  if (shadowedBy === undefined) state.shadowed.delete(key);
+  else state.shadowed.set(key, shadowedBy);
+  if (uncertain === undefined) state.optionsUnknown.delete(key);
+  else state.optionsUnknown.set(key, uncertain);
+}
+
+/** An entry every file gets replaces the earlier ones, keeping their options when it sets only a severity. */
+function applyEveryFileEntry(state: FlatRulesState, { key, value, shadowedBy }: FlatConfigEntry): void {
+  replaceScopedEntries(state, key, value);
+  const earlier = state.unresolved.get(key);
+  if (!value.ok) {
+    state.unresolved.set(key, unreadEntryOf(value.why, shadowedBy));
+    delete state.rules[key];
+    state.shadowed.delete(key);
+    state.optionsUnknown.delete(key);
+  } else if (earlier !== undefined && severityAlone(value.value) && severityOf(value.value, "eslint")?.off !== true) {
+    // On, with options Rerail cannot tell.
+    state.unresolved.set(key, unreadEntryOf(earlier.why, shadowedBy ?? earlier.shadowedBy));
+  } else {
+    setEveryFileRule(state, key, value.value, earlier, shadowedBy);
+  }
+}
+
 /**
  * A flat config's entries as ESLint applies them, in order: a later entry every file gets replaces the earlier ones
  * (keeping their options when it sets only a severity), and the entries limited to some files that come after it are
@@ -402,60 +473,13 @@ function withEarlierOptions(earlier: unknown, later: unknown): unknown {
  * severity alone, which keeps whatever options it set.
  */
 function flatRules(file: string, read: FlatConfigRead): LintConfigRules {
-  const rules: Record<string, unknown> = {};
-  const unresolved = new Map<string, UnreadEntry>();
-  const shadowed = new Map<string, string>();
-  const optionsUnknown = new Map<string, string>();
-  /** Per rule key, the unread entries for some files that no later entry has replaced, with how the config names the files. */
-  const scopedUnresolved = new Map<string, { readonly files: string; readonly entry: UnreadEntry }[]>();
-  const unread = (why: string, by: string | undefined): UnreadEntry => (by === undefined ? { why } : { why, shadowedBy: by });
-  let scoped: ScopedRule[] = [];
-  for (const { key, scope, value, shadowedBy } of read.entries) {
-    if (scope.kind !== "all") {
-      const unreadBefore = scopedUnresolved.get(key) ?? [];
-      if (value.ok) {
-        scoped.push({ key, value: value.value, folders: scope.kind === "folders" ? scope.folders : undefined, files: scope.files, ...(shadowedBy === undefined ? {} : { shadowedBy }) });
-        if (!severityAlone(value.value) || severityOf(value.value, "eslint")?.off === true) {
-          scopedUnresolved.set(key, unreadBefore.filter(entry => entry.files !== scope.files));
-        }
-      } else {
-        scopedUnresolved.set(key, [...unreadBefore, { files: scope.files, entry: unread(`${value.why} (for ${scope.files})`, shadowedBy) }]);
-      }
-      continue;
-    }
-    // A severity alone ("off" included, as ESLint's rulesSchema.merge does) keeps the earlier options, for every file
-    // and for the files an earlier entry limited to some files set them for; a severity with options replaces them.
-    const alone = value.ok && severityAlone(value.value);
-    const off = value.ok && severityOf(value.value, "eslint")?.off === true;
-    if (alone) {
-      scoped = scoped.flatMap(entry => (entry.key !== key ? [entry]
-        : severityAlone(entry.value) ? []
-        : [{ ...entry, value: withEarlierOptions(entry.value, value.value) }]));
-    } else {
-      scoped = scoped.filter(entry => entry.key !== key);
-      scopedUnresolved.delete(key);
-    }
-    const earlier = unresolved.get(key);
-    if (!value.ok) {
-      unresolved.set(key, unread(value.why, shadowedBy));
-      delete rules[key];
-      shadowed.delete(key);
-      optionsUnknown.delete(key);
-    } else if (earlier !== undefined && alone && !off) {
-      // On, with options Rerail cannot tell.
-      unresolved.set(key, unread(earlier.why, shadowedBy ?? earlier.shadowedBy));
-    } else {
-      unresolved.delete(key);
-      // What an unread element after the earlier entry may have set: its severity is now this entry's, its options not.
-      const uncertain = alone ? shadowed.get(key) ?? optionsUnknown.get(key) ?? earlier?.why : undefined;
-      Object.defineProperty(rules, key, { value: withEarlierOptions(rules[key], value.value), enumerable: true, writable: true, configurable: true });
-      if (shadowedBy === undefined) shadowed.delete(key);
-      else shadowed.set(key, shadowedBy);
-      if (uncertain === undefined) optionsUnknown.delete(key);
-      else optionsUnknown.set(key, uncertain);
-    }
+  const state: FlatRulesState = { rules: {}, unresolved: new Map(), shadowed: new Map(), optionsUnknown: new Map(), scopedUnresolved: new Map(), scoped: [] };
+  for (const entry of read.entries) {
+    if (entry.scope.kind === "all") applyEveryFileEntry(state, entry);
+    else applyScopedEntry(state, entry, entry.scope);
   }
-  for (const [key, entries] of scopedUnresolved) if (!unresolved.has(key) && entries.length > 0) unresolved.set(key, entries[0]!.entry);
+  const { rules, scoped, unresolved, shadowed, optionsUnknown } = state;
+  for (const [key, entries] of state.scopedUnresolved) if (!unresolved.has(key) && entries.length > 0) unresolved.set(key, entries[0]!.entry);
   return { file, rules, scoped, unresolved, shadowed, optionsUnknown };
 }
 
@@ -826,6 +850,266 @@ function entryText(file: string, key: string, value: unknown): string {
   return `${file}: ${JSON.stringify(key)}: ${text.length > MAX_VALUE_TEXT ? `${text.slice(0, MAX_VALUE_TEXT - 1)}…` : text}`;
 }
 
+type Port = NonNullable<ReturnType<typeof portOf>>;
+
+/** What reading the lint config files gathers, rule by rule, before it is settled into settings. */
+interface SettingsProposal {
+  readonly ruleCatalog: RuleCatalog;
+  readonly findings: Map<string, Finding[]>;
+  /** Rule id → folder → why: a rule a config turns off for exactly that folder's files. */
+  readonly folderOffs: Map<string, Map<string, string>>;
+  readonly notes: string[];
+}
+
+/** One rule's ESLint port, read against one ESLint config. */
+interface EslintPortRead {
+  readonly proposal: SettingsProposal;
+  readonly ruleId: string;
+  readonly declared: Declared;
+  readonly eslint: LintConfigRules;
+  readonly severities: "eslint" | "eslintrc";
+}
+
+type Severity = NonNullable<ReturnType<typeof severityOf>>;
+
+function addFinding(proposal: SettingsProposal, ruleId: string, finding: Finding): void {
+  proposal.findings.set(ruleId, [...(proposal.findings.get(ruleId) ?? []), finding]);
+}
+
+function addFolderOff(proposal: SettingsProposal, ruleId: string, folder: string, because: string): void {
+  const folders = proposal.folderOffs.get(ruleId) ?? new Map<string, string>();
+  folders.set(folder, folders.has(folder) ? `${folders.get(folder)!}; ${because}` : because);
+  proposal.folderOffs.set(ruleId, folders);
+}
+
+/** ESLint options as the port's `config`, only where the port accepts them as a stored rule setting would be. */
+function mappedOptions(read: EslintPortRead, options: readonly unknown[]): MappedOptions {
+  const config = eslintOptionsConfig(read.declared, options);
+  if (!config.ok) return config;
+  const configured = configureBundledCodeRule(read.proposal.ruleCatalog, read.ruleId, config.config);
+  return configured.ok ? config : { ok: false, reason: configured.reason };
+}
+
+const replacedBy = (by: string): string => `${by}, after it, is not read and may replace it`;
+
+const onWithOptions = (severity: Severity): boolean => !severity.off && severity.options.length > 0;
+
+/** The entry after these that turns the rule back on: it may cover any of the files one that turns it off is for. */
+function turnedBackOnBy(read: EslintPortRead, after: readonly ScopedRule[]): ScopedRule | undefined {
+  return after.find(entry => severityOf(entry.value, read.severities)?.off === false);
+}
+
+/** The repository sets the rule, to what Rerail cannot tell without running the config. */
+function readUnresolvedKey(read: EslintPortRead, key: string, entry: UnreadEntry): void {
+  const because = `${read.eslint.file}: ${JSON.stringify(key)} is not read (${entry.why})`;
+  // Unless something after it that Rerail cannot read either may replace it, in which case it is not used at all.
+  if (entry.shadowedBy === undefined) addFinding(read.proposal, read.ruleId, { off: true, because });
+  else read.proposal.notes.push(`${read.ruleId}: ${because} and is not used: ${replacedBy(entry.shadowedBy)}.`);
+}
+
+/** The mapped options of an entry for every file that sets some, saying why when they cannot be used. */
+function everyFileOptions(read: EslintPortRead, key: string, severity: Severity, because: string, later: readonly ScopedRule[]): MappedOptions | undefined {
+  if (!onWithOptions(severity)) return undefined;
+  const { eslint, ruleId, proposal: { notes } } = read;
+  // Options for every file are the port's for the whole repository only when no entry for some files sets others:
+  // there they would change what ESLint reports.
+  const otherOptions = later.find(entry => {
+    const scoped = entry.shadowedBy === undefined ? severityOf(entry.value, read.severities) : undefined;
+    return scoped !== undefined && !scoped.off && scoped.options.length > 0 && stableJsonText(scoped.options) !== stableJsonText(severity.options);
+  });
+  const unknown = eslint.optionsUnknown.get(key);
+  if (unknown !== undefined) notes.push(`${ruleId}: the options of ${because} are not used: ${unknown}, before it, is not read and may have set them.`);
+  if (otherOptions !== undefined) {
+    notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, otherOptions.value)} sets others for ${otherOptions.files}, and Rerail sets options for the whole repository only.`);
+  }
+  return unknown !== undefined || otherOptions !== undefined ? undefined : mappedOptions(read, severity.options);
+}
+
+/** What the config says about `key` for every file. */
+function readEveryFileEntry(read: EslintPortRead, key: string, later: readonly ScopedRule[]): void {
+  const { eslint, ruleId, proposal } = read;
+  const value = eslint.rules[key];
+  const because = entryText(eslint.file, key, value);
+  const severity = severityOf(value, read.severities);
+  const shadowedBy = eslint.shadowed.get(key);
+  if (severity === undefined) {
+    proposal.notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
+    return;
+  }
+  if (shadowedBy !== undefined) {
+    proposal.notes.push(`${ruleId}: ${because} is not used: ${replacedBy(shadowedBy)}.`);
+    return;
+  }
+  const back = severity.off ? turnedBackOnBy(read, later) : undefined;
+  if (back !== undefined) {
+    proposal.notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
+    return;
+  }
+  const config = everyFileOptions(read, key, severity, because, later);
+  addFinding(proposal, ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
+}
+
+/** An entry for some files that turns the rule off: only a whole folder's files can start off. */
+function readScopedOff(read: EslintPortRead, key: string, entry: ScopedRule, because: string, after: readonly ScopedRule[]): void {
+  const { ruleId, proposal } = read;
+  const back = turnedBackOnBy(read, after);
+  if (back !== undefined) {
+    proposal.notes.push(`${ruleId}: ${because} turns it off, but ${entryText(read.eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
+  } else if (entry.folders !== undefined) {
+    for (const folder of entry.folders) addFolderOff(proposal, ruleId, folder, because);
+  } else {
+    proposal.notes.push(`${ruleId}: ${because} turns it off only for some files; it stays on.`);
+  }
+}
+
+/**
+ * An entry for some files that sets options. A rule setting's config is for the whole repository, so they are used only
+ * when no entry for every file sets the rule: otherwise they would change it for files they do not cover.
+ */
+function readScopedOptions(read: EslintPortRead, key: string, because: string, options: readonly unknown[]): void {
+  const { eslint, ruleId, proposal } = read;
+  const forEvery = Object.hasOwn(eslint.rules, key) ? severityOf(eslint.rules[key], read.severities) : undefined;
+  if (forEvery === undefined) addFinding(proposal, ruleId, { off: false, because, config: mappedOptions(read, options) });
+  // An entry for every file with options of its own says so above; one with a severity alone keeps the defaults.
+  else if (forEvery.options.length === 0) {
+    proposal.notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, eslint.rules[key])} sets the rule for every file, and Rerail sets options for the whole repository only.`);
+  }
+}
+
+/** What the config says about `key` for some files; `after` are the entries for `key` that come after this one. */
+function readScopedEntry(read: EslintPortRead, key: string, entry: ScopedRule, after: readonly ScopedRule[]): void {
+  const { ruleId, proposal: { notes } } = read;
+  const because = `${entryText(read.eslint.file, key, entry.value)} for ${entry.files}`;
+  const severity = severityOf(entry.value, read.severities);
+  if (severity === undefined) {
+    notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
+    return;
+  }
+  if (entry.shadowedBy !== undefined) {
+    notes.push(`${ruleId}: ${because} is not used: ${replacedBy(entry.shadowedBy)}.`);
+    return;
+  }
+  if (severity.off) readScopedOff(read, key, entry, because, after);
+  else if (severity.options.length > 0) readScopedOptions(read, key, because, severity.options);
+}
+
+function readEslintKey(read: EslintPortRead, key: string): void {
+  const unreadEntry = read.eslint.unresolved.get(key);
+  if (unreadEntry !== undefined) {
+    readUnresolvedKey(read, key, unreadEntry);
+    return;
+  }
+  const later = read.eslint.scoped.filter(entry => entry.key === key);
+  if (Object.hasOwn(read.eslint.rules, key)) readEveryFileEntry(read, key, later);
+  for (const [index, entry] of later.entries()) readScopedEntry(read, key, entry, later.slice(index + 1));
+}
+
+/** What the ESLint config says about the rules `port` ports. */
+function readEslintPort(proposal: SettingsProposal, ruleId: string, port: Port, eslint: LintConfigRules | undefined): void {
+  if (eslint === undefined) return;
+  const keys = new Set(port.eslint);
+  if (eslint.unreadable !== undefined) {
+    if (keys.size > 0) addFinding(proposal, ruleId, { off: true, because: `${eslint.file} is not statically readable` });
+    return;
+  }
+  const read: EslintPortRead = { proposal, ruleId, declared: port.declared, eslint, severities: eslint.eslintrc === true ? "eslintrc" : "eslint" };
+  for (const key of keys) readEslintKey(read, key);
+}
+
+/** What the oxlint config says about one oxlint rule the port ports. */
+function readOxlintRule(proposal: SettingsProposal, ruleId: string, rule: OxlintRule, oxlint: LintConfigRules | undefined): void {
+  // oxlint applies a rule's last key: `{"no-unused-vars": "off", "typescript/no-unused-vars": "error"}` keeps it on.
+  const key = Object.keys(oxlint?.rules ?? {}).findLast(candidate => {
+    const resolved = oxlintRuleOfKey(candidate, name => (name === rule.name ? rule.plugin : undefined));
+    return resolved.plugin === rule.plugin && resolved.name === rule.name;
+  });
+  if (key === undefined) return;
+  const value = oxlint!.rules[key];
+  const because = entryText(oxlint!.file, key, value);
+  const severity = severityOf(value, "oxlint");
+  if (severity === undefined) {
+    proposal.notes.push(`${ruleId}: ${because} is not a severity oxlint takes; not read.`);
+    return;
+  }
+  const shadowedBy = oxlint!.shadowed.get(key);
+  if (shadowedBy !== undefined) {
+    proposal.notes.push(`${ruleId}: ${because} is not used: ${shadowedBy}, which Rerail does not read, may set it for some files.`);
+    return;
+  }
+  // The ports' options follow the upstream rule's; oxlint's own options are not mapped onto them.
+  if (onWithOptions(severity)) proposal.notes.push(`${ruleId}: option not mapped: Rerail maps ESLint options, not oxlint's (${because}).`);
+  addFinding(proposal, ruleId, { off: severity.off, because });
+}
+
+function readRuffPerFileIgnores(proposal: SettingsProposal, ruleId: string, ruff: RuffSelection, code: string): void {
+  for (const { pattern, folder, ignore } of ruff.perFileIgnores) {
+    if (!ruffSelects(ignore.selector, code)) continue;
+    if (folder !== undefined) addFolderOff(proposal, ruleId, folder, ruffText(ignore));
+    else proposal.notes.push(`${ruleId}: ${ruffText(ignore)} ignores it only in the files ${JSON.stringify(pattern)} matches; it stays on.`);
+  }
+}
+
+/** What the Ruff config says about one code the port honours suppression comments for. */
+function readRuffCode(proposal: SettingsProposal, ruleId: string, ruff: RuffSelection, code: string): void {
+  const decision = ruffDecision(ruff, code);
+  const by = decision?.by;
+  if (decision?.enabled === false && by !== undefined) {
+    addFinding(proposal, ruleId, { off: true, because: ruffText(by) });
+    return;
+  }
+  if (decision?.enabled === true && by !== undefined) {
+    const overridden = ruff.layers.flatMap(layer => layer.ignore).find(ignored => ruffSelects(ignored.selector, code));
+    if (overridden !== undefined) proposal.notes.push(`${ruleId}: ${ruffText(overridden)} is overridden by ${ruffText(by)}, which Ruff applies after it; it stays on.`);
+  }
+  readRuffPerFileIgnores(proposal, ruleId, ruff, code);
+}
+
+/** What the lint config files say about the rules one port ports, ESLint first. */
+function readPort(proposal: SettingsProposal, ruleId: string, port: Port, { eslint, oxlint, ruff }: LintConfigFiles): void {
+  readEslintPort(proposal, ruleId, port, eslint);
+  for (const rule of port.oxlint) readOxlintRule(proposal, ruleId, rule, oxlint);
+  if (ruff !== undefined) for (const code of new Set(port.noqa)) readRuffCode(proposal, ruleId, ruff, code);
+}
+
+/** The setting for the options the findings agree on, saying why when they do not. */
+function configSetting(proposal: SettingsProposal, ruleId: string, found: readonly Finding[]): LintConfigSetting | undefined {
+  const configured = found.flatMap(finding => (finding.config === undefined ? [] : [{ because: finding.because, mapped: finding.config }]));
+  const unmapped = configured.find(({ mapped }) => !mapped.ok);
+  if (unmapped !== undefined && !unmapped.mapped.ok) {
+    proposal.notes.push(`${ruleId}: option not mapped (${unmapped.mapped.reason}); it keeps its default options. From ${unmapped.because}.`);
+    return undefined;
+  }
+  const configs = configured.flatMap(({ mapped }) => (mapped.ok ? [mapped.config] : []));
+  if (new Set(configs.map(config => stableJsonText(config))).size > 1) {
+    proposal.notes.push(`${ruleId}: ${configured.map(finding => finding.because).join(" and ")} set different options; none is used.`);
+    return undefined;
+  }
+  const config = configs[0];
+  return config !== undefined && Object.keys(config).length > 0
+    ? { ruleId, folder: "", on: null, config, because: configured.map(finding => finding.because).join("; ") }
+    : undefined;
+}
+
+/** The setting one rule's findings come to: a rule any of them turns off starts off. */
+function settingOfFindings(proposal: SettingsProposal, ruleId: string, found: readonly Finding[]): LintConfigSetting | undefined {
+  const offs = found.filter(finding => finding.off);
+  if (offs.length === 0) return configSetting(proposal, ruleId, found);
+  const kept = found.filter(finding => !finding.off);
+  if (kept.length > 0) proposal.notes.push(`${ruleId}: ${kept[0]!.because} keeps it on, but ${offs[0]!.because} turns it off; it starts off.`);
+  // Off everywhere: no folder needs its own setting.
+  proposal.folderOffs.delete(ruleId);
+  return { ruleId, folder: "", on: false, config: null, because: offs.map(finding => finding.because).join("; ") };
+}
+
+/** The linters that at least one of the rules ports. */
+function portedLinters(ports: ReadonlyMap<string, Port>): Set<LintConfigLinter> {
+  return new Set<LintConfigLinter>([...ports.values()].flatMap(port => [
+    ...(port.eslint.length > 0 ? ["eslint" as const] : []),
+    ...(port.oxlint.length > 0 ? ["oxlint" as const] : []),
+    ...(port.noqa.length > 0 ? ["ruff" as const] : []),
+  ]));
+}
+
 /**
  * Settings for the rules of packs `packIds` (in `ruleCatalog`) from what the repository's lint config files say, with
  * notes on what could not be used. Notes about a linter none of these rules ports are left out.
@@ -836,190 +1120,14 @@ export function proposeLintConfigSettings(files: LintConfigFiles, ruleCatalog: R
     const port = portOf(ruleCatalog, id);
     return port === undefined ? [] : [[id, port] as const];
   }));
-  const findings = new Map<string, Finding[]>();
-  /** Rule id → folder → why: a rule a config turns off for exactly that folder's files. */
-  const folderOffs = new Map<string, Map<string, string>>();
-  const notes: string[] = [];
-  const add = (ruleId: string, finding: Finding): void => {
-    findings.set(ruleId, [...(findings.get(ruleId) ?? []), finding]);
-  };
-  const addFolderOff = (ruleId: string, folder: string, because: string): void => {
-    const folders = folderOffs.get(ruleId) ?? new Map<string, string>();
-    folders.set(folder, folders.has(folder) ? `${folders.get(folder)!}; ${because}` : because);
-    folderOffs.set(ruleId, folders);
-  };
-  /** ESLint options as the port's `config`, only where the port accepts them as a stored rule setting would be. */
-  const mappedOptions = (ruleId: string, declared: Declared, options: readonly unknown[]): MappedOptions => {
-    const config = eslintOptionsConfig(declared, options);
-    if (!config.ok) return config;
-    const configured = configureBundledCodeRule(ruleCatalog, ruleId, config.config);
-    return configured.ok ? config : { ok: false, reason: configured.reason };
-  };
-  const eslint = files.eslint;
-  const eslintSeverities = eslint?.eslintrc === true ? "eslintrc" : "eslint";
-  for (const [ruleId, port] of ports) {
-    for (const key of new Set(port.eslint)) {
-      if (eslint === undefined) break;
-      if (eslint.unreadable !== undefined) {
-        add(ruleId, { off: true, because: `${eslint.file} is not statically readable` });
-        break;
-      }
-      const replacedBy = (by: string): string => `${by}, after it, is not read and may replace it`;
-      const unreadEntry = eslint.unresolved.get(key);
-      if (unreadEntry !== undefined) {
-        const because = `${eslint.file}: ${JSON.stringify(key)} is not read (${unreadEntry.why})`;
-        // The repository sets the rule, to what Rerail cannot tell without running the config; unless something after
-        // it that Rerail cannot read either may replace it, in which case it is not used at all.
-        if (unreadEntry.shadowedBy === undefined) add(ruleId, { off: true, because });
-        else notes.push(`${ruleId}: ${because} and is not used: ${replacedBy(unreadEntry.shadowedBy)}.`);
-        continue;
-      }
-      const later = eslint.scoped.filter(entry => entry.key === key);
-      const global = Object.hasOwn(eslint.rules, key);
-      if (global) {
-        const value = eslint.rules[key];
-        const because = entryText(eslint.file, key, value);
-        const severity = severityOf(value, eslintSeverities);
-        const shadowedBy = eslint.shadowed.get(key);
-        if (severity === undefined) {
-          notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
-        } else if (shadowedBy !== undefined) {
-          notes.push(`${ruleId}: ${because} is not used: ${replacedBy(shadowedBy)}.`);
-        } else {
-          const back = severity.off ? later.find(entry => severityOf(entry.value, eslintSeverities)?.off === false) : undefined;
-          if (back !== undefined) {
-            notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
-          } else {
-            // Options for every file are the port's for the whole repository only when no entry for some files sets
-            // others: there they would change what ESLint reports.
-            const otherOptions = severity.off || severity.options.length === 0 ? undefined : later.find(entry => {
-              const scoped = entry.shadowedBy === undefined ? severityOf(entry.value, eslintSeverities) : undefined;
-              return scoped !== undefined && !scoped.off && scoped.options.length > 0 && stableJsonText(scoped.options) !== stableJsonText(severity.options);
-            });
-            const unknown = severity.off || severity.options.length === 0 ? undefined : eslint.optionsUnknown.get(key);
-            const config = severity.off || severity.options.length === 0 || unknown !== undefined || otherOptions !== undefined
-              ? undefined
-              : mappedOptions(ruleId, port.declared, severity.options);
-            if (unknown !== undefined) notes.push(`${ruleId}: the options of ${because} are not used: ${unknown}, before it, is not read and may have set them.`);
-            if (otherOptions !== undefined) {
-              notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, otherOptions.value)} sets others for ${otherOptions.files}, and Rerail sets options for the whole repository only.`);
-            }
-            add(ruleId, { off: severity.off, because, ...(config === undefined ? {} : { config }) });
-          }
-        }
-      }
-      for (const [index, entry] of later.entries()) {
-        const because = `${entryText(eslint.file, key, entry.value)} for ${entry.files}`;
-        const severity = severityOf(entry.value, eslintSeverities);
-        if (severity === undefined) {
-          notes.push(`${ruleId}: ${because} is not a severity ESLint takes; not read.`);
-          continue;
-        }
-        if (entry.shadowedBy !== undefined) {
-          notes.push(`${ruleId}: ${because} is not used: ${replacedBy(entry.shadowedBy)}.`);
-          continue;
-        }
-        if (severity.off) {
-          // A later entry that turns it back on may cover any of these files.
-          const back = later.slice(index + 1).find(next => severityOf(next.value, eslintSeverities)?.off === false);
-          if (back !== undefined) {
-            notes.push(`${ruleId}: ${because} turns it off, but ${entryText(eslint.file, key, back.value)} turns it back on for ${back.files}; it stays on.`);
-          } else if (entry.folders !== undefined) {
-            for (const folder of entry.folders) addFolderOff(ruleId, folder, because);
-          } else {
-            notes.push(`${ruleId}: ${because} turns it off only for some files; it stays on.`);
-          }
-        } else if (severity.options.length > 0) {
-          // A rule setting's config is for the whole repository, so options set for some files are used only when no
-          // entry for every file sets the rule: otherwise they would change it for files they do not cover.
-          const forEvery = global ? severityOf(eslint.rules[key], eslintSeverities) : undefined;
-          if (forEvery === undefined) add(ruleId, { off: false, because, config: mappedOptions(ruleId, port.declared, severity.options) });
-          // An entry for every file with options of its own says so above; one with a severity alone keeps the defaults.
-          else if (forEvery.options.length === 0) {
-            notes.push(`${ruleId}: the options of ${because} are not used: ${entryText(eslint.file, key, eslint.rules[key])} sets the rule for every file, and Rerail sets options for the whole repository only.`);
-          }
-        }
-      }
-    }
-    for (const rule of port.oxlint) {
-      // oxlint applies a rule's last key: `{"no-unused-vars": "off", "typescript/no-unused-vars": "error"}` keeps it on.
-      const key = Object.keys(files.oxlint?.rules ?? {}).findLast(candidate => {
-        const resolved = oxlintRuleOfKey(candidate, name => (name === rule.name ? rule.plugin : undefined));
-        return resolved.plugin === rule.plugin && resolved.name === rule.name;
-      });
-      if (key === undefined) continue;
-      const value = files.oxlint!.rules[key];
-      const because = entryText(files.oxlint!.file, key, value);
-      const severity = severityOf(value, "oxlint");
-      if (severity === undefined) {
-        notes.push(`${ruleId}: ${because} is not a severity oxlint takes; not read.`);
-        continue;
-      }
-      const shadowedBy = files.oxlint!.shadowed.get(key);
-      if (shadowedBy !== undefined) {
-        notes.push(`${ruleId}: ${because} is not used: ${shadowedBy}, which Rerail does not read, may set it for some files.`);
-        continue;
-      }
-      // The ports' options follow the upstream rule's; oxlint's own options are not mapped onto them.
-      if (!severity.off && severity.options.length > 0) notes.push(`${ruleId}: option not mapped: Rerail maps ESLint options, not oxlint's (${because}).`);
-      add(ruleId, { off: severity.off, because });
-    }
-    const ruff = files.ruff;
-    if (ruff !== undefined) {
-      for (const code of new Set(port.noqa)) {
-        const decision = ruffDecision(ruff, code);
-        if (decision?.enabled === false && decision.by !== undefined) {
-          add(ruleId, { off: true, because: ruffText(decision.by) });
-          continue;
-        }
-        if (decision?.enabled === true && decision.by !== undefined) {
-          const overridden = ruff.layers.flatMap(layer => layer.ignore).find(by => ruffSelects(by.selector, code));
-          if (overridden !== undefined) notes.push(`${ruleId}: ${ruffText(overridden)} is overridden by ${ruffText(decision.by)}, which Ruff applies after it; it stays on.`);
-        }
-        for (const { pattern, folder, ignore } of ruff.perFileIgnores) {
-          if (!ruffSelects(ignore.selector, code)) continue;
-          if (folder !== undefined) addFolderOff(ruleId, folder, ruffText(ignore));
-          else notes.push(`${ruleId}: ${ruffText(ignore)} ignores it only in the files ${JSON.stringify(pattern)} matches; it stays on.`);
-        }
-      }
-    }
-  }
-  const settings: LintConfigSetting[] = [];
-  for (const [ruleId, found] of findings) {
-    const offs = found.filter(finding => finding.off);
-    if (offs.length > 0) {
-      const kept = found.filter(finding => !finding.off);
-      if (kept.length > 0) notes.push(`${ruleId}: ${kept[0]!.because} keeps it on, but ${offs[0]!.because} turns it off; it starts off.`);
-      settings.push({ ruleId, folder: "", on: false, config: null, because: offs.map(finding => finding.because).join("; ") });
-      // Off everywhere: no folder needs its own setting.
-      folderOffs.delete(ruleId);
-      continue;
-    }
-    const configured = found.flatMap(finding => (finding.config === undefined ? [] : [{ because: finding.because, mapped: finding.config }]));
-    const unmapped = configured.find(({ mapped }) => !mapped.ok);
-    if (unmapped !== undefined && !unmapped.mapped.ok) {
-      notes.push(`${ruleId}: option not mapped (${unmapped.mapped.reason}); it keeps its default options. From ${unmapped.because}.`);
-      continue;
-    }
-    const configs = configured.flatMap(({ mapped }) => (mapped.ok ? [mapped.config] : []));
-    if (new Set(configs.map(config => stableJsonText(config))).size > 1) {
-      notes.push(`${ruleId}: ${configured.map(finding => finding.because).join(" and ")} set different options; none is used.`);
-      continue;
-    }
-    const config = configs[0];
-    if (config !== undefined && Object.keys(config).length > 0) {
-      settings.push({ ruleId, folder: "", on: null, config, because: configured.map(finding => finding.because).join("; ") });
-    }
-  }
-  for (const [ruleId, folders] of folderOffs) {
+  const proposal: SettingsProposal = { ruleCatalog, findings: new Map(), folderOffs: new Map(), notes: [] };
+  for (const [ruleId, port] of ports) readPort(proposal, ruleId, port, files);
+  const settings = [...proposal.findings].flatMap(([ruleId, found]) => settingOfFindings(proposal, ruleId, found) ?? []);
+  for (const [ruleId, folders] of proposal.folderOffs) {
     for (const [folder, because] of folders) settings.push({ ruleId, folder, on: false, config: null, because });
   }
-  const linters = new Set<LintConfigLinter>([...ports.values()].flatMap(port => [
-    ...(port.eslint.length > 0 ? ["eslint" as const] : []),
-    ...(port.oxlint.length > 0 ? ["oxlint" as const] : []),
-    ...(port.noqa.length > 0 ? ["ruff" as const] : []),
-  ]));
-  return { settings, notes: [...files.notes.filter(note => linters.has(note.linter)).map(note => note.text), ...notes] };
+  const linters = portedLinters(ports);
+  return { settings, notes: [...files.notes.filter(note => linters.has(note.linter)).map(note => note.text), ...proposal.notes] };
 }
 
 /** {@link proposeLintConfigSettings} for the lint config files at `root`. */
