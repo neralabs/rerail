@@ -176,7 +176,7 @@ fn unlowered_constructs_are_named() {
     for (src, what) in [
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
-        (".decl a(x: number)\na(x) :- a(y), x = sum z : { a(z) }.", "sum"),
+        (".decl a(x: number)\na(x) :- a(y), x = mean z : { a(z) }.", "mean"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
         (".violation v(at: span) \"m\"", "at a span"),
     ] {
@@ -361,4 +361,80 @@ fn hand_written_rules_lowering_report() {
         let result = parse_file(&f);
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
     }
+}
+
+// ---- aggregates ----
+
+/// `sum` and `join` over one atom read it in place: the body's own variables are `_`, and join's keys are the
+/// atom's columns. A value or key that is an expression, or an atom that repeats a body variable, is a helper
+/// relation that keeps every variable (a multiset), with the computed value typed by what computes it.
+#[test]
+fn sum_and_join_lower() {
+    let p = parse(concat!(
+        ".decl arg(c: node, t: symbol, i: number)\n.input arg\n",
+        ".decl s(c: node, n: number)\ns(c, n) :- arg(c, _, _), n = sum i : { arg(c, t, i) }.\n",
+        ".decl j(c: node, x: symbol)\nj(c, x) :- arg(c, _, _), x = join t by i sep \", \" : { arg(c, t, i) }.\n",
+        ".decl k(c: node, x: symbol)\nk(c, x) :- arg(c, _, _), x = join t by (n, i) sep \"\" : { arg(c, t, i), n = 0 - i }.\n",
+        ".decl g(c: node, n: number)\ng(c, n) :- arg(c, _, _), n = sum strlen(t) - 1 : { arg(c, t, _) }.\n",
+        ".decl r(c: node, n: number)\nr(c, n) :- arg(c, _, _), n = count : { arg(c, t, t) }.\n",
+    ))
+    .unwrap();
+    let agg = |rel: &str| {
+        let r = p.rules.iter().find(|r| r.head.rel == rel).unwrap();
+        r.body.iter().find_map(|l| if let Literal::Agg { op, over, atom, .. } = l { Some((op.clone(), over.clone(), atom.clone())) } else { None }).unwrap()
+    };
+    let (op, over, atom) = agg("s");
+    assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Sum, Some("i"), "arg($c, _, $i)".to_owned()));
+    let (op, over, atom) = agg("j");
+    assert_eq!((op, over.as_deref(), atom.to_string()), (front::AggOp::Join { by: vec![2], sep: ", ".to_owned() }, Some("t"), "arg($c, $t, _)".to_owned()));
+    // Keys (n, i): the helper's columns in order c, i, n, t.
+    let (op, _, atom) = agg("k");
+    assert_eq!(op, front::AggOp::Join { by: vec![2, 1], sep: String::new() });
+    let types: Vec<&str> = p.decls[&atom.rel].iter().map(|(_, t)| t.as_str()).collect();
+    assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
+    let (op, over, atom) = agg("g");
+    let over = over.unwrap();
+    assert!(op == front::AggOp::Sum && over.starts_with("rr_over"), "{over}");
+    let cols = &p.decls[&atom.rel];
+    assert_eq!(cols.len(), 3, "c, t and the value: {cols:?}");
+    assert!(cols.contains(&(over.clone(), "int".to_owned())), "{cols:?}");
+    let (_, _, atom) = agg("r");
+    assert_ne!(atom.rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
+    for e in [
+        ".decl a(x: symbol)\na(x) :- a(y), x = join z : { a(z) }.",
+        ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.",
+    ] {
+        assert!(matches!(parse(e), Err(front::Error::Syntax(_))), "{e}");
+    }
+}
+
+/// An aggregate inside a term, in a head or a comparison, is an aggregate of its own whose value the term uses.
+#[test]
+fn aggregates_inside_terms_lower() {
+    let p = parse(concat!(
+        ".decl d(f: node, n: node)\n.input d\n",
+        ".decl cc(f: node, k: number)\ncc(f, 1 + count : { d(f, n) }) :- d(f, _).\n",
+        ".decl two(f: node, k: number)\ntwo(f, k) :- d(f, _), k = count : { d(f, n) } + count : { d(n, f) }, k > 1.\n",
+    ))
+    .unwrap();
+    let cc = p.rules.iter().find(|r| r.head.rel == "cc").unwrap();
+    let Some(Literal::Agg { var, op: front::AggOp::Count, .. }) = cc.body.iter().find(|l| matches!(l, Literal::Agg { .. })) else { panic!("{cc}") };
+    assert_eq!(cc.head.args[1], Term::Call("add".to_owned(), vec![Term::Int(1), Term::Var(var.clone())]), "{cc}");
+    let two = p.rules.iter().find(|r| r.head.rel == "two").unwrap();
+    assert_eq!(two.body.iter().filter(|l| matches!(l, Literal::Agg { .. })).count(), 2, "{two}");
+}
+
+/// The aggregates print as `.rr` that reads back as the same program.
+#[test]
+fn aggregates_print_as_themselves() {
+    let b = parse(concat!(
+        ".decl arg(c: node, t: symbol, i: number)\n.input arg\n",
+        ".decl j(c: node, x: symbol, y: symbol, n: number, m: number)\n",
+        "j(c, x, y, n, 2 * count : { arg(c, _, _) }) :- arg(c, _, _), x = join t by i sep \"\\\", \" : { arg(c, t, i) },\n",
+        "    y = join t by (k, i) sep \"\" : { arg(c, t, i), k = strlen(t) }, n = sum strlen(t) : { arg(c, t, _) }, m = sum i : { arg(c, _, i) }.\n",
+        ".output j\n",
+    ))
+    .unwrap();
+    let c = parse(&print(&b).unwrap()).unwrap_or_else(|e| panic!("{e}\n{}", print(&b).unwrap()));
+    assert_eq!(difference(&b, &c), None, "{}", print(&b).unwrap());
 }

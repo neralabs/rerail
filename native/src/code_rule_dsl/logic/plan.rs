@@ -1637,11 +1637,22 @@ impl Model {
                 Literal::Agg { var, op, over, atom } => {
                     let al = a_name();
                     let conds = neg_conds(atom, &al, &env, over.as_deref())?;
+                    let column = |c: usize| col(&al, &sql_col(&atom.rel, c));
+                    let at = |o: &str| atom.args.iter().position(|t| matches!(t, Term::Var(v) if v == o)).expect("the aggregated column");
                     let what = match (op, over) {
                         (AggOp::Count, _) | (_, None) => call("count", vec![Expr::All]),
-                        (AggOp::Min | AggOp::Max, Some(o)) => {
-                            let c = atom.args.iter().position(|t| matches!(t, Term::Var(v) if v == o)).expect("the aggregated column");
-                            call(if *op == AggOp::Min { "min" } else { "max" }, vec![col(&al, &sql_col(&atom.rel, c))])
+                        (AggOp::Min | AggOp::Max, Some(o)) => call(if *op == AggOp::Min { "min" } else { "max" }, vec![column(at(o))]),
+                        // Soufflé's sum of nothing is 0; SQL's is NULL.
+                        (AggOp::Sum, Some(o)) => call("coalesce", vec![call("sum", vec![column(at(o))]), integer(0)]),
+                        // Symbols by their text (code point order is UTF-8's byte order, SQLite's BINARY), numbers by
+                        // value; ties by the value joined. "" of nothing, interned like any computed text.
+                        (AggOp::Join { by, sep }, Some(o)) => {
+                            let sym = |c: usize| prog.decls.get(&atom.rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "sym");
+                            let value = |c: usize| if sym(c) { text_of(atoms, &column(c)) } else { column(c) };
+                            let x = at(o);
+                            let order = by.iter().chain([&x]).map(|&c| value(c)).collect();
+                            let joined = Expr::Ordered { name: "group_concat", arguments: vec![value(x), string(sep)], order };
+                            symbol_of(atoms, call("coalesce", vec![joined, string("")]))
                         }
                     };
                     let query = subquery(what, self.relation(prog, &atom.rel, false), al, conds);

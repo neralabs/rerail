@@ -664,7 +664,7 @@ impl<'s> Parser<'s> {
     }
 
     fn aggregate(&mut self, op: String) -> Result<Term, Error> {
-        let over = if self.is_p(":") { None } else { Some(Box::new(self.agg_part()?)) };
+        let over = if self.is_p(":") { None } else { Some(Box::new(self.agg_term()?)) };
         let (mut by, mut sep) = (Vec::new(), None);
         if self.is_id("by") {
             self.i += 1;
@@ -673,7 +673,7 @@ impl<'s> Parser<'s> {
                 by = self.list(")", Self::term)?;
                 self.p(")")?;
             } else {
-                by.push(self.agg_part()?);
+                by.push(self.agg_term()?);
             }
         }
         if self.is_id("sep") {
@@ -729,25 +729,9 @@ impl<'s> Parser<'s> {
                 self.i += 1;
                 return self.aggregate(s);
             }
-            // `sum strlen(v) : {…}`: an aggregate over a call, when a `:` follows it.
-            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && matches!(self.peek_at(1), Tok::Id(_)) && self.is_p_at(2, "(") => {
-                let save = self.i;
-                self.i += 1;
-                if self.primary().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep")) {
-                    self.i = save + 1;
-                    return self.aggregate(s);
-                }
-                self.i = save;
-                Term::Var(s)
-            }
-            Tok::Id(s)
-                if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join")
-                    && (self.is_p_at(2, ":") || matches!(self.peek_at(2), Tok::Id(w) if w == "by" || w == "sep") || self.is_p_at(1, "(")) =>
-            {
-                // `min x : {…}`, `min (a, b) : {…}` would be a call `min(a, b)` if no `:` follows; see below.
-                if self.is_p_at(1, "(") {
-                    return self.call_or_aggregate(s);
-                }
+            // `min x : {…}`, `sum strlen(x) - strlen(a) : {…}`, `min (a + b) : {…}`: an aggregate when its value is
+            // followed by `:`, `by` or `sep`; otherwise `min(a, b)` is a call and `min` a variable.
+            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && self.aggregate_follows() => {
                 self.i += 1;
                 return self.aggregate(s);
             }
@@ -780,17 +764,33 @@ impl<'s> Parser<'s> {
         self.primary()
     }
 
-    /// `min(a, b)` is a call unless a `:` follows the parentheses (`min (a + b) : { … }`).
-    fn call_or_aggregate(&mut self, op: String) -> Result<Term, Error> {
-        let save = self.i;
-        self.i += 2;
-        let args = self.list(")", Self::term)?;
-        self.p(")")?;
-        if self.is_p(":") {
-            self.i = save + 1;
-            return self.aggregate(op);
+    /// An aggregate's value or key as an expression of `agg_part`s: `strlen(x) - strlen(a)`.
+    fn agg_term(&mut self) -> Result<Term, Error> {
+        let product = |p: &mut Self| -> Result<Term, Error> {
+            let mut l = p.agg_part()?;
+            while let Tok::P(op @ ("*" | "/" | "%")) = p.peek() {
+                let op = *op;
+                p.i += 1;
+                l = Term::Bin { op, l: Box::new(l), r: Box::new(p.agg_part()?) };
+            }
+            Ok(l)
+        };
+        let mut l = product(self)?;
+        while let Tok::P(op @ ("+" | "-")) = self.peek() {
+            let op = *op;
+            self.i += 1;
+            l = Term::Bin { op, l: Box::new(l), r: Box::new(product(self)?) };
         }
-        Ok(Term::Call { name: op, functor: false, args })
+        Ok(l)
+    }
+
+    /// Whether the aggregate word at the cursor starts an aggregate: a value follows it, then `:`, `by` or `sep`.
+    fn aggregate_follows(&mut self) -> bool {
+        let save = self.i;
+        self.i += 1;
+        let follows = self.agg_term().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep"));
+        self.i = save;
+        follows
     }
 }
 
