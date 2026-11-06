@@ -26,12 +26,12 @@ C417(c, "list", "Replace this `list(map(...))` of a lambda with the list compreh
 C417(c, "set", "Replace this `set(map(...))` of a lambda with the set comprehension `{<body> for <param> in <iterable>}`, which avoids a function call per item.") :-
     outer(c, "set", m), rewritable(m).
 C417(c, "dict", "Replace this `dict(map(...))` of a lambda with a dict comprehension `{key: value for <param> in <iterable>}`, using the lambda's two items as key and value.") :-
-    outer(c, "dict", m), rewritable(m), map_lambda(m, l), field(l, "body", b), ruff_bare(b, p),
+    outer(c, "dict", m), rewritable(m), map_lambda(m, l), field(l, "body", b), unparen(b, p),
     (list_like(p, "tuple") ; list_like(p, "list")), count : { child(p, i, _), !kind(i, "comment") } = 2.
 
 // map_lambda(m, l): m is `map(lambda …, …)` of the builtin map, with no keywords.
 .decl map_lambda(m: node, l: node)
-map_lambda(m, l) :- c4_builtin(m, "map"), call_nkwargs(m, 0), ruff_arg(m, 0, a), ruff_bare(a, l), kind(l, "lambda").
+map_lambda(m, l) :- c4_builtin(m, "map"), call_nkwargs(m, 0), ruff_arg(m, 0, a), unparen(a, l), kind(l, "lambda").
 // rewritable(m): the lambda has one plain parameter, read only where the comprehension would bind it, and no
 // yield; no iterable is `*xs` or has a walrus.
 .decl rewritable(m: node)

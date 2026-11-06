@@ -18,5 +18,5 @@
     "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress ruff "LOG014"
 LOG014(k) :- log_call(c, m, _, how), (log_level(m) ; how = "name"), !log_in_handler(c),
-    log_kw(c, "exc_info", k, v), ruff_bare(v, l), py_literal(l), truth_of(v, "true").
+    log_kw(c, "exc_info", k, v), unparen(v, l), py_literal(l), truth_of(v, "true").
 // Ruff's gate is_literal_expr: a str, bytes, number, bool, None or `...` literal (not `ValueError()` or a tuple).

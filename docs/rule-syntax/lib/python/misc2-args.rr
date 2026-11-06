@@ -31,7 +31,7 @@
 //       @staticmethod
 //       def g(x): ...                arg_stub(<g>): not checked
 //   lambda x: 1                      arg_unused(<lambda>, <x>, "x", "ARG005")
-#include "python/annotations.rr"   // ann_overload, ann_override; python/ruff (ruff_qual, ruff_bare)
+#include "python/annotations.rr"   // ann_overload, ann_override; python/ruff (ruff_qual)
 
 // ---- which defs, under which code --------------------------------------------------------------------------------
 .decl arg_checked(f: node, code: symbol, skip: number)
@@ -73,21 +73,21 @@ arg_stub(f) :- kind(f, "function_definition"), field(f, "body", b), count : { bo
 arg_stub(f) :- argt_raise_msg(f).
 .decl argt_stub_stmt(s: node)
 argt_stub_stmt(st) :- kind(st, "pass_statement").
-argt_stub_stmt(st) :- kind(st, "expression_statement"), child(st, e0, 0), !child(st, _, 1), ruff_bare(e0, e),
+argt_stub_stmt(st) :- kind(st, "expression_statement"), child(st, e0, 0), !child(st, _, 1), unparen(e0, e),
     kind(e, "ellipsis").
 argt_stub_stmt(st) :- argt_stub_str(st).
 .decl argt_stub_str(st: node)   // a statement that is a lone str literal
-argt_stub_str(st) :- kind(st, "expression_statement"), child(st, e0, 0), !child(st, _, 1), ruff_bare(e0, e),
+argt_stub_str(st) :- kind(st, "expression_statement"), child(st, e0, 0), !child(st, _, 1), unparen(e0, e),
     argt_plain_str(e).
-argt_stub_stmt(st) :- kind(st, "raise_statement"), child(st, e0, 0), ruff_bare(e0, e1),
+argt_stub_stmt(st) :- kind(st, "raise_statement"), child(st, e0, 0), unparen(e0, e1),
     (kind(e1, "call"), field(e1, "function", e) ; !kind(e1, "call"), e = e1),
     (ruff_qual(e, "builtins.NotImplementedError") ; ruff_qual(e, "builtins.NotImplemented")).
 // argt_raise_msg(f): an optional docstring, then `msg = "…"` (or an f-string) and `raise NotImplementedError(msg)`.
 .decl argt_raise_msg(f: node)
 argt_raise_msg(f) :- kind(f, "function_definition"), field(f, "body", b), argt_skip_doc(b, o), body_len(b, n), n = o + 2,
     body_stmt(b, a0, o), asgstmt(a, a0), !field(a, "type", _), field(a, "left", t), kind(t, "identifier"), text(t, x),
-    field(a, "right", v0), ruff_bare(v0, v), string_type(v, "str"), !argt_tstr(v),
-    body_stmt(b, r, o + 1), kind(r, "raise_statement"), child(r, c0, 0), ruff_bare(c0, c),
+    field(a, "right", v0), unparen(v0, v), string_type(v, "str"), !argt_tstr(v),
+    body_stmt(b, r, o + 1), kind(r, "raise_statement"), child(r, c0, 0), unparen(c0, c),
     call_q(c, "builtins.NotImplementedError"), call_nargs(c, 1), ruff_arg(c, 0, m), kind(m, "identifier"), text(m, x).
 .decl argt_skip_doc(b: node, o: number)
 argt_skip_doc(b, 1) :- argt_doc_first(b).

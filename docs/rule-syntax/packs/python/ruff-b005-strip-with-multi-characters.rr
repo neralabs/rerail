@@ -19,7 +19,7 @@
 B005(c) :- strip_arg(c, v), b005_char(v, i, x), b005_char(v, j, x), i < j.
 .decl strip_arg(c: node, v: symbol)
 strip_arg(c, v) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
-    (m = "strip" ; m = "lstrip" ; m = "rstrip"), bb_npos(c, 1), bb_nkw(c, 0), bb_pos(c, 0, a), plain_str(a, v).
+    (m = "strip" ; m = "lstrip" ; m = "rstrip"), call_nargs(c, 1), call_nkwargs(c, 0), bb_pos(c, 0, a), plain_str(a, v).
 // b005_char(v, i, x): x is the i-th character of v (code points, not bytes), for strip arguments only.
 .decl b005_char(v: symbol, i: number, x: symbol)
 b005_char(v, 0, x) :- strip_arg(_, v), x = @slice(v, 0, 1), x != "".

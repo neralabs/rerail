@@ -14,16 +14,16 @@
 //   y = None and x           ← SIM223 (y is None)
 //   y = x and False          not reported
 #include "python/simplify.rr"
-//   sim_operand(t, o, i, v), sim_nops(t, n), sim_truth(e, b), sim_effect(e), sim_bool_test(e)
+//   sim_operand(t, o, i, v), sim_nops(t, n), sim_truth(e, b), side_effect(e), sim_bool_test(e), in_string_ann(e)
 
 .violation SIM223(at: node, v: node) code "SIM223"
     "Drop the operands after `{v}` in this `and`; it is always false, so they never run and the result is `{v}`."
     suppress ruff "SIM223"
-SIM223(at, v) :- short_circuit(t, i, v), from(t, i, at).
+SIM223(at, v) :- short_circuit(t, i, v), !in_string_ann(t), from(t, i, at).   // Ruff skips string annotations
 
 // pass_over(t, i): operand i is of unknown truth and may not be dropped: the finding starts after it.
 .decl pass_over(t: node, i: number)
-pass_over(t, i) :- sim_operand(t, "and", i, v), !sim_truth(v, _), (!sim_bool_test(t) ; sim_effect(v)).
+pass_over(t, i) :- sim_operand(t, "and", i, v), !sim_truth(v, _), (!sim_bool_test(t) ; side_effect(v)).
 // stop(t, i, v): Ruff's loop ends at pair (i, i + 1), on v, an always-false operand of the two.
 .decl stop(t: node, i: number, v: node)
 stop(t, i, v) :- sim_operand(t, "and", i, v), sim_nops(t, n), i < n - 1, !pass_over(t, i), sim_truth(v, "false").

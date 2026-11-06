@@ -41,5 +41,5 @@ local_in(f, x) :- binding(f, x, _, form), form != "except".
 local_in(f, x) :- bare_annotation(_, _, x, f).
 .decl outer(f: node, x: symbol)
 outer(f, x) :- read(_, x, f, _), inside(f, p, fscope), bound_in(p, x).
-outer(f, x) :- read(_, x, f, _), builtin_name(x).
+outer(f, x) :- read(_, x, f, _), builtin(x).
 outer(f, x) :- read(_, x, f, _), inside(f, p, fscope), bare_annotation(_, _, x, p).

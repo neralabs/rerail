@@ -4,7 +4,7 @@
 //
 // Interface
 //   target_minor(m), targets(m)   the target Python version (python/version)
-//   up_stub(d)               document d is a stub (`.pyi`)
+//   stub_file(d)             document d is a stub (`.pyi`; python/ast)
 //   future_annotations(d)    d has `from __future__ import annotations`: its annotations are never evaluated
 //   typing_ref(e, x)         e names member x of `typing` or `typing_extensions` (by sym_at), through imports:
 //                            `typing.List`, `List` after `from typing import List`, `t.List` after `import typing as t`
@@ -13,11 +13,10 @@
 //   sym_at(e, q)             sym_of in Ruff's order: e names q through the bindings visible where it runs
 //   runs_at_import(n)        n runs while the module is imported: module code and the class bodies in it
 //   up_arg(c, i, a)          a is call c's i-th positional argument, parentheses off (`*xs` not counted)
-//   up_npos(c, n)            c has n positional arguments, `*xs` included (Ruff's `args`)
-//   up_kw(c, k, v)           `k=v` is one of c's keywords, v without parentheses; up_kwarg(c, k, ka): the whole `k=v`
-//   up_argc(c, n)            c has n arguments of every kind;  up_splat(c): c has a `*xs` or `**kw`
-//   kwsplat(c)               c passes `**kw`;  nkw(c, n): c has n keyword arguments, `**kw` included
-//   identifier(x)            x is a valid Python identifier that is not a keyword (`str.isidentifier`, ASCII)
+//   up_kwarg(c, k, ka)       `k=v` is one of c's keywords, ka the whole `k=v`
+//   up_argc(c, n)            c has n arguments of every kind
+//   (counts and keywords: python/ruff's call_nargs, call_nkwargs, call_kw, call_splat, call_kwsplat)
+//   identifier(x)            (python/pyflakes) x is a Python identifier that is not a keyword
 //   functional_def(s, x, c, what)  statement s is `x = what(…)`, c the call, what a typing member by typing_ref
 //
 // Python background
@@ -29,12 +28,9 @@
 //   # pythonVersion "3.8"
 //   from __future__ import annotations
 //   def f(x: List[int]): ...         typing_only(<List[int]>), future_annotations(d), !targets(9)
-#include "python/pyflakes.rr"   // run_scope; includes python/ast
-#include "python/version.rr"    // target_minor, targets
+#include "python/ruff.rr"   // call_nargs, call_kw, …; python/pyflakes (run_scope), python/ast, python/version
 
 // ---- documents ---------------------------------------------------------------------------------------------------
-.decl up_stub(d: number)
-up_stub(d) :- doc(d, p, _), suffix(".pyi", p).
 // future_annotations(d): `from __future__ import annotations` in the module's leading run: only a docstring and
 // other `__future__` imports come before it, as CPython requires (later, it is a SyntaxError, and Ruff ignores it).
 .decl future_annotations(d: number)
@@ -46,15 +42,13 @@ leading_future(i) :- kind(i, "future_import_statement"), child(m, i, k), kind(m,
     count : { child(m, st, j), j < k, !kind(st, "future_import_statement"), !kind(st, "comment"), !docstring(m, st),
         !docstring_stmt(m, st) } = 0.
 .decl docstring_stmt(m: node, st: node)  // the statement holding the module docstring
-docstring_stmt(m, st) :- docstring(m, sd), child(st, sd, 0).
+docstring_stmt(m, st) :- body_of(m, b), body_stmt(b, st, 0), doc_stmt(st, _).
 
 // ---- typing names ------------------------------------------------------------------------------------------------
 // typing_ref(e, x): Ruff's match_typing_expr: e resolves to typing.x or typing_extensions.x.
 .decl typing_ref(e: node, x: symbol)
 typing_ref(e, x) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_at(e, q), split_dot(q, m, x),
-    up_typing_module(m).
-.decl up_typing_module(m: symbol)
-up_typing_module("typing"). up_typing_module("typing_extensions").
+    typing_mod(m).
 .decl typing_only(n: node)
 typing_only(n) :- annotation(n).
 
@@ -79,7 +73,7 @@ runs_at_import(n) :- run_scope(n, _, "module"), !late_annotation(n).
 runs_at_import(n) :- run_scope(n, s, k), k != "module", k != "function", k != "lambda", runs_at_import(s),
     !late_annotation(n).
 .decl late_annotation(n: node)
-late_annotation(n) :- typing_only(n), docof(n, d), (up_stub(d) ; future_annotations(d)).
+late_annotation(n) :- typing_only(n), docof(n, d), (stub_file(d) ; future_annotations(d)).
 late_annotation(n) :- typing_only(n), targets(14).
 // head_ref(e, h, x): h is the name x read at the head of the Name/Attribute chain e (e itself for a name).
 // A store target is not a read.
@@ -143,7 +137,7 @@ builtin_at(e, x) :- sym_at(e, q), split_dot(q, "builtins", x).
 
 // ---- call arguments ----------------------------------------------------------------------------------------------
 // Ruff's Arguments: `args` (positional, `*xs` included) and `keywords` (`x=v` and `**kw`), comments ignored.
-//   f(a, *b, c=1, **d)     up_arg(f, 0, a); up_npos 2; up_kw(f, "c", 1); kwsplat(f); nkw 2; up_argc 4
+//   f(a, *b, c=1, **d)     up_arg(f, 0, a); up_kwarg(f, "c", <c=1>); up_argc 4
 .decl up_arglist(c: node, a: node, j: number)
 up_arglist(c, a, j) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a, j),
     !kind(a, "comment").
@@ -156,35 +150,12 @@ up_positional(a) :- up_arglist(_, a, _), !up_keyword(a), !kind(a, "list_splat").
 .decl up_arg(c: node, i: number, a: node)
 up_arg(c, i, a) :- up_arglist(c, a0, j), up_positional(a0), unparen(a0, a),
     i = count : { up_arglist(c, b, k), k < j, up_positional(b) }.
-.decl up_npos(c: node, n: number)
-up_npos(c, n) :- kind(c, "call"), n = count : { up_arglist(c, a, _), !up_keyword(a) }.
-.decl up_kw(c: node, k: symbol, v: node)
-up_kw(c, k, v) :- up_kwarg(c, k, ka), field(ka, "value", v0), unparen(v0, v).
 .decl up_kwarg(c: node, k: symbol, ka: node)
 up_kwarg(c, k, ka) :- up_arglist(c, ka, _), kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k).
 .decl up_argc(c: node, n: number)
 up_argc(c, n) :- kind(c, "call"), n = count : { up_arglist(c, _, _) }.
-.decl up_splat(c: node)
-up_splat(c) :- up_arglist(c, a, _), (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
-.decl kwsplat(c: node)
-kwsplat(c) :- up_arglist(c, a, _), kind(a, "dictionary_splat").
-.decl nkw(c: node, n: number)
-nkw(c, n) :- kind(c, "call"), n = count : { up_arglist(c, a, _), up_keyword(a) }.
 
 // ---- identifiers and functional definitions ------------------------------------------------------------------
-.decl identifier(x: symbol)
-identifier(x) :- field_name(x), match("[A-Za-z_][A-Za-z0-9_]*", x), !py_keyword(x).
-.decl field_name(x: symbol)  // the strings identifier is asked about: every str literal's value, every name
-field_name(x) :- plain_str(_, x).
-field_name(x) :- kind(n, "identifier"), text(n, x).
-.decl py_keyword(x: symbol)
-py_keyword("False"). py_keyword("None"). py_keyword("True"). py_keyword("and"). py_keyword("as").
-py_keyword("assert"). py_keyword("async"). py_keyword("await"). py_keyword("break"). py_keyword("class").
-py_keyword("continue"). py_keyword("def"). py_keyword("del"). py_keyword("elif"). py_keyword("else").
-py_keyword("except"). py_keyword("finally"). py_keyword("for"). py_keyword("from"). py_keyword("global").
-py_keyword("if"). py_keyword("import"). py_keyword("in"). py_keyword("is"). py_keyword("lambda").
-py_keyword("nonlocal"). py_keyword("not"). py_keyword("or"). py_keyword("pass"). py_keyword("raise").
-py_keyword("return"). py_keyword("try"). py_keyword("while"). py_keyword("with"). py_keyword("yield").
 // functional_def(s, x, c, what): `X = NamedTuple("X", …)` as a statement with one target, a plain name (UP013,
 // UP014): the functional forms that a class statement can replace.
 .decl functional_def(s: node, x: symbol, c: node, what: symbol)

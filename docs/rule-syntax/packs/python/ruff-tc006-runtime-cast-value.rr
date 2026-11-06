@@ -12,12 +12,12 @@
 //   t.cast(t.Literal["3.0"], x)  ← TC006, with `import typing as t`
 //   cast("int", 3.0)             not reported
 #include "python/misc2-typecheck.rr"
-//   tc_cast_type(c, t), up_stub(d)
+//   tc_cast_type(c, t), stub_file(d)
 
 .violation TC006(at: node) code "TC006"
     "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress ruff "TC006"
-TC006(t) :- tc_cast_type(_, t), !str_literal(t), docof(t, d), !up_stub(d).
+TC006(t) :- tc_cast_type(_, t), !str_literal(t), docof(t, d), !stub_file(d).
 // A str literal, adjacent ones included; an f-string or bytes literal is not one (Ruff's is_string_literal_expr).
 .decl str_literal(t: node)
 str_literal(t) :- string_form(t, "str").

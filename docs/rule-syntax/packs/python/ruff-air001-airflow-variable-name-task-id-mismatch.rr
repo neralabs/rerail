@@ -18,7 +18,7 @@
     "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
     suppress ruff "AIR001"
 AIR001(t, tv) :- kind(a, "assignment"), field(a, "left", t), kind(t, "identifier"), field(a, "right", v), !field(a, "type", _),
-    ruff_bare(v, c), call_q(c, q), operator_class(q), call_kwarg(c, "task_id", k), ruff_bare(k, s), plain_str(s, tv),
+    unparen(v, c), call_q(c, q), operator_class(q), call_kwarg(c, "task_id", k), unparen(k, s), plain_str(s, tv),
     !text(t, tv), docof(a, d), seen_module(d, "airflow").
 seen_ask("airflow").
 .decl operator_class(q: symbol)

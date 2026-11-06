@@ -17,11 +17,11 @@
     suppress ruff "SIM910"
     fix safe drop_none "Replace with `{f}({key})`"
 SIM910(c, f, k) :- kind(c, "call"), call_nkwargs(c, 0), field(c, "function", f), attr_of(f, o, "get"),
-    positional(c, 0, k), positional(c, 1, n), ruff_bare(n, nn), kind(nn, "none"), dict_receiver(o).
+    positional(c, 0, k), positional(c, 1, n), unparen(n, nn), kind(nn, "none"), dict_receiver(o).
 // positional(c, i, a): a is c's i-th item of Ruff's `args`, `*xs` included (ruff_arg stops at `*xs`).
 .decl positional(c: node, i: number, a: node)
 positional(c, i, a) :- call_item(c, a, j), pos_item(a), i = count : { call_item(c, b, j2), j2 < j, pos_item(b) }.
 .decl dict_receiver(o: node)
-dict_receiver(o) :- ruff_bare(o, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
-dict_receiver(o) :- ruff_bare(o, m), kind(m, "identifier"), dict_ref(m).
+dict_receiver(o) :- unparen(o, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
+dict_receiver(o) :- unparen(o, m), kind(m, "identifier"), dict_ref(m).
 drop_none(c, f, k) :- !has(c, _, "comment") => replace(c, `$f($k)`).

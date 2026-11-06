@@ -18,5 +18,5 @@ T201(f) :- call_q(c, "builtins.print"), field(c, "function", f), !print_elsewher
 
 // print_elsewhere(c): c passes `file=` a value other than None, sys.stdout or sys.stderr.
 .decl print_elsewhere(c: node)
-print_elsewhere(c) :- call_kwarg(c, "file", v), ruff_bare(v, m), !kind(m, "none"), !ruff_qual(m, "sys.stdout"),
+print_elsewhere(c) :- call_kwarg(c, "file", v), unparen(v, m), !kind(m, "none"), !ruff_qual(m, "sys.stdout"),
     !ruff_qual(m, "sys.stderr").

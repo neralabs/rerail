@@ -33,14 +33,14 @@
 //   cast(int, x)                 tc_cast_type(<call>, <int>): TC006
 //   T = TypeVar("T", int | "str", str)   tc_runtime_typedef(<int | "str">), tc_union_member(…, <"str">): TC010
 #include "python/upgrade-typing.rr"
-//   targets(m), up_stub(d), future_annotations(d), typing_ref(e, x), up_arg(c, i, a), up_kw(c, k, v),
+//   targets(m), stub_file(d), future_annotations(d), typing_ref(e, x), up_arg(c, i, a), call_kw(c, k, v),
 //   up_typing_sub(s, x), type_arg(s, i, a); ann_root (python/ast)
 #include "python/ruff.rr"
-//   ruff_bare(e, m), ruff_qual(e, q), call_q(c, q)
+//   unparen(e, m), ruff_qual(e, q), call_q(c, q)
 
 // ---- TYPE_CHECKING blocks ------------------------------------------------------------------------------------
 .decl tc_block(i: node, b: node)
-tc_block(i, b) :- kind(i, "if_statement"), field(i, "condition", c), ruff_bare(c, t), tc_test(t),
+tc_block(i, b) :- kind(i, "if_statement"), field(i, "condition", c), unparen(c, t), tc_test(t),
     field(i, "consequence", b).
 .decl tc_test(t: node)
 tc_test(t) :- kind(t, "identifier"), text(t, "TYPE_CHECKING").
@@ -51,30 +51,30 @@ tc_in_block(n) :- tc_block(_, b), within(n, b).
 
 // ---- casts and other runtime type definitions ---------------------------------------------------------------
 .decl tc_typing_call(c: node, x: symbol)  // c calls typing.x or typing_extensions.x
-tc_typing_call(c, x) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, g), typing_ref(g, x).
+tc_typing_call(c, x) :- kind(c, "call"), field(c, "function", f), unparen(f, g), typing_ref(g, x).
 .decl tc_cast_type(c: node, t: node)
 tc_cast_type(c, t) :- tc_typing_call(c, "cast"), field(c, "arguments", al), child(al, a0, 0),
-    !kind(a0, "keyword_argument"), !kind(a0, "dictionary_splat"), ruff_bare(a0, t).
-tc_cast_type(c, t) :- tc_typing_call(c, "cast"), up_kw(c, "typ", t).
+    !kind(a0, "keyword_argument"), !kind(a0, "dictionary_splat"), unparen(a0, t).
+tc_cast_type(c, t) :- tc_typing_call(c, "cast"), call_kw(c, "typ", t).
 .decl tc_runtime_typedef(e: node)
 tc_runtime_typedef(e) :- tc_typedef_root(e), !tc_in_block(e).
 .decl tc_typedef_root(e: node)
 // Calls whose arguments are types, evaluated as the call runs (in a stub too).
 tc_typedef_root(t) :- tc_cast_type(_, t).
 tc_typedef_root(a) :- tc_typing_call(c, "TypeVar"), up_arg(c, i, a), i > 0.
-tc_typedef_root(v) :- tc_typing_call(c, "TypeVar"), (up_kw(c, "bound", v) ; up_kw(c, "default", v)).
+tc_typedef_root(v) :- tc_typing_call(c, "TypeVar"), (call_kw(c, "bound", v) ; call_kw(c, "default", v)).
 tc_typedef_root(a) :- tc_typing_call(c, "NewType"), up_arg(c, 1, a).
-tc_typedef_root(v) :- tc_typing_call(c, "NewType"), up_kw(c, "tp", v).
+tc_typedef_root(v) :- tc_typing_call(c, "NewType"), call_kw(c, "tp", v).
 tc_typedef_root(a) :- tc_typing_call(c, "TypeAliasType"), up_arg(c, 1, a).
-tc_typedef_root(v) :- tc_typing_call(c, "TypeAliasType"), up_kw(c, "value", v).
-tc_typedef_root(v) :- tc_typing_call(c, "TypeAliasType"), up_kw(c, "type_params", t), tc_items(t, v).
+tc_typedef_root(v) :- tc_typing_call(c, "TypeAliasType"), call_kw(c, "value", v).
+tc_typedef_root(v) :- tc_typing_call(c, "TypeAliasType"), call_kw(c, "type_params", t), tc_items(t, v).
 tc_typedef_root(a) :- tc_typing_call(c, "TypeForm"), up_arg(c, 0, a).
 // NamedTuple("N", [("a", T), …]) and TypedDict("D", {"a": T}); their keyword forms (`a=T`) too.
 tc_typedef_root(v) :- tc_typing_call(c, "NamedTuple"), up_arg(c, 1, l), tc_items(l, f), kind(f, "tuple"),
-    child(f, x, 1), ruff_bare(x, v).
+    child(f, x, 1), unparen(x, v).
 tc_typedef_root(v) :- tc_typing_call(c, "TypedDict"), up_arg(c, 1, m), kind(m, "dictionary"), child(m, p, _),
-    kind(p, "pair"), field(p, "value", x), ruff_bare(x, v).
-tc_typedef_root(v) :- (tc_typing_call(c, "NamedTuple") ; tc_typing_call(c, "TypedDict")), up_kw(c, k, v),
+    kind(p, "pair"), field(p, "value", x), unparen(x, v).
+tc_typedef_root(v) :- (tc_typing_call(c, "NamedTuple") ; tc_typing_call(c, "TypedDict")), call_kw(c, k, v),
     k != "total".
 // A PEP 613 `X: TypeAlias = …` value, in any scope.
 tc_typedef_root(v) :- kind(s, "assignment"), field(s, "type", t), child(t, h, 0), typing_ref(h, "TypeAlias"),
@@ -86,9 +86,9 @@ tc_typedef_root(a) :- kind(s, "subscript"), tc_generic_sub(s), !annotation(s), !
 // Not in a stub, under `from __future__ import annotations`, or at Python 3.14 and later (PEP 649).
 tc_typedef_root(r) :- ann_root(r), tc_ann_owner(r, o), (kind(o, "function_definition") ;
     nearest(o, s, scope), !kind(s, "function_definition"), !kind(s, "lambda")),
-    docof(r, d), !up_stub(d), !future_annotations(d), !targets(14).
+    docof(r, d), !stub_file(d), !future_annotations(d), !targets(14).
 .decl tc_items(t: node, v: node)  // the elements of a tuple or list display, or t itself
-tc_items(t, v) :- (kind(t, "tuple") ; kind(t, "list")), child(t, x, _), !kind(x, "comment"), ruff_bare(x, v).
+tc_items(t, v) :- (kind(t, "tuple") ; kind(t, "list")), child(t, x, _), !kind(x, "comment"), unparen(x, v).
 tc_items(t, t) :- kind(t, k), k != "tuple", k != "list".
 .decl tc_lazy(s: node)  // the value of `type X = …`, evaluated lazily
 tc_lazy(s) :- kind(a, "type_alias_statement"), within(s, a).
@@ -134,5 +134,5 @@ tc_union_member(u, m) :- tc_union_member(u, v), tc_bitor(v), tc_side(v, m).
 .decl tc_side(u: node, m: node)  // an operand of `|`, through parentheses and the `type` wrapper
 tc_side(u, m) :- tc_bitor(u), child(u, c, _), tc_strip(c, m).
 .decl tc_strip(c: node, m: node)
-tc_strip(c, m) :- ruff_bare(c, m), !kind(m, "type").
-tc_strip(c, m) :- ruff_bare(c, t), kind(t, "type"), child(t, i, 0), tc_strip(i, m).
+tc_strip(c, m) :- unparen(c, m), !kind(m, "type").
+tc_strip(c, m) :- unparen(c, t), kind(t, "type"), child(t, i, 0), tc_strip(i, m).

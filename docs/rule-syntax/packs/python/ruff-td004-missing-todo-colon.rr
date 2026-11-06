@@ -10,9 +10,9 @@
 //   # TODO fix this                ← TD004
 //   # TODO (charlie): fix this     not reported: spaces before the author are skipped
 //   # TODO(charlie): fix this      not reported
-#include "python/misc2-todo.rr"   // todo_item and the TD helpers
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD004(at: node, tag: symbol) code "TD004"
+.violation TD004(at: span, tag: symbol) code "TD004"
     "Put a colon right after `{tag}` or its author, as in `{tag}(name): text`, with the description after the colon."
     suppress ruff "TD004"
-TD004(c, D) :- todo_item(c, D, _), todo_shape(c, "no-colon").
+TD004(t, D) :- todo_item(c, D, _), todo_shape(c, "no-colon"), todo_at(c, t).

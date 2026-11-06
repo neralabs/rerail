@@ -15,11 +15,11 @@
     "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`."
     suppress ruff "ASYNC230"
 ASYNC230(f) :- async_blocking(_, f, q), (q = "builtins.open" ; q = "io.open" ; q = "io.open_code").
-ASYNC230(f) :- kind(c, "call"), field(c, "function", f0), ruff_bare(f0, f), attr_of(f, o0, "open"), ruff_bare(o0, o),
+ASYNC230(f) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o0, "open"), unparen(o0, o),
     async_ctx(c), async_path_value(o).
 // `Path(…)` itself, or a name whose binding in effect has the value `Path(…)` (Ruff's find_binding_value).
 .decl async_path_value(o: node)
 async_path_value(o) :- async_path_call(o).
 async_path_value(o) :- async_name_value(o, v), async_path_call(v).
 .decl async_path_call(e: node)
-async_path_call(e) :- ruff_bare(e, m), call_q(m, "pathlib.Path").
+async_path_call(e) :- unparen(e, m), call_q(m, "pathlib.Path").

@@ -32,7 +32,7 @@ call_without_argument(c, t) :- native(c, t), up_argc(c, 0).
 .violation call_on_literal(at: node, t: symbol) code "UP018"
     "Replace this call with the literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing."
     suppress ruff "UP018"
-call_on_literal(c, t) :- native(c, t), up_argc(c, 1), (up_arg(c, 0, a) ; up_kw(c, k, a), keyword(t, k)), lit(a, t).
+call_on_literal(c, t) :- native(c, t), up_argc(c, 1), (up_arg(c, 0, a) ; call_kw(c, k, a), keyword(t, k)), lit(a, t).
 .decl keyword(t: symbol, k: symbol)
 keyword("str", "object"). keyword("complex", "real").
 

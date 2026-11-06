@@ -31,14 +31,14 @@
 
 // ---- arguments and their forms ----------------------------------------------------------------------------------
 .decl msg_arg(c: node, i: number, a: node)
-msg_arg(c, i, a) :- ruff_arg(c, i, x), ruff_bare(x, a).
+msg_arg(c, i, a) :- ruff_arg(c, i, x), unparen(x, a).
 
 .decl msg_form(a: node, k: symbol)
 msg_form(a, "str") :- msg_str_lit(a).
 msg_form(a, "bytes") :- bytes_lit(a).
 msg_form(a, "fstr") :- fstring(a).
 msg_form(a, "format") :- kind(a, "call"), field(a, "function", f), attr_of(f, _, "format").
-msg_form(a, "printf") :- kind(a, "binary_operator"), op(a, "%"), field(a, "left", l), ruff_bare(l, m),
+msg_form(a, "printf") :- kind(a, "binary_operator"), op(a, "%"), field(a, "left", l), unparen(l, m),
     msg_str_lit(m).
 // msg_str_lit(m): a str literal: a plain (or raw, or u) string, or adjacent ones that all are.
 .decl msg_str_lit(m: node)
@@ -47,8 +47,8 @@ msg_str_lit(m) :- kind(m, "concatenated_string"),
     count : { child(m, s, _), !kind(s, "comment"), !string_form(s, "str") } = 0.
 
 .decl msg_literal(e: node)
-msg_literal(e) :- ruff_bare(e, m), (msg_str_lit(m) ; bytes_lit(m)).
-msg_literal(e) :- ruff_bare(e, m), kind(m, k), msg_literal_kind(k).
+msg_literal(e) :- unparen(e, m), (msg_str_lit(m) ; bytes_lit(m)).
+msg_literal(e) :- unparen(e, m), kind(m, k), msg_literal_kind(k).
 .decl msg_literal_kind(k: symbol)
 msg_literal_kind("integer"). msg_literal_kind("float"). msg_literal_kind("true"). msg_literal_kind("false").
 msg_literal_kind("none"). msg_literal_kind("ellipsis").
@@ -75,12 +75,12 @@ msg_gettext_name(x) :- !msg_names_set(), (x = "_" ; x = "gettext" ; x = "ngettex
 msg_names_set() :- option_item("flake8-gettext.function-names", _, _).
 
 .decl msg_gettext(c: node)
-msg_gettext(c) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, m), kind(m, "identifier"), text(m, x),
+msg_gettext(c) :- kind(c, "call"), field(c, "function", f), unparen(f, m), kind(m, "identifier"), text(m, x),
     msg_gettext_name(x).
 msg_gettext(c) :- kind(c, "call"), field(c, "function", f), ruff_qual(f, q), msg_import_seen(f),
     ( split_dot(q, "builtins", x), msg_gettext_name(x) ; q = "gettext.gettext" ; q = "gettext.ngettext" ).
 // msg_import_seen(f): the import that names f's root is visible at f: inside a def any import of the module is
 // (the body runs later), at module level only one written before f.
 .decl msg_import_seen(f: node)
-msg_import_seen(f) :- ruff_bare(f, m), (chain_root(m, r) ; kind(m, "identifier"), r = m),
+msg_import_seen(f) :- unparen(f, m), (chain_root(m, r) ; kind(m, "identifier"), r = m),
     look(r, x, s), binding(s, x, b, "import"), (b < r ; scope_node(r, s2), !kind(s2, "module")).

@@ -17,7 +17,7 @@
 
 .violation F822(at: node, x: symbol) code "F822" "Undefined name `{x}` in `__all__`"
     suppress ruff "F822"
-F822(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !star(m), !bound_in(m, x), !builtin_name(x),
+F822(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !star(m), !bound_in(m, x), !builtin(x),
     !stub_annotated(d, x), !deleted(m, x), top_stmt(s, st), !noqa(st, "F822").
 // deleted(m, x): module m has `del x` at its top level. Ruff keeps a binding for a deleted name, so `__all__`
 // may list it.

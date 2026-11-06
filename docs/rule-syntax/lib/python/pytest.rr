@@ -10,7 +10,6 @@
 //                                             "" or None (Ruff's is_empty_or_null_string)
 //                   pytest_several(s)         str literal s names several parameters, "a, b" (Ruff's
 //                                             split_names: comma-separated, blanks dropped)
-//                   pytest_str(s, v)          s is a str literal, adjacent pieces joined, with value v
 //   2b. Options:    pytest_broad(c, e, s)     option c ("raises" or "warns")'s require-match-for patterns,
 //                                             or their extend- list, match the name s that Ruff shows for e
 //   3. Blocks:      pytest_with(w, q)         with statement w has an item that is a call of q: `with
@@ -18,10 +17,7 @@
 //                   pytest_crowded(w)         w's body is not one simple statement (PT012, PT031)
 //   4. Fixtures:    pytest_seen(f, n)         yield or call n is one that Ruff's SkipFunctionsVisitor sees in the
 //                                             body of fixture f
-//   5. Comparing:   pytest_same(a, b)         a and b are the same expression, as Ruff's ComparableExpr compares:
-//                                             parentheses, spacing, comments and quote style aside; "ab" equals
-//                                             "a" "b", 1.0 equals 1.00, b"a" and f"a" differ from "a". Only for
-//                                             the pairs a rule adds to pytest_same_seed.
+//   5. Comparing:   python/compare's cmp_same / cmp_same_ask (Ruff's ComparableExpr)
 // Calls (exc_call, exc_arg, exc_argument, kwarg, exc_no_args) come from python/exceptions.
 //
 // Python and Ruff background
@@ -37,6 +33,7 @@
 //       a = f()
 //       g(a)
 #include "python/exceptions.rr"
+#include "python/pyflakes.rr"   // plain_str
 
 // ---- 1. decorators -----------------------------------------------------------------------------------------------
 .decl pytest_deco(o: node, d: node, e: node, q: symbol)
@@ -71,12 +68,7 @@ pytest_empty_fpiece(s) :- kind(s, "string"), strprefix(s, p), contains("f", p), 
 // pytest_several(s): the str literal s, split at commas, gives two or more non-blank names: some comma has a
 // non-blank character before it and one after it.
 .decl pytest_several(s: node)
-pytest_several(s) :- pytest_str(s, v), match("[\\s\\S]*[^,\\s][\\s\\S]*,[\\s\\S]*[^,\\s][\\s\\S]*", v).
-// pytest_str(s, v): s is a str literal (adjacent pieces joined) with value v: Ruff's StringLiteral.
-.decl pytest_str(s: node, v: symbol)
-pytest_str(s, v) :- kind(s, "string"), string_kind(s, "str"), value(s, v).
-pytest_str(c, v) :- kind(c, "concatenated_string"), count : { child(c, q, _), kind(q, "string"), !string_kind(q, "str") } = 0,
-    v = join w by i sep "" : { child(c, p, i), kind(p, "string"), value(p, w) }.
+pytest_several(s) :- plain_str(s, v), match("[\\s\\S]*[^,\\s][\\s\\S]*,[\\s\\S]*[^,\\s][\\s\\S]*", v).
 
 // ---- 2b. options ------------------------------------------------------------------------------------------------
 // Ruff's raises-require-match-for / warns-require-match-for (replacing the defaults when given) and their
@@ -143,38 +135,3 @@ pytest_opaque("boolean_operator"). pytest_opaque("comparison_operator"). pytest_
 pytest_opaque("conditional_expression"). pytest_opaque("named_expression"). pytest_opaque("await").
 pytest_opaque("string"). pytest_opaque("concatenated_string"). pytest_opaque("yield"). pytest_opaque("list_splat").
 pytest_opaque("dictionary_splat"). pytest_opaque("slice"). pytest_opaque("expression_list").
-
-// ---- 5. comparing expressions --------------------------------------------------------------------------------------
-// pytest_same(a, b): the pair, parentheses off, has the same kinds, operators and children (comments skipped) all
-// the way down. A constant compares by its class and value (pytest_atom): str literals by their joined value, so
-// "ab" is "a" "b"; bytes apart from str; numbers by value, ints apart from floats.
-.decl pytest_same_seed(a: node, b: node)
-.decl pytest_atom(a: node, c: symbol, v: symbol)
-pytest_atom(a, "str", v) :- pytest_str(a, v).
-pytest_atom(a, "bytes", v) :- string_kind(a, "bytes"), value(a, v).
-pytest_atom(a, "int", v) :- kind(a, "integer"), !imaginary(a), value(a, v).
-pytest_atom(a, "float", to_string(to_float(@replace_all(t, "_", "")))) :- kind(a, "float"), !imaginary(a), text(a, t).
-pytest_atom(a, "complex", t) :- imaginary(a), text(a, t).
-pytest_atom(a, k, k) :- kind(a, k), (k = "true" ; k = "false" ; k = "none" ; k = "ellipsis").
-.decl pytest_kid(a: node, x: node, i: number)  // x is a's i-th child that is not a comment, parentheses off
-pytest_kid(a, x, i) :- pytest_pair(a, _), !pytest_atom(a, _, _), child(a, x0, j), !kind(x0, "comment"),
-    i = count : { child(a, y, k), k < j, !kind(y, "comment") }, unparen(x0, x).
-pytest_kid(b, y, i) :- pytest_pair(_, b), !pytest_atom(b, _, _), child(b, y0, j), !kind(y0, "comment"),
-    i = count : { child(b, z, k), k < j, !kind(z, "comment") }, unparen(y0, y).
-.decl pytest_pair(a: node, b: node)
-pytest_pair(a, b) :- pytest_same_seed(a0, b0), exc_unparen(a0, a), exc_unparen(b0, b).
-pytest_pair(x, y) :- pytest_pair(a, b), pytest_kid(a, x, i), pytest_kid(b, y, i).
-.decl pytest_differ(a: node, b: node)
-pytest_differ(a, b) :- pytest_pair(a, b), pytest_atom(a, c, v), !pytest_atom(b, c, v).
-pytest_differ(a, b) :- pytest_pair(a, b), pytest_atom(b, c, v), !pytest_atom(a, c, v).
-pytest_differ(a, b) :- pytest_pair(a, b), !pytest_atom(a, _, _), kind(a, k), !kind(b, k).
-pytest_differ(a, b) :- pytest_pair(a, b), !pytest_atom(a, _, _), string_form(a, f), !string_form(b, f).
-pytest_differ(a, b) :- pytest_pair(a, b), !pytest_atom(a, _, _), !child(a, _, _), kind(a, k), k != "string_start",
-    k != "string_end", text(a, t), !text(b, t).
-pytest_differ(a, b) :- pytest_pair(a, b), !pytest_atom(a, _, _), op(a, o), !op(b, o).
-pytest_differ(a, b) :- pytest_pair(a, b), !pytest_atom(a, _, _), op(b, o), !op(a, o).
-pytest_differ(a, b) :- pytest_pair(a, b), !pytest_atom(a, _, _),
-    count : { pytest_kid(a, _, _) } != count : { pytest_kid(b, _, _) }.
-pytest_differ(a, b) :- pytest_pair(a, b), pytest_kid(a, x, i), pytest_kid(b, y, i), pytest_differ(x, y).
-.decl pytest_same(a: node, b: node)
-pytest_same(a0, b0) :- pytest_same_seed(a0, b0), exc_unparen(a0, a), exc_unparen(b0, b), !pytest_differ(a, b).

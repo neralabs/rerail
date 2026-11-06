@@ -13,4 +13,4 @@
 .violation PIE800(at: node) code "PIE800" "Unnecessary spread `**`"
     suppress ruff "PIE800"
 PIE800(m) :- kind(d, "dictionary"), child(d, s, _), kind(s, "dictionary_splat"), child(s, v, _), !kind(v, "comment"),
-    bb_unparen(v, m), kind(m, "dictionary").
+    unparen(v, m), kind(m, "dictionary").

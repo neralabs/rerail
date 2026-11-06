@@ -9,11 +9,11 @@
 //   y = 0 if not x else x          ← SIM212: y = x if x else 0
 //   y = 0 if not x.a else x.a      not reported: only names
 #include "python/ruff.rr"
-//   ruff_bare(e, m)
+//   unparen(e, m)
 
 .violation SIM212(at: node, a: node, b: symbol) code "SIM212"
     "Swap the arms to read `{b} if {b} else {a}`, dropping the `not` from `{a} if not {b} else {b}`."
     suppress ruff "SIM212"
-SIM212(e, a, x) :- kind(e, "conditional_expression"), child(e, a, 0), child(e, t, 1), ruff_bare(t, n),
-    kind(n, "not_operator"), field(n, "argument", v), ruff_bare(v, tv), kind(tv, "identifier"), text(tv, x),
-    child(e, o, 2), ruff_bare(o, ov), kind(ov, "identifier"), text(ov, x).
+SIM212(e, a, x) :- kind(e, "conditional_expression"), child(e, a, 0), child(e, t, 1), unparen(t, n),
+    kind(n, "not_operator"), field(n, "argument", v), unparen(v, tv), kind(tv, "identifier"), text(tv, x),
+    child(e, o, 2), unparen(o, ov), kind(ov, "identifier"), text(ov, x).

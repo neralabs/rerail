@@ -10,9 +10,9 @@
 //   # foo # xxx            ← TD001: the second section starts with the tag
 //   # TODO: this           not reported
 //   # HACK: this           not reported
-#include "python/misc2-todo.rr"   // todo_item and the TD helpers
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD001(at: node, tag: symbol) code "TD001"
+.violation TD001(at: span, tag: symbol) code "TD001"
     "Replace the `{tag}` tag with `TODO` so this note is found with the other open work; leave it if the project gives this tag a separate meaning."
     suppress ruff "TD001"
-TD001(c, D) :- todo_item(c, D, _), !match("[tT][oO][dD][oO]", D).
+TD001(t, D) :- todo_item(c, D, _), !match("[tT][oO][dD][oO]", D), todo_at(c, t).

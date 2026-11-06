@@ -28,7 +28,7 @@ mergeable(w, i) :- kind(w, "with_statement"), field(w, "body", b), body_len(b, 1
 .decl timeout_scope(w: node)  // w has one item, a call of a timeout scope
 timeout_scope(w) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"),
     count : { child(wc, o, _), kind(o, "with_item") } = 1, child(wc, it, _), kind(it, "with_item"),
-    field(it, "value", v), ruff_bare(v, c), call_q(c, q), timeout(q).
+    field(it, "value", v), unparen(v, c), call_q(c, q), timeout(q).
 .decl timeout(q: symbol)
 timeout("asyncio.timeout"). timeout("asyncio.timeout_at"). timeout("anyio.CancelScope"). timeout("anyio.fail_after").
 timeout("anyio.move_on_after"). timeout("trio.fail_after"). timeout("trio.fail_at"). timeout("trio.move_on_after").

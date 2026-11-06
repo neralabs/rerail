@@ -14,7 +14,7 @@
 //   X = NamedTuple(typename="X", a=int)           not reported
 //   X = NamedTuple("X", (("a", int),))            not reported: a tuple
 #include "python/upgrade.rr"
-//   functional_def(s, x, c, what), up_arg(c, i, a), up_npos(c, n), nkw(c, n), kwsplat(c), identifier(x)
+//   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_nkwargs(c, n), call_kwsplat(c), identifier(x)
 
 .violation UP014(at: node, x: symbol) code "UP014"
     "Define `{x}` as `class {x}(NamedTuple):` with one `field: type` line per field, in the same order."
@@ -22,8 +22,8 @@
 UP014(s, x) :- functional_def(s, x, c, "NamedTuple"), fields_ok(c).
 // fields_ok(c): Ruff's match_named_tuple_assign: ("X") or ("X", a=int, …), or ("X", [pairs]) with no keyword.
 .decl fields_ok(c: node)
-fields_ok(c) :- up_npos(c, 1), up_arg(c, 0, _), !kwsplat(c).
-fields_ok(c) :- up_npos(c, 2), nkw(c, 0), up_arg(c, 1, l), kind(l, "list"),
+fields_ok(c) :- call_nargs(c, 1), up_arg(c, 0, _), !call_kwsplat(c).
+fields_ok(c) :- call_nargs(c, 2), call_nkwargs(c, 0), up_arg(c, 1, l), kind(l, "list"),
     !bad_pair(l).
 .decl bad_pair(l: node)  // an element that is no `("name", type)`
 bad_pair(l) :- child(l, e, _), !kind(e, "comment"), !good_pair(e).

@@ -13,7 +13,7 @@
 //   X = TypedDict("X", {"x-y": int})              not reported: not an identifier
 //   X = TypedDict("X", {"a": int, **c})           not reported
 #include "python/upgrade.rr"
-//   functional_def(s, x, c, what), up_arg(c, i, a), up_npos(c, n), kwsplat(c), identifier(x)
+//   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_kwsplat(c), identifier(x)
 
 .violation UP013(at: node, x: symbol) code "UP013"
     "Define `{x}` as `class {x}(TypedDict):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords."
@@ -21,10 +21,10 @@
 UP013(s, x) :- functional_def(s, x, c, "TypedDict"), fields_ok(c).
 // fields_ok(c): Ruff's match_fields_and_total. `*xs` counts as a positional argument.
 .decl fields_ok(c: node)
-fields_ok(c) :- up_npos(c, 1), up_arg(c, 0, _), !kwsplat(c).                        // TypedDict("X") or keywords
-fields_ok(c) :- up_npos(c, 2), up_arg(c, 1, d), kind(d, "dictionary"), !bad_key(d).
-fields_ok(c) :- up_npos(c, 2), up_arg(c, 1, d), kind(d, "call"), field(d, "function", f), builtin_at(f, "dict"),
-    up_npos(d, 0), !kwsplat(d).
+fields_ok(c) :- call_nargs(c, 1), up_arg(c, 0, _), !call_kwsplat(c).                        // TypedDict("X") or keywords
+fields_ok(c) :- call_nargs(c, 2), up_arg(c, 1, d), kind(d, "dictionary"), !bad_key(d).
+fields_ok(c) :- call_nargs(c, 2), up_arg(c, 1, d), kind(d, "call"), field(d, "function", f), builtin_at(f, "dict"),
+    call_nargs(d, 0), !call_kwsplat(d).
 .decl bad_key(d: node)  // an entry that is no `"name": type`
 bad_key(d) :- kind(d, "dictionary"), child(d, e, _), !kind(e, "pair"), !kind(e, "comment").
 bad_key(d) :- kind(d, "dictionary"), child(d, e, _), kind(e, "pair"), field(e, "key", k),

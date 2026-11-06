@@ -15,5 +15,5 @@
     suppress ruff "SIM109"
 SIM109(t, x) :- eq_name(t, x, i), eq_name(t, x, j), i < j, !has(t, _, "comment").
 .decl eq_name(t: node, x: symbol, i: number)  // operand i of the `or` t is `x == y`, x and y plain names
-eq_name(t, x, i) :- sim_operand(t, "or", i, v), ruff_bare(v, c), cmp(c, "==", l, r), kind(l, "identifier"), text(l, x),
+eq_name(t, x, i) :- sim_operand(t, "or", i, v), unparen(v, c), cmp(c, "==", l, r), kind(l, "identifier"), text(l, x),
     kind(r, "identifier").

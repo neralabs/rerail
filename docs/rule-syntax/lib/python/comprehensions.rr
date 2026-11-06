@@ -19,10 +19,7 @@
 //                 c4_elt(e, x)           x is e's element, parentheses off; a dict comprehension's is its pair
 //                 c4_pair(e)             e, parentheses off, is a tuple of two elements, neither `*x`
 //                 c4_passthrough(e)      e is c4_simple and its element is its target: `x for x in y`
-//   3. Compare:   c4_same(x, t)          element or key x is the comprehension target t, as Ruff's
-//                                        ComparableExpr sees them: python/compare's cmp_same, and the target
-//                                        `a, b` is the tuple `(a, b)`. Only for the pairs asked in c4_same_ask.
-//   4. Types:     dict_ref(n)            name n reads a binding Ruff's typing::is_dict accepts: `d = {}`,
+//   3. Types:     dict_ref(n)            name n reads a binding Ruff's typing::is_dict accepts: `d = {}`,
 //                                        `d = dict(…)`, a dict comprehension, `d: dict[…]`, a parameter
 //                                        annotated `dict` or `Dict`, or `**kwargs`
 //
@@ -35,7 +32,7 @@
 //   list(x for x in y)           c4_call(<call>, "list"), c4_only(<call>, <gen>), c4_comp(<gen>, "generator"),
 //                                c4_simple(<gen>, <for x in y>), c4_elt(<gen>, <x>)
 //   dict([(k, v) for k, v in d]) c4_only(<call>, <listcomp>), c4_elt(<listcomp>, <(k, v)>), c4_pair(<(k, v)>)
-#include "python/ruff.rr"       // call_only, ruff_arg, call_nargs, call_nkwargs, ruff_bare, ruff_qual
+#include "python/ruff.rr"       // call_only, ruff_arg, call_nargs, call_nkwargs, ruff_qual
 #include "python/upgrade.rr"    // builtin_at
 #include "python/compare.rr"    // cmp_same, cmp_same_ask
 
@@ -45,7 +42,7 @@ c4_call(c, x) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier")
 .decl c4_named(c: node, x: symbol)
 c4_named(c, x) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x).
 .decl c4_builtin(c: node, x: symbol)
-c4_builtin(c, x) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, m), builtin_at(m, x).
+c4_builtin(c, x) :- kind(c, "call"), field(c, "function", f), unparen(f, m), builtin_at(m, x).
 // c4_builtin_here(n, x): in n's own and enclosing scopes (a class body only when n is directly in it), no
 // binding of x that Ruff has seen at n: in code that runs at import time, only the bindings above n.
 .decl c4_builtin_here(n: node, x: symbol)
@@ -56,13 +53,13 @@ c4_shadow(n, x) :- c4_builtin_ask(n, x), binding(s, x, site, _), (within(n, s), 
     scope_node(n, s), kind(s, "class_definition")), (!runs_at_import(n) ; earlier(site, n)).
 c4_shadow(n, x) :- c4_builtin_ask(n, x), docof(n, d), modnode(d, m), star(m).
 .decl c4_only(c: node, a: node)
-c4_only(c, m) :- call_only(c, a), ruff_bare(a, m).
+c4_only(c, m) :- call_only(c, a), unparen(a, m).
 .decl c4_first(c: node, a: node)
-c4_first(c, m) :- ruff_arg(c, 0, a), ruff_bare(a, m).    // `f(*xs, y)` has none: ruff_arg stops at `*xs`
+c4_first(c, m) :- ruff_arg(c, 0, a), unparen(a, m).    // `f(*xs, y)` has none: ruff_arg stops at `*xs`
 
 // ---- 2. shapes ---------------------------------------------------------------------------------------------------
 .decl c4_comp(e: node, k: symbol)
-c4_comp(e, k) :- ruff_bare(e, m), kind(m, t), c4_comp_kind(t, k).
+c4_comp(e, k) :- unparen(e, m), kind(m, t), c4_comp_kind(t, k).
 .decl c4_comp_kind(t: symbol, k: symbol)
 c4_comp_kind("list_comprehension", "list"). c4_comp_kind("set_comprehension", "set").
 c4_comp_kind("dictionary_comprehension", "dict"). c4_comp_kind("generator_expression", "generator").
@@ -74,37 +71,16 @@ c4_simple(m, fc) :- kind(m, t), c4_comp_kind(t, _), child(m, fc, _), kind(fc, "f
 .decl c4_clause(k: symbol)
 c4_clause("for_in_clause"). c4_clause("if_clause").
 .decl c4_elt(e: node, x: node)
-c4_elt(m, x) :- kind(m, t), c4_comp_kind(t, _), field(m, "body", b), ruff_bare(b, x).
+c4_elt(m, x) :- kind(m, t), c4_comp_kind(t, _), field(m, "body", b), unparen(b, x).
 .decl c4_pair(e: node)
-c4_pair(e) :- ruff_bare(e, m), kind(m, "tuple"), count : { child(m, c, _), !kind(c, "comment") } = 2,
+c4_pair(e) :- unparen(e, m), kind(m, "tuple"), count : { child(m, c, _), !kind(c, "comment") } = 2,
     count : { child(m, c, _), kind(c, "list_splat") } = 0.
 
 .decl c4_passthrough(e: node)
-c4_passthrough(e) :- c4_simple(e, fc), c4_elt(e, x), field(fc, "left", t), c4_same(x, t).
-c4_same_ask(x, t) :- c4_simple(e, fc), c4_elt(e, x), field(fc, "left", t).
+c4_passthrough(e) :- c4_simple(e, fc), c4_elt(e, x), field(fc, "left", t), cmp_same(x, t).
+cmp_same_ask(x, t) :- c4_simple(e, fc), c4_elt(e, x), field(fc, "left", t).
 
-// ---- 3. comparing with a target -----------------------------------------------------------------------------
-// A target `a, b` is a pattern_list, `(a, b)` a tuple_pattern; Ruff's tree has a Tuple for both, as for the
-// element `(a, b)`. So a tuple and such a target are compared element by element (one level).
-//   [x for (x) in y]     c4_same(<x>, <(x)>)        {(a, b): 0 for a, b in z}    c4_same(<(a, b)>, <a, b>)
-.decl c4_same_ask(x: node, t: node)
-.decl c4_same(x: node, t: node)
-c4_same(x, t) :- c4_same_ask(x, t), cmp_same(x, t).
-c4_same(x, t) :- c4_tuple_pair(x, m, t), c4_width(m, n), c4_width(t, n), !c4_part_differs(m, t).
-cmp_same_ask(x, t) :- c4_same_ask(x, t).
-.decl c4_tuple_pair(x: node, m: node, t: node)
-c4_tuple_pair(x, m, t) :- c4_same_ask(x, t), ruff_bare(x, m), kind(m, "tuple"),
-    (kind(t, "pattern_list") ; kind(t, "tuple_pattern")).
-.decl c4_part(e: node, i: number, c: node)  // c is the i-th element of tuple or target e
-c4_part(e, i, c) :- (c4_tuple_pair(_, e, _) ; c4_tuple_pair(_, _, e)), child(e, c, j), !kind(c, "comment"),
-    i = count : { child(e, o, j2), j2 < j, !kind(o, "comment") }.
-.decl c4_width(e: node, n: number)
-c4_width(e, n) :- (c4_tuple_pair(_, e, _) ; c4_tuple_pair(_, _, e)), n = count : { c4_part(e, _, _) }.
-.decl c4_part_differs(m: node, t: node)
-c4_part_differs(m, t) :- c4_tuple_pair(_, m, t), c4_part(m, i, a), c4_part(t, i, b), !cmp_same(a, b).
-cmp_same_ask(a, b) :- c4_tuple_pair(_, m, t), c4_part(m, i, a), c4_part(t, i, b).
-
-// ---- 4. dict-typed names -----------------------------------------------------------------------------------------
+// ---- 3. dict-typed names -----------------------------------------------------------------------------------------
 // dict_ref(n): the binding n's lookup lands on, the latest one above n in its scope (any, when none is above:
 // a function reads the module's after it is defined), is a dict by Ruff's typing::is_dict.
 //   d = {}               d.get(k, None)     dict_ref(<d>)
@@ -124,8 +100,8 @@ dict_site(p) :- (kind(p, "typed_parameter") ; kind(p, "typed_default_parameter")
 dict_site(p) :- kind(p, "typed_parameter"), child(p, s, 0), kind(s, "dictionary_splat_pattern").
 dict_site(p) :- kind(p, "dictionary_splat_pattern").
 .decl dict_value(v: node)
-dict_value(v) :- ruff_bare(v, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
-dict_value(v) :- ruff_bare(v, m), kind(m, "call"), field(m, "function", f), ruff_bare(f, g), builtin_at(g, "dict").
+dict_value(v) :- unparen(v, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
+dict_value(v) :- unparen(v, m), kind(m, "call"), field(m, "function", f), unparen(f, g), builtin_at(g, "dict").
 // dict_annotation(t): `dict`, `dict[str, int]`, `Dict[…]`, `typing.Dict`, through tree-sitter's `type` wrapper.
 .decl dict_annotation(t: node)
 dict_annotation(t) :- ann_head_node(t, h), builtin_at(h, "dict").

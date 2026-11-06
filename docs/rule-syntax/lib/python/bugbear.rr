@@ -6,17 +6,11 @@
 //   1. Calls:     bb_builtin_call(c, x)     c's callee resolves to the builtin x: `getattr(…)`, `builtins.getattr(…)`
 //                                           (python/names' sym_of; a local def of that name hides it)
 //                 bb_sym_call(c, q)         call c's callee resolves to q: `contextlib.suppress`, `re.sub`
-//                 bb_npos(c, k)             c has k positional arguments, `*xs` included (Ruff's `args`)
 //                 bb_pos(c, i, a)           a is c's i-th positional argument, parentheses off (`*xs` is one)
-//                 bb_nkw(c, k)              c has k keyword arguments, `**kw` included (Ruff's `keywords`)
-//                 bb_kw(c, k, v)            c passes k=v; v with parentheses off
-//                 bb_star(c), bb_kwsplat(c) c passes `*xs`, `**kw`
+//                 (counts and keywords: python/ruff's call_nargs, call_nkwargs, call_kw, call_star, call_kwsplat)
 //                 bb_expr_stmt(e)           e is a whole expression statement (`setattr(o, "x", 1)` on its own line)
-//                 bb_unparen(e, m)          as python/ast's unparen, with comments inside the parentheses allowed
 //   2. Literals:  ruff_literal(e)           Ruff's is_literal_expr: a str, bytes, number, bool, None or `...`
-//                 bb_identifier(v)          v, the value of some str literal, is a Python identifier, not a keyword
 //                 bb_mangled(v)             such an identifier is name-mangled in a class: `__x`, not `__x__`
-//                 bb_keyword(x)             the hard keywords of Python 3
 //                 bb_mutable(e)             Ruff's is_mutable_expr: a list, dict or set display or comprehension, or a
 //                                           call of `list`, `dict`, `set` or a mutable collections class
 //                 bb_immutable_call(c)      call c (its callee subscripts off) returns a value Ruff knows is immutable:
@@ -35,7 +29,7 @@
 //
 //   getattr(o, "x")                  bb_builtin_call(<call>, "getattr"), npos 2, nkw 0
 //   except (A, b.C) as e:            handler_type(<x>, <tuple>), handler_elt(<x>, <A>, 0), exc_name(<b.C>, "b.C")
-#include "python/pyflakes.rr"   // plain_str; includes python/ast and python/names
+#include "python/ruff.rr"   // call_nargs, call_nkwargs, call_kw; python/pyflakes, python/ast, python/names
 
 // ---- 1. calls ----------------------------------------------------------------------------------------------------
 .decl bb_builtin_call(c: node, x: symbol)
@@ -51,49 +45,20 @@ bb_arg(c, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_ex
 .decl bb_kwlike(a: node)
 bb_kwlike(a) :- kind(a, "keyword_argument").
 bb_kwlike(a) :- kind(a, "dictionary_splat").
-.decl bb_npos(c: node, k: number)
-bb_npos(c, k) :- kind(c, "call"), k = count : { bb_arg(c, a), !bb_kwlike(a) }.
 .decl bb_pos(c: node, i: number, a: node)
 bb_pos(c, i, a) :- bb_arg(c, a0), !bb_kwlike(a0), unparen(a0, a), child(l, a0, j), kind(l, "argument_list"),
     i = count : { child(l, o, k), k < j, !kind(o, "comment"), !bb_kwlike(o) }.
 bb_pos(c, 0, g) :- bb_arg(c, g), kind(g, "generator_expression"), field(c, "arguments", g).
-.decl bb_nkw(c: node, k: number)
-bb_nkw(c, k) :- kind(c, "call"), k = count : { bb_arg(c, a), bb_kwlike(a) }.
-.decl bb_kw(c: node, k: symbol, v: node)
-bb_kw(c, k, v) :- bb_arg(c, a), kind(a, "keyword_argument"), field(a, "name", n), text(n, k), field(a, "value", v0),
-    unparen(v0, v).
-.decl bb_star(c: node)
-bb_star(c) :- bb_arg(c, a), kind(a, "list_splat").
-.decl bb_kwsplat(c: node)
-bb_kwsplat(c) :- bb_arg(c, a), kind(a, "dictionary_splat").
 .decl bb_expr_stmt(e: node)
 bb_expr_stmt(e) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1).
-
-.decl bb_unparen(e: node, m: node)
-bb_unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
-bb_unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), bb_unparen(i, m).
 
 // ---- 2. literals -------------------------------------------------------------------------------------------------
 // ruff_literal(e): through parentheses, e is a literal Ruff's is_literal_expr accepts. An f-string or t-string is
 // not one; `-1` is a unary operation, not a literal.
 .decl ruff_literal(e: node)
 ruff_literal(e) :- unparen(e, m), py_literal(m).
-// bb_identifier(v): Python's str.isidentifier and not a keyword, as Ruff's is_identifier. The test is run only on
-// str literal values. Non-ASCII characters are all taken as identifier characters (Unicode's XID classes are not
-// modelled): "ſ" is one, as it is in Python; "a·" would be, wrongly, too.
-.decl bb_identifier(v: symbol)
-bb_identifier(v) :- plain_str(_, v), !bb_keyword(v),
-    match("[A-Za-z_\\x80-\\xff][A-Za-z0-9_\\x80-\\xff]*", v).
 .decl bb_mangled(v: symbol)
-bb_mangled(v) :- bb_identifier(v), prefix("__", v), !suffix("__", v).
-.decl bb_keyword(x: symbol)
-bb_keyword("False"). bb_keyword("None"). bb_keyword("True"). bb_keyword("and"). bb_keyword("as").
-bb_keyword("assert"). bb_keyword("async"). bb_keyword("await"). bb_keyword("break"). bb_keyword("class").
-bb_keyword("continue"). bb_keyword("def"). bb_keyword("del"). bb_keyword("elif"). bb_keyword("else").
-bb_keyword("except"). bb_keyword("finally"). bb_keyword("for"). bb_keyword("from"). bb_keyword("global").
-bb_keyword("if"). bb_keyword("import"). bb_keyword("in"). bb_keyword("is"). bb_keyword("lambda").
-bb_keyword("nonlocal"). bb_keyword("not"). bb_keyword("or"). bb_keyword("pass"). bb_keyword("raise").
-bb_keyword("return"). bb_keyword("try"). bb_keyword("while"). bb_keyword("with"). bb_keyword("yield").
+bb_mangled(v) :- identifier(v), prefix("__", v), !suffix("__", v).
 
 // Mutability, after ruff_python_semantic's typing helpers. A call Ruff cannot resolve is neither.
 .decl bb_callee(c: node, q: symbol)

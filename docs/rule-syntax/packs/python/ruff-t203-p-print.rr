@@ -20,5 +20,5 @@ T203(f) :- call_q(c, "pprint.pprint"), field(c, "function", f), !pprint_elsewher
 
 // pprint_elsewhere(c): c passes `stream=` a value other than None, sys.stdout or sys.stderr.
 .decl pprint_elsewhere(c: node)
-pprint_elsewhere(c) :- call_kwarg(c, "stream", v), ruff_bare(v, m), !kind(m, "none"), !ruff_qual(m, "sys.stdout"),
+pprint_elsewhere(c) :- call_kwarg(c, "stream", v), unparen(v, m), !kind(m, "none"), !ruff_qual(m, "sys.stdout"),
     !ruff_qual(m, "sys.stderr").

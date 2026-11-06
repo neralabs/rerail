@@ -180,8 +180,9 @@ Against Ruff 0.15.7 on the review's probe files, the only differences left are t
 
 - **H1, F822 (3 FP).** `pyflakes/__init__.py`. The rule's `.scope exclude "**/__init__.py"` (from the JSON, as in
   Ruff) is not modelled by rrlab.
-- **H2, F541 (2 FP).** rrlab applies `# noqa` only on a finding's first line. Ruff also applies it on the last
-  line of a multi-line string (W605_1.py:39), and honours a file-level `# ruff: noqa: F541` (RUF100_7.py:7).
+- **H2, F541 (2 FP; fixed in rrlab 08d977aa5).** rrlab applied `# noqa` only on a finding's first line. Ruff also
+  applies it on the last line of a multi-line string (W605_1.py:39), and honours a file-level `# ruff: noqa: F541`
+  (RUF100_7.py:7). rrlab now does both; F541 is 22 / 0 / 0 (python merge rescore).
 - **H3, F504 (1 FP + 1 FN, same finding).** F504.py contains a lone `\r`. Ruff counts it as a line break, so the
   finding is at line 20. tree-sitter, and so rrlab, puts it at line 19. core.rr's `src_line` splits Python as
   `str.splitlines()` does, so the engine's `line` should agree with Ruff.

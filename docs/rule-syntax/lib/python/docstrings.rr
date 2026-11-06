@@ -9,12 +9,11 @@
 //                   doc_public(o)         Ruff's visibility: the package path, `_` names, `__all__`, setters
 //                   doc_ignored(o)        a def decorated with a `pydocstyle.ignore-decorators` entry: no D rule
 //                                         looks at it
-//                   doc_stub(d)           document d is a `.pyi` stub
 //                   doc_missing(o, k, nm, x)  public definition o of kind k has no docstring and D100-D107 look at
 //                                         it: not a stub, not ignored, not an @overload (nor an @override
 //                                         method); nm and x its name node and name (a module: itself and "")
-//   2. Docstrings:  doc_expr(o, e)        o's first statement is the str literal e (a string, adjacent strings, in
-//                                         parentheses or not): o is documented
+//   2. Docstrings:  python/ast's docstring(o, e): o's first statement is the str literal e (a string, adjacent
+//                                         strings, in parentheses or not): o is documented
 //                   doc_of(o, s)          … and it is one string s, which the D2xx-D4xx rules check (Ruff skips
 //                                         an implicitly concatenated docstring)
 //                   doc_checked(s)        doc_of, and the body is not blank: Ruff runs its other docstring rules
@@ -39,7 +38,7 @@
 //
 //   class Public:                    doc_def "class", doc_public
 //       def _helper(self): ...       doc_def "method", not public
-//       """Not a docstring."""      not doc_expr: a docstring is the first statement
+//       """Not a docstring."""      not a docstring: a docstring is the first statement
 #include "python/pyflakes.rr"
 //   all_entry(s, x)  string s in the module's `__all__` names x
 #include "python/naming.rr"
@@ -108,27 +107,14 @@ doc_accessor(f, x) :- doc_name(f, _, x), decorator(f, e), dotted_expr(e, q), (q 
 .decl doc_ignored(f: node)
 doc_ignored(f) :- kind(f, "function_definition"), dec_target(f, c), option_item("pydocstyle.ignore-decorators", _, q),
     sym_of(c, q).
-.decl doc_stub(d: number)
-doc_stub(d) :- doc(d, p, _), suffix(".pyi", p).
 .decl doc_missing(o: node, k: symbol, nm: node, x: symbol)
-doc_missing(o, k, nm, x) :- doc_def(o, k), doc_public(o), !doc_expr(o, _), !doc_ignored(o), docof(o, d), !doc_stub(d),
+doc_missing(o, k, nm, x) :- doc_def(o, k), doc_public(o), !docstring(o, _), !doc_ignored(o), docof(o, d), !stub_file(d),
     (k = "module", nm = o, x = "" ; doc_name(o, nm, x), !typing_dec(o, "overload"),
     (k != "method" ; !typing_dec(o, "override"))).
 
 // ---- 2. docstrings -----------------------------------------------------------------------------------------------
-// doc_expr(o, e): the literal (parentheses taken off) of o's first statement.
-//   def f():
-//       ("Docstring.")       doc_expr(f, <"Docstring.">)
-.decl doc_expr(o: node, e: node)
-doc_expr(o, e) :- doc_def(o, _), body_of(o, b), body_stmt(b, st, 0), kind(st, "expression_statement"),
-    child(st, x, 0), !child(st, _, 1), unparen(x, e), plain_doc(e).
-.decl plain_doc(e: node)  // a str literal, or adjacent ones: no bytes, f-strings or t-strings among them
-plain_doc(e) :- plain_piece(e).
-plain_doc(e) :- kind(e, "concatenated_string"), count : { child(e, p, _), kind(p, "string"), !plain_piece(p) } = 0.
-.decl plain_piece(e: node)
-plain_piece(e) :- kind(e, "string"), string_form(e, "str"), !fstring(e).
 .decl doc_of(o: node, s: node)
-doc_of(o, s) :- doc_expr(o, s), kind(s, "string"), !doc_ignored(o).
+doc_of(o, s) :- docstring(o, s), kind(s, "string"), !doc_ignored(o).
 
 .decl doc_checked(s: node)
 doc_checked(s) :- doc_body(s, b), !match("\\s*", b).

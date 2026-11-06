@@ -14,9 +14,7 @@
 //   3. Literals:  py_literal(e), py_const(e), singleton(e), const_non_singleton(e), mutable_literal(e)
 //                                           Ruff's is_literal, is_constant, … (F632, E711)
 //                 nonempty_tuple(e)         e, through parentheses, is a tuple with an element (F631, F634)
-//                 plain_str(e, v)           a str literal (adjacent ones joined) with decoded value v (F50x, F52x)
-//   4. Names:     builtin_name(x)           every name of Python 3.13's builtins module
-//                 unbound_ref(n, x)         load n of x finds no binding in the file, in Ruff's order (F405)
+//   4. Names:     unbound_ref(n, x)         load n of x finds no binding in the file, in Ruff's order (F405)
 //                 load_ref(n, x)            n reads x (a load, or the target of `x += 1`)
 //                 bare_annotation(a, l, x, s)  `x: T` with no value, in scope s (F823, F842)
 //                 resolves_builtin(e, x)    e is the name x and reads the builtin (E721)
@@ -129,37 +127,17 @@ mutable_kind("dictionary"). mutable_kind("dictionary_comprehension").
 nonempty_tuple(e) :- unparen(e, m), kind(m, "tuple"), child(m, c, _), !kind(c, "comment"),
     !kind(c, "line_continuation").
 
-// plain_str(e, v): e is a str literal without interpolation (not bytes, not an f- or t-string), or adjacent
-// ones, and v its decoded value: `"a" 'b'` gives "ab". What Ruff calls a StringLiteral.
-.decl plain_str(e: node, v: symbol)
-plain_str(e, v) :- string_form(e, "str"), !fstring(e), value(e, v).
-plain_str(e, v) :- kind(e, "concatenated_string"),
-    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0,
-    v = join x by i sep "" : { child(e, s, i), kind(s, "string"), value(s, x) }.
+
+// identifier(x): x, the value of some str literal or the text of a name, is a Python identifier (str.isidentifier)
+// that is not a keyword, as Ruff's is_identifier: an XID_Start character or `_`, then XID_Continue characters.
+//   "x_1", "ſ": identifier       "1x", "a-b": not       "class": not, a keyword
+.decl identifier(x: symbol)
+identifier(x) :- field_name(x), match("[_\\p{XID_Start}]\\p{XID_Continue}*", x), !py_keyword(x).
+.decl field_name(x: symbol)  // the strings identifier is asked about: every str literal's value, every name
+field_name(x) :- plain_str(_, x).
+field_name(x) :- kind(n, "identifier"), text(n, x).
 
 // ---- 4. names ----------------------------------------------------------------------------------------------------
-// builtin_name(x): the names of Python 3.13's builtins module, plus the module attributes every module has
-// (`__file__`, `__builtins__`, …), as Ruff's python_builtins and MAGIC_GLOBALS list them. python/names'
-// `builtin` is a subset; LIBRARY CHANGE proposed: replace it with this list (NOTES-py-f-e.md).
-.decl builtin_name(x: symbol)
-builtin_name(x) :- builtin(x).
-builtin_name(x) :- builtin_more(x).
-.decl builtin_more(x: symbol)
-builtin_more("ArithmeticError"). builtin_more("BaseExceptionGroup"). builtin_more("BlockingIOError").
-builtin_more("BrokenPipeError"). builtin_more("BytesWarning"). builtin_more("ChildProcessError").
-builtin_more("ConnectionAbortedError"). builtin_more("ConnectionRefusedError"). builtin_more("ConnectionResetError").
-builtin_more("EncodingWarning"). builtin_more("ExceptionGroup"). builtin_more("False"). builtin_more("FileExistsError").
-builtin_more("FloatingPointError"). builtin_more("FutureWarning"). builtin_more("ImportWarning").
-builtin_more("IndentationError"). builtin_more("InterruptedError"). builtin_more("IsADirectoryError").
-builtin_more("MemoryError"). builtin_more("None"). builtin_more("NotADirectoryError").
-builtin_more("PendingDeprecationWarning"). builtin_more("ProcessLookupError"). builtin_more("PythonFinalizationError").
-builtin_more("ReferenceError"). builtin_more("ResourceWarning"). builtin_more("StopAsyncIteration").
-builtin_more("SyntaxError"). builtin_more("SyntaxWarning"). builtin_more("SystemError"). builtin_more("TabError").
-builtin_more("True"). builtin_more("UnboundLocalError"). builtin_more("UnicodeTranslateError").
-builtin_more("UnicodeWarning"). builtin_more("__build_class__"). builtin_more("__loader__").
-builtin_more("__package__"). builtin_more("copyright"). builtin_more("credits"). builtin_more("exit").
-builtin_more("license"). builtin_more("quit"). builtin_more("__annotations__"). builtin_more("__builtins__").
-builtin_more("__cached__").
 // unbound_ref(n, x): n reads x and Ruff finds no binding for it. Ruff reads code in order and visits function
 // bodies last, so either no scope on n's LEGB chain binds x, or n runs as it is read (module or class body,
 // comprehensions in them included) before every binding of x in that scope, and no outer scope binds x.
@@ -190,7 +168,7 @@ annotated_on_chain(n, x) :- walk(n, x, s), bare_annotation(_, _, x, s).
 // resolves_builtin(e, x): e is the name x, unbound in the file, and x is a builtin: `type`, `int`, `print`.
 // Ruff's has_builtin_binding. A star import does not change it: Ruff binds no name for one.
 .decl resolves_builtin(e: node, x: symbol)
-resolves_builtin(e, x) :- unbound_ref(e, x), builtin_name(x).
+resolves_builtin(e, x) :- unbound_ref(e, x), builtin(x).
 // star_reach(n): `from m import *` in n's module, or in a def or class around n: the import may bind any name.
 .decl star_reach(n: node)
 star_reach(n) :- docof(n, d), modnode(d, m), star(m).

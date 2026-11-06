@@ -19,21 +19,42 @@
 // brackets and quotes balance (to a depth of five), and the text has the shape of a Python statement in a small
 // grammar of expressions (names, literals, brackets, calls, attributes, operators, lambda, `x if c else y`),
 // targets, simple statements and one-line compound statements. Text over 200 characters is not tested.
+#include "python/misc2-noqa.rr"
+//   own_line_comment(c): no token comes before comment c on its line
+
 .violation ERA001(at: node) code "ERA001"
     "Delete this commented-out code; version control keeps the history. Leave it only if the comment is prose or an example that merely looks like code."
     suppress ruff "ERA001"
-ERA001(c) :- era_line(c, l), era_own_line(c), !era_script(c), !era_prose(l),
+ERA001(c) :- era_line(c, l), own_line_comment(c), !era_script(c), !era_prose(l),
     (match("[\\s\\S]*\\\\", l) ; era_header(l) ; era_parses(l)).
 
 // era_line(c, l): comment c's text without its leading `#`s and spaces, nor trailing spaces, when it has a code sign.
 .decl era_line(c: node, l: symbol)
 era_line(c, l) :- comment(c, _), text(c, s), match("[#\\s]*(?<l>[\\s\\S]*?)\\s*", s),
     match("[\\s\\S]*([()\\[\\]{}:=%]|return|break|continue|import)[\\s\\S]*", l).
-.decl era_own_line(c: node)
-era_own_line(c) :- comment(c, _), !token_before(c, _).
-era_own_line(c) :- comment(c, _), token_before(c, t), line(t, lt), line(c, l), lt < l.
 .decl era_prose(l: symbol)
-era_prose(l) :- era_line(_, l), match("(?:[^'\"#]*[^A-Za-z0-9_'\"#])?(?!(?:and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lazy|lambda|match|nonlocal|not|or|pass|raise|return|try|type|while|with|yield)(?![A-Za-z0-9_]))[A-Za-z_][A-Za-z0-9_]*[ \\t]+(?!(?:and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lazy|lambda|match|nonlocal|not|or|pass|raise|return|try|type|while|with|yield)(?![A-Za-z0-9_]))[A-Za-z_][A-Za-z0-9_]*(?![A-Za-z0-9_'\"])[\\s\\S]*", l).
+// Two names in a row, neither a keyword, before any string or `#`, the second not followed by a quote: prose
+// (`see the docs`). The words are read one at a time (era_word), so every adjacent pair is tried.
+era_prose(l) :- era_word(l, a, s, r), s != "", match("[A-Za-z_][\\s\\S]*", a), !era_kw(a), !era_kw(b),
+    match("(?<b>[A-Za-z_][A-Za-z0-9_]*)(?<t>[\\s\\S]*)", r), !match("['\"][\\s\\S]*", t).
+// era_word(l, w, s, r): in the code part of l (before any quote or `#`), a word w (letters, digits, `_`), then
+// the blanks s after it, then the rest r.
+.decl era_word(l: symbol, w: symbol, s: symbol, r: symbol)
+era_word(l, w, s, r) :- era_rest(l, r0), match("[^A-Za-z0-9_'\"#]*(?<w>[A-Za-z0-9_]+)(?<s>[ \\t]*)(?<r>[\\s\\S]*)", r0).
+.decl era_rest(l: symbol, r: symbol)
+era_rest(l, l) :- era_line(_, l).
+era_rest(l, r) :- era_word(l, _, _, r).
+// era_kw(w): a keyword, soft ones and `lazy` included; era_hard(w): the same without `lazy`.
+.decl era_hard(w: symbol)
+era_hard("and"). era_hard("as"). era_hard("assert"). era_hard("async"). era_hard("await"). era_hard("break").
+era_hard("case"). era_hard("class"). era_hard("continue"). era_hard("def"). era_hard("del"). era_hard("elif").
+era_hard("else"). era_hard("except"). era_hard("finally"). era_hard("for"). era_hard("from"). era_hard("global").
+era_hard("if"). era_hard("import"). era_hard("in"). era_hard("is"). era_hard("lambda"). era_hard("match").
+era_hard("nonlocal"). era_hard("not"). era_hard("or"). era_hard("pass"). era_hard("raise"). era_hard("return").
+era_hard("try"). era_hard("type"). era_hard("while"). era_hard("with"). era_hard("yield").
+.decl era_kw(w: symbol)
+era_kw(w) :- era_hard(w).
+era_kw("lazy").
 era_prose(l) :- era_line(_, l), match("(?:TODO|FIXME|XXX)(?:[ :(][\\s\\S]*)?", l).
 era_prose(l) :- era_line(_, l), match("(?:pyright|pyrefly|ruff\\s*:\\s*(?:disable|enable|ignore|file-ignore)|mypy:|type:\\s*ignore|ty:\\s*ignore|SPDX-License-Identifier:|fmt:\\s*(?:on|off|skip)|region|endregion|[nN][oO][qQ][aA]|[pP][yY][lL][iI][nN][tT]|[nN][oO][sS][eE][cC]|[iI][sS][oO][rR][tT]:\\s*(?:on|off|skip|skip_file|split|dont-add-imports)|(?:[eE][nN])?[cC][oO][dD][iI][nN][gG][:=][ \\t]*[-_.A-Za-z0-9]+|language=[-_.a-zA-Z0-9]+)[\\s\\S]*", l).
 era_prose(l) :- era_line(_, l), match("[\\s\\S]*#[0-9][\\s\\S]*", l).
@@ -50,8 +71,9 @@ era_parses(l) :- era_line(_, l), strlen(l) <= 200, era_bal(4, b), match(cat(b, "
 // number: `OK (88 characters)`, `foo() bar`), or an operator before a keyword that cannot start an operand
 // (`[useless-else-on-loop]`, `(and x)`).
 .decl era_bad(l: symbol)
-era_bad(l) :- era_line(_, l), match("[^'\"#]*?(?:(?:^|[^A-Za-z0-9_.])[0-9][A-Za-z0-9_.]*|[)\\]}])[ \\t]+(?!(?:and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|nonlocal|not|or|pass|raise|return|try|type|while|with|yield)(?![A-Za-z0-9_]))[A-Za-z0-9_][\\s\\S]*", l).
-era_bad(l) :- era_line(_, l), match("[^'\"#]*?[-+*/%&|^@<>=~,(\\[{][ \\t]*(?:and|or|else|elif|in|is|if|for|from|as|import|def|class|return|pass|break|continue|raise|del|global|nonlocal|assert|try|except|finally|while|with)(?![A-Za-z0-9_])[\\s\\S]*", l).
+era_bad(l) :- era_line(_, l), match("(?<c>[^'\"#]*)[\\s\\S]*", l),
+    match_all("(?:(?:^|[^A-Za-z0-9_.])[0-9][A-Za-z0-9_.]*|[)\\]}])[ \\t]+(?<w>[A-Za-z0-9_]+)", c), !era_hard(w).
+era_bad(l) :- era_line(_, l), match("[^'\"#]*?[-+*/%&|^@<>=~,(\\[{][ \\t]*(?:and|or|else|elif|in|is|if|for|from|as|import|def|class|return|pass|break|continue|raise|del|global|nonlocal|assert|try|except|finally|while|with)(?:[^A-Za-z0-9_][\\s\\S]*)?", l).
 // era_bal(i, r): r matches text whose brackets nest at most i + 1 deep and balance, strings closed, no `#`.
 .decl era_bal(i: number, r: symbol)
 era_bal(0, "(?:[^()\\[\\]{}'\"#]|'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\")*").
@@ -65,14 +87,14 @@ era_re("N", "[A-Za-z_][A-Za-z0-9_]*").
 era_re("NUM", "(?:[0-9][0-9_]*(?:\\.[0-9_]*)?|\\.[0-9]+)(?:[eE][-+]?[0-9]+)?[jJ]?").
 era_re("STR", "[rRbBuUfF]{0,2}(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\")").
 era_re("OPD", cat("(?:(?:await\\s+|not\\s+|[-+~]\\s*)*(?:\\.\\.\\.|", r_n, "|", r_num, "|", r_str, "(?:\\s*", r_str, ")*|\\(.*\\)|\\[.*\\]|\\{.*\\})(?:\\s*(?:\\.\\s*", r_n, "|\\(.*\\)|\\[.*\\]))*)")) :- era_re("N", r_n), era_re("NUM", r_num), era_re("STR", r_str).
-era_re("TGT", cat("(?:\\*?(?:", r_n, "|\\(.*\\)|\\[.*\\])(?:\\s*(?:\\.\\s*", r_n, "|\\[.*\\]|\\(.*\\)(?=\\s*[.\\[])))*)")) :- era_re("N", r_n).
+era_re("TGT", cat("(?:\\*?(?:", r_n, "|\\(.*\\)|\\[.*\\])(?:\\s*(?:\\.\\s*", r_n, "|\\[.*\\]|\\(.*\\)\\s*(?:\\.\\s*", r_n, "|\\[.*\\])))*)")) :- era_re("N", r_n).
 era_re("BIN", "(?:[-+*/%&|^@<>]|//|\\*\\*|<<|>>|==|!=|<=|>=|not\\s+in\\b|in\\b|is\\s+not\\b|is\\b|and\\b|or\\b|if\\b|else\\b)").
 era_re("EXPR", cat("(?:(?:lambda\\b[^:]*:\\s*)?", r_opd, "(?:\\s*", r_bin, "\\s*(?:lambda\\b[^:]*:\\s*)?", r_opd, ")*)")) :- era_re("OPD", r_opd), era_re("BIN", r_bin).
 era_re("LIST", cat("(?:\\*?", r_expr, "(?:\\s*,\\s*\\*?", r_expr, ")*(?:\\s*,)?)")) :- era_re("EXPR", r_expr).
 era_re("TGTS", cat("(?:", r_tgt, "(?:\\s*,\\s*", r_tgt, ")*(?:\\s*,)?)")) :- era_re("TGT", r_tgt).
 era_re("IMP", cat("(?:import\\s+[\\w.]+(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*[\\w.]+(?:\\s+as\\s+", r_n, ")?)*|from\\s+\\.*[\\w.]*\\s+import\\s+(?:\\*|\\(?\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?)*\\s*,?\\s*\\)?))")) :- era_re("N", r_n).
 era_re("KW", cat("(?:return(?:\\s+", r_list, ")?|pass|break|continue|raise(?:\\s+", r_expr, "(?:\\s+from\\s+", r_expr, ")?)?|del\\s+", r_list, "|(?:global|nonlocal)\\s+", r_n, "(?:\\s*,\\s*", r_n, ")*|assert\\s+", r_expr, "(?:\\s*,\\s*", r_expr, ")?|yield(?:\\s+from)?(?:\\s+", r_list, ")?)")) :- era_re("LIST", r_list), era_re("EXPR", r_expr), era_re("N", r_n).
-era_re("SIMPLE", cat("(?:", r_list, "|(?:", r_tgts, "\\s*=(?!=)\\s*)+(?:", r_list, "|yield\\b.*)|", r_tgt, "\\s*(?:[-+*/%&|^@]|//|\\*\\*|<<|>>)=\\s*", r_list, "|", r_tgt, "\\s*:\\s*", r_expr, "(?:\\s*=\\s*", r_list, ")?|", r_kw, "|", r_imp, ")")) :- era_re("LIST", r_list), era_re("TGTS", r_tgts), era_re("TGT", r_tgt), era_re("EXPR", r_expr), era_re("KW", r_kw), era_re("IMP", r_imp).
+era_re("SIMPLE", cat("(?:", r_list, "|(?:", r_tgts, "\\s*=\\s*)+(?:", r_list, "|yield\\b.*)|", r_tgt, "\\s*(?:[-+*/%&|^@]|//|\\*\\*|<<|>>)=\\s*", r_list, "|", r_tgt, "\\s*:\\s*", r_expr, "(?:\\s*=\\s*", r_list, ")?|", r_kw, "|", r_imp, ")")) :- era_re("LIST", r_list), era_re("TGTS", r_tgts), era_re("TGT", r_tgt), era_re("EXPR", r_expr), era_re("KW", r_kw), era_re("IMP", r_imp).
 era_re("HEAD", cat("(?:(?:if|elif|while)\\s+", r_expr, "|(?:async\\s+)?for\\s+", r_tgts, "\\s+in\\s+", r_list, "|(?:async\\s+)?with\\s+", r_expr, "(?:\\s+as\\s+", r_tgt, ")?(?:\\s*,\\s*", r_expr, "(?:\\s+as\\s+", r_tgt, ")?)*|(?:async\\s+)?def\\s+", r_n, "\\s*\\(.*\\)(?:\\s*->\\s*", r_expr, ")?|class\\s+", r_n, "(?:\\s*\\[.*\\])?(?:\\s*\\(.*\\))?)\\s*:\\s*", r_simple)) :- era_re("EXPR", r_expr), era_re("TGTS", r_tgts), era_re("LIST", r_list), era_re("TGT", r_tgt), era_re("N", r_n), era_re("SIMPLE", r_simple).
 era_re("STMT", cat("(?:", r_head, "|", r_simple, "(?:\\s*;\\s*", r_simple, ")*\\s*;?)\\s*(?:#.*)?")) :- era_re("HEAD", r_head), era_re("SIMPLE", r_simple).
 

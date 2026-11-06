@@ -13,11 +13,11 @@
 #include "python/upgrade.rr"
 //   targets(m), sym_at(e, q)
 #include "python/upgrade-format.rr"
-//   up_kw(c, k, v), up_kwarg(c, k, ka)
+//   call_kw(c, k, v), up_kwarg(c, k, ka)
 
 .decl piped(c: node)  // subprocess.run with stdout and stderr both subprocess.PIPE
 piped(c) :- targets(7), kind(c, "call"), field(c, "function", f), sym_at(f, "subprocess.run"),
-    up_kw(c, "stdout", o), sym_at(o, "subprocess.PIPE"), up_kw(c, "stderr", e), sym_at(e, "subprocess.PIPE").
+    call_kw(c, "stdout", o), sym_at(o, "subprocess.PIPE"), call_kw(c, "stderr", e), sym_at(e, "subprocess.PIPE").
 
 .violation use_capture_output(at: node) code "UP022"
     "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with `capture_output=True`; it is equivalent. Keep them only if the code must still run on Python 3.6."

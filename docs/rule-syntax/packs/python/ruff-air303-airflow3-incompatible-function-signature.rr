@@ -22,11 +22,11 @@
     "`{x}` has an incompatible signature in Airflow 3.0: {how}."
     suppress ruff "AIR303"
 AIR303(a, "create_asset", "pass positional arguments as keyword arguments (e.g., `create_asset(uri=...)`)") :-
-    air303_call(c), field(c, "function", f), ruff_bare(f, g), attr_of(g, o, "create_asset"), field(g, "attribute", a),
+    air303_call(c), field(c, "function", f), unparen(f, g), attr_of(g, o, "create_asset"), field(g, "attribute", a),
     air303_lineage(o), (ruff_arg(c, 0, _) ; call_item(c, s, _), kind(s, "list_splat")).
 AIR303(f, x, "use keyword argument `extra` instead of passing a dict as the second positional argument") :-
     air303_call(c), call_q(c, q), (q = "airflow.Dataset" ; q = "airflow.datasets.Dataset" ; q = "airflow.sdk.Asset"),
-    split_dot(q, m, x), m != "", ruff_arg(c, 1, a), ruff_bare(a, d), air303_dict(d), field(c, "function", f).
+    split_dot(q, m, x), m != "", ruff_arg(c, 1, a), unparen(a, d), air303_dict(d), field(c, "function", f).
 AIR303(n, "get_link", "use `def get_link(self, operator, *, ti_key)` or `def get_link(self, operator, ti_key)`") :-
     kind(f, "function_definition"), field(f, "name", n), text(n, "get_link"), nearest(f, k, scope), kind(k, "class_definition"), class_base_expr(k, b),
     ruff_qual(b, q), match("airflow\\.(models|sdk)(\\..*)?\\.BaseOperatorLink", q), docof(f, d),
@@ -36,7 +36,7 @@ AIR303(n, "get_link", "use `def get_link(self, operator, *, ti_key)` or `def get
 air303_call(c) :- kind(c, "call"), docof(c, d), seen_module(d, "airflow").
 // air303_lineage(o): o is `HookLineageCollector()`, or a name whose current binding is that call.
 .decl air303_lineage(o: node)
-air303_lineage(o) :- ruff_bare(o, m), call_q(m, "airflow.lineage.hook.HookLineageCollector").
+air303_lineage(o) :- unparen(o, m), call_q(m, "airflow.lineage.hook.HookLineageCollector").
 air303_lineage(o) :- air_instance(o, "airflow.lineage.hook.HookLineageCollector").
 .decl air303_dict(d: node)
 air303_dict(d) :- kind(d, "dictionary") ; kind(d, "dictionary_comprehension") ; call_q(d, "builtins.dict") ;

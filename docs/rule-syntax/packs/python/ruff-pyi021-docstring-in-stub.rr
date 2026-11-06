@@ -11,4 +11,4 @@
 
 .violation PYI021(at: node) code "PYI021" "Remove this docstring from the stub; if it is the only statement in the body, replace it with `...`. Keep it if this stub package ships docstrings on purpose."
     suppress ruff "PYI021"
-PYI021(e) :- py_docstring(_, e), in_stub(e).
+PYI021(e) :- docstring(_, e), in_stub(e).

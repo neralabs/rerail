@@ -33,8 +33,7 @@ UP032(c) :- format_call(c, v), brace_ok(v), !brace_nested(v, _, _, _, _, _), !ca
 refers(c, k, e) :- format_call(c, v), brace_arg(v, k, ""), r = count : { brace_arg(v, k2, ""), k2 < k },
     call_pos(c, r, e).
 refers(c, k, e) :- format_call(c, v), brace_arg(v, k, a), match("[0-9]+", a), call_pos(c, to_number(a), e).
-refers(c, k, e) :- format_call(c, v), brace_arg(v, k, x), x != "", !match("[0-9]+", x), call_kw(c, x, ka),
-    field(ka, "value", e).
+refers(c, k, e) :- format_call(c, v), brace_arg(v, k, x), x != "", !match("[0-9]+", x), call_kwarg(c, x, e).
 .decl mixed(v: symbol)  // `{}` and `{0}` together: a ValueError
 mixed(v) :- brace_arg(v, _, ""), brace_arg(v, _, a), match("[0-9]+", a).
 .decl quoted(e: node)  // e is or holds a string literal

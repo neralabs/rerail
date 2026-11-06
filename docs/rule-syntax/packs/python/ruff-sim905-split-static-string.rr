@@ -17,8 +17,8 @@
 .violation SIM905(at: node, method: symbol) code "SIM905" "Consider using a list literal instead of `str.{method}`"
     suppress ruff "SIM905"
 SIM905(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "split" ; m = "rsplit"),
-    ruff_bare(o, s), kind(s, k), (k = "string" ; k = "concatenated_string"), plain_str(s, _), !fstring(s), !string_form(s, "bytes"),
-    !sim_tstring(s), !bad_arg(c, "sep", 0), !bad_arg(c, "maxsplit", 1).
+    unparen(o, s), kind(s, k), (k = "string" ; k = "concatenated_string"), plain_str(s, _), !fstring(s), !string_form(s, "bytes"),
+    !tstring_lit(s), !bad_arg(c, "sep", 0), !bad_arg(c, "maxsplit", 1).
 // bad_arg(c, x, i): the argument for parameter x (keyword x, else positional i) is not one Ruff can read.
 .decl bad_arg(c: node, x: symbol, i: number)
 bad_arg(c, x, i) :- split_param(x, i), arg_for(c, x, i, v), !readable(x, v).
@@ -28,8 +28,8 @@ split_param("sep", 0). split_param("maxsplit", 1).
 arg_for(c, x, i, v) :- split_param(x, i), kind(c, "call"), call_kwarg(c, x, v).
 arg_for(c, x, i, v) :- split_param(x, i), ruff_arg(c, i, v), !call_kwarg(c, x, _).
 .decl readable(x: symbol, v: node)
-readable("sep", v) :- ruff_bare(v, m), kind(m, "none").
-readable("sep", v) :- ruff_bare(v, m), plain_str(m, _), !fstring(m), !string_form(m, "bytes").
+readable("sep", v) :- unparen(v, m), kind(m, "none").
+readable("sep", v) :- unparen(v, m), plain_str(m, _), !fstring(m), !string_form(m, "bytes").
 readable("maxsplit", v) :- ruff_int(v, _).
-readable("maxsplit", v) :- ruff_bare(v, m), kind(m, "unary_operator"), op(m, "-"), field(m, "argument", a),
+readable("maxsplit", v) :- unparen(v, m), kind(m, "unary_operator"), op(m, "-"), field(m, "argument", a),
     ruff_int(a, _).

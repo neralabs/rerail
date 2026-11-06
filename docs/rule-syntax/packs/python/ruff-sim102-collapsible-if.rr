@@ -38,7 +38,7 @@ branch(s, c, b) :- short_if(s), child(s, c, _), kind(c, "elif_clause"), !py_orel
 .decl short_if(s: node)
 short_if(s) :- kind(s, "if_statement"), field(s, "consequence", b), body_len(b, k), k <= 1.
 .decl mergeable_test(c: node)
-mergeable_test(c) :- (kind(c, "if_statement") ; kind(c, "elif_clause")), field(c, "condition", t), ruff_bare(t, m),
+mergeable_test(c) :- (kind(c, "if_statement") ; kind(c, "elif_clause")), field(c, "condition", t), unparen(t, m),
     !kind(m, "true"), !kind(m, "false"), !main_check(m).
 // main_check(m): `__name__ == "__main__"`, the name first, with any one comparison operator.
 .decl main_check(m: node)

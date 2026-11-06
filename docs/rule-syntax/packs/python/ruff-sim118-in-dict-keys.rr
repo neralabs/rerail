@@ -23,10 +23,10 @@ SIM118(t, "in", k) :- (kind(f, "for_statement") ; kind(f, "for_in_clause")), fie
     keys_call(r, k, _).
 // keys_call(r, k, o): r, parentheses off, is the call k, `o.keys()`, o not the name self.
 .decl keys_call(r: node, k: node, o: node)
-keys_call(r, k, o) :- ruff_bare(r, k), kind(k, "call"), call_nargs(k, 0), call_nkwargs(k, 0), field(k, "function", f),
+keys_call(r, k, o) :- unparen(r, k), kind(k, "call"), call_nargs(k, 0), call_nkwargs(k, 0), field(k, "function", f),
     attr_of(f, o, "keys"), !self_name(o).
 .decl self_name(o: node)
-self_name(o) :- ruff_bare(o, m), kind(m, "identifier"), text(m, "self").
+self_name(o) :- unparen(o, m), kind(m, "identifier"), text(m, "self").
 // The receiver as written: `(d).keys()` becomes `(d)`, as in Ruff.
-drop_keys(_, _, k) :- keys_call(_, k, o), ruff_bare(o, m), kind(m, "identifier"), dict_ref(m), ast_name(m, x),
+drop_keys(_, _, k) :- keys_call(_, k, o), unparen(o, m), kind(m, "identifier"), dict_ref(m), ast_name(m, x),
     look(m, x, s), count : { binding(s, x, _, _) } = 1 => replace(k, `$o`).

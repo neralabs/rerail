@@ -11,7 +11,7 @@
 //   def f(a: u"int"): ...       ← UP025, unless the module has `from __future__ import annotations`
 //   x: list[u"int"]             ← UP025 either way: the string is not the whole annotation
 #include "python/upgrade.rr"
-//   up_stub(d), future_annotations(d); ann_root(t) and unparen (python/ast)
+//   stub_file(d), future_annotations(d); ann_root(t) and unparen (python/ast)
 #include "python/upgrade-format.rr"
 //   u_piece(s), lit_piece(e, s)
 
@@ -25,8 +25,8 @@ remove_u(s) :- child(s, st, 0), kind(st, "string_start"), text(st, t), q = @slic
 
 // deferred(s): s is a piece of the whole of an annotation that Python never evaluates.
 .decl deferred(s: node)
-deferred(s) :- whole(t, s), docof(s, d), (future_annotations(d) ; up_stub(d)).
-deferred(s) :- alias_value(v), lit_piece(v, s), docof(s, d), up_stub(d).
+deferred(s) :- whole(t, s), docof(s, d), (future_annotations(d) ; stub_file(d)).
+deferred(s) :- alias_value(v), lit_piece(v, s), docof(s, d), stub_file(d).
 .decl whole(t: node, s: node)  // s is a piece of the string that annotation t is, through parentheses
 whole(t, s) :- ann_root(t), child(t, e, 0), unparen(e, m), lit_piece(m, s).
 // alias_value(v): the value of `X: TypeAlias = v` (typing's or typing_extensions'), through parentheses.

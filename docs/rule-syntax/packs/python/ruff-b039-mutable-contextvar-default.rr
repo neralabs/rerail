@@ -17,5 +17,5 @@
 .violation B039(at: node) code "B039"
     "Default this ContextVar to None and set the mutable value with .set(); a mutable default is shared by every context."
     suppress ruff "B039"
-B039(d) :- bb_callee(c, "contextvars.ContextVar"), bb_kw(c, "default", d), bb_mutable(d).
-B039(d) :- bb_callee(c, "contextvars.ContextVar"), bb_kw(c, "default", d), kind(d, "call"), !bb_immutable_call(d).
+B039(d) :- bb_callee(c, "contextvars.ContextVar"), call_kw(c, "default", d), bb_mutable(d).
+B039(d) :- bb_callee(c, "contextvars.ContextVar"), call_kw(c, "default", d), kind(d, "call"), !bb_immutable_call(d).

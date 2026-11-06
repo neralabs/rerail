@@ -20,9 +20,9 @@ ASYNC116(c, m) :- async_call(c, _, q), async_sleep_arg(q, m, x), async_one_arg(c
 .decl async_over_a_day(a: node)
 // The value is normalised (no leading zeros), so it is compared by its digits: six or more, or five above 86400.
 async_over_a_day(a) :- ruff_int(a, v), match("[1-9][0-9]{5,}|8640[1-9]|864[1-9][0-9]|86[5-9][0-9]{2}|8[7-9][0-9]{3}|9[0-9]{4}", v).
-async_over_a_day(a) :- ruff_bare(a, m), async_float(m, t), to_float(t) > 86400.0.
+async_over_a_day(a) :- unparen(a, m), async_float(m, t), to_float(t) > 86400.0.
 // A float with a positive exponent of three significant digits (1e100, 1e999, 1e0100) is over a day unless its mantissa is 0.
-async_over_a_day(a) :- ruff_bare(a, m), kind(m, "float"), match("[0-9_.]*[1-9][0-9_.]*[eE]\\+?0*[1-9][0-9_]{2,}", m).
+async_over_a_day(a) :- unparen(a, m), kind(m, "float"), match("[0-9_.]*[1-9][0-9_.]*[eE]\\+?0*[1-9][0-9_]{2,}", m).
 // async_float(m, t): float literal m's text without `_`, when to_float can read it: not imaginary, and no
 // exponent of three significant digits (leading zeros aside: 1e010 is read), which may overflow or underflow a double.
 .decl async_float(m: node, t: symbol)

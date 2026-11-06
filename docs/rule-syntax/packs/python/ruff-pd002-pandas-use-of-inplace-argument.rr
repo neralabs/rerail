@@ -17,13 +17,13 @@
 .violation PD002(at: node) code "PD002"
     "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
     suppress ruff "PD002"
-PD002(k) :- last_inplace(c, k), field(k, "value", v), ruff_bare(v, m), kind(m, "true"), docof(c, d),
+PD002(k) :- last_inplace(c, k), field(k, "value", v), unparen(v, m), kind(m, "true"), docof(c, d),
     seen_module(d, "pandas").
 seen_ask("pandas").
 
 // last_inplace(c, k): k is the last `inplace=` keyword of call c, a call of a method that takes one.
 .decl last_inplace(c: node, k: node)
-last_inplace(c, k) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, g), attr_of(g, _, x), inplace_method(x),
+last_inplace(c, k) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, _, x), inplace_method(x),
     call_item(c, k, j), inplace_kw(k), count : { call_item(c, k2, j2), j2 > j, inplace_kw(k2) } = 0.
 .decl inplace_kw(k: node)
 inplace_kw(k) :- kind(k, "keyword_argument"), field(k, "name", n), text(n, "inplace").

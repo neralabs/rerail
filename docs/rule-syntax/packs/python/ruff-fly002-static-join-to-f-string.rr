@@ -28,12 +28,12 @@ FLY002_fstring(c) :- static_join(c, _, a), joinee(a, _, _), !joined_str(a, _), !
 
 // static_join(c, j, a): c is `j.join(a)`, j a plain string's value, a a list or tuple display without `*x`.
 .decl static_join(c: node, j: symbol, a: node)
-static_join(c, j, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "join"), ruff_bare(o, s), plain_str(s, j),
-    call_only(c, x), ruff_bare(x, a), (kind(a, "list") ; kind(a, "tuple")), !has_star(a).
+static_join(c, j, a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "join"), unparen(o, s), plain_str(s, j),
+    call_only(c, x), unparen(x, a), (kind(a, "list") ; kind(a, "tuple")), !has_star(a).
 .decl has_star(a: node)
 has_star(a) :- child(a, e, _), kind(e, "list_splat").
 .decl joinee(a: node, i: number, e: node)
-joinee(a, i, e) :- child(a, x, i), !kind(x, "comment"), ruff_bare(x, e).
+joinee(a, i, e) :- child(a, x, i), !kind(x, "comment"), unparen(x, e).
 // joined_str(a, v): every element is a plain string literal, and v their join; an empty display has none.
 .decl joined_str(a: node, v: symbol)
 joined_str(a, v) :- static_join(_, j, a), joinee(a, _, _), count : { joinee(a, _, e), !plain_str(e, _) } = 0,

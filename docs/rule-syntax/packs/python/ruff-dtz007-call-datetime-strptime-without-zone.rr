@@ -23,7 +23,7 @@
     suppress ruff "DTZ007"
 DTZ007(c) :- parsed_naive(c), !replaced(c, _).
 DTZ007(c) :- parsed_naive(c), replaced(c, r), !call_kwarg(r, "tzinfo", _).
-DTZ007_none(c) :- parsed_naive(c), replaced(c, r), call_kwarg(r, "tzinfo", v), ruff_bare(v, m), kind(m, "none").
+DTZ007_none(c) :- parsed_naive(c), replaced(c, r), call_kwarg(r, "tzinfo", v), unparen(v, m), kind(m, "none").
 
 .decl parsed_naive(c: node)
 parsed_naive(c) :- dt_call(c, "datetime.datetime.strptime"), !then_astimezone(c), !offset_format(c).

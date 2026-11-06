@@ -20,7 +20,7 @@
 // mode_arg(at, v): the mode of an open call: the string literal, without parentheses, where Ruff reports.
 .decl mode_arg(at: node, v: symbol)
 mode_arg(a, v) :- open_call(c), up_arg(c, 1, a), !after_star(c, a), str_lit(a, v).
-mode_arg(m, v) :- open_call(c), up_kw(c, "mode", m), str_lit(m, v).
+mode_arg(m, v) :- open_call(c), call_kw(c, "mode", m), str_lit(m, v).
 .decl after_star(c: node, a: node)  // a positional argument past a `*xs`: its position is unknown
 after_star(c, a) :- up_arglist(c, s, j), kind(s, "list_splat"), up_arglist(c, a0, k), j < k, unparen(a0, a).
 .decl open_call(c: node)

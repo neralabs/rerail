@@ -8,12 +8,12 @@
 //   # todo: fix this       ← TD006, fixed to `# TODO: fix this`
 //   # ToDo(x): this        ← TD006
 //   # TODO: fix this       not reported
-#include "python/misc2-todo.rr"   // todo_item and the TD helpers
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD006(at: node, tag: symbol) code "TD006"
+.violation TD006(at: span, tag: symbol) code "TD006"
     "Write the `{tag}` tag in uppercase as `TODO`."
     suppress ruff "TD006"
     fix safe td006_upper "Write `TODO`"
-TD006(c, D) :- todo_item(c, D, _), match("[tT][oO][dD][oO]", D), D != "TODO".
+TD006(t, D) :- todo_item(c, D, _), match("[tT][oO][dD][oO]", D), D != "TODO", todo_at(c, t).
 // The fix rewrites the comment whole: the text before the tag, TODO, the text after it.
-td006_upper(c, _) :- todo_tag(c, P, _, R), t = cat(cat(P, "TODO"), R) => replace(c, `$t`).
+td006_upper(t, _) :- todo_at(_, t) => replace(t, `TODO`).

@@ -15,6 +15,6 @@
 .violation PD012(at: node) code "PD012"
     "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
     suppress ruff "PD012"
-PD012(f) :- call_q(c, "pandas.read_table"), call_kwarg(c, "sep", v), ruff_bare(v, s), plain_str(s, ","),
+PD012(f) :- call_q(c, "pandas.read_table"), call_kwarg(c, "sep", v), unparen(v, s), plain_str(s, ","),
     field(c, "function", f), docof(c, d), seen_module(d, "pandas").
 seen_ask("pandas").

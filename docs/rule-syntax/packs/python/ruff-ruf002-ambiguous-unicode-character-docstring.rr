@@ -16,5 +16,5 @@
     suppress ruff "RUF002"
 RUF002(c, x) :- confusable_text(p), confusable_char(p, c), text(c, x).
 
-confusable_text(p) :- py_docstring(_, e), (s = e ; kind(e, "concatenated_string"), child(e, s, _)),
+confusable_text(p) :- docstring(_, e), (s = e ; kind(e, "concatenated_string"), child(e, s, _)),
     kind(s, "string"), child(s, p, _), kind(p, "string_content").

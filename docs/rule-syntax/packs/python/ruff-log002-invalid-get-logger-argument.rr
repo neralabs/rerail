@@ -16,7 +16,7 @@
 .violation LOG002(at: node) code "LOG002"
     "Pass `__name__` to `logging.getLogger()` instead of `__file__` or `__cached__`; logger names should be dotted module names, not paths. Keep it only if existing config targets the path-named logger."
     suppress ruff "LOG002"
-LOG002(e) :- call_q(c, "logging.getLogger"), path_arg(c, a), ruff_bare(a, e), resolves_builtin(e, x),
+LOG002(e) :- call_q(c, "logging.getLogger"), path_arg(c, a), unparen(a, e), resolves_builtin(e, x),
     (x = "__file__" ; x = "__cached__"), docof(c, d), seen_module(d, "logging").
 .decl path_arg(c: node, a: node)
 path_arg(c, a) :- call_q(c, "logging.getLogger"), ruff_arg(c, 0, a).

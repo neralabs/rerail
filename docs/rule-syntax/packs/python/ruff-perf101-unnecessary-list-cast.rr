@@ -27,7 +27,7 @@ drop_cast(it) :- list_cast(it, a), !has(it, _, "comment") => replace(it, `$a`).
 
 .decl list_cast(it: node, a: node)  // `list(a)` with one positional argument; keywords do not matter
 list_cast(it, a) :- kind(it, "call"), field(it, "function", f), ruff_qual(f, "builtins.list"), ruff_arg(it, 0, a0),
-    call_nargs(it, 1), !call_splat(it), ruff_bare(a0, a).
+    call_nargs(it, 1), !call_splat(it), unparen(a0, a).
 .decl mutated(f: node, x: symbol)
 mutated(f, x) :- field(f, "body", b), has(b, c, "call"), perf_call_stmt(_, c), field(c, "function", g),
     attr_of(g, o, m), text(o, x), kind(o, "identifier"), mutator(m).
@@ -39,9 +39,9 @@ mutated(f, x) :- field(f, "body", b), has(b, a, "augmented_assignment"), field(a
 mutated(f, x) :- field(f, "body", b), has(b, d, "delete_statement"), del_target(d, l), kind(l, "subscript"),
     field(l, "value", o), kind(o, "identifier"), text(o, x).
 .decl del_target(d: node, t: node)
-del_target(d, t) :- kind(d, "delete_statement"), child(d, e, _), !kind(e, "expression_list"), ruff_bare(e, t).
+del_target(d, t) :- kind(d, "delete_statement"), child(d, e, _), !kind(e, "expression_list"), unparen(e, t).
 del_target(d, t) :- kind(d, "delete_statement"), child(d, l, _), kind(l, "expression_list"), child(l, e, _),
-    ruff_bare(e, t).
+    unparen(e, t).
 .decl mutator(m: symbol)
 mutator("append"). mutator("insert"). mutator("extend"). mutator("remove"). mutator("pop"). mutator("clear").
 mutator("reverse"). mutator("sort").

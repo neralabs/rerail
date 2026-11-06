@@ -31,16 +31,16 @@
 //       if i % 2:                perf_body(<for>, <the append statement>, <i % 2>)
 //           result.append(i)     perf_method_call(<call>, <result>, "append", <i>)
 #include "python/ruff.rr"
-//   ruff_bare(e, m), ruff_qual(e, q), call_nargs(c, n), call_nkwargs(c, n), ruff_arg(c, i, a)
+//   unparen(e, m), ruff_qual(e, q), call_nargs(c, n), call_nkwargs(c, n), ruff_arg(c, i, a)
 
 // ---- loop shapes --------------------------------------------------------------------------------------------
 .decl perf_for(f: node, t: node, it: node)
-perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), ruff_bare(l, t), !perf_paren_target(l, _),
-    field(f, "right", r), ruff_bare(r, it).
+perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), unparen(l, t), !perf_paren_target(l, _),
+    field(f, "right", r), unparen(r, it).
 // `for (i) in …`: tree-sitter reads the parenthesised target as a one-element tuple_pattern (no comma); Ruff's
 // tree has the Name.
 perf_for(f, t, it) :- kind(f, "for_statement"), field(f, "left", l), perf_paren_target(l, t), field(f, "right", r),
-    ruff_bare(r, it).
+    unparen(r, it).
 .decl perf_paren_target(l: node, t: node)
 perf_paren_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","), child(l, t, _), !kind(t, "comment"),
     count : { child(l, c, _), !kind(c, "comment") } = 1.
@@ -48,18 +48,18 @@ perf_paren_target(l, t) :- kind(l, "tuple_pattern"), !op(l, ","), child(l, t, _)
 perf_body(f, st, t) :- kind(f, "for_statement"), field(f, "body", b), body_len(b, 1), body_stmt(b, st, 0),
     !kind(st, "if_statement"), unset(t).
 perf_body(f, st, t) :- kind(f, "for_statement"), field(f, "body", b), body_len(b, 1), body_stmt(b, i, 0),
-    py_if(i, t0, ib), !py_orelse(i, _), body_len(ib, 1), body_stmt(ib, st, 0), ruff_bare(t0, t).
+    py_if(i, t0, ib), !py_orelse(i, _), body_len(ib, 1), body_stmt(ib, st, 0), unparen(t0, t).
 .decl perf_call_stmt(st: node, c: node)
-perf_call_stmt(st, c) :- kind(st, "expression_statement"), child(st, e, 0), !child(st, _, 1), ruff_bare(e, c),
+perf_call_stmt(st, c) :- kind(st, "expression_statement"), child(st, e, 0), !child(st, _, 1), unparen(e, c),
     kind(c, "call").
 .decl perf_method_call(c: node, o: node, m: symbol, a: node)
 // `L.append(x for x in xs)`: tree-sitter makes the bare generator the call's arguments.
-perf_method_call(c, o, m, a) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, g), attr_of(g, o0, m),
-    ruff_bare(o0, o), field(c, "arguments", a), kind(a, "generator_expression").
-perf_method_call(c, o, m, a) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, g), attr_of(g, o0, m),
-    ruff_bare(o0, o), field(c, "arguments", al), kind(al, "argument_list"), count : { child(al, x, _), !kind(x, "comment") } = 1,
+perf_method_call(c, o, m, a) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, o0, m),
+    unparen(o0, o), field(c, "arguments", a), kind(a, "generator_expression").
+perf_method_call(c, o, m, a) :- kind(c, "call"), field(c, "function", f), unparen(f, g), attr_of(g, o0, m),
+    unparen(o0, o), field(c, "arguments", al), kind(al, "argument_list"), count : { child(al, x, _), !kind(x, "comment") } = 1,
     child(al, a0, _), !kind(a0, "comment"), !kind(a0, "keyword_argument"), !kind(a0, "dictionary_splat"),
-    ruff_bare(a0, a).
+    unparen(a0, a).
 .decl perf_mentions(e: node, x: symbol)
 perf_mentions(e, x) :- kind(e, "identifier"), nameref(e, x).
 perf_mentions(e, x) :- node(_, e, _, _, _), has(e, n, "identifier"), nameref(n, x).
@@ -75,11 +75,11 @@ perf_only_binding(n, site) :- kind(n, "identifier"), look(n, x, s), !scope_node(
 perf_latest_site(n, site) :- kind(n, "identifier"), look(n, x, s), binding(s, x, site, _), site < n,
     count : { binding(s, x, b, _), b < n, site < b } = 0.
 .decl perf_site_value(site: node, v: node)
-perf_site_value(site, v) :- binding_value(site, v0), !kind(v0, "assignment"), ruff_bare(v0, v).
-perf_site_value(a, v) :- kind(a, "assignment"), perf_chain_right(a, v0), ruff_bare(v0, v).
+perf_site_value(site, v) :- binding_value(site, v0), !kind(v0, "assignment"), unparen(v0, v).
+perf_site_value(a, v) :- kind(a, "assignment"), perf_chain_right(a, v0), unparen(v0, v).
 perf_site_value(t, v) :- binding(_, _, t, "assign"), kind(t, "identifier"), child(l, t, i), field(a, "left", l),
-    kind(a, "assignment"), perf_chain_right(a, r0), ruff_bare(r0, r),
-    (kind(r, "tuple") ; kind(r, "expression_list") ; kind(r, "list")), child(r, v0, i), ruff_bare(v0, v).
+    kind(a, "assignment"), perf_chain_right(a, r0), unparen(r0, r),
+    (kind(r, "tuple") ; kind(r, "expression_list") ; kind(r, "list")), child(r, v0, i), unparen(v0, v).
 // perf_chain_right(a, v): the value at the end of a chained assignment `a = b = v` (tree-sitter nests the
 // second assignment as the first one's right side); for a plain `a = v`, v itself.
 .decl perf_chain_right(a: node, v: node)
@@ -91,8 +91,8 @@ perf_site_ann(a, h) :- kind(a, "assignment"), field(a, "type", t), perf_ann_head
 perf_site_ann(p, h) :- binding(_, _, p, "param"), field(p, "type", t), perf_ann_head(t, h).
 .decl perf_ann_head(t: node, h: node)
 perf_ann_head(t, h) :- kind(t, "type"), child(t, e, 0), perf_ann_head(e, h).
-perf_ann_head(t, h) :- ruff_bare(t, h), (kind(h, "identifier") ; kind(h, "attribute")).
-perf_ann_head(t, h) :- ruff_bare(t, s), (kind(s, "subscript"), field(s, "value", h) ; kind(s, "generic_type"), child(s, h, 0)).
+perf_ann_head(t, h) :- unparen(t, h), (kind(h, "identifier") ; kind(h, "attribute")).
+perf_ann_head(t, h) :- unparen(t, s), (kind(s, "subscript"), field(s, "value", h) ; kind(s, "generic_type"), child(s, h, 0)).
 .decl perf_typed_site(site: node, ty: symbol)  // "list" or "dict"
 perf_typed_site(site, "list") :- perf_site_value(site, v), (kind(v, "list") ; kind(v, "list_comprehension")).
 perf_typed_site(site, "dict") :- perf_site_value(site, v), (kind(v, "dictionary") ; kind(v, "dictionary_comprehension")).

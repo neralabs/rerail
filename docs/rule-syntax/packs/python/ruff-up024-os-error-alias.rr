@@ -23,10 +23,9 @@ UP024(e) :- exc_site(e, _), os_alias(e).
 UP024(t) :- handler_tuple(t, e), os_alias(e).
 .decl os_alias(e: node)
 os_alias(e) :- builtin_at(e, x), old_name(x).
-// WindowsError is a builtin on Windows only; Ruff counts it as one everywhere. Unbound is enough here.
-os_alias(e) :- ast_name(e, "WindowsError"), miss(e, "WindowsError").
 os_alias(e) :- up_qual(e, q), split_dot(q, m, "error"), error_module(m).
 .decl old_name(x: symbol)
-old_name("EnvironmentError"). old_name("IOError").
+// WindowsError is a builtin on Windows only; Ruff (and python/names) count it as one everywhere.
+old_name("EnvironmentError"). old_name("IOError"). old_name("WindowsError").
 .decl error_module(m: symbol)
 error_module("mmap"). error_module("resource"). error_module("select"). error_module("socket"). error_module("os").

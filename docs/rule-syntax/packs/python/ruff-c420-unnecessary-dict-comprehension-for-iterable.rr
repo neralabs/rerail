@@ -13,7 +13,7 @@
 //   {x: None for x in xs}    ← C420: dict.fromkeys(xs)
 //   {x: [] for x in xs}    {x: x for x in xs}    {x: f() for x in xs}    not reported
 #include "python/comprehensions.rr"
-//   c4_comp(e, k), c4_simple(e, fc), c4_same(x, t), c4_builtin_here(n, x)
+//   c4_comp(e, k), c4_simple(e, fc), cmp_same(x, t) (python/compare), c4_builtin_here(n, x)
 
 .violation C420(at: node) code "C420"
     "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples."
@@ -22,9 +22,9 @@
 C420(e) :- same_value(e, _, _, _).
 .decl same_value(e: node, t: node, i: node, v: node)
 same_value(e, t, i, v) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(fc, "right", i),
-    field(e, "body", p), field(p, "key", k), c4_same(k, t), field(p, "value", v), !impure_target(t),
+    field(e, "body", p), field(p, "key", k), cmp_same(k, t), field(p, "value", v), !impure_target(t),
     !varying(v), !reads_own(e, v).
-c4_same_ask(k, t) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(e, "body", p),
+cmp_same_ask(k, t) :- c4_comp(e, "dict"), c4_simple(e, fc), field(fc, "left", t), field(e, "body", p),
     field(p, "key", k).
 .decl impure_target(t: node)
 impure_target(t) :- kind(t, k), place_kind(k).
@@ -45,8 +45,8 @@ varying_kind("named_expression").
 reads_own(e, v) :- c4_comp(e, "dict"), field(e, "body", p), field(p, "value", v), (n = v ; within(n, v)), ast_name(n, x), look(n, x, s),
     binding(s, x, site, _), within(site, e).
 
-fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), ruff_bare(v, n),
+fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), unparen(v, n),
     kind(n, "none") => replace(e, `dict.fromkeys($i)`).
-fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), ruff_bare(v, n),
+fromkeys(e) :- same_value(e, _, i, v), c4_builtin_here(e, "dict"), !has(e, _, "comment"), unparen(v, n),
     !kind(n, "none") => replace(e, `dict.fromkeys($i, $v)`).
 c4_builtin_ask(e, "dict") :- same_value(e, _, _, _).

@@ -23,4 +23,4 @@ PIE804(s) :- kw_dict(s, d), count : { child(d, o, _), !kind(o, "comment") } = 1,
 .decl kw_dict(s: node, d: node)
 kw_dict(s, d) :- bb_arg(_, s), kind(s, "dictionary_splat"), child(s, v, 0), unparen(v, d), kind(d, "dictionary").
 .decl kwarg_pair(e: node)
-kwarg_pair(e) :- kind(e, "pair"), field(e, "key", k), plain_str(k, v), bb_identifier(v).
+kwarg_pair(e) :- kind(e, "pair"), field(e, "key", k), plain_str(k, v), identifier(v).

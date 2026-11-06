@@ -24,7 +24,7 @@ ASYNC100(w, q) :- async_timeout_item(w, i, q), !async_later_timeout(w, i),
 .decl async_timeout_item(w: node, i: node, q: symbol)
 async_timeout_item(w, i, q) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, i, _),
     kind(i, "with_item"), field(i, "value", v), (kind(v, "as_pattern"), child(v, e, 0) ; !kind(v, "as_pattern"), e = v),
-    ruff_bare(e, c), async_call(c, _, q), async_timeout_cm(q).
+    unparen(e, c), async_call(c, _, q), async_timeout_cm(q).
 .decl async_later_timeout(w: node, i: node)
 async_later_timeout(w, i) :- async_timeout_item(w, i, _), async_timeout_item(w, j, _), i < j.
 .decl async_later_item(w: node, i: node)

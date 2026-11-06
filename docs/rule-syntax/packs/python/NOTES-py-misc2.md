@@ -383,14 +383,14 @@ All 20 are perfect.
   is the same).
 - **D-D4 (TD anchors and TD006 fix):** the TD findings sit on the comment node, so their column is the
   comment's start where Ruff's is the tag's; the line is the same, which is what the findings contract compares.
-  TD006's fix (safe, as Ruff's; the JSON has none) rewrites the whole comment as the text before the tag, `TODO`,
-  and the text after it, which equals Ruff's replacement of the tag alone. A span-anchored version (finding and
-  fix on the tag itself) needs reporting on part of a node; see change request 1 below.
+  TD006's fix (safe, as Ruff's; the JSON has none) replaces the tag alone, as Ruff's does. Since the python merge,
+  TD001-TD007 report at the tag (python/misc2-todo-span's `todo_at`, a match capture on the comment, which rrlab
+  binds as a span since 08d977aa5), so the column is Ruff's too (TD006.py: 5:3, 6:3, 7:9).
   On the review cases `td.py` and `td2.py` all seven rules equal Ruff 0.16.9 by line and code (60 and 1).
-- **D-D7 (file-wide `# ruff: noqa` in rrlab):** an own-line `# ruff: noqa` (or `# flake8: noqa`) silences
-  every other code in the file in Ruff. rrlab's `suppress ruff` honours line `# noqa` only, so on a file with
-  such a comment PGH003 and the other rules report where Ruff is silent (review case `pgh.py` lines 14-21).
-  Not a rule gap: the suppression layer should honour file exemptions.
+- **D-D7 (file-wide `# ruff: noqa` in rrlab; fixed in rrlab 08d977aa5):** an own-line `# ruff: noqa` (or
+  `# flake8: noqa`) silences every other code in the file in Ruff. rrlab honoured line `# noqa` only, so PGH003 and
+  the other rules reported on review case `pgh.py` lines 14-21 where Ruff is silent. rrlab now honours the
+  file-level forms.
 - **D-D5 (PGH004 suppression):** the JSON has no `suppress` for PGH004 and the rule keeps none: Ruff does not
   let a blanket `# noqa` hide its own PGH004 (fixture line 1, `x = 1  # noqa`, is reported). A file whose own-line
   `# ruff: noqa: …` lists PGH004 is exempt (PGH004_3). As Ruff's lexer, the list ends at the first word that is

@@ -13,7 +13,7 @@
 //   @pytest.mark.parametrize("_x", [1, 2])
 //   def test_x(_x): ...                                            not reported
 #include "python/pytest.rr"
-//   exc_argument(c, k, i, a), pytest_str(s, v); ast: sig_param(f, p, nm, i, kind, ann, dflt)
+//   exc_argument(c, k, i, a), plain_str(s, v); ast: sig_param(f, p, nm, i, kind, ann, dflt)
 
 .violation PT019(at: node, x: symbol) code "PT019"
     "If the test never reads `{x}`, remove the parameter and add `@pytest.mark.usefixtures(\"{x}\")` to the test; if it reads the value, leave it as is."
@@ -32,7 +32,7 @@ unknown_names(f) :- argnames(f, a), (kind(a, "list") ; kind(a, "tuple")), child(
     kind(n, "identifier").
 // parametrized(f, x): x is one of the names: "a, _x" split at commas, or a str element of a list or tuple.
 .decl parametrized(f: node, x: symbol)
-parametrized(f, x) :- argnames(f, a), pytest_str(a, v), sig_param(f, _, nm, _, _, _, _), text(nm, x),
+parametrized(f, x) :- argnames(f, a), plain_str(a, v), sig_param(f, _, nm, _, _, _, _), text(nm, x),
     match(cat(cat("([\\s\\S]*,)?\\s*", x), "\\s*(,[\\s\\S]*)?"), v).
 parametrized(f, x) :- argnames(f, a), (kind(a, "list") ; kind(a, "tuple")), child(a, s0, _), unparen(s0, s),
-    pytest_str(s, v), sig_param(f, _, nm, _, _, _, _), text(nm, x), match(cat(cat("\\s*", x), "\\s*"), v).
+    plain_str(s, v), sig_param(f, _, nm, _, _, _, _), text(nm, x), match(cat(cat("\\s*", x), "\\s*"), v).

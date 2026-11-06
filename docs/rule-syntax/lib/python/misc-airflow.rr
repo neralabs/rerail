@@ -57,13 +57,13 @@ air_kind(q, m, s) :- air_kind_ask(m, s), (air_call(_, q) ; air_instance(_, q)),
     match(cat("airflow\\.(providers\\.([^.]+\\.)*)?", cat(m, cat("\\.([^.]+\\.)*[^.]*", s))), q).
 
 .decl air_value(o: node, r: node)
-air_value(o, r) :- ruff_bare(o, n), ast_name(n, x), expr_ctx(n, "load"), look(n, x, s), binding(s, x, a, "assign"),
+air_value(o, r) :- unparen(o, n), ast_name(n, x), expr_ctx(n, "load"), look(n, x, s), binding(s, x, a, "assign"),
     a < n, asg(s, x, r, a), count : { binding(s, x, b, _), a < b, b < n } = 0.
 .decl air_instance(o: node, q: symbol)
-air_instance(o, q) :- air_value(o, r), ruff_bare(r, m), call_q(m, q), docof(o, d), seen_module(d, "airflow").
+air_instance(o, q) :- air_value(o, r), unparen(r, m), call_q(m, q), docof(o, d), seen_module(d, "airflow").
 
 .decl air_task(f: node)
-air_task(f) :- decorator(f, e), ruff_bare(e, m0), (kind(m0, "call"), field(m0, "function", g), ruff_bare(g, m) ;
+air_task(f) :- decorator(f, e), unparen(e, m0), (kind(m0, "call"), field(m0, "function", g), unparen(g, m) ;
     !kind(m0, "call"), m = m0), (air_task_q(m) ; field(m, "object", o), air_task_q(o)).
 .decl air_task_q(e: node)
 air_task_q(e) :- ruff_qual(e, q), (q = "airflow.decorators.task" ; q = "airflow.sdk.task").
@@ -88,6 +88,6 @@ air_in_handler(n, t) :- nearest(n, t, "try_statement"), child(t, h, _), kind(h, 
 air_catches(t, x) :- child(t, h, _), kind(h, "except_clause"), field(h, "value", v), air_caught(v, e),
     ruff_qual(e, q), split_dot(q, "builtins", x).
 .decl air_caught(v: node, e: node)
-air_caught(v, e) :- ruff_bare(v, m), !kind(m, "tuple"), !kind(m, "as_pattern"), e = m.
-air_caught(v, e) :- ruff_bare(v, m), kind(m, "tuple"), child(m, c, _), air_caught(c, e).
-air_caught(v, e) :- ruff_bare(v, m), kind(m, "as_pattern"), child(m, c, 0), air_caught(c, e).
+air_caught(v, e) :- unparen(v, m), !kind(m, "tuple"), !kind(m, "as_pattern"), e = m.
+air_caught(v, e) :- unparen(v, m), kind(m, "tuple"), child(m, c, _), air_caught(c, e).
+air_caught(v, e) :- unparen(v, m), kind(m, "as_pattern"), child(m, c, 0), air_caught(c, e).

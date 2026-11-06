@@ -30,7 +30,7 @@ auto_value(v) :- unparen(v, t), (kind(t, "tuple") ; kind(t, "expression_list")),
 .decl unknown_in_stub(v: node)
 unknown_in_stub(v) :- docof(v, d), file_name(d, f), suffix(".pyi", f), unparen(v, m), kind(m, "ellipsis").
 unknown_in_stub(v) :- docof(v, d), file_name(d, f), suffix(".pyi", f), (bb_sym_call(v, "typing.cast") ;
-    bb_sym_call(v, "typing_extensions.cast")), bb_nkw(v, 0), bb_npos(v, 2), bb_pos(v, 1, e), kind(e, "ellipsis").
+    bb_sym_call(v, "typing_extensions.cast")), call_nkwargs(v, 0), call_nargs(v, 2), bb_pos(v, 1, e), kind(e, "ellipsis").
 .decl value_key(v: node, k: symbol)
 value_key(v, cat("s:", s)) :- plain_str(v, s).
 value_key(v, cat("e:", @replace_all(t, "\\s+", ""))) :- unparen(v, m), !plain_str(m, _), text(m, t).

@@ -31,7 +31,7 @@
 //       cb = lambda: time.sleep(1)    not async_ctx: the lambda body runs when it is called
 //       with trio.move_on_after(1):   async_timeout_cm("trio.move_on_after")
 //           await trio.sleep(2)       async_checkpoint(<the with body>)
-#include "python/ruff.rr"       // call_q, ruff_qual, ruff_bare, ast_up, ruff_arg, call_kwarg, call_nargs
+#include "python/ruff.rr"       // call_q, ruff_qual, ast_up, ruff_arg, call_kwarg, call_nargs
 #include "python/pyflakes.rr"   // run_scope
 #include "python/pathlib.rr"    // pth_seen, site_init: the bindings a name can read, and their values
 

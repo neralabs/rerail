@@ -21,7 +21,7 @@
 //   `from numpy import float` itself is not reported; each read of `float` after it is. Only references that
 //   resolve count: `import numpy as np` must be in the file.
 #include "python/ruff.rr"
-//   ruff_bare(e, m), ruff_qual(e, q)
+//   unparen(e, m), ruff_qual(e, q)
 #include "python/misc2-case.rr"
 //   case_value_name(e, q)
 #include "python/exceptions.rr"
@@ -32,7 +32,7 @@ npy_ref(e, q) :- ast_name(e, _), expr_ctx(e, "load"), ruff_qual(e, q), (q = "num
 npy_ref(e, q) :- kind(e, "attribute"), expr_ctx(e, "load"), ruff_qual(e, q), (q = "numpy" ; prefix("numpy.", q)).
 npy_ref(e, q) :- case_value_name(e, q), prefix("numpy.", q).
 .decl npy_callee(c: node, e: node, q: symbol)
-npy_callee(c, e, q) :- kind(c, "call"), field(c, "function", f), ruff_bare(f, e), npy_ref(e, q).
+npy_callee(c, e, q) :- kind(c, "call"), field(c, "function", f), unparen(f, e), npy_ref(e, q).
 
 // ---- fallbacks (NPY201) -------------------------------------------------------------------------------------
 .decl npy_guarded(e: node, new: symbol)

@@ -13,7 +13,6 @@
 //                 exc_no_args(c)          c is called with nothing: `f()`, `f(  # comment\n)`
 //                 kwarg(c, k, v)          (python/security) c passes k=v, parentheses off
 //                 exc_dotted(e, s)        e's text as a dotted name, without spaces or parentheses: "a.b.c"
-//                 exc_unparen(e, m)       e without parentheses, comments inside them skipped
 //                 exc_written(a, w)       w is a with its parentheses as written
 //   2. Handlers:  exc_handler(t, x)       x is an `except` (or `except*`) clause of try statement t
 //                 exc_alias(x, e)         x binds the caught exception to the name e: `except E as e`
@@ -39,22 +38,6 @@
 // ---- 1. calls ----------------------------------------------------------------------------------------------------
 .decl exc_qual(e: node, q: symbol)
 exc_qual(e, q) :- unparen(e, m), sym_of(m, q).
-// names.rr's builtin table lacks some of Python 3.13's exception classes (NOTES-py-pt-try.md asks for them);
-// until then they resolve here, when nothing in the file binds the name.
-exc_qual(e, cat("builtins.", x)) :- unparen(e, m), kind(m, "identifier"), miss(m, x), exc_more_builtin(x).
-.decl exc_more_builtin(x: symbol)
-exc_more_builtin("BaseExceptionGroup"). exc_more_builtin("BlockingIOError"). exc_more_builtin("BrokenPipeError").
-exc_more_builtin("BytesWarning"). exc_more_builtin("ChildProcessError"). exc_more_builtin("ConnectionAbortedError").
-exc_more_builtin("ConnectionRefusedError"). exc_more_builtin("ConnectionResetError").
-exc_more_builtin("EncodingWarning"). exc_more_builtin("ExceptionGroup"). exc_more_builtin("FileExistsError").
-exc_more_builtin("FloatingPointError"). exc_more_builtin("FutureWarning"). exc_more_builtin("ImportWarning").
-exc_more_builtin("IndentationError"). exc_more_builtin("InterruptedError"). exc_more_builtin("IsADirectoryError").
-exc_more_builtin("MemoryError"). exc_more_builtin("NotADirectoryError").
-exc_more_builtin("PendingDeprecationWarning"). exc_more_builtin("ProcessLookupError").
-exc_more_builtin("PythonFinalizationError"). exc_more_builtin("ReferenceError"). exc_more_builtin("ResourceWarning").
-exc_more_builtin("StopAsyncIteration"). exc_more_builtin("SyntaxError"). exc_more_builtin("SyntaxWarning").
-exc_more_builtin("SystemError"). exc_more_builtin("TabError"). exc_more_builtin("UnboundLocalError").
-exc_more_builtin("UnicodeTranslateError"). exc_more_builtin("UnicodeWarning").
 .decl exc_call(c: node, q: symbol)
 exc_call(c, q) :- kind(c, "call"), field(c, "function", f), exc_qual(f, q).
 // exc_item(c, a, j): the j-th child of c's argument list is positional (`x` or `*xs`).
@@ -76,11 +59,6 @@ exc_argument(c, k, i, a) :- exc_argname(k, i), exc_arg(c, i, a), !kwarg(c, k, _)
 .decl exc_no_args(c: node)
 exc_no_args(c) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"),
     count : { child(l, a, _), !kind(a, "comment") } = 0.
-// exc_unparen(e, m): ast's unparen, skipping a comment inside the parentheses: `(  # why\n a and b)` gives the
-// `and`. (unparen takes the first child, which is the comment there; NOTES-py-pt-try.md asks for the fix.)
-.decl exc_unparen(e: node, m: node)
-exc_unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
-exc_unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), exc_unparen(i, m).
 // exc_written(a, w): w is a with its parentheses, as written: `f((x))` gives the outer `(…)` for x. Ruff
 // reports some findings at a parenthesized range.
 .decl exc_written(a: node, w: node)

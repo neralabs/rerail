@@ -20,9 +20,7 @@
 UP010(i) :- kind(i, "future_import_statement"), field(i, "name", n), kind(n, "dotted_name"), text(n, x),
     obsolete(x), docof(i, d), !read(d, x).
 .decl read(d: number, x: symbol)  // x is read in d, and no binding in the file is what it reads
-// (python/ast's ast_name leaves out the names of `import` statements, not those of a __future__ import.)
-read(d, x) :- ast_name(n, x), obsolete(x), expr_ctx(n, "load"), !look(n, x, _), docof(n, d),
-    !inside(n, _, "future_import_statement").
+read(d, x) :- ast_name(n, x), obsolete(x), expr_ctx(n, "load"), !look(n, x, _), docof(n, d).
 .decl obsolete(x: symbol)
 obsolete("nested_scopes"). obsolete("generators"). obsolete("with_statement"). obsolete("division").
 obsolete("absolute_import"). obsolete("print_function"). obsolete("unicode_literals"). obsolete("generator_stop").

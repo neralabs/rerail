@@ -52,5 +52,5 @@ name_at(t, i, x) :- child(t, n, j), kind(n, "identifier"), text(n, x),
 two(t) :- kind(t, _), count : { child(t, o, _), !kind(o, "comment") } = 2.
 // dict_items(i): `d.items()`, d a name bound to a dict.
 .decl dict_items(i: node)
-dict_items(i) :- ruff_bare(i, c), kind(c, "call"), call_nargs(c, 0), call_nkwargs(c, 0), field(c, "function", f),
+dict_items(i) :- unparen(i, c), kind(c, "call"), call_nargs(c, 0), call_nkwargs(c, 0), field(c, "function", f),
     attr_of(f, o, "items"), kind(o, "identifier"), dict_ref(o).

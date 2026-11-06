@@ -22,4 +22,4 @@ DTZ901(e, m) :- ruff_qual(e, q), split_dot(q, "datetime.datetime", m), (m = "min
 .decl aware_use(e: node)
 aware_use(e) :- ast_up(e, a), attr_of(a, _, "time"), ast_up(a, c), kind(c, "call").
 aware_use(e) :- ast_up(e, a), attr_of(a, _, "replace"), ast_up(a, c), kind(c, "call"), call_kwarg(c, "tzinfo", v),
-    ruff_bare(v, m), !kind(m, "none").
+    unparen(v, m), !kind(m, "none").

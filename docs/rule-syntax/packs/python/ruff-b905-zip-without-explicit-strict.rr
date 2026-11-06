@@ -18,12 +18,12 @@
 .violation B905(at: node) code "B905"
     "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
     suppress ruff "B905"
-B905(c) :- bb_builtin_call(c, "zip"), !bb_kw(c, "strict", _), many(c), !infinite_arg(c), targets(10).
+B905(c) :- bb_builtin_call(c, "zip"), !call_kw(c, "strict", _), many(c), !infinite_arg(c), targets(10).
 .decl many(c: node)
-many(c) :- bb_npos(c, k), k >= 2.
-many(c) :- bb_star(c).
+many(c) :- call_nargs(c, k), k >= 2.
+many(c) :- call_star(c).
 .decl infinite_arg(c: node)
 infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, q), (q = "itertools.cycle" ; q = "itertools.count").
-infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), bb_npos(a, 1), bb_nkw(a, 0).
-infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), bb_npos(a, 2), bb_pos(a, 1, n), kind(n, "none").
-infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), bb_kw(a, "times", n), kind(n, "none").
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 1), call_nkwargs(a, 0).
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 2), bb_pos(a, 1, n), kind(n, "none").
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_kw(a, "times", n), kind(n, "none").

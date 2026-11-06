@@ -15,4 +15,4 @@
 .violation B022(at: node) code "B022"
     "No arguments passed to `contextlib.suppress`. No exceptions will be suppressed and therefore this context manager is redundant"
     suppress ruff "B022"
-B022(c) :- bb_sym_call(c, "contextlib.suppress"), bb_npos(c, 0).
+B022(c) :- bb_sym_call(c, "contextlib.suppress"), call_nargs(c, 0).

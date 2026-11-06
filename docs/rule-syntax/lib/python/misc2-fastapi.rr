@@ -23,13 +23,13 @@
 //   async def read(item_id: int, q: str = Query(None)): …   fast_param(<def>, <q…>, "q", <str>, <Query(None)>),
 //                                                            fast_dependency(<Query(None)>, "Query")
 #include "python/misc2-perf.rr"
-//   perf_latest_site(n, site), perf_site_value(site, v), perf_site_ann(site, h); ruff_bare, ruff_qual (python/ruff)
+//   perf_latest_site(n, site), perf_site_value(site, v), perf_site_ann(site, h); ruff_qual (python/ruff)
 #include "python/upgrade-typing.rr"
 //   up_typing_sub(s, x), type_arg(s, i, a)
 
 .decl fast_route(f: node, dc: node)
 fast_route(f, dc) :- kind(dd, "decorated_definition"), field(dd, "definition", f), child(dd, d, _),
-    kind(d, "decorator"), child(d, e, 0), ruff_bare(e, dc), kind(dc, "call"), field(dc, "function", fn),
+    kind(d, "decorator"), child(d, e, 0), unparen(e, dc), kind(dc, "call"), field(dc, "function", fn),
     attr_of(fn, o, m), fast_method(m), kind(o, "identifier"), perf_latest_site(o, site), fast_app_site(site).
 .decl fast_method(m: symbol)
 fast_method("get"). fast_method("post"). fast_method("put"). fast_method("delete"). fast_method("patch").
@@ -45,8 +45,8 @@ fast_param(f, p, x, a, d) :- sig_param(f, p, nm, _, k, a0, d0), (k = "pos" ; k =
     fast_strip(a0, a), fast_strip(d0, d).
 .decl fast_strip(e: loc, m: loc)  // parentheses and the annotation's `type` wrapper off; unset stays unset
 fast_strip(e, e) :- unset(e).
-fast_strip(e, m) :- ruff_bare(e, b), !kind(b, "type"), m = b.
-fast_strip(e, m) :- ruff_bare(e, b), kind(b, "type"), child(b, i, 0), fast_strip(i, m).
+fast_strip(e, m) :- unparen(e, b), !kind(b, "type"), m = b.
+fast_strip(e, m) :- unparen(e, b), kind(b, "type"), child(b, i, 0), fast_strip(i, m).
 
 .decl fast_dependency(e: node, x: symbol)
 fast_dependency(e, x) :- kind(e, "call"), field(e, "function", f), ruff_qual(f, q), split_dot(q, "fastapi", x),
@@ -72,7 +72,7 @@ fast_annotated(s, a, i) :- up_typing_sub(s, "Annotated"), type_arg(s, i, a0), fa
 .decl fast_depends(c: node)
 fast_depends(c) :- kind(c, "call"), fast_dependency(c, "Depends").
 .decl fast_dep_src(c: node, e: node, how: symbol)  // Depends call c names e: "name" (e itself) or "instance" (e(…))
-fast_dep_src(c, e, how) :- fast_depends(c), (ruff_arg(c, 0, a0) ; call_kwarg(c, "dependency", a0)), ruff_bare(a0, a),
+fast_dep_src(c, e, how) :- fast_depends(c), (ruff_arg(c, 0, a0) ; call_kwarg(c, "dependency", a0)), unparen(a0, a),
     (kind(a, "identifier"), e = a, how = "name" ; kind(a, "call"), field(a, "function", e), kind(e, "identifier"),
     how = "instance").
 .decl fast_dep_known(e: node, how: symbol, x: symbol)  // the parameter names; a row with x = "" for none

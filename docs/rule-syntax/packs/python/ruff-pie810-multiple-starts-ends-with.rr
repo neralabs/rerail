@@ -21,7 +21,7 @@ PIE810(t, m) :- affix_call(t, c, m, x), affix_call(t, d, m, x), c < d.
 .decl affix_call(t: node, c: node, m: symbol, x: symbol)
 affix_call(t, c, m, x) :- bool_operand(t, "or", c0), unparen(c0, c), kind(c, "call"), field(c, "function", f),
     attr_of(f, o, m), (m = "startswith" ; m = "endswith"), kind(o, "identifier"), text(o, x),
-    bb_nkw(c, 0), bb_npos(c, 1), bb_pos(c, 0, a), !bound_to_tuple(a).
+    call_nkwargs(c, 0), call_nargs(c, 1), bb_pos(c, 0, a), !bound_to_tuple(a).
 .decl bound_to_tuple(a: node)
 bound_to_tuple(a) :- kind(a, "identifier"), ref_site(a, s), binding_value(s, v), unparen(v, t), kind(t, "tuple").
 bound_to_tuple(a) :- kind(a, "identifier"), ref_site(a, s), site_annotation(s, n), ann_head(n, h),

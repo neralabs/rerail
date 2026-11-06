@@ -38,9 +38,9 @@ log_method("log").
 
 // ---- loggers -----------------------------------------------------------------------------------------------------
 .decl logger_expr(v: node)
-logger_expr(v) :- ruff_bare(v, m), kind(m, "call"), call_q(m, q), (q = "logging.getLogger" ; q = "logging.Logger").
-logger_expr(v) :- ruff_bare(v, m), !kind(m, "call"), ruff_qual(m, q), logger_q(q).
-logger_expr(v) :- ruff_bare(v, m), !kind(m, "call"), !ruff_qual(m, _), dotted_expr(m, _), leaf_name(m, x),
+logger_expr(v) :- unparen(v, m), kind(m, "call"), call_q(m, q), (q = "logging.getLogger" ; q = "logging.Logger").
+logger_expr(v) :- unparen(v, m), !kind(m, "call"), ruff_qual(m, q), logger_q(q).
+logger_expr(v) :- unparen(v, m), !kind(m, "call"), !ruff_qual(m, _), dotted_expr(m, _), leaf_name(m, x),
     logger_like(x), !local_def_chain(m).
 // local_def_chain(m): m's first name is bound to a def or class of this file, which Ruff resolves to a qualified
 // name of the module itself: `class mylogger: …` then `mylogger.warn(…)` is not a logger.
@@ -57,22 +57,22 @@ logger_like(x) :- leaf_name(_, x), (prefix("log", x) ; prefix("LOG", x) ; suffix
 
 // ---- calls -------------------------------------------------------------------------------------------------------
 .decl log_call(c: node, m: symbol, at: node, how: symbol)
-log_call(c, m, a, "attr") :- kind(c, "call"), field(c, "function", f), ruff_bare(f, g), kind(g, "attribute"),
+log_call(c, m, a, "attr") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "attribute"),
     field(g, "attribute", a), text(a, m), log_method(m), field(g, "object", v), logger_expr(v).
-log_call(c, m, g, "name") :- kind(c, "call"), field(c, "function", f), ruff_bare(f, g), kind(g, "identifier"),
+log_call(c, m, g, "name") :- kind(c, "call"), field(c, "function", f), unparen(f, g), kind(g, "identifier"),
     call_q(c, q), split_dot(q, "logging", m), log_method(m).
 
 .decl log_msg(c: node, e: node)
-log_msg(c, e) :- log_call(c, m, _, _), m != "log", ruff_arg(c, 0, a), ruff_bare(a, e).
-log_msg(c, e) :- log_call(c, "log", _, _), ruff_arg(c, 1, a), ruff_bare(a, e).
-log_msg(c, e) :- log_call(c, _, _, _), call_kwarg(c, "msg", a), ruff_bare(a, e).
+log_msg(c, e) :- log_call(c, m, _, _), m != "log", ruff_arg(c, 0, a), unparen(a, e).
+log_msg(c, e) :- log_call(c, "log", _, _), ruff_arg(c, 1, a), unparen(a, e).
+log_msg(c, e) :- log_call(c, _, _, _), call_kwarg(c, "msg", a), unparen(a, e).
 
 // ---- imports, arguments, places ----------------------------------------------------------------------------------
 seen_ask("logging").
 
 .decl log_kw(c: node, x: symbol, k: node, v: node)
 log_kw(c, x, k, m) :- log_call(c, _, _, _), call_item(c, k, _), kind(k, "keyword_argument"), field(k, "name", n),
-    text(n, x), field(k, "value", v), ruff_bare(v, m).
+    text(n, x), field(k, "value", v), unparen(v, m).
 .decl exc_info_set(c: node, k: node)
 exc_info_set(c, k) :- log_kw(c, "exc_info", k, m), kind(m, "true").
 exc_info_set(c, k) :- log_kw(c, "exc_info", k, m), call_q(m, "sys.exc_info").

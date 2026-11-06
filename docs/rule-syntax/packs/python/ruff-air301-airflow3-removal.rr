@@ -58,7 +58,7 @@ AIR301_renamed(v, "TriggerRule.NONE_FAILED_OR_SKIPPED", "TriggerRule.NONE_FAILED
     air301_trigger_rule(v), ruff_qual(v, "airflow.utils.trigger_rule.TriggerRule.NONE_FAILED_OR_SKIPPED").
 .decl air301_trigger_rule(v: node)  // the value of `trigger_rule=` to a task or an operator
 air301_trigger_rule(v) :- air301_callee(c, t), (t = "task" ; t = "operator"), air_kw(c, "trigger_rule", n),
-    ast_up(n, k), field(k, "value", v0), ruff_bare(v0, v).
+    ast_up(n, k), field(k, "value", v0), unparen(v0, v).
 .decl air301_callee(c: node, t: symbol)
 air301_callee(c, t) :- air_call(c, q), air301_class(q, t).
 .decl air301_class(q: symbol, t: symbol)
@@ -149,25 +149,25 @@ air301_hint(k, "derive what you need from `logical_date` or the `data_interval_*
      k = "yesterday_ds" ; k = "yesterday_ds_nodash").
 // air301_key(e, v, k, at): e reads key k of v, `v["k"]` or `v.get("k")`; at is the string.
 .decl air301_key(e: node, v: node, k: symbol, at: node)
-air301_key(e, v, k, at) :- kind(e, "subscript"), field(e, "value", v), field(e, "subscript", s), ruff_bare(s, at),
+air301_key(e, v, k, at) :- kind(e, "subscript"), field(e, "value", v), field(e, "subscript", s), unparen(s, at),
     plain_str(at, k).
-air301_key(e, v, k, at) :- kind(e, "call"), field(e, "function", f), ruff_bare(f, g), attr_of(g, v, "get"),
-    ruff_arg(e, 0, a), ruff_bare(a, at), plain_str(at, k).
+air301_key(e, v, k, at) :- kind(e, "call"), field(e, "function", f), unparen(f, g), attr_of(g, v, "get"),
+    ruff_arg(e, 0, a), unparen(a, at), plain_str(at, k).
 // air301_ctx(v): v is the context: a `**kwargs` parameter (its one binding), or a name assigned get_current_context().
 .decl air301_ctx(v: node)
-air301_ctx(v) :- ruff_bare(v, m), one_binding(m, _, _, p, "param"), kind(p, "dictionary_splat_pattern").
+air301_ctx(v) :- unparen(v, m), one_binding(m, _, _, p, "param"), kind(p, "dictionary_splat_pattern").
 air301_ctx(v) :- air_instance(v, "airflow.utils.context.get_current_context").
 // air301_from_key(v, k): v is `context["k"]` or `context.get("k")`, or a name whose current binding is that.
 .decl air301_from_key(v: node, k: symbol)
-air301_from_key(v, k) :- ruff_bare(v, m), air301_key(m, c, k, _), air301_ctx(c).
-air301_from_key(v, k) :- air_value(v, r), ruff_bare(r, m), air301_key(m, c, k, _), air301_ctx(c).
+air301_from_key(v, k) :- unparen(v, m), air301_key(m, c, k, _), air301_ctx(c).
+air301_from_key(v, k) :- air_value(v, r), unparen(r, m), air301_key(m, c, k, _), air301_ctx(c).
 .decl air301_execute(f: node)  // `execute` of a class with a base `airflow.….BaseOperator`
 air301_execute(f) :- def_name(f, "execute"), nearest(f, c, scope), kind(c, "class_definition"), class_base_expr(c, b),
     ruff_qual(b, q), prefix("airflow.", q), suffix(".BaseOperator", q), docof(f, d), seen_module(d, "airflow").
 
 // ---- decorators and plugins --------------------------------------------------------------------------------------
 AIR301(dc, "`apply_defaults` is applied automatically in Airflow 3; delete this decorator.") :- decorator(_, e),
-    child(dc, e, 0), kind(dc, "decorator"), ruff_bare(e, m0),
+    child(dc, e, 0), kind(dc, "decorator"), unparen(e, m0),
     (kind(m0, "call"), field(m0, "function", g), ruff_qual(g, q) ; ruff_qual(m0, q)),
     q = "airflow.utils.decorators.apply_defaults", docof(e, d), seen_module(d, "airflow").
 AIR301(t, cat("`", cat(x, "` was removed from plugins in Airflow 3; import the extension as a regular Python module instead."))) :-

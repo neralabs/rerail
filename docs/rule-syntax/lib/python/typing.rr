@@ -1,7 +1,7 @@
 // python/typing: type annotations, typing names and stub-file shapes, as Ruff's flake8-pyi rules (PYI) read them.
 //
 // Interface
-//   1. Stubs:       stub_file(d) / in_stub(n)   document d, or node n, is in a `.pyi` file
+//   1. Stubs:       in_stub(n)              node n is in a `.pyi` file (python/ast's stub_file(d) for a document)
 //                   if_test(i, t)           t is the test of `if` statement i, unparenthesised (not its elifs)
 //                   branch_test(i, t, e)    t is the test of if or elif clause i; e "else" when the chain ends in
 //                                           an `else`, "" when not
@@ -17,8 +17,7 @@
 //                   simple_assign(a, t, v)  a is `t = v` with one target: no chain, no annotation
 //                   plain_target(t, x)       target t is the plain name x (`x`, or `(x)`)
 //   4. Bodies:      ellipsis_stmt(s), pass_stmt(s), class_body(c, b), def_body(f, b), body_one(b, s)
-//                   doc_stmt(s, e)          statement s is a lone str literal e (Ruff's is_docstring_stmt)
-//                   py_docstring(o, e)      e is the docstring of module, class or def o
+//                   (docstrings: python/ast's doc_stmt(s, e) and docstring(o, e))
 //                   pyi_method(c, f, x)     def f, named x, has class c as its nearest scope
 //                   class_member(c, f, x)   … and is a statement of c's body itself, not under an `if`
 //                   abstract(f), returns(f, t), pos_kind(k)
@@ -50,8 +49,6 @@
 // ---- 1. stubs ----------------------------------------------------------------------------------------------------
 // in_stub(n): n is in a stub file.
 //   x: int            in a.pyi: stub
-.decl stub_file(d: number)
-stub_file(d) :- doc(d, p, _), suffix(".pyi", p).
 .decl in_stub(n: node)
 in_stub(n) :- docof(n, d), stub_file(d).
 // if_test(i, t): `if t:`. Ruff's stub checks on tests (PYI002, PYI003-005, PYI007-008) read only the `if`
@@ -125,8 +122,6 @@ tuple_len(e, k) :- kind(e, "tuple"), k = count : { child(e, x, _), !kind(x, "com
 //   import typing_extensions as te; te.Self   typing_sym(<te.Self>, "Self")
 .decl typing_sym(e: node, x: symbol)
 typing_sym(e, x) :- sym_of(e, q), split_dot(q, m, x), typing_mod(m).
-.decl typing_mod(m: symbol)
-typing_mod("typing"). typing_mod("typing_extensions").
 // typevar_call(c, k): `TypeVar("T")`, `ParamSpec("P")`, `TypeVarTuple("Ts")`. _typeshed re-exports them.
 .decl typevar_call(c: node, k: symbol)
 typevar_call(c, k) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), sym_of(f, q), split_dot(q, m, k),
@@ -159,15 +154,6 @@ def_body(f, b) :- kind(f, "function_definition"), field(f, "body", b).
 // body_one(b, s): s is the only statement of block b (comments not counted).
 .decl body_one(b: node, s: node)
 body_one(b, s) :- body_len(b, 1), body_stmt(b, s, 0).
-// doc_stmt(s, e): statement s is a lone str literal e, unparenthesised: Ruff's is_docstring_stmt. Adjacent
-// literals count; an f-string does not. (python/ast's `docstring` reads str_part; this reads plain_str.)
-//   def f():
-//       """Doc."""         doc_stmt
-.decl doc_stmt(s: node, e: node)
-doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str(e, _).
-// py_docstring(o, e): e is the docstring of module, class or def o: its first statement is a doc_stmt.
-.decl py_docstring(o: node, e: node)
-py_docstring(o, e) :- body_of(o, b), body_stmt(b, s, 0), doc_stmt(s, e).
 // pyi_method(c, f, x): def f, named x, has class c as its nearest scope: directly in the body, or under an `if`
 // or `try` there (decorated or not). Ruff's checks that ask for the current scope read this.
 //   class C:

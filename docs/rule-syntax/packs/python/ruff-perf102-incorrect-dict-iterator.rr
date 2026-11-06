@@ -27,8 +27,8 @@ items_loop(at, k, v) :- perf_for(_, t, it), pair(t, k, v), kind(it, "call"), fie
     attr_of(at, _, "items"), call_nargs(it, 0), !call_splat(it).
 .decl pair(t: node, k: node, v: node)  // a two-element target, without parentheses
 pair(t, k, v) :- tuple_target(t), count : { child(t, c, _), !kind(c, "comment") } = 2,
-    child(t, k0, i), !kind(k0, "comment"), child(t, v0, j), !kind(v0, "comment"), i < j, ruff_bare(k0, k),
-    ruff_bare(v0, v).
+    child(t, k0, i), !kind(k0, "comment"), child(t, v0, j), !kind(v0, "comment"), i < j, unparen(k0, k),
+    unparen(v0, v).
 .decl tuple_target(t: node)
 tuple_target(t) :- (kind(t, "pattern_list") ; kind(t, "tuple_pattern") ; kind(t, "tuple")).
 .decl unused(e: node)  // Ruff's is_unused: a name never read again, or a tuple of such

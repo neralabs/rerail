@@ -23,5 +23,5 @@ C415(c, "reversed", "reversed-of-reversal",
 .decl reversal_arg(c: node, f: symbol)
 reversal_arg(c, f) :- c4_builtin(c, f), c4_first(c, a), kind(a, "subscript"), field(a, "subscript", s),
     count : { field(a, "subscript", o) } = 1, kind(s, "slice"), !slice_part(s, "lower", _),
-    !slice_part(s, "upper", _), slice_part(s, "step", st), ruff_bare(st, u), kind(u, "unary_operator"), op(u, "-"),
+    !slice_part(s, "upper", _), slice_part(s, "step", st), unparen(st, u), kind(u, "unary_operator"), op(u, "-"),
     field(u, "argument", one), ruff_int(one, "1").

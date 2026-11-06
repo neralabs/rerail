@@ -17,7 +17,7 @@
 .violation FBT003(at: node) code "FBT003"
     "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."
     suppress ruff "FBT003"
-FBT003(b) :- call_item(c, a, _), pos_item(a), ruff_bare(a, b), (kind(b, "true") ; kind(b, "false")), !trap_allowed(c).
+FBT003(b) :- call_item(c, a, _), pos_item(a), unparen(a, b), (kind(b, "true") ; kind(b, "false")), !trap_allowed(c).
 
 .decl trap_allowed(c: node)
 trap_allowed(c) :- callee_word(c, x), allowed_word(x).

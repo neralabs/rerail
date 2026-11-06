@@ -162,9 +162,11 @@ Options this batch reads (`option_item`): `logger-objects` (G, LOG), `flake8-boo
   `list()`/`tuple()`/`set()`/`dict()`/`frozenset()` (no arguments: falsey; one positional argument: its
   truth, where Ruff recurses). LOG007 and LOG014 read it. LOG014 also keeps Ruff's `is_literal_expr`
   gate, so `exc_info=ValueError()` and a tuple are not reported.
-- **E2. rrlab misses a `# noqa` that follows other text in the same comment.** These are ERA001.py lines 16,
-  25 and 30, for example `#import os  # noqa: ERA001`. rrlab reads a noqa only at the start of a comment.
-  Ruff finds `# noqa` anywhere in the comment. See below.
+- **E2. rrlab missed a `# noqa` that follows other text in the same comment (fixed in rrlab 08d977aa5).** These
+  were ERA001.py lines 16, 25 and 30, for example `#import os  # noqa: ERA001`. rrlab now finds `# noqa` anywhere
+  in the comment, as Ruff does. rrlab's Rust regex then refused ERA001's look-around (`(?!…)`), which cost 6 FNs;
+  the merge rewrote those tests without it, and ERA001 is 19 / 0 / 0 on Ruff's snapshots (`rrlab score
+  --snapshots`).
 
 ## Library and core changes
 

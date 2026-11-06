@@ -10,11 +10,11 @@
 //   # TODO @mona                   ← TD002: nothing after the name, so it is not taken as an author
 //   # TODO(charlie): fix this      not reported
 //   # TODO @mona: fix this         not reported
-#include "python/misc2-todo.rr"   // todo_item and the TD helpers
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD002(at: node, tag: symbol, msg: symbol) code "TD002" "{msg}"
+.violation TD002(at: span, tag: symbol, msg: symbol) code "TD002" "{msg}"
     suppress ruff "TD002"
-TD002(c, D, cat(cat(cat(cat("Add the author after `", D), "`, as `"), D), "(name): ...`, naming whoever owns the follow-up; if nobody is known, leave it and tell the user.")) :-
-    todo_item(c, D, _), todo_author(c, "no", a), !prefix("@", a).
-TD002(c, D, cat(cat("Follow the author with a colon and the description, as `", D), " @name: description`, adding the name if the `@` is empty; if nobody is known, leave it and tell the user.")) :-
-    todo_item(c, D, _), todo_author(c, "no", a), prefix("@", a).
+TD002(t, D, cat(cat(cat(cat("Add the author after `", D), "`, as `"), D), "(name): ...`, naming whoever owns the follow-up; if nobody is known, leave it and tell the user.")) :-
+    todo_item(c, D, _), todo_author(c, "no", a), !prefix("@", a), todo_at(c, t).
+TD002(t, D, cat(cat("Follow the author with a colon and the description, as `", D), " @name: description`, adding the name if the `@` is empty; if nobody is known, leave it and tell the user.")) :-
+    todo_item(c, D, _), todo_author(c, "no", a), prefix("@", a), todo_at(c, t).

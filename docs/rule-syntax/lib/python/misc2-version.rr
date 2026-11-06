@@ -20,7 +20,7 @@
 //   sys.version[2]                  ytt_version_index(<sys.version>, "2")
 //   sys.version >= "3.9"            ytt_single_cmp(<cmp>, <sys.version>, ">=", <"3.9">), ytt_sys(<sys.version>, "version")
 //   sys.version_info[1] < 7         ytt_info_index(<sys.version_info[1]>, "1")
-#include "python/ruff.rr"   // ruff_qual, ruff_bare, ruff_int, slice_part
+#include "python/ruff.rr"   // ruff_qual, ruff_int, slice_part
 
 .decl ytt_sys(e: node, x: symbol)
 ytt_sys(e, x) :- ruff_qual(e, q), split_dot(q, "sys", x).
@@ -28,7 +28,7 @@ ytt_sys(e, x) :- ruff_qual(e, q), split_dot(q, "sys", x).
 // ytt_subscript(s, v, i): s is `v[i]` with one subscript i (`v[a, b]` is a tuple and is not this); v without
 // parentheses, as Ruff's tree has none: `(sys.version)[0]` gives v = `sys.version`.
 .decl ytt_subscript(s: node, v: node, i: node)
-ytt_subscript(s, v, i) :- kind(s, "subscript"), field(s, "value", v0), ruff_bare(v0, v), field(s, "subscript", i),
+ytt_subscript(s, v, i) :- kind(s, "subscript"), field(s, "value", v0), unparen(v0, v), field(s, "subscript", i),
     count : { field(s, "subscript", _) } = 1.
 
 .decl ytt_version_index(v: node, k: symbol)
@@ -39,7 +39,7 @@ ytt_version_upto(v, k) :- ytt_subscript(_, v, sl), kind(sl, "slice"), ytt_sys(v,
     slice_part(sl, "upper", u), ruff_int(u, k), !slice_part(sl, "lower", _), !slice_part(sl, "step", _).
 
 .decl ytt_single_cmp(c: node, l: node, o: symbol, r: node)
-ytt_single_cmp(c, l, o, r) :- cmp_pair(c, 0, o, l0, r0), !cmp_pair(c, 1, _, _, _), ruff_bare(l0, l), ruff_bare(r0, r).
+ytt_single_cmp(c, l, o, r) :- cmp_pair(c, 0, o, l0, r0), !cmp_pair(c, 1, _, _, _), unparen(l0, l), unparen(r0, r).
 
 .decl ytt_order(o: symbol)
 ytt_order("<"). ytt_order("<="). ytt_order(">"). ytt_order(">=").

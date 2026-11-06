@@ -13,7 +13,7 @@
 //   if 42 == CONST: …   if x == 42: …      if f() == x: …        not reported
 #include "python/simplify.rr"
 #include "python/bugbear.rr"
-//   cmp(c, op, l, r) from python/names; ruff_bare(e, m) from python/ruff; ruff_literal(e) from python/bugbear
+//   cmp(c, op, l, r) from python/names; unparen(e, m) from python/ruff; ruff_literal(e) from python/bugbear
 
 .violation SIM300(at: node, l: node, op: symbol, r: node, p: symbol) code "SIM300"
     "Put the variable first: write `{r} {p} {l}`; reverse `<`/`>` and `<=`/`>=` when swapping operands, and keep equality operators unchanged."
@@ -29,9 +29,9 @@ flipped("==", "=="). flipped("!=", "!="). flipped("<", ">"). flipped(">", "<"). 
 rank(e, k) :- at_most(e, k), (k = 0 ; !at_most(e, k - 1)).
 // at_most(e, k): e's likelihood is k or less. A display, an operator and a sign take the lowest of their parts.
 .decl at_most(e: node, k: number)
-at_most(e, k) :- ruff_bare(e, m), level(m, k).
+at_most(e, k) :- unparen(e, m), level(m, k).
 at_most(e, k + 1) :- at_most(e, k), k < 2.
-at_most(e, k) :- ruff_bare(e, m), part(m, p), at_most(p, k).
+at_most(e, k) :- unparen(e, m), part(m, p), at_most(p, k).
 .decl level(m: node, k: number)  // what m is by its own form, before its parts
 level(m, 2) :- ruff_literal(m).
 level(m, 2) :- (kind(m, "tuple") ; kind(m, "list") ; kind(m, "dictionary")), !part(m, _).

@@ -41,13 +41,13 @@ def_kind("function_definition"). def_kind("class_definition").
 // start(t, x, s, a): the binding of x that t reads, the latest one above it in s, is the assignment a `x = 0`.
 .decl start(t: node, x: symbol, s: node, a: node)
 start(t, x, s, a) :- counter(_, _, t, x, s), k = max i : { binding(s, x, o, _), earlier(o, t), visit_index(o, i) },
-    binding(s, x, a, "assign"), visit_index(a, k), start_value(a, v), ruff_bare(v, z), kind(z, "integer"),
+    binding(s, x, a, "assign"), visit_index(a, k), start_value(a, v), unparen(v, z), kind(z, "integer"),
     text(z, n), zero_number(n).
 // start_value(a, v): binding site a stores v: `i = v`, or the matching element of `n, i = 0, 0`.
 .decl start_value(a: node, v: node)
 start_value(a, v) :- binding_value(a, v).
 start_value(t, v) :- kind(t, "identifier"), child(l, t, i), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")),
-    kind(g, "assignment"), field(g, "left", l), field(g, "right", r), ruff_bare(r, m),
+    kind(g, "assignment"), field(g, "left", l), field(g, "right", r), unparen(r, m),
     (kind(m, "expression_list") ; kind(m, "tuple")), child(m, v, i).
 // same_parent(f, a): the loop and the assignment sit in the same statement (or both at module level).
 .decl same_parent(f: node, a: node)

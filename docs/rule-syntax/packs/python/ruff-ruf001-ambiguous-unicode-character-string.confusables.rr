@@ -15,10 +15,10 @@ confusable_char(t, ch) :- confusable_word(t, w), confusable_word_counts(w), conf
 // confusable_word(t, w): a word of t with a non-ASCII character.
 .decl confusable_word(t: loc, w: span)
 confusable_word(t, w) :- confusable_text(t), match_all("(?<w>[\\p{Alphabetic}\\p{N}]+)", t),
-    glob("[\\s\\S]*[^\\x00-\\x7f][\\s\\S]*", w).
+    match("[\\s\\S]*[^\\x00-\\x7f][\\s\\S]*", w).
 // confusable_word_counts(w): w has an ASCII letter or digit, or every non-ASCII character in it is a look-alike.
 .decl confusable_word_counts(w: span)
-confusable_word_counts(w) :- confusable_word(_, w), glob("[\\s\\S]*[0-9A-Za-z][\\s\\S]*", w).
+confusable_word_counts(w) :- confusable_word(_, w), match("[\\s\\S]*[0-9A-Za-z][\\s\\S]*", w).
 confusable_word_counts(w) :- confusable_word(_, w), n = count : { match_all("(?<c>[^\\x00-\\x7f])", w) },
     n = count : { confusable_letter(w, _) }.
 .decl confusable_letter(w: span, ch: span)

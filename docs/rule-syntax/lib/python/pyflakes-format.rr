@@ -18,7 +18,7 @@
 //     brace_index(v, i)          v has a `{i}` field
 //     brace_keyword(v, x)        v has a `{x}` field
 //   Call arguments: call_pos(c, i, a) (before any `*args`), arg_pos(c, i, a) (all, a `*args` one position),
-//                   call_npos(c, n), call_kw(c, x, a), call_star(c), call_kwsplat(c)
+//                   call_npos(c, n); keywords and splats: python/ruff's call_kw, call_star, call_kwsplat
 //   Operands:       known_non_tuple(e)   e's type is known and is not a tuple: a literal, a display, `not x`, …
 //                   sequence_display(r), mapping_display(r), dict_str_key(d, x), dict_spread(d), open_dict(d)
 //
@@ -33,7 +33,7 @@
 //   str.format: `{{` and `}}` are literal braces; a field is `{name!conv:spec}`. name is empty (automatic
 //   numbering), digits (an index) or an identifier (a keyword), followed by `.attr` and `[key]` parts; conv is
 //   r, s or a; spec may hold nested fields, one level deep.
-#include "python/pyflakes.rr"
+#include "python/ruff.rr"   // call_kw, call_star, call_kwsplat; python/pyflakes
 
 // ---- percent format ----------------------------------------------------------------------------------------------
 .decl percent_fmt(b: node, s: node, r: node, v: symbol)
@@ -137,13 +137,6 @@ fmt_positional(a) :- child(al, a, _), kind(al, "argument_list"), !kind(a, "keywo
     !kind(a, "comment").
 .decl call_npos(c: node, n: number)  // positional arguments before any `*args`
 call_npos(c, n) :- format_call(c, _), n = count : { call_pos(c, _, _) }.
-.decl call_kw(c: node, x: symbol, a: node)
-call_kw(c, x, a) :- format_call(c, _), field(c, "arguments", al), child(al, a, _), kind(a, "keyword_argument"),
-    field(a, "name", n), text(n, x).
-.decl call_star(c: node)
-call_star(c) :- format_call(c, _), field(c, "arguments", al), child(al, a, _), kind(a, "list_splat").
-.decl call_kwsplat(c: node)
-call_kwsplat(c) :- format_call(c, _), field(c, "arguments", al), child(al, a, _), kind(a, "dictionary_splat").
 
 // ---- operands ----------------------------------------------------------------------------------------------------
 // sequence_display(r): r is a list, tuple or set display or comprehension, or a generator expression (F502).

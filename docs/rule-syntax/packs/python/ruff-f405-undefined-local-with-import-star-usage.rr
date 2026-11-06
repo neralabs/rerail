@@ -17,5 +17,5 @@
 .violation F405(at: node, x: symbol) code "F405"
     "Import `{x}` explicitly from its module; it may only be defined by a star import."
     suppress ruff "F405"
-F405(n, x) :- unbound_ref(n, x), !builtin_name(x), star_reach(n).
-F405(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !bound_in(m, x), !builtin_name(x), star(m).
+F405(n, x) :- unbound_ref(n, x), !builtin(x), star_reach(n).
+F405(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !bound_in(m, x), !builtin(x), star(m).

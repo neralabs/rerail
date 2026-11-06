@@ -16,7 +16,10 @@
 //   6. Qualified names: qn, then sym_of (follows re-exports through python/imports' resolve_export).
 //   7. Interface (after "==== interface"): what rule files use: scope_node, binding, ref_site, sym_of, annotation,
 //      catches, class_def/class_base/subclass/mro_method, the site_* binding filters.
-//   Layers 1-6 are internal; python/calls also uses look, live_def, live_asg, qn, attr_of, miss, builtin_ref.
+//   From layers 1-6, rules may also use: bound_in(s, x) (scope s binds x), walk(n, x, s) and look(n, x, s) (the
+//   scopes lookup visits from n, and the one it lands on), miss(n, x) and builtin_ref(n, x) (nothing in the file
+//   binds x), and builtin(x), typing_mod(m), py_keyword(x) (the tables at the end); python/calls also uses
+//   live_def, live_asg, qn and attr_of. The rest of layers 1-6 is internal.
 //
 // Precision: this is approximate, file-local name resolution, not a type checker. Lookup lands on a scope, and every
 // binding of the name in that scope is a candidate (may-precise); only straight-line rebinding (layer 5) prunes.
@@ -186,11 +189,14 @@ walk(n, x, s) :- nameref(n, x), wstart(n, s), !tp_ref(n, x).
 walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), nearest(s, p, lfscope).
 // wstart(n, s): where the lookup of n starts: its nearest scope or comprehension, except that a comprehension's
 // first iterable is looked up from the scope around the comprehension. (One level: an iterable nested in another
-// comprehension's first iterable starts at the outer comprehension.)
+// comprehension's first iterable starts at the outer comprehension.) A name parsed from a string annotation starts
+// where the string sits.
 .decl wstart(n: node, s: node)
 wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k).
 wstart(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
 wstart(n, s) :- in_first_iter(n, c), nearest(c, s, lscope).
+wstart(n, s) :- nameref(n, _), parsed_in(n, h), nearest(h, s, lscope), kind(s, k), scope(k).
+wstart(n, c) :- nameref(n, _), parsed_in(n, h), nearest(h, c, lscope), kind(c, k), comp_scope(k).
 .decl in_first_iter(n: node, c: node)
 in_first_iter(n, c) :- nameref(n, _), nearest(n, c, lscope), comp_scope(k), kind(c, k), first_for(c, fc),
     field(fc, "right", e), (n = e ; within(n, e)).
@@ -347,11 +353,33 @@ global_ref(n, x) :- builtin_ref(n, x).
 // annotation(n): n is (inside) a type annotation: parameter types, return types, `x: T = ...`, and the parsed
 // contents of string annotations such as `def f() -> "Foo[int]"`. Rules use it to ignore type-only uses of a name.
 .decl annotation(n: node)
-annotation(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
-annotation(t) :- kind(f, "function_definition"), field(f, "return_type", t).
-annotation(t) :- kind(a, "assignment"), field(a, "type", t).
-annotation(n) :- annotation(t), within(n, t).                          // every node below an annotation root
+annotation(t) :- ann_root(t).
+annotation(n) :- ann_root(t), within(n, t).                            // every node below an annotation root
+annotation(n) :- parsed_in(n, _).                                      // and the trees parsed from its strings
 annotation(r) :- string_annotation(s), parsed(s, "annotation", r).   // native sub-grammar parse of "Foo[int]"
+annotation(n) :- string_annotation(s), parsed(s, "annotation", r), within(n, r).
+// ann_root(t): the root of an annotation: a parameter's, a return's, an annotated assignment's.
+//   def f(x: int) -> str: ...      ann_root(<int>), ann_root(<str>)
+.decl ann_root(t: node)
+ann_root(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
+ann_root(t) :- kind(f, "function_definition"), field(f, "return_type", t).
+ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
+// parsed_in(e, s): e is in the tree parsed from string annotation s, or from a string nested in one; s is the
+// outermost string. The tree has no ancestors of its own, so s's place stands for it: lookup (wstart) starts at
+// s's scope. A string that is part of an implicit concatenation is parsed as the whole; strings in `Literal[...]`
+// are values, not types, and are not parsed.
+//   def f(x: "List['int']"): ...      parsed_in(<List>, <"List['int']">), parsed_in(<int>, <"List['int']">)
+.decl parsed_in(e: node, s: node)
+parsed_in(e, s) :- ann_root(a), (s = a ; within(s, a)), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+parsed_in(e, s0) :- parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+.decl ann_str(s: node)
+ann_str(s) :- (kind(s, "string") ; kind(s, "concatenated_string")), !concat_part(s), !literal_str(s).
+.decl concat_part(s: node)  // s is one of the strings of `"a" "b"`
+concat_part(s) :- kind(c, "concatenated_string"), child(c, s, _).
+.decl literal_str(s: node)  // s is inside the brackets of `Literal[...]` or `x.Literal[...]`
+literal_str(s) :- kind(l, "subscript"), field(l, "value", v), text(v, t), (t = "Literal" ; suffix(".Literal", t)),
+    within(s, l), !within(s, v).
+literal_str(s) :- kind(l, "generic_type"), child(l, v, 0), text(v, "Literal"), within(s, l).
 // type_checking_block(b): b is the body of `if TYPE_CHECKING:` (from typing or typing_extensions). Code there never
 // runs, so imports in it do not count as import-time (see python/imports' import_time).
 .decl type_checking_block(b: node)
@@ -450,7 +478,20 @@ site_outer(site) :- ref_site(r, site), nearest(r, s, scope), binding(t, _, site,
 .decl site_stop_at_global(site: node)
 site_stop_at_global(site) :- binding(s, x, site, _), decl(s, x, m), kind(m, "module").
 
-// builtin(x): x is a name in Python's builtins module (functions, constants, exception classes).
+// typing_mod(m): m is a module of typing members, `typing` or its backport `typing_extensions`.
+.decl typing_mod(m: symbol)
+typing_mod("typing"). typing_mod("typing_extensions").
+// py_keyword(x): x is one of Python 3's hard keywords, never a name.
+.decl py_keyword(x: symbol)
+py_keyword("False"). py_keyword("None"). py_keyword("True"). py_keyword("and"). py_keyword("as").
+py_keyword("assert"). py_keyword("async"). py_keyword("await"). py_keyword("break"). py_keyword("class").
+py_keyword("continue"). py_keyword("def"). py_keyword("del"). py_keyword("elif"). py_keyword("else").
+py_keyword("except"). py_keyword("finally"). py_keyword("for"). py_keyword("from"). py_keyword("global").
+py_keyword("if"). py_keyword("import"). py_keyword("in"). py_keyword("is"). py_keyword("lambda").
+py_keyword("nonlocal"). py_keyword("not"). py_keyword("or"). py_keyword("pass"). py_keyword("raise").
+py_keyword("return"). py_keyword("try"). py_keyword("while"). py_keyword("with"). py_keyword("yield").
+// builtin(x): x is a name in Python's builtins module (functions, constants, exception classes), or a module
+// attribute every module has (`__file__`, `__builtins__`): Python 3.13's full list.
 .decl builtin(x: symbol)  // shipped with the library as facts (generated from the Python version's builtins)
 // The builtin facts: one row per name builtin_ref accepts. Exceptions are included so `except ValueError` resolves
 // to "builtins.ValueError" through sym_of.
@@ -475,3 +516,18 @@ builtin("RecursionError"). builtin("UnicodeError"). builtin("UnicodeDecodeError"
 builtin("ZeroDivisionError"). builtin("KeyboardInterrupt"). builtin("SystemExit"). builtin("Warning").
 builtin("DeprecationWarning"). builtin("UserWarning"). builtin("RuntimeWarning"). builtin("EnvironmentError").
 builtin("IOError"). builtin("BufferError"). builtin("ConnectionError"). builtin("TimeoutError"). builtin("GeneratorExit").
+// The rest of Python 3.13's builtins module, as Ruff's python_builtins lists it. WindowsError is there on every
+// platform (Ruff counts it everywhere); True, False and None are keywords, never an identifier, but are names of the
+// module. Then the module attributes every module has (Ruff's MAGIC_GLOBALS and `__builtins__`).
+builtin("BaseExceptionGroup"). builtin("BlockingIOError"). builtin("BrokenPipeError"). builtin("BytesWarning").
+builtin("ChildProcessError"). builtin("ConnectionAbortedError"). builtin("ConnectionRefusedError").
+builtin("ConnectionResetError"). builtin("EncodingWarning"). builtin("ExceptionGroup"). builtin("FileExistsError").
+builtin("FloatingPointError"). builtin("FutureWarning"). builtin("ImportWarning"). builtin("IndentationError").
+builtin("InterruptedError"). builtin("IsADirectoryError"). builtin("MemoryError"). builtin("NotADirectoryError").
+builtin("PendingDeprecationWarning"). builtin("ProcessLookupError"). builtin("PythonFinalizationError").
+builtin("ReferenceError"). builtin("ResourceWarning"). builtin("StopAsyncIteration"). builtin("SyntaxError").
+builtin("SyntaxWarning"). builtin("SystemError"). builtin("TabError"). builtin("UnboundLocalError").
+builtin("UnicodeTranslateError"). builtin("UnicodeWarning"). builtin("WindowsError"). builtin("False").
+builtin("None"). builtin("True"). builtin("copyright"). builtin("credits"). builtin("exit"). builtin("license").
+builtin("quit"). builtin("__build_class__"). builtin("__loader__"). builtin("__package__").
+builtin("__annotations__"). builtin("__builtins__"). builtin("__cached__").

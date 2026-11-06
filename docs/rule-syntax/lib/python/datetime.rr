@@ -32,7 +32,7 @@ param_slot("datetime.datetime.now", "tz", 0).
 param_slot("datetime.datetime.fromtimestamp", "tz", 1).
 .decl naive_tz(c: node, q: symbol, how: symbol)
 naive_tz(c, q, "missing") :- dt_call(c, q), param_slot(q, x, _), !call_param(c, x, _).
-naive_tz(c, q, "none") :- dt_call(c, q), param_slot(q, x, _), call_param(c, x, v), ruff_bare(v, m), kind(m, "none").
+naive_tz(c, q, "none") :- dt_call(c, q), param_slot(q, x, _), call_param(c, x, v), unparen(v, m), kind(m, "none").
 
 // then_astimezone(c): `c.astimezone`, or `c.replace(…)` whose own value then_astimezone.
 .decl then_astimezone(c: node)

@@ -15,7 +15,7 @@
 .violation SIM208(at: node, operand: node) code "SIM208" "Use `{operand}` instead of `not (not {operand})`."
     suppress ruff "SIM208"
     fix safe drop_negations "Replace with `{operand}` (`bool({operand})` outside a boolean test)"
-SIM208(e, x) :- kind(e, "not_operator"), field(e, "argument", a), ruff_bare(a, i), kind(i, "not_operator"),
+SIM208(e, x) :- kind(e, "not_operator"), field(e, "argument", a), unparen(a, i), kind(i, "not_operator"),
     field(i, "argument", x).
 drop_negations(e, x) :- sim_bool_test(e) => replace(e, `$x`).
 drop_negations(e, x) :- !sim_bool_test(e), c4_builtin_here(e, "bool") => replace(e, `bool($x)`).

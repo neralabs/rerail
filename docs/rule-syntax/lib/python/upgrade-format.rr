@@ -54,7 +54,7 @@ u_piece(s) :- kind(s, "string"), strprefix(s, "u").
 utf8_name("utf-8"). utf8_name("utf8"). utf8_name("utf_8"). utf8_name("u8"). utf8_name("utf").
 utf8_name("cp65001").
 .decl utf8_only_arg(c: node)
-utf8_only_arg(c) :- up_argc(c, 1), (up_arg(c, 0, a) ; up_kw(c, "encoding", a)), str_lit(a, x), utf8_name(@lower(x)).
+utf8_only_arg(c) :- up_argc(c, 1), (up_arg(c, 0, a) ; call_kw(c, "encoding", a)), str_lit(a, x), utf8_name(@lower(x)).
 
 // ---- 5. percent format -------------------------------------------------------------------------------------------
 // pct_conv(v, i, flags, conv): the parts of placeholder i that pct_spec does not keep, by the same regex.

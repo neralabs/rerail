@@ -9,9 +9,9 @@
 //   # TODO(charlie)        ← TD005
 //   # TODO:                ← TD005
 //   # TODO: fix this       not reported
-#include "python/misc2-todo.rr"   // todo_item and the TD helpers
+#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD005(at: node, tag: symbol) code "TD005"
+.violation TD005(at: span, tag: symbol) code "TD005"
     "Say what needs doing after `{tag}`, on the same comment line (for example `{tag}(name): what to fix`); if the work is already done, remove the comment instead."
     suppress ruff "TD005"
-TD005(c, D) :- todo_item(c, D, _), (todo_shape(c, "empty") ; todo_shape(c, "colon-empty")).
+TD005(t, D) :- todo_item(c, D, _), (todo_shape(c, "empty") ; todo_shape(c, "colon-empty")), todo_at(c, t).

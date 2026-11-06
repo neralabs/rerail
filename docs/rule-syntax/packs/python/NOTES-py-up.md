@@ -27,7 +27,7 @@ Summary: 37 rules, 1,221 lines (18 to 81 each), plus 410 lines of libraries and 
 - 26 rules are perfect on the recording.
 - UP043 has no recorded findings at 3.10. At 3.13 it is 23 / 0 / 0 against Ruff.
 - The other 10 miss only on harness gaps: string annotations, rrlab's `\N{…}` decoding, noqa in the middle of a
-  comment, bare-CR line ends, and Ruff's repeated diagnostics at one key. The one exception is UP032_0.py:94, a
+  comment (since fixed in rrlab), bare-CR line ends, and Ruff's repeated diagnostics at one key. The one exception is UP032_0.py:94, a
   library gap in `unparen` (F-L1 below).
 
 ## Scores
@@ -124,6 +124,9 @@ column: the targets compared, every one 0 FP / 0 FN unless noted).
   of UP006 (12) and UP007 (4) is inside a string annotation (UP006_0.py:29-57, UP006_3.py:7, UP007_1.py:29, 33,
   91). The rules read the parsed tree through names' `annotation`/`sym_at`, so the engine should report them; their
   columns (inside the string, or at the string for concatenated ones) are the engine's to place.
+  Since fixed: rrlab b402cbfa8 gives `parsed` rows, and python/names' `parsed_in` starts a parsed name's lookup at
+  its string's scope. UP006 is 17 / 0 / 3 on Ruff's snapshots (`rrlab score --snapshots`); the 3 FNs are names in
+  a string nested in a parsed one (UP006_0.py:49, 53, 57), which rrlab does not parse yet.
 - **I-H2, duplicate keys.** Ruff gives UP035.py:44 six diagnostics (one per target module and per renamed name),
   all at 44:1. The rule reports the statement once: same key, so the five extra recorded rows are FNs only by
   count.
@@ -187,8 +190,8 @@ on probe files and compared with Ruff 0.16.9 at 3.8, 3.10 and 3.14; each probe m
 
 
 Harness gaps (the rule is right; rrlab is not the engine):
-- F-H1, UP009_4.py:1. `# coding=utf8  # noqa: UP009` is one comment; rrlab honours `noqa` only at a comment's start
-  (`re.match`), Ruff anywhere in it.
+- F-H1, UP009_4.py:1 (fixed in rrlab 08d977aa5). `# coding=utf8  # noqa: UP009` is one comment; rrlab honoured
+  `noqa` only at a comment's start, Ruff anywhere in it. rrlab now matches Ruff; UP009 is 7 / 0 / 0 on the snapshot.
 - F-H2, value decoding. rrlab's `value` is approximate: it leaves `\N{snowman}` undecoded, so its braces read as a `{snowman}` field (UP030_0.py:22 and
   UP032_0.py:135 are FNs). The engine's decoder (str_part) is exact.
 - F-H3, string annotations. `x: '"foo".encode("utf-8")'` and the like (UP012.py:86, UP015_1.py:3, UP031_0.py:131,

@@ -1,14 +1,13 @@
 // python/ruff: the vocabulary of Ruff's own rules (RUF0xx), as Ruff's semantic model and AST helpers see code.
 //
 // Interface
-//   1. Expressions:  ruff_bare(e, m)         m is e without parentheses (Ruff's tree has none), comments in them aside
-//                    ast_up(e, p)            p is e's parent expression or statement in Ruff's tree (no parentheses)
+//   1. Expressions:  ast_up(e, p)            p is e's parent expression or statement in Ruff's tree (no parentheses)
 //   2. Names:        ruff_qual(e, q)         e resolves to qualified name q: "dataclasses.field", "builtins.int"
 //                    call_q(c, q)            call c's callee resolves to q
 //   3. Arguments:    ruff_arg(c, i, a)       a is call c's i-th positional argument (none after a `*args`)
-//                    call_kwarg(c, x, v)     call c passes keyword x with value v
+//                    call_kwarg(c, x, v)     call c passes keyword x with value v; call_kw(c, x, v) v unparenthesised
 //                    call_nargs(c, n)        c has n positional arguments, call_nkwargs(c, n) n keywords
-//                    call_splat(c)           c has a `*args` or `**kwargs`
+//                    call_splat(c)           c has a `*args` or `**kwargs`; call_star(c) a `*args`, call_kwsplat(c) a `**kwargs`
 //                    call_only(c, a)         c has exactly one argument, positional a, and no keywords
 //   4. Literals:     list_like(e, t)         e is a list, tuple, set or dict display (t "list", …): no comprehension
 //                    empty_literal(e, t)     e is an empty display, string or bytes: `[]`, `()`, `{}`, `""`, `b""`
@@ -21,6 +20,8 @@
 //   5. Slices:       slice_part(s, which, e) bound e of slice s: "lower", "upper" or "step"
 //   6. Contexts:     bool_test(e)            e is read only for its truth
 //                    side_effect(e)          e may have a side effect (Ruff's contains_effect)
+//                    truth_of(m, t)          m's Ruff Truthiness: "true", "false" or "none" (None); no row: unknown
+//                    tstring_lit(m)          m is a t-string, alone or among adjacent literals
 // The target version: python/version (target_minor, targets).
 // Classes, dataclasses and annotations: python/ruff-classes.
 //
@@ -32,11 +33,6 @@
 #include "python/version.rr"
 
 // ---- 1. expressions ----------------------------------------------------------------------------------------------
-.decl ruff_bare(e: node, m: node)
-ruff_bare(e, m) :- unparen(e, m), !kind(m, "comment").
-// ast.rr's unparen reads a parenthesis's first child, so `(  # note` + newline + `x)` gives the comment.
-ruff_bare(e, m) :- kind(e, "parenthesized_expression"), child(e, c, 0), kind(c, "comment"), child(e, i, _),
-    !kind(i, "comment"), ruff_bare(i, m).
 // ast_up(e, p): p is the nearest non-parenthesis ancestor of e: `(a + b) * c` gives the `*` for `a + b`.
 .decl ast_up(e: node, p: node)
 ast_up(e, p) :- child(p, e, _), !kind(p, "parenthesized_expression").
@@ -46,15 +42,15 @@ ast_up(e, q) :- child(p, e, _), kind(p, "parenthesized_expression"), ast_up(p, q
 // ruff_qual(e, q): `from dataclasses import field as f; f()` gives "dataclasses.field" for f; `int` unshadowed gives
 // "builtins.int".
 .decl ruff_qual(e: node, q: symbol)
-ruff_qual(e, q) :- ruff_bare(e, m), qn(m, q), chain_root(m, r), !rebound(r).
-ruff_qual(e, q) :- ruff_bare(e, m), kind(m, "identifier"), qn(m, q), !rebound(m).
+ruff_qual(e, q) :- unparen(e, m), qn(m, q), chain_root(m, r), !rebound(r).
+ruff_qual(e, q) :- unparen(e, m), kind(m, "identifier"), qn(m, q), !rebound(m).
 // Through parentheses on the object, which names' qn does not open: `(itertools).starmap`.
-ruff_qual(e, @dot(q, x)) :- ruff_bare(e, m), kind(m, "attribute"), field(m, "object", o),
+ruff_qual(e, @dot(q, x)) :- unparen(e, m), kind(m, "attribute"), field(m, "object", o),
     kind(o, "parenthesized_expression"), ruff_qual(o, q), field(m, "attribute", a), text(a, x).
-ruff_qual(e, cat("builtins.", x)) :- ruff_bare(e, m), resolves_builtin(m, x).
+ruff_qual(e, cat("builtins.", x)) :- unparen(e, m), resolves_builtin(m, x).
 // A builtin also when the file binds the name only later in the same scope: at `print(x)` on line 1, a
 // `def print` on line 9 does not exist yet (Ruff resolves names in order).
-ruff_qual(e, cat("builtins.", x)) :- ruff_bare(e, m), kind(m, "identifier"), look(m, x, s), scope_node(m, s), builtin_name(x),
+ruff_qual(e, cat("builtins.", x)) :- unparen(e, m), kind(m, "identifier"), look(m, x, s), scope_node(m, s), builtin(x),
     ast_name(m, x), expr_ctx(m, "load"), count : { binding(s, x, b, _), b < m } = 0.
 // rebound(r): the latest binding of name r before it, in the scope it resolves to, is not an import:
 //   import decimal
@@ -89,6 +85,13 @@ call_nargs(c, n) :- kind(c, "call"), n = count : { call_item(c, a, _), pos_item(
 call_nkwargs(c, n) :- kind(c, "call"), n = count : { call_item(c, a, _), !pos_item(a) }.
 .decl call_splat(c: node)
 call_splat(c) :- call_item(c, a, _), (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
+// call_kw(c, x, v): call_kwarg with v's parentheses off. call_star(c), call_kwsplat(c): c passes `*xs`, `**kw`.
+.decl call_kw(c: node, x: symbol, v: node)
+call_kw(c, x, v) :- call_kwarg(c, x, v0), unparen(v0, v).
+.decl call_star(c: node)
+call_star(c) :- call_item(c, a, _), kind(a, "list_splat").
+.decl call_kwsplat(c: node)
+call_kwsplat(c) :- call_item(c, a, _), kind(a, "dictionary_splat").
 .decl call_only(c: node, a: node)
 call_only(c, a) :- ruff_arg(c, 0, a), call_nargs(c, 1), call_nkwargs(c, 0).
 
@@ -129,7 +132,7 @@ empty_ctor("builtins.frozenset", "frozenset"). empty_ctor("builtins.dict", "dict
 empty_ctor("builtins.bytes", "bytes").
 
 .decl ruff_int(e: node, v: symbol)
-ruff_int(e, v) :- ruff_bare(e, m), kind(m, "integer"), text(m, t), !match("[\\s\\S]*[jJ]", t), value(m, v).
+ruff_int(e, v) :- unparen(e, m), kind(m, "integer"), text(m, t), !match("[\\s\\S]*[jJ]", t), value(m, v).
 
 // int_expr(e): e is an int by its form alone (Ruff's ResolvedPythonType): an int literal, `+x`, `-x`, `~x`, an
 // arithmetic or bitwise operation on two ints (not `/` or `@`), `a if t else b` and `a and b` / `a or b` of two
@@ -137,15 +140,15 @@ ruff_int(e, v) :- ruff_bare(e, m), kind(m, "integer"), text(m, t), !match("[\\s\
 //   1 + 2 * 3      int_expr          1 / 2      not: a float
 .decl int_expr(e: node)
 int_expr(e) :- ruff_int(e, _).
-int_expr(e) :- ruff_bare(e, m), kind(m, "unary_operator"), op(m, o), (o = "+" ; o = "-" ; o = "~"),
+int_expr(e) :- unparen(e, m), kind(m, "unary_operator"), op(m, o), (o = "+" ; o = "-" ; o = "~"),
     field(m, "argument", a), int_expr(a).
-int_expr(e) :- ruff_bare(e, m), kind(m, "binary_operator"), op(m, o), int_op(o), field(m, "left", l), int_expr(l),
+int_expr(e) :- unparen(e, m), kind(m, "binary_operator"), op(m, o), int_op(o), field(m, "left", l), int_expr(l),
     field(m, "right", r), int_expr(r).
-int_expr(e) :- ruff_bare(e, m), kind(m, "conditional_expression"), child(m, a, 0), int_expr(a), child(m, b, 2),
+int_expr(e) :- unparen(e, m), kind(m, "conditional_expression"), child(m, a, 0), int_expr(a), child(m, b, 2),
     int_expr(b).
-int_expr(e) :- ruff_bare(e, m), kind(m, "boolean_operator"), field(m, "left", l), int_expr(l), field(m, "right", r),
+int_expr(e) :- unparen(e, m), kind(m, "boolean_operator"), field(m, "left", l), int_expr(l), field(m, "right", r),
     int_expr(r).
-int_expr(e) :- ruff_bare(e, m), kind(m, "named_expression"), field(m, "value", v), int_expr(v).
+int_expr(e) :- unparen(e, m), kind(m, "named_expression"), field(m, "value", v), int_expr(v).
 .decl int_op(o: symbol)
 int_op("+"). int_op("-"). int_op("*"). int_op("%"). int_op("**"). int_op("<<"). int_op(">>"). int_op("|").
 int_op("^"). int_op("&"). int_op("//").
@@ -166,12 +169,12 @@ typed_as(e, "dict") :- one_binding(e, _, _, p, "param"), kind(p, "dictionary_spl
 typed_as(e, t) :- one_binding(e, _, _, g, "walrus"), child(w, g, 0), kind(w, "named_expression"),
     field(w, "value", r), init_type(r, t).
 .decl one_binding(e: node, s: node, x: symbol, b: node, f: symbol)
-one_binding(e, s, x, b, f) :- ruff_bare(e, m), kind(m, "identifier"), expr_ctx(m, "load"), look(m, x, s),
+one_binding(e, s, x, b, f) :- unparen(e, m), kind(m, "identifier"), expr_ctx(m, "load"), look(m, x, s),
     count : { binding(s, x, _, _) } = 1, binding(s, x, b, f).
 .decl init_type(r: node, t: symbol)
 init_type(r, "int") :- int_expr(r).
-init_type(r, t) :- ruff_bare(r, m), call_q(m, q), (q = "builtins.int", t = "int" ; q = "builtins.dict", t = "dict").
-init_type(r, "dict") :- ruff_bare(r, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
+init_type(r, t) :- unparen(r, m), call_q(m, q), (q = "builtins.int", t = "int" ; q = "builtins.dict", t = "dict").
+init_type(r, "dict") :- unparen(r, m), (kind(m, "dictionary") ; kind(m, "dictionary_comprehension")).
 .decl ann_type(ann: node, t: symbol)
 ann_type(ann, t) :- ann_base(ann, h), ruff_qual(h, q), (q = "builtins.int", t = "int" ; q = "builtins.dict", t = "dict" ;
     (q = "typing.Dict" ; q = "typing_extensions.Dict"), t = "dict").
@@ -181,8 +184,8 @@ ann_base(ann, h) :- (kind(a, "assignment") ; kind(a, "typed_parameter") ; kind(a
     field(a, "type", ann), ann_bare_of(ann, m), (kind(m, "subscript"), field(m, "value", h) ;
     kind(m, "generic_type"), child(m, h, 0) ; !kind(m, "subscript"), !kind(m, "generic_type"), h = m).
 .decl ann_bare_of(ann: node, m: node)
-ann_bare_of(ann, m) :- kind(ann, "type"), child(ann, x, 0), ruff_bare(x, m).
-ann_bare_of(ann, m) :- !kind(ann, "type"), ruff_bare(ann, m).
+ann_bare_of(ann, m) :- kind(ann, "type"), child(ann, x, 0), unparen(x, m).
+ann_bare_of(ann, m) :- !kind(ann, "type"), unparen(ann, m).
 
 // ---- 4b. slices --------------------------------------------------------------------------------------------------
 // slice_part(s, which, e): bound e of slice s, which is "lower", "upper" or "step". tree-sitter's slice has no
@@ -240,7 +243,67 @@ empty_initializer(x) :- call_nargs(x, 0), call_nkwargs(x, 0), field(x, "function
 // ruff_safe_operand(e): Ruff's is_known_safe_binop_operand: a str, bytes or number literal, True, False, None,
 // `...`, an f-string, or a list, tuple, set or dict display or comprehension.
 .decl ruff_safe_operand(e: node)
-ruff_safe_operand(e) :- ruff_bare(e, m), kind(m, k), (k = "string" ; k = "concatenated_string" ; k = "integer" ;
+ruff_safe_operand(e) :- unparen(e, m), kind(m, k), (k = "string" ; k = "concatenated_string" ; k = "integer" ;
     k = "float" ; k = "true" ; k = "false" ; k = "none" ; k = "ellipsis" ; k = "list" ; k = "tuple" ; k = "set" ;
     k = "dictionary" ; k = "list_comprehension" ; k = "set_comprehension" ; k = "dictionary_comprehension"),
-    !string_form(m, "tstr").
+    !tstring_lit(m).
+// tstring_lit(m): m is a t-string (PEP 750), alone or among adjacent literals: a Template, not a str.
+.decl tstring_lit(m: node)
+tstring_lit(m) :- string_form(m, "tstr").
+tstring_lit(m) :- kind(m, "concatenated_string"), child(m, s, _), string_form(s, "tstr").
+
+// truth_of(m, t): Ruff's Truthiness (Truthiness::from_expr) of m, parentheses already off: "true", "false", or
+// "none" for the None literal. No row: unknown (names, most calls, `[*xs]`, `{**d}`, `f"{x}"`).
+//   0, 0.0, 0j, "", b"", f"", f"{''}", (), [], {}, set(), list(), dict([])          "false"
+//   1, 1.5, 2j, "x", b"x", f"x{y}", f"{y=}", t"", ..., lambda: 0, (x for x in y), [1], list("ab")   "true"
+.decl truth_of(m: node, t: symbol)
+truth_of(m, "true") :- kind(m, "true").
+truth_of(m, "false") :- kind(m, "false").
+truth_of(m, "none") :- kind(m, "none").
+truth_of(m, "true") :- kind(m, k), (k = "ellipsis" ; k = "lambda" ; k = "generator_expression").
+truth_of(m, "false") :- empty_literal(m, _), !kind(m, "call"), !tstring_lit(m).
+truth_of(m, "true") :- list_like(m, _), !empty_literal(m, _), unparen(m, d), child(d, c, _), !kind(c, "comment"),
+    !kind(c, "list_splat"), !kind(c, "dictionary_splat").
+truth_of(m, "false") :- ruff_int(m, "0").
+truth_of(m, "true") :- ruff_int(m, v), v != "0".
+// A float or an imaginary literal: zero when its digits are (`0.0`, `0e5`, `0j`).
+truth_of(m, t) :- (kind(m, "float") ; kind(m, "integer"), !ruff_int(m, _)), text(m, x),
+    (match("[0_]*\\.?[0_]*(?:[eE][-+]?[0-9_]+)?[jJ]?", x), t = "false" ;
+     !match("[0_]*\\.?[0_]*(?:[eE][-+]?[0-9_]+)?[jJ]?", x), t = "true").
+// A str or bytes literal (adjacent ones too) that is not empty; a t-string is always true, even `t""`.
+truth_of(m, "true") :- (kind(m, "string") ; kind(m, "concatenated_string")), !fstring(m), !tstring_lit(m),
+    !empty_string(m).
+truth_of(m, "true") :- tstring_lit(m).
+// An f-string is true when it always prints something (Ruff's is_non_empty_f_string): text outside its fields,
+// a `{x=}`, or a field whose value never prints as "" (`f"{[]}"` is "[]", `f"{b''}"` is "b''"). It is false
+// when it is empty (empty_literal above), and unknown otherwise.
+truth_of(m, "true") :- fstring(m), !tstring_lit(m), (has(m, c, "string_content") ; has(m, c, "escape_sequence")),
+    !fstring_field_text(c, m).
+truth_of(m, "true") :- fstring(m), !tstring_lit(m), has(m, i, "interpolation"), !fstring_inner_field(i, m), op(i, "=").
+truth_of(m, "true") :- fstring(m), !tstring_lit(m), has(m, i, "interpolation"), !fstring_inner_field(i, m),
+    !field(i, "format_specifier", _), field(i, "expression", x), unparen(x, y), shows_something(y).
+// A builtin list, tuple, set, dict or frozenset called by name: empty with no arguments; with one positional
+// argument, that argument's truth (unknown for a number, bool, None, `...`, t-string, lambda or generator).
+truth_of(m, "false") :- truth_ctor(m), call_nargs(m, 0), call_nkwargs(m, 0).
+truth_of(m, t) :- truth_ctor(m), call_only(m, a0), unparen(a0, a), truth_of(a, t),
+    !kind(a, "integer"), !kind(a, "float"), !kind(a, "true"), !kind(a, "false"), !kind(a, "none"), !kind(a, "ellipsis"),
+    !kind(a, "lambda"), !kind(a, "generator_expression"), !tstring_lit(a).
+.decl truth_ctor(m: node)
+truth_ctor(m) :- kind(m, "call"), field(m, "function", f), kind(f, "identifier"), ruff_qual(f, q),
+    (q = "builtins.list" ; q = "builtins.tuple" ; q = "builtins.set" ; q = "builtins.dict" ; q = "builtins.frozenset").
+// shows_something(y): y never prints as "": a display, comprehension, number, bool, None, `...`, lambda, bytes,
+// or a non-empty str literal. `f"{x=}"` always shows "x=".
+.decl shows_something(y: node)
+shows_something(y) :- kind(y, k), shown_kind(k).
+shows_something(y) :- string_form(y, "bytes").
+shows_something(y) :- (kind(y, "string") ; kind(y, "concatenated_string")), !fstring(y), !empty_string(y).
+.decl shown_kind(k: symbol)
+shown_kind("lambda"). shown_kind("dictionary"). shown_kind("set"). shown_kind("list"). shown_kind("tuple").
+shown_kind("list_comprehension"). shown_kind("set_comprehension"). shown_kind("dictionary_comprehension").
+shown_kind("integer"). shown_kind("float"). shown_kind("true"). shown_kind("false"). shown_kind("none").
+shown_kind("ellipsis").
+.decl fstring_inner_field(i: node, m: node)  // interpolation i is nested in another interpolation of m
+fstring_inner_field(i, m) :- has(m, i, "interpolation"), inside(i, j, "interpolation"), within(j, m).
+.decl fstring_field_text(c: node, m: node)  // c is text inside an interpolation of m, not m's own text
+fstring_field_text(c, m) :- has(m, c, "string_content"), inside(c, i, "interpolation"), within(i, m).
+fstring_field_text(c, m) :- has(m, c, "escape_sequence"), inside(c, i, "interpolation"), within(i, m).

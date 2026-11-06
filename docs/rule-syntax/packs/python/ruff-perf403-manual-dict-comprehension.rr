@@ -25,8 +25,8 @@ PERF403(a, o) :- perf_for(f, t, _), perf_body(f, st, test), store(st, a, o, key,
 // the subscript (`d[x,]` and `d[a, b]` have a tuple key with no node of its own: flat reads it off the text).
 .decl store(st: node, a: node, o: node, key: node, value: node)
 store(st, a, o, k, v) :- kind(st, "expression_statement"), child(st, a, 0), kind(a, "assignment"), !field(a, "type", _),
-    field(a, "left", l0), ruff_bare(l0, l), kind(l, "subscript"), field(l, "value", o0), ruff_bare(o0, o),
-    k = l, field(a, "right", v0), !kind(v0, "assignment"), ruff_bare(v0, v).
+    field(a, "left", l0), unparen(l0, l), kind(l, "subscript"), field(l, "value", o0), unparen(o0, o),
+    k = l, field(a, "right", v0), !kind(v0, "assignment"), unparen(v0, v).
 // from_target(t, e): e is written as the target itself or as one of its elements (Ruff's ComparableExpr,
 // approximated by the text without comments, whitespace and parentheses: `(x,)` is `x,`, `(o, p)` is `o, p`).
 .decl from_target(t: node, e: node)

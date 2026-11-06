@@ -16,5 +16,5 @@
 .violation B010(at: node) code "B010"
     "Replace this `setattr` call with a plain assignment, such as `obj.name = value`."
     suppress ruff "B010"
-B010(c) :- bb_builtin_call(c, "setattr"), bb_expr_stmt(c), bb_npos(c, 3), bb_nkw(c, 0), bb_pos(c, 0, o),
-    !kind(o, "list_splat"), bb_pos(c, 1, a), plain_str(a, v), bb_identifier(v), v != "__debug__", !bb_mangled(v).
+B010(c) :- bb_builtin_call(c, "setattr"), bb_expr_stmt(c), call_nargs(c, 3), call_nkwargs(c, 0), bb_pos(c, 0, o),
+    !kind(o, "list_splat"), bb_pos(c, 1, a), plain_str(a, v), identifier(v), v != "__debug__", !bb_mangled(v).

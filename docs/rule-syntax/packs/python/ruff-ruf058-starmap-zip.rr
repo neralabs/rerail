@@ -21,5 +21,5 @@ RUF058(c, "Replace `starmap(f, zip(a, b, strict=...))` with `map(f, a, b, strict
 // z, whose positional arguments are not all `*xs` (none at all is fine).
 .decl starmap_zip(c: node, z: node)
 starmap_zip(c, z) :- call_q(c, "itertools.starmap"), call_nargs(c, 2), call_nkwargs(c, 0), call_item(c, a, j),
-    pos_item(a), count : { call_item(c, b, i), i < j, pos_item(b) } = 1, ruff_bare(a, z), call_q(z, "builtins.zip"),
+    pos_item(a), count : { call_item(c, b, i), i < j, pos_item(b) } = 1, unparen(a, z), call_q(z, "builtins.zip"),
     (call_nargs(z, 0) ; call_item(z, p, _), pos_item(p), !kind(p, "list_splat")).
