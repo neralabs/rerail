@@ -335,7 +335,9 @@ impl Lowerer {
             }
             self.prog.inputs.retain(|i| i != rel);
             let head = if rel == "kind" { vec![v("n"), v("k")] } else { vec![v("n"), v("d")] };
-            self.prog.rules.push(Rule {
+            // First, kind before docof: where T's programs wrote them.
+            let at = usize::from(rel == "docof" && self.prog.rules.first().is_some_and(|r| r.head.rel == "kind"));
+            self.prog.rules.insert(at, Rule {
                 head: Atom { rel: rel.to_owned(), args: head, neg: false, gated: false },
                 body: vec![Literal::Atom(Atom { rel: "node".to_owned(), args: args.to_vec(), neg: false, gated: false })],
             });

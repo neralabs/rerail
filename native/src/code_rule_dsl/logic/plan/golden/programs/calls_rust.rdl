@@ -14,7 +14,7 @@
 .decl field(p: node, f: sym, c: node)
 .decl text(n: node, s: sym)
 .decl op(n: node, s: sym)
-.input doc, node, child, field, text, op
+.input doc, node, child, field, text, op, kind
 
 .kindset iscope = "source_file" | "mod_item" | "block"
 .kindset modk = "source_file" | "mod_item"
@@ -23,7 +23,6 @@
 .kindset implk = "impl_item" | "trait_item"
 
 .decl kind(n: node, k: sym)
-kind($n, $k) :- node(_, $n, $k, _, _).
 .decl nm(n: node, x: sym)
 nm($n, $x) :- field($n, "name", $i), text($i, $x).
 

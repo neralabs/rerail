@@ -386,6 +386,21 @@ fn normalized(mut p: front::Program) -> front::Program {
         }
         rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
     }
+    // The lowering's projections (`lower::projections`, decision 0047): `kind` and `docof` over nodes, read as
+    // inputs, are rules over `node`, first.
+    let v = |s: &str| front::Term::Var(s.to_owned());
+    let mut at = 0;
+    for (rel, head, args) in [
+        ("kind", [v("n"), v("k")], [front::Term::Wild, v("n"), v("k"), front::Term::Wild, front::Term::Wild]),
+        ("docof", [v("n"), v("d")], [v("d"), v("n"), front::Term::Wild, front::Term::Wild, front::Term::Wild]),
+    ] {
+        if p.inputs.iter().any(|i| i == rel) && p.decls.contains_key("node") {
+            p.inputs.retain(|i| i != rel);
+            let atom = |rel: &str, args: Vec<front::Term>| front::Atom { rel: rel.to_owned(), args, neg: false, gated: false };
+            p.rules.insert(at, front::Rule { head: atom(rel, head.to_vec()), body: vec![Literal::Atom(atom("node", args.to_vec()))] });
+            at += 1;
+        }
+    }
     p
 }
 
