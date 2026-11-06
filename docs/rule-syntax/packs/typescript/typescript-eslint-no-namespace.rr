@@ -1,0 +1,22 @@
+.policy "typescript-eslint-no-namespace" revision 8
+.description "Use ES module imports and exports instead of TypeScript namespaces and custom modules; global augmentations, named module declarations and .d.ts files are exempt."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   ts_namespace, estree_at, in_declare, definition_file
+
+// typescript-eslint's no-namespace: `namespace A {}` and `module A {}` are TypeScript's own modules; ES modules
+// replace them. `declare module "x" {}` (a module named by a string) and `declare global {}` are exempt.
+//   namespace A {}   module A.B {}   declare namespace D {}         → reported (the last at `declare`)
+//   declare module "fs" {}   declare global {}                       fine
+// Options: allowDeclarations (default false) exempts anything declared with `declare` or inside such a
+// declaration; allowDefinitionFiles (default true) exempts .d.ts files.
+.violation no_namespace(at: node) code "@typescript-eslint/no-namespace" "ES2015 module syntax is preferred over namespaces."
+    suppress eslint "@typescript-eslint/no-namespace"
+    suppress oxlint "no-namespace"
+    suppress biome "lint/style/noNamespace"
+no_namespace(at) :- ts_namespace(m), estree_at(m, at), docof(m, d),
+    !(option("allowDeclarations", "true"), in_declare(m)),
+    !(!option("allowDefinitionFiles", "false"), definition_file(d)).

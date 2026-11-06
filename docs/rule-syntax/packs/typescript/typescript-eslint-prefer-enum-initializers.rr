@@ -1,0 +1,19 @@
+.policy "typescript-eslint-prefer-enum-initializers" revision 5
+.description "Give every TypeScript enum member an explicit value; implicit numbering shifts when members are added or reordered."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/ts-b.rr"
+//   enum_member, enum_init
+
+// typescript-eslint's prefer-enum-initializers: every enum member gets a value. Without one, a member's value is its
+// position, which changes when a member is added above it.
+//   enum E { A, B = 1 }          → A reported: "The value of the member 'A' should be explicitly defined."
+//   enum E { A = 0, B = "b" }    fine
+// No options. The rule's suggestions (`A = 0`, `A = 1`, `A = 'A'`) are not offered here.
+.violation prefer_enum_initializers(at: node, x: symbol) code "@typescript-eslint/prefer-enum-initializers" "The value of the member '{x}' should be explicitly defined."
+    suppress eslint "@typescript-eslint/prefer-enum-initializers"
+    suppress oxlint "prefer-enum-initializers"
+    suppress biome "lint/style/useEnumInitializers"
+prefer_enum_initializers(m, x) :- enum_member(_, m, _, _), !enum_init(m, _), text(m, x).

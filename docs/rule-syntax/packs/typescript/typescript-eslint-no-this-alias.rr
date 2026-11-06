@@ -1,0 +1,30 @@
+.policy "typescript-eslint-no-this-alias" revision 3
+.description "Don't assign this to a local variable in TypeScript; use arrow functions, which keep this without an alias."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
+
+#include "tsx/eslint-a-common.rr"
+//   deparen
+
+// typescript-eslint's no-this-alias: `const self = this` keeps `this` for a nested function; an arrow function
+// keeps it without the alias. Reported at the name, or the pattern, that receives `this`.
+//   const self = this;   let s; s = this;   const { a } = this (with allowDestructuring false)       → reported
+//   const { a } = this;   const f = () => this.a;                                                    fine
+// Options: allowDestructuring (default true) allows a destructuring pattern or a member as the target;
+// allowedNames (default none) lists names that may hold `this`.
+.violation no_this_alias(at: node, msg: symbol) code "@typescript-eslint/no-this-alias" "{msg}"
+    suppress eslint "@typescript-eslint/no-this-alias"
+    suppress oxlint "no-this-alias"
+no_this_alias(id, "Use an arrow function instead of assigning this to a local variable.") :- this_target(id),
+    kind(id, "identifier"), text(id, x), !option_item("allowedNames", _, x).
+no_this_alias(id, "Unexpected aliasing of members of 'this' to local variables.") :- this_target(id),
+    !kind(id, "identifier"), option("allowDestructuring", "false").
+
+// this_target(id): id is what `this` is stored in: a declarator's name or an assignment's left side.
+//   const self = this;   self = (this);   x ||= this;   const { a, b } = this;   o.p = this
+.decl this_target(id: node)
+this_target(id) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, t), kind(t, "this"),
+    field(d, "name", id).
+this_target(id) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "right", v), deparen(v, t), kind(t, "this"), field(a, "left", l), deparen(l, id).
