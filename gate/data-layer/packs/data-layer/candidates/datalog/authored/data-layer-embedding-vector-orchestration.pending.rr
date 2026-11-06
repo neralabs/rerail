@@ -1,0 +1,17 @@
+// PENDING (awaiting the converter's option facts, ConvertFoundation A9: `option_value`). Not read by the converter.
+// entryPoint scan_source, scan_file and _violations_for_files take the unfiltered union, which adds EVO107 and
+// EVO108 to the default case's six issues (the other six rules are the same in every case). Add these to the main
+// file when option_value is given:
+.decl option_value(name: symbol, v: symbol)
+.input option_value
+.decl embedding_full_union(v: symbol)
+embedding_full_union("scan_source"). embedding_full_union("scan_file"). embedding_full_union("_violations_for_files").
+.decl embedding_publisher(s: symbol)
+embedding_publisher("_publish_claimed_queue_message_ref"). embedding_publisher("_publish_worker_scalar_int_ref").
+embedding_publisher("_publish_worker_scalar_string_ref").
+.decl embedding_in_publisher(n: node)
+embedding_in_publisher(n) :- embedding_fn(n, f), embedding_fn_name(f, x), embedding_publisher(x).
+embedding_issue(n, "EVO107") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_next_ref", _),
+    node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
+embedding_issue(n, "EVO108") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_add_server_step", _),
+    !embedding_in_publisher(n), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
