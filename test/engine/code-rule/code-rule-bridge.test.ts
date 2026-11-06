@@ -276,7 +276,7 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
-  it("gives a shell write the preimage Git or the session holds only when its digest is the file's before the write", async () => {
+  it("gives a shell write the preimage Git or the session holds, the baseline text of a file changed before the session, only when its digest is the file's before the write", async () => {
     const root = await workspace();
     const clean = join(root, "src", "clean.py");
     const dirty = join(root, "src", "dirty.py");
@@ -285,7 +285,8 @@ describe("CodeRuleBridge", () => {
     execFileSync("git", ["init", "--quiet"], { cwd: root });
     execFileSync("git", ["add", "."], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
-    // Changed before the session and never staged: neither the index nor HEAD holds what the session first saw.
+    // Changed before the session and never staged: neither the index nor HEAD holds what the session first saw, so the
+    // baseline keeps its text.
     await writeFile(dirty, "uncommitted\n");
     await awaitClockAfter(clean, dirty);
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
@@ -299,10 +300,7 @@ describe("CodeRuleBridge", () => {
     await bridge.finish("shell-1");
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
       { path: "src/clean.py", language: "python", previousText: "one\n", generatedText: "one\ntwo\n" },
-      {
-        path: "src/dirty.py", language: "python",
-        previousReadError: "Source changed outside a tool with a captured preimage", generatedText: "uncommitted\nmore\n",
-      },
+      { path: "src/dirty.py", language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmore\n" },
     ]);
 
     // The session saw what the first write made of the file, so the next write knows its preimage.

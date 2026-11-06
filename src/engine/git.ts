@@ -234,8 +234,11 @@ export function gitText(cwd: string, args: readonly string[]): string | undefine
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
-/** Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined. */
-async function gitOutput(cwd: string, args: readonly string[]): Promise<string | undefined> {
+/**
+ * Stdout of a successful Git command run under `runGit`'s safe configuration without blocking, trimmed unless `raw`
+ * (NUL-separated output may open with a space); else undefined.
+ */
+async function gitOutput(cwd: string, args: readonly string[], options: { raw?: boolean } = {}): Promise<string | undefined> {
   let executable: string;
   try {
     executable = gitExecutable();
@@ -247,7 +250,7 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
     { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null ? stdout.trim() : undefined),
+    (error, stdout) => settle(error === null ? (options.raw === true ? stdout : stdout.trim()) : undefined),
   );
   return await promise;
 }
@@ -308,6 +311,25 @@ export async function headMovedOnlyByCommits(cwd: string, from: string | undefin
   const entries = reflog.split("\n");
   const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
   return moves > 0 && entries.slice(0, moves).every(entry => COMMIT_SUBJECT.test(entry.slice(entry.indexOf(" ") + 1)));
+}
+
+/**
+ * The files of the checkout at `cwd` whose text neither its index nor `HEAD` holds, relative to the checkout: changed in
+ * the working tree since the index took them, or untracked (each file, not its folder). A file removed from the working
+ * tree has no text, and one staged and unchanged since is in the index. Empty without Git, outside a repository, or past
+ * the timeout. `git status` here takes no lock and writes nothing (`GIT_OPTIONAL_LOCKS=0`).
+ */
+export async function gitUncommittedPaths(cwd: string): Promise<Set<string>> {
+  const status = await gitOutput(cwd, ["status", "--porcelain=v1", "-z", "-uall", "--no-renames"], { raw: true });
+  const paths = new Set<string>();
+  if (status === undefined) return paths;
+  // One `XY path` entry per NUL; `X` is the index against `HEAD`, `Y` the working tree against the index, `??` untracked.
+  for (const entry of status.split("\0")) {
+    if (entry.length < 4) continue;
+    const workingTree = entry[1];
+    if (entry.startsWith("??") || (workingTree !== " " && workingTree !== "D")) paths.add(entry.slice(3));
+  }
+  return paths;
 }
 
 /** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */

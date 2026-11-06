@@ -15,7 +15,7 @@ import type {
   IgnoredEditMatch,
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
-import { gitBranchTips, gitCommitsBetween, gitHead, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
+import { gitBranchTips, gitCommitsBetween, gitHead, gitUncommittedPaths, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -529,6 +529,16 @@ async function writtenThisSession(discovery: SourceDiscovery, walk: WalkStart, p
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+/**
+ * The sources `scan` read as a baseline: all of them on the session folder's first walk, those in a worktree whose first
+ * walk this is on the other worktrees' (`WorktreeDiscovery.fresh`), none on any other walk.
+ */
+function baselinedPaths(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): string[] {
+  const read = [...scan.sources.entries()].filter(([, source]) => source.digest !== undefined).map(([path]) => path);
+  if (walk.baseline) return read;
+  if (walk.inSession) return [];
+  return read.filter(path => underBaselineRoot(discovery.worktrees.fresh, path));
 }
 function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
@@ -1346,9 +1356,29 @@ export class CodeRuleBridge {
     await this.#noteWalkedIgnoreFiles(discovery, walk, scan.sources);
     await this.#auditWalkEdits(discovery, walk, edits, uncaptured);
     for (const [root, head] of walk.heads) discovery.heads.set(root, head);
+    const baselined = baselinedPaths(discovery, walk, scan);
     if (walk.inSession) this.#finishSessionWalk(discovery, scan);
     else this.#finishWorktreeWalk(discovery, walk, scan);
+    await this.#rememberUncommittedTexts(discovery, scan, baselined);
     this.#observations?.set(this.#cwd, new Map(this.#observed));
+  }
+
+  /**
+   * Keeps the text of each source `paths` names, a baseline the walk just took, that its checkout's Git holds as it is
+   * not: changed before the session and never staged, or untracked. Its digest is the only preimage the walk has of a
+   * shell edit to it, and no blob matches it; the text kept here does (`#recoverPreimages`). Read again after the walk,
+   * and kept only when still the text the walk saw.
+   */
+  async #rememberUncommittedTexts(discovery: SourceDiscovery, scan: SourceScan, paths: readonly string[]): Promise<void> {
+    for (const [checkout, group] of this.#byOwningCheckout(discovery.root, paths, path => path).owned) {
+      const uncommitted = await gitUncommittedPaths(checkout);
+      if (this.#abandoned(discovery)) return;
+      for (const path of group) {
+        if (!uncommitted.has(sessionPath(checkout, resolve(discovery.root, path)))) continue;
+        const source = await this.#readSource(discovery.root, path);
+        if (source?.text !== undefined && source.digest === scan.sources.get(path)?.digest) this.#rememberText(path, source.text);
+      }
+    }
   }
 
   /**

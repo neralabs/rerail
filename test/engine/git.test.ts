@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
-  runGit,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitUncommittedPaths, headMovedOnlyByCommits,
+  readGitBlobIds, readGitBlobs, runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
@@ -104,6 +104,32 @@ describe("gitBranchTips and gitCommitsBetween", () => {
     expect(await gitCommitsBetween(root, seed, head)).toEqual([head, git(root, "rev-parse", "HEAD~1").trim()]);
     expect(await gitCommitsBetween(root, head, seed)).toEqual([]);
     expect(await gitCommitsBetween(root, "0".repeat(40), head)).toEqual([]);
+  });
+});
+
+describe("gitUncommittedPaths", () => {
+  it("names each file whose text neither the index nor HEAD holds: changed in the working tree, or untracked, in a folder too", async () => {
+    const root = await repository({ "kept.txt": "kept\n", "a-changed.txt": "old\n", "staged.txt": "old\n", "removed.txt": "gone\n", "both.txt": "old\n" });
+    // First in the listing, with the space a working-tree-only change puts before its entry.
+    await writeFile(join(root, "a-changed.txt"), "new\n");
+    await writeFile(join(root, "staged.txt"), "staged\n");
+    git(root, "add", "staged.txt");
+    await writeFile(join(root, "both.txt"), "staged\n");
+    git(root, "add", "both.txt");
+    await writeFile(join(root, "both.txt"), "then changed\n");
+    await rm(join(root, "removed.txt"));
+    await mkdir(join(root, "new"));
+    await writeFile(join(root, "new", "a.txt"), "a\n");
+    await writeFile(join(root, "new", "b.txt"), "b\n");
+    // Staged and unchanged since, the index holds `staged.txt`; a removed file has no text to keep.
+    expect([...await gitUncommittedPaths(root)].sort()).toEqual(["a-changed.txt", "both.txt", "new/a.txt", "new/b.txt"]);
+  });
+
+  it("names nothing outside a repository, and nothing in a clean checkout", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-git-status-"));
+    roots.push(folder);
+    expect(await gitUncommittedPaths(folder)).toEqual(new Set());
+    expect(await gitUncommittedPaths(await repository({ "a.txt": "a\n" }))).toEqual(new Set());
   });
 });
 
