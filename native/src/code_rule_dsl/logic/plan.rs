@@ -454,6 +454,69 @@ pub(in crate::code_rule_dsl) fn sql_col(rel: &str, col: usize) -> String {
     super::sql::select::input_columns(rel).and_then(|names| names.get(col)).map_or_else(|| format!("c{col}"), |&n| n.to_owned())
 }
 
+/// The suffix `private_derived_inputs` gives a derived relation named as a base relation: a suffix, so the name sorts
+/// where the base relation's would (components and plans are ordered by name).
+const PRIVATE: &str = "_rr_derived";
+
+/// `prog` with each relation it derives under a base relation's name (`input_columns`) and does not read as an
+/// input renamed `<rel>_rr_derived` (O81). T's programs derive `docof(n, d) :- node(d, n, …)`, which `core.rr` now
+/// makes an input: `sql_col` names an input's columns, but a derived table's are `c0, c1`. An output keeps its name
+/// (it is the program's result): one that collides is refused here, not misread later.
+pub(in crate::code_rule_dsl) fn private_derived_inputs(prog: &Program) -> Result<std::borrow::Cow<'_, Program>> {
+    let clash: BTreeSet<String> = prog
+        .rules
+        .iter()
+        .map(|r| r.head.rel.clone())
+        .chain(prog.facts.keys().cloned())
+        .filter(|rel| super::sql::select::input_columns(rel).is_some() && !prog.inputs.contains(rel))
+        .collect();
+    if let Some(rel) = clash.iter().find(|rel| prog.decls.contains_key(&format!("{rel}{PRIVATE}"))) {
+        return Err(Error::Plan(format!("{rel}{PRIVATE} is the engine's name for the derived {rel}")));
+    }
+    if clash.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(prog));
+    }
+    if let Some(out) = clash.iter().find(|rel| prog.outputs.contains(rel)) {
+        return Err(Error::Plan(format!("the output {out} is derived under a base relation's name")));
+    }
+    let name = |rel: &str| if clash.contains(rel) { format!("{rel}{PRIVATE}") } else { rel.to_owned() };
+    let mut p = prog.clone();
+    fn rekey<V>(m: &mut BTreeMap<String, V>, clash: &BTreeSet<String>) {
+        for rel in clash {
+            if let Some(v) = m.remove(rel) {
+                m.insert(format!("{rel}{PRIVATE}"), v);
+            }
+        }
+    }
+    rekey(&mut p.decls, &clash);
+    rekey(&mut p.lattice, &clash);
+    rekey(&mut p.facts, &clash);
+    p.demand.iter_mut().for_each(|d| *d = name(d));
+    for r in &mut p.rules {
+        r.head.rel = name(&r.head.rel);
+        for l in &mut r.body {
+            match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => a.rel = name(&a.rel),
+                _ => {}
+            }
+        }
+    }
+    Ok(std::borrow::Cow::Owned(p))
+}
+
+/// `out` with `private_derived_inputs`' names given back: the plans and components are reported as the program wrote them.
+fn public_names(mut out: Outcome) -> Outcome {
+    let public = |s: &str| s.replace(PRIVATE, "");
+    for c in &mut out.chosen {
+        c.head = public(&c.head);
+        c.anchor = public(&c.anchor);
+        c.walks.iter_mut().for_each(|(w, _)| *w = public(w));
+    }
+    out.iterations = std::mem::take(&mut out.iterations).into_iter().map(|(k, v)| (public(&k), v)).collect();
+    out.native = std::mem::take(&mut out.native).into_iter().map(|k| public(&k)).collect();
+    out
+}
+
 fn is_join(l: &Literal) -> bool {
     matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Nearest { .. })
 }
@@ -3148,6 +3211,10 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 }
 
 fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
+    run_named(&*private_derived_inputs(prog)?, db, inputs, lowered).map(public_names)
+}
+
+fn run_named(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&lower::Lowered>) -> Result<Outcome> {
     let db = db;
     let setup = super::profile::span(|| "setup".into());
     super::strings::register(db)?;

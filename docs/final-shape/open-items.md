@@ -1434,3 +1434,22 @@ tokens have no field.
 **Closure:** either the planner names columns by `input_columns` only for relations the program reads as
 inputs (a derived relation keeps `c0, c1`), or a program deriving an input relation is refused at reading and
 the T programs' copies read `core.rr`'s `docof`; the nine tests run again.
+
+**Closed (2026-11-06), the first closure, by renaming.** `plan::private_derived_inputs` runs where a program
+enters the planner (`plan::run`, `plan::lower::lower`). A relation the program derives under a base relation's
+name, and does not read as an input, is planned as `<rel>_rr_derived`, whose columns are positional like any
+derived table's. The suffix sorts where the name did, so components and plans keep T's order, and the reported
+plans and components give the name back (`public_names`). An output under such a name is refused. Eight of the
+nine tests run again. The ninth (`t_programs_with_the_transducers_nearest_derive_t_outputs`) now gets past O81
+and stops at O82.
+
+## O82. Metal runs abort in a debug test build
+
+Two tests that dispatch to the device abort the test process inside `metal-0.33.0` (`lib.rs:82`): Rust's
+debug-build check of `slice::from_raw_parts`' precondition (pointer aligned and non-null) fails, and it is a
+non-unwinding panic. They are `logic::plan::tests::t_programs_with_the_transducers_nearest_derive_t_outputs`,
+ignored with this item, and `typing::file_local::tests::the_device_finds_the_cpus_nearest`. Because the panic
+cannot unwind, it ends every test that shares the process, so a filtered run over `typing::` must skip the
+device tests. It was not checked whether this predates O81's change; nothing in that change touches device
+buffers. **Closure:** find the empty or unaligned buffer passed to `metal`'s slice constructor (likely a
+zero-length contents pointer), and both tests pass in a debug build.
