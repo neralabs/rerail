@@ -554,6 +554,11 @@ def check_rule(stmt, bound_heads=(), bound_vars=()):
     if name in bound_heads:
         bound |= _vars(head[1:])
     bound |= set(bound_vars)
+    branches = _split_top(rest, ";")
+    if len(branches) > 1:   # a top-level `;` binds looser than `,`: each branch is a rule of its own
+        tail = ["=>"] + edits if edits else []
+        return sorted(set().union(*(check_rule(" ".join(head + [":-"] + b + tail), bound_heads, bound_vars)
+                                    for b in branches)))
     lits = [l for l in _split_top(rest, ",") if l]
     need = set()
     # fixpoint over literals
