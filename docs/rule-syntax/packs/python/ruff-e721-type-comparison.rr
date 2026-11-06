@@ -1,0 +1,60 @@
+.policy "ruff-e721-type-comparison" revision 2
+.description "Use isinstance(), or is and is not, instead of == or != to compare types; equality on types misses subclasses and can be overridden."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff E721 (pycodestyle): `==` or `!=` between types: a side is `type(x)` or a builtin class such as `int`.
+// Use `is` / `is not`, or isinstance(). numpy dtypes are compared with `==` on purpose, so a link with a side
+// `x.dtype` or `numpy.dtype(…)` is skipped. Each link of a chain is checked; the finding is at the comparison.
+//   if type(a) == type(b): ...     ← E721
+//   if type(a) == int: ...         ← E721
+//   if x.dtype == float: ...       not reported
+#include "python/pyflakes.rr"
+//   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
+//   resolves_builtin(e, x)     e is the name x and reads the builtin
+
+.violation E721(at: node) code "E721"
+    "Use `is` and `is not` for type comparisons, or `isinstance()` for isinstance checks"
+    suppress ruff "E721"
+E721(c) :- cmp_pair(c, _, op, l, r), (op = "==" ; op = "!=" ), (is_type(l) ; is_type(r)), !is_dtype(l), !is_dtype(r).
+.decl is_type(e: node)
+is_type(e) :- unparen(e, m), kind(m, "call"), field(m, "function", f), unparen(f, g), names_type(g).
+is_type(e) :- unparen(e, m), resolves_builtin(m, x), builtin_class(x).
+.decl names_type(f: node)  // `type`, or `builtins.type` through an import
+names_type(f) :- resolves_builtin(f, "type").
+names_type(f) :- imported_sym(f, "builtins.type").
+.decl is_dtype(e: node)
+is_dtype(e) :- unparen(e, m), attr_of(m, _, "dtype").
+is_dtype(e) :- unparen(e, m), kind(m, "call"), field(m, "function", f), unparen(f, g), imported_sym(g, "numpy.dtype").
+// The builtin classes Ruff's is_type knows by name: the classes, then every builtin exception class.
+.decl builtin_class(x: symbol)
+builtin_class("bool"). builtin_class("bytearray"). builtin_class("bytes"). builtin_class("classmethod").
+builtin_class("complex"). builtin_class("dict"). builtin_class("enumerate"). builtin_class("filter").
+builtin_class("float"). builtin_class("frozenset"). builtin_class("int"). builtin_class("list").
+builtin_class("map"). builtin_class("memoryview"). builtin_class("object"). builtin_class("property").
+builtin_class("range"). builtin_class("reversed"). builtin_class("set"). builtin_class("slice").
+builtin_class("staticmethod"). builtin_class("str"). builtin_class("super"). builtin_class("tuple").
+builtin_class("type"). builtin_class("zip"). builtin_class("ArithmeticError"). builtin_class("AssertionError").
+builtin_class("AttributeError"). builtin_class("BaseException"). builtin_class("BlockingIOError").
+builtin_class("BrokenPipeError"). builtin_class("BufferError"). builtin_class("BytesWarning").
+builtin_class("ChildProcessError"). builtin_class("ConnectionAbortedError"). builtin_class("ConnectionError").
+builtin_class("ConnectionRefusedError"). builtin_class("ConnectionResetError"). builtin_class("DeprecationWarning").
+builtin_class("EnvironmentError"). builtin_class("EOFError"). builtin_class("Exception").
+builtin_class("FileExistsError"). builtin_class("FileNotFoundError"). builtin_class("FloatingPointError").
+builtin_class("FutureWarning"). builtin_class("GeneratorExit"). builtin_class("ImportError").
+builtin_class("ImportWarning"). builtin_class("IndentationError"). builtin_class("IndexError").
+builtin_class("InterruptedError"). builtin_class("IOError"). builtin_class("IsADirectoryError").
+builtin_class("KeyboardInterrupt"). builtin_class("KeyError"). builtin_class("LookupError").
+builtin_class("MemoryError"). builtin_class("ModuleNotFoundError"). builtin_class("NameError").
+builtin_class("NotADirectoryError"). builtin_class("NotImplementedError"). builtin_class("OSError").
+builtin_class("OverflowError"). builtin_class("PendingDeprecationWarning"). builtin_class("PermissionError").
+builtin_class("ProcessLookupError"). builtin_class("RecursionError"). builtin_class("ReferenceError").
+builtin_class("ResourceWarning"). builtin_class("RuntimeError"). builtin_class("RuntimeWarning").
+builtin_class("StopAsyncIteration"). builtin_class("StopIteration"). builtin_class("SyntaxError").
+builtin_class("SyntaxWarning"). builtin_class("SystemError"). builtin_class("SystemExit").
+builtin_class("TabError"). builtin_class("TimeoutError"). builtin_class("TypeError").
+builtin_class("UnboundLocalError"). builtin_class("UnicodeDecodeError"). builtin_class("UnicodeEncodeError").
+builtin_class("UnicodeError"). builtin_class("UnicodeTranslateError"). builtin_class("UnicodeWarning").
+builtin_class("UserWarning"). builtin_class("ValueError"). builtin_class("Warning").
+builtin_class("ZeroDivisionError").

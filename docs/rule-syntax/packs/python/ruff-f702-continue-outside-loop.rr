@@ -1,0 +1,16 @@
+.policy "ruff-f702-continue-outside-loop" revision 2
+.description "Keep continue inside a for or while loop body; outside one (including a loop's else block) it is a Python syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F702 (pyflakes): `continue` with no enclosing loop body in its own def, class or module. CPython rejects
+// the file. A loop's `else` clause is not inside the loop, and a def or class in between hides an outer loop.
+//   def f(): continue        ← F702
+//   for x in xs: continue    not reported
+#include "python/pyflakes.rr"
+//   outside_loop(s)  break/continue s has no loop body around it in its def, class or module
+
+.violation F702(at: node) code "F702" "`continue` not properly in loop"
+    suppress ruff "F702"
+F702(s) :- kind(s, "continue_statement"), outside_loop(s).

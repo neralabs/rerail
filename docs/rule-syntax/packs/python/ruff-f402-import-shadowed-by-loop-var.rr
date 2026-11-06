@@ -1,0 +1,44 @@
+.policy "ruff-f402-import-shadowed-by-loop-var" revision 2
+.description "Don't reuse an imported name as a for-loop variable; the loop silently overwrites the import."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F402 (pyflakes): a `for` loop variable that rebinds an imported name, so the loop overwrites the module.
+// The import is the binding the loop shadows: the latest earlier binding of the name in the loop's own scope,
+// or, when that scope has none yet, the binding in the nearest enclosing def or module. The two must be in the
+// same branch: an import in one arm of an `if` and a loop in the other do not clash.
+//   import os
+//   for os in range(3): ...        ← F402 at `os`
+//   def main():
+//       for os in range(3): ...    ← F402: shadows the module's import
+#include "python/pyflakes.rr"
+
+.violation F402(at: node, x: symbol) code "F402" "Import `{x}` shadowed by loop variable"
+    suppress ruff "F402"
+F402(t, x) :- loop_var(t, x, s), shadows(t, x, s, i), binding(_, x, i, "import"), same_branch(t, i).
+// `from __future__ import annotations` binds `annotations` too, though python/names does not count it.
+F402(t, x) :- loop_var(t, x, m), kind(m, "module"), future_bind(i, x), i < t, !nearest(t, _, branch_block),
+    count : { binding(m, x, o, _), o < t } = 0.
+.decl future_bind(i: node, x: symbol)
+future_bind(i, x) :- kind(f, "future_import_statement"), field(f, "name", i), kind(i, "dotted_name"), text(i, x).
+future_bind(i, x) :- kind(f, "future_import_statement"), field(f, "name", a), field(a, "alias", i), text(i, x).
+.decl loop_var(t: node, x: symbol, s: node)  // t binds x as a `for` statement's target, in scope s
+loop_var(t, x, s) :- binding(s, x, t, "for"), nearest(t, f, target_stmt), kind(f, "for_statement").
+// shadows(t, x, s, i): binding site i is what loop variable t replaces.
+.decl shadows(t: node, x: symbol, s: node, i: node)
+shadows(t, x, s, i) :- loop_var(t, x, s), binding(s, x, i, _), i < t,
+    count : { binding(s, x, o, _), i < o, o < t } = 0.
+shadows(t, x, s, i) :- loop_var(t, x, s), count : { binding(s, x, o, _), o < t } = 0,
+    nearest(s, p, fscope), owner(p, x, q), binding(q, x, i, _), count : { binding(q, x, o, _), o > i } = 0.
+// owner(p, x, q): q is the first scope from p outwards (classes skipped) that binds x.
+.decl owner(p: node, x: symbol, q: node)
+owner(p, x, p) :- owner_ask(p, x), bound_in(p, x).
+owner(p, x, q) :- owner_ask(p, x), !bound_in(p, x), nearest(p, p2, fscope), owner(p2, x, q).
+.decl owner_ask(p: node, x: symbol)
+owner_ask(p, x) :- loop_var(_, x, s), nearest(s, p, fscope).
+owner_ask(p2, x) :- owner_ask(p, x), !bound_in(p, x), nearest(p, p2, fscope).
+// same_branch(a, b): the innermost if/try/match branch around a and b is the same one, or there is none.
+.decl same_branch(a: node, b: node)
+same_branch(t, i) :- shadows(t, _, _, i), nearest(t, b, branch_block), nearest(i, b, branch_block).
+same_branch(t, i) :- shadows(t, _, _, i), !nearest(t, _, branch_block), !nearest(i, _, branch_block).

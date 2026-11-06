@@ -1,0 +1,16 @@
+.policy "ruff-e401-multiple-imports-on-one-line" revision 2
+.description "Give each module its own import statement instead of comma-separating several in one; from-imports may still list several names."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff E401 (pycodestyle): one `import` statement that names several modules. `from m import a, b` is fine.
+//   import os, sys          ← E401
+//   from os import path, sep   not reported
+#include "python/pyflakes.rr"
+
+.violation E401(at: node) code "E401"
+    "Split this into one `import` statement per module, each on its own line (or separated by `;` on a line that already holds other statements)."
+    suppress ruff "E401"
+// import_alias has one row per module the statement names, with or without `as`.
+E401(i) :- kind(i, "import_statement"), count : { import_alias(i, _, _, _, _) } > 1.

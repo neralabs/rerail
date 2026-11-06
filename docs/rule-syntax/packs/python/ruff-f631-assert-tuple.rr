@@ -1,0 +1,17 @@
+.policy "ruff-f631-assert-tuple" revision 3
+.description "Don't use a tuple as an assert's condition; a non-empty tuple is always true, so the assert never fails."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F631 (pyflakes): `assert` whose test is a non-empty tuple, which is always true, so the assert never
+// fails. Usually the message was meant: `assert (x, "msg")` for `assert x, "msg"`.
+//   assert (x, "x is set")    ← F631
+//   assert x, "x is set"      not reported
+//   assert ()                 not reported: the empty tuple is false
+#include "python/pyflakes.rr"
+//   nonempty_tuple(e)  e, through parentheses, is a tuple with at least one element
+
+.violation F631(at: node) code "F631" "Assert test is a non-empty tuple, which is always `True`"
+    suppress ruff "F631"
+F631(a) :- kind(a, "assert_statement"), child(a, t, 0), nonempty_tuple(t).

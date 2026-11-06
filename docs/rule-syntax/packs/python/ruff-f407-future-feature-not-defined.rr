@@ -1,0 +1,28 @@
+.policy "ruff-f407-future-feature-not-defined" revision 2
+.description "Import only real feature names from __future__; an unknown feature name is a syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff F407 (pyflakes): `from __future__ import x` where x is not one of the features `__future__` defines;
+// CPython rejects the file. Reported at the name.
+//   from __future__ import annotations          not reported
+//   from __future__ import braces               ← F407 at `braces`
+#include "python/pyflakes.rr"
+
+.violation F407(at: node, x: symbol) code "F407" "Future feature `{x}` is not defined"
+    suppress ruff "F407"
+// tree-sitter parses `from __future__ import …` as its own statement kind; each name is a dotted_name, or an
+// aliased_import around one. `import *` is also no feature.
+F407(n, x) :- kind(i, "future_import_statement"), field(i, "name", a), future_name(a, n), text(n, x),
+    !future_feature(x).
+F407(w, "*") :- kind(i, "future_import_statement"), child(i, w, _), kind(w, "wildcard_import").
+.decl future_name(a: node, n: node)
+future_name(a, a) :- kind(a, "dotted_name").
+future_name(a, n) :- kind(a, "aliased_import"), field(a, "name", n).
+// The names in CPython's `__future__.all_feature_names`.
+.decl future_feature(x: symbol)
+future_feature("nested_scopes"). future_feature("generators"). future_feature("division").
+future_feature("absolute_import"). future_feature("with_statement"). future_feature("print_function").
+future_feature("unicode_literals"). future_feature("barry_as_FLUFL"). future_feature("generator_stop").
+future_feature("annotations").
