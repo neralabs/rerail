@@ -433,7 +433,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         let mut pending_nodes = 0;
         let mut at = docs.iter().peekable();
         let mut t = thread_usage();
-        let keep_tapes = syntax::VALUES.iter().any(|rel| read.contains(*rel));
+        let keep_tapes = syntax::TAPED.iter().any(|rel| read.contains(*rel));
         // A document's facts: a grammar file's tree, or a text file's text (`core::text`). A text file that is not
         // UTF-8 (an image, an archive) is no document.
         let build = |d: &i64, path: &String| -> Result<Option<syntax::Document>> {
@@ -458,7 +458,8 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             if let Some(references) = &references {
                 references.add(*d as u32, path, &file.source, &facts)?;
             }
-            // W's values are read off the tape, in the file's context: kept only for a program that reads them.
+            // W's values and f-string trees are read off the tape, in the file's context: kept only for a program that
+            // reads them.
             let tape = keep_tapes.then(|| (doc, file));
             Ok(Some(syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest: core::digest(&facts), facts, tape }))
         };
