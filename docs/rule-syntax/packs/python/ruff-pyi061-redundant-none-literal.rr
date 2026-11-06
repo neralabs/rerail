@@ -1,0 +1,18 @@
+.policy "ruff-pyi061-redundant-none-literal" revision 2
+.description "Write None as plain None or in a union with None, not inside a Literal type; the meaning is the same and the union reads more clearly."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI061 (flake8-pyi), every file: `None` inside `Literal[…]`. `Literal[None]` is `None`, and
+// `Literal[1, None]` is `Literal[1] | None`. Nested Literals are flattened; each None is reported.
+//   x: Literal[None]           ← PYI061: write `None`
+//   y: Literal[1, None]        ← PYI061: write `Literal[1] | None`
+#include "python/typing.rr"
+
+.violation PYI061(at: node, msg: symbol) code "PYI061" "{msg}"
+    suppress ruff "PYI061"
+PYI061(n, "This Literal holds only `None`; write plain `None` instead. Leave it if runtime code reads this annotation's arguments.") :-
+    literal_leaf(l, n), kind(n, "none"), count : { literal_leaf(l, m), !kind(m, "none") } = 0.
+PYI061(n, "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10). Leave it if runtime code reads this annotation's arguments.") :-
+    literal_leaf(l, n), kind(n, "none"), literal_leaf(l, m), !kind(m, "none").

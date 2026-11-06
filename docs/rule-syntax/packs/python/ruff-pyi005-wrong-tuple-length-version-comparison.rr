@@ -1,0 +1,19 @@
+.policy "ruff-pyi005-wrong-tuple-length-version-comparison" revision 2
+.description "Compare a sys.version_info slice only with a tuple of the same length in stub files; a tuple of another length is never equal."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI005 (flake8-pyi), stubs only: `sys.version_info[:1]` or `[:2]` tested with `==` or `!=` against a
+// tuple of another length (any elements), which is never equal. The `if` test is checked, or each operand of
+// its top-level `and`/`or`.
+//   if sys.version_info[:2] == (3,):     ← PYI005
+//   if sys.version_info[:2] >= (3,):     fine: an ordering compares
+#include "python/typing.rr"
+
+.violation PYI005(at: node, msg: symbol) code "PYI005" "{msg}"
+    suppress ruff "PYI005"
+PYI005(c, m) :- stub_test(c), version_cmp(c, f, o, r), (o = "==" ; o = "!="), tuple_len(r, k), wants(f, n, m), k != n.
+.decl wants(form: symbol, n: number, msg: symbol)  // the slice, the tuple length it compares with
+wants("slice1", 1, "Match the slice to the tuple length: use `sys.version_info[:2]` for a tuple such as `(3, 9)`, or a one-element tuple such as `(3,)` with `[:1]`; as written the result ignores the version.").
+wants("slice2", 2, "Match the slice to the tuple length: use `sys.version_info[0] == 3` for the major version only, or a tuple such as `(3, 9)` with `[:2]`; as written the result ignores the version.").

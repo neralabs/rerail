@@ -1,0 +1,32 @@
+.policy "ruff-pyi019-custom-type-var-for-self" revision 2
+.description "Use Self instead of a custom type variable to annotate the instance or class a method works on; Self is shorter and needs no type variable."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI019 (flake8-pyi), every file: a method whose first parameter is annotated with a type variable
+// standing for the class: `self: _S` in an instance method, `cls: type[_S]` in a class method or `__new__`.
+// `Self` says the same. Any TypeVar counts, private or not, assigned in the file or a PEP 695 parameter of the
+// def itself (not of its class); the return annotation does not matter. Static, abstract and overloaded
+// methods are skipped, and so are definite metaclasses (`class M(type)`; a maybe-metaclass is checked).
+// Reported where the signature starts: the `[` of PEP 695 parameters, else the `(`.
+//   def m(self: _S) -> _S: ...                  ← PYI019
+//   @classmethod
+//   def make(cls: type[_S]) -> _S: ...          ← PYI019 (typing.Type[_S] and builtins.type[_S] are not checked)
+#include "python/typing.rr"
+
+.violation PYI019(at: node, x: symbol) code "PYI019" "Replace the custom type variable `{x}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{x}` here."
+    suppress ruff "PYI019"
+PYI019(at, x) :- receiver(f, k, t), sig_at(f, at), (k = "instance", self_var(t, x) ; k != "instance", builtin_sub(t, "type"),
+    tsub(t, h, 0, e), kind(h, "identifier"), tsub_n(t, 1), self_var(e, x)).
+// receiver(f, k, t): method f of kind k (not static) has its first parameter annotated t, bare.
+.decl receiver(f: node, k: symbol, t: node)
+receiver(f, k, t) :- method_kind(f, k), k != "static", pyi_method(c, f, _), !metaclass_yes(c), !abstract(f),
+    !decorated(f, "overload"), first_param(f, _, a), !unset(a), type_bare(a, t).
+.decl sig_at(f: node, at: node)
+sig_at(f, at) :- receiver(f, _, _), (field(f, "type_parameters", at) ; !field(f, "type_parameters", _),
+    field(f, "parameters", at)).
+// self_var(t, x): t is a type variable x, or a string annotation that parses to one.
+.decl self_var(t: node, x: symbol)
+self_var(t, x) :- typevar_name(t, x).
+self_var(t, x) :- parsed(t, "annotation", r0), type_bare(r0, r), typevar_name(r, x).

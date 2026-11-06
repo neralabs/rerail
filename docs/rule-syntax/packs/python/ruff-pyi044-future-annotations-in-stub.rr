@@ -1,0 +1,17 @@
+.policy "ruff-pyi044-future-annotations-in-stub" revision 2
+.description "Remove the future annotations import from stub files; stubs are never executed and already treat annotations as forward references."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI044 (flake8-pyi), stubs only: `from __future__ import annotations`, alone or with other features,
+// aliased or not. Stubs already read annotations lazily.
+//   from __future__ import annotations         ← PYI044
+#include "python/typing.rr"
+
+.violation PYI044(at: node) code "PYI044" "Delete `annotations` from this `__future__` import (and the whole line if nothing else is imported); stubs already treat annotations as forward references."
+    suppress ruff "PYI044"
+PYI044(i) :- kind(i, "future_import_statement"), in_stub(i), field(i, "name", a), import_name(a, "annotations").
+.decl import_name(a: node, x: symbol)  // the imported name of alias a: `x` or `x as y`
+import_name(a, x) :- kind(a, "dotted_name"), text(a, x).
+import_name(a, x) :- kind(a, "aliased_import"), field(a, "name", n), text(n, x).

@@ -1,0 +1,15 @@
+.policy "ruff-pyi014-argument-default-in-stub" revision 2
+.description "Replace complex default values of untyped parameters in stub files with an ellipsis; only simple literal defaults belong in a stub."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI014 (flake8-pyi), stubs only: an unannotated parameter's default that is not a simple value (see
+// python/typing's simple_value: literals, `-1`, `1 + 2j`, math and sys constants, small flat containers).
+//   def f(a=os.sep, b=[[1]], c=(1, 2)): ...     ← PYI014 at `os.sep` and `[[1]]`; `(1, 2)` is fine
+#include "python/typing.rr"
+
+.violation PYI014(at: node) code "PYI014" "Replace this default value with `...`; a stub only needs to show that the parameter has a default, and keeps literal values only when they are simple."
+    suppress ruff "PYI014"
+PYI014(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), unset(a), !unset(d),
+    !simple_value(d, "top").

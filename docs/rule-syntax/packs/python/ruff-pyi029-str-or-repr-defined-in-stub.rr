@@ -1,0 +1,18 @@
+.policy "ruff-pyi029-str-or-repr-defined-in-stub" revision 2
+.description "Remove redundant __str__ and __repr__ definitions from stub files; their signatures match the defaults every class inherits, so they add nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PYI029 (flake8-pyi), stubs only: a method `__str__` or `__repr__` with object's own signature: at most
+// one positional parameter, no keyword-only ones, returning builtin `str`, and not abstract. Reported at the name.
+//   class C:
+//       def __str__(self) -> str: ...          ← PYI029
+//       def __repr__(self, x) -> str: ...      fine: another signature
+#include "python/typing.rr"
+
+.violation PYI029(at: node, x: symbol) code "PYI029" "Remove this `{x}` definition from the stub; a `{x}` returning `str` is inherited from `object`, so declaring it is almost always redundant."
+    suppress ruff "PYI029"
+PYI029(n, x) :- pyi_method(_, f, x), (x = "__str__" ; x = "__repr__"), in_stub(f), returns(f, t), sym_of(t, "builtins.str"),
+    count : { sig_param(f, p, _, _, k, _, _), pos_kind(k) } <= 1, !sig_param(f, _, _, _, "kwonly", _, _),
+    !abstract(f), field(f, "name", n).
