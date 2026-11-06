@@ -338,15 +338,25 @@ are quick.
   `:workspace` profile: only the workspace root is writable, and the network is off. It also denies reads and writes
   in `/tmp`, `$TMPDIR` (other runs' folders), the home folder except its toolchains (`.cargo`, `.rustup`, `go`,
   `.nvm`, `.pyenv`, `.bun`, `.local/bin`), Codex's release folder and Node, the source repository, the dataset,
-  `--repos` and the ledger cache. Hooks run outside the sandbox.
+  `--repos` and the ledger cache. Hooks run outside the sandbox. The agent's commands get Codex's environment without
+  credentials (`shell_environment_policy`: every `AWS_*` variable and every name with `TOKEN`, `SECRET`, `KEY`,
+  `CREDENTIAL` or `PASSWORD`).
+- **Provider.** `--provider amazon-bedrock --model <id>` (for example `openai.gpt-6-luna`) puts every Codex call,
+  agent and grader, on Codex's built-in Bedrock provider (`--bedrock-region`, `us-east-1` by default); the grader uses
+  the same model unless `--judge-model` says otherwise. `--codex-bin` names the Codex executable when it is not on
+  `PATH`. `--bedrock-token-cmd '<cmd>'` runs the command once at the start and hands what it prints to the Codex
+  processes only, as `AWS_BEARER_TOKEN_BEDROCK`: never to the harness's own commands, the report, or the agent's
+  shell. Without it Codex uses the AWS credential chain.
 - **Leak guard.** After each run, every tool call in Codex's `--json` events and in its session transcript is
   checked. The transcript also holds calls the sandbox refused and calls a code-mode `exec` cell made. A run is marked
   `leaked` with the offending calls if any call names a path outside its folder, the system folders or the
   toolchains. Paths starting with `~`, `$HOME` or `..` count too, as do `/tmp/ma-ctx`, `refs/pull/`, GitHub hosts,
-  `curl`/`wget`/`gh`/`ssh`, git `fetch`/`clone`/`pull`/`ls-remote`, or a web search. Patches count by the files they
-  name. Leaked runs are listed with their calls and counted per arm, then left out of every aggregate. `--tamper` runs
-  each selected pair once under `none` with the task "Run `ls /tmp/ma-ctx/oss` …" and exits non-zero unless every
-  run is flagged.
+  `curl`/`wget`/`gh`/`ssh`, git `fetch`/`clone`/`pull`/`ls-remote`, a web search, a command that prints the
+  environment (`env`, `printenv`, `export -p`, `/proc/*/environ`, all of `os.environ` or `process.env`), or one that
+  reads a credential (`$AWS_…`, Secrets Manager, the instance metadata address, `~/.aws`). So does a credential Codex
+  ran with appearing in the run's events or transcript. Patches count by the files they name. Leaked runs are listed
+  with their calls and counted per arm, then left out of every aggregate. `--tamper` runs each selected pair once
+  under `none` with the task "Run `ls /tmp/ma-ctx/oss` …" and exits non-zero unless every run is flagged.
 - **Arms.** `none`: the hook only logs. `align`: at an area's first touch (the context eval's areas and triggers:
   files read after a command, files patched before the patch), the hook asks `--align-module`'s `deliverForArea`
   (`benchmark/merge-assist-align.ts` by default) for that area's units, passing the files the call touched there.
@@ -420,7 +430,14 @@ and not changed after.
   were only smoke-run on the Rerail dev pair.
 - **Fixed settings.** Each run starts from the second pull request's `base_sha` as a history-free snapshot; the
   ledger of other pull requests is as visible at the second's start (the first plus every concurrent one). Codex 0.158,
-  default model, `--timeout-min 20`, the sandbox profile and leak guard; leaked runs are excluded and reported.
+  `--timeout-min 20`, the sandbox profile and leak guard; leaked runs are excluded and reported.
+- **Amendment, committed before any OSS run produced data.** Runs execute on Linux build hosts, not the Mac: Codex
+  0.158 with its `amazon-bedrock` provider and `openai.gpt-6-luna` on Amazon Bedrock (the same model the earlier
+  comparisons reached through the default ChatGPT route), for both the agent and the blind grader; the sandbox is
+  Codex's Linux one, with the same profile rules (network off, only the run's folder writable, other runs, the
+  dataset and home denied) and the tamper check passing on the host before look 1. The Bedrock key reaches the Codex
+  process only, never the agent's shell. An earlier look 1 started on the Mac was stopped before any run finished;
+  nothing from it is used.
 - **Primary** (per treatment against `none`, one-sided, stratified by pair, Holm across the two treatments): R1, the
   share of runs the blind grader judges to conflict with the first pull request's design (yes or unclear count as a
   conflict; errors and empty diffs count as failures) is lower.
