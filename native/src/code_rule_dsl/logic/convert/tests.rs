@@ -23,30 +23,70 @@ struct Converted {
     program: String,
     clauses: Vec<(String, Result<Origin, Gap>)>,
     approx: BTreeSet<String>,
+    /// Whether the run's options differ from the policy's own (its config, else its defaults), or its clauses were
+    /// edited: what an authored file, written for the policy as it is, does not follow.
+    configured: bool,
+}
+
+/// Why a rule did not convert: the run's configuration does not apply to it, or its authored file is wrong.
+#[derive(Debug)]
+enum Failure {
+    Config(String),
+    Authored(String),
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Config(e) => write!(f, "the configuration does not apply: {e}"),
+            Failure::Authored(e) => f.write_str(e),
+        }
+    }
 }
 
 fn scope_globs(document: &serde_json::Value, key: &str) -> Vec<String> {
     document.get("scope").and_then(|s| s.get(key)).and_then(|v| v.as_array()).into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect()
 }
 
-/// How a replay event adjusts a rule: its scope, and which clauses it keeps.
+/// How a replay event adjusts a rule: its scope, which clauses it keeps, and an edit of the policy document before it
+/// compiles (option values, clause edits) that says whether it edited clauses, or why it cannot apply.
 #[derive(Default)]
 struct Adjust {
     scope: Option<(Vec<String>, Vec<String>)>,
     keep: Option<Box<dyn Fn(&str) -> bool>>,
+    policy: Option<Box<dyn Fn(&mut serde_json::Value) -> Result<bool, String>>>,
+}
+
+/// A policy's option values, clause by clause: its config's, else the option's default.
+fn option_values(document: &serde_json::Value) -> Vec<(usize, String, serde_json::Value)> {
+    let mut out = Vec::new();
+    for (i, clause) in document["clauses"].as_array().into_iter().flatten().enumerate() {
+        let define = &clause["define"];
+        for (name, option) in define["options"].as_object().into_iter().flatten() {
+            let value = define["config"].get(name).unwrap_or(&option["default"]);
+            out.push((i, name.clone(), value.clone()));
+        }
+    }
+    out
 }
 
 /// One rule file as a program: its scope as path globs and each forbid clause's matcher as rules deriving
 /// `violation(rule, clause, code, path, line)`, under the rule's authored file (`authored()`) where it has one. An
 /// error is the authored file's.
-fn convert(path: &Path, adjust: &Adjust) -> Result<Converted, String> {
+fn convert(path: &Path, adjust: &Adjust) -> Result<Converted, Failure> {
     convert_over(path, adjust, Some(&authored()))
 }
 
 /// `convert` with the authored files in `authored`, or none.
-fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result<Converted, String> {
+fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result<Converted, Failure> {
     let text = std::fs::read_to_string(path).unwrap();
     let mut document: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let original = document.clone();
+    let edited = match &adjust.policy {
+        Some(edit) => edit(&mut document).map_err(Failure::Config)?,
+        None => false,
+    };
+    let configured = edited || option_values(&original) != option_values(&document);
     let id = document["id"].as_str().unwrap().to_owned();
     // A relational clause is SQL stages: it is not converted but written by hand in `.rr` (list step 30). It is
     // taken out before the rest compiles, since the newer rules' stages use forms (`escape: sql`, `message`,
@@ -62,10 +102,15 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
             !sql
         });
     }
-    let text = if relational.is_empty() { text } else { document.to_string() };
+    let text = if relational.is_empty() && document == original { text } else { document.to_string() };
     // Only relational clauses report: nothing is left to compile.
     let reports = document["clauses"].as_array().into_iter().flatten().any(|c| c.get("define").is_none());
-    let compiled = reports.then(|| CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).unwrap_or_else(|e| panic!("{id}: {e:?}")));
+    let compiled = match reports.then(|| CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned())) {
+        Some(Ok(c)) => Some(c),
+        Some(Err(e)) if configured => return Err(Failure::Config(format!("{id} does not compile so configured: {}", e.reason))),
+        Some(Err(e)) => panic!("{id}: {e:?}"),
+        None => None,
+    };
     let mut e = Emitter::new(GrammarDialect::Python);
     let (include, exclude) = adjust.scope.clone().unwrap_or_else(|| (scope_globs(&document, "include"), scope_globs(&document, "exclude")));
     // The scope: a document in an include glob and in no exclude glob.
@@ -156,8 +201,8 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     // The authored file's clauses over the converter's, with only what `violation` reaches.
     let file = authored.map(|dir| dir.join(format!("{id}.rr"))).filter(|f| f.exists());
     let prog = if let Some(file) = file {
-        let authored = crate::code_rule_dsl::logic::rr::parse_file(&file).map_err(|e| format!("{}: {e:?}", file.display()))?;
-        let (prog, given) = overlay(prog, authored, &id, &order, &|c| adjust.keep.as_ref().is_none_or(|keep| keep(c))).map_err(|e| format!("{}: {e}", file.display()))?;
+        let authored = crate::code_rule_dsl::logic::rr::parse_file(&file).map_err(|e| Failure::Authored(format!("{}: {e:?}", file.display())))?;
+        let (prog, given) = overlay(prog, authored, &id, &order, &|c| adjust.keep.as_ref().is_none_or(|keep| keep(c))).map_err(|e| Failure::Authored(format!("{}: {e}", file.display())))?;
         for (clause, result) in &mut clauses {
             if given.contains(clause) {
                 *result = Ok(Origin::Authored);
@@ -167,8 +212,8 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     } else {
         reachable(prog)
     };
-    let program = crate::code_rule_dsl::logic::rr::print(&prog).map_err(|e| format!("{id}: the merged program does not print: {e:?}"))?;
-    Ok(Converted { program, clauses, approx: e.approx.clone() })
+    let program = crate::code_rule_dsl::logic::rr::print(&prog).map_err(|e| Failure::Authored(format!("{id}: the merged program does not print: {e:?}")))?;
+    Ok(Converted { program, clauses, approx: e.approx.clone(), configured })
 }
 
 /// The rules the converter reads, by id: the 60 of Pulling-it-all-together's rewrite (`rules-ast`), then the
@@ -349,14 +394,44 @@ fn regexes_become_exact_globs() {
     }
 }
 
-/// The recorded events (the upstream linters' tests, `fixtures/host/data-layer-port`), as `replay.ts` reads them:
-/// every batch's recording and probes. Each event carries its group in `_group`: `recordings 1-6` (the baseline
-/// the 60 rules were converted against) or `batches 7-8 and probes`.
-fn events() -> Vec<serde_json::Value> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port");
+type Json = serde_json::Value;
+
+/// A finding as the replay compares it: (path, line, code), the code `None` where the oracle records none.
+type Key = (String, u64, Option<String>);
+
+/// One event the replay runs: an upstream linter call on files, and what it found.
+struct Event {
+    /// `recordings 1-6` (the baseline the 60 rules were converted against), `batches 7-8 and probes`, or
+    /// `batches 9-10 API records`.
+    group: &'static str,
+    check: String,
+    test: String,
+    files: Vec<(String, String)>,
+    /// The oracle's findings, or why they cannot be compared.
+    want: Result<Vec<Key>, String>,
+    /// Whether the oracle compares more than the keys (messages, metadata, categories, columns).
+    keys_only: bool,
+    /// The rule as the oracle ran it, or why it cannot be configured so.
+    adjust: Result<Adjust, String>,
+}
+
+fn port() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/fixtures/host/data-layer-port")
+}
+
+/// Every event of the oracle (`fixtures/host/data-layer-port`): the recordings and probes, then the API records of
+/// batches 9 and 10.
+fn events() -> Vec<Event> {
+    let mut out = recorded_events();
+    out.extend(api_events());
+    out
+}
+
+/// The recorded events (the upstream linters' tests), as `replay.ts` reads them: every batch's recording and probes.
+fn recorded_events() -> Vec<Event> {
     let first = |name: &str| (1..=6).any(|b| name == format!("batch-{b:02}-recording.json"));
     let events = |name: &str| name.starts_with("batch-") && (name.ends_with("-recording.json") || name.ends_with("probes.json"));
-    let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(port())
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(events))
@@ -364,20 +439,186 @@ fn events() -> Vec<serde_json::Value> {
     paths.sort();
     let mut out = Vec::new();
     for p in paths {
-        let recording: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        let recording: Json = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         let group = if first(&p.file_name().unwrap().to_string_lossy()) { "recordings 1-6" } else { "batches 7-8 and probes" };
-        for mut event in recording["events"].as_array().cloned().unwrap_or_default() {
-            if event.get("retained_reason").is_some() || event["upstream_passed"] != serde_json::Value::Bool(true) {
+        for event in recording["events"].as_array().into_iter().flatten() {
+            if event.get("retained_reason").is_some() || event["upstream_passed"] != Json::Bool(true) {
                 continue;
             }
-            if event.get("files").is_none_or(serde_json::Value::is_null) {
-                event["files"] = recording["files"].clone();
-            }
-            event["_group"] = group.into();
-            out.push(event);
+            let files = if event.get("files").is_none_or(Json::is_null) { &recording["files"] } else { &event["files"] };
+            let files = files.as_array().into_iter().flatten().map(|f| (f["path"].as_str().unwrap().to_owned(), f["source"].as_str().unwrap().to_owned())).collect();
+            let check = event["check"].as_str().unwrap().to_owned();
+            let entry = event["entry"].as_str().unwrap_or_default();
+            let truthy = |k: &str| event.get(k).is_some_and(|v| !v.is_null() && v != false && v.as_array().is_none_or(|a| !a.is_empty()));
+            // `replay.ts` compares messages, metadata fields and categories where asked, and the backend checks' columns.
+            let keys_only = truthy("compare_message") || truthy("compare_fields") || truthy("compare_clause") || check == "backend_type_strings";
+            let want = Ok(event["findings"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| (f["path"].as_str().unwrap().to_owned(), f["line"].as_u64().unwrap_or_default(), f["code"].as_str().map(str::to_owned)))
+                .collect());
+            let adjust = recorded_adjust(event, &check, entry, event["production_scope"] == true);
+            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust });
         }
     }
     out
+}
+
+/// A recorded event's rule as `replay.ts` runs it: outside production its scope is the event's and `oracleAnalyzer`
+/// is on; the oracle's `source_gate`, `categories` (`category-<name>` options, each name in its first category) and
+/// `options` set the options the policy declares, and, as in `replay.ts`, an oracle setting the policy declares no
+/// option for is left out (the rule has no such switch: `lazy_architecture`'s `oracleAnalyzer`, say); the
+/// escape-hatch analyzer calls drop `report_when`; and a `path_skip_override` (the test switched off the linter's
+/// own path skips, which are the regex clauses' `paths`, not the scope) drops those `paths`. A signed allowlist is
+/// checked by the host, not the rule: that is not replayed.
+fn recorded_adjust(event: &Json, check: &str, entry: &str, production: bool) -> Result<Adjust, String> {
+    let oracle = &event["oracle_config"];
+    if oracle.get("allowlist_signature").is_some_and(|v| !v.is_null()) {
+        return Err("a signed allowlist (the host's signature guard)".into());
+    }
+    let globs = |key: &str| event["scope"][key].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect::<Vec<_>>();
+    let scope = (!production).then(|| if globs("include").is_empty() { (vec![], vec![]) } else { (globs("include"), globs("exclude")) });
+    let source_gate = oracle.get("source_gate").filter(|v| !v.is_null()).cloned();
+    // No name is in two categories in the recordings, so the order categories are read in does not matter.
+    let categories = oracle.get("categories").and_then(Json::as_object).map(|categories| {
+        let mut assigned = BTreeSet::new();
+        let mut out = BTreeMap::new();
+        for (category, names) in categories {
+            let names: Vec<Json> = names.as_array().into_iter().flatten().filter(|n| assigned.insert(n.to_string())).cloned().collect();
+            out.insert(category.clone(), Json::Array(names));
+        }
+        out
+    });
+    let options = oracle.get("options").and_then(Json::as_object).cloned().unwrap_or_default();
+    let report_when = check == "sql_grammar_escape_hatches" && entry != "plugin.reporter";
+    let path_skip = event["path_skip_override"] == true;
+    let policy = move |document: &mut Json| -> Result<bool, String> {
+        let mut edited = false;
+        for clause in document.get_mut("clauses").and_then(Json::as_array_mut).into_iter().flatten() {
+            if path_skip && clause.get_mut("forbid").and_then(|f| f.get_mut("regex")).and_then(Json::as_object_mut).is_some_and(|r| r.remove("paths").is_some()) {
+                edited = true;
+            }
+            let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) else { continue };
+            if report_when && define.remove("report_when").is_some() {
+                edited = true;
+            }
+            let Some(declares) = define.get("options").and_then(Json::as_object).cloned() else { continue };
+            let mut config = define.get("config").and_then(Json::as_object).cloned().unwrap_or_default();
+            if declares.contains_key("oracleAnalyzer") {
+                config.insert("oracleAnalyzer".into(), Json::Bool(!production));
+            }
+            if let Some(gate) = source_gate.as_ref().filter(|_| declares.contains_key("sourceGate")) {
+                config.insert("sourceGate".into(), gate.clone());
+            }
+            if let Some(categories) = &categories {
+                for name in declares.keys().filter(|n| n.starts_with("category-")) {
+                    config.insert(name.clone(), categories.get(&name["category-".len()..]).cloned().unwrap_or_else(|| Json::Array(Vec::new())));
+                }
+            }
+            for (name, value) in options.iter().filter(|(name, _)| declares.contains_key(*name)) {
+                config.insert(name.clone(), value.clone());
+            }
+            if !config.is_empty() {
+                define.insert("config".into(), Json::Object(config));
+            }
+        }
+        Ok(edited)
+    };
+    Ok(Adjust { scope, keep: keep(check, entry, production), policy: Some(Box::new(policy)) })
+}
+
+/// The API records of batches 9 and 10 (`batch-nine.ts`, `batch-ten.ts`): each linter entry point's result on its
+/// files, the test passed, each distinct record once.
+fn api_events() -> Vec<Event> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for name in ["batch-09-complete-api.json", "batch-10-complete-api.json.gz", "batch-10-file-contract-regressions.json", "batch-10-repair-regressions.json"] {
+        let path = port().join(name);
+        let bytes = if name.ends_with(".gz") {
+            let output = std::process::Command::new("gzip").arg("-dc").arg(&path).output().unwrap();
+            assert!(output.status.success(), "gzip -dc {}", path.display());
+            output.stdout
+        } else {
+            std::fs::read(&path).unwrap()
+        };
+        let oracle: Json = serde_json::from_slice(&bytes).unwrap();
+        let records = oracle.get("records").or_else(|| oracle.get("cases").filter(|c| c.is_array()));
+        let passed = |test: &str| oracle["cases"].get(test).and_then(Json::as_array).is_none_or(|phases| phases.iter().all(|p| p["outcome"] == "passed"));
+        for record in records.and_then(Json::as_array).into_iter().flatten() {
+            let test = record["test"].as_str().unwrap_or_default().to_owned();
+            let mut content = record.clone();
+            content.as_object_mut().unwrap().remove("test");
+            if !passed(&test) || !seen.insert(content.to_string()) {
+                continue;
+            }
+            let check = record["check"].as_str().unwrap().to_owned();
+            let entry = record["entry"].as_str().unwrap_or_default().to_owned();
+            let files: Option<Vec<(String, String)>> = record["files"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|f| {
+                    let source = f["source"].as_str().or_else(|| f["sourceSha256"].as_str().and_then(|s| oracle["sources"][s].as_str()));
+                    source.map(|s| (f["path"].as_str().unwrap().to_owned(), s.to_owned()))
+                })
+                .collect();
+            let (want, files) = match files {
+                Some(files) => (api_want(&check, &entry, &record["expected"], &files), files),
+                None => (Err("a file whose source is not recorded".into()), Vec::new()),
+            };
+            let adjust = Ok(api_adjust(&check, &entry, &record["parameters"], record["production"] == true));
+            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust });
+        }
+    }
+    out
+}
+
+/// An API record's rule as `batch-nine.ts` and `batch-ten.ts` run it: outside production, every clause's options
+/// configured with the entry point and the parameters, and every file in scope.
+fn api_adjust(check: &str, entry: &str, parameters: &Json, production: bool) -> Adjust {
+    if production {
+        return Adjust::default();
+    }
+    let entry = Json::String(if check == "connection_service_architecture" && entry == "lint" { "all".into() } else { entry.into() });
+    let parameters = Json::String(parameters.to_string());
+    let policy = move |document: &mut Json| -> Result<bool, String> {
+        for clause in document.get_mut("clauses").and_then(Json::as_array_mut).into_iter().flatten() {
+            let Some(define) = clause.get_mut("define").and_then(Json::as_object_mut) else { continue };
+            if define.get("options").is_none_or(Json::is_null) {
+                continue;
+            }
+            let mut config = define.get("config").and_then(Json::as_object).cloned().unwrap_or_default();
+            config.insert("entryPoint".into(), entry.clone());
+            config.insert("parameters".into(), parameters.clone());
+            define.insert("config".into(), Json::Object(config));
+        }
+        Ok(false)
+    };
+    Adjust { scope: Some((vec!["**/*".into()], Vec::new())), keep: None, policy: Some(Box::new(policy)) }
+}
+
+/// An API record's result as keys: rows of a path (`path`, `file_path`, `file`, or the one file), a line (`line`,
+/// `line_number`) and a code (`code`, `rule`, `rule_id`) where it has one; or why it is not findings.
+fn api_want(check: &str, entry: &str, expected: &Json, files: &[(String, String)]) -> Result<Vec<Key>, String> {
+    let Some(rows) = expected.as_array() else { return Err("the oracle's result is an exception, not findings".into()) };
+    rows.iter()
+        .map(|row| {
+            let Some(row) = row.as_object() else { return Err("findings recorded as text, not rows".into()) };
+            let text = |keys: &[&str]| keys.iter().find_map(|k| row.get(*k).and_then(Json::as_str)).map(str::to_owned);
+            let path = match text(&["path", "file_path", "file"]) {
+                // The scan reports its temporary copy: `tmp/embedding_vector_orchestration_scan/<digest>/<path>`.
+                Some(p) if check == "embedding_vector_orchestration" && entry == "scan_source" => {
+                    p.strip_prefix("tmp/embedding_vector_orchestration_scan/").and_then(|r| r.split_once('/')).map_or(p.clone(), |(_, rest)| rest.to_owned())
+                }
+                Some(p) => p,
+                None if files.len() == 1 => files[0].0.clone(),
+                None => return Err("a finding without a path".into()),
+            };
+            let Some(line) = ["line", "line_number"].iter().find_map(|k| row.get(*k).and_then(Json::as_u64)) else { return Err("a finding without a line".into()) };
+            Ok((path, line, text(&["code", "rule", "rule_id"])))
+        })
+        .collect()
 }
 
 /// The replay's clause filters (`replay.ts`), by check and entry.
@@ -401,102 +642,178 @@ fn keep(check: &str, entry: &str, production: bool) -> Option<Box<dyn Fn(&str) -
     }
 }
 
-/// The converted rules, with their authored files, on the recorded events: per check, the events whose kept clauses
-/// are all converted or authored and how many give the recorded findings exactly (path, line, code); then per check
-/// the clauses still gapped, and the first misses. `RERAIL_REPLAY_CHECK` selects checks (comma-separated),
-/// `RERAIL_REPLAY_MISSES` how many misses are printed (40).
+/// What the replay counts, per group and check.
+#[derive(Default)]
+struct Row {
+    events: usize,
+    /// Events it can run: a rule file, comparable findings, a configuration that applies.
+    replayable: usize,
+    /// Replayable events whose kept clauses are all converted or authored, run.
+    run: usize,
+    exact: usize,
+    /// Of the exact, those whose oracle compares more than (path, line, code), which the replay does not.
+    keys_only: usize,
+    errors: usize,
+    /// Run events configured otherwise than the policy is, with an authored clause, which follows the policy's own
+    /// options: their mismatches are listed apart.
+    config_authored: usize,
+    config_authored_exact: usize,
+    /// Why the other events were not run, by reason.
+    not_run: BTreeMap<String, usize>,
+}
+
+impl Row {
+    fn add(&mut self, o: &Row) {
+        self.events += o.events;
+        self.replayable += o.replayable;
+        self.run += o.run;
+        self.exact += o.exact;
+        self.keys_only += o.keys_only;
+        self.errors += o.errors;
+        self.config_authored += o.config_authored;
+        self.config_authored_exact += o.config_authored_exact;
+        for (reason, n) in &o.not_run {
+            *self.not_run.entry(reason.clone()).or_default() += n;
+        }
+    }
+
+    fn line(&self) -> String {
+        let mut line = format!(
+            "events {}, replayable {}, run {}, exact {} (keys only {}), errors {}, config+authored {} (exact {})",
+            self.events, self.replayable, self.run, self.exact, self.keys_only, self.errors, self.config_authored, self.config_authored_exact
+        );
+        if !self.not_run.is_empty() {
+            let reasons: Vec<String> = self.not_run.iter().map(|(r, n)| format!("{r} {n}")).collect();
+            line.push_str(&format!("; not run: {}", reasons.join(", ")));
+        }
+        line
+    }
+}
+
+/// The converted rules, with their authored files, on every event of the oracle (`events`), each configured as its
+/// oracle ran (`recorded_adjust`, `api_adjust`). Per group and check: the events, those it can replay, those whose
+/// kept clauses are all converted or authored (run), how many give the oracle's findings exactly as (path, line,
+/// code) keys, and why the rest were not run; then per check the clauses still gapped, the first misses, and the
+/// mismatches of configured events with authored clauses. `RERAIL_REPLAY_CHECK` (check names) and
+/// `RERAIL_REPLAY_RULE` (rule ids), comma-separated, select; `RERAIL_REPLAY_MISSES` is how many misses are printed
+/// (40).
 #[test]
 #[ignore = "runs every recorded event through the corpus runner"]
 fn converted_rules_give_the_recorded_findings() {
-    let only: Option<Vec<String>> = std::env::var("RERAIL_REPLAY_CHECK").ok().map(|s| s.split(',').map(str::to_owned).collect());
+    let list = |var: &str| std::env::var(var).ok().map(|s| s.split(',').map(str::to_owned).collect::<Vec<_>>());
+    let (checks, rules) = (list("RERAIL_REPLAY_CHECK"), list("RERAIL_REPLAY_RULE"));
+    let selected = |check: &str| {
+        (checks.is_none() && rules.is_none())
+            || checks.as_ref().is_some_and(|c| c.iter().any(|c| c == check))
+            || rules.as_ref().is_some_and(|r| r.iter().any(|r| *r == format!("data-layer-{}", check.replace('_', "-"))))
+    };
     let shown: usize = std::env::var("RERAIL_REPLAY_MISSES").ok().map_or(40, |n| n.parse().expect("RERAIL_REPLAY_MISSES: a count"));
-    let mut per_check = BTreeMap::<(String, String), [usize; 4]>::new();
+    let mut per_check = BTreeMap::<(&'static str, String), Row>::new();
     let mut gapped = BTreeMap::<String, BTreeSet<String>>::new();
-    let mut unreplayed = BTreeMap::<String, usize>::new();
-    let mut misses = Vec::new();
+    let (mut misses, mut config_misses) = (Vec::new(), Vec::new());
     let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay");
     for (k, event) in events().into_iter().enumerate() {
-        let check = event["check"].as_str().unwrap().to_owned();
-        if only.as_ref().is_some_and(|o| !o.contains(&check)) {
+        if !selected(&event.check) {
             continue;
         }
-        let row = per_check.entry((event["_group"].as_str().unwrap().to_owned(), check.clone())).or_default();
-        row[0] += 1;
-        // Configured oracles, path-skip overrides, and comparisons of the message or of oracle metadata (which
-        // the findings here do not carry) are not replayed.
-        let unread = ["compare_message", "compare_fields"].iter().any(|k| event.get(*k).is_some_and(|v| !v.is_null() && v != false && v.as_array().is_none_or(|a| !a.is_empty())));
-        if unread || event.get("oracle_config").is_some_and(|c| !c.is_null()) || event.get("path_skip_override").is_some_and(|v| v == true) {
-            *unreplayed.entry(check.clone()).or_default() += 1;
-            continue;
-        }
-        let production = event.get("production_scope").is_some_and(|v| v == true);
-        let globs = |key: &str| event["scope"][key].as_array().into_iter().flatten().filter_map(|g| g.as_str().map(str::to_owned)).collect::<Vec<_>>();
-        let scope = (!production).then(|| if globs("include").is_empty() { (vec![], vec![]) } else { (globs("include"), globs("exclude")) });
-        let adjust = Adjust { scope, keep: keep(&check, event["entry"].as_str().unwrap_or(""), production) };
-        let Some(rule) = rule_file(&check) else {
-            misses.push(format!("{check}: no rule file"));
+        let row = per_check.entry((event.group, event.check.clone())).or_default();
+        row.events += 1;
+        let mut skip = |reason: &str| *row.not_run.entry(reason.chars().take(120).collect()).or_default() += 1;
+        let Some(rule) = rule_file(&event.check) else {
+            skip("no rule file");
             continue;
         };
-        let c = match convert(&rule, &adjust) {
-            Ok(c) => c,
-            Err(e) => {
-                row[3] += 1;
-                misses.push(format!("{check} {}: error {e}", event["test"]));
+        let want = match &event.want {
+            Ok(want) => want,
+            Err(reason) => {
+                skip(reason);
                 continue;
             }
         };
+        let adjust = match &event.adjust {
+            Ok(adjust) => adjust,
+            Err(reason) => {
+                skip(reason);
+                continue;
+            }
+        };
+        let c = match convert(&rule, adjust) {
+            Ok(c) => c,
+            Err(Failure::Config(reason)) => {
+                skip(&reason);
+                continue;
+            }
+            Err(e @ Failure::Authored(_)) => {
+                row.replayable += 1;
+                row.errors += 1;
+                misses.push(format!("{} {}: error {e}", event.check, event.test));
+                continue;
+            }
+        };
+        row.replayable += 1;
         let gaps: Vec<&String> = c.clauses.iter().filter(|(_, r)| r.is_err()).map(|(id, _)| id).collect();
         if !gaps.is_empty() {
-            gapped.entry(check.clone()).or_default().extend(gaps.into_iter().cloned());
+            *row.not_run.entry("clauses gapped".to_owned()).or_default() += 1;
+            gapped.entry(event.check.clone()).or_default().extend(gaps.into_iter().cloned());
             continue;
         }
-        row[1] += 1;
+        row.run += 1;
+        let config_authored = c.configured && c.clauses.iter().any(|(_, r)| *r == Ok(Origin::Authored));
+        if config_authored {
+            row.config_authored += 1;
+        }
         let dir = root.join(format!("e{k}"));
-        write_files(&dir, event["files"].as_array().unwrap().iter().map(|f| (f["path"].as_str().unwrap(), f["source"].as_str().unwrap())));
-        let mut got = match findings(&c.program, &dir) {
+        write_files(&dir, event.files.iter().map(|(p, s)| (p.as_str(), s.as_str())));
+        let got = match finding_keys(&c.program, &dir) {
             Ok(got) => got,
             Err(e) => {
-                row[3] += 1;
-                misses.push(format!("{check} {}: error {e}", event["test"]));
+                row.errors += 1;
+                misses.push(format!("{} {}: error {e}", event.check, event.test));
                 continue;
             }
         };
-        let mut want: Vec<String> = event["findings"].as_array().unwrap().iter().map(|f| format!("{}:{}:{}", f["path"].as_str().unwrap(), f["line"], f["code"].as_str().unwrap())).collect();
+        // Where the oracle records no code, (path, line) only.
+        let codeless = want.iter().any(|(_, _, code)| code.is_none());
+        let key = |path: &str, line: u64, code: Option<&str>| match code {
+            Some(code) if !codeless => format!("{path}:{line}:{code}"),
+            _ => format!("{path}:{line}"),
+        };
+        let mut want: Vec<String> = want.iter().map(|(p, l, c)| key(p, *l, c.as_deref())).collect();
+        let mut got: Vec<String> = got.iter().map(|(p, l, c)| key(p, *l, Some(c))).collect();
         got.sort();
         want.sort();
         if got == want {
-            row[2] += 1;
+            row.exact += 1;
+            row.keys_only += usize::from(event.keys_only || codeless);
+            row.config_authored_exact += usize::from(config_authored);
         } else {
-            misses.push(format!("{check} {}: want {want:?} got {got:?}", event["test"]));
+            let miss = format!("{} {}: want {want:?} got {got:?}", event.check, event.test);
+            if config_authored { config_misses.push(miss) } else { misses.push(miss) }
         }
     }
     let _ = std::fs::remove_dir_all(&root);
-    let mut report = String::from("check: events, all kept clauses converted or authored, exact, errors\n");
-    let mut sums = BTreeMap::<&str, [usize; 4]>::new();
+    let mut report = String::new();
+    let mut sums = BTreeMap::<&str, Row>::new();
     for ((group, check), row) in &per_check {
-        report.push_str(&format!("  {group} {check}: {} {} {} {}\n", row[0], row[1], row[2], row[3]));
-        for key in [group.as_str(), "all"] {
-            let sum = sums.entry(key).or_default();
-            for i in 0..4 {
-                sum[i] += row[i];
-            }
+        report.push_str(&format!("  {group} {check}: {}\n", row.line()));
+        for key in [*group, "all"] {
+            sums.entry(key).or_default().add(row);
         }
     }
     for (group, sum) in &sums {
-        let name = if *group == "recordings 1-6" { "total".to_owned() } else { format!("total ({group})") };
-        report.push_str(&format!("{name}: {} {} {} {}\n", sum[0], sum[1], sum[2], sum[3]));
+        report.push_str(&format!("total ({group}): {}\n", sum.line()));
     }
     report.push_str("\nclauses still gapped, by check:\n");
     for (check, clauses) in &gapped {
         report.push_str(&format!("  {check}: {}\n", clauses.iter().cloned().collect::<Vec<_>>().join(", ")));
     }
-    report.push_str("\nevents not replayed (a configured oracle, a message or field comparison, a path-skip override), by check:\n");
-    for (check, n) in &unreplayed {
-        report.push_str(&format!("  {check}: {n}\n"));
-    }
     println!("{report}");
     println!("misses: {} (the first {})", misses.len(), shown.min(misses.len()));
     for m in misses.iter().take(shown) {
+        println!("{m}");
+    }
+    println!("\nconfigured events with authored clauses that miss: {} (the first {})", config_misses.len(), shown.min(config_misses.len()));
+    for m in config_misses.iter().take(shown) {
         println!("{m}");
     }
 }
@@ -512,6 +829,11 @@ fn write_files<'a>(dir: &Path, files: impl IntoIterator<Item = (&'a str, &'a str
 
 /// A program's findings over the files under `dir` (the corpus runner), each `path:line:code`.
 fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
+    Ok(finding_keys(program, dir)?.into_iter().map(|(path, line, code)| format!("{path}:{line}:{code}")).collect())
+}
+
+/// A program's findings over the files under `dir`: (path, line, code).
+fn finding_keys(program: &str, dir: &Path) -> Result<Vec<(String, u64, String)>, String> {
     let out = dir.join(".out");
     super::super::plan::corpus::run(program, dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).map_err(|e| e.to_string())?;
     Ok(std::fs::read_to_string(out.join("violation.csv"))
@@ -519,7 +841,7 @@ fn findings(program: &str, dir: &Path) -> Result<Vec<String>, String> {
         .lines()
         .map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            format!("{}:{}:{}", f[3], f[4], f[2])
+            (f[3].to_owned(), f[4].parse().unwrap_or_default(), f[2].to_owned())
         })
         .collect())
 }
@@ -657,7 +979,7 @@ fn authored_clauses_replace_the_converters() {
     got.sort();
     let at = |l: usize, code: &str| format!("{}:{l}:{code}", EXECUTOR.0);
     assert_eq!(got, [at(1, "SPTA001"), at(2, "SPTA006"), at(2, "SPTA007"), at(4, "SPTA006"), at(4, "SPTA007")]);
-    let without = Adjust { scope: None, keep: Some(Box::new(|c: &str| c != "executor-parameters")) };
+    let without = Adjust { keep: Some(Box::new(|c: &str| c != "executor-parameters")), ..Adjust::default() };
     let c = convert_over(&rule, &without, Some(&dir)).unwrap();
     assert_eq!(origin(&c, "executor-parameters"), None);
     assert!(!c.program.contains("executor-parameters") && !c.program.contains("executor_parameters_"), "{}", c.program);
