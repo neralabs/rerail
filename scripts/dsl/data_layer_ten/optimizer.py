@@ -75,7 +75,7 @@ def candidate(root):
  # A document diagnostic reports line one. Its full-file input proves that anchor.
  stale_query=stale_query.replace('d.__start start_byte,d.__end end_byte','0 start_byte,length(CAST(source_text(d.__path) AS BLOB)) end_byte')
  all_query=registry_query+' UNION ALL '+missing+' UNION ALL '+stale_query
- clause_['relational']['query']=select_entry('SELECT * FROM ('+all_query+') WHERE EXISTS(SELECT 1 FROM a WHERE __path='+q(verifier)+' AND kind='+q('Module')+')',{'scan_file':'SELECT * FROM ('+registry_query+') WHERE 0','find_violations':all_query})
+ clause_['relational']['query']=select_entry('SELECT * FROM ('+all_query+') WHERE source_text('+q(verifier)+') IS NOT NULL',{'scan_file':'SELECT * FROM ('+registry_query+') WHERE 0','find_violations':all_query})
  clause_['relational']['line']='line'
  # Use a full document witness as well as each code capture.
  clause_['relational']['inputs']['documents']={'evidence':{'as':'doc','query':{'regex':{'source':'file.content','pattern':r'(?s)\A(?P<TEXT>.*)\z'}},'project':{'path':'file.path'}}}
