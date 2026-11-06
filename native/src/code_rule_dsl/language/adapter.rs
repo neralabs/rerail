@@ -51,6 +51,7 @@ use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// Python's family: Ruff's semantics.
 pub(crate) struct Python;
@@ -429,22 +430,38 @@ pub(crate) fn packages(label: &str) -> bool {
         .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGES))
 }
 
+/// Every family's `kinds`, each once: the walks ask per node they visit, so the union is gathered
+/// once rather than per call.
+fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&'static str> {
+    let mut union = Vec::new();
+    for kind in Family::ALL.into_iter().flat_map(kinds) {
+        if !union.contains(kind) {
+            union.push(*kind);
+        }
+    }
+    union
+}
+
+static WALK_COMMENT_KINDS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| every_family_kind(|family| with_adapter!(family, A => A::WALK_COMMENT_KINDS)));
+
+static PAREN_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    every_family_kind(
+        |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::PAREN_KINDS),
+    )
+});
+
 /// Whether `kind` is a comment that a token or sibling walk passes over, in any family's grammar
 /// (`Adapter::WALK_COMMENT_KINDS`). The matchers that walk (`compare`, `layout`) hold no family, and
 /// a kind's name means a comment in every grammar that has it.
 pub(crate) fn is_comment_kind(kind: &str) -> bool {
-    Family::ALL
-        .into_iter()
-        .any(|family| with_adapter!(family, A => A::WALK_COMMENT_KINDS).contains(&kind))
+    WALK_COMMENT_KINDS.contains(&kind)
 }
 
 /// Whether `kind` is a parenthesized expression in any family's grammar
 /// (`ScopeRules::PAREN_KINDS`), for the matchers that hold no family.
 pub(crate) fn is_paren_kind(kind: &str) -> bool {
-    Family::ALL.into_iter().any(|family| {
-        with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::PAREN_KINDS)
-            .contains(&kind)
-    })
+    PAREN_KINDS.contains(&kind)
 }
 
 /// Whether a file of `dialect` is parsed by Forte: its family's `Adapter::PARSED_BY_FORTE`.
