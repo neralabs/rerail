@@ -1,1 +1,0 @@
-At session start, including after `/clear`, the footer says `R E R A I L ● starting` until Rerail has recorded the new session, rather than `session unavailable`, which now means only that the session could not be read.

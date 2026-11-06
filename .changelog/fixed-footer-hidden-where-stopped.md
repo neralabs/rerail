@@ -1,1 +1,0 @@
-The Claude Code, OMP and Pi footer is gone where Rerail is stopped, or was never started: a new session there no longer shows `R E R A I L ○ not on here`. `/rerail` and `rerail status` still say Rerail is not on here, and how to start it.

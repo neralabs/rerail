@@ -1,1 +1,0 @@
-An agent's edits in a worktree of a started repository are audited and show on the repository's dashboard, whichever folder its session started in. The agent is steered on its file-tool edits and on shell writes in its own folder; a shell write in another worktree is recorded but steers no session. A worktree stopped on its own stays stopped.

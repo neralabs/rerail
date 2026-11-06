@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-typescript",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Rerail rule pack: typescript-eslint and @vitest/eslint-plugin rules ported to Rerail code rules.",
   "keywords": [
     "rerail",
