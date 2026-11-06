@@ -205,6 +205,25 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   arms, descriptively, the share of runs that ran `git conflicts`, detections, resolved and open at the end. Effects
   are mean within-pair differences with cluster-bootstrap 95% CIs, 20,000 permutations, seed 1. `--self-test` adds
   R1's no-effect false-positive rate at 14 pairs × 2 runs per arm, one treatment and two with Holm.
+  `--analyze-completion completion.json [...] --arms A[,B...] --control none [--weights D1=0.74,D2=0.26] [--look N]`
+  analyses `merge-assist-replay.ts --completion --json` reports, refusing to pool reports with another dataset,
+  exclusion list, model, grader model, config, timeouts, align module, review-round limit or price table, a label
+  defined differently, or the same run twice. Strata are pairs; leaked runs are left out and counted; a run with an
+  error, an empty final diff or no final verdict violates every item, did not end on the adopted design and is at
+  least as costly as its pair's worst sound run. Every aggregate over both scenarios weighs each scenario's mean
+  within-pair effect half and half (the permutation statistic is the same weighted sum, labels shuffled within pair;
+  the bootstrap resamples pairs within scenario). Primary, per treatment against the control, one-sided, Holm across
+  every primary of every treatment, Pocock 0.0221 per look, at most three: H1 conflict items violated after
+  completion lower (all pairs; mean within-pair difference in items); H2 agent cost in USD lower (all; log, ratio of
+  geometric means); H3 agent wall time non-inferior at ×1.10 (all); H4 ended on the adopted design non-inferior by
+  0.10 (D2 only; H0 treatment − control ≤ −0.10, tested by raising the treatment's 0/1 values by 0.10). Cost and time
+  are the agent's own (phase 1 and its fixes); the reviewer's and grader's cost are listed apart. Secondary, raw p:
+  total and uncached agent tokens, first-pass items, fix rounds, H1–H4 on D1 alone, and with `--weights` H1–H4 over
+  every pair with the scenarios weighed by prevalence. `--self-test` adds, over 1,000 synthetic datasets of 11 D1 +
+  15 D2 pairs × 2 runs per arm (failures and leaks included), H1's no-effect false-positive rate, H3's and H4's at
+  their margins, H1–H4's family-wise rate with Holm under their global null and the prevalence mix's (D1 0.74) under
+  no effect, each passing at ≤ 0.05 plus two Monte Carlo standard errors (0.064); H1's and H4's power; and the
+  balanced weights.
 - `merge-assist-guard.ts` (`node --import tsx benchmark/merge-assist-guard.ts --index index.json [--thresholds ...]
   [--hook-calls N]`) scores the guard offline, with no agent: each labelled teammate file and project file as a
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross
@@ -341,6 +360,16 @@ are quick.
   `--repos` and the ledger cache. Hooks run outside the sandbox. The agent's commands get Codex's environment without
   credentials (`shell_environment_policy`: every `AWS_*` variable and every name with `TOKEN`, `SECRET`, `KEY`,
   `CREDENTIAL` or `PASSWORD`).
+- **Toolchains.** The agent's commands run with a PATH (`shell_environment_policy.set`) that puts the pair's
+  toolchains first: the workspace's `.venv/bin` and `node_modules/.bin` after setup, then the folder where each of the
+  language's tools (Go: `go`, `gofmt`; Rust: `cargo`, `rustc`, `rustfmt`; Python: `python3`, `uv`, `pip`, `pytest`;
+  TypeScript and JavaScript: `node`, `npm`, `npx`, `pnpm`, `yarn`) and each command of the spec's setup is found on the
+  setup's own PATH (the harness's, then `/usr/local/go/bin`, `~/go/bin`, `~/.cargo/bin`, `~/.local/bin` and Node's
+  folder), then the rest of that PATH; only folders the sandbox lets the agent read. The setup runs with the same
+  PATH. Temporary files and caches go to the workspace's `.replay-tmp/` (`TMPDIR`, `XDG_CACHE_HOME`, `GOCACHE`;
+  `GOTOOLCHAIN=local`), which `.git/info/exclude` keeps out of every diff: the sandbox leaves `/tmp` and the home
+  folder's caches unwritable, and Go cannot build without them. The nera-spike hosts have Go 1.27.3 in
+  `/usr/local/go`.
 - **Provider.** `--provider amazon-bedrock --model <id>` (for example `openai.gpt-6-luna`) puts every Codex call,
   agent and grader, on Codex's built-in Bedrock provider (`--bedrock-region`, `us-east-1` by default); the grader uses
   the same model unless `--judge-model` says otherwise. `--codex-bin` names the Codex executable when it is not on
@@ -420,6 +449,29 @@ are quick.
   (`first_half` or `second_half`) files, how many (ref, file) pairs were identified against first and against other
   refs, then the conflict pairs identified before `noticed_at` (any file, labelled file) and the negatives identified
   against first (false detections).
+- **`--completion`.** Runs each completion label (`<dataset>/completion/<id>.json`, the format of
+  `/tmp/ma-ctx/oss/completion-spec.md`; `--pairs` picks label ids, `--exclude id,id` leaves labels out without
+  reading them) to completion, under `none,git-conflict` unless `--arms` says otherwise. The label names its pair in
+  `pairs.json`, its base, task, `done` and setup; `first_visible` is the pair's replay spec's when it has one for the
+  same base, else first's newest labelled commit visible at second's start. Phase 1 is a replay run. Then up to 3
+  review rounds: the reviewer, a blind structured Codex call that sees the task, the adopted and the other design, the
+  numbered conflict items, `done` and the diff (stripped as for the replay grader), judges each item violated,
+  satisfied or not applicable, citing diff lines; when any is violated, the agent resumes its session (`codex exec
+  resume`, the arm's hook still on) with a fixed-form message listing each violated item, the reviewer's reason and
+  the diff lines. A review with no violated item ends the loop. Then a separate grading call (the same prompt, its own
+  call) judges the final diff and the first pass's (one call when they are the same diff): items violated after
+  phase 1 and after completion, and whether the run ended on the adopted design (no item violated). Also recorded: fix
+  rounds, wall time, tokens (total = input + output, uncached = input − cached) and USD for the agent, the reviewer
+  and the grader apart, and `git merge-tree` of the final diff against the adopted side's head (first's in D1,
+  second's in D2). Resumed calls report the thread's running total, so each call's own tokens are the difference.
+  Cost uses Bedrock's Standard prices for `openai.gpt-6-luna`, Mantle in-Region, recorded in the report (`prices`):
+  per 1M tokens $0.11 input, $0.1375 cache write, $0.011 cache read, $0.55 output; a request over 272K input tokens is
+  billed at $0.22 / $0.275 / $0.022 / $0.825 in full (the agent's requests are read from its transcript). Source: the
+  model card's Pricing section (https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html,
+  linked from https://aws.amazon.com/bedrock/pricing/), retrieved 2026-11-06; the AWS Price List API had no
+  `openai.gpt-6-luna` product that day. A run fails its protocol on a harness error, a failed agent call (the loop
+  stops), a review with no verdict, an empty final diff or no final verdict. The report's format is
+  `rerail.merge-assist-replay-completion/v1`; `merge-assist-stats.ts --analyze-completion` analyses it.
 
 ## OSS architecture-conflict replay, simple in-flight git arms: pre-registration
 
@@ -469,6 +521,42 @@ and not changed after.
   git-conflict,git-conflict-pull --control none`.
 - **Later arm.** The in-flight alignment mechanism (`align`) joins on the same specs only after all five links pass on
   the Rerail dev set; it runs with a repeated `none` slice of 1 trial per pair to check for drift between the runs.
+
+## OSS completion run, adopted design: pre-registration
+
+Fixed before any agent runs on the completion labels (`/tmp/ma-ctx/oss/dataset/completion/`), and not changed after.
+It replaces "conflicts with the first pull request" with what the project actually adopted, and measures every task
+run to completion, as the session-focus comparison above did.
+
+- **Question.** Telling an agent while it works that its edits would conflict with another open pull request (the
+  push arm, frozen as it ran on OSS before): does it leave fewer conflicts with the adopted design once the task is
+  finished, at lower cost per task, without pulling the agent toward a design the project rejected?
+- **Scenarios.** 26 pairs of open-source pull requests, both public at the same time; the later one's task is
+  replayed from its base with every pull request open then visible. D1 (11 pairs): the earlier pull request's design
+  was adopted. D2 (15 pairs): the later one's was, and the earlier one was closed, superseded or reverted for it.
+  Labels (adopted and rejected design in neutral words, the evidence, 3–8 checkable conflict items) were written from
+  history by curators who never saw the mechanism or a result. Excluded before any run: pytest #14543/#14749 (the
+  project adopted neither design) and httpx #3304/#3335 (the adopted design never reached mainline).
+- **Protocol.** Phase 1, then up to 3 review rounds: a reviewer that knows the adopted design, blind to the arm, lists
+  the violated conflict items with their diff lines, and the agent fixes them in the same session; then a final grade.
+  Codex 0.158 with `openai.gpt-6-luna` on Amazon Bedrock for agent, reviewer and grader, on Linux hosts, sandbox
+  profile, leak guard, no web, each task's toolchain on the sandbox's path. Cost in US dollars from Bedrock's prices
+  for that model, agent and reviewer reported separately; human review time is not counted.
+- **Arms.** `none` (control) and `git-conflict` (push).
+- **Primary hypotheses** (push against none, one-sided, stratified by pair, Holm across the four; D1 and D2 weighted
+  equally unless stated):
+  - H1: fewer conflict items with the adopted design remain after completion.
+  - H2: lower cost per task.
+  - H3: time per task is not worse than ×1.10.
+  - H4 (D2 only, harm): ending on the adopted design is no more than 0.10 below control.
+- **Secondary** (raw p): tokens per task (total and uncached), conflict items after phase 1, review rounds, D1 alone,
+  the mix weighted to how often the earlier pull request was adopted among the 34 curated OSS conflicts (D1 0.74, D2
+  0.26), textual conflicts with the adopted pull request's head.
+- **Looks.** Look 1: 2 trials per pair and arm (104 runs). Looks 2 and 3 add 2 trials each. Stop for success when all
+  four primaries reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks); stop after look 3 whatever the result.
+  Leaked runs are excluded and reported; errors count as failures for their arm.
+- **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze-completion <look reports...> --arms
+  git-conflict --control none --weights D1=0.74,D2=0.26`.
 
 ## Steer strategies
 

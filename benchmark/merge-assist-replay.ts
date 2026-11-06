@@ -5,8 +5,8 @@
  *   node --import tsx benchmark/merge-assist-replay.ts --dataset <dir> [--pairs id,id] [--trials N]
  *     [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N]
  *     [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value]
- *     [--keep] [--tamper] [--detect-only] [--provider amazon-bedrock --model id] [--bedrock-region r]
- *     [--bedrock-token-cmd cmd] [--codex-bin path]
+ *     [--keep] [--tamper] [--detect-only] [--completion [--exclude id,id]] [--provider amazon-bedrock --model id]
+ *     [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path]
  *
  * `--dataset` holds `pairs.json` (`{ pairs: Pair[] }`) and `replay/<id>.json` (the agent-replay specs), in the formats
  * of the shared spec (`/tmp/ma-ctx/align/oss-spec.md`); every pair with a spec runs unless `--pairs` names some. A
@@ -35,7 +35,10 @@
  * environment), with `--provider`'s model provider when given (and `--bedrock-token-cmd`'s token, handed to the Codex
  * processes only), and every run's tool calls go through `findLeaks`: a run with a call that reaches past its folder,
  * prints the environment or reads a credential is marked `leaked` and left out of every aggregate. `--tamper` checks
- * the guard: one `none` run per pair asked to `ls /tmp/ma-ctx/oss`, failing unless each is flagged.
+ * the guard: one `none` run per pair asked to `ls /tmp/ma-ctx/oss`, failing unless each is flagged. The agent's
+ * commands get a PATH with the pair's toolchains on it (`sandboxPath`: the language's tools and the setup's commands
+ * where the setup finds them, Go in `/usr/local/go/bin` on the build hosts) and temporary files and caches in the
+ * workspace's `.replay-tmp/`, which no diff includes.
  * Recorded per run: the diff against the base (after setup), Codex's `--json` events, the hook log (each unit with the
  * file and time it went out at), tokens, wall time and the final message. Graded per run, blind: a separate `codex
  * exec` (no hooks, empty folder, `--output-schema`) sees the task, the rubric, `done` and the diff, with every added
@@ -48,6 +51,14 @@
  *
  * It prints the ledger per pair, a row per run, leaked runs with their calls, then aggregates per arm and per pair ×
  * arm; `--json` writes all of it, events and hook logs included. Folders are removed unless `--keep`.
+ *
+ * `--completion` runs each label in `<dataset>/completion/` (/tmp/ma-ctx/oss/completion-spec.md; `--pairs` picks label
+ * ids, `--exclude` leaves labels out unread) to completion, under `none,git-conflict` unless `--arms` says otherwise:
+ * phase 1, then up to 3 review rounds (a blind reviewer call that knows the adopted design judges each conflict item
+ * on the stripped diff; when any is violated, the agent resumes its session with the items and their diff lines), then
+ * blind grading calls on the first pass's and the final diff. Recorded per run: items violated after phase 1 and at
+ * the end, whether it ended on the adopted design, rounds, wall time, tokens and USD (`PRICES`) for the agent, the
+ * reviewer and the grader apart, and `git merge-tree` against the adopted side's head.
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -56,7 +67,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { clip, type CodexRunOptions, createCodexHome, fixed, GIT_ENV, mean, median, pool, readEvents, runCodex, table, transcriptText, type Usage } from "./merge-assist-context.js";
+import { clip, type CodexEvents, type CodexOutcome, type CodexRunOptions, createCodexHome, fixed, GIT_ENV, mean, median, pool, readEvents, runCodex, table, transcriptText, type Usage } from "./merge-assist-context.js";
 import { type AlignModule, CHECK_COMMAND, GIT_ARMS, type LedgerUnit, loadAlignModule, REPLAY_ARMS, type ReplayArm, type ReplayHookConfig, type ReplayHookLogEntry } from "./merge-assist-replay-hook.js";
 import { commitRanges, conflictKey, gitRead, identify, type LineRange, type RefHunk, refFiles, refHunks, type RefSide, statedIntent } from "./merge-assist-replay-git.js";
 
@@ -137,6 +148,96 @@ const VERDICT_JSON_SCHEMA = {
   additionalProperties: false,
 };
 
+/**
+ * A completion label (`<dataset>/completion/<id>.json`, /tmp/ma-ctx/oss/completion-spec.md): the design the project
+ * adopted and what a solution must satisfy to match it. `scenario` D1: first's design was adopted; D2: second's.
+ */
+const completionLabelSchema = z.object({
+  id: z.string().min(1),
+  scenario: z.enum(["D1", "D2"]),
+  adopted: z.string().min(1),
+  rejected: z.string().min(1),
+  adopted_evidence: z.string().min(1),
+  conflict_items: z.array(z.string().min(1)).min(1),
+  done: z.string().min(1),
+  task: z.string().min(1),
+  base_sha: z.string().min(7),
+  /** The pair's id in `pairs.json`. */
+  pair: z.string().min(1),
+  setup: z.string().nullable(),
+}).passthrough();
+export type CompletionLabel = z.infer<typeof completionLabelSchema>;
+
+/** `--completion`'s arms unless `--arms` names others: the control and the frozen push arm. */
+const COMPLETION_ARMS: readonly ReplayArm[] = ["none", "git-conflict"];
+/** The most review rounds a completion run gets: a review, and when it finds a violated item, a fix. */
+export const MAX_REVIEW_ROUNDS = 3;
+
+const ITEM_STATUSES = ["violated", "satisfied", "not_applicable"] as const;
+const itemsVerdictSchema = z.object({
+  items: z.array(z.object({ item: z.number().int(), status: z.enum(ITEM_STATUSES), reason: z.string(), lines: z.array(z.string()) }).strict()),
+  done: z.enum(DONE),
+}).strict();
+export type ItemsVerdict = z.infer<typeof itemsVerdictSchema>;
+/** {@link itemsVerdictSchema} as JSON Schema, for the reviewer's and the grader's `--output-schema`. */
+const ITEMS_VERDICT_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          item: { type: "integer" },
+          status: { type: "string", enum: ITEM_STATUSES },
+          reason: { type: "string" },
+          lines: { type: "array", items: { type: "string" } },
+        },
+        required: ["item", "status", "reason", "lines"],
+        additionalProperties: false,
+      },
+    },
+    done: { type: "string", enum: DONE },
+  },
+  required: ["items", "done"],
+  additionalProperties: false,
+};
+
+/** USD per million tokens of one price tier. */
+interface TokenPrices {
+  readonly input: number;
+  readonly cacheWrite: number;
+  readonly cacheRead: number;
+  readonly output: number;
+}
+
+/**
+ * Amazon Bedrock's Standard-tier prices for `openai.gpt-6-luna`, Mantle in-Region (what Codex's `amazon-bedrock`
+ * provider calls for that model id; US geographic cross-Region inference costs the same), recorded in every
+ * completion report.
+ */
+export const PRICES = {
+  model: "openai.gpt-6-luna",
+  currency: "USD per 1M tokens",
+  tier: "Standard, Mantle in-Region (us-east-1)",
+  source: "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html (section Pricing, linked from https://aws.amazon.com/bedrock/pricing/ under OpenAI), retrieved 2026-11-06. The AWS Price List API (aws pricing get-products, service codes AmazonBedrock, AmazonBedrockFoundationModels and AmazonBedrockService) held no openai.gpt-6-luna product that day.",
+  /** A request with more input tokens than this is billed at `long` rates in full. */
+  longContextAbove: 272_000,
+  short: { input: 0.11, cacheWrite: 0.1375, cacheRead: 0.011, output: 0.55 },
+  long: { input: 0.22, cacheWrite: 0.275, cacheRead: 0.022, output: 0.825 },
+} as const satisfies { short: TokenPrices; long: TokenPrices } & Record<string, unknown>;
+
+/**
+ * What `usage` costs at `prices`: cached input at the cache-read rate, input written to the cache (Bedrock reports it)
+ * at the cache-write rate, the rest of the input at the input rate, and output (reasoning included) at the output rate.
+ */
+export function usageCost(usage: Usage | null, prices: TokenPrices = PRICES.short): number {
+  if (usage === null) return 0;
+  const write = usage.cacheWrite ?? 0;
+  const plain = Math.max(0, usage.input - usage.cached - write);
+  return (plain * prices.input + write * prices.cacheWrite + usage.cached * prices.cacheRead + usage.output * prices.output) / 1_000_000;
+}
+
 // ---------------------------------------------------------------------------------------------------------- options
 
 interface Options {
@@ -170,6 +271,13 @@ interface Options {
    * to the Codex processes (never stored, never in an agent's shell; see {@link providerConfig}).
    */
   bedrockTokenCmd: string | undefined;
+  /**
+   * `--completion`: each selected completion label (`<dataset>/completion/<id>.json`) run to completion: phase 1,
+   * then up to {@link MAX_REVIEW_ROUNDS} review rounds, then a final grade (see `runCompletionJob`).
+   */
+  completion: boolean;
+  /** `--exclude`: completion labels (by id, the file's name) `--completion` leaves out unread. */
+  exclude: string[];
 }
 
 /** The model providers `--provider` takes. */
@@ -178,7 +286,7 @@ const DEFAULT_BEDROCK_REGION = "us-east-1";
 /** The variable Codex's `amazon-bedrock` provider reads its bearer token from. */
 const BEDROCK_TOKEN_ENV = "AWS_BEARER_TOKEN_BEDROCK";
 
-const USAGE = "Usage: node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id] [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N] [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value] [--keep] [--tamper] [--detect-only] [--provider amazon-bedrock] [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path]";
+const USAGE = "Usage: node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id] [--trials N] [--arms none,align,git-conflict,git-conflict-pull] [--concurrency N] [--timeout-min N] [--judge-timeout-min N] [--json out.json] [--repo path] [--repos dir] [--align-module path] [--model m] [--judge-model m] [-c key=value] [--keep] [--tamper] [--detect-only] [--completion] [--exclude id,id] [--provider amazon-bedrock] [--bedrock-region r] [--bedrock-token-cmd cmd] [--codex-bin path]";
 
 function parseOptions(argv: readonly string[]): Options {
   const options: Options = {
@@ -203,6 +311,8 @@ function parseOptions(argv: readonly string[]): Options {
     bedrockRegion: DEFAULT_BEDROCK_REGION,
     codexBin: undefined,
     bedrockTokenCmd: undefined,
+    completion: false,
+    exclude: [],
   };
   const value = (flag: string, index: number): string => {
     const next = argv[index + 1];
@@ -214,11 +324,13 @@ function parseOptions(argv: readonly string[]): Options {
     if (!Number.isInteger(number) || number < 1) throw new Error(`${flag} takes a positive integer\n${USAGE}`);
     return number;
   };
+  let armsGiven = false;
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index]!;
-    if (flag === "--keep" || flag === "--tamper" || flag === "--detect-only") {
+    if (flag === "--keep" || flag === "--tamper" || flag === "--detect-only" || flag === "--completion") {
       if (flag === "--keep") options.keep = true;
       else if (flag === "--tamper") options.tamper = true;
+      else if (flag === "--completion") options.completion = true;
       else options.detectOnly = true;
       continue;
     }
@@ -226,12 +338,14 @@ function parseOptions(argv: readonly string[]): Options {
     index++;
     if (flag === "--dataset") options.dataset = resolve(text);
     else if (flag === "--pairs") options.pairs = text.split(",").filter(id => id !== "");
+    else if (flag === "--exclude") options.exclude = text.split(",").filter(id => id !== "");
     else if (flag === "--trials") options.trials = positive(flag, text);
     else if (flag === "--arms") {
       const arms = text.split(",").filter(arm => arm !== "");
       const unknown = arms.filter(arm => !(REPLAY_ARMS as readonly string[]).includes(arm));
       if (unknown.length > 0 || arms.length === 0) throw new Error(`--arms takes ${REPLAY_ARMS.join(",")}; not ${unknown.join(",")}`);
       options.arms = arms as ReplayArm[];
+      armsGiven = true;
     } else if (flag === "--concurrency") options.concurrency = positive(flag, text);
     else if (flag === "--timeout-min") options.timeoutMin = positive(flag, text);
     else if (flag === "--judge-timeout-min") options.judgeTimeoutMin = positive(flag, text);
@@ -257,6 +371,8 @@ function parseOptions(argv: readonly string[]): Options {
     options.judgeModel ??= options.model;
   }
   if (options.bedrockTokenCmd !== undefined && options.provider !== "amazon-bedrock") throw new Error("--bedrock-token-cmd needs --provider amazon-bedrock");
+  if (options.completion && (options.tamper || options.detectOnly)) throw new Error(`--completion takes no --tamper or --detect-only\n${USAGE}`);
+  if (options.completion && !armsGiven) options.arms = [...COMPLETION_ARMS];
   if (options.tamper) {
     options.arms = ["none"];
     options.trials = TAMPER_TASKS.length;
@@ -346,27 +462,65 @@ interface PairContext {
   /** First and the `concurrent` refs as visible at `ledgerTime`, with their hunks: what the `git-conflict` arms identify against. */
   readonly refs: readonly RefSide[];
   readonly refsMs: number;
+  /** `--completion`: the pair's completion label; null otherwise. */
+  readonly label: CompletionLabel | null;
 }
 
 function loadPairs(dataset: string): Pair[] {
   return z.object({ pairs: z.array(pairSchema) }).passthrough().parse(JSON.parse(readFileSync(join(dataset, "pairs.json"), "utf8"))).pairs;
 }
 
-function loadDataset(options: Options): Array<{ pair: Pair; spec: ReplaySpec }> {
-  const pairs = loadPairs(options.dataset);
-  const specFolder = join(options.dataset, "replay");
+/** The replay specs in `<dataset>/replay/`, by id. */
+function loadSpecs(dataset: string): Map<string, ReplaySpec> {
+  const specFolder = join(dataset, "replay");
   const specs = new Map<string, ReplaySpec>();
   for (const name of existsSync(specFolder) ? readdirSync(specFolder).filter(file => file.endsWith(".json")) : []) {
     const spec = specSchema.parse(JSON.parse(readFileSync(join(specFolder, name), "utf8")));
     specs.set(spec.id, spec);
   }
+  return specs;
+}
+
+function loadDataset(options: Options): Array<{ pair: Pair; spec: ReplaySpec }> {
+  const pairs = loadPairs(options.dataset);
+  const specs = loadSpecs(options.dataset);
   const wanted = options.pairs ?? pairs.filter(pair => specs.has(pair.id)).map(pair => pair.id);
   return wanted.map(id => {
     const pair = pairs.find(candidate => candidate.id === id);
     const spec = specs.get(id);
     if (pair === undefined) throw new Error(`No pair ${id} in ${join(options.dataset, "pairs.json")}`);
-    if (spec === undefined) throw new Error(`No replay spec for ${id} in ${specFolder}`);
+    if (spec === undefined) throw new Error(`No replay spec for ${id} in ${join(options.dataset, "replay")}`);
     return { pair, spec };
+  });
+}
+
+/**
+ * `--completion`'s selection: each label in `<dataset>/completion/` (or those `--pairs` names, by label id) with its
+ * pair and a replay spec built from the label (its base, task, `done` and setup). `first_visible` is the pair's replay
+ * spec's when one exists for the same base, else first's newest labelled commit visible at second's start (first's
+ * base when none was).
+ */
+function loadCompletionDataset(options: Options): Array<{ pair: Pair; spec: ReplaySpec; label: CompletionLabel }> {
+  const pairs = loadPairs(options.dataset);
+  const specs = loadSpecs(options.dataset);
+  const folder = join(options.dataset, "completion");
+  const labels = new Map<string, CompletionLabel>();
+  for (const name of existsSync(folder) ? readdirSync(folder).filter(file => file.endsWith(".json") && !options.exclude.includes(file.slice(0, -".json".length))) : []) {
+    const label = completionLabelSchema.parse(JSON.parse(readFileSync(join(folder, name), "utf8")));
+    labels.set(label.id, label);
+  }
+  return (options.pairs ?? [...labels.keys()]).map(id => {
+    const label = labels.get(id);
+    if (label === undefined) throw new Error(`No completion label ${id} in ${folder}`);
+    const pair = pairs.find(candidate => candidate.id === label.pair);
+    if (pair === undefined) throw new Error(`${id}: no pair ${label.pair} in ${join(options.dataset, "pairs.json")}`);
+    const replay = specs.get(label.pair);
+    const started = ledgerTime(pair, label.base_sha);
+    const firstVisible = replay !== undefined && replay.base_sha === label.base_sha
+      ? replay.first_visible
+      : pair.first.commits.filter(commit => Date.parse(commit.visible_at) <= Date.parse(started)).at(-1)?.sha ?? pair.first.base_sha;
+    const spec: ReplaySpec = { id: label.id, base_sha: label.base_sha, task: label.task, first_visible: firstVisible, rubric: label.conflict_items.join("\n"), done: label.done, setup: label.setup };
+    return { pair, spec, label };
   });
 }
 
@@ -505,14 +659,14 @@ function visibleRefs(source: string, pair: Pair, base: string, time: string, fir
  * (a long branch replayed from the middle), so that commit's authoring; otherwise second's creation, or its earliest
  * authored commit when that is earlier.
  */
-function ledgerTime(pair: Pair, spec: ReplaySpec): string {
-  const base = pair.second.commits.find(commit => commit.sha.startsWith(spec.base_sha) || spec.base_sha.startsWith(commit.sha));
+function ledgerTime(pair: Pair, baseSha: string): string {
+  const base = pair.second.commits.find(commit => commit.sha.startsWith(baseSha) || baseSha.startsWith(commit.sha));
   if (base !== undefined) return base.authored_at;
   const times = [pair.second.created_at, ...pair.second.commits.map(commit => commit.authored_at)];
   return times.reduce((earliest, time) => (Date.parse(time) < Date.parse(earliest) ? time : earliest));
 }
 
-async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align: AlignModule | null): Promise<PairContext> {
+async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align: AlignModule | null, label: CompletionLabel | null = null): Promise<PairContext> {
   const source = options.repo ?? join(options.repos, pair.repo.replace("/", "__"));
   if (!existsSync(source)) throw new Error(`${pair.id}: no repository at ${source}`);
   for (const [name, sha] of [["base_sha", spec.base_sha], ["first.head_sha", pair.first.head_sha], ["first_visible", spec.first_visible]] as const) {
@@ -529,7 +683,7 @@ async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align
       await removeFolder(folder);
     }
   }
-  const time = ledgerTime(pair, spec);
+  const time = ledgerTime(pair, spec.base_sha);
   let units: LedgerUnit[] | null = null;
   let ledgerError: string | null = null;
   let ledgerMs: number | null = null;
@@ -545,7 +699,7 @@ async function preparePair(pair: Pair, spec: ReplaySpec, options: Options, align
   const refsStarted = performance.now();
   const refs = options.tamper ? [] : visibleRefs(source, pair, spec.base_sha, time, spec.first_visible);
   const refsMs = Math.round(performance.now() - refsStarted);
-  return { pair, spec, source, objects, ledgerTime: time, units, ledgerMs, ledgerError, firstFiles, reference, refs, refsMs };
+  return { pair, spec, source, objects, ledgerTime: time, units, ledgerMs, ledgerError, firstFiles, reference, refs, refsMs, label };
 }
 
 // ---------------------------------------------------------------------------------------------------------- sandbox
@@ -628,12 +782,13 @@ async function removeFolder(folder: string): Promise<void> {
 /**
  * The run's CODEX_HOME config: the model provider, if any; a shell environment policy that keeps credentials out of
  * every command the agent runs (Codex's default excludes `*KEY*`, `*SECRET*`, `*TOKEN*`, which it skips unless told
- * otherwise, and every `AWS_*` variable); and a permission profile that extends Codex's workspace profile (the
- * workspace root writable, no network) and takes away what the default leaves open: writes and reads in `/tmp` and
- * `$TMPDIR` (other runs' folders, the curated data under `/tmp/ma-ctx`), the whole home folder but its toolchains
- * (every other clone), and each of `denied` (the source repository, the dataset, the ledger cache).
+ * otherwise, and every `AWS_*` variable) and sets `shell` in it (the agent's toolchain PATH and scratch folders, see
+ * {@link agentShellEnv}); and a permission profile that extends Codex's workspace profile (the workspace root
+ * writable, no network) and takes away what the default leaves open: writes and reads in `/tmp` and `$TMPDIR` (other
+ * runs' folders, the curated data under `/tmp/ma-ctx`), the whole home folder but its toolchains (every other clone),
+ * and each of `denied` (the source repository, the dataset, the ledger cache).
  */
-export function sandboxConfig(denied: readonly string[], provider: ProviderSettings | null = null): string {
+export function sandboxConfig(denied: readonly string[], provider: ProviderSettings | null = null, shell: Readonly<Record<string, string>> = {}): string {
   const roots = ["/tmp", "/private/tmp", tmpdir(), realpathSync(tmpdir()), homedir()];
   // A path under a denied root is denied with it; naming it again makes bubblewrap (Linux) fail to set up the mount.
   const extra = denied.filter(path => existsSync(path) && !roots.some(root => [path, realpathSync(path)].some(form => form.startsWith(`${root}/`))));
@@ -657,6 +812,7 @@ export function sandboxConfig(denied: readonly string[], provider: ProviderSetti
     `inherit = "all"`,
     "ignore_default_excludes = false",
     `exclude = ["AWS_*", "*TOKEN*", "*SECRET*", "*KEY*", "*CREDENTIAL*", "*PASSWORD*"]`,
+    ...(Object.keys(shell).length === 0 ? [] : [`set = { ${Object.entries(shell).map(([name, value]) => `${name} = ${JSON.stringify(value)}`).join(", ")} }`]),
     "",
     `[permissions.${PROFILE}]`,
     `description = "Merge Assist replay: the workspace only, no network"`,
@@ -669,6 +825,61 @@ export function sandboxConfig(denied: readonly string[], provider: ProviderSetti
     "enabled = false",
     "",
   ].join("\n");
+}
+
+/** The workspace folder the agent's tools use for temporary files and caches; kept out of the diff (`.git/info/exclude`). */
+const SCRATCH = ".replay-tmp";
+
+/**
+ * The PATH a task's setup runs with and finds its tools on: the harness's own, then where toolchains live on the
+ * hosts besides it (Go's tarball install, Go's and Cargo's bin folders, this Node).
+ */
+function setupPath(): string[] {
+  const home = homedir();
+  const toolchains = ["/usr/local/go/bin", join(home, "go", "bin"), join(home, ".cargo", "bin"), join(home, ".local", "bin"), dirname(process.execPath)].filter(path => existsSync(path));
+  return [...new Set([...(process.env.PATH ?? "").split(":").filter(dir => dir !== ""), ...toolchains])];
+}
+
+/** The tools a pair's language builds and tests with. */
+const LANGUAGE_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  go: ["go", "gofmt"],
+  rust: ["cargo", "rustc", "rustfmt"],
+  python: ["python3", "python", "uv", "pip", "pytest"],
+  typescript: ["node", "npm", "npx", "pnpm", "yarn"],
+  javascript: ["node", "npm", "npx", "pnpm", "yarn"],
+};
+
+/** The commands a setup runs: the first word of each simple command, past variable assignments and `env`. */
+export function setupCommands(setup: string | null): string[] {
+  if (setup === null) return [];
+  return [...new Set(setup.split(/&&|\|\||[;|\n()]/u).flatMap(command => {
+    const word = command.trim().split(/\s+/u).find(token => token !== "env" && !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(token));
+    return word !== undefined && /^[A-Za-z0-9_.+-]+$/u.test(word) ? [word] : [];
+  }))];
+}
+
+/**
+ * The agent's PATH: the workspace's own tool folders after setup (`.venv/bin`, `node_modules/.bin`), then the folder
+ * each of the language's tools and the setup's commands is found in on {@link setupPath} (Go in `/usr/local/go/bin`
+ * on the build hosts), then the rest of that path; every folder one the sandbox lets the agent read.
+ */
+export function sandboxPath(language: string, setup: string | null, repo: string): string[] {
+  const search = setupPath();
+  const readable = [repo, ...SYSTEM_ROOTS, ...homeReadable()];
+  const local = [join(repo, ".venv", "bin"), join(repo, "node_modules", ".bin")].filter(path => existsSync(path));
+  const found = [...(LANGUAGE_TOOLS[language] ?? []), ...setupCommands(setup)].flatMap(tool => search.find(dir => existsSync(join(dir, tool))) ?? []);
+  return [...new Set([...local, ...found, ...search].filter(dir => readable.some(root => dir === root || dir.startsWith(`${root}/`))))];
+}
+
+/**
+ * What the agent's commands run with besides Codex's environment: {@link sandboxPath} as PATH, and temporary files
+ * and caches in the workspace's {@link SCRATCH} folder, since the sandbox makes `/tmp` and the home folder's caches
+ * read-only or unreadable (Go cannot build without a writable `GOCACHE` and temporary folder). `GOTOOLCHAIN=local`:
+ * Go never tries to download another toolchain.
+ */
+export function agentShellEnv(language: string, setup: string | null, repo: string): Record<string, string> {
+  const scratch = join(repo, SCRATCH);
+  return { PATH: sandboxPath(language, setup, repo).join(":"), TMPDIR: join(scratch, "tmp"), XDG_CACHE_HOME: join(scratch, "cache"), GOCACHE: join(scratch, "cache", "go-build"), GOTOOLCHAIN: "local" };
 }
 
 /** One thing the agent did that reaches past its workspace: where it was seen, why it counts, and the call's text. */
@@ -858,28 +1069,42 @@ export interface Grade {
   readonly wallMs: number;
 }
 
+/**
+ * One blind structured Codex call (the grader's, the reviewer's): no hooks, an empty folder `<name>` in `folder`, the
+ * sandbox profile, `--ephemeral`, and `--output-schema` holding its final message to `jsonSchema`. Returns that
+ * message parsed as JSON, or why there is none.
+ */
+async function judgeCall(folder: string, name: string, prompt: string, jsonSchema: object, options: Options, denied: readonly string[], codexEnv: Readonly<Record<string, string>>): Promise<{ answer: unknown; error: string | null; usage: Usage | null; wallMs: number }> {
+  const work = join(folder, name);
+  mkdirSync(work, { recursive: true });
+  const schema = join(folder, `${name}-schema.json`);
+  writeFileSync(schema, JSON.stringify(jsonSchema));
+  const codexHome = join(folder, `${name}-codex-home`);
+  createCodexHome(codexHome, "", null);
+  writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
+  const judge: CodexRunOptions = { model: options.judgeModel, config: [], timeoutMin: options.judgeTimeoutMin, extraArgs: ["--output-schema", schema, "--ephemeral", ...NO_WEB_ARGS], permissions: PROFILE, binary: codexBinary(), env: codexEnv };
+  const outcome = await runCodex(work, codexHome, "", prompt, judge, join(folder, `${name}-rerail-home`));
+  const events = readEvents(outcome.stdout);
+  const base = { usage: events.usage, wallMs: outcome.wallMs };
+  if (outcome.timedOut) return { ...base, answer: null, error: `${name} timed out after ${options.judgeTimeoutMin} minutes` };
+  if (events.finalMessage === null) return { ...base, answer: null, error: events.error ?? `${name} exited ${outcome.exitCode} with no answer: ${clip(outcome.stderr, 200)}` };
+  try {
+    return { ...base, answer: JSON.parse(events.finalMessage) as unknown, error: null };
+  } catch (error) {
+    return { ...base, answer: null, error: `${name} answer unreadable (${error instanceof Error ? error.message : String(error)}): ${clip(events.finalMessage, 200)}` };
+  }
+}
+
 async function gradeRun(context: PairContext, diff: string, folder: string, options: Options, denied: readonly string[], codexEnv: Readonly<Record<string, string>>): Promise<Grade> {
   const { spec, pair } = context;
   const { text, stripped, truncated } = graderDiff(diff, pair, context.refs.map(side => side.author));
   if (text.trim() === "") return { verdict: { conflicts_with_first: "no", reasons: ["The run changed no file."], done: "no" }, by: "empty-diff", error: null, strippedLines: stripped, truncated, usage: null, wallMs: 0 };
-  const work = join(folder, "grade");
-  mkdirSync(work, { recursive: true });
-  const schema = join(folder, "grade-schema.json");
-  writeFileSync(schema, JSON.stringify(VERDICT_JSON_SCHEMA));
-  const codexHome = join(folder, "grade-codex-home");
-  createCodexHome(codexHome, "", null);
-  writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
-  const judge: CodexRunOptions = { model: options.judgeModel, config: [], timeoutMin: options.judgeTimeoutMin, extraArgs: ["--output-schema", schema, "--ephemeral", ...NO_WEB_ARGS], permissions: PROFILE, binary: codexBinary(), env: codexEnv };
-  const outcome = await runCodex(work, codexHome, "", gradePrompt(spec, text), judge, join(folder, "grade-rerail-home"));
-  const events = readEvents(outcome.stdout);
-  const base = { by: null, strippedLines: stripped, truncated, usage: events.usage, wallMs: outcome.wallMs };
-  if (outcome.timedOut) return { ...base, verdict: null, error: `grader timed out after ${options.judgeTimeoutMin} minutes` };
-  if (events.finalMessage === null) return { ...base, verdict: null, error: events.error ?? `grader exited ${outcome.exitCode} with no answer: ${clip(outcome.stderr, 200)}` };
-  try {
-    return { ...base, by: "grader", verdict: verdictSchema.parse(JSON.parse(events.finalMessage)), error: null };
-  } catch (error) {
-    return { ...base, verdict: null, error: `grader answer unreadable (${error instanceof Error ? error.message : String(error)}): ${clip(events.finalMessage, 200)}` };
-  }
+  const call = await judgeCall(folder, "grade", gradePrompt(spec, text), VERDICT_JSON_SCHEMA, options, denied, codexEnv);
+  const base = { by: null, strippedLines: stripped, truncated, usage: call.usage, wallMs: call.wallMs };
+  if (call.error !== null) return { ...base, verdict: null, error: call.error };
+  const parsed = verdictSchema.safeParse(call.answer);
+  if (!parsed.success) return { ...base, verdict: null, error: `grader answer unreadable (${parsed.error.message}): ${clip(JSON.stringify(call.answer), 200)}` };
+  return { ...base, by: "grader", verdict: parsed.data, error: null };
 }
 
 // ---------------------------------------------------------------------------------------------------------- run
@@ -978,7 +1203,10 @@ function gitOutcome(context: PairContext, hookLog: readonly ReplayHookLogEntry[]
   };
 }
 
-/** The workspace at `repo`: the base snapshot as its only commit, from the source's objects through a throwaway index. */
+/**
+ * The workspace at `repo`: the base snapshot as its only commit, from the source's objects through a throwaway index;
+ * then the {@link SCRATCH} folder, which `.git/info/exclude` keeps out of every later commit and diff.
+ */
 function checkoutBase(context: PairContext, folder: string, repo: string): void {
   git(folder, ["init", "-q", repo]);
   const index = { GIT_INDEX_FILE: join(folder, "base.index") };
@@ -986,11 +1214,15 @@ function checkoutBase(context: PairContext, folder: string, repo: string): void 
   git(context.source, [`--work-tree=${repo}`, "checkout-index", "--all", "--force"], index);
   git(repo, ["add", "--all", "--force"]);
   git(repo, ["commit", "-q", "--no-verify", "-m", "base"]);
+  mkdirSync(join(repo, ".git", "info"), { recursive: true });
+  writeFileSync(join(repo, ".git", "info", "exclude"), `/${SCRATCH}/\n`, { flag: "a" });
+  for (const sub of ["tmp", "cache"]) mkdirSync(join(repo, SCRATCH, sub), { recursive: true });
 }
 
+/** The spec's setup in the workspace, on {@link setupPath} (so it finds Go where the hosts install it), committed. */
 function runSetup(command: string, repo: string): NonNullable<ReplayRun["setup"]> {
   const started = performance.now();
-  const result = spawnSync("sh", ["-c", command], { cwd: repo, env: process.env, encoding: "utf8", timeout: SETUP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 });
+  const result = spawnSync("sh", ["-c", command], { cwd: repo, env: { ...process.env, PATH: setupPath().join(":") }, encoding: "utf8", timeout: SETUP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim().split("\n");
   git(repo, ["add", "--all"]);
   git(repo, ["commit", "-q", "--no-verify", "--allow-empty", "-m", "setup"]);
@@ -1007,86 +1239,152 @@ function parseEvents(stdout: string): unknown[] {
   });
 }
 
-async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<ReplayRun> {
-  const { context, arm, trial } = job;
-  const { pair, spec } = context;
-  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-replay-")));
+/** A run's prepared workspace: the repository after setup, its CODEX_HOME with the hook, and what the sandbox denies. */
+interface Workspace {
+  readonly folder: string;
+  readonly repo: string;
+  readonly codexHome: string;
+  readonly configPath: string;
+  readonly logPath: string;
+  readonly denied: readonly string[];
+  readonly setup: ReplayRun["setup"];
+  /** The commit the diff is taken against: the base snapshot after setup. */
+  readonly diffBase: string;
+  /** What the agent's commands run with ({@link agentShellEnv}). */
+  readonly shell: Readonly<Record<string, string>>;
+}
+
+/**
+ * The run's workspace in `folder`: the base snapshot, the spec's setup, the hook's configuration for the arm, and the
+ * CODEX_HOME whose config holds the sandbox profile and the agent's shell environment.
+ */
+function prepareWorkspace(job: Job, options: Options, folder: string, task: string): Workspace {
+  const { context, arm } = job;
+  const { spec } = context;
   const repo = join(folder, "repo");
   const codexHome = join(folder, "codex-home");
   const configPath = join(folder, "hook-config.json");
   const logPath = join(folder, "hook.log");
-  const empty = { timedOut: false, exitCode: null, wallMs: 0, usage: null, finalMessage: null, noteLine: false, leaked: false, leaks: [], setup: null, diff: "", files: [], merge: null, mergeError: null, touches: { firstHalf: [], firstFiles: [] }, delivered: [], injections: 0, landed: null, hookErrors: [], hookLog: [], git: null, events: [], grade: null };
-  const task = options.tamper ? TAMPER_TASKS[trial - 1]! : spec.task;
   // What no replay Codex call may read: the source repository, its objects, the dataset, the clones, the ledger cache.
   const denied = [context.source, dirname(context.objects), options.dataset, options.repos, LEDGER_CACHE];
+  if (arm === "align" && context.units === null) throw new Error(`no ledger: ${context.ledgerError ?? "not built"}`);
+  checkoutBase(context, folder, repo);
+  const setup = spec.setup === null ? null : runSetup(spec.setup, repo);
+  const diffBase = git(repo, ["rev-parse", "HEAD"]).trim();
+  const conflictsFile = arm === "git-conflict-pull" ? join(repo, ".git", "rerail-conflicts.md") : null;
+  if (conflictsFile !== null) {
+    writeFileSync(conflictsFile, "No in-flight conflicts: none of your changes overlap another branch's.\n");
+    git(repo, ["config", "alias.conflicts", "!cat .git/rerail-conflicts.md"]);
+  }
+  const config: ReplayHookConfig = {
+    arm,
+    units: arm === "align" ? context.units! : [],
+    alignModule: arm === "align" ? options.alignModule : null,
+    alignOptions: { cacheDir: join(folder, "align-cache") },
+    prompt: task,
+    root: repo,
+    log: logPath,
+    state: join(folder, "hook-state.json"),
+    refs: GIT_ARMS.includes(arm) ? context.refs : [],
+    workspaceBase: diffBase,
+    conflictsFile,
+  };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  writeFileSync(logPath, "");
+  createCodexHome(codexHome, configPath, HOOK);
+  const shell = agentShellEnv(context.pair.language, spec.setup, repo);
+  writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options), shell));
+  return { folder, repo, codexHome, configPath, logPath, denied, setup, diffBase, shell };
+}
+
+/** The agent's Codex options: the run's model and timeout, no web, the sandbox profile, the provider's token. */
+function agentOptions(options: Options, codexEnv: Readonly<Record<string, string>>): CodexRunOptions {
+  return { ...options, extraArgs: NO_WEB_ARGS, permissions: PROFILE, binary: codexBinary(), env: codexEnv };
+}
+
+/** Why a Codex call failed (timed out, reported an error, exited non-zero); null when it ran its course. */
+function callFailure(outcome: CodexOutcome, events: CodexEvents, timeoutMin: number): string | null {
+  if (outcome.timedOut) return `timed out after ${timeoutMin} minutes`;
+  return events.error ?? (outcome.exitCode === 0 ? null : `codex exited ${outcome.exitCode}: ${clip(outcome.stderr.trim().split("\n").at(-1) ?? "", 200)}`);
+}
+
+function readHookLog(path: string): ReplayHookLogEntry[] {
+  return readFileSync(path, "utf8").split("\n").filter(line => line.trim() !== "").map(line => JSON.parse(line) as ReplayHookLogEntry);
+}
+
+/** The run's leaks over every agent call's events and its transcript, and any credential Codex ran with showing up in them. */
+function runLeaks(stdouts: readonly string[], transcript: string | null, workspace: Workspace, codexEnv: Readonly<Record<string, string>>): Leak[] {
+  const leaks = findLeaks(stdouts.flatMap(parseEvents), transcript, workspace.folder, workspace.repo);
+  // A credential Codex ran with that shows up in what the agent saw or said, however it got there.
+  for (const secret of Object.values(codexEnv)) {
+    if (stdouts.some(stdout => stdout.includes(secret)) || (transcript ?? "").includes(secret)) leaks.push({ source: "output", reason: "a credential in the run's events or transcript", text: "(redacted)" });
+  }
+  return leaks;
+}
+
+/** The workspace against its base after setup, untracked files included: the diff, a binary patch, and per-file line counts. */
+function workspaceDiff(workspace: Workspace): { diff: string; patch: string; files: ReplayRun["files"] } {
+  const { repo, diffBase } = workspace;
+  git(repo, ["add", "--all"]);
+  const files = git(repo, ["diff", "--cached", "--numstat", diffBase]).split("\n").filter(line => line !== "").map(line => {
+    const [added, removed, ...path] = line.split("\t");
+    return { path: path.join("\t"), added: Number(added) || 0, removed: Number(removed) || 0 };
+  });
+  return { diff: git(repo, ["diff", "--cached", "--no-color", diffBase]), patch: git(repo, ["diff", "--cached", "--binary", "--no-color", diffBase]), files };
+}
+
+/** `patch` applied to `base_sha` as a commit in a scratch repository, merged with each of `theirs` (`git merge-tree`). */
+function mergeResult(context: PairContext, workspace: Workspace, patch: string, theirs: readonly string[]): MergeCheck[] {
+  const scratch = scratchRepository(workspace.folder, [context.objects, join(workspace.repo, ".git", "objects")]);
+  const index = { GIT_INDEX_FILE: join(workspace.folder, "result.index") };
+  git(scratch, ["read-tree", context.spec.base_sha], index);
+  if (patch.trim() !== "") git(scratch, ["apply", "--cached", "--binary", "--3way"], index, patch);
+  const tree = git(scratch, ["write-tree"], index).trim();
+  const result = git(scratch, ["commit-tree", tree, "-p", context.spec.base_sha, "-m", "run"]).trim();
+  return theirs.map(sha => mergeCheck(scratch, result, sha));
+}
+
+const errorLine = (error: unknown): string => (error instanceof Error ? error.message.split("\n").slice(0, 3).join(" ") : String(error));
+
+/** Each unit the hook delivered, with whether it came from first and the second into the run it went out at. */
+function deliveredUnits(context: PairContext, hookLog: readonly ReplayHookLogEntry[], started: number): ReplayRun["delivered"] {
+  return hookLog.flatMap(entry => entry.delivered.map(item => {
+    const unit = context.units?.find(candidate => candidate.id === item.unitId);
+    return { ...item, fromFirst: unit !== undefined && fromFirst(unit, context.pair), atS: Math.round((entry.at - started) / 1000) };
+  }));
+}
+
+async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<ReplayRun> {
+  const { context, arm, trial } = job;
+  const { pair, spec } = context;
+  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-replay-")));
+  const empty = { timedOut: false, exitCode: null, wallMs: 0, usage: null, finalMessage: null, noteLine: false, leaked: false, leaks: [], setup: null, diff: "", files: [], merge: null, mergeError: null, touches: { firstHalf: [], firstFiles: [] }, delivered: [], injections: 0, landed: null, hookErrors: [], hookLog: [], git: null, events: [], grade: null };
+  const task = options.tamper ? TAMPER_TASKS[trial - 1]! : spec.task;
   try {
-    if (arm === "align" && context.units === null) throw new Error(`no ledger: ${context.ledgerError ?? "not built"}`);
-    checkoutBase(context, folder, repo);
-    const setup = spec.setup === null ? null : runSetup(spec.setup, repo);
-    const diffBase = git(repo, ["rev-parse", "HEAD"]).trim();
-    const conflictsFile = arm === "git-conflict-pull" ? join(repo, ".git", "rerail-conflicts.md") : null;
-    if (conflictsFile !== null) {
-      writeFileSync(conflictsFile, "No in-flight conflicts: none of your changes overlap another branch's.\n");
-      git(repo, ["config", "alias.conflicts", "!cat .git/rerail-conflicts.md"]);
-    }
-    const config: ReplayHookConfig = {
-      arm,
-      units: arm === "align" ? context.units! : [],
-      alignModule: arm === "align" ? options.alignModule : null,
-      alignOptions: { cacheDir: join(folder, "align-cache") },
-      prompt: task,
-      root: repo,
-      log: logPath,
-      state: join(folder, "hook-state.json"),
-      refs: GIT_ARMS.includes(arm) ? context.refs : [],
-      workspaceBase: diffBase,
-      conflictsFile,
-    };
-    writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-    writeFileSync(logPath, "");
-    createCodexHome(codexHome, configPath, HOOK);
-    writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
+    const workspace = prepareWorkspace(job, options, folder, task);
     const started = Date.now();
-    const outcome = await runCodex(repo, codexHome, configPath, task, { ...options, extraArgs: NO_WEB_ARGS, permissions: PROFILE, binary: codexBinary(), env: codexEnv }, join(folder, "rerail-home"));
+    const outcome = await runCodex(workspace.repo, workspace.codexHome, workspace.configPath, task, agentOptions(options, codexEnv), join(folder, "rerail-home"));
     const events = readEvents(outcome.stdout);
-    const hookLog = readFileSync(logPath, "utf8").split("\n").filter(line => line.trim() !== "").map(line => JSON.parse(line) as ReplayHookLogEntry);
+    const hookLog = readHookLog(workspace.logPath);
     const injected = hookLog.flatMap(entry => (entry.text === undefined ? [] : [entry.text]));
-    const transcript = transcriptText(codexHome);
-    const leaks = findLeaks(parseEvents(outcome.stdout), transcript, folder, repo);
-    // A credential Codex ran with that shows up in what the agent saw or said, however it got there.
-    for (const secret of Object.values(codexEnv)) {
-      if (outcome.stdout.includes(secret) || (transcript ?? "").includes(secret)) leaks.push({ source: "output", reason: "a credential in the run's events or transcript", text: "(redacted)" });
-    }
-    git(repo, ["add", "--all"]);
-    const diff = git(repo, ["diff", "--cached", "--no-color", diffBase]);
-    const patch = git(repo, ["diff", "--cached", "--binary", "--no-color", diffBase]);
-    const files = git(repo, ["diff", "--cached", "--numstat", diffBase]).split("\n").filter(line => line !== "").map(line => {
-      const [added, removed, ...path] = line.split("\t");
-      return { path: path.join("\t"), added: Number(added) || 0, removed: Number(removed) || 0 };
-    });
+    const transcript = transcriptText(workspace.codexHome);
+    const leaks = runLeaks([outcome.stdout], transcript, workspace, codexEnv);
+    const { diff, patch, files } = workspaceDiff(workspace);
     let merge: ReplayRun["merge"] = null;
     let mergeError: string | null = null;
     try {
-      const scratch = scratchRepository(folder, [context.objects, join(repo, ".git", "objects")]);
-      const index = { GIT_INDEX_FILE: join(folder, "result.index") };
-      git(scratch, ["read-tree", spec.base_sha], index);
-      if (patch.trim() !== "") git(scratch, ["apply", "--cached", "--binary", "--3way"], index, patch);
-      const tree = git(scratch, ["write-tree"], index).trim();
-      const result = git(scratch, ["commit-tree", tree, "-p", spec.base_sha, "-m", "run"]).trim();
-      merge = { head: mergeCheck(scratch, result, pair.first.head_sha), visible: mergeCheck(scratch, result, spec.first_visible) };
+      const [head, visible] = mergeResult(context, workspace, patch, [pair.first.head_sha, spec.first_visible]) as [MergeCheck, MergeCheck];
+      merge = { head, visible };
     } catch (error) {
-      mergeError = error instanceof Error ? error.message.split("\n").slice(0, 3).join(" ") : String(error);
+      mergeError = errorLine(error);
     }
     const changed = new Set(files.map(file => file.path));
-    const grade = await gradeRun(context, diff, folder, options, denied, codexEnv);
-    const failure = outcome.timedOut
-      ? `timed out after ${options.timeoutMin} minutes`
-      : events.error ?? (outcome.exitCode === 0 ? null : `codex exited ${outcome.exitCode}: ${clip(outcome.stderr.trim().split("\n").at(-1) ?? "", 200)}`);
+    const grade = await gradeRun(context, diff, folder, options, workspace.denied, codexEnv);
     return {
       pair: pair.id,
       arm,
       trial,
-      error: failure,
+      error: callFailure(outcome, events, options.timeoutMin),
       timedOut: outcome.timedOut,
       exitCode: outcome.exitCode,
       wallMs: outcome.wallMs,
@@ -1095,16 +1393,13 @@ async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<stri
       noteLine: /^\s*Note:.*decided differently/mu.test(events.finalMessage ?? ""),
       leaked: leaks.length > 0,
       leaks,
-      setup,
+      setup: workspace.setup,
       diff,
       files,
       merge,
       mergeError,
       touches: { firstHalf: (pair.conflict?.first_half.files ?? []).filter(path => changed.has(path)), firstFiles: context.firstFiles.filter(path => changed.has(path)) },
-      delivered: hookLog.flatMap(entry => entry.delivered.map(item => {
-        const unit = context.units?.find(candidate => candidate.id === item.unitId);
-        return { ...item, fromFirst: unit !== undefined && fromFirst(unit, pair), atS: Math.round((entry.at - started) / 1000) };
-      })),
+      delivered: deliveredUnits(context, hookLog, started),
       injections: injected.length,
       landed: transcript === null ? null : injected.filter(text => transcript.includes(JSON.stringify(text).slice(1, -1))).length,
       hookErrors: hookLog.flatMap(entry => (entry.error === undefined ? [] : [entry.error])),
@@ -1119,6 +1414,467 @@ async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<stri
   } finally {
     if (options.keep) console.error(`kept ${folder}`);
     else await removeFolder(folder);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------- completion
+
+/** The reviewer's and the grader's prompt: the task, the adopted and the other design, the numbered items, `done` and the diff. */
+export function itemsPrompt(label: CompletionLabel, diff: string): string {
+  return [
+    "You are a maintainer of this repository reviewing a code change made for the task below. Judge it only from the diff; there is nothing else to look at.",
+    "",
+    "## Task the change was made for",
+    label.task,
+    "",
+    "## The design this project adopted",
+    label.adopted,
+    "",
+    "## The design it did not adopt",
+    label.rejected,
+    "",
+    "## Statements a change must satisfy to match the adopted design",
+    ...label.conflict_items.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "## Done",
+    "How to tell whether the task is reasonably done:",
+    label.done,
+    "",
+    "## Diff (against the commit the work started from)",
+    "```diff",
+    diff,
+    "```",
+    "",
+    "Answer with JSON only. `items`: one entry per numbered statement, in order, each judged on its own. `item`: its number. `status`: \"violated\" when the diff contradicts the statement, \"satisfied\" when the diff conforms to it, \"not_applicable\" when the diff does not touch what it is about. `reason`: one or two sentences. `lines`: for a violated statement, the diff lines it rests on, each the path and the quoted added or removed line; empty otherwise. `done`: \"yes\", \"partial\" or \"no\" by the done criteria.",
+  ].join("\n");
+}
+
+/** A reviewer's or grader's judgment of each conflict item on one diff. */
+export interface ItemGrade {
+  readonly verdict: ItemsVerdict | null;
+  /** Items judged violated; null without a verdict. */
+  readonly violated: number | null;
+  /**
+   * `model` for a Codex call; `empty-diff` for a diff that changes nothing (every item not applicable, not done), with
+   * no call; `same-diff` for the final grade of a run whose diff is the first pass's, which is reused.
+   */
+  readonly by: "model" | "empty-diff" | "same-diff" | null;
+  readonly error: string | null;
+  readonly strippedLines: number;
+  readonly truncated: boolean;
+  readonly usage: Usage | null;
+  readonly wallMs: number;
+}
+
+/** `answer`'s items when they are exactly 1..`count`, each once, sorted; why not otherwise. */
+export function checkItems(answer: unknown, count: number): { verdict: ItemsVerdict; error: null } | { verdict: null; error: string } {
+  const parsed = itemsVerdictSchema.safeParse(answer);
+  if (!parsed.success) return { verdict: null, error: `answer unreadable (${parsed.error.message}): ${clip(JSON.stringify(answer), 200)}` };
+  const items = [...parsed.data.items].sort((left, right) => left.item - right.item);
+  if (items.length !== count || items.some((item, index) => item.item !== index + 1)) return { verdict: null, error: `answer judges items ${items.map(item => item.item).join(",")}, not 1..${count}` };
+  return { verdict: { ...parsed.data, items }, error: null };
+}
+
+/** One blind judgment of `diff` against the label's items: the arm's injected text stripped as for the replay grader. */
+async function judgeItems(context: PairContext, diff: string, folder: string, name: string, options: Options, denied: readonly string[], codexEnv: Readonly<Record<string, string>>): Promise<ItemGrade> {
+  const label = context.label!;
+  const { text, stripped, truncated } = graderDiff(diff, context.pair, context.refs.map(side => side.author));
+  const base = { strippedLines: stripped, truncated };
+  if (text.trim() === "") {
+    const items = label.conflict_items.map((_, index) => ({ item: index + 1, status: "not_applicable" as const, reason: "The run changed no file.", lines: [] }));
+    return { ...base, verdict: { items, done: "no" }, violated: 0, by: "empty-diff", error: null, usage: null, wallMs: 0 };
+  }
+  const call = await judgeCall(folder, name, itemsPrompt(label, text), ITEMS_VERDICT_JSON_SCHEMA, options, denied, codexEnv);
+  const checked = call.error === null ? checkItems(call.answer, label.conflict_items.length) : { verdict: null, error: call.error };
+  return {
+    ...base,
+    verdict: checked.verdict,
+    violated: checked.verdict === null ? null : checked.verdict.items.filter(item => item.status === "violated").length,
+    by: checked.verdict === null ? null : "model",
+    error: checked.verdict === null ? `${name}: ${checked.error}` : null,
+    usage: call.usage,
+    wallMs: call.wallMs,
+  };
+}
+
+/** What the agent gets back after a review that found violated items: each item, the reviewer's reason and diff lines. */
+export function reviewMessage(label: CompletionLabel, verdict: ItemsVerdict, round: number): string {
+  const violated = verdict.items.filter(item => item.status === "violated");
+  return [
+    `A maintainer who knows the design this project adopted reviewed your change (review ${round} of at most ${MAX_REVIEW_ROUNDS}). It does not match that design on ${violated.length === 1 ? "this point" : `these ${violated.length} points`}:`,
+    "",
+    ...violated.flatMap((item, index) => [
+      `${index + 1}. ${label.conflict_items[item.item - 1]}`,
+      `   Why: ${item.reason}`,
+      ...(item.lines.length === 0 ? [] : ["   Diff lines:", ...item.lines.map(line => `     ${line}`)]),
+      "",
+    ]),
+    "Change your code so that each point holds, keep the rest of the task done, and finish as before.",
+  ].join("\n");
+}
+
+/** `total` minus `earlier`, field by field: a resumed call's own tokens (Codex reports the thread's running total). */
+function usageSince(total: Usage, earlier: Usage | null): Usage {
+  if (earlier === null) return total;
+  return { input: total.input - earlier.input, cached: total.cached - earlier.cached, output: total.output - earlier.output, cacheWrite: (total.cacheWrite ?? 0) - (earlier.cacheWrite ?? 0) };
+}
+
+/**
+ * The agent's model requests from its session transcript: the growth of Codex's running `total_token_usage` at each
+ * `token_count` event (a total that shrinks starts a new session file).
+ */
+export function transcriptRequests(transcript: string | null): Usage[] {
+  const requests: Usage[] = [];
+  let previous: Usage | null = null;
+  for (const line of (transcript ?? "").split("\n")) {
+    if (!line.includes("\"token_count\"")) continue;
+    let entry: { payload?: { type?: string; info?: { total_token_usage?: Record<string, unknown> } | null } };
+    try {
+      entry = JSON.parse(line) as typeof entry;
+    } catch {
+      continue;
+    }
+    const total = entry.payload?.type === "token_count" ? entry.payload.info?.total_token_usage : undefined;
+    if (total === undefined) continue;
+    const count = (value: unknown) => (typeof value === "number" ? value : 0);
+    const usage: Usage = { input: count(total.input_tokens), cached: count(total.cached_input_tokens), output: count(total.output_tokens), cacheWrite: count(total.cache_write_input_tokens) };
+    const request = previous !== null && usage.input >= previous.input ? usageSince(usage, previous) : usage;
+    previous = usage;
+    if (request.input > 0 || request.output > 0) requests.push(request);
+  }
+  return requests;
+}
+
+/**
+ * What the requests above {@link PRICES}' long-context threshold cost on top of the short-context rates every call's
+ * usage is priced at: they are billed at long-context rates in full.
+ */
+function longContextSurcharge(requests: readonly Usage[]): number {
+  return requests.filter(request => request.input > PRICES.longContextAbove).reduce((sum, request) => sum + usageCost(request, PRICES.long) - usageCost(request, PRICES.short), 0);
+}
+
+/** One Codex call of a completion run: the agent's phase 1 or a fix, a review, or a grade. */
+export interface CompletionCall {
+  readonly role: "agent" | "reviewer" | "grader";
+  readonly name: string;
+  readonly wallMs: number;
+  /** The call's own tokens. */
+  readonly usage: Usage | null;
+  readonly usd: number;
+  readonly error: string | null;
+}
+
+/** One review round: the review of the current diff, and when it found violated items, the message and the fix. */
+export interface CompletionRound {
+  readonly round: number;
+  readonly review: ItemGrade;
+  readonly message: string | null;
+  readonly fix: CompletionCall | null;
+  /** The diff after the fix; the next round reviews it. */
+  readonly diffAfter: string | null;
+}
+
+/** One role's calls summed: wall time, tokens (total = input + output; uncached = input − cached) and USD. */
+export interface RoleTotals {
+  readonly calls: number;
+  readonly wallMs: number;
+  readonly usage: Usage;
+  readonly total: number;
+  readonly uncached: number;
+  readonly usd: number;
+}
+
+function roleTotals(calls: readonly CompletionCall[], role: CompletionCall["role"], surcharge = 0): RoleTotals {
+  const own = calls.filter(call => call.role === role);
+  const usage = own.reduce<Usage>((sum, call) => (call.usage === null ? sum : { input: sum.input + call.usage.input, cached: sum.cached + call.usage.cached, output: sum.output + call.usage.output, cacheWrite: (sum.cacheWrite ?? 0) + (call.usage.cacheWrite ?? 0) }), { input: 0, cached: 0, output: 0, cacheWrite: 0 });
+  return { calls: own.length, wallMs: own.reduce((sum, call) => sum + call.wallMs, 0), usage, total: usage.input + usage.output, uncached: usage.input - usage.cached, usd: own.reduce((sum, call) => sum + call.usd, 0) + surcharge };
+}
+
+/** A completion run (pair × arm × trial). */
+export interface CompletionRun {
+  /** The completion label's id. */
+  readonly pair: string;
+  readonly scenario: CompletionLabel["scenario"];
+  readonly arm: ReplayArm;
+  readonly trial: number;
+  /** Why the run did not complete its protocol (a harness error, an agent call that failed, a review with no verdict). */
+  readonly error: string | null;
+  readonly leaked: boolean;
+  readonly leaks: readonly Leak[];
+  readonly setup: ReplayRun["setup"];
+  /** The agent's PATH. */
+  readonly shellPath: readonly string[];
+  readonly threadId: string | null;
+  /** The label's conflict items. */
+  readonly items: number;
+  readonly firstPass: { readonly diff: string; readonly files: ReplayRun["files"]; readonly finalMessage: string | null; readonly grade: ItemGrade | null };
+  readonly rounds: readonly CompletionRound[];
+  readonly final: { readonly diff: string; readonly files: ReplayRun["files"]; readonly finalMessage: string | null; readonly grade: ItemGrade | null };
+  /** Items the grader judged violated after phase 1, and after the last round; null without a verdict. */
+  readonly itemsAfterPhase1: number | null;
+  readonly itemsAfterCompletion: number | null;
+  /** The final grade judged no item violated: the run ended on the adopted design. */
+  readonly adoptedAtEnd: boolean | null;
+  /** Reviews that found violated items and sent the agent back. */
+  readonly fixRounds: number;
+  /** The final diff on `base_sha` merged with the adopted side's head (first's in D1, second's in D2). */
+  readonly merge: { readonly adoptedHead: string; readonly adopted: MergeCheck } | null;
+  readonly mergeError: string | null;
+  readonly calls: readonly CompletionCall[];
+  readonly agent: RoleTotals;
+  readonly reviewer: RoleTotals;
+  readonly grader: RoleTotals;
+  /** Agent requests above the long-context threshold, billed at long-context rates. */
+  readonly longContextRequests: number;
+  /** From the workspace's start to the final grade. */
+  readonly wallMs: number;
+  readonly hookLog: readonly ReplayHookLogEntry[];
+  readonly hookErrors: readonly string[];
+  readonly delivered: ReplayRun["delivered"];
+  readonly git: GitOutcome | null;
+  /** Codex's `--json` events of every agent call, in order. */
+  readonly events: readonly unknown[];
+  readonly folder: string | null;
+}
+
+/**
+ * One completion run. Phase 1: the agent does the task, as a replay run does. Then up to {@link MAX_REVIEW_ROUNDS}
+ * rounds: the reviewer (a blind Codex call that knows the adopted design, the same for every arm) judges the current
+ * diff against the label's items; when any is violated, the agent resumes its session (`codex exec resume`, the hook
+ * still on) with {@link reviewMessage}. A round with no violated item ends the loop. Then a separate grading call
+ * judges the final diff, and another the first pass's (the reported numbers): the final diff's grade is the first
+ * pass's when the two diffs are the same. A failed agent call ends the loop; a failed phase 1 gets no review.
+ */
+async function runCompletionJob(job: Job, options: Options, codexEnv: Readonly<Record<string, string>>): Promise<CompletionRun> {
+  const { context, arm, trial } = job;
+  const { pair, spec } = context;
+  const label = context.label!;
+  const adoptedHead = (label.scenario === "D1" ? pair.first : pair.second).head_sha;
+  const folder = await realpath(await mkdtemp(join(tmpdir(), "rerail-ma-replay-")));
+  const started = Date.now();
+  const calls: CompletionCall[] = [];
+  const stdouts: string[] = [];
+  const totals = (surcharge: number) => ({ agent: roleTotals(calls, "agent", surcharge), reviewer: roleTotals(calls, "reviewer"), grader: roleTotals(calls, "grader") });
+  const empty = { diff: "", files: [], finalMessage: null, grade: null };
+  const failed = (error: string): CompletionRun => ({
+    pair: label.id, scenario: label.scenario, arm, trial, error, leaked: false, leaks: [], setup: null, shellPath: [], threadId: null, items: label.conflict_items.length,
+    firstPass: empty, rounds: [], final: empty, itemsAfterPhase1: null, itemsAfterCompletion: null, adoptedAtEnd: null, fixRounds: 0, merge: null, mergeError: null,
+    calls, ...totals(0), longContextRequests: 0, wallMs: Date.now() - started, hookLog: [], hookErrors: [], delivered: [], git: null, events: stdouts.flatMap(parseEvents), folder: options.keep ? folder : null,
+  });
+  try {
+    const workspace = prepareWorkspace(job, options, folder, spec.task);
+    const agent = agentOptions(options, codexEnv);
+    let thread: Usage | null = null;
+    const agentCall = async (name: string, prompt: string, resume?: string) => {
+      const outcome = await runCodex(workspace.repo, workspace.codexHome, workspace.configPath, prompt, agent, join(folder, "rerail-home"), resume);
+      stdouts.push(outcome.stdout);
+      const events = readEvents(outcome.stdout);
+      const usage = events.usage === null ? null : usageSince(events.usage, thread);
+      if (events.usage !== null) thread = events.usage;
+      const call: CompletionCall = { role: "agent", name, wallMs: outcome.wallMs, usage, usd: usageCost(usage), error: callFailure(outcome, events, options.timeoutMin) };
+      calls.push(call);
+      return { call, events };
+    };
+    const judge = async (role: "reviewer" | "grader", name: string, diff: string) => {
+      const grade = await judgeItems(context, diff, folder, name, options, workspace.denied, codexEnv);
+      if (grade.by !== "empty-diff") calls.push({ role, name, wallMs: grade.wallMs, usage: grade.usage, usd: usageCost(grade.usage), error: grade.error });
+      return grade;
+    };
+    const phase1 = await agentCall("phase 1", spec.task);
+    const threadId = phase1.events.threadId;
+    let error = phase1.call.error === null ? null : `phase 1: ${phase1.call.error}`;
+    const first = workspaceDiff(workspace);
+    let current = first;
+    let finalMessage = phase1.events.finalMessage;
+    const rounds: CompletionRound[] = [];
+    for (let round = 1; error === null && round <= MAX_REVIEW_ROUNDS; round++) {
+      const review = await judge("reviewer", `review-${round}`, current.diff);
+      const violated = review.verdict?.items.some(item => item.status === "violated") ?? false;
+      if (review.verdict === null || !violated || threadId === null) {
+        if (review.verdict === null) error = review.error;
+        else if (violated) error = "phase 1 left no session to resume";
+        rounds.push({ round, review, message: null, fix: null, diffAfter: null });
+        break;
+      }
+      const message = reviewMessage(label, review.verdict, round);
+      const fix = await agentCall(`fix ${round}`, message, threadId);
+      current = workspaceDiff(workspace);
+      finalMessage = fix.events.finalMessage ?? finalMessage;
+      rounds.push({ round, review, message, fix: fix.call, diffAfter: current.diff });
+      if (fix.call.error !== null) error = `fix ${round}: ${fix.call.error}`;
+    }
+    const firstGrade = await judge("grader", "grade-phase1", first.diff);
+    const finalGrade = current.diff === first.diff && firstGrade.verdict !== null
+      ? { ...firstGrade, by: firstGrade.by === "model" ? "same-diff" as const : firstGrade.by, usage: null, wallMs: 0 }
+      : await judge("grader", "grade-final", current.diff);
+    let merge: CompletionRun["merge"] = null;
+    let mergeError: string | null = null;
+    try {
+      if (!hasCommit(context.source, adoptedHead)) throw new Error(`${context.source} has no commit ${adoptedHead} (the adopted side's head)`);
+      merge = { adoptedHead, adopted: mergeResult(context, workspace, current.patch, [adoptedHead])[0]! };
+    } catch (caught) {
+      mergeError = errorLine(caught);
+    }
+    const transcript = transcriptText(workspace.codexHome);
+    const leaks = runLeaks(stdouts, transcript, workspace, codexEnv);
+    const requests = transcriptRequests(transcript);
+    const hookLog = readHookLog(workspace.logPath);
+    const events = stdouts.flatMap(parseEvents);
+    return {
+      pair: label.id,
+      scenario: label.scenario,
+      arm,
+      trial,
+      error,
+      leaked: leaks.length > 0,
+      leaks,
+      setup: workspace.setup,
+      shellPath: (workspace.shell.PATH ?? "").split(":"),
+      threadId,
+      items: label.conflict_items.length,
+      firstPass: { diff: first.diff, files: first.files, finalMessage: phase1.events.finalMessage, grade: firstGrade },
+      rounds,
+      final: { diff: current.diff, files: current.files, finalMessage, grade: finalGrade },
+      itemsAfterPhase1: firstGrade.violated,
+      itemsAfterCompletion: finalGrade.violated,
+      adoptedAtEnd: finalGrade.violated === null ? null : finalGrade.violated === 0,
+      fixRounds: rounds.filter(round => round.fix !== null).length,
+      merge,
+      mergeError,
+      calls,
+      ...totals(longContextSurcharge(requests)),
+      longContextRequests: requests.filter(request => request.input > PRICES.longContextAbove).length,
+      wallMs: Date.now() - started,
+      hookLog,
+      hookErrors: hookLog.flatMap(entry => (entry.error === undefined ? [] : [entry.error])),
+      delivered: deliveredUnits(context, hookLog, started),
+      git: GIT_ARMS.includes(arm) ? gitOutcome(context, hookLog, events, started) : null,
+      events,
+      folder: options.keep ? folder : null,
+    };
+  } catch (error) {
+    return failed(error instanceof Error ? error.message : String(error));
+  } finally {
+    if (options.keep) console.error(`kept ${folder}`);
+    else await removeFolder(folder);
+  }
+}
+
+const usd = (value: number): string => `$${value.toFixed(value < 1 ? 3 : 2)}`;
+const kilo = (value: number): string => `${Math.round(value / 1000)}k`;
+
+function printPrices(): void {
+  const row = (name: string, prices: TokenPrices) => [name, String(prices.input), String(prices.cacheWrite), String(prices.cacheRead), String(prices.output)];
+  console.log(`\nPrices: ${PRICES.model}, ${PRICES.tier}, ${PRICES.currency}\n${table(["context", "input", "cache write", "cache read", "output"], [row(`≤ ${PRICES.longContextAbove} input`, PRICES.short), row(`> ${PRICES.longContextAbove} input`, PRICES.long)])}\nSource: ${PRICES.source}`);
+}
+
+function printCompletionRuns(runs: readonly CompletionRun[]): void {
+  const rows = runs.map(run => [
+    run.pair,
+    run.scenario,
+    run.arm,
+    String(run.trial),
+    `${run.itemsAfterPhase1 ?? "?"}/${run.items}`,
+    run.rounds.map(round => (round.review.violated === null ? "err" : String(round.review.violated))).join(" → ") || "-",
+    `${run.itemsAfterCompletion ?? "?"}/${run.items}`,
+    run.adoptedAtEnd === null ? "?" : run.adoptedAtEnd ? "yes" : "no",
+    run.final.grade?.verdict?.done ?? "",
+    String(run.fixRounds),
+    fixed(run.agent.wallMs / 60_000, 1),
+    fixed((run.reviewer.wallMs + run.grader.wallMs) / 60_000, 1),
+    `${kilo(run.agent.total)}/${kilo(run.agent.uncached)}`,
+    usd(run.agent.usd),
+    `${kilo(run.reviewer.total)}/${kilo(run.reviewer.uncached)}`,
+    usd(run.reviewer.usd),
+    `${kilo(run.grader.total)}/${kilo(run.grader.uncached)}`,
+    usd(run.grader.usd),
+    run.merge === null ? "err" : `${run.merge.adopted.files.length}/${run.merge.adopted.hunks}`,
+    run.leaked ? `LEAK (${run.leaks.length})` : "",
+    clip(run.error ?? run.mergeError, 40),
+  ]);
+  console.log(`\n${table(["pair", "scen", "arm", "trial", "items p1", "review items", "items end", "adopted", "done", "fixes", "agent min", "judge min", "agent tok/uncached", "agent $", "reviewer tok", "reviewer $", "grader tok", "grader $", "merge adopted f/h", "leaked", "error"], rows)}`);
+  for (const run of runs) {
+    console.log(`\n${run.pair} ${run.arm} #${run.trial}: first pass ${run.itemsAfterPhase1 ?? "?"} of ${run.items} items violated, ${run.fixRounds} fix round(s), end ${run.itemsAfterCompletion ?? "?"}${run.final.grade?.by === "same-diff" ? " (same diff as the first pass)" : ""}; ${(run.wallMs / 60_000).toFixed(1)} min in all`);
+    for (const call of run.calls) console.log(`  - ${call.role} ${call.name}: ${(call.wallMs / 60_000).toFixed(1)} min, ${call.usage === null ? "no usage" : `${kilo(call.usage.input + call.usage.output)} tokens (${kilo(call.usage.input - call.usage.cached)} uncached input, ${kilo(call.usage.output)} output)`}, ${usd(call.usd)}${call.error === null ? "" : `, ${clip(call.error, 80)}`}`);
+    for (const round of run.rounds) {
+      const items = round.review.verdict?.items.filter(item => item.status === "violated").map(item => item.item) ?? [];
+      console.log(`  review ${round.round}: ${round.review.violated === null ? `no verdict (${clip(round.review.error, 80)})` : `${round.review.violated} violated${items.length === 0 ? "" : ` (items ${items.join(", ")})`}`}${round.fix === null ? "" : `; fixed in ${(round.fix.wallMs / 60_000).toFixed(1)} min`}`);
+    }
+    for (const [name, grade] of [["first pass", run.firstPass.grade], ["final", run.final.grade]] as const) {
+      for (const item of grade?.verdict?.items.filter(entry => entry.status === "violated") ?? []) console.log(`  ${name} item ${item.item} violated: ${clip(item.reason, 200)}`);
+    }
+  }
+  for (const run of runs.filter(candidate => candidate.leaked)) {
+    console.log(`\n${run.pair} ${run.arm} #${run.trial} LEAKED, left out of every aggregate:`);
+    for (const leak of run.leaks) console.log(`  - ${leak.reason} [${leak.source}]: ${clip(leak.text, 200)}`);
+  }
+}
+
+/** A completion run that failed its protocol: an error, an empty final diff, or no final verdict. */
+export const completionFailed = (run: CompletionRun): boolean => run.error !== null || run.final.diff.trim() === "" || run.itemsAfterCompletion === null;
+
+function completionAggregate(label: readonly string[], all: readonly CompletionRun[]): string[] {
+  const runs = all.filter(run => !run.leaked);
+  const known = (values: ReadonlyArray<number | null>) => values.filter((value): value is number => value !== null);
+  return [
+    ...label,
+    String(runs.length),
+    String(all.length - runs.length),
+    `${runs.filter(completionFailed).length}/${runs.length}`,
+    fixed(mean(known(runs.map(run => run.itemsAfterPhase1))), 2),
+    fixed(mean(known(runs.map(run => run.itemsAfterCompletion))), 2),
+    `${runs.filter(run => run.adoptedAtEnd === true).length}/${runs.length}`,
+    fixed(mean(runs.map(run => run.fixRounds)), 2),
+    fixed(median(runs.map(run => run.agent.wallMs / 60_000)), 1),
+    runs.length === 0 ? "n/a" : `${kilo(mean(runs.map(run => run.agent.total)))}/${kilo(mean(runs.map(run => run.agent.uncached)))}`,
+    runs.length === 0 ? "n/a" : usd(mean(runs.map(run => run.agent.usd))),
+    runs.length === 0 ? "n/a" : usd(mean(runs.map(run => run.reviewer.usd))),
+    runs.length === 0 ? "n/a" : usd(mean(runs.map(run => run.grader.usd))),
+    `${runs.filter(run => run.merge !== null && !run.merge.adopted.clean).length}/${runs.length}`,
+  ];
+}
+
+const COMPLETION_HEADERS = ["runs", "leaked", "failed", "items p1", "items end", "adopted", "fixes", "median agent min", "agent tok/uncached", "agent $", "reviewer $", "grader $", "merge conflicted"];
+
+function printCompletionAggregates(runs: readonly CompletionRun[], arms: readonly ReplayArm[]): void {
+  console.log(`\nPer arm (means per run; leaked runs left out)\n${table(["arm", ...COMPLETION_HEADERS], arms.map(arm => completionAggregate([arm], runs.filter(run => run.arm === arm))))}`);
+  const scenarios = [...new Set(runs.map(run => run.scenario))].sort();
+  console.log(`\nPer scenario × arm\n${table(["scenario", "arm", ...COMPLETION_HEADERS], scenarios.flatMap(scenario => arms.map(arm => completionAggregate([scenario, arm], runs.filter(run => run.scenario === scenario && run.arm === arm)))))}`);
+  const pairs = [...new Set(runs.map(run => run.pair))];
+  console.log(`\nPer pair × arm\n${table(["pair", "arm", ...COMPLETION_HEADERS], pairs.flatMap(pair => arms.map(arm => completionAggregate([pair, arm], runs.filter(run => run.pair === pair && run.arm === arm)))))}`);
+}
+
+export const COMPLETION_REPORT_FORMAT = "rerail.merge-assist-replay-completion/v1";
+
+async function completionMain(options: Options): Promise<void> {
+  const selected = loadCompletionDataset(options);
+  if (selected.length === 0) throw new Error(`No completion label in ${join(options.dataset, "completion")}`);
+  const align = options.arms.includes("align") ? await loadAlignModule(options.alignModule) : null;
+  const contexts: PairContext[] = [];
+  for (const { pair, spec, label } of selected) contexts.push(await preparePair(pair, spec, options, align, label));
+  printLedgers(contexts);
+  printPrices();
+  const jobs = contexts.flatMap(context => Array.from({ length: options.trials }, (_, trial) => options.arms.map(arm => ({ context, arm, trial: trial + 1 }))).flat());
+  console.error(`\n${jobs.length} completion runs (${contexts.length} labels × ${options.arms.join(",")} × ${options.trials} trials), ${options.concurrency} at a time, ${options.timeoutMin} min per agent call, at most ${MAX_REVIEW_ROUNDS} review rounds`);
+  const codexEnv = codexEnvironment(options);
+  const startedAt = new Date().toISOString();
+  const runs = await pool(jobs, options.concurrency, job => runCompletionJob(job, options, codexEnv), (done, run) => {
+    console.error(`[${done}/${jobs.length}] ${run.pair} ${run.arm} #${run.trial}: ${fixed(run.wallMs / 60_000, 1)} min, items ${run.itemsAfterPhase1 ?? "?"} → ${run.itemsAfterCompletion ?? "?"} of ${run.items} after ${run.fixRounds} fix round(s), agent ${usd(run.agent.usd)}${run.error === null ? "" : `, ${clip(run.error, 80)}`}`);
+  });
+  printCompletionRuns(runs);
+  printCompletionAggregates(runs, options.arms);
+  if (options.json !== undefined) {
+    const report = {
+      format: COMPLETION_REPORT_FORMAT,
+      startedAt,
+      options,
+      maxReviewRounds: MAX_REVIEW_ROUNDS,
+      prices: PRICES,
+      pairs: contexts.map(({ pair, spec, label, source, ledgerTime: time, refs }) => ({ id: label!.id, label, pair, spec, source, ledgerTime: time, refs: refs.map(({ files, ...side }) => ({ ...side, files: Object.keys(files) })) })),
+      runs,
+    };
+    writeFileSync(options.json, `${JSON.stringify(report, null, 2)}\n`);
+    console.error(`wrote ${options.json}`);
   }
 }
 
@@ -1408,6 +2164,10 @@ async function main(): Promise<void> {
   codexOverride = options.codexBin;
   if (options.detectOnly) {
     detectOnly(options);
+    return;
+  }
+  if (options.completion) {
+    await completionMain(options);
     return;
   }
   const selected = loadDataset(options);

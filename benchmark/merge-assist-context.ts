@@ -1144,6 +1144,8 @@ export interface Usage {
   input: number;
   cached: number;
   output: number;
+  /** Input tokens written to the prompt cache, when the provider reports them (Bedrock does); part of `input`. */
+  cacheWrite?: number;
 }
 
 interface TargetDelivery {
@@ -1360,6 +1362,7 @@ export function readEvents(stdout: string): CodexEvents {
       usage.input += count(fields.input_tokens);
       usage.cached += count(fields.cached_input_tokens);
       usage.output += count(fields.output_tokens);
+      if (typeof fields.cache_write_input_tokens === "number") usage.cacheWrite = (usage.cacheWrite ?? 0) + fields.cache_write_input_tokens;
     }
     if (event.type === "turn.failed" || event.type === "error") {
       const detail = (event.error as Record<string, unknown> | undefined)?.message ?? event.message;
