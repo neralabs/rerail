@@ -330,6 +330,9 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     super::vocabulary::install(connection)?;
     crate::code_rule_dsl::text::install(connection)?;
     crate::code_rule_dsl::prefilter::tapes::install(connection)?;
+    // `atoms` over this process's arena, and the commit hook that keeps pending atoms out of
+    // committed rows (decision 0045).
+    super::atoms::Atoms::install(connection)?;
     Ok(())
 }
 
@@ -440,7 +443,7 @@ impl ContentStore {
             .expect("content store connection unavailable");
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
 
@@ -457,7 +460,7 @@ impl ContentStore {
         let _no_wait = NoBusyWait::enter();
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let value = operation(&transaction)?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(value)
     }
 }

@@ -52,7 +52,7 @@ impl ContentStore {
              ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
             params![object_kind, object_id, owner_id, lease_until],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -367,7 +367,7 @@ impl ContentStore {
             "UPDATE store_state SET generation=generation+1 WHERE singleton=1",
             [],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         connection
             .execute_batch("PRAGMA wal_checkpoint(PASSIVE); PRAGMA incremental_vacuum(128);")?;
         drop(connection);

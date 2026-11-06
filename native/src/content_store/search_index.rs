@@ -70,7 +70,7 @@ impl ContentStore {
             put_set.execute(params![tape.0, index_version])?;
         }
         drop(put_set);
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -130,7 +130,7 @@ impl ContentStore {
             ])?;
         }
         drop((remove_kind, put_kind, put_set));
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 

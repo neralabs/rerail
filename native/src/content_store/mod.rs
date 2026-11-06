@@ -585,8 +585,8 @@ pub struct ContentStore {
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
     facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
-    /// The mirror of the `atoms` table (atoms.rs).
-    atoms: parking_lot::Mutex<atoms::Interner>,
+    /// This process's atoms of the store (atoms.rs, decision 0045), shared with the planner's symbols.
+    atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
     working_set: working_set::WorkingSet,
     #[cfg(test)]
@@ -595,6 +595,18 @@ pub struct ContentStore {
     git_tree_write_count: AtomicUsize,
     #[cfg(test)]
     git_tree_transactions: AtomicUsize,
+}
+
+impl Drop for ContentStore {
+    /// Appends the atoms still pending (decision 0045 §4.3); another handle or the next open
+    /// writes them if this fails, and nothing durable names them meanwhile.
+    fn drop(&mut self) {
+        if self.atoms.pending()
+            && let Err(error) = self.immediate_transaction(|_| Ok(()))
+        {
+            eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+        }
+    }
 }
 
 impl ContentStore {
@@ -612,9 +624,10 @@ impl ContentStore {
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        retry_busy(&mut BusyRetries::default(), || {
+        let created = retry_busy(&mut BusyRetries::default(), || {
             Self::initialize(&mut connection)
         })?;
+        drop(connection);
         Ok(Self {
             database_path: path.to_path_buf(),
             connection: ThreadConnection {
@@ -627,7 +640,8 @@ impl ContentStore {
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            atoms: parking_lot::Mutex::new(atoms::Interner::default()),
+            // A store just created replaces any atoms this process held for a file at its path.
+            atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
             working_set: working_set::WorkingSet::default(),
             #[cfg(test)]
             git_tree_lookup_count: AtomicUsize::new(0),

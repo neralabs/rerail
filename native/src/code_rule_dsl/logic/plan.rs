@@ -2998,8 +2998,8 @@ pub(in crate::code_rule_dsl) fn run_sql_native(
 
 /// Evaluates a lowered program (decision 0009) over the base relations bound on `db` (`facts::vtab::syntax::bind`),
 /// with the planner's statistics in the attached schema `stats`. `db` is a connection to the content store: the
-/// symbols the run makes are appended to its `atoms`, and derived relations are `temp` tables, dropped by the next
-/// run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
+/// symbols the run makes are the store's atoms (pending until a flush, decision 0045), and derived relations are
+/// `temp` tables, dropped by the next run. Outputs are decoded: names and kinds as text, node ids as the vtabs'.
 pub(in crate::code_rule_dsl) fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Result<Outcome> {
     db.execute_batch("PRAGMA temp_store = MEMORY;")?;
     super::native::register_symbols(db)?;
@@ -3054,12 +3054,10 @@ fn run_native_inputs(lowered: &lower::Lowered, db: &Connection, inputs: Inputs) 
     super::native::register(db)?;
     super::native::register_symbols(db)?;
     super::native::forget_inputs(db);
-    super::native::hold_symbols(db, true)?;
     let out = run(&lowered.program, db, inputs, Some(lowered));
-    // Flushed while still held: the run's symbols are the table's next rows.
-    let flushed = super::native::flush_symbols(db);
-    super::native::hold_symbols(db, false)?;
-    flushed?;
+    // The run's symbols are pending in the store's arena; they are written when a flush is due or with the next
+    // write transaction (decision 0045).
+    super::native::flush_symbols(db)?;
     out
 }
 

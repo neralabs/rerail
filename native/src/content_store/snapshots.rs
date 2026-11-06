@@ -364,7 +364,7 @@ impl ContentStore {
              ON CONFLICT(snapshot_id,path_id) DO UPDATE SET source_id=excluded.source_id,tape_id=excluded.tape_id",
             params![snapshot_id.0, path_id, source_id.0, tape_id.map(|id| id.0)],
         )?;
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(())
     }
 
@@ -441,7 +441,7 @@ impl ContentStore {
                 tape: tape_id,
             });
         }
-        transaction.commit()?;
+        self.commit(transaction)?;
         Ok(stored)
     }
 }

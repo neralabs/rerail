@@ -21,12 +21,13 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 2;
+pub(super) const SCHEMA_VERSION: i64 = 3;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v2.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 2: the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 2;
+pub const STORE_FILE_NAME: &str = "content-v3.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 3: atoms stored as segments of the arena
+/// (decision 0045); 2 was the prefilter vocabulary keyed by atom.
+const STORE_FILE_FLOOR: i64 = 3;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -294,25 +295,27 @@ CREATE TABLE IF NOT EXISTS facts_completions (
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
--- The single interner (atoms.rs): dense, append-only; atom 0 is the empty string.
-CREATE TABLE IF NOT EXISTS atoms (
-    atom INTEGER PRIMARY KEY CHECK(atom >= 0),
-    value TEXT NOT NULL
+-- The single interner (atoms.rs, decision 0045): dense, append-only; atom 0 is the empty string.
+-- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
+-- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
+-- over the process's arena; a row that names an atom commits with or after its segment.
+CREATE TABLE IF NOT EXISTS atom_segment (
+    first INTEGER PRIMARY KEY CHECK(first >= 0),
+    ends BLOB NOT NULL,
+    bytes BLOB NOT NULL
 ) STRICT;
-INSERT OR IGNORE INTO atoms(atom,value) VALUES (0,'');
--- A string's atom, from SQL: the vocabulary's terms are atoms, looked up and range-sought by text.
-CREATE UNIQUE INDEX IF NOT EXISTS atoms_by_value ON atoms(value);
+INSERT OR IGNORE INTO atom_segment(first,ends,bytes) VALUES (0,x'00000000',x'');
 
 -- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
 -- derivation's inputs with the digest it read. A derivation's output is a name too, so an
 -- unchanged output rebinds nothing (early cutoff). Additive: older binaries never read these tables.
 CREATE TABLE IF NOT EXISTS name_bindings (
-    name_atom INTEGER PRIMARY KEY REFERENCES atoms(atom),
+    name_atom INTEGER PRIMARY KEY,
     digest BLOB NOT NULL CHECK(length(digest) = 32),
     revision INTEGER NOT NULL CHECK(revision >= 0)
 ) STRICT;
 CREATE TABLE IF NOT EXISTS derivations (
-    output_atom INTEGER PRIMARY KEY REFERENCES atoms(atom),
+    output_atom INTEGER PRIMARY KEY,
     producer BLOB NOT NULL CHECK(length(producer) = 32),
     status INTEGER NOT NULL,
     cost INTEGER NOT NULL CHECK(cost >= 0)
@@ -320,7 +323,7 @@ CREATE TABLE IF NOT EXISTS derivations (
 CREATE TABLE IF NOT EXISTS derivation_inputs (
     output_atom INTEGER NOT NULL REFERENCES derivations(output_atom) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-    name_atom INTEGER REFERENCES atoms(atom),
+    name_atom INTEGER,
     digest BLOB NOT NULL CHECK(length(digest) = 32),
     PRIMARY KEY (output_atom, ordinal)
 ) STRICT, WITHOUT ROWID;
@@ -562,11 +565,11 @@ impl ContentStore {
     /// Configures `connection` and brings its store up to SCHEMA. A store at this floor that holds
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
-    /// exclusive lock and applies SCHEMA.
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<()> {
+    /// exclusive lock and applies SCHEMA. Returns whether it created the store.
+    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<bool> {
         configure_connection(connection)?;
         if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
-            return Ok(());
+            return Ok(false);
         }
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
         // Another open may have created the store since the read above.
@@ -579,7 +582,7 @@ impl ContentStore {
             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
         transaction.commit()?;
-        Ok(())
+        Ok(version == 0)
     }
 }
 
@@ -589,6 +592,13 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
     if version > SCHEMA_VERSION {
         return Err(StoreError::Invalid(format!(
             "database schema version {version} is newer than supported version {SCHEMA_VERSION}: update Rerail"
+        )));
+    }
+    // A store is never upgraded (STORE_FILE_NAME): an older floor's `atoms` table would hide the
+    // `atoms` virtual table (decision 0045).
+    if version != 0 && version < STORE_FILE_FLOOR {
+        return Err(StoreError::Invalid(format!(
+            "database schema version {version} is older than this build's floor {STORE_FILE_FLOOR}: the store is a cache; delete it"
         )));
     }
     Ok(version)
