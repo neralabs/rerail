@@ -17,6 +17,8 @@
 .decl value(n: node, v: symbol)
 .decl value_type_of(n: node, t: symbol)
 .decl token(p: node, i: number, s: symbol, start: number, end: number)
+.decl end_line(n: node, l: number)
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
 .decl syntax_error(d: number)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
@@ -179,24 +181,74 @@ introspection_stmt_peel(st, i) :- introspection_stmt_peel(st, e), node(_, e, "pa
     child(e, i, 0).
 .decl introspection_stmt_string(n: node)
 introspection_stmt_string(n) :- introspection_stmt_peel(_, n).
-// introspection_const(n, v): a Constant str and its value. A plain literal or run is a Constant, its value W's
-// `value` (escapes decoded, parts joined). A literal or run holding an f-string with no interpolation is a
-// JoinedStr holding one Constant (its value; never a statement's own value, the JoinedStr is), taken at the
-// literal's line.
+// introspection_const(n, v): a Constant str of a literal with no f-string part and its value, W's `value`
+// (escapes decoded, parts joined), at the literal's line.
 .decl introspection_const(n: node, v: symbol)
 introspection_const(e, v) :- introspection_lit(e), !introspection_f(e), value_type_of(e, "str"), value(e, v),
     !introspection_stmt_string(e).
-introspection_const(e, v) :- introspection_lit(e), introspection_f(e), value_type_of(e, "str"), value(e, v).
-// An f-string with an interpolation has no `value`: its Constants are its literal pieces (JoinedStr.values).
-// Approximation, until W's f-string pieces (fstring_piece) are bound: each `string_content` piece is read as
-// written (escapes and `{{` not decoded), on its own, at the piece's line; the pieces of adjacent f-strings, and
-// plain literals joined to one, are not joined (and those plain literals are not read).
-introspection_const(k, c) :- introspection_lit(e), introspection_f(e), !value(e, _), introspection_fpiece(e, s),
-    strprefix(s, p), !contains("b", p), child(s, k, _), node(_, k, "string_content", _, _), node_text(k, c).
-.decl introspection_fpiece(e: node, s: node)
-introspection_fpiece(s, s) :- introspection_lit(s), introspection_fpart(s).
-introspection_fpiece(c, s) :- introspection_lit(c), child(c, s, _), introspection_fpart(s).
+
+// A literal holding an f-string is a JoinedStr, and a format spec (`{x:…}`) a JoinedStr of its own; their
+// Constants are their literal runs (JoinedStr.values; never a statement's own value, the JoinedStr is):
+// fstring_piece's literal rows, decoded and merged across the parts of a run, a debug field's `x = ` and the
+// spec's literal text in them. Each is at CPython 3.12's lineno for it: the line where the run's source starts.
+.decl introspection_fhost(e: node)
+introspection_fhost(e) :- introspection_lit(e), introspection_f(e).
+introspection_fhost(s) :- node(d, s, "format_specifier", _, _), introspection_doc(d, _).
+// The host's parts (a run's strings, else the string) and replacement fields in order (a part's
+// interpolations, a spec's format_expressions): (host, field, start, end).
+.decl introspection_part(e: node, s: node)
+introspection_part(s, s) :- introspection_fhost(s), node(_, s, "string", _, _).
+introspection_part(e, s) :- introspection_fhost(e), node(_, e, "concatenated_string", _, _), child(e, s, _),
+    node(_, s, "string", _, _).
+.decl introspection_field(e: node, f: node, b: number, fe: number)
+introspection_field(e, f, b, fe) :- introspection_part(e, s), child(s, f, _), node(_, f, "interpolation", b, fe).
+introspection_field(e, f, b, fe) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), child(e, f, _),
+    node(_, f, "format_expression", b, fe).
+// The source items a run is read from, at (host, first byte, line), as CPython positions a run (checked on
+// 3.12): an f part's string_content (a `\<newline>` continuation in it included), a plain part (its quote; an
+// empty one too), a debug field's text (from after its `{`), and a spec's slices after its `:` and after each
+// field (the line of the field's `}`), each holding a byte.
+.decl introspection_item(e: node, o: number, l: number)
+introspection_item(e, o, l) :- introspection_part(e, s), introspection_fpart(s), child(s, c, _),
+    node(_, c, "string_content", o, _), line(c, l).
+introspection_item(e, o, l) :- introspection_part(e, s), !introspection_fpart(s), node(_, s, _, o, _), line(s, l).
+introspection_item(e, o, l) :- introspection_field(e, f, b, _), token(f, _, "=", _, _), o = b + 1, line(f, l).
+.decl introspection_slice(e: node, a: number, l: number)
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", s, _), a = s + 1, line(e, l).
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", _, _),
+    introspection_field(e, f, _, a), end_line(f, l).
+introspection_item(e, a, l) :- introspection_slice(e, a, l), node(_, e, _, _, k), a < k, !introspection_field(e, _, a, _).
+// Each item's run, keyed by the start of the first field ending after it, else the host's end; a run's line is
+// its first item's.
+.decl introspection_after(e: node, o: number, b: number)
+introspection_after(e, o, b) :- introspection_item(e, o, _), introspection_field(e, _, b, fe), fe > o.
+.decl introspection_not_next(e: node, o: number, b: number)
+introspection_not_next(e, o, b) :- introspection_after(e, o, b), introspection_after(e, o, b2), b2 < b.
+.decl introspection_run(e: node, k: number, l: number)
+introspection_run(e, k, l) :- introspection_item(e, o, l), introspection_after(e, o, k), !introspection_not_next(e, o, k).
+introspection_run(e, k, l) :- introspection_item(e, o, l), !introspection_after(e, o, _), node(_, e, _, _, k).
+.decl introspection_run_line(e: node, k: number, l: number)
+introspection_run_line(e, k, l) :- introspection_run(e, k, _), l = min l2 : { introspection_run(e, k, l2) }.
+// fstring_piece has one interpolation per field, in order, and a literal per run that decodes to something: the
+// j-th field's run is the literal right before the j-th interpolation, the last run a literal ending the tree.
+.decl introspection_ford(e: node, b: number, j: number)
+introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { introspection_field(e, _, b2, _), b2 < b }.
+.decl introspection_pord(e: node, i: number, j: number)
+introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _),
+    j = count : { fstring_piece(e, i2, "interpolation", _), i2 < i }.
+.decl introspection_later(e: node, i: number)
+introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.
+.decl introspection_fconst(e: node, v: symbol, l: number)
+introspection_fconst(e, v, l) :- introspection_ford(e, b, j), introspection_pord(e, i, j),
+    fstring_piece(e, h, "literal", v), i = h + 1, introspection_run_line(e, b, l).
+introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fstring_piece(e, h, "literal", v),
+    !introspection_later(e, h), introspection_run_line(e, k, l).
+// Residual, blocked on CPython's own string parts (str_part, not bound): a literal W's parse cannot decode, or
+// over MAX_STRING_BYTES, has no fstring_piece rows and is not read, where CPython still has its Constants.
 
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
     introspection_const(n, v), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
     node(d, n, _, _, _), introspection_doc(d, p), line(n, l).
+violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :-
+    introspection_fconst(n, v, l), introspection_sql_marker(_, re), match(re, v), !introspection_authority(n),
+    node(d, n, _, _, _), introspection_doc(d, p).
