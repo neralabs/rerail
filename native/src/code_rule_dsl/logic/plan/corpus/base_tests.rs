@@ -263,3 +263,31 @@ invalid(p) :- doc(d, p, _), syntax_error(d).
     assert_eq!(got[1], format!("{path}\n"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A base relation a program reads is an input though its `.input` leaves it out, as in an authored file: `text`
+/// over spans only (the program port-21 reported failing with "no such column: n in SELECT n, s FROM text"), in
+/// rules run per chunk and in rules run once over every file.
+#[test]
+fn base_relations_read_are_inputs() {
+    let files = [("l9750_graphql/bad.py", "def f(:\n    ServerPlan\n"), ("l9750_graphql/ok.py", "x = 1\n")];
+    let dir = corpus("span-text", &files);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl syntax_error(d: number)
+.input doc, syntax_error, source
+.decl hit(p: symbol)
+hit(p) :- doc(d, p, _), syntax_error(d), source(d, sp), text(sp, s), contains("ServerPlan", s).
+.decl plain(p: symbol)
+plain(p) :- doc(d, p, _), !syntax_error(d), source(d, sp), text(sp, s), contains("x = 1", s).
+.decl same(p: symbol, q: symbol)
+same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, sq), text(sq, s).
+.output hit, plain, same
+"#;
+    let got = run(&dir, program, &["hit", "plain", "same"]);
+    assert_eq!(got[0], "l9750_graphql/bad.py\n");
+    assert_eq!(got[1], "l9750_graphql/ok.py\n");
+    assert_eq!(got[2], csv(files.iter().map(|(p, _)| format!("{p}\t{p}"))));
+    let _ = std::fs::remove_dir_all(&dir);
+}
