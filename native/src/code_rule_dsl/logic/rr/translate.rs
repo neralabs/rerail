@@ -144,8 +144,8 @@ struct Translator<'s> {
 }
 
 /// The built-in constraints of `.rr`: a relation of the same name is renamed with a trailing `_`.
-pub(super) const RESERVED: [&str; 13] =
-    ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "split_dot"];
+pub(super) const RESERVED: [&str; 14] =
+    ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "match_group", "split_dot"];
 
 /// A relation's `.rr` name.
 pub(super) fn relation(r: &str) -> String {
