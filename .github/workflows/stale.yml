@@ -1,0 +1,99 @@
+name: Stale issues
+
+# An issue a maintainer has labelled `needs-info` is waiting on its reporter (docs/GOVERNANCE.md, "Issues that wait on
+# their reporter"). Every day this asks once on any such issue that has had no activity for 14 days, labelling it
+# `stale`, and closes it as not planned 7 days after that if nobody has said anything since. A comment or edit removes
+# `stale` at the next run. A comment from the reporter does it at once, swapping `needs-info` (and `stale`) for
+# `needs-triage` and reopening the issue if the bot had closed it (the `reporter-replied` job), so an answered question
+# is back in the maintainers' queue and the bot leaves it alone until a maintainer asks for something again. An issue a
+# maintainer closed stays closed. Nothing else is closed for age: issues without `needs-info` (triaged bugs, misfires,
+# requests, anything still in `needs-triage`), assigned issues, issues on a milestone and pull requests are never
+# touched. Run it by hand with `dry-run` on to see in the run log what it would do without doing it.
+#
+# actions/stale keeps its place between runs in the Actions cache (hence `actions: write`), and `operations-per-run`
+# (default 30) is the number of API calls one run spends before it stops and leaves the rest to the next.
+
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Log what would change and change nothing
+        type: boolean
+        default: true
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  stale:
+    name: Ask, then close, issues waiting on their reporter
+    if: github.repository == 'neralabs/rerail' && github.event_name != 'issue_comment'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      issues: write
+    concurrency:
+      group: stale-issues
+      cancel-in-progress: false
+    steps:
+      - name: Mark and close
+        uses: actions/stale@4391f3da665fdf50b6810c1a66712fb9ba21aa93 # v11.0.0
+        with:
+          only-issue-labels: needs-info
+          exempt-all-issue-assignees: true
+          exempt-all-issue-milestones: true
+          days-before-issue-stale: 14
+          days-before-issue-close: 7
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+          stale-issue-label: stale
+          remove-issue-stale-when-updated: true
+          close-issue-reason: not_planned
+          stale-issue-message: >-
+            Still seeing this on the current release? A reply with the version you're on, or with what was asked for
+            above, keeps this open. Without one, this is closed as not planned in 7 days. A comment from whoever opened
+            it reopens it after that.
+          close-issue-message: >-
+            Closed as not planned: we couldn't get the details needed to look into it. That doesn't mean it isn't real.
+            If you opened this issue, comment here with what you're seeing and it reopens. Anyone else, or if the
+            details have changed, please open a new issue.
+          debug-only: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+
+  reporter-replied:
+    name: Hand an answered issue back to the maintainers
+    if: >-
+      github.repository == 'neralabs/rerail'
+      && github.event_name == 'issue_comment'
+      && !github.event.issue.pull_request
+      && github.event.comment.user.login == github.event.issue.user.login
+      && contains(github.event.issue.labels.*.name, 'needs-info')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: reporter-replied-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Reopen if the bot closed it, and swap needs-info (and stale) for needs-triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          STATE: ${{ github.event.issue.state }}
+          HAS_STALE: ${{ contains(github.event.issue.labels.*.name, 'stale') }}
+        run: |
+          if [ "$STATE" = closed ]; then
+            # A maintainer's close stays closed, and stays out of the needs-triage queue. `state_reason` can't tell the
+            # two apart: a maintainer declining an issue also closes it as not planned.
+            closed_by=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" --jq .closed_by.login)
+            if [ "$closed_by" != "github-actions[bot]" ]; then exit 0; fi
+            gh issue reopen "$ISSUE" --repo "$GITHUB_REPOSITORY"
+          fi
+          labels=needs-info
+          if [ "$HAS_STALE" = true ]; then labels="$labels,stale"; fi
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label "$labels" --add-label needs-triage
