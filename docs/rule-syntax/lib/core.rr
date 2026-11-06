@@ -265,6 +265,9 @@
 //                 is what matched; its line, end_line and col are the linter's finding's (in source, the lines and
 //                 byte column of the file; in a line span, that line and the column in it). re is a constant;
 //                 its named groups bind as match's do. !match_all("re", sp, _): re does not occur in sp.
+// match_group("re", sp, m, g, gsp)  the groups of match_all's matches, as spans: gsp is the span of named group g
+//                 in match m, one row per group that takes part, placed as the linter places a finding at that
+//                 capture. match_group("(?P<module>[\w.]+)\.py", sp, m, "module", gsp) is the module's span.
 //
 // User functors, declared as in Soufflé and written @name(…). They compute a symbol from symbols.
 .functor dot(a: symbol, b: symbol): symbol               // "a.b" ("" . b gives b): @dot("os", "path") = "os.path"

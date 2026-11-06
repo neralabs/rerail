@@ -50,8 +50,9 @@ rebuild. The converter merges it over its own program for that rule (`convert::o
   the clause one of the policy's.
 - Name helper relations and kind sets after their clause (`lazy_loop_…`). Names the converter makes are errors:
   `m`, `u`, `t`, `k` or `blocked` followed by digits; `never`, `in_scope`, `out_scope`, `report_when_gt` (other
-  than as read); `strtest_*`, `matchall_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`, and `match_all` is a
-  built-in. So are a relation both programs derive and one name declared with other column types.
+  than as read); `strtest_*`, `matchall_*`, `matchgroup_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`, and
+  `match_all` and `match_group` are built-ins. So are a relation both programs derive and one name declared with
+  other column types.
 - A clause the file derives counts as authored, whatever the converter made of it: its rules replace the
   converter's. A clause the replay leaves out for an event is dropped from both.
 
@@ -78,6 +79,8 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl node_text(n: node, s: symbol)               // a node's source text, exactly (W's `regex` on a node)
 // built-in, not declared: m is each match of regex re in span sp's text, leftmost-first and non-overlapping
 // match_all(re: symbol, sp: span, m: span)
+// built-in, not declared: gsp is the span of named group g in match m (of match_all("re", sp, m)), where g takes part
+// match_group(re: symbol, sp: span, m: span, g: symbol, gsp: span)
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -97,6 +100,11 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   - W's whole-file regex: `source(d, sp), match_all("re", sp, m), line(m, l)`, exactly, whatever the regex.
   - A `lines` regex (`forbid.regex` with `lines`): `src_line(d, l, sp), match_all("re", sp, _)` (or `src_line_lf`
     for `terminators: "lf"`), at line `l`; `lines.exclude` and `include` test the line's text.
+- `match_group("re", sp, m, g, gsp)` is W's captures (`each`, a capture anchor, `{NAME}` in a message): `gsp` is the
+  span of the named group `g` (`(?P<g>…)`/`(?<g>…)`) in match `m`, one row per group that takes part (an unmatched
+  `(?P<g>…)?` has none), `m` the same span as `match_all`'s for that match. `gsp` has `text`, `line`, `end_line` and
+  `col` as W's finding anchored at `capture.g`. `g` may be a constant or a variable (every group).
+  `!match_group("re", sp, m, "g", _)`: `g` took no part in `m`. Its input is `matchgroup_<k>(sp, m, g, gsp)`.
 - `match(re, s)` is whole-string. To search a text without match spans: `match("(?s:.*)(?:re)(?s:.*)", s)`, which
   keeps `re`'s own `.` off line terminators (`(?s).*re.*` does not: it gives `re` the `s` flag too) and its
   alternatives inside the group; an inline flag of `re` stays inside `(?:…)`. Count lines with `line_count`
