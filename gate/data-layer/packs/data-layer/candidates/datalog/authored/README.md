@@ -92,3 +92,35 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   the regex matches no line terminator (no `\n`, `\s`, `[^…]` or `(?s).` that could reach one) and has no `^`, `$`,
   `\A` or `\z`. Otherwise read `source(d, sp), text(sp, s)` and test the whole text (`match("(?s).*re.*", s)`), and
   count lines with `line_count` (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`). There is no `match_all`.
+
+### The reference graph
+
+W's Python reference graph (`calls { graph: references }`, a relational clause's `references`), across files, bound in
+the corpus runner's cross-file part (`logic::plan::corpus::references`):
+
+```
+.decl reference_edge(src: node, dst: node, via: symbol) // src's body refers to dst, as `via` says
+.decl reference_open(n: node)                           // definition n refers to something no static name denotes
+```
+
+- `src` and `dst` are `function_definition` or `class_definition` nodes, in any files. `src` is a function or method
+  at the top of its nesting (a nested function's references are its outermost function's), or a method a sibling
+  link starts from; `dst` any definition. The pairs are exactly the edges W's relational stages read
+  (`calls::reference_rows`) and its `calls` terms walk, for the policy's `siblingLinks` and `constructorFields`:
+  internal-dead-code's `reference_edges` table is `reference_edge(s, t, _)`, and imperative-private-functions'
+  `calls { graph: references, … }` follows `reference_edge` from the definition, through definitions that pass
+  `through` (any: no `class_definition` after the first; sync: no `async` either).
+- `via` is what made the edge, one row per way (an edge made two ways has two rows): `name` (a qualified name: a
+  definition, an import or re-export of one, a module or class member), `bare` (a bare name at module level: declared
+  re-exports, then imports, then the name), `unqualified` (a bare name in a method: the class's own member first),
+  `self` (`self.x` or `cls.x`: the class's bases breadth first, then a sibling base of a subclass), `super`
+  (`super().x`), `field` (`self.f.x`: the type of field `f`, its constructor parameter's under `constructorFields`),
+  `param_type` (`p.x` for a parameter declared `p: T`), `late` (a late-bound name) and `sibling` (a `siblingLinks`
+  delegation). The graph is built with the policy's configuration, so a rule reads every `via`; `sibling` rows are
+  the only ones `siblingLinks` adds.
+- `reference_open(n)`: n's file was not fully summarized (a syntax error), or n refers to a module member no
+  definition gives (W's `Graph::open_defs`). W's `calls` term is unknown, not false, at a definition that reaches one
+  through definitions `through` passes; W's relational stage refuses a graph with a file not fully summarized.
+- The configuration is the converter's `.references` setting (the policy's `siblingLinks`, `constructorFields` and
+  the run's scope, which the graph's files are): never written in an authored file. Files are summarized with their
+  modules named by the corpus's `__init__.py` files, as W names a snapshot's.

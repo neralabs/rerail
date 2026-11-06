@@ -852,6 +852,19 @@ pub(crate) fn field_atom(tag: u8, code: u16) -> u32 {
     u32::from(tag) << 16 | u32::from(code)
 }
 
+/// Document `key`'s `function_definition` and `class_definition` nodes by byte range (start, end), as ids of
+/// `node`: what W's call summaries name a definition by (`calls::summary::Def`).
+pub(crate) fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
+    let dialect = Dialect::new((facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8)?;
+    let p = Projected::new(key, Arc::clone(facts), &dialect);
+    Ok(p.core
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| matches!(dialect.name(facts, **id), "function_definition" | "class_definition"))
+        .map(|(local, &id)| ((facts.start[id as usize], facts.end[id as usize]), p.global(local as u32)))
+        .collect())
+}
+
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
     let (batch, relations, _) = Batch::build(store, documents, &BTreeSet::new())?;
