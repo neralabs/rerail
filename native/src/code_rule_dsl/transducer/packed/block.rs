@@ -12,9 +12,13 @@
 //!   loop over blocks around a straight-line body, and Metal (`metal_block_program`) emits as a
 //!   straight-line kernel;
 //! - the Metal interpreter (`metal_block_program`), the set program's shape: every operation in
-//!   order over a thread per byte, a SIMD-group ballot for each mask.
+//!   order, each lane building its own mask word of 16, 32 or 64 bytes by SWAR on `uint4`s.
 //!
 //! Operations are added one at a time, each through every executor before the next.
+//!
+//! The block size is the executor's, not the program's: a program means one bit per source
+//! byte. The CPU works in 64-byte words; Metal gives each lane 16, 32 or 64 bytes
+//! (`metal_block_program::LaneWidth`).
 
 use super::Error;
 
@@ -23,13 +27,37 @@ use super::Error;
 pub(in crate::code_rule_dsl) enum BlockOp {
     /// The bytes equal to the byte: simdjson's `in.eq(c)`.
     Eq(u8),
+    /// The same 64-bit pattern over every 64 bytes of the stream, e.g. simdjson's `ODD_BITS`.
+    Const(u64),
+    Not(u16),
+    And(u16, u16),
+    Or(u16, u16),
+    Xor(u16, u16),
+    /// `a & !b`.
+    AndNot(u16, u16),
 }
 
 impl BlockOp {
     /// The operation's text mnemonic and operands (`rir`).
     pub(super) fn text(&self) -> String {
+        let two = |name: &str, a: &u16, b: &u16| format!("{name} %{a}, %{b}");
         match self {
             BlockOp::Eq(byte) => format!("eq {byte:#04x}"),
+            BlockOp::Const(c) => format!("const {c:#018x}"),
+            BlockOp::Not(a) => format!("not %{a}"),
+            BlockOp::And(a, b) => two("and", a, b),
+            BlockOp::Or(a, b) => two("or", a, b),
+            BlockOp::Xor(a, b) => two("xor", a, b),
+            BlockOp::AndNot(a, b) => two("andnot", a, b),
+        }
+    }
+
+    /// The values the operation reads.
+    pub(super) fn operands(&self) -> Vec<u16> {
+        match *self {
+            BlockOp::Eq(_) | BlockOp::Const(_) => vec![],
+            BlockOp::Not(a) => vec![a],
+            BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) => vec![a, b],
         }
     }
 
@@ -40,15 +68,46 @@ impl BlockOp {
                 .and_then(|hex| u8::from_str_radix(hex, 16).ok())
                 .ok_or_else(|| format!("a bad byte `{word}`"))
         };
-        match words {
-            [name, b] if name == "eq" => Ok(BlockOp::Eq(byte(b)?)),
+        let value = |word: &str| -> Result<u16, String> {
+            word.trim_end_matches(',')
+                .strip_prefix('%')
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| format!("a bad value `{word}`"))
+        };
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        match words.as_slice() {
+            ["eq", b] => Ok(BlockOp::Eq(byte(b)?)),
+            ["const", c] => c
+                .strip_prefix("0x")
+                .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+                .map(BlockOp::Const)
+                .ok_or_else(|| format!("a bad constant `{c}`")),
+            ["not", a] => Ok(BlockOp::Not(value(a)?)),
+            ["and", a, b] => Ok(BlockOp::And(value(a)?, value(b)?)),
+            ["or", a, b] => Ok(BlockOp::Or(value(a)?, value(b)?)),
+            ["xor", a, b] => Ok(BlockOp::Xor(value(a)?, value(b)?)),
+            ["andnot", a, b] => Ok(BlockOp::AndNot(value(a)?, value(b)?)),
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
 
     fn canonical(&self, out: &mut Vec<u8>) {
-        match self {
-            BlockOp::Eq(byte) => out.extend_from_slice(&[0, *byte]),
+        let two = |out: &mut Vec<u8>, tag: u8, a: u16, b: u16| {
+            out.push(tag);
+            out.extend_from_slice(&a.to_le_bytes());
+            out.extend_from_slice(&b.to_le_bytes());
+        };
+        match *self {
+            BlockOp::Eq(byte) => out.extend_from_slice(&[0, byte]),
+            BlockOp::Const(c) => {
+                out.push(1);
+                out.extend_from_slice(&c.to_le_bytes());
+            }
+            BlockOp::Not(a) => two(out, 2, a, a),
+            BlockOp::And(a, b) => two(out, 3, a, b),
+            BlockOp::Or(a, b) => two(out, 4, a, b),
+            BlockOp::Xor(a, b) => two(out, 5, a, b),
+            BlockOp::AndNot(a, b) => two(out, 6, a, b),
         }
     }
 }
@@ -61,12 +120,17 @@ pub(in crate::code_rule_dsl) struct BlockProgram {
 }
 
 impl BlockProgram {
-    /// The verifier's rules for a block program: at least one operation and one output, and
-    /// outputs that name values.
+    /// The verifier's rules for a block program: at least one operation and one output, every
+    /// operand an earlier value, and outputs that name values.
     pub(super) fn verify(&self) -> Result<(), Error> {
         let fits = self.ops.len() <= usize::from(u16::MAX);
         let outputs = !self.outputs.is_empty() && self.outputs.iter().all(|&v| usize::from(v) < self.ops.len());
-        if self.ops.is_empty() || !fits || !outputs {
+        let earlier = self
+            .ops
+            .iter()
+            .enumerate()
+            .all(|(at, op)| op.operands().iter().all(|&v| usize::from(v) < at));
+        if self.ops.is_empty() || !fits || !outputs || !earlier {
             return Err(Error::InvalidTarget(0));
         }
         Ok(())
@@ -92,8 +156,18 @@ impl BlockProgram {
         let blocks = padded(bytes);
         let mut values: Vec<Vec<u64>> = Vec::with_capacity(self.ops.len());
         for op in &self.ops {
+            let v = |at: u16| &values[usize::from(at)];
+            let two = |a: u16, b: u16, f: fn(u64, u64) -> u64| -> Vec<u64> {
+                v(a).iter().zip(v(b)).map(|(&x, &y)| f(x, y)).collect()
+            };
             let words: Vec<u64> = match *op {
                 BlockOp::Eq(byte) => blocks.iter().map(|block| eq(block, byte)).collect(),
+                BlockOp::Const(c) => vec![c; blocks.len()],
+                BlockOp::Not(a) => v(a).iter().map(|&x| !x).collect(),
+                BlockOp::And(a, b) => two(a, b, |x, y| x & y),
+                BlockOp::Or(a, b) => two(a, b, |x, y| x | y),
+                BlockOp::Xor(a, b) => two(a, b, |x, y| x ^ y),
+                BlockOp::AndNot(a, b) => two(a, b, |x, y| x & !y),
             };
             values.push(words);
         }

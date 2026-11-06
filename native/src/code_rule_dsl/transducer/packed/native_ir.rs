@@ -390,8 +390,15 @@ pub(super) struct BlockNative {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BlockInst {
     /// The block's bytes compared with a byte, as a mask: on the CPU four 16-byte compares and a
-    /// bitmask; on Metal a compare per thread and a SIMD-group ballot.
+    /// bitmask; on Metal SWAR over the lane's `uint4`s.
     EqByte(u8),
+    /// A 64-bit pattern repeated over the stream.
+    Const(u64),
+    Not(u16),
+    And(u16, u16),
+    Or(u16, u16),
+    Xor(u16, u16),
+    AndNot(u16, u16),
 }
 
 impl BlockNative {
@@ -402,6 +409,12 @@ impl BlockNative {
             .iter()
             .map(|op| match *op {
                 BlockOp::Eq(byte) => BlockInst::EqByte(byte),
+                BlockOp::Const(c) => BlockInst::Const(c),
+                BlockOp::Not(a) => BlockInst::Not(a),
+                BlockOp::And(a, b) => BlockInst::And(a, b),
+                BlockOp::Or(a, b) => BlockInst::Or(a, b),
+                BlockOp::Xor(a, b) => BlockInst::Xor(a, b),
+                BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
             })
             .collect();
         Self { insts, outputs: program.outputs.clone() }

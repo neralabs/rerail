@@ -3,13 +3,17 @@
 //! is straight-line bit operations on vectors and words, with no branch (`native_cpu_value`
 //! defines value programs the same way, one function each).
 //!
+//! The bitmask follows the architecture, as simdjson's does: on aarch64 its `to_bitmask` (each
+//! byte weighted by its bit, then three rounds of pairwise adds, `addp`); elsewhere
+//! `vhigh_bits` (one `pmovmskb` on x86).
+//!
 //! `out` holds each output's words in turn: output `k`'s word for block `i` at `k * blocks + i`.
 
 use super::Error;
 use super::block::{mask_tail, padded};
 use super::native_ir::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
-use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
+use cranelift_codegen::ir::{AbiParam, ConstantData, Endianness, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
@@ -75,7 +79,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         f.switch_to_block(entry);
         let params = f.block_params(entry).to_vec();
         let (bytes, blocks, out) = (params[0], params[1], params[2]);
-        let splats: Vec<Option<Value>> = native
+        // Constants, made once outside the loop: each compare's splat, each `const`'s word, and
+        // the bitmask's weights.
+        let constants: Vec<Option<Value>> = native
             .insts
             .iter()
             .map(|inst| match *inst {
@@ -83,8 +89,15 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     let c = f.ins().iconst(types::I8, i64::from(byte));
                     Some(f.ins().splat(types::I8X16, c))
                 }
+                BlockInst::Const(c) => Some(f.ins().iconst(types::I64, c as i64)),
+                _ => None,
             })
             .collect();
+        let weights = {
+            const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
+            let handle = f.func.dfg.constants.insert(ConstantData::from(&WEIGHTS[..]));
+            f.ins().vconst(types::I8X16, handle)
+        };
         let output_bases: Vec<Value> = (0..native.outputs.len())
             .map(|k| {
                 let first = f.ins().imul_imm(blocks, k as i64);
@@ -104,24 +117,24 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let loads = MemFlags::new().with_notrap();
         let mut values: Vec<Value> = Vec::with_capacity(native.insts.len());
         for (at, inst) in native.insts.iter().enumerate() {
+            let v = |x: u16| values[usize::from(x)];
             let value = match *inst {
                 BlockInst::EqByte(_) => {
-                    let splat = splats[at].expect("a splat per compare");
-                    // Four 16-byte compares, each a 16-bit mask, joined into one word.
-                    let mut word: Option<Value> = None;
-                    for part in 0..4 {
-                        let v = f.ins().load(types::I8X16, loads, base, part * 16);
-                        let m = f.ins().icmp(IntCC::Equal, v, splat);
-                        let bits = f.ins().vhigh_bits(types::I16, m);
-                        let wide = f.ins().uextend(types::I64, bits);
-                        let placed = if part == 0 { wide } else { f.ins().ishl_imm(wide, i64::from(part * 16)) };
-                        word = Some(match word {
-                            None => placed,
-                            Some(w) => f.ins().bor(w, placed),
-                        });
-                    }
-                    word.expect("four parts")
+                    let splat = constants[at].expect("a splat per compare");
+                    let parts: Vec<Value> = (0..4)
+                        .map(|part| {
+                            let bytes = f.ins().load(types::I8X16, loads, base, part * 16);
+                            f.ins().icmp(IntCC::Equal, bytes, splat)
+                        })
+                        .collect();
+                    bitmask(&mut f, &parts, weights)
                 }
+                BlockInst::Const(_) => constants[at].expect("a word per const"),
+                BlockInst::Not(a) => f.ins().bnot(v(a)),
+                BlockInst::And(a, b) => f.ins().band(v(a), v(b)),
+                BlockInst::Or(a, b) => f.ins().bor(v(a), v(b)),
+                BlockInst::Xor(a, b) => f.ins().bxor(v(a), v(b)),
+                BlockInst::AndNot(a, b) => f.ins().band_not(v(a), v(b)),
             };
             values.push(value);
         }
@@ -151,4 +164,30 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     // SAFETY: `tempo_block` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     Ok(CompiledBlock { _module: module, entry, outputs: native.outputs.len(), clif, disassembly })
+}
+
+/// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.
+fn bitmask(f: &mut FunctionBuilder<'_>, parts: &[Value], weights: Value) -> Value {
+    if cfg!(target_arch = "aarch64") {
+        // simdjson's arm64 `to_bitmask`: weight, then pairwise adds: 4 `and`, 4 `addp`, 1 `umov`.
+        let w: Vec<Value> = parts.iter().map(|&p| f.ins().band(p, weights)).collect();
+        let s0 = f.ins().iadd_pairwise(w[0], w[1]);
+        let s1 = f.ins().iadd_pairwise(w[2], w[3]);
+        let s = f.ins().iadd_pairwise(s0, s1);
+        let s = f.ins().iadd_pairwise(s, s);
+        let lanes = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(Endianness::Little), s);
+        f.ins().extractlane(lanes, 0)
+    } else {
+        let mut word: Option<Value> = None;
+        for (part, &m) in parts.iter().enumerate() {
+            let bits = f.ins().vhigh_bits(types::I16, m);
+            let wide = f.ins().uextend(types::I64, bits);
+            let placed = if part == 0 { wide } else { f.ins().ishl_imm(wide, part as i64 * 16) };
+            word = Some(match word {
+                None => placed,
+                Some(w) => f.ins().bor(w, placed),
+            });
+        }
+        word.expect("four parts")
+    }
 }
