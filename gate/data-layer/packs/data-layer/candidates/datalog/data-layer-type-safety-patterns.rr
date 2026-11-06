@@ -1,14 +1,14 @@
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, field, text, line, syntax_error
 .decl in_scope(d: number)
-.decl m5(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, text, line, syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -110,7 +110,4 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-m5(n) :- node(_, n, "subscript", _, _).
-m5(n) :- node(_, n, "generic_type", _, _).
-violation("data-layer-type-safety-patterns", "text-deprecated_filter_method", "TSP001", p, l) :- node(_, n, "identifier", _, _), text(n, v12), (v12 = "filter_eq" ; v12 = "filter_gt" ; v12 = "filter_gte" ; v12 = "filter_in" ; v12 = "filter_lt" ; v12 = "filter_lte" ; v12 = "filter_ne"), field(v13, "attribute", n), node(_, v13, "attribute", _, _), field(v14, "function", v13), node(_, v14, "call", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
+violation("data-layer-type-safety-patterns", "text-deprecated_filter_method", "TSP001", p, l) :- node(_, n, "identifier", _, _), text(n, v1), (v1 = "filter_eq" ; v1 = "filter_gt" ; v1 = "filter_gte" ; v1 = "filter_in" ; v1 = "filter_lt" ; v1 = "filter_lte" ; v1 = "filter_ne"), field(v2, "attribute", n), node(_, v2, "attribute", _, _), field(v3, "function", v2), node(_, v3, "call", _, _), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

@@ -1,11 +1,12 @@
 .decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, line, syntax_error
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, line, syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l9750_graphql/**/*.py", p).
@@ -23,4 +24,3 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 violation("data-layer-lazy-adapter-ownership", "invalid-source", "LAO000", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation

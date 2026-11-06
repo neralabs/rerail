@@ -1,12 +1,3 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
-.decl child(p: node, c: node, i: number)
-.decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, name, line, syntax_error
 .decl k0(kind: symbol)
 k0("with_statement").
 .decl k1(kind: symbol)
@@ -16,7 +7,11 @@ k1("module").
 .decl blocked20(low: node, high: node)
 .decl blocked51(low: node, high: node)
 .decl blocked82(low: node, high: node)
+.decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
 .decl m103(n: node)
 .decl m109(n: node)
 .decl m110(n: node)
@@ -42,7 +37,11 @@ k1("module").
 .decl m80(n: node)
 .decl m81(n: node)
 .decl m90(n: node)
+.decl name(n: node, s: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl u125(n: node)
 .decl u137(n: node)
 .decl u35(n: node)
@@ -50,6 +49,8 @@ k1("module").
 .decl u66(n: node)
 .decl u95(n: node)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, name, line, syntax_error
+.output violation
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -130,4 +131,3 @@ blocked153(low, high) :- inside(low, s, k0), u137(s), inside(s, high, k0).
 m161(n) :- node(_, n, "module", _, _), node(v154, n, _, _, _), node(v154, v155, _, _, _), name(v155, v156), (contains("open_provider_read_plan", v156) ; contains("open_provider_versioned_read_plan", v156) ; contains("open_provider_versioned_write_plan", v156) ; contains("open_provider_write_plan", v156) ; contains("open_read_plan", v156) ; contains("open_write_plan", v156)).
 m161(n) :- inside(n, v157, k1), node(_, v157, "module", _, _), node(v158, v157, _, _, _), node(v158, v159, _, _, _), name(v159, v160), (contains("open_provider_read_plan", v160) ; contains("open_provider_versioned_read_plan", v160) ; contains("open_provider_versioned_write_plan", v160) ; contains("open_provider_write_plan", v160) ; contains("open_read_plan", v160) ; contains("open_write_plan", v160)).
 violation("data-layer-plan-scope-side-effects", "python-side-effect", "PSE-050", p, l) :- node(_, n, "call", _, _), field(n, "function", v120), m135(v120), inside(n, v136, k0), !blocked153(n, v136), u137(v136), m161(n), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-.output violation
