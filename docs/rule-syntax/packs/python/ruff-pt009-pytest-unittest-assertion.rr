@@ -1,0 +1,33 @@
+.policy "ruff-pt009-pytest-unittest-assertion" revision 2
+.description "Use plain assert statements instead of unittest-style assertion methods; pytest rewrites them to show detailed failure output."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT009 (flake8-pytest-style): a unittest assertion method, called on anything: `self.assertEqual(a, b)`.
+// pytest rewrites plain `assert` statements to show the values. The raising forms are PT027.
+//   self.assertEqual(a, b)       ← PT009
+//   self.assertRaises(E, f)      not reported (PT027)
+#include "python/pytest.rr"
+//   names: attr_of(n, o, a)
+
+.violation PT009(at: node, x: symbol) code "PT009"
+    "Use a plain `assert` (for example `assert a == b`) instead of `{x}`; leave it if this is not a unittest assertion or the tests run under unittest only."
+    suppress ruff "PT009"
+PT009(g, x) :- kind(c, "call"), field(c, "function", g0), unparen(g0, g), attr_of(g, _, x), unittest_assert(x).
+
+.decl unittest_assert(x: symbol)  // Ruff's UnittestAssert names
+unittest_assert("assertAlmostEqual"). unittest_assert("assertAlmostEquals"). unittest_assert("assertCountEqual").
+unittest_assert("assertDictContainsSubset"). unittest_assert("assertDictEqual"). unittest_assert("assertEqual").
+unittest_assert("assertEquals"). unittest_assert("failIf"). unittest_assert("failIfAlmostEqual").
+unittest_assert("failIfEqual"). unittest_assert("failUnless"). unittest_assert("failUnlessAlmostEqual").
+unittest_assert("failUnlessEqual"). unittest_assert("assertFalse"). unittest_assert("assertGreater").
+unittest_assert("assertGreaterEqual"). unittest_assert("assertIn"). unittest_assert("assertIs").
+unittest_assert("assertIsInstance"). unittest_assert("assertIsNone"). unittest_assert("assertIsNot").
+unittest_assert("assertIsNotNone"). unittest_assert("assertLess"). unittest_assert("assertLessEqual").
+unittest_assert("assertListEqual"). unittest_assert("assertMultiLineEqual"). unittest_assert("assertNotAlmostEqual").
+unittest_assert("assertNotAlmostEquals"). unittest_assert("assertNotEqual"). unittest_assert("assertNotEquals").
+unittest_assert("assertNotIn"). unittest_assert("assertNotIsInstance"). unittest_assert("assertNotRegex").
+unittest_assert("assertNotRegexpMatches"). unittest_assert("assertRegex"). unittest_assert("assertRegexpMatches").
+unittest_assert("assertSequenceEqual"). unittest_assert("assertSetEqual"). unittest_assert("assertTrue").
+unittest_assert("assertTupleEqual"). unittest_assert("assert_").

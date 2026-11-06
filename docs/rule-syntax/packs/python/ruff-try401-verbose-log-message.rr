@@ -1,0 +1,28 @@
+.policy "ruff-try401-verbose-log-message" revision 2
+.description "Don't include the caught exception object in an exception log message; the exception call already records it with its traceback."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY401 (tryceratops): naming a caught exception in the positional arguments of `logger.exception(…)`
+// inside a handler; the call already logs the exception with its traceback. Any name bound by an
+// `except … as` counts; a name under an attribute (`e.args`) does not.
+//   except ValueError as e:
+//       logger.exception("failed: %s", e)        ← TRY401, at e
+//       logger.exception(f"failed: {e}")         ← TRY401
+//       logger.exception("failed: %s", e.args)   not reported
+#include "python/exceptions.rr"
+//   exc_handler_log(x, c, level), exc_arg(c, i, a); names: ref_site(n, site), site_form(site, form)
+
+.violation TRY401(at: node, e: symbol) code "TRY401"
+    "Remove `{e}` from this message: the `exception` call already logs the caught exception and its traceback. Leave it if this logger does not append the traceback."
+    suppress ruff "TRY401"
+TRY401(n, e) :- exc_handler_log(_, c, "exception"), positional(c, a), (n = a ; has(a, n, "identifier")),
+    ast_name(n, e), expr_ctx(n, "load"), !under_attribute(n, a), ref_site(n, s), site_form(s, "except").
+// positional(c, a): an argument of `call.args`, `*xs` included (Ruff's visitor reads them all).
+.decl positional(c: node, a: node)
+positional(c, a) :- exc_item(c, a, _).
+// under_attribute(n, a): n is inside an attribute expression within argument a: `e.args`, `f(e).x`.
+.decl under_attribute(n: node, a: node)
+under_attribute(n, a) :- positional(_, a), has(a, n, "identifier"), inside(n, t, "attribute"), within(t, a).
+under_attribute(n, a) :- positional(_, a), kind(a, "attribute"), has(a, n, "identifier").

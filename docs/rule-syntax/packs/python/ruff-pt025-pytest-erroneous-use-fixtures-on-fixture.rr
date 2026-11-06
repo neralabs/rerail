@@ -1,0 +1,17 @@
+.policy "ruff-pt025-pytest-erroneous-use-fixtures-on-fixture" revision 2
+.description "Don't apply a pytest usefixtures marker to a fixture function; it has no effect there, so request other fixtures as parameters instead."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT025 (flake8-pytest-style): `@pytest.mark.usefixtures(…)` on a fixture, where marks do nothing.
+//   @pytest.mark.usefixtures("a")    ← PT025
+//   @pytest.fixture
+//   def b(): ...
+#include "python/pytest.rr"
+//   pytest_fixture(f, d, e), pytest_mark(o, d, e, m)
+
+.violation PT025(at: node) code "PT025"
+    "Remove this `usefixtures` mark; it has no effect on a fixture. To make the fixture depend on other fixtures, list them as parameters of the fixture function."
+    suppress ruff "PT025"
+PT025(d) :- pytest_fixture(f, _, _), pytest_mark(f, d, _, "usefixtures").

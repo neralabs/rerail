@@ -1,0 +1,19 @@
+.policy "ruff-pt017-pytest-assert-in-except" revision 2
+.description "Assert on an exception with pytest.raises instead of inside an except block; the test silently passes when nothing is raised."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT017 (flake8-pytest-style): an `assert` that reads the caught exception inside `except … as e`; if
+// nothing is raised the assert never runs and the test passes. Any assert in the handler's body counts, nested
+// defs included.
+//   except ZeroDivisionError as e:
+//       assert e.args == ("division by zero",)       ← PT017
+#include "python/pytest.rr"
+//   exc_alias(x, e), exc_body(x, b); ast: ast_name(n, x)
+
+.violation PT017(at: node, e: symbol) code "PT017"
+    "Move this assert out of the `except`: wrap the raising call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value` instead of `{e}`; leave non-test code alone."
+    suppress ruff "PT017"
+PT017(a, e) :- exc_alias(x, e), exc_body(x, b), kind(a, "assert_statement"), within(a, b), within(n, a),
+    ast_name(n, e).

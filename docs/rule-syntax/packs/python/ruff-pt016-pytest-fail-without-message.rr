@@ -1,0 +1,23 @@
+.policy "ruff-pt016-pytest-fail-without-message" revision 2
+.description "Pass a non-empty message to pytest.fail calls; a bare failure gives no hint why the test failed."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT016 (flake8-pytest-style): `pytest.fail()` without a message, or with "" or None. The message is the
+// `reason=` keyword or the first positional argument, else the deprecated `msg=`.
+//   pytest.fail()                    ← PT016
+//   pytest.fail("")                  ← PT016
+//   pytest.fail(msg="why")           not reported
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a), kwarg(c, k, v), pytest_empty_or_null(e)
+
+.violation PT016(at: node, f: symbol) code "PT016"
+    "Add a message to `{f}(...)` that says why the test is failing, so the failure report explains itself."
+    suppress ruff "PT016"
+PT016(g, x) :- exc_call(c, "pytest.fail"), !has_message(c), field(c, "function", g0), unparen(g0, g), text(g, x).
+.decl message(c: node, m: node)
+message(c, m) :- exc_call(c, "pytest.fail"), exc_argument(c, "reason", 0, m).
+message(c, m) :- exc_call(c, "pytest.fail"), !exc_argument(c, "reason", 0, _), kwarg(c, "msg", m).
+.decl has_message(c: node)
+has_message(c) :- message(c, m), !pytest_empty_or_null(m).

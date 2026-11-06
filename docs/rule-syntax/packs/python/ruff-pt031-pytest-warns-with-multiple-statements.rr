@@ -1,0 +1,18 @@
+.policy "ruff-pt031-pytest-warns-with-multiple-statements" revision 2
+.description "Keep a pytest.warns block to a single simple statement; extra statements can raise the expected warning themselves and hide a failure in the call under test."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT031 (flake8-pytest-style): a `with pytest.warns(…)` block holding more than the one simple statement
+// expected to warn; the shape rules are PT012's.
+//   with pytest.warns(UserWarning):      ← PT031
+//       x = make()
+//       x.check()
+#include "python/pytest.rr"
+//   pytest_with(w, q), pytest_crowded(w)
+
+.violation PT031(at: node) code "PT031"
+    "Keep only the statement expected to warn inside this `pytest.warns` block and move the other statements before or after it, unless they are needed to trigger the warning."
+    suppress ruff "PT031"
+PT031(w) :- pytest_with(w, "pytest.warns"), pytest_crowded(w).

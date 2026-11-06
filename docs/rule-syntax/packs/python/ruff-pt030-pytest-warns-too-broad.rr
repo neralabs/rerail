@@ -1,0 +1,27 @@
+.policy "ruff-pt030-pytest-warns-too-broad" revision 2
+.description "Pass a match pattern to pytest.warns for Warning, UserWarning or DeprecationWarning, or expect a more specific warning; a generic warning also catches unrelated ones."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PT030 (flake8-pytest-style): `pytest.warns(W)` for a broad W with no `match=`, or an empty one. Broad is
+// option `warns-require-match-for` (default Warning, UserWarning, DeprecationWarning) plus
+// `warns-extend-require-match-for`, globs over the qualified name. Unlike PT011, the callable form
+// `pytest.warns(W, func)` is reported too; it ignores `match=`.
+//   with pytest.warns(UserWarning): …                 ← PT030
+//   pytest.warns(UserWarning, func)                   ← PT030
+//   with pytest.warns(UserWarning, match="x"): …      not reported
+#include "python/pytest.rr"
+//   exc_call(c, q), exc_argument(c, k, i, a), exc_arg(c, i, a), kwarg(c, k, v), pytest_empty_or_null(e),
+//   pytest_broad(c, e, s)
+
+.violation PT030(at: node, id: symbol) code "PT030" "{id}"
+    suppress ruff "PT030"
+PT030(w, cat("Give `pytest.warns(", x, ")` a non-empty `match=` regex, or expect a more specific warning, so an unrelated warning cannot satisfy it.")) :-
+    broad_warn(c, w), !exc_arg(c, 1, _), text(w, x).
+PT030(w, cat("`pytest.warns(", x, ", func)` ignores `match=`; call the function inside `with pytest.warns(", x,
+        ", match=...):` instead, or expect a more specific warning class.")) :- broad_warn(c, w), exc_arg(c, 1, _), text(w, x).
+
+.decl broad_warn(c: node, w: node)
+broad_warn(c, w) :- exc_call(c, "pytest.warns"), exc_argument(c, "expected_warning", 0, w), pytest_broad("warns", w, _),
+    (!kwarg(c, "match", _) ; kwarg(c, "match", m), pytest_empty_or_null(m)).

@@ -1,0 +1,20 @@
+.policy "ruff-try201-verbose-raise" revision 2
+.description "Use a bare raise to re-raise the caught exception instead of raising it again by name; the bare form is the idiomatic way to propagate it."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff TRY201 (tryceratops): `raise e` in a handler that caught the exception as e; a bare `raise` re-raises it.
+// Ruff collects the raises of the handler's body with its own walk (exc_reraise): into nested defs and branches,
+// and into a nested `try` only one level below its body and `finally`.
+//   except ValueError as e:
+//       raise e                ← TRY201
+//       raise e from None      not reported: the cause changes what is raised
+//       raise                  not reported
+#include "python/exceptions.rr"
+//   exc_alias(x, e), exc_reraise(x, r), exc_raise(r, e), exc_cause(r)
+
+.violation TRY201(at: node, e: symbol) code "TRY201"
+    "Use a bare `raise` instead of `raise {e}`. Keep the name if `{e}` was reassigned, or the raise is in a nested function or an inner `except` block, where a bare raise re-raises something else."
+    suppress ruff "TRY201"
+TRY201(n, e) :- exc_alias(x, e), exc_reraise(x, r), !exc_cause(r), exc_raise(r, n), kind(n, "identifier"), text(n, e).
