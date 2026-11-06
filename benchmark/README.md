@@ -556,7 +556,10 @@ run to completion, as the session-focus comparison above did.
   four primaries reject at Holm-adjusted p ≤ 0.0221 (Pocock, three looks); stop after look 3 whatever the result.
   Leaked runs are excluded and reported; errors count as failures for their arm.
 - **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze-completion <look reports...> --arms
-  git-conflict --control none --weights D1=0.74,D2=0.26`.
+  git-conflict --control none --weights D1=0.74,D2=0.26`. Runs: `benchmark/merge-assist-replay.ts --completion
+  --exclude encode-httpx-3304-3335 --arms none,git-conflict --trials 2`, split by pair across the build hosts.
+- **Known property of the test.** In the self-test (4,000 synthetic datasets at this size) the false-positive rate
+  under no effect is 0.051–0.055 against a nominal 0.05; the per-look bar of 0.0221 is kept as is.
 
 ## Steer strategies
 
