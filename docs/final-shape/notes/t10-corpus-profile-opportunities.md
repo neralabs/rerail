@@ -203,6 +203,16 @@ cross-file statistics. The memo adds 32 MB to the full corpus's store.
 `rerail-engine logic` takes a directory of `.rr` files and runs them as one program (100 rules on s200: 1.6 s,
 286 MB).
 
+Two items from §1 measured again on the full corpus, with the memo off and the tapes cached:
+
+- **Batch: 4.1 s**, no longer SQLite durability. Atom writes are deferred (decision 0047), so interning takes
+  0.08 s. What's left is nearest ancestors (1.8 s), projecting (1.3 s) and text tests (0.9 s). It is paid only for
+  files the memo misses.
+- **Memory doesn't creep with corpus size.** `RERAIL_PROF_CHUNKS=1` prints memory as each chunk arrives. The live
+  heap is 280 MB at chunk 1 and 290 to 350 MB through chunk 104. The footprint rose to about 550 MB by chunk 30 and
+  stayed there: freed pages the allocator kept. The run now returns them after each chunk, so the footprint holds
+  near 380 MB. Peak RSS went from 653 MB to 572 MB, at the same instructions (748e9).
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:
