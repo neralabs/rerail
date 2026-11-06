@@ -104,8 +104,9 @@
 // relations, and no tree.
 // source(d, sp): the whole file as one span. match / match_all over it give spans with lines.
 .decl source(d: number, sp: span)
-// src_line(d, 12, sp): physical line 12, without its terminator. Python documents split as str.splitlines()
-// does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line); others split at \n only.
+// src_line(d, 12, sp): physical line 12, without its terminator. Lines end at \n, \r\n or a lone \r: the
+// terminators CPython's tokenizer, Ruff and ESLint count, so src_line numbers agree with line(n). A form feed is
+// whitespace inside a line (str.splitlines() would split there, and disagree with every tool).
 // A Datalog version over match_all would be exact for \n only, so it is native.
 .decl src_line(d: number, l: number, sp: span)
 .decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them

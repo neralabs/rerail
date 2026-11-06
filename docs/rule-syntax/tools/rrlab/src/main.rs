@@ -421,7 +421,7 @@ fn python_lines(s: &str) -> Vec<&str> {
     let mut i = 0;
     while i < b.len() {
         let (at, c) = b[i];
-        if matches!(c, '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}') {
+        if matches!(c, '\n' | '\r') {
             out.push(&s[start..at]);
             let mut next = at + c.len_utf8();
             if c == '\r' && i + 1 < b.len() && b[i + 1].1 == '\n' {
