@@ -83,6 +83,9 @@ struct Lowerer {
     /// `.violation`s: (relation, columns, the column holding the code).
     violations: Vec<(String, usize, Option<usize>)>,
     next: usize,
+    /// Whether the clause being lowered binds a variable named `top` in an atom: there `top` is that variable, not
+    /// the lattice's top (`child(x, top, _)`).
+    top_var: bool,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -253,6 +256,14 @@ impl Lowerer {
     }
 
     fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {
+        fn atom_binds_top(lits: &[Lit]) -> bool {
+            lits.iter().any(|l| match l {
+                Lit::Atom { args, .. } => args.iter().any(|a| matches!(a, STerm::Var(v) if v == "top")),
+                Lit::Group { alts, .. } => alts.iter().any(|a| atom_binds_top(a)),
+                _ => false,
+            })
+        }
+        self.top_var = atom_binds_top(body);
         let mut outer = Vec::new();
         heads.iter().flat_map(|h| &h.args).for_each(|a| a.vars(&mut outer));
         let bodies = self.conjunction(body, &outer.into_iter().collect())?;
@@ -527,7 +538,7 @@ impl Lowerer {
 
     fn term(&mut self, t: &STerm) -> Result<Term, Error> {
         Ok(match t {
-            STerm::Var(v) if v == "top" => Term::Top,
+            STerm::Var(v) if v == "top" && !self.top_var => Term::Top,
             STerm::Var(v) => Term::Var(v.clone()),
             STerm::Wild => Term::Wild,
             STerm::Num(n) => Term::Int(*n),

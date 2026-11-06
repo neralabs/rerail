@@ -701,3 +701,32 @@ first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
     assert_eq!(got[0], "f\t18\tassign\n");
     assert_eq!(got[1], "f\t0\tfunction\n");
 }
+
+/// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
+/// `child(p, c, _)` does.
+#[test]
+fn a_variable_named_top_is_a_variable_where_an_atom_binds_it() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.input node, child
+.decl lists(n: node)
+lists(n) :- node(_, n, "argument_list", _, _).
+.decl via(p: node, c: node)
+via(p, c) :- lists(p), child(p, c, _).
+.decl direct(p: node, c: node)
+direct(p, top) :- node(_, p, "argument_list", _, _), child(p, top, _).
+.decl kids(p: node, c: node)
+kids(p, c) :- child(p, c, _).
+.decl grand(a: node, c: node)
+grand(a, c) :- kids(a, b), kids(b, c).
+.decl chained(a: node, c: node)
+chained(a, top) :- child(a, b, _), child(b, top, _).
+.output via, direct, grand, chained
+"#;
+    let got = corpus_outputs("child-chain", &[("a.py", "class Base(SqlRenderable):\n    pass\n")], program, &["via", "direct", "grand", "chained"]);
+    assert!(!got[0].is_empty(), "{got:?}");
+    assert_eq!(got[1], got[0]);
+    assert!(!got[2].is_empty(), "{got:?}");
+    assert_eq!(got[3], got[2]);
+}
