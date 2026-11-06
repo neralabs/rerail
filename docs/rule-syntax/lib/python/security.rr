@@ -1,0 +1,234 @@
+// python/security: a call, its arguments and the file's imports as Bandit 1.9.4 sees them.
+//
+// Bandit's tests do not resolve names. They read a call through a small, file-wide view (bandit/core/context.py,
+// node_visitor.py, utils.py), and their findings follow that view, imprecise as it is. This file is that view:
+//
+//   qual_call(c, q)       call c's `call_function_name_qual`: the callee's dotted text, with the head mapped
+//                         through the import aliases seen so far. `import pickle as p; p.loads(x)` gives
+//                         "pickle.loads"; `foo().bar()` gives ".bar"; `fs[0]()` gives "".
+//   call_leaf(c, x)       its `call_function_name`: q after the last dot ("loads").
+//   pos_arg(c, i, a)      a is `call.args[i]`: positional, `*xs` included, parentheses off.
+//   arg_count(c, k)           `call_args_count`: how many there are.
+//   kwarg(c, k, v)        `k=v` is one of c's keywords; v without parentheses.
+//   literal(e, t, v)      what Bandit reads for an argument e (`_get_literal_value`, after `.attr`):
+//                         t "str": a str constant, True/False/None as "True"/"False"/"None", a name's id, an
+//                         attribute's attr; "int", "float" (v normalised: 0o777 is "511"); "bytes"; "list",
+//                         "tuple", "set", "dict" (v ""); "complex" (its text); "ellipsis". No row: Bandit's None (a call, an f-string, `-1`, …).
+//   report_at(c, v, at)   a finding Bandit moves to keyword value v's line: the call itself when on that line.
+//   truthy(e)             e's literal counts as true (`kw or args[i]` picks the first truthy one).
+//   kw_literal(c, k, t, v) literal of keyword k: `get_call_arg_value(k)`.
+//   kw_none(c, k)         `get_call_arg_value(k)` is None: k absent, or its value has no literal.
+//   import_entry(i, s)    import statement i adds s to Bandit's `imports` set: `import a.b` "a.b",
+//                         `from m import x` "m.x", `from . import x` "x" (relative dots dropped).
+//   imported_like(n, s)   `is_module_imported_like(s)` at n: an import before n has an entry containing s.
+//   imported_exact(n, s)  `is_module_imported_exact(s)` at n: an import before n has the entry s.
+//                         "Before" is Bandit's walk order, CPython's ast order (core's earlier, visit_index).
+//   blacklisted(n, code)  Bandit's blacklist test (B001) reports `code` at call or import n. The tables are in
+//                         python/security-blacklist.rr, generated from the rules' JSON.
+//   catch_all_body(x, s)  handler x is `except:` or `except Exception:` and s its only statement (B110, B112).
+//   process_fn(g, q)      Bandit's shell_injection groups: "subprocess", "shell", "no_shell" (B606, B609).
+// imported_like, imported_exact and kw_none test only the strings in like_probe, exact_probe and kw_probe; a
+// new rule adds its own rows.
+//
+// "Seen so far": Bandit fills its alias table and `imports` set as it walks the file, and never forgets an entry
+// or lets a local binding shadow one. An import inside a function counts for every later line of the file; a call
+// above the import does not see it.
+//
+//   import pickle as p
+//   p.loads(x)                 qual_call "pickle.loads": blacklisted B301
+//   def f(p): p.loads(x)       still "pickle.loads": Bandit does not see the parameter
+//   from xml.sax import parse  import_entry "xml.sax.parse": blacklisted B406 (prefix "xml.sax")
+#include "python/ast.rr"                  // unparen, from_module_raw
+#include "python/security-blacklist.rr"   // blacklist_call, blacklist_import
+
+// ---- 1. the import table ------------------------------------------------------------------------------------------
+// alias_site(a, x, q): import alias node a maps name x to q (`import_aliases[x] = q`):
+//   import a.b as c          c -> "a.b"      (`import a.b` adds no alias: its text already reads "a.b")
+//   from m import x [as y]   x (or y) -> "m.x"; relative dots dropped, `from ..m import x` maps x to "m.x"
+//   from . import x as y     y -> "x"        (no module: Bandit handles it as `import x as y`)
+.decl alias_site(a: node, x: symbol, q: symbol)
+alias_site(a, y, m) :- kind(i, "import_statement"), field(i, "name", a), kind(a, "aliased_import"),
+    field(a, "name", d), text(d, m), field(a, "alias", al), text(al, y).
+alias_site(a, x, @dot(m, x)) :- from_module_raw(i, m), m != "", field(i, "name", a), kind(a, "dotted_name"), text(a, x).
+alias_site(a, y, q) :- from_module_raw(i, m), field(i, "name", a), kind(a, "aliased_import"), field(a, "name", d),
+    text(d, x), field(a, "alias", al), text(al, y), (m != "", q = @dot(m, x) ; m = "", q = x).
+
+// import_entry(i, s): what statement i adds to `imports`; also what the blacklist compares (with startswith).
+.decl import_entry(i: node, s: symbol)
+import_entry(i, s) :- kind(i, "import_statement"), field(i, "name", a), import_name(a, s).
+import_entry(i, s) :- from_module_raw(i, m), field(i, "name", a), import_name(a, x),
+    (m != "", s = @dot(m, x) ; m = "", s = x).
+import_entry(i, cat(m, ".*")) :- from_module_raw(i, m), child(i, w, _), kind(w, "wildcard_import").
+.decl import_name(a: node, s: symbol)  // the imported name of an alias node, without `as`
+import_name(a, s) :- kind(a, "dotted_name"), text(a, s).
+import_name(a, s) :- kind(a, "aliased_import"), field(a, "name", d), text(d, s).
+
+// The order is Bandit's walk, CPython's ast order (core's visit_index): a def's decorators come after its body,
+// so in `@p.loads(x)` / `def f(): import pickle as p` the decorator sees the alias.
+// first_import(d, how, s, k): the first import of document d that is like (or exactly) s is at visit index k.
+.decl first_import(d: number, how: symbol, s: symbol, k: number)
+first_import(d, "like", s, k) :- like_probe(s), doc(d, _, _),
+    k = min j : { import_entry(i, e), contains(s, e), docof(i, d), visit_index(i, j) }.
+first_import(d, "exact", s, k) :- exact_probe(s), doc(d, _, _),
+    k = min j : { import_entry(i, s), docof(i, d), visit_index(i, j) }.
+.decl imported_like(n: node, s: symbol)
+imported_like(c, s) :- kind(c, "call"), docof(c, d), first_import(d, "like", s, k), visit_index(c, j), k < j.
+.decl imported_exact(n: node, s: symbol)
+imported_exact(c, s) :- kind(c, "call"), docof(c, d), first_import(d, "exact", s, k), visit_index(c, j), k < j.
+// like_probe(s), exact_probe(s): the modules the rules ask about, so the tests stay finite.
+.decl like_probe(s: symbol)
+like_probe("flask"). like_probe("paramiko"). like_probe("transformers"). like_probe("datasets").
+like_probe("huggingface_hub").
+.decl exact_probe(s: symbol)
+exact_probe("torch").
+
+// ---- 2. the callee's name ------------------------------------------------------------------------------------------
+// callee_part(e): e is the callee of a call, or the object of one along the attribute chain; parentheses off
+// (`ast` has none: `(exec)(s)` calls the Name exec).
+.decl callee_part(e: node)
+callee_part(f) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f).
+callee_part(o) :- callee_part(e), kind(e, "attribute"), field(e, "object", o0), unparen(o0, o).
+// qual_part(e, q): `_get_attr_qual_name`. A name maps through the latest alias before it, else reads as itself;
+// an attribute appends `.attr`; anything else (a call, a subscript) is "".
+.decl qual_part(e: node, q: symbol)
+qual_part(e, q) :- callee_part(e), kind(e, "identifier"), text(e, x), latest_alias(e, x, a), alias_site(a, x, q).
+qual_part(e, x) :- callee_part(e), kind(e, "identifier"), text(e, x), !aliased_before(e, x).
+qual_part(e, cat(cat(q, "."), x)) :- callee_part(e), kind(e, "attribute"), field(e, "object", o0), unparen(o0, o),
+    qual_part(o, q), field(e, "attribute", at), text(at, x).
+qual_part(e, "") :- callee_part(e), kind(e, k), k != "identifier", k != "attribute".
+.decl aliased_before(e: node, x: symbol)
+aliased_before(e, x) :- callee_part(e), kind(e, "identifier"), text(e, x), alias_site(a, x, _), earlier(a, e).
+// latest_alias(e, x, a): a is the last alias site of x before e, in walk order.
+.decl latest_alias(e: node, x: symbol, a: node)
+latest_alias(e, x, a) :- aliased_before(e, x), k = max j : { alias_site(b, x, _), earlier(b, e), visit_index(b, j) },
+    alias_site(a, x, _), visit_index(a, k), docof(a, d), docof(e, d).
+
+.decl qual_call(c: node, q: symbol)
+qual_call(c, q) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), qual_part(f, q).
+.decl call_leaf(c: node, x: symbol)
+call_leaf(c, x) :- qual_call(c, q), match("(?:.*\\.)?(?<x>[^.]*)", q).
+
+// ---- 3. arguments --------------------------------------------------------------------------------------------------
+// in_call_args(a): an argument_list child that is in `call.args`: not `k=v`, not `**kw`, not a comment.
+.decl in_call_args(a: node)
+in_call_args(a) :- child(l, a, _), kind(l, "argument_list"), kind(a, k), k != "keyword_argument",
+    k != "dictionary_splat", k != "comment".
+.decl pos_arg(c: node, i: number, a: node)
+pos_arg(c, i, a) :- kind(c, "call"), field(c, "arguments", l), kind(l, "argument_list"), child(l, a0, j),
+    in_call_args(a0), i = count : { child(l, b, k), k < j, in_call_args(b) }, unparen(a0, a).
+pos_arg(c, 0, g) :- kind(c, "call"), field(c, "arguments", g), kind(g, "generator_expression").   // f(x for x in y)
+.decl arg_count(c: node, k: number)
+arg_count(c, k) :- kind(c, "call"), k = count : { pos_arg(c, _, _) }.
+.decl kwarg(c: node, k: symbol, v: node)
+kwarg(c, k, v) :- kind(c, "call"), field(c, "arguments", l), child(l, ka, _), kind(ka, "keyword_argument"),
+    field(ka, "name", n), text(n, k), field(ka, "value", v0), unparen(v0, v).
+
+// literal(e, t, v): see the header. Strings: a prefix with f or t is interpolated (no literal); b is bytes.
+.decl literal(e: node, t: symbol, v: symbol)
+literal(e, "str", a) :- kind(e, "attribute"), field(e, "attribute", at), text(at, a).
+literal(e, "str", x) :- kind(e, "identifier"), text(e, x).
+literal(e, "str", "True") :- kind(e, "true").
+literal(e, "str", "False") :- kind(e, "false").
+literal(e, "str", "None") :- kind(e, "none").
+literal(e, "int", v) :- kind(e, "integer"), value(e, v), !imaginary(e).
+literal(e, "float", v) :- kind(e, "float"), value(e, v), !imaginary(e).
+literal(e, "complex", t) :- imaginary(e), text(e, t).
+literal(e, "ellipsis", "...") :- kind(e, "ellipsis").
+.decl imaginary(e: node)  // `1024j`: tree-sitter calls it an integer or a float
+imaginary(e) :- (kind(e, "integer") ; kind(e, "float")), text(e, t), match(".*[jJ]", t).
+literal(e, t, v) :- kind(e, "string"), string_kind(e, t), value(e, v).
+literal(e, t, v) :- kind(e, "concatenated_string"), child(e, s0, 0), string_kind(s0, t),
+    !mixed(e), v = join s by i sep "" : { child(e, p, i), kind(p, "string"), value(p, s) }.
+literal(e, "list", "") :- kind(e, "list").
+literal(e, "tuple", "") :- kind(e, "tuple").
+literal(e, "set", "") :- kind(e, "set").
+literal(e, "dict", "") :- kind(e, "dictionary").
+literal(e, t, v) :- kind(e, "parenthesized_expression"), unparen(e, m), m != e, literal(m, t, v).
+.decl string_kind(s: node, t: symbol)  // "str" or "bytes"; no row for an f-string or t-string
+string_kind(s, "str") :- kind(s, "string"), strprefix(s, p), !contains("f", p), !contains("t", p), !contains("b", p).
+string_kind(s, "bytes") :- kind(s, "string"), strprefix(s, p), contains("b", p).
+.decl mixed(e: node)  // adjacent literals whose pieces are not all the same plain kind (Bandit: no literal)
+mixed(e) :- kind(e, "concatenated_string"), child(e, s0, 0), string_kind(s0, t), child(e, p, _), kind(p, "string"),
+    !string_kind(p, t).
+// report_at(c, v, at): where Bandit puts a finding on call c that it moves to the line of argument v
+// (`lineno=get_lineno_for_call_arg(k)`): v's line, at the call's column. at is c when they share a line, else v.
+.decl report_at(c: node, v: node, at: node)
+report_at(c, v, c) :- kwarg(c, _, v), line(c, l), line(v, l).
+report_at(c, v, v) :- kwarg(c, _, v), line(c, l), !line(v, l).
+// truthy(e): e's literal is true in Python, as `a or b` reads it: not zero or "" (a container is taken as
+// non-empty). "None" is truthy: Bandit has turned None into a string by then.
+.decl truthy(e: node)
+truthy(e) :- literal(e, _, _), !falsy(e).
+.decl falsy(e: node)  // 0, 0.0 (0e0 too), 0j, ""
+falsy(e) :- literal(e, "int", "0").
+falsy(e) :- literal(e, "str", "").
+falsy(e) :- literal(e, "float", v), to_float(@replace_all(v, "_", "")) = 0.0.
+falsy(e) :- literal(e, "complex", t), to_float(@replace_all(t, "[_jJ]", "")) = 0.0.
+.decl kw_literal(c: node, k: symbol, t: symbol, v: symbol)
+kw_literal(c, k, t, v) :- kwarg(c, k, e), literal(e, t, v).
+.decl kw_none(c: node, k: symbol)
+kw_none(c, k) :- kind(c, "call"), kw_probe(k), !kw_literal(c, k, _, _).
+// kw_probe(k): the keywords a rule asks get_call_arg_value about, so kw_none stays finite.
+.decl kw_probe(k: symbol)
+kw_probe("timeout"). kw_probe("weights_only"). kw_probe("key_size"). kw_probe("bits"). kw_probe("curve").
+kw_probe("revision"). kw_probe("commit_id").
+
+// ---- 4. the blacklist (B001) ---------------------------------------------------------------------------------------
+// Calls: one name per call, Bandit's: the qualified name, except that `__import__("m")` and importlib's
+// `import_module("m")` / `__import__("m")` are read as m. Bandit's Call blacklist is the call lists and then the
+// import lists, all by equality: `telnetlib()` is B401, `importlib.import_module("pickle.loads")` B301.
+.decl blacklisted(n: node, code: symbol)
+blacklisted(c, code) :- blacklist_name(c, n), (blacklist_call(code, n) ; blacklist_import(code, _, n)).
+.decl blacklist_name(c: node, n: symbol)
+blacklist_name(c, q) :- qual_call(c, q), q != "importlib.import_module", q != "importlib.__import__", !dunder_import(c).
+blacklist_name(c, m) :- loads_module(c, m).
+// Imports: one finding per statement, from the first list (in Bandit's order) that any imported name starts with:
+//   import pickle, telnetlib     B401 only: telnetlib's list comes first
+.decl import_hit(i: node, code: symbol, rank: number)
+import_hit(i, code, r) :- import_entry(i, s), blacklist_import(code, r, m), prefix(m, s).
+blacklisted(i, code) :- import_hit(i, code, r), r = min k : { import_hit(i, _, k) }.
+
+.decl dunder_import(c: node)  // `__import__(…)`, the bare name only (Bandit does not alias it)
+dunder_import(c) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), kind(f, "identifier"), text(f, "__import__").
+// loads_module(c, m): the module name Bandit reads from an import call: a str constant first argument, else
+// "UNKNOWN" for `__import__`; for importlib, the first argument's literal, else the `name=` keyword's.
+.decl loads_module(c: node, m: symbol)
+loads_module(c, m) :- dunder_import(c), pos_arg(c, 0, a), literal(a, "str", m), kind(a, k), (k = "string" ; k = "concatenated_string").
+loads_module(c, m) :- qual_call(c, q), (q = "importlib.import_module" ; q = "importlib.__import__"),
+    (pos_arg(c, 0, a), literal(a, "str", m) ; arg_count(c, 0), kw_literal(c, "name", "str", m)).
+
+// ---- 5. handlers ---------------------------------------------------------------------------------------------------
+// catch_all_body(x, s): except handler x (`except` or `except*`) catches everything or `Exception`, as B110 and
+// B112 read it (no type, or a bare Name whose id is Exception; `builtins.Exception` and tuples do not count), and
+// its body is the one statement s (comments are not statements; a docstring is).
+//   except: pass                 s is the pass
+//   except (Exception) as e:     the type is the Name Exception: `ast` has no parentheses
+//   except ValueError: pass      no row
+.decl catch_all_body(x: node, s: node)
+catch_all_body(x, s) :- handler(x), catch_all(x), child(x, b, _), kind(b, "block"),
+    count : { child(b, t, _), !kind(t, "comment") } = 1, child(b, s, _), !kind(s, "comment").
+.decl handler(x: node)
+handler(x) :- kind(x, "except_clause").   // `except*` too: tree-sitter parses it as an except_clause
+.decl catch_all(x: node)
+catch_all(x) :- handler(x), !field(x, "value", _), count : { child(x, t, _), !kind(t, "block"), !kind(t, "comment") } = 0.
+catch_all(x) :- handler(x), field(x, "value", v), except_type(v, t), unparen(t, n), kind(n, "identifier"),
+    text(n, "Exception").
+.decl except_type(v: node, t: node)  // `except T as e` holds T in an as_pattern
+except_type(v, t) :- kind(v, "as_pattern"), child(v, t, 0).
+except_type(v, v) :- !kind(v, "as_pattern"), child(_, v, _).
+
+// ---- 6. process-starting functions -----------------------------------------------------------------------------------
+// process_fn(group, q): Bandit's shell_injection configuration, its default (injection_shell.py's gen_config):
+//   "subprocess"  starts a process, with a shell only if shell= is truthy   (B602, B603, B609)
+//   "shell"       always starts a shell                                      (B605, B609)
+//   "no_shell"    replaces or spawns a process without a shell              (B606)
+.decl process_fn(group: symbol, q: symbol)
+process_fn("subprocess", q) :- (q = "subprocess.Popen" ; q = "subprocess.call" ; q = "subprocess.check_call" ;
+    q = "subprocess.check_output" ; q = "subprocess.run").
+process_fn("shell", q) :- (q = "os.system" ; q = "os.popen" ; q = "os.popen2" ; q = "os.popen3" ; q = "os.popen4" ;
+    q = "popen2.popen2" ; q = "popen2.popen3" ; q = "popen2.popen4" ; q = "popen2.Popen3" ; q = "popen2.Popen4" ;
+    q = "commands.getoutput" ; q = "commands.getstatusoutput" ; q = "subprocess.getoutput" ;
+    q = "subprocess.getstatusoutput").
+process_fn("no_shell", q) :- (q = "os.execl" ; q = "os.execle" ; q = "os.execlp" ; q = "os.execlpe" ; q = "os.execv" ;
+    q = "os.execve" ; q = "os.execvp" ; q = "os.execvpe" ; q = "os.spawnl" ; q = "os.spawnle" ; q = "os.spawnlp" ;
+    q = "os.spawnlpe" ; q = "os.spawnv" ; q = "os.spawnve" ; q = "os.spawnvp" ; q = "os.spawnvpe" ; q = "os.startfile").

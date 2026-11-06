@@ -1,0 +1,52 @@
+.policy "bandit-b615-huggingface-unsafe-download" revision 6
+.description "Pin Hugging Face model and dataset downloads to a specific commit revision; an unpinned download can silently pull changed or tampered files."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B615 (huggingface_unsafe_download): in a file that has imported something named like transformers,
+// datasets or huggingface_hub, a download call not pinned to a commit. The calls: a qualified name ending in
+// from_pretrained with a segment transformers, load_dataset with datasets, or hf_hub_download, snapshot_download
+// or repository_id with huggingface_hub. Not reported when:
+//   - revision= or commit_id= is not a constant (a variable may hold a pin);
+//   - revision (else commit_id) is a string of 7 or more hex digits, quotes stripped;
+//   - the first argument is a local path: a string starting with ./, ../ or /.
+//   from transformers import AutoModel
+//   AutoModel.from_pretrained("org/model")                        B615
+//   AutoModel.from_pretrained("org/model", revision="main")       B615
+//   AutoModel.from_pretrained("org/model", revision="5d0f2e8")    not reported: a commit
+//   AutoModel.from_pretrained("org/model", revision=REV)          not reported: not a constant
+//   AutoModel.from_pretrained("./local")                          not reported
+
+#include "python/security.rr"   // imported_like, qual_call, call_leaf, kwarg, kw_literal, pos_arg, truthy
+
+.violation B615(at: node, api: symbol) code "B615"
+    "Pin {api}() to a specific commit hash with revision=; an unpinned download can silently pull changed or tampered files."
+    suppress nosec "B615"
+B615(c, f) :- hub_call(c, f), !dynamic_revision(c), !pinned(c), !local_path(c).
+
+// hub_call(c, f): c is a download call named f (the name's last segment), its module named among the segments.
+.decl hub_call(c: node, f: symbol)
+hub_call(c, f) :- hub_imported(c), call_leaf(c, f), hub_api(f, m), qual_call(c, q),
+    contains(cat(cat(".", m), "."), cat(cat(".", q), ".")).
+.decl hub_imported(c: node)
+hub_imported(c) :- imported_like(c, m), (m = "transformers" ; m = "datasets" ; m = "huggingface_hub").
+.decl hub_api(f: symbol, m: symbol)
+hub_api("from_pretrained", "transformers"). hub_api("load_dataset", "datasets").
+hub_api("hf_hub_download", "huggingface_hub"). hub_api("snapshot_download", "huggingface_hub").
+hub_api("repository_id", "huggingface_hub").
+
+.decl dynamic_revision(c: node)  // revision= or commit_id= is not an `ast.Constant`
+dynamic_revision(c) :- hub_call(c, _), kwarg(c, k, v), (k = "revision" ; k = "commit_id"), !constant(v).
+.decl constant(v: node)
+constant(v) :- kind(v, k), (k = "integer" ; k = "float" ; k = "true" ; k = "false" ; k = "none" ; k = "ellipsis").
+constant(v) :- (kind(v, "string") ; kind(v, "concatenated_string")), literal(v, _, _).
+// pinned(c): `revision or commit_id` is a commit hash. A truthy revision decides alone.
+.decl pinned(c: node)
+pinned(c) :- hub_call(c, _), revision(c, r), literal(r, "str", s),
+    match("[0-9a-fA-F]{7,}", @replace_all(s, "^[\"']+|[\"']+$", "")).
+.decl revision(c: node, r: node)
+revision(c, r) :- hub_call(c, _), (kwarg(c, "revision", r) ; !revision_set(c), kwarg(c, "commit_id", r)), truthy(r).
+.decl revision_set(c: node)
+revision_set(c) :- hub_call(c, _), kwarg(c, "revision", r), truthy(r).
+.decl local_path(c: node)  // the first argument is a path on disk
+local_path(c) :- hub_call(c, _), pos_arg(c, 0, a), literal(a, "str", s), (prefix("./", s) ; prefix("/", s) ; prefix("../", s)).

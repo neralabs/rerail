@@ -1,0 +1,18 @@
+.policy "bandit-b311-random" revision 2
+.description "Avoid the random module's generators for anything security-related; their output is predictable, so use the secrets module for tokens, passwords, and keys."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B311 (its B001 blacklist): a call to one of the random module's generators: Random, random, randrange, randint,
+// choice, choices, uniform, triangular, randbytes, sample, getrandbits.
+//   import random; random.randint(0, 9)        B311
+//   secrets.randbelow(10)                      not reported
+//   random.seed(1)                             not reported: not a generator
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B311(at: node) code "B311"
+    "Standard pseudo-random generators are not suitable for security or cryptographic purposes."
+    suppress nosec "B311"
+B311(n) :- blacklisted(n, "B311").

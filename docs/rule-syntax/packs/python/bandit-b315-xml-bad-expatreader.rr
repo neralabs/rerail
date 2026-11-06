@@ -1,0 +1,15 @@
+.policy "bandit-b315-xml-bad-expatreader" revision 2
+.description "Use defusedxml instead of creating parsers with xml.sax.expatreader; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B315 (its B001 blacklist): a call to xml.sax.expatreader.create_parser.
+//   import xml.sax.expatreader; xml.sax.expatreader.create_parser()   B315
+// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+
+#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+
+.violation B315(at: node) code "B315"
+    "Using xml.sax.expatreader to parse untrusted XML may permit XML attacks; use defusedxml."
+    suppress nosec "B315"
+B315(n) :- blacklisted(n, "B315").

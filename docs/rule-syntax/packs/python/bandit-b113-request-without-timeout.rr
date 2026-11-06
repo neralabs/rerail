@@ -1,0 +1,31 @@
+.policy "bandit-b113-request-without-timeout" revision 2
+.description "Pass a timeout to requests calls, and never set it to None on requests or httpx calls; without one, a slow server can hang the program indefinitely."
+.language python
+.mode steer
+.scope include "**/*"
+// Bandit's B113 (request_without_timeout), on calls whose qualified name starts with requests or httpx:
+//   1. requests' get, options, head, post, put, patch or delete, with no timeout Bandit can read;
+//   2. those, or httpx's (plus request, stream, Client, AsyncClient), with timeout=None.
+//   requests.get(url)                      B113
+//   requests.get(url, timeout=None)        B113
+//   requests.get(url, timeout=pick())      B113: a call is no literal, so Bandit reads "no timeout"
+//   requests.get(url, timeout=t)           not reported: a name
+//   httpx.get(url)                         not reported: httpx has a default timeout
+//   httpx.Client(timeout=None)             B113
+
+#include "python/security.rr"   // qual_call, call_leaf, kw_none, kw_literal
+
+.violation B113(at: node) code "B113"
+    "Pass a finite timeout to this HTTP call; without one a slow server can hang the program."
+    suppress nosec "B113"
+B113(c) :- http_call(c, "requests"), kw_none(c, "timeout").
+B113(c) :- http_call(c, _), kw_literal(c, "timeout", "str", "None").
+
+// http_call(c, lib): c's qualified name's first segment is lib and its last a method B113 covers.
+.decl http_call(c: node, lib: symbol)
+http_call(c, lib) :- qual_call(c, q), lib = @head(q), call_leaf(c, x), http_method(lib, x).
+.decl http_method(lib: symbol, x: symbol)
+http_method(lib, x) :- (lib = "requests" ; lib = "httpx"),
+    (x = "get" ; x = "options" ; x = "head" ; x = "post" ; x = "put" ; x = "patch" ; x = "delete").
+http_method("httpx", "request"). http_method("httpx", "stream"). http_method("httpx", "Client").
+http_method("httpx", "AsyncClient").

@@ -1,0 +1,40 @@
+.policy "bandit-b609-linux-commands-wildcard-injection" revision 2
+.description "Avoid wildcards in shell commands that run chown, chmod, tar or rsync; crafted file names can inject extra options."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Bandit's B609 (linux_commands_wildcard_injection): a command run through a shell, whose first argument
+// mentions chown, chmod, tar or rsync and a `*`. Through a shell means Bandit's "shell" group (os.system,
+// os.popen, …), or its "subprocess" group with shell=True. The argument is a string, or a list whose items
+// are joined with spaces. The finding is on the line of shell=, where the call has it.
+//   os.system("/bin/tar xvzf *")                         B609
+//   subprocess.Popen("/bin/chown *", shell=True)         B609
+//   subprocess.Popen("/bin/chmod *")                     not reported: no shell, so no glob expansion
+//   subprocess.Popen(["/bin/chown", "*"], shell=True)    B609
+//   os.system("ls *")                                    not reported
+// Bandit tests for `*` only; the JSON also took `?` and `[` (see NOTES-py-bandit.md).
+
+#include "python/security.rr"   // qual_call, process_fn, pos_arg, kwarg, literal, report_at
+
+.violation B609(at: node) code "B609"
+    "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options."
+    suppress nosec "B609"
+B609(at) :- via_shell(c), command_piece(c, p1), command_piece(c, p2), contains("*", p2),
+    (contains("chown", p1) ; contains("chmod", p1) ; contains("tar", p1) ; contains("rsync", p1)),
+    (kwarg(c, "shell", v), report_at(c, v, at) ; !kwarg(c, "shell", _), at = c).
+
+.decl via_shell(c: node)
+via_shell(c) :- qual_call(c, q), process_fn("shell", q).
+via_shell(c) :- qual_call(c, q), process_fn("subprocess", q), kw_literal(c, "shell", "str", "True").
+// command_piece(c, s): the first argument as Bandit reads it: a string (or a name's id, an attribute's attr), or
+// the text of a list, which Bandit builds from each item's repr: the strings, bytes and names inside it, nested
+// lists, tuples, sets and dicts included (`["tar", ["*"]]` and `["tar", b"*"]` both mention `*`; a dict's items
+// are ast nodes, whose repr shows their values from Python 3.14 on). Only which strings
+// occur matters, so whether they share one item does not.
+.decl command_piece(c: node, s: symbol)
+command_piece(c, s) :- via_shell(c), pos_arg(c, 0, a), literal(a, "str", s).
+command_piece(c, s) :- list_item(c, e), !kind(e, "attribute"), (literal(e, "str", s) ; literal(e, "bytes", s)).
+.decl list_item(c: node, e: node)  // e is an item of the first argument, a list, at any depth of nesting
+list_item(c, e) :- via_shell(c), pos_arg(c, 0, l), kind(l, "list"), child(l, e0, _), unparen(e0, e).
+list_item(c, e) :- list_item(c, l), (kind(l, "list") ; kind(l, "tuple") ; kind(l, "set") ; kind(l, "dictionary") ;
+    kind(l, "pair")), child(l, e0, _), unparen(e0, e).
