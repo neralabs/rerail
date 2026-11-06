@@ -14,12 +14,18 @@ def record(source, output):
     from data_layer_ten.common import PIN
     sys.path[:0] = [str(source), str(source / 'scripts')]
     inventory = [dict(path=f'api/_inventory_{group}.py', source=''.join(f'def target_{i}():\n    return {i}\ndef caller_{i}():\n    return target_{i}()\n' for i in range(group*15,(group+1)*15))) for group in range(300)]
+    intents = [dict(path=f'api/_inventory_{group}.py', source='class QueryExecuteIntent:\n    pass\n'+''.join(f'def target_{i}():\n    return QueryExecuteIntent()\ndef caller_{i}():\n    return target_{i}()\n' for i in range(group*15,(group+1)*15))) for group in range(300)]
+    unused = [dict(path=f'impl/unused_{group}.py', source='from l2055_lazy_result.purity import pure_lazy\n'+''.join(f'STATE_{i} = {{0: 1}}\n' for i in range(400))+''.join(f'@pure_lazy\ndef derive_{i}(key):\n    return key\n' for i in range(400))) for group in range(2)]
+    referenced = [dict(file) for file in unused]
+    referenced[0]['source']+='@pure_lazy\ndef probe(key):\n    return STATE_0[key]\n'
     static = 'STATIC = {' + ','.join(f'{i}: ({i}, {i+1})' for i in range(1000)) + '}\n'
     cases = [
-        ('lazy_architecture', 'graph-positive', 'scan_files', [*inventory, dict(path='api/_probe.py', source='class QueryExecuteIntent:\n    pass\ndef mixed(plan):\n    _ctor = QueryExecuteIntent\n    step = _ctor()\n    plan.execute()\n')]),
+        ('lazy_architecture', 'graph-positive', 'scan_files', [*intents, dict(path='api/_probe.py', source='class QueryExecuteIntent:\n    pass\ndef mixed(plan):\n    _ctor = QueryExecuteIntent\n    step = _ctor()\n    plan.execute()\n')]),
         ('lazy_architecture', 'graph-clean', 'scan_files', [*inventory, dict(path='api/_probe.py', source='def mixed(plan):\n    return 1\n')]),
         ('pure_lazy_runtime_purity', 'static-positive', 'scan_paths', [dict(path='impl/static_probe.py', source='from l2055_lazy_result.purity import pure_lazy\n'+static+'@pure_lazy\ndef derive(key):\n    return STATIC[key]\n')]),
         ('pure_lazy_runtime_purity', 'static-clean', 'scan_paths', [dict(path='impl/static_probe.py', source='from l2055_lazy_result.purity import pure_lazy\n'+static+'@pure_lazy\ndef derive(key):\n    return key\n')]),
+        ('pure_lazy_runtime_purity', 'references-positive', 'scan_paths', referenced),
+        ('pure_lazy_runtime_purity', 'references-clean', 'scan_paths', unused),
     ]
     events = []
     for check, name, entry, files in cases:
