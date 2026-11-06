@@ -1,0 +1,184 @@
+{
+  "format": "rerail.data-layer-batch-ten-reaudit/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "sourceFilesChecked": 113,
+  "cases": {},
+  "sources": {},
+  "records": [
+    {
+      "test": "hnsw_architecture:root-file",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "vector_types.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [],
+      "selected": []
+    },
+    {
+      "test": "hnsw_architecture:root-directory",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "vector_types.py/probe.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "vector_types.py/probe.py",
+          "line": 1,
+          "code": "HNSW001",
+          "message": "forbidden pseudo-HNSW symbol: SqlHnswBeamLayerSearch"
+        }
+      ],
+      "selected": [
+        "vector_types.py/probe.py"
+      ]
+    },
+    {
+      "test": "hnsw_architecture:common",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "impl/common/probe.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "impl/common/probe.py",
+          "line": 1,
+          "code": "HNSW001",
+          "message": "forbidden pseudo-HNSW symbol: SqlHnswBeamLayerSearch"
+        }
+      ],
+      "selected": [
+        "impl/common/probe.py"
+      ]
+    },
+    {
+      "test": "hnsw_architecture:vector",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "l5200_vector_index/probe.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "l5200_vector_index/probe.py",
+          "line": 1,
+          "code": "HNSW001",
+          "message": "forbidden pseudo-HNSW symbol: SqlHnswBeamLayerSearch"
+        }
+      ],
+      "selected": [
+        "l5200_vector_index/probe.py"
+      ]
+    },
+    {
+      "test": "hnsw_architecture:test-directory",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "impl/common/tests/probe.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [],
+      "selected": []
+    },
+    {
+      "test": "hnsw_architecture:ignored-directory",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "impl/common/tmp/probe.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [],
+      "selected": []
+    },
+    {
+      "test": "hnsw_architecture:clean",
+      "check": "hnsw_architecture",
+      "entry": "all",
+      "parameters": {},
+      "production": true,
+      "files": [
+        {
+          "path": "impl/common/probe.py",
+          "source": "ordinary()\n"
+        }
+      ],
+      "expected": [],
+      "selected": [
+        "impl/common/probe.py"
+      ]
+    },
+    {
+      "test": "hnsw_architecture:standalone-root-positive",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "vector_types.py",
+          "source": "SqlHnswBeamLayerSearch()\n"
+        }
+      ],
+      "expected": [
+        {
+          "path": "vector_types.py",
+          "line": 1,
+          "code": "HNSW001",
+          "message": "forbidden pseudo-HNSW symbol: SqlHnswBeamLayerSearch"
+        }
+      ],
+      "selected": [
+        "vector_types.py"
+      ]
+    },
+    {
+      "test": "hnsw_architecture:standalone-root-clean",
+      "check": "hnsw_architecture",
+      "entry": "find_hnsw_architecture_findings",
+      "parameters": {},
+      "production": false,
+      "files": [
+        {
+          "path": "vector_types.py",
+          "source": "ordinary()\n"
+        }
+      ],
+      "expected": [],
+      "selected": [
+        "vector_types.py"
+      ]
+    }
+  ]
+}
