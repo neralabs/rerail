@@ -1320,10 +1320,11 @@ oracles and messages; the census counts 100.
 
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
-`.violation`, `~` patterns, `must`/`may`, `=> edits`, `ordered by`, `sum`/`mean`/`join`, `match`
-captures, arithmetic, built-in functions, negated disjunctions, `.input` with parameters and the
-relation-argument built-ins (`within_stop` …) are refused by name. Every hand-written data-layer
-rule stops at one of them. **Closure:** list step 30.
+Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
+parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Still refused by name:
+`.violation` at a span or a source location (file-length, test-budget, noqa-sec-ratchet), `~` patterns,
+`must`/`may`, `=> edits`, `ordered by`, `dfs_first`, `sum`/`mean`/`join`, an aggregate over a join, kind
+sets of functions (tsx) and negated disjunctions. **Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
 
@@ -1336,3 +1337,23 @@ include it.
 T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
 reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
 `.rdl` left. **Closure:** step 31 (O19) removes them.
+
+## O76. Base relations and inputs the engine does not make yet
+
+Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
+parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
+(`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
+since reading it is not written. **Closure:** these relations are built natively and the files are read.
+
+## O77. Lowering shortcuts in `.rr`
+
+- A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
+  text test.
+- Comparing two symbols (`t > s`) compares their interned ids, not their text.
+- `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
+- `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
+  `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
+  path has no range read yet.
+- The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
+  no new values; this extends O11's bound.
+**Closure:** each is lowered as `core.rr` describes, or the description changed.

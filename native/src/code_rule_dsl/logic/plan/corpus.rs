@@ -54,7 +54,7 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     let domain = |tbl: &str, col: &str| match (tbl, col) {
         ("node", "kind") => Domain::Kind,
         ("field", "f") => Domain::Field,
-        ("text" | "op", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
+        ("text" | "op" | "path_part" | "file_name" | "value", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
         _ => Domain::Int,
     };
     db.execute_batch(
@@ -179,6 +179,44 @@ use std::collections::{BTreeMap, BTreeSet};
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
 /// runs once, over the base relations held in memory and the exports read once from `x`, all bound in `main`. Memory
 /// is two chunks', the held base columns, and the cross-file part's own.
+/// The inputs read from a file in the repository (`.input r(IO=json, filename="…")`, rr's `input` setting): with
+/// no such file the relation is empty, so it is no input but a relation without rules. Reading the files
+/// themselves is not written yet (open item O76), so a file that exists is an error, not an empty relation.
+fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
+    let params: Vec<(String, String)> = prog
+        .settings
+        .iter()
+        .filter(|(k, _)| k == "input")
+        .filter_map(|(_, t)| t.split_once('(').map(|(r, p)| (r.trim().to_owned(), p.to_owned())))
+        .collect();
+    for (rel, params) in params {
+        let file = params.split("filename=").nth(1).and_then(|f| f.split('"').nth(1));
+        if let Some(f) = file
+            && root.join(f).exists()
+        {
+            return Err(Error::Plan(format!("{rel}: reading {f} is not written yet (O76)")));
+        }
+        if file.is_none() && !params.contains("artifact=") {
+            continue;
+        }
+        prog.inputs.retain(|i| *i != rel);
+    }
+    // `core.rr` relations the engine does not make yet, read as empty, each named in the profile (open item O76).
+    for (rel, what) in NOT_MADE {
+        if prog.inputs.iter().any(|i| i == rel) {
+            crate::code_rule_dsl::logic::profile::decision("relations not made yet (O76)", || format!("{rel} is empty: {what}"));
+            prog.inputs.retain(|i| i != rel);
+        }
+    }
+    Ok(())
+}
+
+/// The `core.rr` relations a rule may read that the engine does not make yet (O76): each is empty.
+const NOT_MADE: [(&str, &str); 2] = [
+    ("parsed", "strings are not parsed as code, so names in string annotations are not resolved"),
+    ("string_annotation", "read only with `parsed`"),
+];
+
 pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(program, root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
@@ -229,6 +267,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
         }
     };
     let paths: HashMap<i64, String> = docs.iter().cloned().collect();
+    external_inputs(&mut prog, root)?;
     // Declarations and dependency summaries, as `declared_ret` facts (`corpus::typing`).
     let mut typed = TypingReport::default();
     let mut declared = BTreeMap::new();
@@ -447,7 +486,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             let measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel}"));
             let measured = syntax::statistics(source.as_ref());
             drop(measure);
-            if split.base.contains(&rel) && (own || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
+            if split.base.contains(&rel) && (own || !t_stats.knows(&rel) || rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION)) {
                 totals.add(&rel, source.len(), &measured);
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);

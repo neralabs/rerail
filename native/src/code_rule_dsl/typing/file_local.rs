@@ -225,7 +225,7 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     // `syntax_error`.
     let base_locations = |rel: &str| -> Vec<usize> {
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if matches!(rel, "node" | "doc" | "pkg" | "syntax_error") {
+        if matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error") {
             columns.push(0);
         }
         columns

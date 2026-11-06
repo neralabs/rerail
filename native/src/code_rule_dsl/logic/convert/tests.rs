@@ -159,6 +159,22 @@ fn rule_files() -> Vec<PathBuf> {
     by_id.into_values().collect()
 }
 
+/// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
+/// it lowers. `RERAIL_REPLAY_CONVERTED` replays the converted JSON instead.
+fn hand_written(check: &str) -> Option<String> {
+    if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
+        return None;
+    }
+    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    let program = crate::code_rule_dsl::logic::rr::parse_file(&path).ok()?;
+    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
+    // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
+    if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {
+        std::fs::write(PathBuf::from(dir).join(format!("{check}.rr")), &text).unwrap();
+    }
+    Some(text)
+}
+
 /// The rule file of a recorded check (`async_sync_boundary` → `data-layer-async-sync-boundary`).
 fn rule_file(check: &str) -> Option<PathBuf> {
     let name = format!("data-layer-{}", check.replace('_', "-"));
@@ -388,7 +404,12 @@ fn converted_rules_give_the_recorded_findings() {
         // Configured oracles, path-skip overrides, and comparisons of the message or of oracle metadata (which
         // the findings here do not carry) are not replayed.
         let unread = ["compare_message", "compare_fields"].iter().any(|k| event.get(*k).is_some_and(|v| !v.is_null() && v != false && v.as_array().is_none_or(|a| !a.is_empty())));
-        if unread || event.get("oracle_config").is_some_and(|c| !c.is_null()) || event.get("path_skip_override").is_some_and(|v| v == true) {
+        // `source_gate` is a prefilter of the JSON rules (a file mentioning `except`, say): it changes no finding,
+        // so a hand-written rule, which has none, replays its events.
+        let written = hand_written(&check);
+        let config = event.get("oracle_config").filter(|c| !c.is_null());
+        let gate_only = config.and_then(|c| c.as_object()).is_some_and(|c| c.keys().all(|k| k == "source_gate"));
+        if unread || (config.is_some() && !(written.is_some() && gate_only)) || event.get("path_skip_override").is_some_and(|v| v == true) {
             continue;
         }
         let production = event.get("production_scope").is_some_and(|v| v == true);
@@ -399,10 +420,17 @@ fn converted_rules_give_the_recorded_findings() {
             misses.push(format!("{check}: no rule file"));
             continue;
         };
-        let c = convert(&rule, &adjust);
-        if c.clauses.iter().any(|(_, r)| r.is_err()) {
-            continue;
-        }
+        // A hand-written `.rr` that lowers wins over the converted JSON.
+        let program = match written {
+            Some(program) => program,
+            None => {
+                let c = convert(&rule, &adjust);
+                if c.clauses.iter().any(|(_, r)| r.is_err()) {
+                    continue;
+                }
+                c.program
+            }
+        };
         row[1] += 1;
         let dir = root.join(format!("e{k}"));
         for f in event["files"].as_array().unwrap() {
@@ -411,7 +439,7 @@ fn converted_rules_give_the_recorded_findings() {
             std::fs::write(&p, f["source"].as_str().unwrap()).unwrap();
         }
         let out = dir.join(".out");
-        let mut got: Vec<String> = match super::super::plan::corpus::run(&c.program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
+        let mut got: Vec<String> = match super::super::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18) {
             Ok(_) => std::fs::read_to_string(out.join("violation.csv"))
                 .unwrap_or_default()
                 .lines()

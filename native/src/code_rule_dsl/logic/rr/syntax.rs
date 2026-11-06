@@ -208,8 +208,9 @@ pub(super) enum Item {
     Edit { name: String },
     Functor { name: String },
     Type { name: String },
-    /// `.input a, b`; `params`: the relations given with Soufflé's I/O parameters, `.input r(IO=json, …)`.
-    Io { output: bool, names: Vec<String>, params: Vec<String> },
+    /// `.input a, b`; `params`: the relations given with Soufflé's I/O parameters, `.input r(IO=json, …)`, and
+    /// the parameters' text.
+    Io { output: bool, names: Vec<String>, params: Vec<(String, String)> },
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
@@ -429,6 +430,7 @@ impl<'s> Parser<'s> {
                 let names = self.list(".", |p| {
                     let name = p.id()?;
                     if p.is_p("(") {
+                        let start = p.start();
                         p.i += 1;
                         let mut depth = 1;
                         while depth > 0 {
@@ -440,7 +442,8 @@ impl<'s> Parser<'s> {
                             }
                             p.i += 1;
                         }
-                        params.push(name.clone());
+                        let text = p.src[start + 1..p.toks[p.i - 1].1].to_owned();
+                        params.push((name.clone(), text));
                     }
                     Ok(name)
                 })?;

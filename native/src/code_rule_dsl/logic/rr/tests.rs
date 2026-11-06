@@ -176,7 +176,7 @@ fn unlowered_constructs_are_named() {
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
         (".decl a(x: number)\na(x) :- a(y), x = sum z : { a(z) }.", "sum"),
-        (".decl a(x: symbol)\na(x) :- a(y), match(\"(?<x>.*)\", y).", "named groups"),
+        (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
         (".violation v(at: span) \"m\"", "at a span"),
     ] {
         let e = parse(src).unwrap_err().to_string();

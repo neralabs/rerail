@@ -8,6 +8,7 @@
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
 //! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
+//! A file read with `parse_file` has `core.rr` before it, included or not.
 
 mod check;
 mod lower;
@@ -72,6 +73,9 @@ fn program(path: &Path) -> Result<Vec<(PathBuf, Vec<syntax::Statement>)>, Error>
         Ok(())
     }
     let mut out = Vec::new();
-    visit(path, &mut out, &mut Vec::new())?;
+    // `core.rr` is every program's prelude (the base relations and built-ins), included or not.
+    visit(&library().join("core.rr"), &mut out, &mut Vec::new())?;
+    let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
+    visit(path, &mut out, &mut seen)?;
     Ok(out)
 }

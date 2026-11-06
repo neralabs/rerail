@@ -30,7 +30,7 @@ impl Domain {
 
 /// The domains of a functor's arguments and of its value, where it fixes them: `@cat`'s parts and whole are names,
 /// `flat_bin`'s operator is one; arithmetic is over integers; `concat`, `substr` and `to_string` make names,
-/// `strlen` an integer (`.rr`'s `+ - * /`, `cat`, `substr`, `to_string`, `strlen`).
+/// `strlen` an integer, `rx_group` a regex's named group, `pkg_up` a package (`.rr`'s `+ - * /`, `cat`, `substr`, `to_string`, `strlen`).
 pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<Option<Domain>>, Option<Domain>) {
     use Domain::{Int, Name};
     match f {
@@ -40,6 +40,15 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "strlen" => (vec![Some(Name)], Some(Int)),
         "to_string" => (vec![Some(Int)], Some(Name)),
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
+        "rx_group" => (vec![Some(Name); 3], Some(Name)),
+        f if let Some((_, args, ret)) = crate::code_rule_dsl::logic::strings::functions::signature(f) => {
+            let domain = |k: &crate::code_rule_dsl::logic::strings::functions::Kind| {
+                Some(if *k == crate::code_rule_dsl::logic::strings::functions::Kind::Text { Name } else { Int })
+            };
+            (args.iter().map(domain).collect(), domain(&ret))
+        }
+        // `equals` (membership) takes its subject's domain: kinds compare as kind atoms (`lower`, `@in`).
+        "equals" | "in" => (vec![None; arity], None),
         f if crate::code_rule_dsl::logic::strings::is_test(f) => (vec![Some(Name); arity], None),
         _ => (vec![None; arity], None),
     }
@@ -291,6 +300,19 @@ pub(in crate::code_rule_dsl) fn lower(
                 }
                 Literal::Cmp { l, r, .. } => {
                     let of = |t: &Term| if let Term::Var(v) = t { vars.get(v).copied() } else { None };
+                    // Membership of a kind or field, `@equals($k, {"a", "b"})`: `@in` of their atoms.
+                    if let Term::Call(f, args) = l
+                        && f == "equals"
+                        && let [x, set] = args.as_mut_slice()
+                        && let Some(d @ (Domain::Kind | Domain::Field)) = of(x)
+                    {
+                        match set {
+                            Term::Call(g, items) if g == crate::code_rule_dsl::logic::strings::SET => items.iter_mut().try_for_each(|i| k.term(i, Some(d)))?,
+                            one => k.term(one, Some(d))?,
+                        }
+                        *f = "in".to_owned();
+                        continue;
+                    }
                     let (dl, dr) = (of(r), of(l));
                     k.term(l, dl)?;
                     k.term(r, dr)?;
