@@ -420,6 +420,10 @@
 //   1. turns each edit into a byte range in the edited node's file (a fix may edit several files);
 //   2. fills templates: in `…`, $x is variable x's value (a node's or span's source text, or a symbol); $$$X is a
 //      list variable bound by a pattern; the text is reindented to where it lands, as ast-grep's fix does;
+//   2b. pads replace and insert texts as Ruff's `pad` and ESLint's fixers do: when the text would start (end)
+//      with an identifier character right after (before) an identifier character outside the edit, a space goes
+//      in between, so `return{…}` → `return dict(…)` and `d.keys()in x` → `d in x`, never `returndict` or `din`.
+//      Rules write the plain text and never pad by hand;
 //   3. drops the whole fix if two of its edits overlap, or the same node gets two different texts;
 //   4. applies all files or none, reparses them, and drops the fix if any no longer parses.
 // After a fix is applied, Rerail re-checks the edited files; the finding must be gone (checked in rule tests).
