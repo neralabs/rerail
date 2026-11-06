@@ -223,6 +223,15 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
 
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
 /// document of `node`, `doc`, …). A row's document is read off any of them (decision 0050).
+fn document_column(relation: &str) -> Option<usize> {
+    match relation {
+        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
+        "source" | "src_line" | "line_count" | "parsed" => Some(0),
+        "docof" => Some(1),
+        _ => None,
+    }
+}
+
 pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>) {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
@@ -231,8 +240,8 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
     // `syntax_error`.
     let base_locations = |rel: &str| -> Vec<usize> {
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error") {
-            columns.push(0);
+        if let Some(column) = document_column(rel) {
+            columns.push(column);
         }
         columns
     };
@@ -571,7 +580,6 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
         .filter(|r| local.contains(r.as_str()) && split.locations.get(*r).is_none_or(Vec::is_empty))
         .cloned()
         .collect();
-    let doc_column = |rel: &str| matches!(rel, "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error");
     let decls = prog.decls.clone();
     let node_typed = |rel: &str, c: usize| decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "node");
     let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
@@ -590,8 +598,8 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                 Literal::Atom(a) if !a.neg => Some(a),
                 _ => None,
             });
-            let doc = positive().find_map(|a| match a.args.first() {
-                Some(Term::Var(v)) if doc_column(&a.rel) => Some(v.clone()),
+            let doc = positive().find_map(|a| match document_column(&a.rel).and_then(|column| a.args.get(column)) {
+                Some(Term::Var(v)) => Some(v.clone()),
                 _ => None,
             });
             let mut body = rule.body.clone();
