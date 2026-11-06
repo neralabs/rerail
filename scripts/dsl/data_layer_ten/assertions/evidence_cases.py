@@ -75,3 +75,10 @@ def test_unrelated_detector_reports_cannot_stand_in_for_helper_reports():
     assert summary['cases']==1 and summary['calls']==1
     with pytest.raises(ValueError,match='Missing native helper'):
         verify_helpers(ledger,oracle,[core],'snapshot','contracts')
+
+
+def test_field_name_sets_transfer_but_python_hashability_does_not():
+    import ast
+    from data_layer_ten.assertions.transfer import classify
+    assert classify('test_violation_has_four_fields', ast.parse("names == {'code', 'file_path', 'line_number', 'message'}", mode='eval').body)[0] == 'values'
+    assert classify('test_violation_is_hashable', ast.parse('v in s', mode='eval').body)[0] is None
