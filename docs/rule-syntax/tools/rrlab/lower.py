@@ -699,7 +699,7 @@ class Program:
             if axis == "inside":
                 L.append(f"{r}(n, a) :- rr_within(n, a), {s}(a).")
             elif axis == "has":
-                L.append(f"{r}(a, n) :- rr_within(n, a), {s}(a).")
+                L.append(f"{r}(a, n) :- rr_within(n, a), {s}(n).")
             elif axis == "nearest":
                 L.append(f"{r}(n, a) :- rrlab_parent(n, a), {s}(a).")
                 L.append(f"{r}(n, a) :- rrlab_parent(n, p), !{s}(p), {r}(p, a).")
