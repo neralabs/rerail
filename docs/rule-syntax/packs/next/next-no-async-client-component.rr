@@ -1,0 +1,46 @@
+.policy "next-no-async-client-component" revision 4
+.description "Don't make the default-exported component of a \"use client\" file an async function; Client Components cannot be async."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-async-client-component. After a top-level "use client" statement, the default export
+// must not be an async component (a capitalised name; generators too). Two forms:
+//   "use client"; export default async function Page() {}            the export statement
+//   "use client"; async function Page() {}  export default Page       the declaration of Page
+//   "use client"; const Page = async () => {};  export default Page    the declaration of Page
+// For `export default Page` the plugin reads the first top-level function or variable declaration of Page.
+
+#include "tsx/modules.rr"
+
+.violation async_client(at: node) code "@next/next/no-async-client-component"
+    "Prevent client components from being async functions. See: https://nextjs.org/docs/messages/no-async-client-component"
+    suppress eslint "@next/next/no-async-client-component"
+    suppress oxlint "no-async-client-component"
+    suppress biome "lint/correctness/noNextAsyncClientComponent"
+async_client(e) :- client_default(e, f), async_component(f).
+async_client(s) :- client_default(e, x), kind(x, "identifier"), text(x, n), glob("[A-Z]**", n),
+    first_decl(e, n, s), (async_component(s) ; async_arrow(s, n)).
+
+// client_default(e, v): e is a top-level `export default v` with a "use client" statement above it.
+.decl client_default(e: node, v: node)
+client_default(e, v) :- program(_, p), child(p, e, _), kind(e, "export_statement"), op(e, "default"),
+    (field(e, "declaration", v) ; field(e, "value", v)), child(p, u, _), earlier(u, e), use_client(u).
+.decl use_client(u: node)  // the statement "use client"; anywhere at the top, not only in the prologue
+use_client(u) :- kind(u, "expression_statement"), child(u, l, 0), kind(l, "string"), str(l, "use client").
+.decl async_component(f: node)  // async function Page() {}, async function* Page() {}
+async_component(f) :- function_decl(f), op(f, "async"), field(f, "name", x), glob("[A-Z]**", x).
+.decl async_arrow(s: node, n: symbol)  // const Page = async () => {}
+async_arrow(s, n) :- declares(s, n, v), field(v, "value", a), kind(a, "arrow_function"), op(a, "async").
+// first_decl(e, n, s): s is the first top-level statement of e's program that declares n by function or variable.
+.decl first_decl(e: node, n: symbol, s: node)
+first_decl(e, n, s) :- client_default(e, x), text(x, n), child(p, e, _), child(p, s, _), decl_of(s, n),
+    count : { child(p, t, _), decl_of(t, n), earlier(t, s) } = 0.
+.decl decl_of(s: node, n: symbol)
+decl_of(s, n) :- function_decl(s), field(s, "name", x), text(x, n).
+.decl function_decl(f: node)  // ESTree's FunctionDeclaration, generators included
+function_decl(f) :- kind(f, "function_declaration").
+function_decl(f) :- kind(f, "generator_function_declaration").
+decl_of(s, n) :- declares(s, n, _).
+.decl declares(s: node, n: symbol, v: node)  // var/let/const s has declarator v of the plain name n
+declares(s, n, v) :- (kind(s, "lexical_declaration") ; kind(s, "variable_declaration")), child(s, v, _),
+    kind(v, "variable_declarator"), field(v, "name", x), kind(x, "identifier"), text(x, n).

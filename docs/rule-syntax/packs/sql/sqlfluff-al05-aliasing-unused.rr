@@ -1,0 +1,40 @@
+.policy "sqlfluff-al05-aliasing-unused" revision 2
+.description "Remove SQL table aliases the query never uses, unless the alias is required, as for a subquery, a VALUES list or a table joined to itself."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's AL05 (aliasing.unused). A table alias that nothing in its query refers to; the finding is at the
+// alias:
+//   SELECT * FROM my_tbl AS foo                     reported: foo is never used
+//   SELECT foo.x FROM my_tbl AS foo                 fine
+//   SELECT * FROM (SELECT 1) AS s                   fine: a subquery needs its alias (so do VALUES, UNNEST)
+//   SELECT * FROM t AS a JOIN t AS b USING (id)     fine: a self-join needs both
+// A use is a qualifier (foo.x, foo.*), a whole-row reference (f(foo)) or a later FROM item read from it
+// (foo.arr), anywhere in the query, subqueries included. Names compare as PostgreSQL resolves them (alias_key).
+
+#include "sql/syntax.rr"
+
+.violation AL05(at: node, x: node) code "AL05" "Alias '{x}' is never used in SELECT statement."
+    suppress sqlfluff "AL05", "L025", "aliasing", "aliasing.unused", "all", "core"
+AL05(a, a) :- block(b, _, f), from_item(f, r), table_alias(r, a), alias_key(a, x), !needs_alias(f, r),
+    count : { within(u, b), use(u), alias_key(u, x) } = 0.
+
+// alias_key(n, v): names compare as PostgreSQL resolves them, but an alias in '…' only parses in MySQL and
+// SQLite, which match names regardless of case: `FROM t AS 'A'` is used by `a.x`.
+.decl alias_key(n: node, v: symbol)
+alias_key(n, v) :- ident_pg(n, v), !quoted(n, "'").
+alias_key(n, v) :- ident_fold(n, v), quoted(n, "'").
+
+// use(u): identifier u can name a table alias.
+.decl use(u: node)
+use(u) :- column_ref(_, u, _).                                                  // foo.x
+use(u) :- kind(w, "all_fields"), child(w, o, _), field(o, "name", u).           // foo.*
+use(u) :- column_ref(_, q, u), unset(q).                                        // f(foo), a whole row
+use(u) :- kind(o, "object_reference"), child(r, o, _), kind(r, "relation"), field(o, "schema", u).   // foo.arr
+
+// needs_alias(f, r): r is a subquery, VALUES or a table function, or its table appears twice in f.
+.decl needs_alias(f: node, r: node)
+needs_alias(f, r) :- from_item(f, r), child(r, c, _), (kind(c, "subquery") ; kind(c, "values")).
+needs_alias(f, r) :- from_item(f, r), table_function(r).
+needs_alias(f, r) :- from_item(f, r), table_name(r, n), text(n, x), from_item(f, s), s != r, table_name(s, m),
+    text(m, x).

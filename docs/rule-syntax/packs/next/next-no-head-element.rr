@@ -1,0 +1,18 @@
+.policy "next-no-head-element" revision 2
+.description "Use the Head component from next/head instead of a raw head element outside the app directory; Next.js manages the page head itself."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-head-element. A lowercase <head> outside the app directory (the plugin's test: the file
+// name contains "app/"), where next/head's <Head> belongs:
+//   pages/index.js:  <head><title>x</title></head>       reported
+//   app/layout.js:   <html><head/></html>                fine
+
+#include "tsx/next.rr"
+
+.violation head(at: node) code "@next/next/no-head-element"
+    "Do not use `<head>` element. Use `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-head-element"
+    suppress eslint "@next/next/no-head-element"
+    suppress oxlint "no-head-element"
+    suppress biome "lint/style/noHeadElement"
+head(o) :- tag_of(o, "head"), docof(o, d), !in_app_dir(d).

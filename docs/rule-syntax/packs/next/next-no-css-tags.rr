@@ -1,0 +1,19 @@
+.policy "next-no-css-tags" revision 3
+.description "Import local stylesheets instead of adding them with link tags, so Next.js can bundle and optimize the CSS; links to external stylesheet URLs are allowed."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-css-tags. A <link rel="stylesheet"> whose href is a string literal that does not
+// start with http:
+//   <link rel="stylesheet" href="/styles.css" />              reported
+//   <link rel="stylesheet" href="https://cdn.x.com/a.css" />  fine
+//   <link rel="stylesheet" href={url} />                      fine: not a literal
+// The plugin reads `attr.value.value`, so both values must be written as plain strings, not {"…"}.
+
+#include "tsx/next.rr"
+
+.violation css(at: node) code "@next/next/no-css-tags"
+    "Do not include stylesheets manually. See: https://nextjs.org/docs/messages/no-css-tags"
+    suppress eslint "@next/next/no-css-tags"
+    suppress oxlint "no-css-tags"
+css(o) :- tag_of(o, "link"), attr_plain(o, "rel", "stylesheet"), attr_plain(o, "href", h), !prefix("http", h).

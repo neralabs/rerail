@@ -1,0 +1,27 @@
+.policy "sqlfluff-st08-structure-distinct" revision 2
+.description "Don't put parentheses after DISTINCT in SQL as if it were a function; DISTINCT is a keyword, and the parentheses mislead about what it applies to."
+.language sql
+.mode steer
+.scope include "**/*.sql"
+// sqlfluff's ST08 (structure.distinct). DISTINCT written like a function call:
+//   SELECT DISTINCT(a), b FROM t              reported at (a): DISTINCT applies to the row, not to a
+//   SELECT DISTINCT(a + b) * c FROM t         reported at DISTINCT
+//   SELECT COUNT(DISTINCT(k)) FROM t          reported at DISTINCT; the fix is COUNT(DISTINCT k)
+//   SELECT COUNT(DISTINCT (SELECT 1)) FROM t  fine: the parentheses belong to a subquery
+
+#include "sql/syntax.rr"
+
+.violation ST08(at: node) code "ST08" "DISTINCT used with parentheses."
+    suppress sqlfluff "ST08", "L015", "all", "core", "structure", "structure.distinct"
+ST08(p) :- distinct_list(_, e), child(e, t, 0), field(t, "value", p), kind(p, "parenthesized_expression").
+ST08(k) :- distinct_list(k, e), child(e, t, 0), field(t, "value", b), kind(b, "binary_expression"),
+    field(b, "left", p), kind(p, "parenthesized_expression"), child(s, k, _), match("(?i)select\\s+distinct\\([\\s\\S]*", s).
+ST08(k) :- kind(c, "invocation"), child(c, k, _), kind(k, "keyword_distinct"), next_sibling(k, t), kind(t, "term"),
+    !field(t, "alias", _), !next_sibling(t, _), field(t, "value", p), kind(p, "parenthesized_expression"),
+    !has(p, _, query_kind).
+.decl query_kind(k: symbol)
+query_kind("subquery"). query_kind("select").
+// distinct_list(k, e): SELECT DISTINCT's keyword k and the select list e after it.
+.decl distinct_list(k: node, e: node)
+distinct_list(k, e) :- kind(s, "select"), child(s, k, _), kind(k, "keyword_distinct"), next_sibling(k, e),
+    kind(e, "select_expression").

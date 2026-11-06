@@ -1,0 +1,27 @@
+.policy "next-no-img-element" revision 5
+.description "Use the next/image Image component instead of img elements (picture children and metadata image routes aside); it optimizes images for faster loads and less bandwidth."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+// eslint-plugin-next's no-img-element. An <img> with at least one attribute, unless it sits directly in a
+// <picture> or the file is a metadata image route (app/…/opengraph-image.*, twitter-image, icon.*):
+//   <img src="/a.png" alt="" />                                reported
+//   <picture><source srcSet="/a.webp" /><img src="/a.png" /></picture>   fine
+
+#include "tsx/next.rr"
+
+.violation img(at: node) code "@next/next/no-img-element"
+    "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element"
+    suppress eslint "@next/next/no-img-element"
+    suppress oxlint "no-img-element"
+    suppress biome "lint/performance/noImgElement"
+img(o) :- tag_of(o, "img"), attr_count(o, k), k > 0, opening(e, o), !in_picture(e), docof(o, d), doc(d, p, _),
+    !metadata_route(p).
+// in_picture(e): the plugin's node.parent.parent.openingElement.name.name === "picture".
+.decl in_picture(e: node)
+in_picture(e) :- child(p, e, _), kind(p, "jsx_element"), field(p, "open_tag", t), tag_of(t, "picture").
+// The plugin's test on the path relative to the working directory, with its alternation as written:
+// app/…/opengraph-image anywhere, or app/…twitter-image, or app/…icon.<ext> at the end.
+.decl metadata_route(p: symbol)
+metadata_route(p) :- doc(_, p, _),
+    match("(?:src/)?app(?:/.*)?/opengraph-image.*|(?:src/)?app/.*twitter-image.*|(?:src/)?app/.*icon\\.\\w+", p).
