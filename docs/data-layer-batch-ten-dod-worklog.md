@@ -258,3 +258,50 @@ The v8 receipt now requires the fresh audit and full-domain revalidation of ever
 The stale-receipt test fails before regeneration; the regenerated receipt passes all 14 metadata and detector-control tests.
 The transferable-assertion evidence guard also passes.
 No new joint 100-rule execution was performed after this repair, in accordance with the changed-kernel measurement limit.
+
+## Independent verification of the complete original test suite
+
+The previous total of 1,098 combined 279 original cases with 819 supplementary cases.
+This round verifies the originals independently rather than treating the saved corpus as the discovery authority.
+The new scanner checks all 4,466 tracked Python test files against their pinned Git blobs.
+Unfiltered pytest collection finds 279 original cases across 11 files, with no collection errors, deselection, or skip/xfail markers.
+This includes all 14 shared conditional tests and both graph tests outside `scripts/tests/`.
+The independent inventory matches every original case in both preceding execution reports. No missing original detector case was found.
+
+The original detector subset is 155 cases and 156 observations, including 135 positives per API.
+There are also 67 native helper cases and 57 host cases with their separately verified assertion-transfer contracts.
+The original suite contains no optimizer-v2 linter test file. Its supplementary observations must remain labelled separately.
+The scanner also inventories seven adjacent matching gate-runner tests. All seven pass on the original checkout.
+These test data-layer workflow scripts, including collection of the 819-cell matching behavioral matrix, rather than native linter detection.
+
+The independent collector handles parameter cells, test classes, local imports, shared helper imports, and literal dynamic module dependencies.
+A collector regression exposed incorrect dedentation of an undecorated test method; its failing test now passes with `textwrap.dedent`.
+The coverage guard rejects missing cases even if both the saved corpus and execution report omit them.
+It also rejects duplicate shards, unsuccessful phases, and cases silently left without a detector, helper, or declared host contract.
+
+A broader literal-plugin scan then found `test_lint_all.py`, which the first import-only inventory missed.
+Its 175 cases validate the original registry and suite infrastructure. Three parameter cells explicitly require tranche-ten CI blockers.
+The earlier statement about no omitted originals was incomplete for integration coverage, although all 279 direct/shared cases were present.
+All 175 registry cases pass on the original checkout. The final inventory retains them separately, together with the seven gate-runner cases.
+The complete related inventory is therefore 461 cases across 14 files: 279 direct/shared, 175 registry, and seven gate-runner cases.
+This is not a claim of 461 native detector tests.
+
+Three new native counterparts execute the shipped graph, conditional, and embedding rules through the real production CLI.
+They require block mode, failure with `--check`, complete original positive diagnostics, and clean success: six command comparisons.
+They do not replace detector programs with synthetic rules.
+The original integration runner records all 182 cases and their three runtime phases without native adapters.
+Its collected assertion-body hashes match the independent inventory exactly.
+The receipt and CI require both this original execution and all three native counterparts.
+Validators reject missing cases, changed assertion bodies, unsuccessful phases, duplicate native results, and original execution presented as native coverage.
+
+The dedicated original-only replay passes all 279 cases in both APIs, with 156 complete detector observations and 135 positives per API.
+It also retains all 67 helper cases and the separately declared 57 host cases.
+The full 1,098-case reports independently agree with this inventory; their 819 supplementary cases remain separately labelled.
+The inventory now includes the registry file and reproduces from pinned source. No original module failed collection.
+All 75 evidence-validator tests pass, including the new inventory and integration guards.
+No production rule or engine change was required in this verification round.
+
+Final checks pass: 75 evidence-validator tests, three real-rule registry counterparts, 14 receipt/control tests, and type checking.
+All 45 CI shell scripts pass syntax checks. Boundary and Windows path checks pass.
+The structure check retains its three existing flat-directory findings and adds none.
+The v8 receipt now binds the independent inventory, both original-suite coverage summaries, and the separate original/native integration proofs.

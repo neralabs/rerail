@@ -7424,3 +7424,18 @@ The 60 broader native groups pass all 4,317 assertions. The fresh audit passes 6
 The detector-removal control run fails as required and proves rejection for all ten disabled detectors.
 The regenerated v8 receipt and its 14 metadata/control tests pass. The transfer-evidence guard also passes.
 The structure baseline remains unchanged at three existing findings. No new Linear issue was created.
+
+## 2026-11-06: Independent tranche-ten test-suite completeness check
+
+The inventory scans all 4,466 pinned Python test files and collects whole relevant modules without port adapters or test filters.
+The first pass found 279 direct/shared original cases. Literal plugin-name references then exposed 175 registry cases that it had missed.
+The final inventory records 461 related cases across 14 files: 279 direct/shared, 175 registry, and seven workflow cases.
+The original registry/workflow assertions pass unchanged. They remain distinct from native detector coverage.
+Three explicit CI-blocker registry cells now have real shipped-rule CLI counterparts, with positive and clean command checks.
+
+Eight bounded original-only replay commands pass all 279 direct/shared cases through both native APIs.
+Each API matches all 156 complete detector observations, including 135 positives, with no original-detector fallback.
+The 67 helper and 57 host cases retain their separate execution contracts.
+There is no optimizer-v2 linter test file at this source pin; its original-evaluated supplementary observations remain labelled separately.
+Raw reports and exact assertion-phase evidence are under `.rerail/data-layer-batch-ten/suite-completeness-20261106/`.
+No cold batch benchmark or engine build was performed. The historical repository measurements are unchanged.

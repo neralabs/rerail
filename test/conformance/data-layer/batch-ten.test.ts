@@ -36,6 +36,9 @@ it("ships the ten documents once in the private pack",()=>{
 it("binds complete runs and positive controls to the batch implementation",()=>{
  const receipt=JSON.parse(readFileSync("fixtures/host/data-layer-port/batch-10-native-assertions.json","utf8"));
  expect(receipt.format).toBe("rerail.data-layer-batch-ten-assertions/v8");
+ expect(receipt.originalSuite).toMatchObject({scannedTestFiles:4466,originalFiles:11,adjacentWorkflowCases:7,suiteIntegrationCases:175,missingDedicatedSuites:["plan_optimizer_v2"]});
+ expect(receipt.originalSuite.integration).toMatchObject({originalRegistryCases:175,originalGateCases:7,nativeRegistryCounterparts:3,positiveAndCleanCommandComparisons:6,missing:[],skipped:[],failed:[]});
+ for(const mode of ["snapshot","workspace"])expect(receipt.originalSuite.executionPaths[mode]).toMatchObject({cases:279,detectorCases:155,detectorObservations:156,positiveDetectorObservations:135,helperCases:67,helperObservations:104,hostCases:57,missing:[],skipped:[],failed:[]});
  for(const mode of["snapshot","workspace"]){expect(receipt.executionPaths[mode]).toMatchObject({cases:1098,completeResults:975,positiveResults:870,distinctObservations:781,distinctPositiveObservations:683,detectorCases:974,nativeHelperCases:67,retainedPythonCases:57,semanticFallbacks:[]});expect(receipt.executionPaths[mode].retainedPythonCaseIds).toHaveLength(57);expect(receipt.executionPaths[mode].engineSha256).toBe(receipt.engineSha256);expect(receipt.executionPaths[mode].originalCalls["matching_architecture:_source_requires_matching_scan"]).toBeUndefined();}
  expect(Object.keys(receipt.hostAssertionLedger)).toHaveLength(57);
  expect(receipt.dodCompletion).toMatchObject({assertions:57,lifecycleRules:10,lifecycleRevisions:57,approvalApiComparisons:28,approvalEncodingComparisons:16,matchingRootSourceComparisons:6});

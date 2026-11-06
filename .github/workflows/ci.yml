@@ -537,6 +537,16 @@ jobs:
           unset RERAIL_ENGINE_PATH GIT_PAGER RERAIL_NATIVE_CONTRACTS
           reports="$RUNNER_TEMP/batch-ten-reports"
           mkdir -p "$reports"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.suite_inventory \
+            --source .rerail/data-layer-upstream --output "$reports/original-test-inventory.json"
+          cmp fixtures/host/data-layer-port/batch-10-original-test-inventory.json "$reports/original-test-inventory.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m pytest -q -p no:cacheprovider -c /dev/null \
+            scripts/dsl/data_layer_ten/contracts/inventory_cases.py
+          if [ "$MODE" = snapshot ]; then
+            timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" scripts/dsl/data_layer_ten/contracts/inventory_execute.py \
+              .rerail/data-layer-upstream "$reports/original-integration.json" scripts/tests/test_lint_all.py \
+              scripts/tests/test_matching_phase1_gate.py scripts/tests/test_matching_phase5_gate.py
+          fi
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.assertions.programs \
             --source .rerail/data-layer-upstream --output "$reports/helper-contracts.json"
           cmp fixtures/host/data-layer-port/batch-10-helper-contracts.json "$reports/helper-contracts.json"
@@ -566,6 +576,7 @@ jobs:
           from data_layer_ten.common import CHECKS
           from data_layer_ten.evidence import read_report,verify
           from data_layer_ten.assertions.evidence import verify_helpers
+          from data_layer_ten.contracts.suite_inventory import verify_execution
           reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports';mode=os.environ['MODE']
           paths=[reports/f'api-{mode}-{part}.json' for part in range(8)]+[reports/f'repository-{mode}.json']
           policies={c:hashlib.sha256(Path('packs/data-layer/rules', 'data-layer-'+c.replace('_','-')+'.json').read_bytes()).hexdigest() for c in CHECKS}
@@ -573,6 +584,8 @@ jobs:
           (reports/f'api-summary-{mode}.json').write_text(json.dumps(summary,indent=2)+'\n')
           helper=verify_helpers(read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'],read_report(Path('fixtures/host/data-layer-port/batch-10-helper-assertions.json')),[read_report(p) for p in paths],mode,hashlib.sha256(Path('fixtures/host/data-layer-port/batch-10-helper-contracts.json').read_bytes()).hexdigest())
           (reports/f'helper-summary-{mode}.json').write_text(json.dumps(helper,indent=2)+'\n')
+          original=verify_execution(read_report(Path('fixtures/host/data-layer-port/batch-10-original-test-inventory.json')),[read_report(p) for p in paths],mode,read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'])
+          (reports/f'original-suite-summary-{mode}.json').write_text(json.dumps(original,indent=2)+'\n')
           PY
       - name: Verify batch-ten production configuration and persistent revisions
         if: matrix.mode == 'snapshot'
@@ -612,6 +625,8 @@ jobs:
         if: matrix.mode == 'snapshot'
         run: |
           set -euo pipefail
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-registry.test.ts \
+            --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/registry-counterparts.json"
           for check in graph_lazy_sql_plan bounded_composed_graph_paths graphql_plan_ownership plan_optimizer_v2 conditional_architecture schema_introspection_data_paths matching_architecture hnsw_architecture embedding_vector_orchestration generated_index_sources; do
             timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts -t "$check" \
               --reporter=json --outputFile="$RUNNER_TEMP/batch-ten-reports/reaudit-$check.json"
@@ -674,6 +689,7 @@ jobs:
           from data_layer_ten.evidence import read_report,verify_configured,verify_contracts
           from data_layer_ten.assertions.evidence import verify_replay
           from data_layer_ten.assertions.transferred import verify_transfer
+          from data_layer_ten.contracts.suite_inventory import verify_integration
           reports=Path(os.environ['RUNNER_TEMP'])/'batch-ten-reports'
           paths=[reports/f'configured-{i}.json' for i in range(4)]+[reports/f'configured-repository-{mode}.json' for mode in ['snapshot','workspace']]
           summary=verify_configured(read_report(Path('fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz')),[read_report(p) for p in paths])
@@ -684,6 +700,8 @@ jobs:
           (reports/'helpers-replay-summary.json').write_text(json.dumps(helpers,indent=2)+'\n')
           transferred=verify_transfer(read_report(Path('fixtures/host/data-layer-port/batch-10-assertion-ledger.json'))['cases'],read_report(Path('fixtures/host/data-layer-port/batch-10-transferable-assertions.json')),[read_report(reports/f'transferred-{i}.json') for i in range(6)])
           (reports/'transferred-summary.json').write_text(json.dumps(transferred,indent=2)+'\n')
+          registry=verify_integration(read_report(Path('fixtures/host/data-layer-port/batch-10-original-test-inventory.json')),read_report(reports/'original-integration.json'),read_report(reports/'registry-counterparts.json'))
+          (reports/'registry-summary.json').write_text(json.dumps(registry,indent=2)+'\n')
           PY
       - name: Upload batch-ten assertion receipts
         if: always()

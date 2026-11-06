@@ -9,7 +9,7 @@ The historical 100-rule run matched 25,262 findings over 9,021 code files and se
 That joint measurement predates this scope repair. Only the changed HNSW rule was rerun over its entire input domain.
 The [assertion receipt](../fixtures/host/data-layer-port/batch-10-native-assertions.json) separates current comparisons from historical measurements.
 The [measurement](performance-decisions/data-layer-batch-ten-20261106.json) records CPU, wall time, compilation, and RSS.
-Receipt metadata, disabled-evidence guards, and all 36 evidence-validator tests pass.
+Receipt metadata, disabled-evidence guards, and all 75 evidence-validator tests pass.
 Type checking, boundary checks, and Windows path checks pass.
 The structure check retains exactly three pre-existing flat-directory findings; this repair adds none.
 
@@ -60,6 +60,48 @@ It found annotation, nullable-field, Unicode-import, message, result-order, and 
 It also maps each detector's collector contract to its SQL implementation and test evidence.
 
 ## Evidence
+
+### Independent original-suite inventory
+
+The [inventory](../fixtures/host/data-layer-port/batch-10-original-test-inventory.json) comes from the pinned checkout, independently of the saved corpus and port selectors.
+It scans all 4,466 tracked Python test files and verifies their Git blobs.
+Each relevant test module receives unfiltered pytest collection in a separate process.
+Collection rejects errors, deselection, and lost parameter cells. No original case has a skip or xfail marker.
+
+| Rule | Original cases |
+| --- | ---: |
+| Graph lazy SQL plan | 156 |
+| Bounded composed graph paths | 12 |
+| GraphQL plan ownership | 5 |
+| Optimizer v2 | 0 |
+| Conditional architecture, including the shared suite | 19 |
+| Schema introspection | 14 |
+| Matching architecture | 42 |
+| HNSW architecture | 13 |
+| Embedding/vector orchestration | 13 |
+| Generated index sources | 5 |
+| Total | 279 |
+
+These cases span nine dedicated files, the 14-case shared conditional file, and two graph tests under `tests/`.
+There is no dedicated optimizer-v2 linter test file at this pin.
+Its 166 supplementary observations, including 144 positives, are original-evaluated coverage rather than an upstream test suite.
+
+The original 279 cases comprise 155 detector cases, 67 helper cases, and 57 host cases.
+The detectors produce 156 complete observations per API, including 135 positive observations.
+The helpers produce 104 native observations per API.
+The host cases retain their separately verified native counterparts for all 75 transferable assertion sites across 47 cases.
+Sixteen Python-specific assertion sites remain identified; ten cases are wholly Python-specific.
+One instrumentation assertion uses native parse/walk counters instead of a Python mock's call count.
+The 819 supplementary cases are additional evidence and are not counted as original tests.
+
+CI regenerates the inventory and requires every original case to pass setup, call, and teardown in both API reports.
+The guard fails even when a case is absent from both the saved corpus and native reports.
+The registry file adds 175 original integration tests; two matching gate-runner files add seven workflow tests.
+All 182 pass separately on the original checkout. They are not counted as native detector coverage.
+Three registry parameter cells explicitly require tranche-ten rules to block CI with `--check`.
+New native counterparts run the shipped graph, conditional, and embedding rules through the real production command.
+Each verifies block mode, exit status, complete positive diagnostics, and a clean control. CI runs these counterparts.
+The other registry assertions concern the original Python suite and its wider configured rule set.
 
 The [compressed complete corpus](../fixtures/host/data-layer-port/batch-10-complete-api.json.gz) retains source text, parameters, and complete original results.
 Compression preserves the full production-file inventory without adding a 59 MB JSON file.

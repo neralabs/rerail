@@ -30954,6 +30954,80 @@
       "semanticFallbacks": []
     }
   },
+  "originalSuite": {
+    "scannedTestFiles": 4466,
+    "originalFiles": 11,
+    "adjacentWorkflowCases": 7,
+    "suiteIntegrationCases": 175,
+    "missingDedicatedSuites": [
+      "plan_optimizer_v2"
+    ],
+    "executionPaths": {
+      "snapshot": {
+        "cases": 279,
+        "detectorCases": 155,
+        "detectorObservations": 156,
+        "positiveDetectorObservations": 135,
+        "helperCases": 67,
+        "helperObservations": 104,
+        "hostCases": 57,
+        "missing": [],
+        "skipped": [],
+        "failed": [],
+        "perFile": {
+          "scripts/tests/test_conditional_architecture_facts.py": 14,
+          "scripts/tests/test_lint_bounded_composed_graph_paths.py": 12,
+          "scripts/tests/test_lint_conditional_architecture.py": 5,
+          "scripts/tests/test_lint_embedding_vector_orchestration.py": 13,
+          "scripts/tests/test_lint_generated_index_sources.py": 5,
+          "scripts/tests/test_lint_graph_lazy_sql_plan.py": 154,
+          "scripts/tests/test_lint_graphql_plan_ownership.py": 5,
+          "scripts/tests/test_lint_hnsw_architecture.py": 13,
+          "scripts/tests/test_lint_matching_architecture.py": 42,
+          "scripts/tests/test_lint_schema_introspection_data_paths.py": 14,
+          "tests/test_graph_lazy_sql_plan_linter.py": 2
+        }
+      },
+      "workspace": {
+        "cases": 279,
+        "detectorCases": 155,
+        "detectorObservations": 156,
+        "positiveDetectorObservations": 135,
+        "helperCases": 67,
+        "helperObservations": 104,
+        "hostCases": 57,
+        "missing": [],
+        "skipped": [],
+        "failed": [],
+        "perFile": {
+          "scripts/tests/test_conditional_architecture_facts.py": 14,
+          "scripts/tests/test_lint_bounded_composed_graph_paths.py": 12,
+          "scripts/tests/test_lint_conditional_architecture.py": 5,
+          "scripts/tests/test_lint_embedding_vector_orchestration.py": 13,
+          "scripts/tests/test_lint_generated_index_sources.py": 5,
+          "scripts/tests/test_lint_graph_lazy_sql_plan.py": 154,
+          "scripts/tests/test_lint_graphql_plan_ownership.py": 5,
+          "scripts/tests/test_lint_hnsw_architecture.py": 13,
+          "scripts/tests/test_lint_matching_architecture.py": 42,
+          "scripts/tests/test_lint_schema_introspection_data_paths.py": 14,
+          "tests/test_graph_lazy_sql_plan_linter.py": 2
+        }
+      }
+    },
+    "integration": {
+      "originalRegistryCases": 175,
+      "originalGateCases": 7,
+      "nativeRegistryCounterparts": 3,
+      "positiveAndCleanCommandComparisons": 6,
+      "missing": [],
+      "skipped": [],
+      "failed": []
+    },
+    "integrationArtifactSha256": {
+      ".rerail/data-layer-batch-ten/suite-completeness-20261106/original-integration.json": "72a585c177266004eba6615f567dbc8a37441bd56552bd2c7092414f19f82722",
+      ".rerail/data-layer-batch-ten/suite-completeness-20261106/registry-native.json": "e9377b7be521b5058403a62578e17595c3cf01efc3175df30b4848906e29d641"
+    }
+  },
   "configured": {
     "observations": 1392,
     "positiveObservations": 978,
@@ -48073,7 +48147,7 @@
   },
   "fileSha256": {
     ".gitattributes": "3a94dea80784d86d3161b3df2ced5ea828708ec03c3d266f83dc9e59b198a811",
-    ".github/workflows/ci.yml": "3b94e2a5c2237411aea488c3a5804f473876a8ae84df08413a0c65e335e75e1b",
+    ".github/workflows/ci.yml": "c61217c8d0f19c294fde425348c6e2ac2e2748fcabe9085fcb59cf66d1e93fdb",
     "conformance/data-layer/batch-ten.ts": "2963b2688afcd72c5938d4d78f59b89ee83a8bb2e6386169d16a021a80c12c35",
     "conformance/data-layer/execution.ts": "77f8aa8b4d4926e67951482cd349d24f582bbe3d36fe3938678722c35ccb312a",
     "conformance/data-layer/helper-assertions.ts": "c1ff1d64794a763ae497e6af0816363f20f4241f5f679ff8e62b040a564d6aad",
@@ -48099,6 +48173,7 @@
     "fixtures/host/data-layer-port/batch-10-helper-contracts.json": "ed91ea15a14a3bd1c4ee426ee40c4f657ee8a6555b9ed0030685b3c2d46d5281",
     "fixtures/host/data-layer-port/batch-10-identity-inventory.json": "369a926d3cc0cf718758714f743170df184e6fcb0a62bd6592c08b7366af4233",
     "fixtures/host/data-layer-port/batch-10-lifecycle.json": "bd94f75c18928fe5b15a4db5c1272ead1bce3a014a798eab335582b06a73b5ed",
+    "fixtures/host/data-layer-port/batch-10-original-test-inventory.json": "e5139114d5d243ae80475810a5f349dff4db66ed0211dd0b4366e25fd5ce8c05",
     "fixtures/host/data-layer-port/batch-10-reaudit.json": "1cb45f3480452a85b0cdd15972d17036f68b60c865af71251b419f5e074b77e4",
     "fixtures/host/data-layer-port/batch-10-repair-regressions.json": "0efbb8da103038692ab563cc2ac943b65a3adfaa9402f2d69df0ba47a3483b8f",
     "fixtures/host/data-layer-port/batch-10-shape-seeds.json": "979e4a9a002c597bd3d288996c94b485d8dddb57bd95572f2a939d9d23dc7973",
@@ -48338,14 +48413,18 @@
     "scripts/dsl/data_layer_ten/contracts/collectors.py": "102efcdd8b5c921fed19f5864e57d814eec15259b24fffb29cd48459be16ff62",
     "scripts/dsl/data_layer_ten/contracts/completion_cases.py": "7bb13dd2d9c52c5f3d77ee059110546b63eab1a60e0e3a30543683357314794e",
     "scripts/dsl/data_layer_ten/contracts/global_queries.py": "23b8abe09d2f561aa6b423691d9b0142b2e79a884d4b40b805507891288f61f8",
+    "scripts/dsl/data_layer_ten/contracts/inventory_cases.py": "c0432a866a0b2b00a449d01a3bb1b0ae1175d55b42ac77d8dd5a1aea09d99aba",
+    "scripts/dsl/data_layer_ten/contracts/inventory_collect.py": "b244b43f21ff4f1df807b6025dd9574fff44f88650de8275ce011b5709633bec",
+    "scripts/dsl/data_layer_ten/contracts/inventory_execute.py": "3e3832ae4992ec8dfce6cfff6a3185e4dc05b182e91d08431816380c9996adaf",
     "scripts/dsl/data_layer_ten/contracts/reaudit.py": "babe8e4a224440c1bd5994016ee86d203e7ec4e658f05f151036e7c3c2db75cd",
     "scripts/dsl/data_layer_ten/contracts/reaudit_cases.py": "ecb28a561e2ae999646ff13fe23a3d511f1a49782c603240d20435fd7eaf72d8",
     "scripts/dsl/data_layer_ten/contracts/reaudit_evidence.py": "ed803e7d34507ca49830dd378580d2ab973a5c16f0c6d2b66fb17b47ab1bffe7",
     "scripts/dsl/data_layer_ten/contracts/recovery.py": "ff385043867fc379fe465a1f4571850752e808bcc7d193fba7afd5a228ab6ac6",
     "scripts/dsl/data_layer_ten/contracts/strings.py": "78b4ddff58f6e3efcd91ca992339197bf7c67b98ec219a9208186289677cff4d",
     "scripts/dsl/data_layer_ten/contracts/structures.py": "c9d4241eb34151f5ffe416149d3ecfcc399578c66d56c3f3c22eec5a6c06fae1",
+    "scripts/dsl/data_layer_ten/contracts/suite_inventory.py": "67416dd023d8d3ce34762df48416963957fdd82e1410def426d3e29a295eb393",
     "scripts/dsl/data_layer_ten/embedding.py": "e3f40bee3a9067956e4c91cbdbff34fcff13e80f571ea1b87fe6226925d3905b",
-    "scripts/dsl/data_layer_ten/evidence.py": "705ae4743e94cbe1e9c777868fac52becdba361b0d0b38e8bab67d68afed7186",
+    "scripts/dsl/data_layer_ten/evidence.py": "8a8c4b8a7165d75dbc15ebbe45ad65bfbe05bae96ce8761d948dc67ac498f4d4",
     "scripts/dsl/data_layer_ten/evidence_cases.py": "ac05d5ebf9d2bf5495a353126a246cc149ea4f0dc212d5b40ef50057bae1ec9a",
     "scripts/dsl/data_layer_ten/file_contracts.py": "d07c746a4da1452878b9b9adbd3923eea4cdfc124786d1bfe518bcf14d68f17b",
     "scripts/dsl/data_layer_ten/generated.py": "696017ae0760c47b0af84a10d155f523205c723e408ce95c965ac2f7b192ddb3",
@@ -48380,7 +48459,7 @@
     "test/conformance/data-layer/batch-ten-helpers.test.ts": "aaa4b0b548664000a262fb3a3cf803220279829ca52e1b52039d93a7413dec36",
     "test/conformance/data-layer/batch-ten-repair.test.ts": "556a0b343b8898f51fe322de7048989181772b239d3e5602e188ab8eb78f7b3d",
     "test/conformance/data-layer/batch-ten-transfer.test.ts": "59559d4c3c6c160eccc66ba6ac87bdc0b761ae6c9b1ef76bc48c4c296cf307fa",
-    "test/conformance/data-layer/batch-ten.test.ts": "38dbf3c146f52ed9b4649f659077481b2bc8c9c2f86d72c44116b18763225936",
+    "test/conformance/data-layer/batch-ten.test.ts": "e9e5de6c016aa08e5a7595115869e4a35af18942392ecd78aaa859172954fc58",
     "test/conformance/data-layer/dod/approvals.test.ts": "5e5703e566319e516b692841cf609e4b847befe6e47f2e44b4df796a0856850c",
     "test/conformance/data-layer/dod/commands.test.ts": "271f321a5d0e385bc71b47a08c951400440deb882f0fe52bb9c178faaae516bc",
     "test/conformance/data-layer/dod/global-queries.test.ts": "a943c2bac23b17c0c00c8113ebb3dfa7bf5a4796afcf50bbc74fdba5f6c76806",
@@ -48390,6 +48469,7 @@
     "test/conformance/data-layer/dod/optimizer.test.ts": "7749cd70311688a6306d61576714a1d898373dc056af741707ad1f55e8154941",
     "test/conformance/data-layer/production-runtime.test.ts": "bdb093d34feba879c88be9fdacf3c34b8eb876743a22263fe8522c26edf11411",
     "test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts": "68f8ad35a16c0c97f2312ac8d28575ba6eeadc1d1ede28585d2891dc14c14012",
+    "test/conformance/data-layer/regressions/batch-ten-registry.test.ts": "998d815ab60931347cee29fef4c41c89f14806318679afa5410d8fda065907e4",
     "test/conformance/data-layer/regressions/bootstrap-inventory.test.ts": "767ab6f9cb036213f81992d3999e384355dcb07cce3fade52e6555b6582efb6b",
     "test/engine/native/data-layer-ten/import-level.test.ts": "6f1d40b1176e17351808812180aa5f5d0e9d831d5d0adcd03de8841b49561c12",
     "test/engine/native/data-layer-ten/invalid-expansion.test.ts": "a8d4db4c14230a5891298752261a025c64cb5465113f54df98988ee7d7edc4a5",
