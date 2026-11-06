@@ -6,13 +6,17 @@ clause lowers.
 
 | Check | Python lines | `.rr` lines | rrlab dl (exact / events) | Reader |
 |---|---|---|---|---|
-| bootstrap_cache_health | 370 | 53 | 15 / 16 | yes |
-| bootstrap_lazy_sql | 390 | 16 + 54 (lib) | 2 / 2 (+1 skipped) | yes |
+| bootstrap_cache_health | 370 | 53 | 16 / 16 | yes |
+| bootstrap_lazy_sql | 390 | 16 + 54 (lib) | 2 / 2 | yes |
 | bootstrap_eager_resolve | 12 | 13 (+ the same lib) | 2 / 2 | yes |
-| bootstrap_engine_invariants | 2,163 | 385 + 412 (generated tables) | 143 / 145 (+1 skipped): file scan 74 / 75, fake executor 10 / 11, coverage 59 / 59 | yes |
-| schema_bootstrap_contracts | 387 | 97 | 16 / 16 (+1 skipped) | yes |
-| schema_architecture | 232 + 239 (plugin) | 94 | 10 / 10 (+1 skipped) | yes |
-| schema_introspection_data_paths | 612 | 51 + 27 (generated tables) | 54 / 54 with the code remap below (9 / 54 as recorded) | yes |
+| bootstrap_engine_invariants | 2,163 | 415 + 412 (generated tables) | 143 / 145: file scan 74 / 75, fake executor 10 / 11, coverage 59 / 59 | yes |
+| schema_bootstrap_contracts | 387 | 97 | 16 / 16 | yes |
+| schema_architecture | 232 + 239 (plugin) | 94 | 10 / 10 | yes |
+| schema_introspection_data_paths | 612 | 51 + 27 (generated tables) | 54 / 54 | yes |
+
+bootstrap_engine_invariants takes over 115 s in one run, so it is scored in pieces (`--entry`, and `--test` for the
+coverage entry). Events whose expected result is an exception (the linter raises SyntaxError on a direct call) are
+not counted: a policy withholds an unparsable document.
 
 Shared files:
 - `lib/data-layer/boot-python.rr` (79 lines): how these scripts read Python by spelling. `callee_name` (a Name id or
@@ -32,26 +36,11 @@ Both generators print `ok` with `--check`.
 
 ## Misses and harness notes
 
-The harness (`tools/rrlab/dl.py`) has two gaps. I scored through a patched copy in my scratch directory; dl.py
-itself is unchanged.
-- **Exception records crash dl.py.** A record whose `expected` is an exception (`{'exception': {'type':
-  'SyntaxError', …}}`) makes `events()` fail with `TypeError: string indices must be integers` for
-  bootstrap_lazy_sql, schema_architecture, schema_bootstrap_contracts and bootstrap_engine_invariants. The patched
-  copy skips those records; they are the "+1 skipped" in the table. In each case the linter raises SyntaxError from
-  a direct call. A policy withholds an unparsable document and gives no finding, unless it says `.on syntax_error`.
-- **Codeless records.** dl.py gives a record without a `code` field the check's name as its code. That is right for
-  schema_architecture's standalone script: its findings have a rule id and no code (see below). It is wrong for
-  schema_introspection_data_paths: its `_collect_violations` entry returns Violation objects that carry call_name,
-  not a code, while the plugin reports every one as **SIDP001**. The rule reports SIDP001, as the plugin and the
-  JSON port do. With the recorded codes remapped (`schema_introspection_data_paths` → `SIDP001`), all 54 events are
-  exact; as recorded, 9 are (the 9 with no findings). A fix in dl.py: give such an entry's records the code that the
-  check's plugin reports.
+schema_introspection_data_paths: its `_collect_violations` entry returns Violation objects with no code, while the
+plugin reports every one as **SIDP001**. The rule reports SIDP001, as the plugin and the JSON port do, and rrlab dl
+names the codeless records after the rule's one code.
 
 Remaining misses:
-- **bootstrap_cache_health, `test_cache_parser_error_is_a_diagnostic`** (BCH000 at line 1): a harness gap.
-  The rule says `.on syntax_error report BCH000 at line 1`, which is the linter's extraction-failure finding, but
-  rrlab does not implement `.on syntax_error`. schema_architecture's SAP000 is written the same way, and no
-  recorded event exercises it.
 - **bootstrap_engine_invariants, `test_engine_private_helper_uses_selected_function`**
   (`_collect_fake_executor_violations`, BEI007 at bootstrap.py:2): an entry emulation. The direct call checks one
   def wherever it is. Through the linter's file scan, as in this rule, that check runs only in engine files, and
@@ -79,12 +68,23 @@ Remaining misses:
   - Forbidden calls are table-driven: `bei_watch(family, code, def)` and `bei_ban(family, name)`, one family per
     linter collector. The shape checks (`@pure_lazy`, `-> LazyResult[…]`, keyword-only refs) share
     `bei_lazy_surface`.
-  - `-> LazyResult[…]` is read from the tree: the return annotation is a subscript of the bare name LazyResult.
-    The linter tests whether `ast.unparse(returns)` starts with "LazyResult[", and that is the same test.
-  - BEI007's zero-count guard is an ancestor `if` (or `elif`) whose test compares `….ZERO_APPLICATION_TERMINALS`.
-    An `elif` two or more steps down its chain is not seen as inside the first `elif`'s If, as it is in ast. No
-    event exercises this.
-  - At 385 lines the file is long. That is 45 codes from a 2,163-line linter, in six families; the families are
+  - `-> LazyResult[…]` is read from the tree. The linter tests whether `ast.unparse(returns)` starts with
+    "LazyResult[". It does exactly when the annotation's leftmost operand is a subscript of the bare name
+    LazyResult, so `-> LazyResult[int] | None` passes (bei_leftmost).
+  - BEI007's zero-count guard is an enclosing ast If whose test compares `….ZERO_APPLICATION_TERMINALS`. An `elif`
+    is an If whose orelse holds every later clause, so a call in a later `elif` or the `else` is guarded too
+    (bei_if_holds).
+  - BEI020 has a second branch in the linter, a Name `fallback_schema_ref`, which is dead code: the collector is
+    only ever passed Call nodes. The rule leaves it out. Running the linter on
+    `def _application_sql_assertions_for_plan(plan): fallback_schema_ref = 1` in an engine coordinator reports
+    nothing.
+  - BEI032's base is a Name or Attribute: `class E(PipelineLifecycleEffect[int])` is not an effect, because the
+    linter's `_attribute_name` gives "" for a Subscript. "In the class" includes its decorators, as ast.walk does.
+  - Argument values are read with their parentheses taken off (bei_kw, bei_arg0), and positional counts include
+    `*xs` (bei_npos), as ast's Call.args does.
+  - Review counterexamples: the linter itself, run on the four review trees, agrees with the rule on every finding
+    except the match capture below.
+  - At 415 lines the file is long. That is 45 codes from a 2,163-line linter, in six families; the families are
     the structure, and a library would not shorten it.
 - **Strings:** constant text tests (BEI036's stub markers, SIDP001's SQL markers) read `str_part`, the str
   Constants as CPython builds them, f-string pieces included. The rrlab facts give only an f-string's first piece.
@@ -95,7 +95,27 @@ Remaining misses:
 
 ## Library and core change requests
 
-None. All new vocabulary is in the two library files above.
+**python/ast.rr, `ast_name`: match captures are not Names.** In `case x:`, `case [a, *r]:`,
+`case P(k=b) as c:` CPython binds x, a, r, b and c as strings (MatchAs.name, MatchStar.name), not as ast.Name.
+A dotted value `case C.RED:` and the class `P` are Names. `ast_name` counts the captures, so BEI002 reports
+`case _publish_static_naming_rows_direct:`, and the linter does not. Proposed addition to ast.rr, next to `not_name`:
+
+```
+// Match captures: CPython keeps a capture's name as a string (MatchAs.name, MatchStar.name, MatchMapping.rest),
+// not a Name. `case x`, `case [a, *r]`, `case P(k=b) as c`, `case {**rest}` bind x, a, r, b, c, rest; the
+// value `C.RED` and the class `P` stay Names, and a keyword pattern's key (k) is a string too.
+.decl capture_name(n: node)
+capture_name(n) :- (kind(p, "case_pattern") ; kind(p, "keyword_pattern")), child(p, dn, _), kind(dn, "dotted_name"),
+    child(dn, n, 0), !child(dn, _, 1).
+capture_name(n) :- kind(p, "keyword_pattern"), child(p, n, 0), kind(n, "identifier").
+capture_name(n) :- (kind(s, "splat_pattern") ; kind(s, "dictionary_splat_pattern")), child(s, n, 0),
+    kind(n, "identifier"), inside(s, _, "case_clause").
+capture_name(n) :- kind(a, "as_pattern"), inside(a, _, "case_clause"), child(a, n, 1), kind(n, "identifier").
+not_name(n) :- capture_name(n).
+```
+
+The tree shapes are tree-sitter-python's, checked with rrlab on these four cases. The rule does not work around
+this.
 
 ## Not expressible
 
