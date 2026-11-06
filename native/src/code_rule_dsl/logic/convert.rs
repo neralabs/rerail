@@ -37,7 +37,8 @@
 //!   `has(a, n, set)` (`a` a strict ancestor of `n` of a kind in `set`), `nearest(n, a, set)` (the nearest one),
 //!   `set` a relation of kind facts the file declares (`.decl calls(kind: symbol)`, `calls("call").`). The
 //!   converter does not gate its own clauses: in a policy with a report gate they are gaps, for the file to give.
-//!   `match_all("re", sp, m)` is a built-in, never declared: `m` each match of regex `re` in span `sp`'s text;
+//!   `match_all("re", sp, m)` is a built-in, never declared: `m` each match of regex `re` in span `sp`'s text; so is
+//!   `match_group("re", sp, m, g, gsp)`: `gsp` the span of the named group `g` in that match;
 //! - each clause it gives derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, declared
 //!   `.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)`, the rule and clause
 //!   constant and the clause one of the policy's;
@@ -851,7 +852,7 @@ fn converter_name(rel: &str) -> bool {
     ["m", "u", "t", "k", "blocked"].into_iter().any(numbered)
         || ["never"].contains(&rel)
         || GIVEN.contains(&rel)
-        || ["strtest_", "matchall_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
+        || ["strtest_", "matchall_", "matchgroup_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
 }
 
 fn types(columns: &[(String, String)]) -> Vec<&str> {
@@ -902,8 +903,8 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
         if axis(name) {
             continue;
         }
-        if name == "match_all" {
-            return err("match_all is a built-in constraint (match_all(\"re\", sp, m)): it is not declared".into());
+        if matches!(name.as_str(), "match_all" | "match_group") {
+            return err(format!("{name} is a built-in constraint (match_all(\"re\", sp, m), match_group(\"re\", sp, m, g, gsp)): it is not declared"));
         }
         let want = match name.as_str() {
             "violation" => Some(VIOLATION.map(str::to_owned).to_vec()),
@@ -934,8 +935,9 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
     }
     let mut authored_clauses = BTreeSet::new();
     for r in &authored.rules {
-        // `match_all("re", sp, m)` is a built-in, which the runner makes a relation of (`strings::as_relations`).
-        for a in r.body.iter().filter_map(Literal::atom).filter(|a| a.rel != "match_all") {
+        // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
+        // relations of (`strings::as_relations`).
+        for a in r.body.iter().filter_map(Literal::atom).filter(|a| !matches!(a.rel.as_str(), "match_all" | "match_group")) {
             let rel = a.rel.as_str();
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
