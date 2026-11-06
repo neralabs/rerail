@@ -145,6 +145,8 @@ pub(super) struct NativeModule {
     pub longs: Vec<u64>,
     pub strings: Vec<Vec<u8>>,
     pub value_programs: Vec<ValueProgram>,
+    /// The block programs, lowered (`BlockNative`).
+    pub block_programs: Vec<BlockNative>,
     pub capture_programs: Vec<CaptureProgram>,
     pub output_program: super::output::OutputProgram,
     pub output: FunctionRef,
@@ -366,11 +368,44 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
         longs: program.longs.clone(),
         strings: program.strings.clone(),
         value_programs: program.value_programs.clone(),
+        block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         capture_programs: program.capture_programs.clone(),
         output_program: program.output_program.clone(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,
     })
+}
+
+/// A block program lowered for the code generators: the ephemeral native IR that Cranelift
+/// (`native_cpu_block`) and MSL (`metal_block_program`) both emit, one straight-line body per
+/// 64-byte block. Each instruction is one value, a mask word, built only from bit operations;
+/// there is no branch and no loop inside a body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct BlockNative {
+    pub insts: Vec<BlockInst>,
+    pub outputs: Vec<u16>,
+}
+
+/// An instruction of a block body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BlockInst {
+    /// The block's bytes compared with a byte, as a mask: on the CPU four 16-byte compares and a
+    /// bitmask; on Metal a compare per thread and a SIMD-group ballot.
+    EqByte(u8),
+}
+
+impl BlockNative {
+    pub(super) fn lower(program: &super::block::BlockProgram) -> Self {
+        use super::block::BlockOp;
+        let insts = program
+            .ops
+            .iter()
+            .map(|op| match *op {
+                BlockOp::Eq(byte) => BlockInst::EqByte(byte),
+            })
+            .collect();
+        Self { insts, outputs: program.outputs.clone() }
+    }
 }
 
 #[cfg(test)]
