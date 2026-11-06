@@ -243,7 +243,7 @@ fn within_holds_exactly_the_contained_pairs() {
         let facts = facts(&path, source);
         docs.push(Document { key: (10 + at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts });
     }
-    let (batch, _, _) = Batch::build(&store, docs).unwrap();
+    let (batch, _, _) = Batch::build(&store, docs, &Projection::default()).unwrap();
     let nodes = *batch.nodes.last().unwrap();
     let id = |r: usize| batch.id(r);
     // (document, local, size, depth, start, end) of node row r.
@@ -286,6 +286,8 @@ fn within_holds_exactly_the_contained_pairs() {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
     }
+}
+
 /// One document of `source` in `label`'s dialect, keyed `key`.
 fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
