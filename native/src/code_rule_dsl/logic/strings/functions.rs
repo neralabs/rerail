@@ -35,6 +35,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("sha256", &[Text], Text),
     ("json_str", &[Text], Text),
     ("nfkc", &[Text], Text),
+    // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
+    ("lower", &[Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),
     // Soufflé's `to_number`: a decimal integer's value; no value for other text.
@@ -158,6 +160,7 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
             Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
         }
         "json_str" => Some(json_str(t(0))),
+        "lower" => Some(t(0).to_lowercase()),
         "nfkc" => {
             use unicode_normalization::UnicodeNormalization;
             Some(t(0).nfkc().collect())

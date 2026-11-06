@@ -664,7 +664,11 @@ unsafe impl VTabCursor for RelCursor {
 // here, in literal order, so each step looks up one index and never re-derives the binding pattern.
 // An input relation is read once per process (`INPUTS`) with a hash index per key-column set, built on first use.
 
+/// `@dot(a, b)` (`core.rr`): `a.b`, and `b` when `a` is "".
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
+    if syms.names[a as usize].is_empty() {
+        return b;
+    }
     let mut s = std::mem::take(&mut syms.buf);
     s.clear();
     s.push_str(&syms.names[a as usize]);
@@ -1041,6 +1045,12 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
             }
             Step::Split { whole, a, b, ka, kb } => {
                 let w = cx.syms.names[val(slots, *whole) as usize].clone();
+                // `@dot("", w)` is `w`: with "" given for the first part, the second is the whole.
+                if a.is_none() && cx.syms.names[val(slots, *ka) as usize].is_empty() {
+                    match b { Some(s) => slots[*s] = val(slots, *whole), None => if val(slots, *kb) != val(slots, *whole) { return } }
+                    go(cx, i + 1, slots);
+                    return;
+                }
                 for (p, _) in w.match_indices('.') {
                     let (x, y) = (&w[..p], &w[p + 1..]);
                     match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.names[val(slots, *ka) as usize] != x { continue } }
