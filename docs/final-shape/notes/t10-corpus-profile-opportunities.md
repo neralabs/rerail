@@ -172,6 +172,37 @@ run alone). The replay's totals are unchanged.
 Encoding the tape now reads a node's field from the cursor-status call it already makes (one stack walk per node,
 not two). Parity with native tree-sitter holds on s1000's 997 Python files.
 
+### 2c. The file-local part, profiled, and memoised per file (2026-11-06)
+
+A profile of the warm full run's file-local part (39.7 s, profiled build) had three pieces:
+
+- joins: 21.8 s;
+- opening each chunk's engine: 9.5 s. Half of it (4.8 s) was one rule's `span_within` source, built whole for each
+  chunk. A source made on lookup is now probed through its index (`Source::made_on_lookup`), so it takes 0.002 s;
+- per-stratum overhead: about 6 s, for 620 strata in each of 104 chunks.
+
+That brought the file-local part from 49 s to 29 s.
+
+Then decision 0050: each file's file-local rows are memoised under its content, its path and the run's plan. A
+file that hasn't changed is neither parsed nor evaluated; its rows are replayed into the cross-file tables.
+
+Every converted rule (100) in one run (M; load 24–52):
+
+| Corpus | Run | Instructions retired | CPU | Peak RSS | Findings |
+|---|---|---|---|---|---|
+| full | tapes cached, memo empty | 744e9 | 36.8 s | 665 MB | 252 |
+| full | memo full | 12.1e9 | 0.93 s | 124 MB | 252 |
+| s200 | memo empty | 31.9e9 | | 287 MB | 4 |
+| s200 | memo full | 6.2e9 | | 45 MB | 4 |
+| s200, 3 files edited | memo on | 12.2e9 | | 74 MB | 8 |
+| the same | memo off | 28.5e9 | | 289 MB | 8 |
+
+With the memo full, the run reads 9,010 memo entries (0.25 s across the workers) and spends 0.65 s on the
+cross-file statistics. The memo adds 32 MB to the full corpus's store.
+
+`rerail-engine logic` takes a directory of `.rr` files and runs them as one program (100 rules on s200: 1.6 s,
+286 MB).
+
 ## 3. The shapes
 
 The fix for each is one engine rule, not one per check:

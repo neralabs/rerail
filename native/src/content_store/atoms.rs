@@ -227,6 +227,12 @@ impl Atoms {
         atoms
     }
 
+    /// Makes `path`'s database read and write these atoms in this process: a run's working database
+    /// (its SQL's scratch) whose symbols are the store's (decision 0050).
+    pub(crate) fn share(self: &Arc<Self>, path: &Path) {
+        REGISTRY.lock().insert(key(path), Arc::downgrade(self));
+    }
+
     /// This process's atoms of `connection`'s main database.
     pub(crate) fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
@@ -630,6 +636,12 @@ impl super::ContentStore {
     }
 
     /// Appends the pending atoms now, unless another writer holds the store (a later write will).
+    /// The database at `path` reads and writes this store's atoms in this process (`Atoms::share`): a
+    /// connection there resolves symbols as the store does. Call before opening it.
+    pub(crate) fn share_atoms_with(&self, path: &Path) {
+        self.atoms.share(path);
+    }
+
     pub(crate) fn flush_atoms(&self) -> StoreResult<()> {
         if !self.atoms.pending() {
             return Ok(());
