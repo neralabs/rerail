@@ -108,11 +108,24 @@ def flatten_json(prefix, v, out):
         out.append((prefix, "true" if v is True else "false" if v is False else "null" if v is None else str(v)))
 
 
+MAX_WALK = 200_000
+
+
+def shallow(root):
+    """A root too near / to walk: fewer than 3 path components (/, /Users, /private/tmp)."""
+    return len([p for p in os.path.abspath(root).split(os.sep) if p]) < 3
+
+
 def repo_inputs(root, docs):
-    """file, package, package_field, package_for from the files under root."""
+    """file, package, package_field, package_for from the files under root (at most MAX_WALK files)."""
+    if shallow(root):
+        raise SystemExit(f"rrlab: refusing to walk {root}: pass a --root at least 3 levels deep")
     files, pkgs = [], {}
     for d, dirs, fs in os.walk(root):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
+        if len(files) > MAX_WALK:
+            log(f"rrlab: {root} has over {MAX_WALK} files; file() facts are truncated")
+            break
         for f in fs:
             rel = os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/")
             files.append((rel,))
@@ -165,12 +178,26 @@ def io_input(spec, root):
 
 # ---- running ------------------------------------------------------------------------------------------------------
 
+_RUNS = []
+
+
+def cleanup():
+    """Remove the work directories of this process's runs that --keep did not name."""
+    for r in _RUNS:
+        if not r.keep:
+            shutil.rmtree(r.work, ignore_errors=True)
+
+
 class Run:
     def __init__(self, rule, files, root, options=None, lang=None, keep=None, verbose=False):
         ensure_built()
         self.rule, self.files, self.root, self.verbose = rule, files, root, verbose
         self.prog = L.Program(rule, P.Compiler(FACTS_BIN))
-        self.work = keep or os.path.join(HERE, "target", "work", os.path.splitext(os.path.basename(rule))[0])
+        # one directory per process (writers run rrlab side by side), removed after the run unless --keep names one
+        self.keep = bool(keep)
+        self.work = keep or os.path.join(HERE, "target", "work",
+                                         f"{os.path.splitext(os.path.basename(rule))[0]}-{os.getpid()}-{len(_RUNS)}")
+        _RUNS.append(self)
         self.inp, self.out = os.path.join(self.work, "in"), os.path.join(self.work, "out")
         for d in (self.inp, self.out):
             shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
@@ -282,7 +309,7 @@ class Run:
                     continue
                 code = meta["code"] if meta["code"] is not None else r[meta["cols"].index(meta["code_col"])]
                 out.append({"path": pth, "line": ln, "col": c, "code": code, "violation": v, "row": r,
-                            "message": self.message(meta, r, line), "syntax_error": d in errs})
+                            "message": self.message(meta, r, line), "syntax_error": d in errs, "at": at})
         out = self.suppress(out)
         uniq = {}
         for f in out:
@@ -329,9 +356,13 @@ class Run:
             if m:
                 names = {x.strip() for x in re.split(r"[,\s]+", m.group(1) or "") if x.strip()}
                 directives[path[docof[nid]]].append(("noqa", line[nid], end[nid], names))
+        nosec = nosec_lines(self, path, docof, line) if any(t == "nosec" for v in tools.values() for t, _ in v) else {}
         keep = []
         for f in found:
             names = {r for tool, r in tools[f["violation"]]}
+            codes = {r for tool, r in tools[f["violation"]] if tool == "nosec"}
+            if codes and nosec_suppresses(nosec.get(f["path"], {}), codes, f["line"], line.get(f.get("at")), end.get(f.get("at"))):
+                continue
             off = False
             state = False
             for kind, a, b, rules in sorted(directives.get(f["path"], []), key=lambda x: x[1]):
@@ -351,6 +382,55 @@ class Run:
             if not (off or state):
                 keep.append(f)
         return keep
+
+
+# Bandit 1.9.4's `# nosec`, as native/src/code_rule_dsl/suppress/nosec.rs ports it: a comment's test list (ids or
+# names; none known is a blanket nosec), read on the reported line and the first `# nosec` among the node's lines.
+NOSEC_COMMENT = re.compile(r"#\s*nosec:?\s*(?P<tests>[^#]+)?#?")
+NOSEC_TESTS = re.compile(r"(?i)(?:(B\d+|[a-z\d_]+),?)+")
+_NOSEC_NAMES = None
+
+
+def nosec_names():
+    global _NOSEC_NAMES
+    if _NOSEC_NAMES is None:
+        src = os.path.join(REPO, "native", "src", "code_rule_dsl", "suppress", "nosec.rs")
+        pairs = re.findall(r'\("(B\d+)", "([A-Za-z_\d]+)"\)', open(src).read()) if os.path.exists(src) else []
+        _NOSEC_NAMES = {"B001": "B001", **{i: i for i, _ in pairs}}
+        for i, n in pairs:
+            _NOSEC_NAMES.setdefault(n, i)
+    return _NOSEC_NAMES
+
+
+def nosec_parse(comment):
+    m = NOSEC_COMMENT.search(comment)
+    if not m:
+        return None
+    ids = []
+    for t in NOSEC_TESTS.finditer(m.group("tests") or ""):
+        i = nosec_names().get(t.group(1))
+        if i and i not in ids:
+            ids.append(i)
+    return ids
+
+
+def nosec_lines(run, path, docof, line):
+    """path -> {line: [test ids]} for every `# nosec` comment."""
+    out = collections.defaultdict(dict)
+    for nid, body in run.table("comment"):
+        ids = nosec_parse("#" + body)
+        if ids is not None and nid in docof:
+            out[path[docof[nid]]].setdefault(line[nid], ids)
+    return out
+
+
+def nosec_suppresses(lines, codes, at_line, first, last):
+    reported = lines.get(at_line)
+    context = next((lines[l] for l in range(first, (last or first) + 1) if l in lines), None) if first else None
+    if reported is None and context is None:
+        return False
+    tests = (reported or []) + (context or [])
+    return not tests or any(t in codes for t in tests)
 
 
 def meta_name(prog, meta):
@@ -390,7 +470,10 @@ def score(args):
         prog = L.Program(rule)
         codes = {v["code"] for v in prog.violations.values() if v["code"]}
         tools = [d for d in os.listdir(os.path.join(pack, "upstream")) if os.path.isdir(os.path.join(pack, "upstream", d))]
-        upstream = {"tool": tools[0] if len(tools) == 1 else None, "rule": next(iter(codes), args.rule_id)}
+        # several tools (python: ruff and bandit): the one the rule id starts with
+        tool = tools[0] if len(tools) == 1 else next(
+            (t for t in sorted(tools, key=len, reverse=True) if args.rule_id.startswith(t + "-")), None)
+        upstream = {"tool": tool, "rule": next(iter(codes), args.rule_id)}
         log(f"rrlab: {args.rule_id} is not in {args.pack}/conformance.json; scoring code {upstream['rule']} "
             f"against {upstream['tool']}")
         match = "line"
@@ -402,15 +485,17 @@ def score(args):
     rec = json.load(open(os.path.join(rec_dir, "fixtures.expected.json")))
     fixtures = os.path.join(rec_dir, "fixtures")
     urule = upstream["rule"]
-    sub = urule.split("/", 1)[1] if "/" in urule and not os.path.isdir(os.path.join(fixtures, urule)) else urule
-    # a unit is a file, or [file, context files…] (a package.json the file is linted under)
-    allfiles = [f[0] if isinstance(f, list) else f for f in rec["source"]["files"]]
-    files = allfiles if args.all else [f for f in allfiles if f.startswith(sub + "/")]
+    allfiles = unit_files(rec)
+    if args.all:
+        files, how = allfiles, "every fixture"
+    else:
+        files, how = own_files(rec_dir, upstream["tool"], urule, allfiles, entry)
+        if not files and any(f["rule"] == urule for f in rec["findings"]):
+            files, how = allfiles, "every fixture: no own fixtures found for this rule"
     expected = [f for f in rec["findings"] if f["rule"] == urule and f["path"] in set(files)]
     print(f"rule      {os.path.relpath(rule, RR)}")
     print(f"upstream  {rec['tool']} {rec['version']} {urule}  ({os.path.relpath(rec_dir, data)})")
-    print(f"files     {len(files)} ({'every fixture' if args.all else 'fixtures/' + sub + '/'}); "
-          f"{len(expected)} recorded findings")
+    print(f"files     {len(files)} ({how}); {len(expected)} recorded findings")
     if not files:
         print(f"score     n/a: the recording has no fixtures for {urule}")
         return
@@ -456,7 +541,95 @@ def score(args):
         print(f"pattern   `{src}`{' at ' + at if at else ''}: {st}")
     rounds = max(r.rounds for r in runs)
     print(f"time      facts {sum(r.facts_cpu for r in runs):.1f}s + souffle {sum(r.souffle_cpu for r in runs):.1f}s CPU "
-          f"({rounds} round{'s' if rounds != 1 else ''}), {time.time() - t0:.1f}s wall; work dir {runs[0].work}")
+          f"({rounds} round{'s' if rounds != 1 else ''}), {time.time() - t0:.1f}s wall"
+          f"{'; work dir ' + runs[0].work if runs[0].keep else ''}")
+
+
+def unit_files(rec):
+    """The scored files of a recording. A unit is a file, or a sorted list of files analysed together
+    (["package.json", "prefer-global/buffer/invalid-001.js"], two PHP files of a cross-file case); every member
+    but a JSON manifest is scored. The manifests are read from the fixture tree like any other file."""
+    out = []
+    for u in rec["source"]["files"]:
+        members = u if isinstance(u, list) else [u]
+        out += [m for m in members if not m.endswith(".json")] or members[:1]
+    return list(dict.fromkeys(out))
+
+
+def _norm(s):
+    s = re.sub(r"[^a-z0-9]", "", s.lower())
+    for suffix in ("validator", "unittest", "test"):
+        if s.endswith(suffix) and len(s) > len(suffix):
+            s = s[: -len(suffix)]
+    return s
+
+
+def bandit_tests(rec_dir):
+    """Bandit's generate.py TESTS: test id -> the examples it fires in (read as data, not run)."""
+    import ast
+    gen = os.path.join(rec_dir, "..", "..", "upstream", "bandit", "generate.py")
+    gen = os.path.join(os.path.dirname(rec_dir), "bandit", "generate.py") if not os.path.exists(gen) else gen
+    if not os.path.exists(gen):
+        return {}
+    for node in ast.parse(open(gen).read()).body:
+        target = getattr(node, "target", None) or (node.targets[0] if isinstance(node, ast.Assign) else None)
+        if isinstance(target, ast.Name) and target.id == "TESTS" and node.value is not None:
+            return ast.literal_eval(node.value)
+    return {}
+
+
+def ruff_fixtures(rec_dir):
+    """fixtures.json (code -> ruff's test fixture paths), beside the recording or in this checkout's pack, with
+    ruff's fixture root stripped so paths read as the recording's."""
+    rel = os.path.join("packs", "python", "upstream", "ruff", "fixtures.json")
+    for f in (os.path.join(rec_dir, "fixtures.json"), os.path.join(REPO, rel)):
+        if os.path.exists(f):
+            rules = json.load(open(f)).get("rules", {})
+            root = "crates/ruff_linter/resources/test/fixtures/"
+            return {k: [p[len(root):] if p.startswith(root) else p for p in v] for k, v in rules.items()}
+    return {}
+
+
+def own_files(rec_dir, tool, urule, files, entry):
+    """(files, description): the fixtures written for this rule. In order: the pack's own `fixtures` globs
+    (conformance.json); Bandit's TESTS map plus fixtures/rerail/*/<code>*; else a path segment named after the rule:
+    a directory (`curly/`, `ansi/AL04/`, `DebugDirectiveTest/` for DebugDirectiveValidator) or a file stem
+    (`ASYNC100.py`, `B006_B008.py`, `BLE.py` for BLE001, `EmptyStatementUnitTest.inc.php`). Tool prefixes
+    (`@next/next/`, `react/`, `n/`) are dropped."""
+    import fnmatch
+    if entry and entry.get("fixtures"):
+        globs = entry["fixtures"]
+        return [f for f in files if any(fnmatch.fnmatch(f, g) for g in globs)], "conformance.json fixtures " + ", ".join(globs)
+    if tool == "bandit":
+        tests = bandit_tests(rec_dir)
+        if urule in tests:
+            mine = set(tests[urule])
+            own = [f for f in files if f in mine or re.match(rf"rerail/[^/]+/{re.escape(urule)}\b", f)
+                   or re.match(rf"rerail/probes/{re.escape(urule.lower())}-", f)]
+            return own, "Bandit's TESTS map (generate.py) and its rerail/ cases"
+    if tool == "ruff":
+        mine = ruff_fixtures(rec_dir).get(urule)
+        if mine:
+            own = [f for f in files if any(f == m or f.startswith(m.rstrip("/") + "/") for m in mine)
+                   or re.match(rf"rerail/[^/]+/{re.escape(urule)}\b", f)]
+            if own:
+                return own, "ruff's fixtures.json and its rerail/ cases"
+    cands = {urule, urule.split("/")[-1], urule.split(".")[-1]}
+    if "/" in urule:
+        cands.add(urule.split("/", 1)[1])
+    norms = {_norm(c) for c in cands if _norm(c)}
+    code = re.fullmatch(r"([A-Z]+)[0-9]+", urule)
+    own = []
+    for f in files:
+        parts = f.split("/")
+        dirs, stem = parts[:-1], parts[-1].split(".")[0]
+        if "/" in urule and f.startswith(urule.split("/", 1)[1] + "/"):
+            own.append(f); continue
+        if any(_norm(d) in norms for d in dirs) or _norm(stem) in norms:
+            own.append(f); continue
+        if code and (urule in re.split(r"[_\W]+", stem) or stem.startswith(urule + "_") or stem == code.group(1)):
+            own.append(f)
+    return own, "own fixtures: " + ("a path segment named " + " or ".join(sorted(cands)))
 
 
 def option_dict(o):
@@ -550,6 +723,9 @@ def column_points(found, root):
 
 def cmd_run(args):
     root = os.path.abspath(args.root or os.path.commonpath([os.path.dirname(os.path.abspath(f)) for f in args.files]))
+    if shallow(root):
+        raise SystemExit(f"rrlab: the files' common directory {root} is too shallow to walk for package.json and "
+                         f"file facts; put them under one directory or pass --root DIR (3 or more levels deep)")
     files = [os.path.relpath(os.path.abspath(f), root) for f in args.files]
     run = Run(args.rule, files, root, options=json.loads(args.options) if args.options else None, lang=args.lang,
               keep=args.keep, verbose=args.verbose)
@@ -557,7 +733,8 @@ def cmd_run(args):
     for f in found:
         star = " (syntax error in file)" if f["syntax_error"] else ""
         print(f"{f['path']}:{f['line']}:{f['col'] + 1}: {f['code']}: {f['message']}{star}")
-    print(f"{len(found)} findings; {run.rounds} souffle round(s), {run.souffle_cpu:.1f}s CPU; work dir {run.work}",
+    print(f"{len(found)} findings; {run.rounds} souffle round(s), {run.souffle_cpu:.1f}s CPU"
+          f"{'; work dir ' + run.work if run.keep else ''}",
           file=sys.stderr)
     for w in run.prog.warnings:
         print(f"warning: {w}", file=sys.stderr)
@@ -604,6 +781,8 @@ def main():
         {"run": cmd_run, "score": score, "lower": cmd_lower, "pattern": cmd_pattern}[args.cmd](args)
     except L.LowerError as e:
         raise SystemExit(f"rrlab: {e}")
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":
