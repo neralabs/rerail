@@ -346,12 +346,17 @@ fn write_rr_translations() {
 }
 
 /// Which hand-written data-layer rules lower to the engine today, and what stops the others (a report).
+/// `RERAIL_RR_REPORT_EXTRA=<dir>[:<dir>…]` reports the `.rr` files under those directories too (another branch's
+/// packs, say), with `#include` still read from this library.
 #[test]
 #[ignore = "a report: what the hand-written rules need from the lowering"]
 fn hand_written_rules_lowering_report() {
     let mut out = Vec::new();
     files(&rule_syntax().join("data-layer"), "rr", &mut out);
     files(&library(), "rr", &mut out);
+    for dir in std::env::var("RERAIL_RR_REPORT_EXTRA").iter().flat_map(|dirs| dirs.split(':')).filter(|d| !d.is_empty()) {
+        files(Path::new(dir), "rr", &mut out);
+    }
     for f in out {
         let result = parse_file(&f);
         println!("{}: {}", short(&f), result.map_or_else(|e| e.to_string(), |p| format!("lowers: {} rules", p.rules.len())));
