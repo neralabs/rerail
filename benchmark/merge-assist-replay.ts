@@ -610,6 +610,9 @@ function homeDenials(readable: readonly string[]): string[] {
   return denied;
 }
 
+/** Turns off Codex's built-in apps server, whose `search_service.web_run` reaches the web even with web search off. */
+const NO_WEB_ARGS = ["--disable", "apps"] as const;
+
 /**
  * The run's CODEX_HOME config: the model provider, if any; a shell environment policy that keeps credentials out of
  * every command the agent runs (Codex's default excludes `*KEY*`, `*SECRET*`, `*TOKEN*`, which it skips unless told
@@ -634,6 +637,8 @@ export function sandboxConfig(denied: readonly string[], provider: ProviderSetti
   return [
     ...(provider === null ? [] : [`model_provider = ${JSON.stringify(provider.provider)}`]),
     `default_permissions = ${JSON.stringify(PROFILE)}`,
+    // No web: the search tool and the built-in apps server (`search_service.web_run`) both reach the internet.
+    `web_search = "disabled"`,
     "",
     ...(provider === null ? [] : [`[model_providers.${provider.provider}.aws]`, `region = ${JSON.stringify(provider.region)}`, ""]),
     "[shell_environment_policy]",
@@ -852,7 +857,7 @@ async function gradeRun(context: PairContext, diff: string, folder: string, opti
   const codexHome = join(folder, "grade-codex-home");
   createCodexHome(codexHome, "", null);
   writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
-  const judge: CodexRunOptions = { model: options.judgeModel, config: [], timeoutMin: options.judgeTimeoutMin, extraArgs: ["--output-schema", schema, "--ephemeral"], permissions: PROFILE, binary: codexBinary(), env: codexEnv };
+  const judge: CodexRunOptions = { model: options.judgeModel, config: [], timeoutMin: options.judgeTimeoutMin, extraArgs: ["--output-schema", schema, "--ephemeral", ...NO_WEB_ARGS], permissions: PROFILE, binary: codexBinary(), env: codexEnv };
   const outcome = await runCodex(work, codexHome, "", gradePrompt(spec, text), judge, join(folder, "grade-rerail-home"));
   const events = readEvents(outcome.stdout);
   const base = { by: null, strippedLines: stripped, truncated, usage: events.usage, wallMs: outcome.wallMs };
@@ -1030,7 +1035,7 @@ async function runJob(job: Job, options: Options, codexEnv: Readonly<Record<stri
     createCodexHome(codexHome, configPath, HOOK);
     writeFileSync(join(codexHome, "config.toml"), sandboxConfig(denied, providerOf(options)));
     const started = Date.now();
-    const outcome = await runCodex(repo, codexHome, configPath, task, { ...options, permissions: PROFILE, binary: codexBinary(), env: codexEnv }, join(folder, "rerail-home"));
+    const outcome = await runCodex(repo, codexHome, configPath, task, { ...options, extraArgs: NO_WEB_ARGS, permissions: PROFILE, binary: codexBinary(), env: codexEnv }, join(folder, "rerail-home"));
     const events = readEvents(outcome.stdout);
     const hookLog = readFileSync(logPath, "utf8").split("\n").filter(line => line.trim() !== "").map(line => JSON.parse(line) as ReplayHookLogEntry);
     const injected = hookLog.flatMap(entry => (entry.text === undefined ? [] : [entry.text]));

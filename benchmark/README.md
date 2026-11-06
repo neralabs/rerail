@@ -448,6 +448,13 @@ and not changed after.
   merge base with the base branch tip then, or with the replay base when that is nearer, for stacked branches), not
   its diff from the replay base: the first definition counted mainline work a branch had merged in as its own. Fixed
   on the dev pair before any OSS data.
+- **Restart of look 1, logged before it reran.** The first box start of look 1 was stopped after 18 of its 84 runs
+  for two protocol defects, not results: the clones held only the labelled pull requests' heads, so the git arms saw
+  1–6 refs per pair instead of every concurrent pull request this pre-registration names; and Codex reached the web
+  through its built-in apps server, which Bedrock refused mid-run. Every concurrent head was fetched (4,113 refs over
+  the 19 repositories) and web access was turned off (`web_search = "disabled"`, `--disable apps`) for agent and
+  grader. The stopped runs were bubbletea (6 runs, all graded no conflict) and chi (6 graded conflict) plus 6 not yet
+  graded; none of them are used, and look 1 reruns in full.
 - **Primary** (per treatment against `none`, one-sided, stratified by pair, Holm across the two treatments): R1, the
   share of runs the blind grader judges to conflict with the first pull request's design (yes or unclear count as a
   conflict; errors and empty diffs count as failures) is lower.
