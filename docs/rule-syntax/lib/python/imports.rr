@@ -180,11 +180,15 @@ export_query(@dot(m2, x)) :- import_alias(_, _, m2, x, _), x != "".
 .decl dunder_all(m: symbol, x: symbol)
 dunder_all(m, x) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__"), field(a, "right", r),
     child(r, s, _), value(s, x), module_of(a, m), nearest(a, sc, scope), kind(sc, "module").
-// public_name(m, x): x is part of m's public interface: listed in `__all__` when m has one; otherwise any exported
+// public_name(m, x): x is part of m's public interface: listed in `__all__` when m assigns one; otherwise any exported
 // name not starting with an underscore. This is also what `from m import *` copies.
 .decl public_name(m: symbol, x: symbol)
 public_name(m, x) :- dunder_all(m, x).
-public_name(m, x) :- exported(m, x), count : { dunder_all(m, _) } = 0, !prefix("_", x).
+public_name(m, x) :- exported(m, x), !has_all(m), !prefix("_", x).
+// has_all(m): module m assigns `__all__` at top level, even an empty one (`__all__ = []` exports nothing).
+.decl has_all(m: symbol)
+has_all(m) :- kind(a, "assignment"), field(a, "left", l), text(l, "__all__"), module_of(a, m), nearest(a, sc, scope),
+    kind(sc, "module").
 
 // ---- edits --------------------------------------------------------------------------------------------------------
 // Library edits for import fixes. Each expands to core's native edits; see python/flow for what `.edit` means.

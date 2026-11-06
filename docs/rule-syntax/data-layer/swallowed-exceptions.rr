@@ -11,15 +11,17 @@
 //   WARNING the handler reads its exception variable;  CRITICAL it does not; also `with contextlib.suppress(…)` that
 //   suppresses more than KeyError. Logging changes nothing. Keys in the ignores file do not count. The plugin's codes
 //   missing_baseline, unsigned_baseline, invalid_baseline_signature, baseline_increase are the .budget's outcomes.
-// Follows the Python linter where the recorded findings show it (the contract is parity with them):
-//   suppress is matched by the callee's text, as the linter does, not by what it resolves to (step 4 below). The text
-//   decides: an aliased `from contextlib import suppress as s` is not matched, and an unimported `suppress(…)` is.
-//   A raise inside a def, class or lambda that is itself inside any handler counts for no handler, as the linter's
-//   depth counter has it: `except A:` / `def f():` / `try: … except B: raise` reports B as well as A.
-// Still differs from the Python linter (no recorded finding exercises these):
-//   caught types are resolved (catches): aliases, `builtins.KeyError` and all-protocol tuples are protocol catches,
-//   where the linter compares the written text ("KeyError, StopIteration" is not protocol there);
-//   the variable is followed by binding: a rebound `e = …` does not count, a closure over e does.
+// Follows the Python linter throughout (the contract is parity with it and its recorded findings). Text decides;
+// nothing is resolved:
+//   suppress is matched by the callee's text (step 4 below): an aliased `from contextlib import suppress as s` is not
+//   matched, and an unimported `suppress(…)` is.
+//   The caught type is its written text (protocol_text): `except KeyError` and `except (KeyError,)` are protocol;
+//   `except builtins.KeyError` and `except (KeyError, StopIteration)` ("KeyError, StopIteration") are not.
+//   The exception variable is read when any Name with its text appears in the handler (lint_name), a rebinding
+//   `e = …` included, as the linter's on_Name has it.
+//   The linter's depth counter: a raise or a Name inside a def, class or lambda (decorators too) that is itself inside
+//   any handler counts for no handler: `except A:` / `def f():` / `try: … except B: raise` reports B as well as A,
+//   and a closure over e is not a read. Each counts for the innermost handler around it only.
 //
 // How to read this file
 //   1. handler(x, b) lists every except clause and its body. reraises, protocol_only, reads_exc and ignored_at are
@@ -45,9 +47,9 @@ own_scope("except_clause").
 .decl handler_k(kind: symbol)
 handler_k("except_clause").
 // Exceptions used for control flow; catching only these is not a swallow (the Python linter's _PROTOCOL_EXCEPTIONS).
+// Compared as text, as the linter's _PROTOCOL_EXCEPTIONS is.
 .decl protocol(v: symbol)
-protocol("builtins.KeyError"). protocol("builtins.StopIteration").
-protocol("builtins.StopAsyncIteration"). protocol("queue.Empty").
+protocol("KeyError"). protocol("StopIteration"). protocol("StopAsyncIteration"). protocol("queue.Empty").
 
 .decl handler(x: node, b: node)  // except clause x, body block b
 handler(x, b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
@@ -60,17 +62,45 @@ reraises(x) :- handler(x, _), kind(r, "raise_statement"), within_stop(r, x, own_
 // def_scope: the scopes the linter's _nested_scope_depth counts.
 .decl def_scope(kind: symbol)
 def_scope("function_definition"). def_scope("class_definition"). def_scope("lambda").
+def_scope("decorated_definition").   // a decorator is visited after the linter enters the def
 .decl hidden_raise(r: node)
-hidden_raise(r) :- kind(r, "raise_statement"), inside(r, d, def_scope), inside(d, _, "except_clause").
-// protocol_only(x): x catches something (catches has a row), and every type it catches is a protocol exception.
-// The count : { …, !… } = 0 pattern is "for all": there is no caught type outside the set. A bare `except:` catches
-// builtins.BaseException, so it is never protocol-only.
+hidden_raise(r) :- kind(r, "raise_statement"), hidden(r).
+// hidden(n): n is below a def_scope node that is below an except clause (the linter's _nested_scope_depth > 0).
+.decl hidden(n: node)
+hidden(n) :- inside(n, d, def_scope), inside(d, _, "except_clause").
+// protocol_only(x): x's caught type, as written, is one protocol exception (the linter's
+// `ctx.type_name in _PROTOCOL_EXCEPTIONS`). A bare `except:` is "(bare except)", never protocol.
 .decl protocol_only(x: node)
-protocol_only(x) :- handler(x, _), catches(x, _), count : { catches(x, q), !protocol(q) } = 0.
-// reads_exc(x): x binds `except … as e`, and some reference inside x reads that binding. Following ref_site rather
-// than matching the name means a nested `e = …` rebinding is not a read, and a closure in the handler that reads e is.
+protocol_only(x) :- handler(x, _), exc_type(x, e), protocol_text(e).
+// exc_type(x, e): the type expression of except clause x (without its `as e`).
+.decl exc_type(x: node, e: node)
+exc_type(x, e) :- kind(x, "except_clause"), child(x, e, _), !kind(e, "block"), !kind(e, "comment"),
+    !kind(e, "as_pattern").
+exc_type(x, e) :- kind(x, "except_clause"), child(x, ap, _), kind(ap, "as_pattern"), child(ap, e, 0).
+// protocol_text(e): _get_exception_type_name(e) is a protocol name: a name or dotted name (lint_dotted), through
+// parentheses, or a one-element tuple of one ("KeyError, X" joins to a text no protocol name has).
+.decl protocol_text(e: node)
+protocol_text(e) :- dotted_q(e), lint_dotted(e, t), protocol(t).
+protocol_text(e) :- dotted_q(e), kind(e, "tuple"), count : { child(e, y, _), !kind(y, "comment") } = 1,
+    child(e, c, _), protocol_text(c).
+// reads_exc(x): x binds `except … as v`, and a Name v (lint_name) has x as its innermost handler, outside any
+// hidden scope. Any Name counts, a store `v = …` too: the linter's on_Name does not look at the context.
 .decl reads_exc(x: node)
-reads_exc(x) :- binding(_, _, s, "except"), nearest(s, x, handler_k), ref_site(r, s), within(r, x).
+reads_exc(x) :- exc_var(x, v), lint_name(n, v), nearest(n, x, handler_k), !hidden(n).
+.decl exc_var(x: node, v: symbol)
+exc_var(x, v) :- kind(x, "except_clause"), child(x, ap, _), kind(ap, "as_pattern"), field(ap, "alias", t),
+    child(t, n, _), kind(n, "identifier"), text(n, v).
+// lint_name(n, v): identifier n is an ast.Name: nameref (python/names) less parameter names, imported names, the
+// names of `global`/`nonlocal`, and `except … as v` itself (CPython keeps those as strings).
+.decl lint_name(n: node, v: symbol)
+lint_name(n, v) :- nameref(n, v), !not_name(n).
+.decl not_name(n: node)
+not_name(n) :- field(_, "parameters", ps), child(ps, p, _), (n = p ; child(p, n, 0)), kind(n, "identifier").
+not_name(n) :- kind(i, k), (k = "import_statement" ; k = "import_from_statement" ; k = "future_import_statement"),
+    within(n, i), kind(n, "identifier").
+not_name(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _).
+not_name(n) :- kind(x, "except_clause"), child(x, ap, _), kind(ap, "as_pattern"), field(ap, "alias", t),
+    child(t, n, _).
 // ignored_at(n): n's file and start line is a key in the ignores file. The Python linter applies ignores after scanning.
 .decl ignored_at(n: node)
 ignored_at(n) :- docof(n, d), doc(d, p, _), line(n, l), ignored(p, l).
@@ -163,6 +193,7 @@ bare_suppress(w) :- kind(w, "with_statement"), imports_suppress(i), earlier(i, w
 // Parentheses are not in Python's ast, so they are seen through.
 .decl dotted_q(e: node)
 dotted_q(f) :- with_call(_, c), callee(c, f).
+dotted_q(e) :- exc_type(_, e).
 dotted_q(a) :- with_call(_, c), pos_arg(c, a).
 dotted_q(x) :- dotted_q(e), kind(e, "tuple"), child(e, x, _).
 dotted_q(o) :- dotted_q(e), kind(e, "attribute"), field(e, "object", o).
