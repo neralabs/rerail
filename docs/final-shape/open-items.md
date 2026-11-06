@@ -46,7 +46,7 @@ never deleted: a closed item keeps its row with the commit that closed it.
 | O60 | Phase 6 / 11 | The matcher atom's captures, `ast($D, $N, {…}, NAME: $v)`: parsed, no executor (t17) | open |
 | O61 | Phase 6 / 11 | A builtin catalogue: the data-layer programs use 30 builtins, one built (t17) | open |
 | O62 | Phase 6 / 11 | One value lattice, the shortlex-least route: four data-layer recursions, no implementation, `widen` loses the witness (t17) | open |
-| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open |
+| O63 | Phase 6 / 11 | Tree built-ins beyond `nearest` are written as builtins (`@within`, `@depth`); two kind-filtered walks stay Datalog recursion (t17) | open, narrowed (2026-11-06): `.rr`'s `within(n, a)` is the engine's tree relation, read off the tape per looked-up node (decision 0046 §4); the `@within`/`@depth` programs and the two kind-filtered walks remain |
 | O64 | Phase 11 | The 113 regex forbid clauses of the data-layer rules have no logic form until rewritten as matcher atoms (PIAT §5.1, t17) | open |
 | O65 | Phase 11 | Two data-layer stages outside the fragment: `call_paths` (a value cycle) and `block_results` (`NotStratifiable` over the tree) (t17) | open |
 
@@ -1273,6 +1273,11 @@ outermost function, depth (t17 § 3). The programs write them as `@within($x, $r
 new literal would change `logic/plan`'s exhaustive matches. Two walks through chosen kinds (dispatch `annotations`,
 steps `payload_values`) remain Datalog recursion over tree edges, against §7. **Closure:** `within` and a
 kind-filtered climb/descent (the matcher's `inside`/`has` with `stopBy`) as tree built-ins.
+
+2026-11-06: the `.rr` built-in `within(n, a)` is no longer lowered to an id range or a recursive `below` relation
+over `child`. The engine serves it from a relation read off the tree (decision 0046 §4): n's ancestors for a bound
+n, a's subtree for a bound a. The converter writes it. The `.rdl` programs' `@within`/`@depth` and the two walks
+are unchanged.
 
 ## O64. The data-layer's regex forbid clauses
 
