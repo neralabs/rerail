@@ -646,6 +646,20 @@ pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, 
     });
     for built in chunks_in {
         let (chunk_nodes_built, sources, chunk_docs, hits) = built?;
+        // The previous chunk's freed pages go back to the system: without this the footprint settles about 170 MB
+        // over the live heap on the full corpus (550 MB against 300 to 350 MB), and the peak is 80 MB higher.
+        crate::code_rule_dsl::prof::release();
+        // `RERAIL_PROF_CHUNKS=1`: the memory held as each chunk arrives (footprint, live heap, cross-file rows).
+        if std::env::var_os("RERAIL_PROF_CHUNKS").is_some() {
+            let _ = tikv_jemalloc_ctl::epoch::advance();
+            let live = tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20;
+            eprintln!(
+                "chunk {chunks}: footprint {} MB (max {}), heap live {live} MB, outputs {} lines",
+                crate::code_rule_dsl::prof::footprint_mb(),
+                crate::code_rule_dsl::prof::max_footprint_mb(),
+                outputs.values().map(Vec::len).sum::<usize>()
+            );
+        }
         phase("wait", statements.count());
         statements.enter("local");
         // Memo hits: their rows go to `x` and their lines to the outputs as an evaluated chunk's would.
