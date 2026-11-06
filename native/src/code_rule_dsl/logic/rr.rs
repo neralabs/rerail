@@ -42,6 +42,19 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
 /// A program's `.rr` file, with what it includes.
 pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
     let files = program(path)?;
+    // Names starting `rr_` are the engine's (`front::RESERVED`): its helpers, axes and places.
+    for (file, statements) in &files {
+        for (item, line) in statements {
+            let names: Vec<&String> = match item {
+                syntax::Item::Decl { name, .. } | syntax::Item::Violation { name, .. } => vec![name],
+                syntax::Item::Clause { heads, .. } => heads.iter().map(|h| &h.rel).collect(),
+                _ => Vec::new(),
+            };
+            if let Some(name) = names.into_iter().find(|n| n.starts_with(super::front::RESERVED)) {
+                return Err(Error::Syntax(format!("{}:{line}: {name}: names starting `{}` are the engine's", file.display(), super::front::RESERVED)));
+            }
+        }
+    }
     lower::lower(files.into_iter().flat_map(|(_, statements)| statements).collect())
 }
 

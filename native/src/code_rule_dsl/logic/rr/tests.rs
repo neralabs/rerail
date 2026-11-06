@@ -154,7 +154,7 @@ best(n, @dot("a", x)) :- name(n, x).
     assert_eq!(rules.len(), 6);
     let owner: Vec<&front::Rule> = p.rules.iter().filter(|r| r.head.rel == "owner").collect();
     assert_eq!(owner[0].body, [Literal::Nearest { n: "n".to_owned(), a: "a".to_owned(), kindset: "scope".to_owned() }]);
-    assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "inside_rr_kind_module"));
+    assert!(matches!(&owner[1].body[0], Literal::Atom(a) if a.rel == "rr_inside_rr_kind_module"));
     // A count over two literals reads a helper of every variable, grouped by the ones shared (`_` for the body's
     // own); a min over two, the ones shared and its own.
     let helper = |head: &str| -> Vec<String> {
@@ -176,9 +176,7 @@ fn unlowered_constructs_are_named() {
     for (src, what) in [
         (".decl a(n: node)\na(n) :- n ~ `exec($X)`.", "pattern"),
         (".decl a(x: number)\nmust a(1) :- a(2).", "must"),
-        (".decl a(x: number)\na(x) :- a(y), x = sum z : { a(z) }.", "sum"),
         (".decl a(x: symbol)\na(x) :- a(x), a(y), !match(\"(?<z>.*)\", y).", "named groups"),
-        (".violation v(at: span) \"m\"", "at a span"),
     ] {
         let e = parse(src).unwrap_err().to_string();
         assert!(e.contains("not lowered yet") && e.contains(what), "{src}: {e}");
@@ -203,11 +201,85 @@ fn directives_and_functions_lower() {
     let rule = |rel: &str| p.rules.iter().find(|r| r.head.rel == rel).map(ToString::to_string).unwrap_or_default();
     assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)");
     let bad = rule("BAD");
-    for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!inside_fdef($c, _)"] {
+    for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!rr_inside_fdef($c, _)"] {
         assert!(bad.contains(part), "{part} in {bad}");
     }
     assert!(!p.rules.iter().any(|r| r.head.rel == "drop"), "a fix is not run");
     assert!(rule("r").contains("= @cat($s, \"x\"), e($rr_t"), "{}", rule("r"));
+}
+
+/// The `.violation` lines the packs use: a constant code, `suppress` lines (settings of the findings layer), a span
+/// or place `at`; and an aggregate over an expression parses.
+#[test]
+fn violation_codes_suppressions_and_places_lower() {
+    let p = parse(concat!(
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl doc(d: number, p: symbol, m: symbol)\n",
+        ".decl text(n: node, s: symbol)\n.input node, doc, text\n",
+        ".violation font(at: node, why: symbol) code \"@next/next/no-page-custom-font\"\n",
+        "    \"{why} is discouraged.\"\n",
+        "    suppress eslint \"@next/next/no-page-custom-font\"\n",
+        "    suppress phpcs \"A.B\", \"A.B.C\",\n        \"A.D\"\n",
+        "font(n, w) :- text(n, w).\n",
+        ".violation SEC(at: span, c: symbol) code {c} in \"SEC\\d+\" \"{c}\"\n",
+        "SEC(n, c) :- text(n, c).\n",
+        ".violation missing(at: loc, why: symbol) \"{why}\"\n",
+        "missing(@place(p, 1), \"none\") :- doc(_, p, _).\n",
+        "missing(n, \"text\") :- text(n, _).\n",
+    ))
+    .unwrap();
+    let rules: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "violation").map(ToString::to_string).collect();
+    assert!(rules.iter().any(|r| r.contains("\"@next/next/no-page-custom-font\"") && r.contains("font($rr_v0, _)")), "{rules:?}");
+    assert!(rules.iter().any(|r| r.contains("SEC($rr_v0, $rr_v1)") && r.contains("docof($rr_v0, $rr_d)")), "{rules:?}");
+    assert!(rules.iter().any(|r| r.contains("rr_place_missing($rr_p, $rr_l, _)")), "{rules:?}");
+    assert!(p.rules.iter().any(|r| r.head.rel == "rr_place_missing" && r.head.args[1] == Term::Int(1)));
+    let settings: Vec<String> = p.settings.iter().map(|(k, t)| format!("{k} {t}")).collect();
+    assert!(settings.contains(&"suppress font eslint \"@next/next/no-page-custom-font\"".to_owned()), "{settings:?}");
+    assert!(settings.contains(&"suppress font phpcs \"A.B\", \"A.B.C\", \"A.D\"".to_owned()), "{settings:?}");
+    assert!(settings.contains(&"code_in SEC \"SEC\\\\d+\"".to_owned()), "{settings:?}");
+    // The printed program reads back as itself.
+    let printed = print(&p).unwrap();
+    assert_eq!(parse(&printed).unwrap().settings, p.settings, "{printed}");
+    let sum = "len(n, k) :- node(_, n, _, _, _), k = sum strlen(x) - strlen(y) : { text(n, x), text(n, y) }.";
+    let statements = syntax::Parser::new(sum).unwrap().statements().unwrap();
+    assert!(format!("{statements:?}").contains("Agg { op: \"sum\", over: Some(Bin { op: \"-\""), "{statements:?}");
+}
+
+/// Soufflé's built-ins run: `cat` of any arity, `max` and `min` of two, `to_number`, `%`, floats (`to_float`,
+/// decimals, their arithmetic and order), and an aggregate inside a term.
+#[test]
+fn souffle_builtins_run() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("builtins");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\ny = 2\n").unwrap();
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl s(t: symbol)
+s("12"). s("7"). s("x").
+.decl f(t: symbol)
+f("1.5"). f("-2.25"). f("1e3").
+.decl joined(t: symbol)
+joined(cat(a, "-", b, "-", a)) :- s(a), s(b), a != b, a != "x", b != "x".
+.decl num(t: symbol, n: number, r: number, big: number, small: number)
+num(t, n, n % 5, max(n, 10), min(n, 10)) :- s(t), n = to_number(t).
+.decl fl(t: symbol, back: symbol)
+fl(t, to_string(to_float(t) * 2.0)) :- f(t), to_float(t) > 0.0.
+.decl neg(t: symbol)
+neg(t) :- f(t), to_float(t) < 0.
+.decl assigns(d: number, k: number)
+assigns(d, 1 + count : { node(d, _, "assignment", _, _) }) :- doc(d, _, _).
+.output joined, num, fl, neg, assigns
+"#;
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    assert_eq!(read("joined"), "12-7-12\n7-12-7\n");
+    assert_eq!(read("num"), "12\t12\t2\t12\t10\n7\t7\t2\t10\t7\n");
+    assert_eq!(read("fl"), "1.5\t3\n1e3\t2000\n");
+    assert_eq!(read("neg"), "-2.25\n");
+    assert!(read("assigns").ends_with("\t3\n"), "{}", read("assigns"));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A program and what it was read from, compared field by field: the first difference.

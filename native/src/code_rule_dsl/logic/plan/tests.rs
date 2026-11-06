@@ -321,8 +321,8 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             let sets = lowered.transduce_nearest();
             assert!(!sets.is_empty(), "{name} reads nearest");
             assert!(!lowered.program.rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding).unwrap() {
-                if rel.starts_with("nearest_") {
+            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+                if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
                         db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
@@ -364,8 +364,8 @@ fn t_programs_run_natively_over_atoms_like_t() {
         let p = program(name);
         let mut lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
         let sets = lowered.transduce_nearest();
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu).unwrap() {
-            if rel.starts_with("nearest_") {
+        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+            if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
                     db.execute("INSERT OR REPLACE INTO s.stat_col VALUES (?1, ?2, ?3, ?4, ?5, ?6)", rusqlite::params![rel, col, rows, ndv, sq, sqd]).unwrap();
@@ -565,7 +565,8 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 }
 
 /// The tree axes (decision 0036): `inside(n, a, set)` holds every ancestor of `n` whose kind is in the set, not
-/// only the nearest; `has(a, n, set)` is the same pairs read from the ancestor; both negate.
+/// only the nearest; `has(a, n, set)` every descendant of `a` whose kind is in the set (`core.rr`: the set tests the
+/// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
     let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
@@ -578,6 +579,8 @@ fn rules_read_inside_and_has_as_tape_relations() {
 .input node, field, text
 .decl fn(kind: symbol)
 fn("function_definition").
+.decl call_k(kind: symbol)
+call_k("call").
 .decl callee(c: node, s: symbol)
 callee(c, s) :- node(_, c, "call", _, _), field(c, "function", x), text(x, s).
 .decl fname(f: node, s: symbol)
@@ -587,11 +590,16 @@ fname(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), tex
 call_in(c, f) :- callee(n, c), inside(n, a, fn), fname(a, f).
 // Functions that have a call to g somewhere below them.
 .decl calls_g(f: symbol)
-calls_g(f) :- fname(a, f), has(a, n, fn), callee(n, "g").
+calls_g(f) :- fname(a, f), has(a, n, call_k), callee(n, "g").
+// Functions with a function inside them, and without.
+.decl nests(f: symbol)
+nests(f) :- fname(a, f), has(a, _, fn).
+.decl flat(f: symbol)
+flat(f) :- fname(a, f), !has(a, _, fn).
 // Calls inside no function.
 .decl top(c: symbol)
 top(c) :- callee(n, c), !inside(n, _, fn).
-.output call_in, calls_g, top
+.output call_in, calls_g, top, nests, flat
 "#;
     let out = dir.join("out");
     super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -599,6 +607,8 @@ top(c) :- callee(n, c), !inside(n, _, fn).
     assert_eq!(read("call_in"), "f\touter\ng\tinner\ng\touter\n");
     assert_eq!(read("calls_g"), "inner\nouter\n");
     assert_eq!(read("top"), "h\n");
+    assert_eq!(read("nests"), "outer\n");
+    assert_eq!(read("flat"), "inner\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -858,8 +858,9 @@ impl Source for Nearest {
 }
 
 /// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms),
-/// made by the transducer's file-local FIX bound as `binding`: `nearest_<set>(n, a)`, the nearest ancestor in the
-/// set, or `inside_<set>(n, a)`, every one (decision 0036).
+/// made by the transducer's file-local FIX bound as `binding`: `rr_nearest_<set>(n, a)`, the nearest ancestor in the
+/// set, `rr_inside_<set>(n, a)`, every one (decision 0036), or `rr_has_<set>(n, a)`, n in the set and a each of its
+/// strict ancestors.
 pub(crate) fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,
@@ -885,12 +886,32 @@ pub(crate) fn with_nearest(
     drop(viewing);
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     let (parent, kind) = batch.trees();
-    let kinds: Vec<Vec<i64>> = sets.iter().map(|(_, kinds)| kinds.clone()).collect();
-    let found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?;
-    for ((name, _), ancestors) in sets.iter().zip(found) {
+    use crate::code_rule_dsl::logic::front::{AXIS, DESCENDANTS};
+    // `rr_has_<set>` needs no nearest ancestors: it is read off the parents.
+    let kinds: Vec<Vec<i64>> = sets.iter().filter(|(name, _)| !name.starts_with(DESCENDANTS)).map(|(_, kinds)| kinds.clone()).collect();
+    let mut found = file_local::nearest(&file_local::Trees { parent: &parent, kind: &kind }, &kinds, binding)?.into_iter();
+    for (name, members) in sets {
         let (mut node, mut ancestor) = (Vec::new(), Vec::new());
-        // `inside_<set>` (decision 0036): every ancestor in the set, the chain of nearest ones.
-        let all = name.starts_with(crate::code_rule_dsl::logic::front::AXIS);
+        if name.starts_with(DESCENDANTS) {
+            // `rr_has_<set>` (`core.rr`'s `has`): every node of a kind in the set, with each of its strict ancestors.
+            let members: std::collections::HashSet<i64> = members.iter().copied().collect();
+            for (row, k) in kind.iter().enumerate() {
+                if !members.contains(k) {
+                    continue;
+                }
+                let mut a = parent[row];
+                while a != file_local::NONE {
+                    node.push(row as u32);
+                    ancestor.push(a);
+                    a = parent[a as usize];
+                }
+            }
+            out.push((name.clone(), Arc::new(Nearest { batch: Arc::clone(&batch), node, ancestor, by_ancestor: Default::default() })));
+            continue;
+        }
+        let ancestors = found.next().expect("one nearest ancestor list per set");
+        // `rr_inside_<set>` (decision 0036): every ancestor in the set, the chain of nearest ones.
+        let all = name.starts_with(AXIS);
         for (row, &first) in ancestors.iter().enumerate() {
             let mut a = first;
             while a != file_local::NONE {
