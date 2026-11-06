@@ -1275,7 +1275,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" | "name" | "str" | "strprefix" | "node_text" => &[&["n"], &["s", "n"]],
+        "text" | "name" | "str" | "strprefix" | "node_text" | "comment" => &[&["n"], &["s", "n"]],
         "value" | "static_value" => &[&["n"], &["v", "n"]],
         "value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],

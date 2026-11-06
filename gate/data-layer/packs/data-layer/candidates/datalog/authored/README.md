@@ -80,6 +80,7 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl static_value(n: node, v: symbol)            // the same, names followed to their bindings (W's value.follow)
 .decl value_type_of(n: node, t: symbol)           // the type of n's value, as W's value.type names it
 .decl value_type(v: symbol, t: symbol)            // core.rr's: a value text of `value` and a type it has somewhere
+.decl comment(c: node, s: symbol)                 // a comment's text without its marker
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -115,3 +116,12 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   rows), and a container or bytes has no text. So W's `value: {type: str}` is `value_type_of(n, "str")`; its
   `regex` and `startsWith`, which read strings only, are `value(n, v), value_type_of(n, "str"), match(re, v)` (W's
   regex searches: `match("(?s:.*)(?:re)(?s:.*)", v)`); its `eq` on a string `value(n, "s"), value_type_of(n, "str")`.
+- `comment(c, s)` has every comment node of the tape (a comment kind not inside another: Python's `comment`,
+  Rust's `line_comment` and `block_comment`, what W's `kind: comment` matches), `s` its text with the marker (`#`,
+  `//`, `///`, `//!`, `/*` … `*/`, `/**` … `*/`, `--`) taken off and then the whitespace around it (`# noqa: E501`
+  is `noqa: E501`, `#!/usr/bin/env python` is `!/usr/bin/env python`, a lone `#` is the empty string). T's nodes
+  leave Python's comments out, so a Python comment is a span (`d << 32 | SPAN | 1 << 28 | k`, the document's k-th
+  comment), never in `node`, `child` or `field`, with rows in `line`, `end_line`, `col` (its real column),
+  `node_text` and `text` (its whole text, marker included, what W's `regex` on it reads) and in `docof` (it is a
+  document's like any span). A Rust comment is a node of `node`, which T keeps, and has its node rows. Tie a comment
+  to code by position: `line` and `col` against a node's, or its document's `tape_line`.

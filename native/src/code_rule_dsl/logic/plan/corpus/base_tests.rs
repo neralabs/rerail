@@ -449,3 +449,73 @@ vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
     assert_eq!(out[2], regex);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// W's findings of one `clause` (its `forbid`) in a `language` file.
+fn w_in(language: &str, forbid: Value, path: &str, source: &str) -> Vec<Value> {
+    let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation() })), &capabilities)
+        .unwrap_or_else(|e| panic!("{}", e.reason));
+    evaluate_file(&compiled, language, path, source)["violations"].as_array().unwrap().clone()
+}
+
+/// W's comment nodes of `kinds` in a `language` file, as `comments` rows (start line, end line, start column, text
+/// and the text without its marker), and the texts without their markers.
+fn w_comments(language: &str, kinds: &[&str], path: &str, source: &str) -> (String, BTreeSet<String>) {
+    let (mut rows, mut bodies) = (Vec::new(), BTreeSet::new());
+    for kind in kinds {
+        for v in w_in(language, json!({ "ast": { "language": language, "rule": { "kind": kind } } }), path, source) {
+            let span = &v["span"];
+            let at = |k: &str| span[k].as_u64().unwrap();
+            let text = &source[at("startByte") as usize..at("endByte") as usize];
+            let body = crate::code_rule_dsl::facts::vtab::syntax::comment_body(text);
+            rows.push(format!("{}\t{}\t{}\t{text}\t{body}", at("startLine") + 1, at("endLine") + 1, at("startColumn")));
+            bodies.insert(body.to_owned());
+        }
+    }
+    (csv(rows), bodies)
+}
+
+/// `comment(c, s)`: each of W's comment nodes once, `s` its text without the marker; a Python comment, which T's
+/// nodes leave out, is a span whose `line`, `end_line`, `col`, `node_text` and `text` are W's span of it, and a Rust
+/// comment, which T keeps, is its node.
+#[test]
+fn comments_are_ws_comment_nodes() {
+    let python = "#!/usr/bin/env python\r\n# noqa: E501\nimport os  # type: ignore\ndef f():\n    #\n    return 1  #   trailing   \nx = \"# not a comment\"  # é\n";
+    let dir = corpus("comments", &[("a.py", python)]);
+    let program = r#"
+.decl comment(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl node_text(n: node, s: symbol)
+.decl text(n: loc, s: symbol)
+.input comment, line, end_line, col, node_text, text
+.decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
+comments(l, e, c, t, s) :- comment(n, s), line(n, l), end_line(n, e), col(n, c), node_text(n, t), text(n, t).
+.output comments
+"#;
+    let got = run(&dir, program, &["comments"]);
+    let (want, bodies) = w_comments("python", &["comment"], "a.py", python);
+    assert_eq!(bodies, BTreeSet::from(["!/usr/bin/env python", "noqa: E501", "type: ignore", "", "trailing", "é"].map(str::to_owned)), "{want}");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+    let rust = "//! crate doc\n/// item doc\nfn f() { /* block */ let x = 1; // tail\n}\n/** outer block doc */\nfn g() {}\n";
+    let dir = corpus("rust-comments", &[("src/lib.rs", rust)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl comment(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl node_text(n: node, s: symbol)
+.input node, comment, line, end_line, col, node_text
+.decl comments(l: number, e: number, c: number, t: symbol, s: symbol)
+comments(l, e, c, t, s) :- comment(n, s), node(_, n, _, _, _), line(n, l), end_line(n, e), col(n, c), node_text(n, t).
+.output comments
+"#;
+    let got = run(&dir, program, &["comments"]);
+    let (want, bodies) = w_comments("rust", &["line_comment", "block_comment"], "src/lib.rs", rust);
+    assert_eq!(bodies, BTreeSet::from(["crate doc", "item doc", "block", "tail", "outer block doc"].map(str::to_owned)), "{want}");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+}

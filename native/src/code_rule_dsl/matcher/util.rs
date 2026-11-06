@@ -34,7 +34,7 @@ thread_local! {
 
 /// Whether a node kind is a comment in some grammar: tree-sitter's `comment`, Blade's
 /// `html_comment`, Rust's `line_comment` and `block_comment`.
-pub(super) fn is_comment_kind(kind: &str) -> bool {
+pub(in crate::code_rule_dsl) fn is_comment_kind(kind: &str) -> bool {
     matches!(
         kind,
         "comment" | "html_comment" | "line_comment" | "block_comment"

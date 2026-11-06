@@ -49,6 +49,22 @@ pub(crate) struct Document {
 /// The relations of W's values (`Extra`), for which a batch's documents keep their tapes (`Document::tape`).
 pub(crate) const VALUES: [&str; 4] = ["value", "static_value", "value_type_of", "value_type"];
 
+/// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
+/// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
+pub(crate) fn comment_body(text: &str) -> &str {
+    let body = if let Some(rest) = text.strip_prefix("/*") {
+        let rest = rest.strip_suffix("*/").unwrap_or(rest);
+        rest.strip_prefix(['*', '!']).unwrap_or(rest)
+    } else if let Some(rest) = text.strip_prefix("//") {
+        rest.strip_prefix(['/', '!']).unwrap_or(rest)
+    } else if let Some(rest) = text.strip_prefix("<!--") {
+        rest.strip_suffix("-->").unwrap_or(rest)
+    } else {
+        text.strip_prefix('#').or_else(|| text.strip_prefix("--")).unwrap_or(text)
+    };
+    body.trim()
+}
+
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
 /// the crate root under `crate` (`src/lib.rs` and `src/main.rs` are `crate`, `src/a/mod.rs` and
 /// `src/a.rs` are `crate.a`).
@@ -270,11 +286,14 @@ pub(crate) struct Batch {
 
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | SPAN | k`, past every node of its
 /// document, so no node view has a row of it (`Batch::node`). `k` is 0 for the whole source (`source`), `l` for
-/// physical line `l` (`src_line`), `LF | l` for `\n`-line `l` (`src_line_lf`) and `TAPE | l` for the tape's line `l`
-/// (`tape_line`).
+/// physical line `l` (`src_line`), `LF | l` for `\n`-line `l` (`src_line_lf`), `TAPE | l` for the tape's line `l`
+/// (`tape_line`) and `COMMENT | k` for the document's `k`-th comment from 1, in source order, of those no node is
+/// (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but keep Rust's `line_comment`, which is
+/// then the comment's id).
 pub(crate) const SPAN: u32 = 1 << 31;
 pub(crate) const LF: u32 = 1 << 30;
 pub(crate) const TAPE: u32 = 1 << 29;
+pub(crate) const COMMENT: u32 = 1 << 28;
 
 /// The physical lines of `source`, as byte ranges without their terminators: as Python's `str.splitlines()`
 /// splits (`splitlines`: `\r\n`, `\n`, `\r`, `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029; W's `lines`
@@ -358,7 +377,9 @@ enum View {
 /// followed through their file-local bindings (W's `value.follow`). `value_type_of(n, t)` names the type of W's value
 /// of `n` as W's `value.type` does (containers and bytes included, a JavaScript RegExp also `object`), and
 /// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
-/// (the str `"12"` and the int `12` both give `12`). Rows hold string indexes, as `Batch::build`'s do.
+/// (the str `"12"` and the int `12` both give `12`). `comment(c, s)` is each comment's text without its marker
+/// (`comment_body`); a comment no node is (`COMMENT`) has rows in `text` and `node_text` (its text, marker included),
+/// `line`, `end_line` and `col` as a node's. Rows hold string indexes, as `Batch::build`'s do.
 #[derive(Default)]
 struct Extra {
     source: bool,
@@ -375,6 +396,7 @@ struct Extra {
     static_value: bool,
     value_type_of: bool,
     value_type: bool,
+    comment: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
     src_lines_lf: Vec<[i64; 3]>,
@@ -388,6 +410,7 @@ struct Extra {
     static_values: Vec<[i64; 2]>,
     value_types_of: Vec<[i64; 2]>,
     value_types: BTreeSet<[i64; 2]>,
+    comments: Vec<[i64; 2]>,
 }
 
 impl Extra {
@@ -408,12 +431,13 @@ impl Extra {
             static_value: read("static_value"),
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
+            comment: read("comment"),
             ..Self::default()
         }
     }
 
     fn spans(&self) -> bool {
-        self.source || self.src_line || self.src_line_lf || self.tape_line
+        self.source || self.src_line || self.src_line_lf || self.tape_line || self.comment
     }
 
     /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
@@ -421,8 +445,9 @@ impl Extra {
         self.line && self.spans()
     }
 
-    /// A span's rows in `text` (into `text`), `line`, `end_line` and `col`.
-    fn span(&mut self, sp: i64, first: usize, last: usize, body: &str, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+    /// A span's rows in `text` (into `text`), `line`, `end_line` and `col` (its start's byte column).
+    #[allow(clippy::too_many_arguments)]
+    fn span(&mut self, sp: i64, first: usize, last: usize, col: usize, body: &str, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
         if self.text {
             text.push([sp, string(body) as i64]);
         }
@@ -433,12 +458,12 @@ impl Extra {
             self.end_lines.push([sp, last as i64]);
         }
         if self.col {
-            self.cols.push([sp, 0]);
+            self.cols.push([sp, col as i64]);
         }
     }
 
-    /// Document `p`'s rows (its `Document` `d`); `splitlines`: it is Python's.
-    fn document(&mut self, p: &Projected, d: &Document, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`); `splitlines`: it is Python's.
+    fn document(&mut self, p: &Projected, d: &Document, dialect: &Dialect, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
         if plain || self.static_value {
@@ -497,6 +522,32 @@ impl Extra {
         let key = i64::from(p.key);
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
+        if self.comment {
+            use crate::code_rule_dsl::matcher::is_comment_kind;
+            let mut k = 0;
+            for id in 0..f.len() as u32 {
+                // A comment kind's node, not inside another (Rust's doc comment parts are not comments).
+                if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+                    continue;
+                }
+                let whole = f.text(id);
+                let c = match p.local[id as usize] {
+                    NONE => {
+                        k += 1;
+                        let c = span(COMMENT | k);
+                        let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                        let col = start - f.lines.start(f.lines.line(start));
+                        self.span(c, f.start_line[id as usize] as usize, f.lines.line(end) + 1, col, whole, text, string);
+                        if self.node_text {
+                            self.node_texts.push([c, string(whole) as i64]);
+                        }
+                        c
+                    }
+                    local => p.global(local),
+                };
+                self.comments.push([c, string(comment_body(whole)) as i64]);
+            }
+        }
         if !(self.spans() || self.line_count) {
             return Ok(());
         }
@@ -508,27 +559,27 @@ impl Extra {
             let sp = span(0);
             self.sources.push([key, sp]);
             let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
-            self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), source, text, string);
+            self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, text, string);
         }
         if self.src_line {
             for (i, r) in physical.iter().enumerate() {
                 let (l, sp) = (i + 1, span(i as u32 + 1));
                 self.src_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, &source[r.clone()], text, string);
+                self.span(sp, l, l, 0, &source[r.clone()], text, string);
             }
         }
         if self.src_line_lf {
             for (i, r) in physical_lines(source, false).iter().enumerate() {
                 let (l, sp) = (i + 1, span(LF | (i as u32 + 1)));
                 self.src_lines_lf.push([key, l as i64, sp]);
-                self.span(sp, l, l, &source[r.clone()], text, string);
+                self.span(sp, l, l, 0, &source[r.clone()], text, string);
             }
         }
         if self.tape_line {
             for i in 0..f.lines.starts().len() {
                 let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
                 self.tape_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, &source[f.lines.start(i)..f.lines.end(i)], text, string);
+                self.span(sp, l, l, 0, &source[f.lines.start(i)..f.lines.end(i)], text, string);
             }
         }
         Ok(())
@@ -580,6 +631,9 @@ impl Extra {
         }
         if self.value_type {
             out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| vec![atom(v), atom(t)]))));
+        }
+        if self.comment {
+            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)]))));
         }
         out
     }
@@ -679,7 +733,7 @@ impl Batch {
                     _ => {}
                 }
             }
-            extra.document(&p, d, python == Some(tag), &mut text, &mut string)?;
+            extra.document(&p, d, dialect, python == Some(tag), &mut text, &mut string)?;
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
