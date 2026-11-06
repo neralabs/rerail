@@ -1,10 +1,11 @@
 //! core.rr's relations in a program: core.rr is every program's prelude (decision 0043), as the libraries read it.
 //!
-//! - **Declarations.** A relation the program reads and does not declare, which core.rr declares, has core.rr's
-//!   declaration and is an input (`declare_core`). A program's own declaration replaces core.rr's: an authored
-//!   overlay's `syntax_error(d: number)` (the tape has an error node: the converter's, what the corpus binds) stands
-//!   where core.rr's `syntax_error(d, l, msg)` (CPython's verdict, line and message) would.
-//!   `#include "core.rr"` reads nothing more (`rr::program`).
+//! - **Declarations.** `rr::program` reads core.rr before every file, so a file's program has all of core.rr's
+//!   declarations; it keeps those it reads, derives or outputs (`unused_core`). A relation read and not declared,
+//!   which core.rr declares, has core.rr's declaration and is an input (`declare_core`: a program's text parsed
+//!   alone, `rr::parse`). A program's own declaration replaces core.rr's: an authored overlay's
+//!   `syntax_error(d: number)` (the tape has an error node: the converter's, what the corpus binds) stands where
+//!   core.rr's `syntax_error(d, l, msg)` (CPython's verdict, line and message) would.
 //! - **Tree arithmetic.** The core relations that are questions about the tape, where the program does not derive
 //!   them, lower to the relations the engine has (`rewrite`):
 //!
@@ -119,9 +120,9 @@ fn substitute(t: &Term, map: &BTreeMap<String, Term>) -> Term {
 
 impl Lowerer {
     /// Whether `rel` is a core relation `rewrite` lowers in this program: one it does not derive (nor, for
-    /// `syntax_error`, declare: a program's `syntax_error(d: number)` is the tape's).
+    /// `syntax_error`, declare otherwise than core.rr does: a program's `syntax_error(d: number)` is the tape's).
     pub(super) fn rewritten(&self, rel: &str) -> bool {
-        REWRITTEN.contains(&rel) && !self.derived.contains(rel) && !(rel == "syntax_error" && self.prog.decls.contains_key(rel))
+        REWRITTEN.contains(&rel) && !self.derived.contains(rel) && !(rel == "syntax_error" && self.prog.decls.get(rel).is_some_and(|cols| *cols != DECLS[rel]))
     }
 
     /// `rel(args)` (negated: `neg`) as the literals the engine reads, where `rewritten(rel)`.
@@ -253,6 +254,25 @@ impl Lowerer {
             }
         }
         Ok(())
+    }
+
+    /// core.rr's relations the program neither reads, derives nor outputs, as core.rr declares them: the prelude's
+    /// declarations and inputs, which are no relations of this program.
+    pub(super) fn unused_core(&mut self) {
+        let prog = &self.prog;
+        let used: BTreeSet<String> = prog
+            .rules
+            .iter()
+            .flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)))
+            .map(|a| a.rel.clone())
+            .chain(prog.facts.keys().cloned())
+            .chain(prog.outputs.iter().cloned())
+            .collect();
+        let unused: Vec<String> = DECLS.iter().filter(|(rel, cols)| !used.contains(*rel) && prog.decls.get(*rel).is_none_or(|own| own == *cols)).map(|(rel, _)| rel.clone()).collect();
+        for rel in unused {
+            self.prog.decls.remove(&rel);
+            self.prog.inputs.retain(|i| *i != rel);
+        }
     }
 }
 

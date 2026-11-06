@@ -1320,10 +1320,11 @@ oracles and messages; the census counts 100.
 
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
-`.violation`, `~` patterns, `must`/`may`, `=> edits`, `ordered by`, `sum`/`mean`/`join`, `match`
-captures, arithmetic, built-in functions, negated disjunctions, `.input` with parameters and the
-relation-argument built-ins (`within_stop` …) are refused by name. Every hand-written data-layer
-rule stops at one of them. **Closure:** list step 30.
+Lowered now: `.violation` at a node, `match` captures, arithmetic, the string functions, `.input` with
+parameters, `within`, `within_stop`, `nearest` with a wildcard, and `unset`. Still refused by name:
+`.violation` at a span or a source location (file-length, test-budget, noqa-sec-ratchet), `~` patterns,
+`must`/`may`, `=> edits`, `ordered by`, `dfs_first`, `sum`/`mean`/`join`, an aggregate over a join, kind
+sets of functions (tsx) and negated disjunctions. **Closure:** list step 30.
 
 ## O74. Translated programs declare the base relations themselves
 
@@ -1336,3 +1337,55 @@ include it.
 T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
 reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
 `.rdl` left. **Closure:** step 31 (O19) removes them.
+
+## O76. Base relations and inputs the engine does not make yet
+
+Hand-written rules read relations the engine does not make yet: `parsed` and `string_annotation` (strings
+parsed as code) are read as empty, each named in the profile. Inputs read from a file in the repository
+(`.input r(IO=json, filename="…")`) are empty when the file is absent; when it exists the run stops,
+since reading it is not written. **Closure:** these relations are built natively and the files are read.
+
+## O77. Lowering shortcuts in `.rr`
+
+- A `match` capture is computed per row (`rx_group`, one cached regex per pattern), not as a chunk-at-a-time
+  text test.
+- `unset(x)` is the id -1; `text(x, "")` does not hold of it, as `core.rr` says it should.
+- `within(n, a)` where nothing else gives `n` lists the nodes below `a` by following `child` down from the
+  `a`'s the rule gives (named children only), not by reading the id range `a + 1 ..= a + size`; the native
+  path has no range read yet.
+- The cycle check lets a recursion through a shrinking function (`pkg_up`, `substr`) pass, since these make
+  no new values; this extends O11's bound.
+**Closure:** each is lowered as `core.rr` describes, or the description changed.
+
+## O78. Where the `.rr` library and rules differ from the recorded findings
+
+The library (`docs/rule-syntax/lib`) and the data-layer rules now live here; More-ergonomic-rule-syntax's pass is
+brought over as it lands. Hand-written rules on the recorded events: 97 of 98 exact (was 64). Fixed:
+- `resolve_export` kept no row for a name defined in its own module; `public_name` read `__all__ = []` as no
+  `__all__`; public-api roots are public names, module roots functions only.
+- `ref_site` counted a binding target as a read (`bind_only`).
+- An unimported `contextlib.suppress(…)`/`suppress(…)` and a bare `TYPE_CHECKING` match by text, as the linters do.
+- POSTOPDISPATCH001 asks for an `earlier` comparison; `cmp` reads `op_at` (O79).
+- public-api's class methods follow the linter's `public_methods_of_class`: the class, then its bases
+  breadth-first, the first public non-property method of each name (a property does not claim its name).
+  Written five levels deep, since recursion that makes new keys is refused (`UnboundedValueCycle`).
+- swallowed-exceptions follows the linter's scope depth: a raise in a def, class or lambda inside any handler does
+  not count, so a handler inside a def inside a handler is reported (the `nested-handler` probe).
+- missing-async-pairs compares the linter's `node.args.args`: ordinary parameters in order, not `/`-only,
+  `*`-only, `*args` or `**kwargs`.
+- The replay says when a hand-written rule does not lower (it fell back to the converted rule silently).
+
+Left: public-api's chainable-builder reads `text` of a return annotation. `core.rr` (and the rule-syntax pass's
+ALIGN-FINAL-SHAPE.md) give every node a `text`; the engine's is T's, identifiers only (1 event).
+**Closure:** `text` of every node in the engine, as a value and not only as a test (0042 covers tests).
+
+`logic::profile::tests::explain_shows_engines_plans_devices_and_decisions` failed once in the parallel `logic::` run
+at load 40-55 and passes alone: shared state between tests, not looked into.
+
+## O79. `op` of a comparison: closed
+
+`op` stays T's: one row per node, binary, boolean and unary operators, augmented assignments and `async`, so T's
+parity tests hold. A comparison has several operators in order (`a < b <= c`), so it has its own relation, the one
+`core.rr` already declares: `op_at(n, i, s)`, n's operator tokens (the `operator` and `operators` fields) from 0.
+The library's `cmp` reads `op_at(c, 0, o)`. Not yet: Rust's `&&` in a `let` chain (`complexity/rust.rr`), whose
+tokens have no field.

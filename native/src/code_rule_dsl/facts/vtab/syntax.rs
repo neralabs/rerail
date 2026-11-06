@@ -130,6 +130,8 @@ struct Dialect {
     catalog: KindCatalog,
     classes: Vec<Class>,
     operator: Option<u16>,
+    /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
+    operators: Option<u16>,
     canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
 }
@@ -147,7 +149,7 @@ impl Dialect {
         for (k, &c) in canonical.iter().enumerate() {
             codes.entry(c).or_default().push(k as u16);
         }
-        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), canonical, codes })
+        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes })
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     fn code(&self, f: &Facts, id: u32) -> u16 {
@@ -796,6 +798,7 @@ impl Batch {
         // Text relations (decision 0037): `name(n, s)` (an identifier's text, an attribute's dotted text),
         // `str(n, s)` (a string literal's content, between its quotes) and `strprefix(n, p)` (its prefix, lowercased).
         let (mut name, mut strs, mut strprefix) = (Vec::new(), Vec::new(), Vec::new());
+        // `value`, `op_at`, `path_part` and `file_name` are `Extra`'s and `tree`'s (W's values; built when read).
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
         let mut extra = Extra::new(reads, matches);

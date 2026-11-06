@@ -13,6 +13,8 @@ pub(super) enum Tok {
     Id(String),
     Str(String),
     Num(i64),
+    /// A decimal number, as written (`0.0`).
+    Float(String),
     /// A backtick literal's content: a code pattern or a fix template.
     Tick(String),
     /// `#include` and other `#` lines.
@@ -132,7 +134,16 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
             let n = bytes[pos..].iter().take_while(|&&b| b == b'`').count();
             let fence = &src[pos..pos + n];
             let body_start = pos + n;
-            let close = src[body_start..].find(fence).ok_or_else(|| fail(pos, "unterminated backtick literal"))? + body_start;
+            // Two backticks with no closing pair are the empty literal (`replace(c, ``)`).
+            let close = match src[body_start..].find(fence) {
+                Some(c) => c + body_start,
+                None if n == 2 => {
+                    out.push((Tok::Tick(String::new()), start, pos + 2));
+                    pos += 2;
+                    continue;
+                }
+                None => return Err(fail(pos, "unterminated backtick literal")),
+            };
             let mut body = &src[body_start..close];
             if n > 1 {
                 body = body.strip_prefix(' ').unwrap_or(body);
@@ -142,6 +153,13 @@ pub(super) fn tokens(src: &str) -> Result<Vec<Spanned>, Error> {
             pos = close + n;
         } else if c.is_ascii_digit() {
             let end = pos + bytes[pos..].iter().take_while(|b| b.is_ascii_digit()).count();
+            // `1.5`: a `.` between digits; `0.` ends a clause.
+            if bytes.get(end) == Some(&b'.') && bytes.get(end + 1).is_some_and(u8::is_ascii_digit) {
+                let end = end + 1 + bytes[end + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
+                out.push((Tok::Float(src[pos..end].to_owned()), start, end));
+                pos = end;
+                continue;
+            }
             let value = src[pos..end].parse().map_err(|_| fail(pos, "bad number"))?;
             out.push((Tok::Num(value), start, end));
             pos = end;
@@ -171,6 +189,8 @@ pub(super) enum Term {
     Var(String),
     Wild,
     Num(i64),
+    /// A decimal number, as written.
+    Float(String),
     Str(String),
     Tick(String),
     /// `@f(…)` (`functor`), or a Soufflé built-in function such as `cat(…)`.
@@ -208,8 +228,9 @@ pub(super) enum Item {
     Edit { name: String },
     Functor { name: String },
     Type { name: String },
-    /// `.input a, b`; `params`: the relations given with Soufflé's I/O parameters, `.input r(IO=json, …)`.
-    Io { output: bool, names: Vec<String>, params: Vec<String> },
+    /// `.input a, b`; `params`: the relations given with Soufflé's I/O parameters, `.input r(IO=json, …)`, and
+    /// the parameters' text.
+    Io { output: bool, names: Vec<String>, params: Vec<(String, String)> },
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
@@ -365,6 +386,7 @@ impl<'s> Parser<'s> {
             out.push(match self.peek() {
                 Tok::Id(s) => s.clone(),
                 Tok::Num(n) => n.to_string(),
+                Tok::Float(f) => f.clone(),
                 Tok::Str(s) => s.clone(),
                 Tok::P(p) => (*p).to_owned(),
                 other => format!("{other:?}"),
@@ -429,6 +451,7 @@ impl<'s> Parser<'s> {
                 let names = self.list(".", |p| {
                     let name = p.id()?;
                     if p.is_p("(") {
+                        let start = p.start();
                         p.i += 1;
                         let mut depth = 1;
                         while depth > 0 {
@@ -440,7 +463,8 @@ impl<'s> Parser<'s> {
                             }
                             p.i += 1;
                         }
-                        params.push(name.clone());
+                        let text = p.src[start + 1..p.toks[p.i - 1].1].to_owned();
+                        params.push((name.clone(), text));
                     }
                     Ok(name)
                 })?;
@@ -667,12 +691,23 @@ impl<'s> Parser<'s> {
     fn primary(&mut self) -> Result<Term, Error> {
         let t = match self.peek().clone() {
             Tok::Num(n) => Term::Num(n),
+            Tok::Float(f) => Term::Float(f),
             Tok::Str(s) => Term::Str(s),
             Tok::Tick(t) => Term::Tick(t),
             Tok::P("-") if matches!(self.peek_at(1), Tok::Num(_)) => {
                 self.i += 1;
                 let Tok::Num(n) = self.peek().clone() else { unreachable!() };
                 Term::Num(-n)
+            }
+            Tok::P("-") if matches!(self.peek_at(1), Tok::Float(_)) => {
+                self.i += 1;
+                let Tok::Float(f) = self.peek().clone() else { unreachable!() };
+                Term::Float(format!("-{f}"))
+            }
+            // `-x`, `-f(x)`: zero minus it.
+            Tok::P("-") => {
+                self.i += 1;
+                return Ok(Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.primary()?) });
             }
             Tok::P("(") => {
                 self.i += 1;
@@ -693,6 +728,17 @@ impl<'s> Parser<'s> {
             Tok::Id(s) if s == "count" && self.is_p_at(1, ":") => {
                 self.i += 1;
                 return self.aggregate(s);
+            }
+            // `sum strlen(v) : {…}`: an aggregate over a call, when a `:` follows it.
+            Tok::Id(s) if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join") && matches!(self.peek_at(1), Tok::Id(_)) && self.is_p_at(2, "(") => {
+                let save = self.i;
+                self.i += 1;
+                if self.primary().is_ok() && (self.is_p(":") || self.is_id("by") || self.is_id("sep")) {
+                    self.i = save + 1;
+                    return self.aggregate(s);
+                }
+                self.i = save;
+                Term::Var(s)
             }
             Tok::Id(s)
                 if matches!(s.as_str(), "min" | "max" | "sum" | "mean" | "join")
@@ -765,12 +811,38 @@ impl Term {
                 by.iter().for_each(|b| b.vars(out));
                 body.iter().for_each(|l| l.vars(out));
             }
-            Term::Wild | Term::Num(_) | Term::Str(_) | Term::Json(_) => {}
+            Term::Wild | Term::Num(_) | Term::Float(_) | Term::Str(_) | Term::Json(_) => {}
         }
     }
 }
 
 impl Lit {
+    /// The variables of this literal's own scope: not those only inside an aggregate's body, which are that
+    /// body's own unless they appear outside it too (Soufflé's scoping).
+    pub(super) fn scope_vars(&self, out: &mut Vec<String>) {
+        fn term(t: &Term, out: &mut Vec<String>) {
+            match t {
+                Term::Agg { .. } => {}
+                Term::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+                Term::Bin { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                Term::Named(_, t) => term(t, out),
+                t => t.vars(out),
+            }
+        }
+        match self {
+            Lit::Atom { args, .. } => args.iter().for_each(|a| term(a, out)),
+            Lit::Cmp { l, r, .. } => {
+                term(l, out);
+                term(r, out);
+            }
+            Lit::Group { alts, .. } => alts.iter().flatten().for_each(|l| l.scope_vars(out)),
+            l @ Lit::Pattern { .. } => l.vars(out),
+        }
+    }
+
     pub(super) fn vars(&self, out: &mut Vec<String>) {
         match self {
             Lit::Atom { args, .. } => args.iter().for_each(|a| a.vars(out)),

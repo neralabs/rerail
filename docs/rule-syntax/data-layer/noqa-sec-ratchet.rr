@@ -25,7 +25,7 @@
 // _internal and every top-level l####_* directory. The trailing `/` makes them directories: the top-level
 // l2093_debug_timing.py is a file and is not scanned.
 .decl prod(d: number)
-prod(d) :- doc(d, p, _), match("(?:impl|data_layer|_internal|l\d{4}_[^/]+)/.*", p),
+prod(d) :- doc(d, p, _), match("(?:impl|data_layer|_internal|l\\d{4}_[^/]+)/.*", p),
     count : { path_part(d, x), skip_dir(x) } = 0.
 // _should_skip_path's SKIP_DIRS, plus discovery's own (browser_build, .pytest_cache). `test` and `tests` are
 // .scope tests false; the walk skips .git, .venv, tmp and __pycache__ itself.
@@ -38,8 +38,8 @@ skip_dir("data_layer_testing"). skip_dir("browser_build"). skip_dir(".pytest_cac
 // `x = "SEC1"  # noqa: SEC2` counts two. Lines split as str.splitlines() does, as src_line does for Python.
 .decl hit(m: span, c: symbol)
 hit(m, c) :- prod(d), src_line(d, _, sp),
-    match(".*#\s*noqa:\s*(?:\w+,\s*)*SEC\d+.*", sp),
-    match_all("(?<m>SEC\d+)", sp), text(m, c).
+    match(".*#\\s*noqa:\\s*(?:\\w+,\\s*)*SEC\\d+.*", sp),
+    match_all("(?<m>SEC\\d+)", sp), text(m, c).
 
 // One finding per SEC code per line; its code is the SEC code, as in the plugin's StructuredViolation.
 .violation SEC(at: span, c: symbol) code {c} "{c} suppression annotation"

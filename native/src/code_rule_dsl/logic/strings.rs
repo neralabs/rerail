@@ -168,7 +168,17 @@ pub(in crate::code_rule_dsl) fn test(op: &str, s: &str, pattern: &str) -> bool {
     m.is_some_and(|m| m.is_match(s))
 }
 
-/// `str_test(op, s, patterns)`: 1 or 0; NULL gives NULL.
+static GROUP_REGEXES: LazyLock<Mutex<HashMap<String, Option<Arc<regex::Regex>>>>> = LazyLock::new(Default::default);
+
+/// The text of named group `name` of regex `re`'s match of `s` (`.rr`'s `match("(?<x>…)", s)`); none when `re`
+/// does not match, the group took no part, or `re` is invalid.
+pub(in crate::code_rule_dsl) fn group(s: &str, re: &str, name: &str) -> Option<String> {
+    let rx = GROUP_REGEXES.lock().unwrap().entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok().map(Arc::new)).clone()?;
+    rx.captures(s)?.name(name).map(|m| m.as_str().to_owned())
+}
+
+/// `str_test(op, s, patterns)`: 1 or 0; `rx_group(s, re, name)`: the named group's text (`group`); and `core.rr`'s
+/// text functors (`functions`). NULL gives NULL.
 pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     db.create_scalar_function(c"str_test", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
@@ -176,7 +186,14 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
             return Ok(None);
         };
         Ok(Some(i64::from(test(&op, &s, &p))))
-    })
+    })?;
+    db.create_scalar_function(c"rx_group", 3, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, |ctx| {
+        let (Some(s), Some(re), Some(name)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?, ctx.get::<Option<String>>(2)?) else {
+            return Ok(None);
+        };
+        Ok(group(&s, &re, &name))
+    })?;
+    functions::register(db)
 }
 
 /// A text test in a rule body: `@op($s, patterns) = 1` (holds) or `= 0` (fails).
@@ -365,6 +382,8 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
     }
     Ok(Vocabulary { tests, matches, markers, seen: Mutex::default(), tested: Mutex::default() })
 }
+
+pub(in crate::code_rule_dsl) mod functions;
 
 #[cfg(test)]
 mod tests;

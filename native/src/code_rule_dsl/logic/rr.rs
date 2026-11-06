@@ -8,8 +8,8 @@
 //! - `translate`: the earlier `.rdl` dialect's text in `.rr`, comments kept, for the move and for the converter.
 //!
 //! `#include "x.rr"` reads `docs/rule-syntax/lib/x.rr`, or else `x.rr` beside the including file; each file once.
-//! An included file's `.output`s are its own, not the program's: they are left out (`python/calls.rr`'s). core.rr is
-//! every program's prelude (`lower`'s module doc), so `#include "core.rr"` reads nothing more.
+//! A file read with `parse_file` has `core.rr` before it, included or not. An included file's `.output`s are its own,
+//! not the program's: they are left out (`python/calls.rr`'s).
 
 mod check;
 mod lower;
@@ -43,45 +43,121 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
 
 /// A program's `.rr` file, with what it includes.
 pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
-    let files = program(path)?;
-    lower::lower(files.into_iter().flat_map(|(_, statements)| statements).collect())
+    read_file(path).map(|(program, _)| program)
 }
 
-fn read(path: &Path) -> Result<Vec<syntax::Statement>, Error> {
-    let src = std::fs::read_to_string(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))
+/// A library file a program read: decision 0044's seeded fact `library_file(path, hash)`. `sha256`
+/// is of the file's bytes, or `None` where an `#include` looked and found no file (a file
+/// appearing there changes what the program reads).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct LibraryFile {
+    pub path: PathBuf,
+    pub sha256: Option<[u8; 32]>,
 }
 
-/// A file and everything it includes, each once, includes first: (path, statements without the includes), the
-/// included files' `.output`s left out.
-fn program(path: &Path) -> Result<Vec<(PathBuf, Vec<syntax::Statement>)>, Error> {
-    fn visit(path: &Path, out: &mut Vec<(PathBuf, Vec<syntax::Statement>)>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
+impl LibraryFile {
+    fn now(path: &Path) -> Self {
+        use sha2::{Digest as _, Sha256};
+        Self { path: path.to_owned(), sha256: std::fs::read(path).ok().map(|bytes| Sha256::digest(&bytes).into()) }
+    }
+
+    /// The seeded fact, for a file that exists.
+    // Read by the runner's record when it seeds the store (0044 step 2).
+    #[allow(dead_code)]
+    pub(in crate::code_rule_dsl) fn fact(&self) -> Option<String> {
+        let hash = self.sha256?;
+        let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        Some(format!("library_file({}, \"sha256:{hex}\").", quote(&self.path.to_string_lossy())))
+    }
+}
+
+/// The program of a `.rr` file and the library files it read or probed, in reading order (core.rr, then
+/// each file before what it includes).
+///
+/// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
+/// reused while every file it read hashes the same, so only an edit to a file it read (or a
+/// file appearing where an include looked) reads and lowers it again.
+pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
+    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let cache = PROGRAMS.get_or_init(Default::default);
+    if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
+        && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
+    {
+        crate::code_rule_dsl::prof::count("rr.program_reused", 1);
+        return Ok((program.clone(), files.clone()));
+    }
+    let (statements, files) = program(path)?;
+    let program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    Ok((program, files))
+}
+
+fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
+    use sha2::{Digest as _, Sha256};
+    let bytes = std::fs::read(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let file = LibraryFile { path: path.to_owned(), sha256: Some(Sha256::digest(&bytes).into()) };
+    let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let statements = syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    Ok((statements, file))
+}
+
+type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
+
+/// A file and everything it includes, each once, includes first: (path, statements without the
+/// includes, the included files' `.output`s left out); and every library file read or probed, in reading order.
+fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>, included: bool) -> Result<(), Error> {
         let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
         if seen.contains(&path) {
             return Ok(());
         }
         seen.push(path.clone());
-        let (includes, mut rest): (Vec<_>, Vec<_>) = read(&path)?.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+        let (statements, file) = read(&path)?;
+        read_files.push(file);
+        let (includes, mut rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
         if included {
             rest.retain(|(item, _)| !matches!(item, syntax::Item::Io { output: true, .. }));
         }
         for (item, line) in includes {
             let syntax::Item::Include(name) = item else { unreachable!("an include") };
-            if name == "core.rr" {
-                continue;
-            }
             let in_library = library().join(&name);
             let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
-            let found = if in_library.exists() { in_library } else { beside };
+            let found = if in_library.exists() {
+                in_library
+            } else {
+                read_files.push(LibraryFile { path: in_library, sha256: None });
+                beside
+            };
             if !found.exists() {
                 return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
             }
-            visit(&found, out, seen, true)?;
+            visit(&found, out, read_files, seen, true)?;
         }
         out.push((path, rest));
         Ok(())
     }
-    let mut out = Vec::new();
-    visit(path, &mut out, &mut Vec::new(), false)?;
-    Ok(out)
+    let (mut out, mut read_files) = (Vec::new(), Vec::new());
+    // `core.rr` is every program's prelude (the base relations and built-ins), included or not.
+    visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new(), false)?;
+    let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
+    visit(path, &mut out, &mut read_files, &mut seen, false)?;
+    // A relation the program declares itself is its own (an authored overlay's `syntax_error(d: number)`, the
+    // converter's option facts): core.rr's `.input` of it goes with core.rr's declaration, which it replaces.
+    let own: std::collections::BTreeSet<String> = out[1..]
+        .iter()
+        .flat_map(|(_, statements)| statements)
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Decl { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    for (item, _) in &mut out[0].1 {
+        if let syntax::Item::Io { output: false, names, .. } = item {
+            names.retain(|n| !own.contains(n));
+        }
+    }
+    Ok((out, read_files))
 }

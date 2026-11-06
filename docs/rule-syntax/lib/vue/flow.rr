@@ -1,0 +1,98 @@
+// vue/flow: whether JavaScript code can run to its end, for the rules that ask whether a function returns on every
+// path. A syntactic approximation of ESLint's code path analysis: statements that always leave their function by
+// return or throw, branches that all do, loops that never end.
+//
+// Interface:
+//   vexits(s)          statement s always ends in a return or a throw (or loops forever); the code after it is dead
+//   vfalls_off(f)      function f with a block body can reach the end of its body
+//   vown_return(f, r)  r is a return statement of f's own code;  vlast_return(f, r): the last one in source order
+//
+//   function a(x) { if (x) { return 1 } else { throw e } }      vexits(the if): a cannot fall off its end
+//   function b(x) { if (x) return 1 }                            vfalls_off(b)
+#include "tsx/modules.rr"
+//   function_kind(k)
+
+// vcompletes(s): s can run to its end (ESLint: its final segment is reachable). It is the positive relation the
+// recursion runs on; vexits is its complement.
+.decl vexits(s: node)
+vexits(s) :- vstatement(s), !vcompletes(s).
+.decl vstatement(s: node)
+vstatement(s) :- kind(s, k), k != "comment", child(p, s, _), kind(p, pk), vstmt_parent(pk).
+.decl vstmt_parent(k: symbol)
+vstmt_parent("statement_block"). vstmt_parent("program"). vstmt_parent("switch_case"). vstmt_parent("switch_default").
+vstmt_parent("if_statement"). vstmt_parent("else_clause"). vstmt_parent("labeled_statement").
+vstmt_parent("for_statement"). vstmt_parent("for_in_statement"). vstmt_parent("while_statement").
+vstmt_parent("do_statement").
+.decl vcompletes(s: node)
+// Plain statements complete; a return or throw never does.
+vcompletes(s) :- vstatement(s), kind(s, k), vplain_stmt(k).
+// A block completes when every statement does: walk its statements from the first.
+vcompletes(s) :- kind(s, "statement_block"), !vhas_stmt(s).
+vcompletes(s) :- kind(s, "statement_block"), vfirst_stmt(s, c), vcompletes_from(c).
+vcompletes(s) :- kind(s, "if_statement"), field(s, "consequence", a), vcompletes(a).
+vcompletes(s) :- kind(s, "if_statement"), !field(s, "alternative", _).
+vcompletes(s) :- kind(s, "if_statement"), field(s, "alternative", e), child(e, b, 0), vcompletes(b).
+vcompletes(s) :- kind(s, "labeled_statement"), field(s, "body", b), (vcompletes(b) ; vbreaks_out(b, s)).
+// try: the block or a handler completes, and the finally block (if any) does.
+vcompletes(s) :- kind(s, "try_statement"), vtry_part_completes(s), !field(s, "finalizer", _).
+vcompletes(s) :- kind(s, "try_statement"), vtry_part_completes(s), field(s, "finalizer", f), child(f, b, _),
+    kind(b, "statement_block"), vcompletes(b).
+// Loops complete, except for (;;) and while (true) without a break of their own; do-while as its body.
+vcompletes(s) :- kind(s, "for_in_statement").
+vcompletes(s) :- kind(s, "for_statement"), field(s, "condition", c), !kind(c, "empty_statement").
+vcompletes(s) :- kind(s, "for_statement"), vbreaks_out(s, s).
+vcompletes(s) :- kind(s, "while_statement"), field(s, "condition", c), !vtrue_cond(c).
+vcompletes(s) :- kind(s, "while_statement"), vbreaks_out(s, s).
+vcompletes(s) :- kind(s, "do_statement"), field(s, "body", b), (vcompletes(b) ; vbreaks_out(b, s)).
+// switch: no default, a break of its own, or the last case's statements complete (the cases above fall into it).
+vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), !vhas_default(b).
+vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), vbreaks_out(b, s).
+vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), vlast_case(b, l), !field(l, "body", _).
+vcompletes(s) :- kind(s, "switch_statement"), field(s, "body", b), vlast_case(b, l), vfirst_stmt(l, c),
+    vcompletes_from(c).
+.decl vplain_stmt(k: symbol)
+vplain_stmt(k) :- vstatement(s), kind(s, k), k != "return_statement", k != "throw_statement", !vcompound(k).
+.decl vcompound(k: symbol)
+vcompound("statement_block"). vcompound("if_statement"). vcompound("labeled_statement"). vcompound("try_statement").
+vcompound("for_statement"). vcompound("for_in_statement"). vcompound("while_statement"). vcompound("do_statement").
+vcompound("switch_statement").
+// vcompletes_from(c): statement c and every statement after it complete.
+.decl vcompletes_from(c: node)
+vcompletes_from(c) :- vcompletes(c), !vnext_stmt(c, _).
+vcompletes_from(c) :- vcompletes(c), vnext_stmt(c, d), vcompletes_from(d).
+.decl vnext_stmt(c: node, d: node)
+vnext_stmt(c, d) :- next_sibling(c, d), vstatement(c), vstatement(d).
+.decl vfirst_stmt(b: node, c: node)
+vfirst_stmt(b, c) :- vstatement(c), child(b, c, i), count : { child(b, x, j), j < i, vstatement(x) } = 0.
+.decl vhas_stmt(b: node)
+vhas_stmt(b) :- child(b, c, _), vstatement(c).
+.decl vtry_part_completes(s: node)
+vtry_part_completes(s) :- kind(s, "try_statement"), field(s, "body", b), vcompletes(b).
+vtry_part_completes(s) :- kind(s, "try_statement"), field(s, "handler", h), field(h, "body", b), vcompletes(b).
+.decl vhas_default(b: node)
+vhas_default(b) :- child(b, d, _), kind(d, "switch_default").
+.decl vtrue_cond(c: node)
+vtrue_cond(c) :- kind(c, "true").
+vtrue_cond(c) :- kind(c, "parenthesized_expression"), child(c, x, 0), vtrue_cond(x).
+.decl vlast_case(b: node, l: node)
+vlast_case(b, l) :- kind(b, "switch_body"), child(b, l, i), count : { child(b, _, j), j > i } = 0.
+// vbreaks_out(b, s): a break in b leaves s: an unlabelled break whose nearest breakable is s, or `break L` for
+// s's label.
+.decl vbreaks_out(b: node, s: node)
+vbreaks_out(b, s) :- has(b, k, "break_statement"), !field(k, "label", _), nearest(k, s, vbreakable), vstmt(s).
+vbreaks_out(b, s) :- has(b, k, "break_statement"), field(k, "label", l), text(l, x), kind(s, "labeled_statement"),
+    field(s, "label", m), text(m, x), within(b, s).
+.decl vstmt(s: node)
+vstmt(s) :- kind(s, k), vbreakable(k).
+.decl vbreakable(k: symbol)
+vbreakable("for_statement"). vbreakable("for_in_statement"). vbreakable("while_statement").
+vbreakable("do_statement"). vbreakable("switch_statement").
+
+.decl vfn_own(k: symbol)
+vfn_own(k) :- function_kind(k).
+.decl vfalls_off(f: node)
+vfalls_off(f) :- kind(f, k), function_kind(k), field(f, "body", b), kind(b, "statement_block"), vcompletes(b).
+.decl vown_return(f: node, r: node)
+vown_return(f, r) :- kind(f, k), function_kind(k), has(f, r, "return_statement"), nearest(r, f, vfn_own).
+.decl vlast_return(f: node, r: node)
+vlast_return(f, r) :- vown_return(f, r), visit_index(r, i), i = max j : { vown_return(f, q), visit_index(q, j) }.

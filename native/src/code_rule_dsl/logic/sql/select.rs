@@ -106,8 +106,10 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         // CPython's verdict (`facts::vtab::syntax::cpython`; core.rr's `syntax_error(d, l, msg)`).
         "cpython_syntax_error" => &["d", "l", "msg"],
         "intval" => &["n", "v"],
+        "op_at" => &["n", "i", "s"],
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],
+        "path_part" | "file_name" => &["d", "s"],
         "syntax_error" => &["d"],
         // core.rr's source text and node columns beyond T's (`facts::vtab::syntax::Extra`).
         "source" => &["d", "sp"],
@@ -117,11 +119,9 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "col" => &["n", "c"],
         // core.rr's tree and document relations (`facts::vtab::syntax::tree`; `docof`, lowered to `rr_docof`, `Extra`'s).
         "rr_docof" => &["n", "d"],
-        "op_at" => &["n", "i", "s"],
         "prev_token" => &["n", "s"],
         "token" => &["p", "i", "s", "start", "end_"],
         "visit_index" => &["n", "i"],
-        "path_part" | "file_name" => &["d", "s"],
         // W's Python reference graph (`logic::plan::corpus::references`).
         "reference_edge" => &["src", "dst", "via"],
         "reference_open" => &["n"],

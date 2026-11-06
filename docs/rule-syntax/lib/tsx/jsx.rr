@@ -15,8 +15,9 @@
 // through components. Within a file, render_up climbs the tree; across files, a tag's symbol (sym_of) is
 // joined with component(q, f) to continue inside the component's own file.
 //
-// Builds on tsx/names for sym_of and ref_site, and on core for the tape and nearest/within.
-#include "tsx/names.rr"
+// Builds on tsx/names for sym_of and ref_site, tsx/modules for function_kind, and on core for the tape and
+// nearest/within.
+#include "tsx/modules.rr"
 
 // The tag name of an element. Fragments (<>…</>) have none.
 // <A x={1}>…</A> is a jsx_element whose open_tag holds the name; <A/> is a jsx_self_closing_element with the name
@@ -55,7 +56,7 @@ component(@qname(m, x), f) :- kind(v, "variable_declarator"), field(v, "name", n
 .decl component_fn(e: node, f: node)
 component_fn(e, e) :- kind(e, k), (k = "arrow_function" ; k = "function_expression").
 component_fn(e, f) :- kind(e, "call_expression"), field(e, "function", c), sym_of(c, q),
-    (q = "react#memo" ; q = "react#forwardRef"), field(e, "arguments", as), child(as, a, 0), component_fn(a, f).
+    (q = "react#memo" ; q = "react#forwardRef"), field(e, "arguments", args), child(args, a, 0), component_fn(a, f).
 
 // ---- render position ---------------------------------------------------------------------------------------------
 // Forms a rendered child passes through on its way up: {…}, && and ?:, parentheses, fragments, and callbacks in child
@@ -69,8 +70,8 @@ component_fn(e, f) :- kind(e, "call_expression"), field(e, "function", c), sym_o
 // <ul>{xs.map(x => <li/>)}</ul>. Its result is rendered where the call is, so it does not end the climb.
 // A callback inside an attribute (onClick={() => <X/>}, render props) is not rendered in child position.
 .decl child_callback(f: node)
-child_callback(f) :- kind(f, "arrow_function"), nearest(f, c, "call_expression"), field(c, "arguments", as),
-    child(as, f, _), nearest(c, j, "jsx_expression"), !nearest(c, _, "jsx_attribute").
+child_callback(f) :- kind(f, "arrow_function"), nearest(f, c, "call_expression"), field(c, "arguments", args),
+    child(args, f, _), nearest(c, j, "jsx_expression"), !nearest(c, _, "jsx_attribute").
 // render_stop(n): nodes that end the upward climb.
 .decl render_stop(n: node)
 // A real element: what is below it renders under it. Fragments are skipped, so their children belong to the
@@ -102,10 +103,9 @@ render_attr(c, e, @dot(q, x)) :- jsx_el(c), nearest(c, at, "jsx_attribute"), chi
 // down with render_up.
 // returned(f, x): x is an expression function f returns. `return <A/>` or `return (cond ? <A/> : <B/>)`.
 .decl returned(f: node, x: node)
-// The returned expression of a return statement, attributed to the function the statement is in.
-.decl fn_kind(kind: symbol)
-fn_kind("function_declaration"). fn_kind("function_expression"). fn_kind("arrow_function").
-returned(f, x) :- kind(r, "return_statement"), nearest(r, f, fn_kind), child(r, x, 0).
+// The returned expression of a return statement, attributed to the function the statement is in: the nearest
+// function of any kind, so a `return` in a method or generator nested in f is not f's.
+returned(f, x) :- kind(r, "return_statement"), nearest(r, f, function_kind), child(r, x, _), !kind(x, "comment").
 // An expression-bodied arrow returns its body: `() => <A/>`.
 returned(f, x) :- kind(f, "arrow_function"), field(f, "body", x), !kind(x, "statement_block").
 .decl render_root(f: node, e: node)
@@ -136,7 +136,7 @@ children_slot(f, s) :- kind(s, "jsx_expression"), child(s, m, 0), kind(m, "membe
 // content(e, c): c is real content of element e: a child element or expression, or non-blank text.
 .decl content(e: node, c: node)
 content(e, c) :- kind(e, "jsx_element"), child(e, c, _), !field(e, "open_tag", c), !field(e, "close_tag", c),
-    count : { kind(c, "jsx_text"), match("\s*", c) } = 0.
+    count : { kind(c, "jsx_text"), match("\\s*", c) } = 0.
 
 // unwrap(e): replace element e by what it contains. `<A><B/></A>` becomes `<B/>`. With several children the tags
 // become a fragment, `<A><B/><C/></A>` → `<><B/><C/></>`, because a single expression is still needed where e was.

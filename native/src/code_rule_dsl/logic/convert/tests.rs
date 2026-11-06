@@ -354,6 +354,29 @@ fn rule_files() -> Vec<PathBuf> {
     by_id.into_values().collect()
 }
 
+/// A check's hand-written rule (`docs/rule-syntax/data-layer/<check>.rr`, includes resolved), as `.rr` text, where
+/// it lowers. `RERAIL_REPLAY_CONVERTED` replays the converted JSON instead.
+fn hand_written(check: &str) -> Option<String> {
+    if std::env::var_os("RERAIL_REPLAY_CONVERTED").is_some() {
+        return None;
+    }
+    let path = crate::code_rule_dsl::logic::rr::library().join(format!("../data-layer/{}.rr", check.replace('_', "-")));
+    // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
+    let program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{check}: the hand-written rule does not lower: {e}");
+            return None;
+        }
+    };
+    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
+    // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
+    if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {
+        std::fs::write(PathBuf::from(dir).join(format!("{check}.rr")), &text).unwrap();
+    }
+    Some(text)
+}
+
 /// The rule file of a recorded check (`async_sync_boundary` → `data-layer-async-sync-boundary`).
 fn rule_file(check: &str) -> Option<PathBuf> {
     let name = format!("data-layer-{}", check.replace('_', "-"));
@@ -547,6 +570,10 @@ struct Event {
     keys_only: bool,
     /// The rule as the oracle ran it, or why it cannot be configured so.
     adjust: Result<Adjust, String>,
+    /// Whether the oracle ran the linter unconfigured (a `source_gate` aside: a prefilter of the JSON rules, which
+    /// changes no finding), its own path skips on and only the keys compared: what a hand-written rule, which has
+    /// no options, replays.
+    plain: bool,
 }
 
 fn port() -> PathBuf {
@@ -593,7 +620,10 @@ fn recorded_events() -> Vec<Event> {
                 .map(|f| (f["path"].as_str().unwrap().to_owned(), f["line"].as_u64().unwrap_or_default(), f["code"].as_str().map(str::to_owned)))
                 .collect());
             let adjust = recorded_adjust(event, &check, entry, event["production_scope"] == true);
-            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust });
+            let config = event.get("oracle_config").filter(|c| !c.is_null());
+            let gate_only = config.is_none_or(|c| c.as_object().is_some_and(|c| c.keys().all(|k| k == "source_gate")));
+            let plain = gate_only && !truthy("compare_message") && !truthy("compare_fields") && event["path_skip_override"] != true;
+            out.push(Event { group, test: event["test"].as_str().unwrap_or_default().to_owned(), check, files, want, keys_only, adjust, plain });
         }
     }
     out
@@ -702,7 +732,7 @@ fn api_events() -> Vec<Event> {
                 None => (Err("a file whose source is not recorded".into()), Vec::new()),
             };
             let adjust = Ok(api_adjust(&check, &entry, &record["parameters"], record["production"] == true));
-            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust });
+            out.push(Event { group: "batches 9-10 API records", check, test, files, want, keys_only: true, adjust, plain: false });
         }
     }
     out
@@ -829,13 +859,15 @@ impl Row {
 }
 
 /// The converted rules, with their authored files, on every event of the oracle (`events`), each configured as its
-/// oracle ran (`recorded_adjust`, `api_adjust`). Per group and check: the events, those it can replay, those whose
-/// kept clauses are all converted or authored (run), how many give the oracle's findings exactly as a set of (path,
-/// line, code) keys (J1: a key found twice is one; the events where that collapsed some are counted), and why the
-/// rest were not run; then per check the clauses still gapped, the first misses, and the
-/// mismatches of configured events with authored clauses. `RERAIL_REPLAY_CHECK` (check names) and
-/// `RERAIL_REPLAY_RULE` (rule ids), comma-separated, select; `RERAIL_REPLAY_MISSES` is how many misses are printed
-/// (40).
+/// oracle ran (`recorded_adjust`, `api_adjust`); a check with a hand-written rule that lowers (`hand_written`) runs
+/// that instead, on its unconfigured events (`Event::plain`), unless `RERAIL_REPLAY_CONVERTED` is set. Per group and
+/// check: the events, those it can replay, those whose kept clauses are all converted or authored (run), how many
+/// give the oracle's findings exactly as a set of (path, line, code) keys (J1: a key found twice is one; the events
+/// where that collapsed some are counted), and why the rest were not run; then per check the clauses still gapped,
+/// the first misses, and the mismatches of configured events with authored clauses. `RERAIL_REPLAY_CHECK` (check
+/// names) and `RERAIL_REPLAY_RULE` (rule ids), comma-separated, select; `RERAIL_REPLAY_EVENT` keeps the events whose
+/// name contains it; `RERAIL_REPLAY_MISSES` is how many misses are printed (40); `RERAIL_REPLAY_SHOW` and
+/// `RERAIL_REPLAY_EXTRA` print relations' rows and add rules (below).
 #[test]
 #[ignore = "runs every recorded event through the corpus runner"]
 fn converted_rules_give_the_recorded_findings() {
@@ -855,6 +887,10 @@ fn converted_rules_give_the_recorded_findings() {
         if !selected(&event.check) {
             continue;
         }
+        // `RERAIL_REPLAY_EVENT=<text>`: only the events whose name contains it.
+        if std::env::var("RERAIL_REPLAY_EVENT").is_ok_and(|e| !event.test.contains(&e)) {
+            continue;
+        }
         let row = per_check.entry((event.group, event.check.clone())).or_default();
         row.events += 1;
         let mut skip = |reason: &str| *row.not_run.entry(reason.chars().take(120).collect()).or_default() += 1;
@@ -869,41 +905,65 @@ fn converted_rules_give_the_recorded_findings() {
                 continue;
             }
         };
-        let adjust = match &event.adjust {
-            Ok(adjust) => adjust,
-            Err(reason) => {
-                skip(reason);
+        // A hand-written `.rr` that lowers wins over the converted JSON. It has no options, so it replays the events
+        // the oracle ran unconfigured (`Event::plain`).
+        let written = hand_written(&event.check);
+        let (program, config_authored) = match written {
+            Some(_) if !event.plain => {
+                skip("configured (the hand-written rule has no options)");
                 continue;
             }
-        };
-        let c = match convert(&rule, adjust) {
-            Ok(c) => c,
-            Err(Failure::Config(reason)) => {
-                skip(&reason);
-                continue;
-            }
-            Err(e @ Failure::Authored(_)) => {
+            Some(program) => {
                 row.replayable += 1;
-                row.errors += 1;
-                misses.push(format!("{} {}: error {e}", event.check, event.test));
-                continue;
+                (program, false)
+            }
+            None => {
+                let adjust = match &event.adjust {
+                    Ok(adjust) => adjust,
+                    Err(reason) => {
+                        skip(reason);
+                        continue;
+                    }
+                };
+                let c = match convert(&rule, adjust) {
+                    Ok(c) => c,
+                    Err(Failure::Config(reason)) => {
+                        skip(&reason);
+                        continue;
+                    }
+                    Err(e @ Failure::Authored(_)) => {
+                        row.replayable += 1;
+                        row.errors += 1;
+                        misses.push(format!("{} {}: error {e}", event.check, event.test));
+                        continue;
+                    }
+                };
+                row.replayable += 1;
+                let gaps: Vec<&String> = c.clauses.iter().filter(|(_, r)| r.is_err()).map(|(id, _)| id).collect();
+                if !gaps.is_empty() {
+                    *row.not_run.entry("clauses gapped".to_owned()).or_default() += 1;
+                    gapped.entry(event.check.clone()).or_default().extend(gaps.into_iter().cloned());
+                    continue;
+                }
+                let config_authored = c.configured && c.clauses.iter().any(|(_, r)| *r == Ok(Origin::Authored));
+                (c.program, config_authored)
             }
         };
-        row.replayable += 1;
-        let gaps: Vec<&String> = c.clauses.iter().filter(|(_, r)| r.is_err()).map(|(id, _)| id).collect();
-        if !gaps.is_empty() {
-            *row.not_run.entry("clauses gapped".to_owned()).or_default() += 1;
-            gapped.entry(event.check.clone()).or_default().extend(gaps.into_iter().cloned());
-            continue;
-        }
         row.run += 1;
-        let config_authored = c.configured && c.clauses.iter().any(|(_, r)| *r == Ok(Origin::Authored));
         if config_authored {
             row.config_authored += 1;
         }
         let dir = root.join(format!("e{k}"));
         write_files(&dir, event.files.iter().map(|(p, s)| (p.as_str(), s.as_str())));
-        let got = match finding_keys(&c.program, &dir) {
+        // `RERAIL_REPLAY_SHOW=a,b`: relations a and b are outputs too, and their rows are printed.
+        let show: Vec<String> = std::env::var("RERAIL_REPLAY_SHOW").map(|s| s.split(',').map(str::to_owned).collect()).unwrap_or_default();
+        let program = show.iter().fold(program, |p, r| format!("{p}\n.output {r}\n"));
+        // `RERAIL_REPLAY_EXTRA=<file>`: `.rr` rules added to every replayed program, to try a change to a rule.
+        let program = match std::env::var("RERAIL_REPLAY_EXTRA") {
+            Ok(f) => format!("{program}\n{}\n", std::fs::read_to_string(f).unwrap()),
+            Err(_) => program,
+        };
+        let got = match finding_keys(&program, &dir) {
             Ok(got) => got,
             Err(e) => {
                 row.errors += 1;
@@ -911,6 +971,10 @@ fn converted_rules_give_the_recorded_findings() {
                 continue;
             }
         };
+        for r in &show {
+            let rows = std::fs::read_to_string(dir.join(".out").join(format!("{r}.csv"))).unwrap_or_else(|_| "(no file)".to_owned());
+            eprintln!("{} {r}:\n{rows}", event.test);
+        }
         // Where the oracle records no code, (path, line) only.
         let codeless = want.iter().any(|(_, _, code)| code.is_none());
         let key = |path: &str, line: u64, code: Option<&str>| match code {

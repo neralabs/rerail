@@ -205,7 +205,9 @@ pub(in crate::code_rule_dsl) fn print(prog: &Program) -> Result<String, Error> {
         }
         out.push('\n');
     }
-    let inputs: Vec<String> = prog.inputs.iter().filter(|i| !axis(i)).map(|i| relation(i)).collect();
+    // An input with parameters is printed with them, as a setting (`.input r(IO=…)`).
+    let with_params: BTreeSet<&str> = prog.settings.iter().filter(|(k, _)| k == "input").filter_map(|(_, t)| t.split('(').next()).collect();
+    let inputs: Vec<String> = prog.inputs.iter().filter(|i| !axis(i) && !with_params.contains(i.as_str())).map(|i| relation(i)).collect();
     if !inputs.is_empty() {
         writeln!(out, ".input {}", inputs.join(", ")).expect("a string");
     }

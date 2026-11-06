@@ -12,17 +12,20 @@
 //   missing_pair        one side exists and does I/O (an I/O method call, or a conn/session/txn… parameter);
 //                       the other side does not exist
 //   signature_mismatch  both sides exist and their parameters, self aside, differ
-// Improves on the Python linter:
-//   a counterpart inherited from a base class counts, across files (the Python linter looks only in the same class body);
-//   classes are told apart by definition, not by name (same-named classes in one file no longer merge);
-//   the whole parameter list is compared, keyword-only parameters included (the Python linter compares positional ones).
+// As the Python linter does (the contract is parity with its recorded findings):
+//   only the class's own body counts: an inherited counterpart does not;
+//   a class is its name within one file: two same-named classes in a file are one, and when a class has two defs on
+//   one side of one base name, the last one is the member (the linter's dict keeps the last it records);
+//   parameters are the linter's node.args.args: the ones that can be passed by position or keyword. Positional-only
+//   (before `/`), keyword-only (after `*` or `*args`), `*args` and `**kwargs` are left out, of the comparison and of
+//   the connection-like-parameter test.
 //
 // How to read this file
 //   1. named / side: each def that can take part in a pair, with its base name and side ("sync" or "async").
-//   2. own: the def sits directly in a class body. sees: the class has that side, own or inherited.
+//   2. own: the def sits directly in a class body, keyed by file and class name. member: the last own def per side.
 //   3. io: the def does I/O (a connection-like parameter, or an I/O method call in its body).
-//   4. missing_pair: an own I/O def whose class sees no counterpart.
-//   5. pair / differ / signature_mismatch: both sides exist and their parameter lists differ.
+//   4. missing_pair: a member I/O def whose class has no def on the other side.
+//   5. arg / differ / signature_mismatch: both sides exist and their argument lists differ.
 // Base names join the two sides: def foo and async def foo_async share base "foo".
 
 #include "python/names.rr"
@@ -106,49 +109,64 @@ side(f, n, "sync")   :- named(f, n, _), !is_async(f), !prefix("_", n).
 // An async def's base drops _async: async def foo_async and async def foo both have base "foo".
 side(f, b, "async")  :- named(f, _, b), is_async(f), !prefix("_", b).
 
-// own(c, b, k, f): f sits directly in class c's body. sees(c, b, k, f): c has f as that side, own or inherited.
-.decl own(c: node, b: symbol, k: symbol, f: node)
+// own(d, x, b, k, f): f sits directly in the body of a class named x in document d (the linter's methods[class_name],
+// one dict per file).
+.decl own(d: number, x: symbol, b: symbol, k: symbol, f: node)
 // nearest(f, c, cdef): c is f's closest class. !nearest(f, _, fdef): f is not inside any def, so a def nested in a
 // method is not a method (the Python linter records only when its function stack is empty). _CachedQuery is skipped.
-own(c, b, k, f) :- side(f, b, k), nearest(f, c, cdef), !nearest(f, _, fdef), def_name(c, x), !exempt_class(x).
-.decl sees(c: node, b: symbol, k: symbol, f: node)
-// Own methods.
-sees(c, b, k, f) :- own(c, b, k, f).
-// Inherited: mro_method lists every method c has through its bases (python/names), in any file. own(c, …) limits
-// this to classes that have at least one candidate method of their own, so only those classes are examined.
-sees(c, b, k, f) :- own(c, _, _, _), class_def(c, cq), mro_method(cq, _, f), side(f, b, k).
+own(d, x, b, k, f) :- side(f, b, k), nearest(f, c, cdef), !nearest(f, _, fdef), def_name(c, x), !exempt_class(x),
+    docof(f, d).
+// member(d, x, b, k, f): f is the k side of base b in class x: the last own def of that side, as the linter's
+// sync_methods / async_methods dicts keep the last method recorded (methods are recorded in document order).
+.decl member(d: number, x: symbol, b: symbol, k: symbol, f: node)
+member(d, x, b, k, f) :- own(d, x, b, k, f), count : { own(d, x, b, k, g), earlier(f, g) } = 0.
+.decl has_side(d: number, x: symbol, b: symbol, k: symbol)
+has_side(d, x, b, k) :- own(d, x, b, k, _).
+
+// arg(f, x, j): x is the j-th of f's positional-or-keyword parameters, self left out (the linter's args list).
+// pos_param(f, x, i): x is the parameter at child i of f's parameter list, and ast puts it in args.args: not `*x` or
+// `**x` (param has those too), not before a `/`, not after a `*` or `*args`. (python/ast's sig_param has the same
+// kinds, but that library does not lower to the engine yet.)
+.decl pos_param(f: node, x: symbol, i: number)
+pos_param(f, x, i) :- own(_, _, _, _, f), param(f, x, i), field(f, "parameters", ps), child(ps, p, i),
+    !kind(p, "list_splat_pattern"), !kind(p, "dictionary_splat_pattern"),
+    count : { slash_at(ps, j), i < j } = 0, count : { star_at(ps, j), j < i } = 0.
+.decl slash_at(ps: node, j: number)
+slash_at(ps, j) :- kind(ps, "parameters"), child(ps, c, j), kind(c, "positional_separator").
+.decl star_at(ps: node, j: number)
+star_at(ps, j) :- kind(ps, "parameters"), child(ps, c, j), kind(c, "keyword_separator").
+star_at(ps, j) :- kind(ps, "parameters"), child(ps, c, j), kind(c, "list_splat_pattern").
+star_at(ps, j) :- kind(ps, "parameters"), child(ps, c, j), kind(c, "typed_parameter"), child(c, s, 0),
+    kind(s, "list_splat_pattern").
+.decl arg(f: node, x: symbol, j: number)
+arg(f, x, j) :- pos_param(f, x, i), x != "self", j = count : { pos_param(f, y, i2), i2 < i, y != "self" }.
 
 // The Python linter's has_io: set from parameters at entry, and by any I/O call anywhere below, nested defs included.
 // io(f): f takes a connection-like parameter, or calls an I/O method anywhere in its body.
 .decl io(f: node)
-// A parameter named conn, session, txn, … (any parameter; the Python linter reads positional ones only).
-io(f) :- own(_, _, _, f), params(f, x, _), io_param(x).
+// A positional-or-keyword parameter named conn, session, txn, … (the linter reads node.args.args only).
+io(f) :- own(_, _, _, _, f), arg(f, x, _), io_param(x).
 // A call `….name(…)` anywhere in f's body, with name an I/O method.
-io(f) :- own(_, _, _, f), within(c, f), callee(c, n), kind(n, "attribute"), field(n, "attribute", a),
+io(f) :- own(_, _, _, _, f), within(c, f), callee(c, n), kind(n, "attribute"), field(n, "attribute", a),
     text(a, x), io_method(x).
 
-// missing_pair: f is the class's own def on one side, does I/O, and the class has no def on the other side, neither
-// own nor inherited. `direction` names the side that is missing. A def without I/O needs no counterpart.
+// missing_pair: f is the class's def on one side, does I/O, and the class body has no def on the other side.
+// `direction` names the side that is missing. A def without I/O needs no counterpart.
 .violation missing_pair(at: node, cls: symbol, direction: symbol) "{cls}.{at.name} missing {direction} counterpart"
-missing_pair(f, x, "async") :- own(c, b, "sync", f), io(f), !sees(c, b, "async", _), def_name(c, x).
-missing_pair(f, x, "sync")  :- own(c, b, "async", f), io(f), !sees(c, b, "sync", _), def_name(c, x).
+missing_pair(f, x, "async") :- member(d, x, b, "sync", f), io(f), !has_side(d, x, b, "async").
+missing_pair(f, x, "sync")  :- member(d, x, b, "async", f), io(f), !has_side(d, x, b, "sync").
 
-// Requiring one side to be own keeps a pair that is wholly inherited from being reported again in every subclass.
-// pair(c, s, a): c pairs sync s with async a, at least one of them its own.
-.decl pair(c: node, s: node, a: node)
-pair(c, s, a) :- own(c, b, "sync", s), sees(c, b, "async", a).
-pair(c, s, a) :- own(c, b, "async", a), sees(c, b, "sync", s).
-// differ(s, a): some parameter, self aside, is at a position in one def that the other does not have under the same
-// name. The two rules check both directions, so a longer list on either side is a difference.
+// differ(s, a): the argument lists differ: some argument is at a position in one def that the other does not have
+// under the same name. The two rules check both directions, so a longer list on either side is a difference.
 .decl differ(s: node, a: node)
-differ(s, a) :- pair(_, s, a), params(s, x, i), x != "self", !params(a, x, i).
-differ(s, a) :- pair(_, s, a), params(a, x, i), x != "self", !params(s, x, i).
+differ(s, a) :- member(d, x, b, "sync", s), member(d, x, b, "async", a), arg(s, y, j), !arg(a, y, j).
+differ(s, a) :- member(d, x, b, "sync", s), member(d, x, b, "async", a), arg(a, y, j), !arg(s, y, j).
 
 // signature_mismatch: reported at the sync def, naming the async def as `other`.
 .violation signature_mismatch(at: node, cls: symbol, other: node) "{cls}.{at.name}/{other.name}: Argument mismatch"
     fix match_sync "Give {other.name} the parameters of {at.name}"
     fix match_async "Give {at.name} the parameters of {other.name}"
-signature_mismatch(s, x, a) :- pair(c, s, a), differ(s, a), def_name(c, x).
+signature_mismatch(s, x, a) :- member(d, x, b, "sync", s), member(d, x, b, "async", a), differ(s, a).
 
 // Two alternative fixes, both suggestions: the rule cannot know which side is right, so the person or agent picks.
 // Each copies one def's whole parameter list, annotations and defaults included, onto the other. `$sp` in the

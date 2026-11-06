@@ -1,0 +1,253 @@
+// tsx/react-compiler: the functions the React Compiler checks, and which of their code runs while they render.
+// eslint-plugin-react-hooks 7 runs the compiler (compilationMode "infer") on each file and reports what its
+// validations find. The compiler reasons over its own IR (types, aliasing, mutation effects); this library is
+// the syntactic part every rule needs first: which functions are compiled, and which code is render code.
+//
+// What a rule gets from this library:
+//   which functions
+//     rc_compiled(f)          f is a component or hook the compiler compiles (and so checks)
+//     rc_component(f)         f is compiled as a component (its first parameter is props)
+//     function_node(n)        n is a function or method: code inside runs when it is called (eslint-a-common)
+//   render code
+//     rc_render_fn(g, f)      g's own code runs while f renders: f itself, or a useMemo callback in f's render code
+//     rc_live_fn(g, f)        g is a function created while f renders that may be called then too: not deferred
+//     rc_called_fn(c, g, f)   call c, in f's render code, calls local function g
+//     rc_deferred(g)          function g is handed on to run later: a JSX prop's value, a hook's argument (an
+//                             effect's, useCallback's, useState's initializer), or a const holding it used only there
+//     rc_own(n, g)            g is the function whose own code n is in (function_kind's nearest)
+//     rc_always(n, g)         n runs whenever g's own code runs: no branch, loop or try around it, no return before
+//   React values
+//     rc_hook_call(c)         c calls a hook: useX(…) or Namespace.useX(…)
+//     rc_react_call(c, x)     c calls React's x: x(…) or React.x(…)
+//     rc_state_setter(s)      s binds a useState setter: the second name of `const [v, setV] = useState(…)`
+//     rc_set_state(c)         c calls a useState setter: setV(…)
+//     rc_ref_site(s)          s binds a ref: `const r = useRef(…)`, or a name `ref` or `…Ref`
+//     rc_current(m)           m is a ref's `r.current`
+//     rc_local_of(s, f)       binding site s is declared inside compiled f (its parameters included)
+//
+// The compiler's rules for which functions it compiles (findFunctionsToCompile, getComponentOrHookLike):
+//   function Button(props) { return <b/>; }        a component: capitalised, calls a hook or makes JSX,
+//                                                  at most (props, ref) parameters, returns no non-node
+//   function useWidth() { useState(0); … }         a hook: use + capital or digit, calls a hook or makes JSX
+//   memo(() => <b/>), forwardRef(function (p, r) {…})   a component, if it calls a hook or makes JSX
+//   function helper() { … }                         not compiled; neither is anything inside a class
+// The first compiled function on the way down is compiled whole: functions inside it are part of it.
+// The ESLint plugin runs the compiler only on files whose top level declares a capitalised or use* function
+// (mayContainReactCode); a file with only `export const A = memo(() => …)` is never checked.
+// Babel's tree has no parentheses, so the compiler sees through them: deparen (eslint-a-common).
+// A JSX tag <Row/> is a reference in tsx/names (jsx_tag_ref), so ref_site resolves it like any name.
+#include "tsx/react-hooks.rr"
+#include "tsx/eslint-a-functions.rr"   // fn_param; eslint-a-common (deparen, call_arg) through it
+
+// ---- functions ------------------------------------------------------------------------------------------------
+// Babel's Function: what the compiler compiles. Methods are not, and classes are skipped whole. Scopes, whose
+// code runs when called, are functions and methods: function_node.
+.decl rc_fn_kind(k: symbol)
+rc_fn_kind(k) :- function_kind(k), k != "method_definition".
+.decl rc_fn(f: node)
+rc_fn(f) :- kind(f, k), rc_fn_kind(k).
+.decl rc_own(n: node, g: node)
+rc_own(n, g) :- nearest(n, g, function_kind).
+
+// rc_name(f, n): getFunctionName. A declaration's id, or what the function is stored to:
+//   const Button = () => …     Button = function () {}     { Button: () => … }     ({ Button = () => … })
+.decl rc_name(f: node, n: node)
+rc_name(f, n) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")), field(f, "name", n).
+rc_name(f, n) :- rc_fn(f), deparen(v, f), field(d, "value", v), kind(d, "variable_declarator"), field(d, "name", n).
+rc_name(f, n) :- rc_fn(f), deparen(v, f), kind(a, "assignment_expression"), field(a, "right", v), field(a, "left", n).
+rc_name(f, n) :- rc_fn(f), deparen(v, f), kind(p, "pair"), field(p, "value", v), field(p, "key", n),
+    kind(n, "property_identifier").
+rc_name(f, n) :- rc_fn(f), deparen(v, f), (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pattern")),
+    field(p, "right", v), field(p, "left", n).
+.decl rc_comp_named(f: node)  // a component's name: capitalised
+rc_comp_named(f) :- rc_name(f, n), (kind(n, "identifier") ; kind(n, "property_identifier")), glob("[A-Z]**", n).
+.decl rc_hook_named(f: node)  // a hook's name, and not a component's
+rc_hook_named(f) :- rc_name(f, n), !rc_comp_named(f), rc_hook_ref(n).
+// isHook: `useFoo`, `use2`, or `Namespace.useFoo` with a capitalised namespace; react-hooks' callee without `use`.
+.decl rc_hook_ref(n: node)
+rc_hook_ref(n) :- hook_proper(n).
+rc_hook_ref(n) :- hook_callee(n), field(n, "property", p), hook_proper(p).
+.decl rc_hook_call(c: node)
+rc_hook_call(c) :- hook_call(c, f), rc_hook_ref(f).
+.decl rc_react_call(c: node, x: symbol)  // isReactAPI: x(…) or React.x(…)
+rc_react_call(c, x) :- kind(c, "call_expression"), field(c, "function", n), deps_name(n, x).
+
+// callsHooksOrCreatesJsx: in f's own code, nested functions skipped (methods are not).
+.decl rc_hooks_or_jsx(f: node)
+rc_hooks_or_jsx(f) :- rc_fn(f), within_stop(n, f, rc_fn), (jsx_el(n) ; rc_hook_call(n)).
+
+// isValidComponentParams: none; one that is not a rest; or (props, ref) with the second a plain name holding
+// "ref" or "Ref". A props annotation of an array, tuple, function, literal or primitive type rules it out.
+//   function Row(props: RowProps, ref) {…}    valid        function Row(a, b) {…}        not a component
+.decl rc_valid_params(f: node)
+rc_valid_params(f) :- rc_fn(f), !fn_param(f, _, _).
+rc_valid_params(f) :- fn_param(f, p, 0), !fn_param(f, _, 1), !rc_rest(p), !rc_bad_props_type(p).
+rc_valid_params(f) :- fn_param(f, p, 0), fn_param(f, r, 1), !fn_param(f, _, 2), !rc_bad_props_type(p), rc_ref_param(r).
+.decl rc_rest(p: node)
+rc_rest(p) :- kind(p, "rest_pattern").
+rc_rest(p) :- field(p, "pattern", r), kind(r, "rest_pattern").
+.decl rc_ref_param(p: node)  // `ref`, `forwardedRef`: an identifier, no default
+rc_ref_param(p) :- kind(p, "identifier"), (contains("ref", p) ; contains("Ref", p)).
+rc_ref_param(p) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), !field(p, "value", _),
+    field(p, "pattern", n), rc_ref_param(n).
+.decl rc_bad_props_type(p: node)
+rc_bad_props_type(p) :- field(p, "type", a), child(a, t, 0), kind(t, k), rc_bad_type_kind(k).
+rc_bad_props_type(p) :- field(p, "type", a), child(a, t, 0), kind(t, "predefined_type"),
+    glob("{bigint,boolean,number,string,symbol,never}", t).
+rc_bad_props_type(p) :- field(p, "type", a), child(a, t, 0), kind(t, "literal_type"), !glob("{null,undefined}", t).
+.decl rc_bad_type_kind(k: symbol)
+rc_bad_type_kind("array_type"). rc_bad_type_kind("tuple_type"). rc_bad_type_kind("function_type").
+rc_bad_type_kind("constructor_type"). rc_bad_type_kind("template_literal_type").
+
+// returnsNonNode: the last return of f's own code (or an arrow's expression body) gives a value React cannot
+// render: nothing, an object, a function, a class, `new …` or a bigint.
+//   function Make() { …; return { a: <b/> }; }     not a component: it returns an object
+.decl rc_returns_non_node(f: node)
+rc_returns_non_node(f) :- kind(f, "arrow_function"), field(f, "body", b), !kind(b, "statement_block"),
+    deparen(b, x), rc_non_node(x).
+rc_returns_non_node(f) :- rc_fn(f), i = max j : { rc_own_return(r, f), visit_index(r, j) }, rc_own_return(r, f),
+    visit_index(r, i), (!child(r, _, _) ; child(r, x0, 0), deparen(x0, x), rc_non_node(x)).
+.decl rc_own_return(r: node, f: node)
+rc_own_return(r, f) :- kind(r, "return_statement"), rc_own(r, f), rc_fn(f).
+.decl rc_non_node(x: node)
+rc_non_node(x) :- kind(x, k), (k = "object" ; k = "arrow_function" ; k = "function_expression" ;
+    k = "generator_function" ; k = "class" ; k = "new_expression").
+rc_non_node(x) :- kind(x, "number"), suffix("n", x).
+
+// rc_candidate(f): getComponentOrHookLike gives Component or Hook.
+.decl rc_candidate(f: node, w: symbol)
+rc_candidate(f, "component") :- rc_comp_named(f), rc_hooks_or_jsx(f), rc_valid_params(f),
+    !rc_returns_non_node(f).
+rc_candidate(f, "hook") :- rc_hook_named(f), rc_hooks_or_jsx(f).
+// memo(() => …), forwardRef(function (props, ref) {…}), React.memo(…): an unnamed function argument.
+rc_candidate(f, "component") :- (kind(f, "function_expression") ; kind(f, "arrow_function")),
+    !rc_comp_named(f), !rc_hook_named(f), deparen(v, f), hook_wrapped(v), rc_hooks_or_jsx(f).
+
+// rc_compiled(f): the outermost candidate, outside classes, in a file the plugin compiles, and not one the
+// compiler gives up on (below).
+.decl rc_compiled(f: node)
+rc_compiled(f) :- rc_candidate(f, _), count : { within(f, g), rc_candidate(g, _) } = 0,
+    !inside(f, _, "class_declaration"), !inside(f, _, "class"), docof(f, d), rc_file(d), !rc_bails(f).
+.decl rc_component(f: node)
+rc_component(f) :- rc_compiled(f), rc_candidate(f, "component").
+// The compiler stops on syntax it does not lower yet ("Todo" errors); then nothing in f is checked:
+//   try { … } finally { … }            a try without catch
+//   catch ({ message }) { … }          a destructured catch parameter
+.decl rc_bails(f: node)
+rc_bails(f) :- rc_candidate(f, _), has(f, t, "try_statement"), !field(t, "handler", _).
+rc_bails(f) :- rc_candidate(f, _), has(f, c, "catch_clause"), field(c, "parameter", p),
+    (kind(p, "object_pattern") ; kind(p, "array_pattern")).
+
+// rc_file(d): React's runtime (react_doc), and mayContainReactCode: a top-level function declaration, or a
+// const of a function, with a component's or hook's name; an `export default` of an anonymous function counts.
+.decl rc_file(d: number)
+rc_file(d) :- react_doc(d), kind(p, "program"), docof(p, d), child(p, s, _), rc_top_decl(s).
+.decl rc_top_decl(s: node)
+rc_top_decl(s) :- kind(s, "export_statement"), field(s, "declaration", x), rc_top_decl(x).
+rc_top_decl(s) :- kind(s, "export_statement"), field(s, "value", v), deparen(v, x),
+    (kind(x, "arrow_function") ; kind(x, "function_expression"), !field(x, "name", _)).
+rc_top_decl(s) :- kind(s, "export_statement"), child(s, f, _), kind(f, "function_declaration"), !field(f, "name", _).
+rc_top_decl(s) :- (kind(s, "function_declaration") ; kind(s, "generator_function_declaration")), field(s, "name", n),
+    glob("{[A-Z],use[A-Z0-9]}**", n).
+rc_top_decl(s) :- (kind(s, "lexical_declaration") ; kind(s, "variable_declaration")), child(s, v, _),
+    kind(v, "variable_declarator"), field(v, "name", n), kind(n, "identifier"), glob("{[A-Z],use[A-Z0-9]}**", n),
+    field(v, "value", x), (kind(x, "arrow_function") ; kind(x, "function_expression")).
+
+// ---- render code ----------------------------------------------------------------------------------------------
+// What runs while a component renders: its own code, and useMemo callbacks there (React calls them during
+// render). Effects, event handlers and useCallback callbacks run later.
+//   function Clock() {
+//     const t = Date.now();                       render code
+//     const m = useMemo(() => Date.now(), []);    render code: useMemo runs its callback now
+//     useEffect(() => { Date.now(); });           later
+//     return <b onClick={() => Date.now()}>{t}</b>;   later
+//   }
+.decl rc_render_fn(g: node, f: node)
+rc_render_fn(f, f) :- rc_compiled(f).
+rc_render_fn(g, f) :- rc_memo_callback(g, c), rc_own(c, h), rc_render_fn(h, f).
+.decl rc_memo_callback(g: node, c: node)  // g is the callback of useMemo call c
+rc_memo_callback(g, c) :- rc_react_call(c, "useMemo"), call_arg(c, a, 0), deparen(a, g), rc_fn(g).
+
+// rc_deferred(g): g is handed to React to call later, or to a hook, which the compiler trusts not to call it
+// while rendering (useMemo's callback aside, above).
+//   <b onClick={() => …}/>    useEffect(() => …)    useCallback(() => …, [])    useState(() => init())
+//   const h = () => …; <b onClick={h}/>
+.decl rc_deferred(g: node)
+rc_deferred(g) :- rc_handed(g).
+rc_deferred(g) :- rc_fn(g), deparen(v, g), field(d, "value", v), kind(d, "variable_declarator"),
+    count : { ref_site(r, d), !rc_later_ref(r) } = 0.
+rc_deferred(g) :- kind(g, "function_declaration"), count : { ref_site(r, g), !rc_later_ref(r) } = 0.
+.decl rc_later_ref(r: node)  // a reference in a place React calls later
+rc_later_ref(r) :- rc_later_slot(v), deparen(v, r).
+.decl rc_later_slot(v: node)  // the value of a JSX prop, or an argument of a hook (effects, useCallback, useState)
+rc_later_slot(v) :- kind(a, "jsx_attribute"), child(a, j, 1), kind(j, "jsx_expression"), child(j, v, _).
+rc_later_slot(v) :- rc_hook_call(c), call_arg(c, v, _).
+.decl rc_effect_call(c: node)  // useEffect, useLayoutEffect, useInsertionEffect
+rc_effect_call(c) :- rc_react_call(c, x), effect_hook(x).
+
+// rc_live_fn(g, f): a function made in render code that may run during render. Liveness spreads only through
+// code that is itself live, so a function reached from an effect body, a handler or a useCallback body is not.
+//   written in place where render code runs: passed to an unknown call, rendered, stored in an object, called
+//     const get = () => …; return <b>{[1].map(() => Date.now())}</b>;     the map callback: map calls it now
+//   bound to a name in f (`const g = () => …`, `function g() {}`): live when some reference to it, outside a
+//   JSX prop or hook argument, is in live code
+//     const get = () => Date.now(); return <b>{get}</b>;       live: what <b> does with it is unknown
+//     const load = () => Date.now(); useEffect(() => { load(); });   not: the only reference runs later
+.decl rc_live_fn(g: node, f: node)
+rc_live_fn(g, f) :- function_node(g), !rc_fn_at(_, g), !rc_handed(g), !rc_memo_callback(g, _), rc_own(g, h),
+    (rc_render_fn(h, f) ; rc_live_fn(h, f)).
+rc_live_fn(g, f) :- rc_fn_at(s, g), within(g, f), ref_site(r, s), !rc_later_ref(r), rc_own(r, h),
+    (rc_render_fn(h, f) ; rc_live_fn(h, f)).
+.decl rc_handed(g: node)  // g is written as a JSX prop's value or a hook's argument
+rc_handed(g) :- rc_fn(g), rc_later_slot(v), deparen(v, g).
+
+// rc_always(n, g): n is in g's own code and on every path through it.
+//   setX(1);  if (a) setX(1);  a && setX(1);  for (…) setX(1);  try { setX(1) } …  if (a) return; setX(1);
+//   always    no               no             no                no                  no
+.decl rc_always(n: node, g: node)
+rc_always(n, g) :- rc_own(n, g), count : { inside(n, x, rc_branch_kind), within(x, g) } = 0,
+    count : { inside(n, x, "binary_expression"), within(x, g), rc_lazy(x) } = 0,
+    count : { has(g, r, rc_exit_kind), rc_own(r, g), earlier(r, n) } = 0.
+.decl rc_lazy(x: node)  // a && b, a || b, a ?? b: b may not run
+rc_lazy(x) :- kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??")).
+.decl rc_branch_kind(k: symbol)
+rc_branch_kind("if_statement"). rc_branch_kind("ternary_expression"). rc_branch_kind("switch_statement").
+rc_branch_kind("for_statement"). rc_branch_kind("for_in_statement"). rc_branch_kind("while_statement").
+rc_branch_kind("do_statement"). rc_branch_kind("try_statement").
+.decl rc_exit_kind(k: symbol)
+rc_exit_kind("return_statement"). rc_exit_kind("throw_statement").
+
+// rc_called_fn(c, g, f): call c in f's render code calls g, a local function: `const g = () => …; g()`,
+// `function g() {…}; g()`, or `(() => …)()`.
+.decl rc_called_fn(c: node, g: node, f: node)
+rc_called_fn(c, g, f) :- kind(c, "call_expression"), rc_own(c, h), rc_render_fn(h, f), field(c, "function", n),
+    kind(n, "identifier"), ref_site(n, s), rc_fn_at(s, g).
+rc_called_fn(c, g, f) :- kind(c, "call_expression"), rc_own(c, h), rc_render_fn(h, f), field(c, "function", n),
+    deparen(n, g), rc_fn(g).
+.decl rc_fn_at(s: node, g: node)  // binding site s holds function g
+rc_fn_at(g, g) :- kind(g, "function_declaration").
+rc_fn_at(s, g) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, g), rc_fn(g).
+
+// ---- React values ---------------------------------------------------------------------------------------------
+// rc_local_of(s, f): binding s is f's: declared in its body or parameters.
+.decl rc_local_of(s: node, f: node)
+rc_local_of(s, f) :- rc_compiled(f), within(s, f).
+// const [value, setValue] = useState(0)
+.decl rc_state_setter(s: node)
+rc_state_setter(s) :- kind(d, "variable_declarator"), field(d, "value", c), rc_react_call(c, "useState"),
+    field(d, "name", p), kind(p, "array_pattern"), child(p, s, 1), kind(s, "identifier").
+.decl rc_set_state(c: node)
+rc_set_state(c) :- kind(c, "call_expression"), field(c, "function", n), kind(n, "identifier"), ref_site(n, s),
+    rc_state_setter(s).
+// Refs: `const r = useRef(…)`, and, as the compiler assumes, any binding named `ref` or ending
+// in `Ref` (a prop `inputRef`, a parameter `ref`).
+.decl rc_ref_site(s: node)
+rc_ref_site(s) :- kind(s, "variable_declarator"), field(s, "value", c), rc_react_call(c, "useRef").
+rc_ref_site(s) :- ref_site(_, s), (kind(s, "variable_declarator"), field(s, "name", n) ; n = s), kind(n, k),
+    (k = "identifier" ; k = "shorthand_property_identifier_pattern"), (text(n, "ref") ; glob("**Ref", n)).
+
+// rc_current(m): m is `r.current` for a ref r.
+.decl rc_current(m: node)
+rc_current(m) :- kind(m, "member_expression"), field(m, "property", p), text(p, "current"), field(m, "object", o),
+    kind(o, "identifier"), ref_site(o, s), rc_ref_site(s).
+

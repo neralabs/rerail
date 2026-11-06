@@ -293,6 +293,11 @@ impl Stats {
         self.steps_cache.borrow_mut().clear();
     }
 
+    /// Whether any column of `rel` has statistics (read or measured).
+    pub(in crate::code_rule_dsl) fn knows(&self, rel: &str) -> bool {
+        self.col.keys().any(|(r, _)| r == rel)
+    }
+
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
     pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
@@ -1231,7 +1236,9 @@ fn make_plan(prog: &Program, db: &Connection, inputs: Inputs) -> Result<Model> {
             stats.fan.insert((rel.clone(), col), (rows / distinct).max(1.0));
         }
     }
-    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
+    // An input no rule reads needs no statistics: a `.rr` program declares every `core.rr` relation (its prelude).
+    let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).map(|a| a.rel.as_str()).collect();
+    for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel) && read.contains(rel.as_str())) {
         for col in 0..prog.decls[rel].len() {
             let name = sql_col(rel, col);
             let Some(&[rows, n, sq, _]) = stats.col.get(&(rel.clone(), name.clone())) else {
@@ -1358,6 +1365,22 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
         Term::Call(f, args) => {
             let a = args.iter().map(|x| sql_term(x, env, atoms)).collect::<Result<Vec<_>>>()?;
             match (f.as_str(), a.as_slice()) {
+                // Membership of a kind or field among atoms (`plan::lower`): 1 or 0.
+                ("in", [x, _]) => {
+                    let items: Vec<&Term> = match &args[1] {
+                        Term::Call(g, items) if g == super::strings::SET => items.iter().collect(),
+                        one => vec![one],
+                    };
+                    let mut out = None;
+                    for item in items {
+                        let e = eq(x.clone(), sql_term(item, env, atoms)?);
+                        out = Some(match out {
+                            None => e,
+                            Some(o) => bin(Op::Or, o, e),
+                        });
+                    }
+                    out.unwrap_or_else(|| integer(0))
+                }
                 // A literal test on a name or path (`logic::strings`): the atoms' text in atoms mode.
                 (f, [x, y]) if super::strings::is_test(f) => {
                     let text = |e: &Expr| if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() };
@@ -1387,12 +1410,12 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 ("strlen", [x]) => length(&text_of(atoms, x)),
                 ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
                 ("to_string", [x]) => symbol_of(atoms, bin(Op::Concatenate, x.clone(), string(""))),
+                // A named group of a regex's match (`.rr`'s `match` with captures, `strings::group`); NULL without one.
+                ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
                 ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
                 ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
                 ("cat", [x, y]) => bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone()),
-                // core.rr's name functors (`register_functors`).
-                ("pkg_up", [q, k]) => symbol_of(atoms, call("rr_pkg_up", vec![text_of(atoms, q), k.clone()])),
-                ("head", [q]) => symbol_of(atoms, call("rr_head", vec![text_of(atoms, q)])),
+                // core.rr's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
                 ("replace_all", [s, re, by]) => symbol_of(atoms, call("rr_replace_all", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 // A JSON string literal as W's signed-list stages write one (`json_group_array`'s elements): SQLite's
                 // `json_quote` of the text.
@@ -1415,6 +1438,13 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                         ],
                         fallback: Box::new(integer(TOP)),
                     }
+                }
+                // `core.rr`'s text functors (`strings::functions`): symbols in as text, a symbol result back.
+                (f, items) if let Some((f, kinds, ret)) = super::strings::functions::signature(f) && kinds.len() == items.len() => {
+                    use super::strings::functions::Kind;
+                    let items = items.iter().zip(kinds).map(|(e, k)| if *k == Kind::Text { text_of(atoms, e) } else { e.clone() }).collect();
+                    let value = call(f, items);
+                    if ret == Kind::Text { symbol_of(atoms, value) } else { value }
                 }
                 _ => return Err(Error::Plan(format!("no SQL for {t}"))),
             }
@@ -2297,7 +2327,8 @@ impl Run<'_> {
                     wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
                 }
             }
-            let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &prog.decls[&l.rel][c].1)).collect();
+            let decl = prog.decls.get(&l.rel).unwrap_or_else(|| panic!("{} is read and not declared", l.rel));
+            let types: String = keep.iter().map(|&c| sym_char(&self.model.inputs, &decl[c].1)).collect();
             let types = if types.is_empty() { "i".to_owned() } else { types };
             let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();
             if !wheres.is_empty() {
@@ -3124,8 +3155,8 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
     Ok(views)
 }
 
-/// core.rr's functors on names that SQL has not: `@pkg_up(q, k)`, `q` less its last `k` dotted segments (`""` past the
-/// root); `@head(q)`, its first segment; `@replace_all(s, re, by)`, each match of `re` in `s` replaced by `by`, `$1`
+/// core.rr's functors whose meaning is W's, which `strings::functions` does not give: `@replace_all(s, re, by)`, each
+/// match of `re` in `s` replaced by `by`, `$1`
 /// and `${name}` its groups, as W's `replace` transform does (`matcher::transform::replace`); `@rx_replace(s, re, by)`
 /// the same as W's SQL `rx_replace` does it (`waves::relational::functions`: the `regex` crate's `replace_all`, `$1`,
 /// `$name`, `${name}` and `$$` as it reads them); `@ed25519_ok(key, message, sig)`, 1 where `crypto::ed25519_ok`
@@ -3135,13 +3166,6 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 fn register_functors(db: &Connection) -> rusqlite::Result<()> {
     use rusqlite::functions::FunctionFlags;
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
-    db.create_scalar_function(c"rr_pkg_up", 2, flags, |ctx| {
-        let (Some(q), Some(k)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<i64>>(1)?) else { return Ok(None) };
-        let segments: Vec<&str> = if q.is_empty() { Vec::new() } else { q.split('.').collect() };
-        let keep = segments.len().saturating_sub(usize::try_from(k).unwrap_or(0));
-        Ok(Some(segments[..keep].join(".")))
-    })?;
-    db.create_scalar_function(c"rr_head", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|q| q.split('.').next().unwrap_or_default().to_owned())))?;
     fn compiled(f: &str, re: &str) -> rusqlite::Result<regex::Regex> {
         static REGEXES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Option<regex::Regex>>>> = std::sync::LazyLock::new(Default::default);
         let regex = REGEXES.lock().expect("the regex cache").entry(re.to_owned()).or_insert_with(|| regex::Regex::new(re).ok()).clone();

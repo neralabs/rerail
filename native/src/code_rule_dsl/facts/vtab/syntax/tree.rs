@@ -70,7 +70,7 @@ impl Tree {
         }
         let Some(dialect) = dialect else { return };
         if self.op_at {
-            let fields = [dialect.catalog.field_id("operator"), dialect.catalog.field_id("operators")];
+            let fields = [dialect.operator, dialect.operators];
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
                 let operators = f.children(id).iter().filter(|&&c| f.field[c as usize] != 0 && fields.contains(&Some(f.field[c as usize])));
