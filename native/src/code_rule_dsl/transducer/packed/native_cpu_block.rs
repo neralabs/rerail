@@ -74,6 +74,12 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let exit = f.create_block();
         f.append_block_params_for_function_params(entry);
         f.append_block_param(body, types::I64);
+        // One loop-carried word per carried instruction: `prev`'s previous word, `toggle`'s
+        // parity (all ones or zero), `after_odd_run`'s borrow (0 or 1).
+        let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
+        for _ in &carried {
+            f.append_block_param(body, types::I64);
+        }
 
         // The entry: constants every block uses, and each output's first word.
         f.switch_to_block(entry);
@@ -92,6 +98,10 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 BlockInst::Const(c) => Some(f.ins().iconst(types::I64, c as i64)),
                 BlockInst::Class { bits, .. } => {
                     let c = f.ins().iconst(types::I8, i64::from(bits));
+                    Some(f.ins().splat(types::I8X16, c))
+                }
+                BlockInst::Plane(k) => {
+                    let c = f.ins().iconst(types::I8, 1i64 << k);
                     Some(f.ins().splat(types::I8X16, c))
                 }
                 _ => None,
@@ -128,18 +138,22 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             })
             .collect();
         let zero = f.ins().iconst(types::I64, 0);
+        let even = f.ins().iconst(types::I64, super::block::carry::EVEN as i64);
         let none = f.ins().icmp_imm(IntCC::Equal, blocks, 0);
-        f.ins().brif(none, exit, &[], body, &[zero.into()]);
+        let first: Vec<cranelift_codegen::ir::BlockArg> = std::iter::repeat_n(zero.into(), carried.len() + 1).collect();
+        f.ins().brif(none, exit, &[], body, &first);
 
         // The body: one block, straight-line.
         f.switch_to_block(body);
         let i = f.block_params(body)[0];
+        let carries_in: Vec<Value> = f.block_params(body)[1..].to_vec();
+        let mut carries_out: Vec<Value> = Vec::with_capacity(carried.len());
         let offset = f.ins().ishl_imm(i, 6);
         let base = f.ins().iadd(bytes, offset);
         let loads = MemFlags::new().with_notrap();
         let mut values: Vec<Value> = Vec::with_capacity(native.insts.len());
         // The block's 64 bytes, loaded once for every compare and class.
-        let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. }));
+        let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_)));
         let chunks: Vec<Value> = if reads {
             (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
         } else {
@@ -173,12 +187,59 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                         .collect();
                     bitmask(&mut f, &parts, weights)
                 }
+                BlockInst::Plane(_) => {
+                    let bit = constants[at].expect("a splat per plane");
+                    let parts: Vec<Value> = chunks
+                        .iter()
+                        .map(|&bytes| {
+                            let picked = f.ins().band(bytes, bit);
+                            f.ins().icmp(IntCC::NotEqual, picked, zero16)
+                        })
+                        .collect();
+                    bitmask(&mut f, &parts, weights)
+                }
                 BlockInst::Const(_) => constants[at].expect("a word per const"),
                 BlockInst::Not(a) => f.ins().bnot(v(a)),
                 BlockInst::And(a, b) => f.ins().band(v(a), v(b)),
                 BlockInst::Or(a, b) => f.ins().bor(v(a), v(b)),
                 BlockInst::Xor(a, b) => f.ins().bxor(v(a), v(b)),
                 BlockInst::AndNot(a, b) => f.ins().band_not(v(a), v(b)),
+                BlockInst::Prev(a, k) => {
+                    let previous = carries_in[carries_out.len()];
+                    let up = f.ins().ishl_imm(v(a), i64::from(k));
+                    let halo = f.ins().ushr_imm(previous, 64 - i64::from(k));
+                    carries_out.push(v(a));
+                    f.ins().bor(up, halo)
+                }
+                BlockInst::Toggle(a) => {
+                    // prefix XOR by six shift-XOR rounds (Cranelift has no carry-less multiply),
+                    // then the parity carried in.
+                    let parity = carries_in[carries_out.len()];
+                    let mut x = v(a);
+                    for k in [1, 2, 4, 8, 16, 32] {
+                        let up = f.ins().ishl_imm(x, k);
+                        x = f.ins().bxor(x, up);
+                    }
+                    let y = f.ins().bxor(x, parity);
+                    carries_out.push(f.ins().sshr_imm(y, 63));
+                    y
+                }
+                BlockInst::AfterOddRun(a) => {
+                    // simdjson's find_escaped_branchless (`block::carry::after_odd_run`).
+                    let cin = carries_in[carries_out.len()];
+                    let run = v(a);
+                    let b = f.ins().band_not(run, cin);
+                    let up = f.ins().ishl_imm(b, 1);
+                    let follows = f.ins().bor(up, cin);
+                    let odd = f.ins().band_not(b, even);
+                    let odd_starts = f.ins().band_not(odd, follows);
+                    let (sequences, overflow) = f.ins().uadd_overflow(odd_starts, b);
+                    let invert = f.ins().ishl_imm(sequences, 1);
+                    let flipped = f.ins().bxor(even, invert);
+                    let escaped = f.ins().band(flipped, follows);
+                    carries_out.push(f.ins().uextend(types::I64, overflow));
+                    f.ins().band_not(escaped, run)
+                }
             };
             values.push(value);
         }
@@ -189,7 +250,9 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         }
         let next = f.ins().iadd_imm(i, 1);
         let more = f.ins().icmp(IntCC::UnsignedLessThan, next, blocks);
-        f.ins().brif(more, body, &[next.into()], exit, &[]);
+        let again: Vec<cranelift_codegen::ir::BlockArg> =
+            std::iter::once(next.into()).chain(carries_out.iter().map(|&c| c.into())).collect();
+        f.ins().brif(more, body, &again, exit, &[]);
 
         f.switch_to_block(exit);
         f.ins().return_(&[]);

@@ -37,6 +37,64 @@ pub(in crate::code_rule_dsl) enum BlockOp {
     Xor(u16, u16),
     /// `a & !b`.
     AndNot(u16, u16),
+    /// Each byte's bit from `k` bytes before (`1..=16`), across blocks: simdjson's `follows`
+    /// (`a << k` with the previous word's top `k` bits). Carry: a halo of `k` bits.
+    Prev(u16, u8),
+    /// Each byte's bit is the XOR of `a`'s bits up to and including it, across the stream:
+    /// simdjson's `prefix_xor` (the inside-string mask). Carry: parity.
+    Toggle(u16),
+    /// The bytes just after a run of `a`'s bits of odd length: simdjson's escaped characters
+    /// (`a` the backslashes), by its add-with-carry. Carry: borrow (generate and propagate).
+    AfterOddRun(u16),
+}
+
+/// The carried operations' word functions, shared by the CPU executors' references and the
+/// interpreter: each takes the block's word and the carry in, and gives the result and the carry
+/// out.
+pub(super) mod carry {
+    /// simdjson's even bits.
+    pub(in crate::code_rule_dsl) const EVEN: u64 = 0x5555_5555_5555_5555;
+
+    /// `prev`: the word shifted up `k` bits, the previous word's top `k` bits below.
+    pub(in crate::code_rule_dsl) fn prev(word: u64, previous: u64, k: u8) -> u64 {
+        (word << k) | (previous >> (64 - u32::from(k)))
+    }
+
+    /// `toggle`: the word's prefix XOR, inverted when `carry` (all ones or zero) is set; the
+    /// carry out is the last bit, spread.
+    pub(in crate::code_rule_dsl) fn toggle(word: u64, carry: u64) -> (u64, u64) {
+        let y = prefix_xor(word) ^ carry;
+        (y, ((y as i64) >> 63) as u64)
+    }
+
+    /// simdjson's `prefix_xor` on aarch64: a carry-less multiply by all ones (`vmull_p64`).
+    #[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
+    pub(in crate::code_rule_dsl) fn prefix_xor(word: u64) -> u64 {
+        use core::arch::aarch64::vmull_p64;
+        // SAFETY: `aes` (PMULL) is enabled for this target.
+        unsafe { vmull_p64(word, u64::MAX) as u64 }
+    }
+
+    /// Elsewhere, six shift-XOR rounds.
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "aes")))]
+    pub(in crate::code_rule_dsl) fn prefix_xor(mut word: u64) -> u64 {
+        for k in [1, 2, 4, 8, 16, 32] {
+            word ^= word << k;
+        }
+        word
+    }
+
+    /// `after_odd_run`: simdjson's branch-free escape finder (`find_escaped_branchless`) with the
+    /// carry in (`cin`, 0 or 1: the block's first byte is escaped), without the backslashes
+    /// themselves; the carry out is the add's overflow.
+    pub(in crate::code_rule_dsl) fn after_odd_run(run: u64, cin: u64) -> (u64, u64) {
+        let b = run & !cin;
+        let follows = (b << 1) | cin;
+        let odd_starts = b & !EVEN & !follows;
+        let (sequences, overflow) = odd_starts.overflowing_add(b);
+        let escaped = (EVEN ^ (sequences << 1)) & follows;
+        (escaped & !run, u64::from(overflow))
+    }
 }
 
 impl BlockOp {
@@ -52,6 +110,9 @@ impl BlockOp {
             BlockOp::Or(a, b) => two("or", a, b),
             BlockOp::Xor(a, b) => two("xor", a, b),
             BlockOp::AndNot(a, b) => two("andnot", a, b),
+            BlockOp::Prev(a, k) => format!("prev %{a}, {k}"),
+            BlockOp::Toggle(a) => format!("toggle %{a}"),
+            BlockOp::AfterOddRun(a) => format!("after_odd_run %{a}"),
         }
     }
 
@@ -59,7 +120,7 @@ impl BlockOp {
     pub(super) fn operands(&self) -> Vec<u16> {
         match *self {
             BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Const(_) => vec![],
-            BlockOp::Not(a) => vec![a],
+            BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Toggle(a) | BlockOp::AfterOddRun(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) => vec![a, b],
         }
     }
@@ -94,6 +155,9 @@ impl BlockOp {
             ["or", a, b] => Ok(BlockOp::Or(value(a)?, value(b)?)),
             ["xor", a, b] => Ok(BlockOp::Xor(value(a)?, value(b)?)),
             ["andnot", a, b] => Ok(BlockOp::AndNot(value(a)?, value(b)?)),
+            ["prev", a, k] => Ok(BlockOp::Prev(value(a)?, k.parse().map_err(|_| format!("a bad distance `{k}`"))?)),
+            ["toggle", a] => Ok(BlockOp::Toggle(value(a)?)),
+            ["after_odd_run", a] => Ok(BlockOp::AfterOddRun(value(a)?)),
             _ => Err(format!("an unknown block operation `{}`", words.join(" "))),
         }
     }
@@ -120,6 +184,9 @@ impl BlockOp {
             BlockOp::Or(a, b) => two(out, 4, a, b),
             BlockOp::Xor(a, b) => two(out, 5, a, b),
             BlockOp::AndNot(a, b) => two(out, 6, a, b),
+            BlockOp::Prev(a, k) => two(out, 8, a, u16::from(k)),
+            BlockOp::Toggle(a) => two(out, 9, a, a),
+            BlockOp::AfterOddRun(a) => two(out, 10, a, a),
         }
     }
 }
@@ -161,6 +228,8 @@ impl BlockProgram {
             .all(|(at, op)| op.operands().iter().all(|&v| usize::from(v) < at));
         let tables = self.ops.iter().all(|op| match *op {
             BlockOp::Class { table, bits } => usize::from(table) < self.tables.len() && bits != 0,
+            // A distance of at most 16 bytes: Metal's narrowest lane holds the whole halo.
+            BlockOp::Prev(_, k) => (1..=16).contains(&k),
             _ => true,
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables {
@@ -210,6 +279,37 @@ impl BlockProgram {
                 BlockOp::Or(a, b) => two(a, b, |x, y| x | y),
                 BlockOp::Xor(a, b) => two(a, b, |x, y| x ^ y),
                 BlockOp::AndNot(a, b) => two(a, b, |x, y| x & !y),
+                // The carried operations: one pass over the blocks, the carry in a register.
+                BlockOp::Prev(a, k) => {
+                    let mut previous = 0;
+                    v(a).iter()
+                        .map(|&x| {
+                            let y = carry::prev(x, previous, k);
+                            previous = x;
+                            y
+                        })
+                        .collect()
+                }
+                BlockOp::Toggle(a) => {
+                    let mut c = 0;
+                    v(a).iter()
+                        .map(|&x| {
+                            let (y, out) = carry::toggle(x, c);
+                            c = out;
+                            y
+                        })
+                        .collect()
+                }
+                BlockOp::AfterOddRun(a) => {
+                    let mut c = 0;
+                    v(a).iter()
+                        .map(|&x| {
+                            let (y, out) = carry::after_odd_run(x, c);
+                            c = out;
+                            y
+                        })
+                        .collect()
+                }
             };
             values.push(words);
         }

@@ -1,14 +1,17 @@
 #include <metal_stdlib>
 using namespace metal;
 
-// Block programs' Metal interpreter (metal_block_program.rs): the set program's shape, one
-// dispatch running every operation in order. Each lane owns W consecutive source bytes (W = 16,
+// Block programs' Metal interpreter (metal_block_program.rs): the set program's shape, every
+// operation in order, one dispatch per round: a carried operation ends a round, its groups'
+// aggregates are scanned, and the next round starts with it (metal_block_carry.metal). Each lane owns W consecutive source bytes (W = 16,
 // 32 or 64) and its W-bit word of every value, so the SIMD group's full ALU width works on
 // words: a 32-lane group covers 32 * W bytes. Values are slots of lane words.
-struct BlockArgs { uint ops, lanes, pad0, pad1; };
-// An operation: op (0 eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 class), operands a
-// and b, and an immediate (eq's byte; const's pattern as b = low half, imm = high half; class's
-// class bits in imm's low byte and its table above them).
+// The operations a dispatch runs, [from, to), and the lanes.
+struct BlockArgs { uint from, to, lanes, pad; };
+// An operation of the planes form (native IR, `class` written as formulas of bit-planes): op (0
+// eq, 1 const, 2 not, 3 and, 4 or, 5 xor, 6 andnot, 7 plane), operands a and b, and an immediate
+// (eq's byte; const's pattern as b = low half, imm = high half; plane's bit), and the carried
+// operations 8 prev (imm the distance), 9 toggle, 10 after_odd_run, each with its round in b.
 struct BlockStep { uint op, a, b, imm; };
 
 // 16 bytes equal to c (repeated in c4) as 16 bits, by SWAR on four words: an exact zero-byte
@@ -20,34 +23,18 @@ static inline uint eq16(uint4 v, uint c4) {
   return g.x | (g.y << 4u) | (g.z << 8u) | (g.w << 12u);
 }
 
-// 16 bytes that are not zero as 16 bits (eq16's test, inverted).
-static inline uint nz16(uint4 x) {
-  const uint4 z = (((x & 0x7f7f7f7fu) + 0x7f7f7f7fu) | x) & 0x80808080u;
+// Bit k of 16 bytes as 16 bits: each byte's bit k moved to its high bit, then eq16's gather.
+static inline uint plane16(uint4 v, uint k) {
+  const uint4 z = (v << (7u - k)) & 0x80808080u;
   const uint4 g = (((z >> 7u) * 0x00204081u) >> 21u) & 0xfu;
   return g.x | (g.y << 4u) | (g.z << 8u) | (g.w << 12u);
 }
 
-// A word's four bytes' class bits: two lookups per byte in table T (lo at 0, hi at 16).
-static inline uint classes4(uint v, constant uchar* T) {
-  return uint(T[v & 15u] & T[16u + ((v >> 4u) & 15u)]) |
-         (uint(T[(v >> 8u) & 15u] & T[16u + ((v >> 12u) & 15u)]) << 8u) |
-         (uint(T[(v >> 16u) & 15u] & T[16u + ((v >> 20u) & 15u)]) << 16u) |
-         (uint(T[(v >> 24u) & 15u] & T[16u + (v >> 28u)]) << 24u);
-}
-
-// 16 bytes in any class of the bits repeated in s4, as 16 bits.
-static inline uint class16(uint4 v, constant uchar* T, uint s4) {
-  const uint4 k = uint4(classes4(v.x, T), classes4(v.y, T), classes4(v.z, T), classes4(v.w, T));
-  return nz16(k & s4);
-}
-
-static inline ushort class_lane(device const uint4* p, constant uchar* T, uint s4, ushort) { return ushort(class16(p[0], T, s4)); }
-static inline uint class_lane(device const uint4* p, constant uchar* T, uint s4, uint) {
-  return class16(p[0], T, s4) | (class16(p[1], T, s4) << 16u);
-}
-static inline ulong class_lane(device const uint4* p, constant uchar* T, uint s4, ulong) {
-  return ulong(class16(p[0], T, s4)) | (ulong(class16(p[1], T, s4)) << 16u) |
-         (ulong(class16(p[2], T, s4)) << 32u) | (ulong(class16(p[3], T, s4)) << 48u);
+static inline ushort plane_lane(device const uint4* p, uint k, ushort) { return ushort(plane16(p[0], k)); }
+static inline uint plane_lane(device const uint4* p, uint k, uint) { return plane16(p[0], k) | (plane16(p[1], k) << 16u); }
+static inline ulong plane_lane(device const uint4* p, uint k, ulong) {
+  return ulong(plane16(p[0], k)) | (ulong(plane16(p[1], k)) << 16u) | (ulong(plane16(p[2], k)) << 32u) |
+         (ulong(plane16(p[3], k)) << 48u);
 }
 
 static inline ushort eq_lane(device const uint4* p, uint c4, ushort) { return ushort(eq16(p[0], c4)); }
@@ -66,13 +53,16 @@ static inline M pattern(ulong c, uint lane) {
 
 template <typename M>
 static inline void run(device const uint4* bytes, device M* values, constant BlockArgs& p,
-                       device const BlockStep* steps, constant uchar* tables, uint lane) {
+                       device const BlockStep* steps, device atomic_uint* states, uint lane, uint g, uint l) {
   const uint chunks = uint(sizeof(M)) / 2u;
+  const uint groups = p.lanes / 32u;
   device const uint4* mine = bytes + lane * chunks;
-  for (uint at = 0u; at < p.ops; at++) {
+  for (uint at = p.from; at < p.to; at++) {
     const BlockStep s = steps[at];
     const M a = values[s.a * p.lanes + lane];
     const M b = values[s.b * p.lanes + lane];
+    // A carried step's round is in b; its state array holds each group's inclusive prefix.
+    device atomic_uint* state = states + s.b * groups;
     M out;
     switch (s.op) {
       case 0u: out = eq_lane(mine, s.imm * 0x01010101u, M(0)); break;
@@ -82,27 +72,69 @@ static inline void run(device const uint4* bytes, device M* values, constant Blo
       case 4u: out = a | b; break;
       case 5u: out = a ^ b; break;
       case 6u: out = a & ~b; break;
-      case 7u: out = class_lane(mine, tables + 32u * (s.imm >> 8u), (s.imm & 0xffu) * 0x01010101u, M(0)); break;
+      case 7u: out = plane_lane(mine, s.imm, M(0)); break;
+      case 8u: out = apply_prev(a, s.imm, lane_in_halo(summary_prev(a, s.imm), carry_before(state, 2u, g), l)); break;
+      case 9u: out = apply_toggle(a, lane_in_parity(summary_toggle(a), carry_before(state, 0u, g), l)); break;
+      case 10u: out = apply_after_odd_run(a, lane_in_borrow(summary_after_odd_run(a), carry_before(state, 1u, g), l)); break;
       default: out = M(0); break;
     }
     values[at * p.lanes + lane] = out;
   }
 }
 
-kernel void block_program_16(device const uint4* bytes [[buffer(0)]], device ushort* values [[buffer(1)]],
-                             constant BlockArgs& p [[buffer(2)]], device const BlockStep* steps [[buffer(3)]],
-                             constant uchar* tables [[buffer(4)]], uint lane [[thread_position_in_grid]]) {
-  run<ushort>(bytes, values, p, steps, tables, lane);
+// A carried step's group aggregate: the SIMD group's combined lane summaries of its operand.
+template <typename M>
+static inline uint aggregate(device const M* values, constant BlockArgs& p, device const BlockStep* steps, uint lane) {
+  const BlockStep s = steps[p.to];
+  const M a = values[s.a * p.lanes + lane];
+  switch (s.op) {
+    case 8u: return reduce_halo(summary_prev(a, s.imm));
+    case 9u: return reduce_parity(summary_toggle(a));
+    default: return reduce_borrow(summary_after_odd_run(a));
+  }
 }
 
-kernel void block_program_32(device const uint4* bytes [[buffer(0)]], device uint* values [[buffer(1)]],
-                             constant BlockArgs& p [[buffer(2)]], device const BlockStep* steps [[buffer(3)]],
-                             constant uchar* tables [[buffer(4)]], uint lane [[thread_position_in_grid]]) {
-  run<uint>(bytes, values, p, steps, tables, lane);
-}
+#define BLOCK_KERNELS(W, M)                                                                                     \
+  kernel void block_program_##W(device const uint4* bytes [[buffer(0)]], device M* values [[buffer(1)]],       \
+                                constant BlockArgs& p [[buffer(2)]], device const BlockStep* steps [[buffer(3)]], \
+                                device atomic_uint* states [[buffer(4)]], uint lane [[thread_position_in_grid]], \
+                                uint g [[threadgroup_position_in_grid]], uint l [[thread_index_in_simdgroup]]) {   \
+    run<M>(bytes, values, p, steps, states, lane, g, l);                                                         \
+  }                                                                                                              \
+  kernel void block_summary_##W(device const M* values [[buffer(1)]], constant BlockArgs& p [[buffer(2)]],      \
+                                device const BlockStep* steps [[buffer(3)]], device uint* aggregates [[buffer(5)]], \
+                                uint lane [[thread_position_in_grid]], uint g [[threadgroup_position_in_grid]],   \
+                                uint l [[thread_index_in_simdgroup]]) {                                          \
+    const uint agg = aggregate<M>(values, p, steps, lane);                                                       \
+    if (l == 0u) aggregates[g] = agg;                                                                            \
+  }
 
-kernel void block_program_64(device const uint4* bytes [[buffer(0)]], device ulong* values [[buffer(1)]],
-                             constant BlockArgs& p [[buffer(2)]], device const BlockStep* steps [[buffer(3)]],
-                             constant uchar* tables [[buffer(4)]], uint lane [[thread_position_in_grid]]) {
-  run<ulong>(bytes, values, p, steps, tables, lane);
+BLOCK_KERNELS(16, ushort)
+BLOCK_KERNELS(32, uint)
+BLOCK_KERNELS(64, ulong)
+
+// The groups' aggregates scanned into inclusive prefixes (the interpreter's threadgroup level):
+// one threadgroup of 256 threads, each folding a stretch of groups, a scan of the stretches in
+// threadgroup memory, then each stretch written. Loops over sizes, bounded.
+kernel void block_carry_scan(device const uint* aggregates [[buffer(0)]], device uint* states [[buffer(1)]],
+                             constant uint2& p [[buffer(2)]], uint t [[thread_position_in_threadgroup]]) {
+  threadgroup uint totals[256];
+  const uint groups = p.x, kind = p.y;
+  const uint per = (groups + 255u) / 256u;
+  const uint from = min(t * per, groups), to = min(from + per, groups);
+  uint acc = carry_identity(kind);
+  for (uint g = from; g < to; g++) acc = combine_carry(kind, acc, aggregates[g]);
+  totals[t] = acc;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  for (uint d = 1u; d < 256u; d <<= 1u) {
+    const uint before = t >= d ? totals[t - d] : carry_identity(kind);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    totals[t] = combine_carry(kind, before, totals[t]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+  acc = t > 0u ? totals[t - 1u] : carry_identity(kind);
+  for (uint g = from; g < to; g++) {
+    acc = combine_carry(kind, acc, aggregates[g]);
+    states[g] = CARRY_INCLUSIVE | acc;
+  }
 }

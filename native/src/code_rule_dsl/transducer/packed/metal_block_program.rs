@@ -8,12 +8,25 @@
 //! Each lane owns `W` consecutive source bytes and builds its own `W`-bit word of every value
 //! (`LaneWidth`: 16, 32 or 64), so a SIMD group's 32 lanes work on 32 words at once, not one bit
 //! each. A byte compare is SWAR over the lane's `uint4`s; the logic is word logic.
+//!
+//! Carried operations (`prev`, `toggle`, `after_odd_run`) follow `06-block-parallel.md` §2 and
+//! §5: each is a round, one dispatch. A lane's summary is combined across its SIMD group (one
+//! threadgroup of 32 lanes) by SIMD-group operations, and across groups through a state per
+//! group. Masks are recomputed in every round, not stored; only the states persist.
+//!
+//! - **Generated MSL** passes states by decoupled look-back with bounded waits: a group waits a
+//!   fixed number of polls for a predecessor's state, then computes that predecessor's aggregate
+//!   from its bytes itself. The mask code stays straight-line; only the look-back loops.
+//! - **The interpreter** keeps its values in slots, so a group cannot recompute another's; it
+//!   scans the groups' aggregates in a dispatch of its own instead (`block_carry_scan`).
 use super::*;
-use crate::code_rule_dsl::transducer::packed::block::{BlockOp, BlockProgram, mask_tail};
+use crate::code_rule_dsl::transducer::packed::block::{BlockProgram, mask_tail};
 use crate::code_rule_dsl::transducer::packed::native_ir::{BlockInst, BlockNative};
 use metal::MTLSize;
 
-const SOURCE: &str = include_str!("metal_block_program.metal");
+/// The carries' helpers (`metal_block_carry.metal`), shared by the interpreter and generated MSL.
+const CARRY: &str = include_str!("metal_block_carry.metal");
+const SOURCE: &str = concat!(include_str!("metal_block_carry.metal"), include_str!("metal_block_program.metal"));
 /// Lanes per threadgroup: one SIMD group.
 const GROUP: usize = 32;
 
@@ -49,21 +62,38 @@ impl LaneWidth {
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct BlockArgs {
-    ops: u32,
+    from: u32,
+    to: u32,
     lanes: u32,
-    pad: [u32; 2],
+    pad: u32,
 }
 
-fn encoded(op: &BlockOp) -> [u32; 4] {
-    match *op {
-        BlockOp::Eq(byte) => [0, 0, 0, u32::from(byte)],
-        BlockOp::Const(c) => [1, 0, c as u32, (c >> 32) as u32],
-        BlockOp::Class { table, bits } => [7, 0, 0, u32::from(bits) | (u32::from(table) << 8)],
-        BlockOp::Not(a) => [2, u32::from(a), 0, 0],
-        BlockOp::And(a, b) => [3, u32::from(a), u32::from(b), 0],
-        BlockOp::Or(a, b) => [4, u32::from(a), u32::from(b), 0],
-        BlockOp::Xor(a, b) => [5, u32::from(a), u32::from(b), 0],
-        BlockOp::AndNot(a, b) => [6, u32::from(a), u32::from(b), 0],
+/// A carried instruction's kind, as the carry helpers number it.
+fn kind(inst: &BlockInst) -> u32 {
+    match inst {
+        BlockInst::Toggle(_) => 0,
+        BlockInst::AfterOddRun(_) => 1,
+        BlockInst::Prev(..) => 2,
+        _ => unreachable!("not carried"),
+    }
+}
+
+/// An instruction of the planes form as the interpreter's step: `[op, a, b, imm]`; a carried
+/// instruction's `b` is its round.
+fn encoded(inst: &BlockInst, round: u32) -> [u32; 4] {
+    match *inst {
+        BlockInst::EqByte(byte) => [0, 0, 0, u32::from(byte)],
+        BlockInst::Const(c) => [1, 0, c as u32, (c >> 32) as u32],
+        BlockInst::Not(a) => [2, u32::from(a), 0, 0],
+        BlockInst::And(a, b) => [3, u32::from(a), u32::from(b), 0],
+        BlockInst::Or(a, b) => [4, u32::from(a), u32::from(b), 0],
+        BlockInst::Xor(a, b) => [5, u32::from(a), u32::from(b), 0],
+        BlockInst::AndNot(a, b) => [6, u32::from(a), u32::from(b), 0],
+        BlockInst::Plane(k) => [7, 0, 0, u32::from(k)],
+        BlockInst::Prev(a, k) => [8, u32::from(a), round, u32::from(k)],
+        BlockInst::Toggle(a) => [9, u32::from(a), round, 0],
+        BlockInst::AfterOddRun(a) => [10, u32::from(a), round, 0],
+        BlockInst::Class { .. } => unreachable!("the planes form has no class"),
     }
 }
 
@@ -73,24 +103,58 @@ pub(in crate::code_rule_dsl) fn interpret(
     bytes: &[u8],
     width: LaneWidth,
 ) -> Result<Vec<Vec<u64>>, Error> {
-    let steps: Vec<[u32; 4]> = program.ops.iter().map(encoded).collect();
-    let name = format!("block_program_{}", width.bytes());
-    let pipeline = pipeline_named(SOURCE, &name)?;
-    let slots = program.ops.len();
-    // Every table as 32 bytes (`lo`, then `hi`); one zero table when there are none.
-    let mut tables: Vec<u8> = program.tables.iter().flat_map(|t| t.lo.iter().chain(&t.hi).copied()).collect();
-    tables.resize(tables.len().max(32), 0);
-    let words = dispatch(&pipeline, bytes, width, slots, |encoder, lanes| {
-        let args = BlockArgs { ops: slots as u32, lanes, pad: [0; 2] };
-        encoder.set_bytes(2, std::mem::size_of::<BlockArgs>() as u64, std::ptr::from_ref(&args).cast());
-        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        let steps_buffer = MappedBuffer::from_slice(device, &steps)?;
-        encoder.set_buffer(3, Some(&steps_buffer.buffer), 0);
-        let tables_buffer = MappedBuffer::from_slice(device, &tables)?;
-        encoder.set_buffer(4, Some(&tables_buffer.buffer), 0);
-        Ok((steps_buffer, tables_buffer))
-    })?;
-    Ok(program.outputs.iter().map(|&v| finish(&words[usize::from(v)], bytes.len())).collect())
+    // The interpreter runs the planes form: `class` as formulas of bit-planes, as generated MSL.
+    let native = BlockNative::lower(program).planes_form();
+    let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
+    let mut round = 0u32;
+    let steps: Vec<[u32; 4]> = native
+        .insts
+        .iter()
+        .map(|inst| {
+            let step = encoded(inst, round);
+            round += u32::from(inst.carried());
+            step
+        })
+        .collect();
+    let w = width.bytes();
+    let run = pipeline_named(SOURCE, &format!("block_program_{w}"))?;
+    let summary = pipeline_named(SOURCE, &format!("block_summary_{w}"))?;
+    let scan = pipeline_named(SOURCE, "block_carry_scan")?;
+    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    let stream = Stream::new(bytes, width, steps.len())?;
+    let steps_buffer = MappedBuffer::from_slice(device, &steps)?;
+    let states = MappedBuffer::zeroed::<u32>(device, carried.len().max(1) * stream.groups)?;
+    let aggregates = MappedBuffer::zeroed::<u32>(device, stream.groups)?;
+    let args = |from: usize, to: usize| BlockArgs { from: from as u32, to: to as u32, lanes: stream.lanes as u32, pad: 0 };
+    let state_bytes = (stream.groups * 4) as u64;
+    let mut passes: Vec<Pass<'_>> = Vec::new();
+    let lanes_pass = |pipeline, a: BlockArgs| Pass {
+        pipeline,
+        buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*steps_buffer.buffer, 0), (4, &*states.buffer, 0), (5, &*aggregates.buffer, 0)],
+        args: vec![(2, bytes_of(&a))],
+        groups: stream.groups,
+        threads: GROUP,
+    };
+    let mut from = 0;
+    for (j, &at) in carried.iter().enumerate() {
+        if from < at {
+            passes.push(lanes_pass(&run, args(from, at)));
+        }
+        passes.push(lanes_pass(&summary, args(at, at)));
+        let p = [stream.groups as u32, kind(&native.insts[at])];
+        passes.push(Pass {
+            pipeline: &scan,
+            buffers: vec![(0, &*aggregates.buffer, 0), (1, &*states.buffer, j as u64 * state_bytes)],
+            args: vec![(2, bytes_of(&p))],
+            groups: 1,
+            threads: 256,
+        });
+        from = at;
+    }
+    passes.push(lanes_pass(&run, args(from, native.insts.len())));
+    encode_passes(&passes)?;
+    let words = stream.slots(steps.len());
+    Ok(native.outputs.iter().map(|&v| finish(&words[usize::from(v)], bytes.len())).collect())
 }
 
 /// SWAR byte compare, emitted once into every generated kernel (the interpreter's `eq16`).
@@ -144,108 +208,6 @@ const TRANSPOSE8: &str = "static inline ulong transpose8(ulong x) {
 /// The native IR as one straight-line MSL kernel, `tempo_block`, for lanes of `width`.
 pub(in crate::code_rule_dsl) fn generate(native: &BlockNative, width: LaneWidth) -> String {
     generate_with(native, width, ClassStrategy::Planes)
-}
-
-/// A class formula's value: a constant, or a named lane word.
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum Term {
-    Zero,
-    Ones,
-    Named(String),
-}
-
-/// Formulas over planes, written out as named lane words and shared.
-struct Formulas {
-    m: &'static str,
-    lines: Vec<String>,
-    next: usize,
-    memo: std::collections::HashMap<(usize, usize, u16), Term>,
-    combined: std::collections::HashMap<(String, Term, Term), Term>,
-}
-
-impl Formulas {
-    fn emit(&mut self, rhs: String) -> Term {
-        let name = format!("f{}", self.next);
-        self.next += 1;
-        self.lines.push(format!("  const {} {name} = {}({rhs});\n", self.m, self.m));
-        Term::Named(name)
-    }
-
-    /// The function of planes `base..base + vars` whose truth table (indexed by the planes' bits)
-    /// is the low `2^vars` bits of `tt`, by Shannon expansion on the highest plane.
-    fn function(&mut self, base: usize, vars: usize, tt: u16) -> Term {
-        let size = 1u32 << vars;
-        let full = if size == 16 { u16::MAX } else { (1u16 << size) - 1 };
-        let tt = tt & full;
-        if tt == 0 {
-            return Term::Zero;
-        }
-        if tt == full {
-            return Term::Ones;
-        }
-        if let Some(t) = self.memo.get(&(base, vars, tt)) {
-            return t.clone();
-        }
-        let half = size / 2;
-        let low_mask = (1u16 << half) - 1;
-        let (t0, t1) = (tt & low_mask, (tt >> half) & low_mask);
-        let f0 = self.function(base, vars - 1, t0);
-        let f1 = self.function(base, vars - 1, t1);
-        let x = format!("p{}", base + vars - 1);
-        let complement = t1 == !t0 & low_mask;
-        let term = self.combine(&x, f0, f1, complement);
-        self.memo.insert((base, vars, tt), term.clone());
-        term
-    }
-
-    /// `x ? f1 : f0` bitwise, folded.
-    fn combine(&mut self, x: &str, f0: Term, f1: Term, complement: bool) -> Term {
-        let key = (x.to_owned(), f0.clone(), f1.clone());
-        if let Some(t) = self.combined.get(&key) {
-            return t.clone();
-        }
-        let n = |t: &Term| match t {
-            Term::Named(n) => n.clone(),
-            _ => unreachable!(),
-        };
-        let term = match (&f0, &f1) {
-            _ if f0 == f1 => f0.clone(),
-            (Term::Zero, Term::Ones) => Term::Named(x.to_owned()),
-            (Term::Ones, Term::Zero) => self.emit(format!("~{x}")),
-            (Term::Zero, _) => self.emit(format!("{x} & {}", n(&f1))),
-            (_, Term::Zero) => self.emit(format!("{} & ~{x}", n(&f0))),
-            (_, Term::Ones) => self.emit(format!("{x} | {}", n(&f0))),
-            (Term::Ones, _) => self.emit(format!("{} | ~{x}", n(&f1))),
-            _ if complement => self.emit(format!("{x} ^ {}", n(&f0))),
-            _ => self.emit(format!("{a} ^ (({a} ^ {b}) & {x})", a = n(&f0), b = n(&f1))),
-        };
-        self.combined.insert(key, term.clone());
-        term
-    }
-
-    fn and(&mut self, a: Term, b: Term) -> Term {
-        match (a, b) {
-            (Term::Zero, _) | (_, Term::Zero) => Term::Zero,
-            (Term::Ones, t) | (t, Term::Ones) => t,
-            (Term::Named(a), Term::Named(b)) => self.emit(format!("{a} & {b}")),
-        }
-    }
-
-    fn or(&mut self, a: Term, b: Term) -> Term {
-        match (a, b) {
-            (Term::Ones, _) | (_, Term::Ones) => Term::Ones,
-            (Term::Zero, t) | (t, Term::Zero) => t,
-            (Term::Named(a), Term::Named(b)) => self.emit(format!("{a} | {b}")),
-        }
-    }
-
-    fn word(&self, t: &Term) -> String {
-        match t {
-            Term::Zero => format!("{}(0)", self.m),
-            Term::Ones => format!("{}(~{}(0))", self.m, self.m),
-            Term::Named(n) => n.clone(),
-        }
-    }
 }
 
 /// The lane's eight bit-planes `p0..p7` from its chunks `c0..`: `transpose8` on each 8 bytes,
@@ -310,59 +272,181 @@ fn lookup_helper(t: usize, table: &super::block::ClassTable) -> String {
     out
 }
 
-/// The native IR as one straight-line MSL kernel, `tempo_block`, for lanes of `width`, with
-/// `class` computed by `strategy`.
+/// The native IR as MSL for lanes of `width`, `class` by `strategy`: a straight-line summary
+/// function and a round kernel (`tempo_round_J`) per carried instruction, and the straight-line
+/// kernel `tempo_block` that writes the outputs.
 pub(in crate::code_rule_dsl) fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy) -> String {
+    generate_polling(native, width, strategy, SPINS)
+}
+
+/// `generate_with`, polling a predecessor's state `spins` times before computing it (0: always
+/// compute it, which tests the fallback).
+pub(in crate::code_rule_dsl) fn generate_polling(native: &BlockNative, width: LaneWidth, strategy: ClassStrategy, spins: u32) -> String {
+    let planes_form;
+    let native = match strategy {
+        ClassStrategy::Lookup => native,
+        ClassStrategy::Planes => {
+            planes_form = native.planes_form();
+            &planes_form
+        }
+    };
+    let mut helpers = String::new();
+    if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. })) {
+        helpers.push_str(NZ16);
+        for (t, table) in native.tables.iter().enumerate() {
+            helpers.push_str(&lookup_helper(t, table));
+        }
+    }
+    if native.insts.iter().any(|i| matches!(i, BlockInst::Plane(_))) {
+        helpers.push_str(TRANSPOSE8);
+    }
+    let mut out = format!("{CARRY}\n{EQ16}\n{helpers}\n");
+    let carried: Vec<usize> = (0..native.insts.len()).filter(|&at| native.insts[at].carried()).collect();
+    for (j, &at) in carried.iter().enumerate() {
+        let inst = native.insts[at];
+        out.push_str(&format!(
+            "// Round {j}: the lane's summary of %{at}.\n\
+             static inline uint summary_{j}(device const uint4* bytes, device atomic_uint* states, uint groups, uint g, uint l) {{\n\
+             \x20 const uint gl = g * {GROUP}u + l;\n"
+        ));
+        out.push_str(&lane_values(native, width, at));
+        out.push_str(&format!("  return {};\n}}\n\n", summary_of(&inst)));
+        out.push_str(&round_kernel(j, &inst, spins));
+    }
+    out.push_str(
+        "kernel void tempo_block(\n\
+         \x20   device const uint4* bytes [[buffer(0)]],\n",
+    );
+    out.push_str(&format!(
+        "    device {}* out [[buffer(1)]],\n\
+         \x20   constant uint& lanes [[buffer(2)]],\n\
+         \x20   device atomic_uint* states [[buffer(3)]],\n\
+         \x20   uint gl [[thread_position_in_grid]],\n\
+         \x20   uint g [[threadgroup_position_in_grid]],\n\
+         \x20   uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20 const uint groups = lanes / {GROUP}u;\n",
+        width.word()
+    ));
+    out.push_str(&lane_values(native, width, native.insts.len()));
+    for (k, v) in native.outputs.iter().enumerate() {
+        out.push_str(&format!("  out[{k}u * lanes + gl] = v{v};\n"));
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// A carried instruction's summary of its operand, the carry helpers' function for its kind.
+fn summary_of(inst: &BlockInst) -> String {
+    match *inst {
+        BlockInst::Prev(a, k) => format!("summary_prev(v{a}, {k}u)"),
+        BlockInst::Toggle(a) => format!("summary_toggle(v{a})"),
+        BlockInst::AfterOddRun(a) => format!("summary_after_odd_run(v{a})"),
+        _ => unreachable!("not carried"),
+    }
+}
+
+fn kind_name(inst: &BlockInst) -> &'static str {
+    match inst {
+        BlockInst::Toggle(_) => "parity",
+        BlockInst::AfterOddRun(_) => "borrow",
+        BlockInst::Prev(..) => "halo",
+        _ => unreachable!("not carried"),
+    }
+}
+
+/// Round `j`'s kernel: the group's aggregate published, the look-back for its exclusive prefix,
+/// then its inclusive prefix published. A halo depends on the group before only, so it is
+/// published as inclusive at once.
+fn round_kernel(j: usize, inst: &BlockInst, spins: u32) -> String {
+    let kind = kind_name(inst);
+    let mut out = format!(
+        "kernel void tempo_round_{j}(device const uint4* bytes [[buffer(0)]], constant uint& lanes [[buffer(2)]],\n\
+         \x20                          device atomic_uint* states [[buffer(3)]], uint g [[threadgroup_position_in_grid]],\n\
+         \x20                          uint l [[thread_index_in_simdgroup]]) {{\n\
+         \x20 const uint groups = lanes / {GROUP}u;\n\
+         \x20 device atomic_uint* state = states + {j}u * groups;\n\
+         \x20 const uint agg = reduce_{kind}(summary_{j}(bytes, states, groups, g, l));\n"
+    );
+    if kind == "halo" {
+        out.push_str("  if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | agg, memory_order_relaxed);\n}\n\n");
+        return out;
+    }
+    out.push_str(&format!(
+        "  if (l == 0u) atomic_store_explicit(&state[g], CARRY_AGGREGATE | agg, memory_order_relaxed);\n\
+         \x20 // Look-back, bounded: at most {spins} polls per predecessor, then its aggregate recomputed here.\n\
+         \x20 uint prefix = carry_identity({k}u);\n\
+         \x20 for (uint back = 1u; back <= g; back++) {{\n\
+         \x20   const uint p = g - back;\n\
+         \x20   uint st = 0u;\n\
+         \x20   for (uint spin = 0u; spin < {spins}u && (st >> 30u) == 0u; spin++) {{\n\
+         \x20     st = simd_broadcast(atomic_load_explicit(&state[p], memory_order_relaxed), 0u);\n\
+         \x20   }}\n\
+         \x20   if ((st >> 30u) == 0u) {{\n\
+         \x20     st = CARRY_AGGREGATE | reduce_{kind}(summary_{j}(bytes, states, groups, p, l));\n\
+         \x20   }}\n\
+         \x20   prefix = combine_{kind}(st & CARRY_VALUE, prefix);\n\
+         \x20   if ((st >> 30u) == 2u) break;\n\
+         \x20 }}\n\
+         \x20 if (l == 0u) atomic_store_explicit(&state[g], CARRY_INCLUSIVE | combine_{kind}(prefix, agg), memory_order_relaxed);\n}}\n\n",
+        k = kind_index(inst)
+    ));
+    out
+}
+
+fn kind_index(inst: &BlockInst) -> u32 {
+    kind(inst)
+}
+
+/// Polls of a predecessor's state before computing it here.
+const SPINS: u32 = 64;
+
+/// The straight-line statements defining `v0..v{upto}` for global lane `gl` of group `g`, lane
+/// `l`; carried instructions read their round's state for the group before.
+fn lane_values(native: &BlockNative, width: LaneWidth, upto: usize) -> String {
     let m = width.word();
     let chunks = width.bytes() / 16;
     let bits = width.bytes();
-    let classes = native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. }));
-    let mut helpers = String::new();
-    if classes {
-        match strategy {
-            ClassStrategy::Lookup => {
-                helpers.push_str(NZ16);
-                for (t, table) in native.tables.iter().enumerate() {
-                    helpers.push_str(&lookup_helper(t, table));
-                }
-            }
-            ClassStrategy::Planes => helpers.push_str(TRANSPOSE8),
-        }
-    }
-    let mut out = format!(
-        "#include <metal_stdlib>\nusing namespace metal;\n\n{EQ16}\n{helpers}\n\
-         kernel void tempo_block(\n\
-         \x20   device const uint4* bytes [[buffer(0)]],\n\
-         \x20   device {m}* out [[buffer(1)]],\n\
-         \x20   constant uint& lanes [[buffer(2)]],\n\
-         \x20   uint lane [[thread_position_in_grid]]) {{\n"
-    );
-    if native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. })) {
+    let insts = &native.insts[..upto];
+    let mut out = String::new();
+    if insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_))) {
         for c in 0..chunks {
-            out.push_str(&format!("  const uint4 c{c} = bytes[lane * {chunks}u + {c}u];\n"));
+            out.push_str(&format!("  const uint4 c{c} = bytes[gl * {chunks}u + {c}u];\n"));
         }
     }
-    let mut formulas = Formulas { m, lines: vec![], next: 0, memo: Default::default(), combined: Default::default() };
-    if classes {
-        match strategy {
-            ClassStrategy::Lookup => {
-                let used: std::collections::BTreeSet<u16> = native
-                    .insts
-                    .iter()
-                    .filter_map(|i| if let BlockInst::Class { table, .. } = *i { Some(table) } else { None })
-                    .collect();
-                for t in used {
-                    for c in 0..chunks {
-                        out.push_str(&format!("  const uint4 k{t}_{c} = classes_t{t}(c{c});\n"));
-                    }
-                }
-            }
-            ClassStrategy::Planes => out.push_str(&planes(width)),
+    let used: std::collections::BTreeSet<u16> =
+        insts.iter().filter_map(|i| if let BlockInst::Class { table, .. } = *i { Some(table) } else { None }).collect();
+    for t in used {
+        for c in 0..chunks {
+            out.push_str(&format!("  const uint4 k{t}_{c} = classes_t{t}(c{c});\n"));
         }
     }
-    for (at, inst) in native.insts.iter().enumerate() {
+    if insts.iter().any(|i| matches!(i, BlockInst::Plane(_))) {
+        out.push_str(&planes(width));
+    }
+    let mut round = 0usize;
+    for (at, inst) in insts.iter().enumerate() {
+        if inst.carried() {
+            let j = round;
+            round += 1;
+            let (kind, apply) = match *inst {
+                BlockInst::Prev(a, k) => ("halo", format!("apply_prev(v{a}, {k}u, i{j})")),
+                BlockInst::Toggle(a) => ("parity", format!("apply_toggle(v{a}, i{j})")),
+                BlockInst::AfterOddRun(a) => ("borrow", format!("apply_after_odd_run(v{a}, i{j})")),
+                _ => unreachable!(),
+            };
+            let lane = ", l";
+            out.push_str(&format!(
+                "  const uint e{j} = carry_before(states + {j}u * groups, {}u, g);\n\
+                 \x20 const uint s{j} = {};\n\
+                 \x20 const uint i{j} = lane_in_{kind}(s{j}, e{j}{lane});\n\
+                 \x20 const {m} v{at} = {apply};\n",
+                kind_index(inst),
+                summary_of(inst)
+            ));
+            continue;
+        }
         let rhs = match *inst {
-            BlockInst::Class { table, bits: sel } if strategy == ClassStrategy::Lookup => {
+            BlockInst::Class { table, bits: sel } => {
                 let s4 = u32::from(sel) * 0x0101_0101;
                 (0..chunks)
                     .map(|c| {
@@ -372,22 +456,7 @@ pub(in crate::code_rule_dsl) fn generate_with(native: &BlockNative, width: LaneW
                     .collect::<Vec<_>>()
                     .join(" | ")
             }
-            BlockInst::Class { table, bits: sel } => {
-                let t = native.tables[usize::from(table)];
-                let mut word = Term::Zero;
-                for c in (0..8).filter(|c| sel >> c & 1 == 1) {
-                    let lo = (0..16).fold(0u16, |a, n| a | (u16::from(t.lo[n] >> c & 1) << n));
-                    let hi = (0..16).fold(0u16, |a, n| a | (u16::from(t.hi[n] >> c & 1) << n));
-                    let l = formulas.function(0, 4, lo);
-                    let h = formulas.function(4, 4, hi);
-                    let both = formulas.and(l, h);
-                    word = formulas.or(word, both);
-                }
-                for line in formulas.lines.drain(..) {
-                    out.push_str(&line);
-                }
-                formulas.word(&word)
-            }
+            BlockInst::Plane(k) => format!("p{k}"),
             BlockInst::EqByte(byte) => {
                 let c4 = u32::from(byte) * 0x0101_0101;
                 (0..chunks)
@@ -399,19 +468,16 @@ pub(in crate::code_rule_dsl) fn generate_with(native: &BlockNative, width: LaneW
                     .join(" | ")
             }
             BlockInst::Const(c) if bits == 64 => format!("{c:#018x}ul"),
-            BlockInst::Const(c) => format!("{m}({c:#018x}ul >> ((lane * {bits}u) & 63u))"),
+            BlockInst::Const(c) => format!("{m}({c:#018x}ul >> ((gl * {bits}u) & 63u))"),
             BlockInst::Not(a) => format!("{m}(~v{a})"),
             BlockInst::And(a, b) => format!("v{a} & v{b}"),
             BlockInst::Or(a, b) => format!("v{a} | v{b}"),
             BlockInst::Xor(a, b) => format!("v{a} ^ v{b}"),
             BlockInst::AndNot(a, b) => format!("{m}(v{a} & ~v{b})"),
+            BlockInst::Prev(..) | BlockInst::Toggle(_) | BlockInst::AfterOddRun(_) => unreachable!(),
         };
         out.push_str(&format!("  const {m} v{at} = {rhs};\n"));
     }
-    for (k, v) in native.outputs.iter().enumerate() {
-        out.push_str(&format!("  out[{k}u * lanes + lane] = v{v};\n"));
-    }
-    out.push_str("}\n");
     out
 }
 
@@ -424,81 +490,133 @@ pub(in crate::code_rule_dsl) fn run_generated(
     run_generated_with(native, bytes, width, ClassStrategy::Planes).map(|(words, _)| words)
 }
 
-/// Generated MSL run with `class` by `strategy`: the outputs, and the dispatch's GPU seconds.
+/// Generated MSL run with `class` by `strategy`: the outputs, and the GPU seconds of all the
+/// rounds' dispatches.
 pub(in crate::code_rule_dsl) fn run_generated_with(
     native: &BlockNative,
     bytes: &[u8],
     width: LaneWidth,
     strategy: ClassStrategy,
 ) -> Result<(Vec<Vec<u64>>, f64), Error> {
-    let pipeline = pipeline_named(&generate_with(native, width, strategy), "tempo_block")?;
-    let mut seconds = 0.0;
-    let words = dispatch_timed(&pipeline, bytes, width, native.outputs.len(), &mut seconds, |encoder, lanes| {
-        encoder.set_bytes(2, std::mem::size_of::<u32>() as u64, std::ptr::from_ref(&lanes).cast());
-        Ok(())
-    })?;
+    run_source(native, &generate_with(native, width, strategy), bytes, width)
+}
+
+/// Run generated `source` for `native`.
+pub(in crate::code_rule_dsl) fn run_source(
+    native: &BlockNative,
+    source: &str,
+    bytes: &[u8],
+    width: LaneWidth,
+) -> Result<(Vec<Vec<u64>>, f64), Error> {
+    let rounds = native.insts.iter().filter(|i| i.carried()).count();
+    let pipelines: Vec<metal::ComputePipelineState> = (0..rounds)
+        .map(|j| pipeline_named(source, &format!("tempo_round_{j}")))
+        .chain(std::iter::once(pipeline_named(source, "tempo_block")))
+        .collect::<Result<_, _>>()?;
+    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    let stream = Stream::new(bytes, width, native.outputs.len())?;
+    let states = MappedBuffer::zeroed::<u32>(device, rounds.max(1) * stream.groups)?;
+    let lanes = stream.lanes as u32;
+    let passes: Vec<Pass<'_>> = pipelines
+        .iter()
+        .map(|pipeline| Pass {
+            pipeline,
+            buffers: vec![(0, &*stream.source.buffer, 0), (1, &*stream.values.buffer, 0), (3, &*states.buffer, 0)],
+            args: vec![(2, bytes_of(&lanes))],
+            groups: stream.groups,
+            threads: GROUP,
+        })
+        .collect();
+    let seconds = encode_passes(&passes)?;
+    let words = stream.slots(native.outputs.len());
     Ok((words.iter().map(|w| finish(w, bytes.len())).collect(), seconds))
 }
 
-/// One dispatch over `bytes`, padded to whole SIMD groups of lanes, with `slots` slots of lane
-/// words; returns each slot as 64-bit words of the stream (lane words are little-endian and in
-/// lane order, so they are the stream's words).
-fn dispatch<T>(
-    pipeline: &metal::ComputePipelineState,
-    bytes: &[u8],
-    width: LaneWidth,
-    slots: usize,
-    bind: impl FnOnce(&metal::ComputeCommandEncoderRef, u32) -> Result<T, Error>,
-) -> Result<Vec<Vec<u64>>, Error> {
-    dispatch_timed(pipeline, bytes, width, slots, &mut 0.0, bind)
+/// The source padded to whole SIMD groups of lanes, and a buffer of `slots` slots of lane words.
+struct Stream {
+    source: MappedBuffer,
+    values: MappedBuffer,
+    lanes: usize,
+    groups: usize,
+    slot_bytes: usize,
+    words: usize,
 }
 
-/// `dispatch`, also giving the command's GPU seconds.
-fn dispatch_timed<T>(
-    pipeline: &metal::ComputePipelineState,
-    bytes: &[u8],
-    width: LaneWidth,
-    slots: usize,
-    seconds: &mut f64,
-    bind: impl FnOnce(&metal::ComputeCommandEncoderRef, u32) -> Result<T, Error>,
-) -> Result<Vec<Vec<u64>>, Error> {
+impl Stream {
+    fn new(bytes: &[u8], width: LaneWidth, slots: usize) -> Result<Self, Error> {
+        let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+        let span = width.bytes() * GROUP;
+        let padded_len = bytes.len().div_ceil(span).max(1) * span;
+        let mut flat = bytes.to_vec();
+        flat.resize(padded_len, 0);
+        let lanes = padded_len / width.bytes();
+        let slot_bytes = padded_len / 8;
+        Ok(Self {
+            source: MappedBuffer::from_slice(device, &flat)?,
+            values: MappedBuffer::zeroed::<u8>(device, slots.max(1) * slot_bytes)?,
+            lanes,
+            groups: lanes / GROUP,
+            slot_bytes,
+            words: bytes.len().div_ceil(64),
+        })
+    }
+
+    /// Each slot as 64-bit words of the stream (lane words are little-endian and in lane order,
+    /// so they are the stream's words).
+    fn slots(&self, slots: usize) -> Vec<Vec<u64>> {
+        let base = self.values.buffer.contents().cast::<u8>();
+        (0..slots)
+            .map(|slot| {
+                // SAFETY: the buffer holds `slots * slot_bytes` bytes, written by the kernels.
+                let raw = unsafe { std::slice::from_raw_parts(base.add(slot * self.slot_bytes), self.slot_bytes) };
+                raw.chunks(8).take(self.words).map(|w| u64::from_le_bytes(w.try_into().unwrap())).collect()
+            })
+            .collect()
+    }
+}
+
+/// One compute dispatch: buffers `(index, buffer, offset)`, small arguments by value, and the
+/// grid as threadgroups of `threads`.
+struct Pass<'a> {
+    pipeline: &'a metal::ComputePipelineState,
+    buffers: Vec<(u64, &'a metal::BufferRef, u64)>,
+    args: Vec<(u64, Vec<u8>)>,
+    groups: usize,
+    threads: usize,
+}
+
+fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
+    // SAFETY: `T` is a plain `repr(C)` value or an integer array; its bytes are read only.
+    unsafe { std::slice::from_raw_parts(std::ptr::from_ref(value).cast::<u8>(), std::mem::size_of::<T>()) }.to_vec()
+}
+
+/// The passes in order, one encoder each, in one command buffer; returns its GPU seconds.
+fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let _scope = super::metal_backend::launch::LaunchScope::enter();
-    let span = width.bytes() * GROUP;
-    let padded_len = bytes.len().div_ceil(span).max(1) * span;
-    let mut flat = bytes.to_vec();
-    flat.resize(padded_len, 0);
-    let lanes = padded_len / width.bytes();
-    let slot_bytes = padded_len / 8;
-    let source = MappedBuffer::from_slice(device, &flat)?;
-    let values = MappedBuffer::zeroed::<u8>(device, slots.max(1) * slot_bytes)?;
     let queue = device.new_command_queue();
     let command = queue.new_command_buffer();
     command.set_label("Rerail block program");
-    let encoder = command.new_compute_command_encoder();
-    encoder.set_label("block_program");
-    encoder.set_compute_pipeline_state(pipeline);
-    encoder.set_buffer(0, Some(&source.buffer), 0);
-    encoder.set_buffer(1, Some(&values.buffer), 0);
-    let _kept = bind(encoder, lanes as u32)?;
-    encoder.checked_dispatch_thread_groups(
-        command,
-        MTLSize::new((lanes / GROUP) as u64, 1, 1),
-        MTLSize::new(GROUP as u64, 1, 1),
-    );
-    encoder.end_encoding();
+    for pass in passes {
+        let encoder = command.new_compute_command_encoder();
+        encoder.set_label("block_program");
+        encoder.set_compute_pipeline_state(pass.pipeline);
+        for &(index, buffer, offset) in &pass.buffers {
+            encoder.set_buffer(index, Some(buffer), offset);
+        }
+        for (index, data) in &pass.args {
+            encoder.set_bytes(*index, data.len() as u64, data.as_ptr().cast());
+        }
+        encoder.checked_dispatch_thread_groups(
+            command,
+            MTLSize::new(pass.groups as u64, 1, 1),
+            MTLSize::new(pass.threads as u64, 1, 1),
+        );
+        encoder.end_encoding();
+    }
     commit_checked(command)?;
     wait_checked(command)?;
-    *seconds = super::metal_backend::launch::gpu_seconds(command);
-    let base = values.buffer.contents().cast::<u8>();
-    let words = bytes.len().div_ceil(64);
-    Ok((0..slots)
-        .map(|slot| {
-            // SAFETY: the buffer holds `slots * slot_bytes` bytes, written by the kernel.
-            let raw = unsafe { std::slice::from_raw_parts(base.add(slot * slot_bytes), slot_bytes) };
-            raw.chunks(8).take(words).map(|w| u64::from_le_bytes(w.try_into().unwrap())).collect()
-        })
-        .collect())
+    Ok(super::metal_backend::launch::gpu_seconds(command))
 }
 
 fn finish(words: &[u64], len: usize) -> Vec<u64> {
