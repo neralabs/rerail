@@ -35,9 +35,10 @@ def rows(c):
  # branch is unreachable and must not become an invented rule.
  add('BEI018',"CASE WHEN n.name='BootstrapObservedState' THEN 'schema generation planning must consume BootstrapObservation facts only' ELSE 'schema generation planning must not read legacy generation maps' END","f.kind='FunctionDef' AND f.name='plan_bootstrap_schema_generation' AND n.kind='Name' AND n.name IN ('BootstrapObservedState','SCHEMA_GENERATION_GLOBAL_TAG')",50,'function_nodes f JOIN a n ON n.__path=f.__path AND n.id BETWEEN f.id AND f.last',order="printf('%020d/%06d/%024.6f',f.bfs,50000,n.bfs)")
  add('BEI018',q("schema generation/version counters must be explicit, not inferred with 'or'"),"p.kind='BoolOp' AND p.op='Or' AND n.kind='Attribute' AND n.field='values' AND n.name IN ('schema_generation','schema_version')",50,'engine_nodes p JOIN a n ON n.__path=p.__path AND n.parent=p.id',order="printf('%020d/%06d/%024.6f',p.bfs,50000,n.position)")
- helper="substr(n.__path,1,37)='data_layer_testing/helpers/bootstrap' AND instr(substr(n.__path,28),'/')=0"
  # Compare the complete relative parent, not a loose substring of an arbitrary path.
- helper="rx_matches(n.__path,'^data_layer_testing/helpers/bootstrap[^/]*$')"
+ # This is the exact literal-prefix/no-further-slash predicate. Keep it in SQL:
+ # a regex callback for each syntax row spends the native work allowance.
+ helper="substr(n.__path,1,36)='data_layer_testing/helpers/bootstrap' AND instr(substr(n.__path,37),'/')=0"
  add('BEI021',q('test bootstrap helpers must use the lazy bootstrap coordinator path, not probe or mutate proof caches'),helper+f' AND n.callee IN {literals(c["HELPER_BOOTSTRAP_PROBE_NAMES"])}',51,'engine_calls n')
  add('BEI021',q('test bootstrap helpers must not maintain helper-owned bootstrap proof state'),helper+f" AND n.kind IN ('Name','Attribute') AND n.name IN {literals(c['HELPER_BOOTSTRAP_PROOF_ATTRS'])}",51)
  add('BEI028',q('backend-specific bootstrap probes must live behind explicit interrogation/replay collaborators'),f"n.basename!='bootstrap_backend_collaborators.py' AND (substr(n.basename,1,9)='bootstrap' OR instr('/'||n.__path||'/','/bootstrap/')>0) AND n.kind='Attribute' AND n.name IN {literals(c['BACKEND_PROBE_ATTRS'])}",52)

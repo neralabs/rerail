@@ -18,9 +18,11 @@ def candidate(root):
  FROM effective_source source CROSS JOIN entry WHERE entry.name='_collect_fake_executor_violations' OR EXISTS(SELECT 1 FROM configuration,json_each(coalesce(json_extract(data,'$.bootstrapPaths'),{q(json.dumps(DEFAULT))})) p WHERE p.value=source.__path)
  OR rx_matches(source.__path,'(^|/)(schema_transaction|sql_connection|bootstrap_interrogation)\\.py$') OR instr(rx_replace(source.__path,'^.*/',''),'bootstrap')>0
  OR rx_matches(source.source,'Bootstrap|bootstrap|schema_transaction|materialized_pipeline|physical_table|reconciliation')""",('__path',)),
- S('engine_nodes','SELECT a.*,s.basename,s.engine,s.bootstrap FROM a JOIN file_scope s ON s.__path=a.__path',('__path','id'),('__path','kind','name')),
- S('engine_calls','SELECT c.*,s.basename,s.engine,s.bootstrap FROM calls c JOIN file_scope s ON s.__path=c.__path',('__path','id'),('__path','callee')),
- S('function_nodes',"SELECT f.*,s.basename,s.engine,s.bootstrap,s.engine OR s.basename='schema_transaction.py' AND f.name IN ('bootstrap_interrogation_lazy','bootstrap_interrogation_request_no_io','bootstrap_schema_tail_lazy') OR entry.name='_collect_fake_executor_violations' AS checked FROM functions f JOIN file_scope s ON s.__path=f.__path CROSS JOIN entry CROSS JOIN configuration WHERE entry.name!='_collect_fake_executor_violations' OR json_extract(configuration.data,'$.functionLine') IS NULL OR f.line=json_extract(configuration.data,'$.functionLine')",('__path','id'))]
+ # Consumers select kinds/callees across the whole file set. A leading path
+ # column hides those keys and turns each diagnostic arm into a complete scan.
+ S('engine_nodes','SELECT a.*,s.basename,s.engine,s.bootstrap FROM a JOIN file_scope s ON s.__path=a.__path',('__path','id'),('kind','name')),
+ S('engine_calls','SELECT c.*,s.basename,s.engine,s.bootstrap FROM calls c JOIN file_scope s ON s.__path=c.__path',('__path','id'),('callee',)),
+ S('function_nodes',"SELECT f.*,s.basename,s.engine,s.bootstrap,s.engine OR s.basename='schema_transaction.py' AND f.name IN ('bootstrap_interrogation_lazy','bootstrap_interrogation_request_no_io','bootstrap_schema_tail_lazy') OR entry.name='_collect_fake_executor_violations' AS checked FROM functions f JOIN file_scope s ON s.__path=f.__path CROSS JOIN entry CROSS JOIN configuration WHERE entry.name!='_collect_fake_executor_violations' OR json_extract(configuration.data,'$.functionLine') IS NULL OR f.line=json_extract(configuration.data,'$.functionLine')",('__path','id'),('basename','name'))]
  # Raw scans use each surface's first occurrence. They are separate from AST
  # name matches, and apply to comments and strings as in the pinned source.
  raw=[]
