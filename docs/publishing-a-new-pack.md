@@ -106,9 +106,11 @@ Reruns after a failure are safe.
 
 - **The tag script** pushes each release tag to GitHub. On a rerun, a version already tagged is skipped.
 - **The publish script** publishes each pack public under the `latest` dist-tag, then points `next` at it (`next`
-  never trails `latest`). It waits on nothing npm does. On a rerun, a version npm already has has its `next` raised,
-  not published again.
-- Once tagged, a version's publish is only ever re-run, never replanned: if the publish fails, run it again.
+  never trails `latest`). It waits on nothing npm does, so it doesn't check the package is public: step 4 does. On a
+  rerun, a version npm already has has its `next` raised, not published again. A version older than the pack's
+  `latest` is never published, since that would move `latest` back.
+- If the publish fails after tagging, run the publish script again. Later versions don't depend on it: the release
+  workflow publishes any version that is tagged but not on npm.
 
 </details>
 
@@ -221,9 +223,10 @@ Find the message you see in the table; the fix is beside it.
 
 | Symptom | Cause and fix |
 |---|---|
-| `the checkout has changes; publish from a clean checkout` | Changed or untracked files in the worktree. Restart at step 1. |
+| `the checkout has changes; tag from a clean checkout of the commit to release` | Changed or untracked files in the worktree. Restart at step 1. |
 | `commit <sha> is not on GitHub, or gh cannot read the repository` | Not on a pushed commit, or `gh` isn't logged in. Use `origin/main` as in step 1; check `gh auth status`. |
-| `<name>@<version> answers an anonymous request with <status> 3 minutes after its publish: it is not public` | npm keeps the package private, or is slower than usual to serve it. Check `npm access get status <name>`; if private, run `npm access set status=public <name>`. Then rerun the script. |
+| `npm access get status` in step 4 prints `private` | npm keeps the package private. Run `npm access set status=public <name>`, then check again. |
+| `<name>@<version> is older than latest <latest>, so it was not published` | A newer version is already `latest` and supersedes this one. Nothing to do; publishing it would move `latest` back. |
 | `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
 | The gate says a tool-pack's test data is missing and to run `npm run fixtures:pull` | The worktree has no pack data. Run `npm run fixtures:pull -- --pack <id>` with read access to the bucket, then step 2 again. |

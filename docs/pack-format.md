@@ -874,12 +874,16 @@ Set-up and `rerail packs add <id>` fetch under `latest` (on the default update c
 then on. `next` never trails `latest`: it moves to the version too unless already at a newer one, so the `next`
 channel gets the release. A pack held at an older `latest` (step 3) is published under `next` instead and stays held.
 
-Packs publish one by one, and a failed publish is re-run: the tags and Releases stand, and the re-run publishes the
-same tagged versions. One the registry already has counts as published, and has `next` moved up. The **Published
-dist-tags** job lists each published pack's dist-tags in the run summary, read with no npm login. It fails if a pack
-can't be read that way (it isn't public), if `latest` (`next` for a held pack) is not the version just published, or
-if `next` is older than `latest`. It gates nothing. A pull request touching packs runs the gate and packing as a dry
-run.
+Packs publish one by one, and a failed publish leaves its tags and Releases standing. A version is released once it is
+tagged and on npm: every run's plan reads npm for each tagged version and publishes again one npm doesn't have, with a
+warning naming it. So re-running the run (all jobs or only the failed ones) or the next push to `main` finishes it,
+with no time limit, and a run whose plan can't read npm fails rather than call the version released. One the registry
+already has counts as published, and has `next` moved up. A version older than the pack's `latest` (an old run re-run
+after a newer one shipped) is never published, since that would move `latest` back; the run fails naming it. The
+**Published dist-tags** job lists each published pack's dist-tags in the run summary, read with no npm login. It fails
+if a pack can't be read that way (it isn't public), if `latest` (`next` for a held pack) is not the version just
+published, or if `next` is older than `latest`. It gates nothing. A pull request touching packs runs the gate and
+packing as a dry run.
 
 </details>
 

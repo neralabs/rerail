@@ -11,8 +11,9 @@ name: Release packs
 #   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
 #   under `latest` with trusted publishing, side by side; its `next` is moved up to that version too, unless `next` is
 #   already at a newer one, so `next` never trails `latest`. A pack held at an older `latest` (put back on purpose) is
-#   published under `next` instead, so the hold stays. A failed publish is re-run, and publishes the same tagged
-#   version. The dist-tags job then lists each published pack's dist-tags in the run summary and fails if one is not
+#   published under `next` instead, so the hold stays. A version tagged but not on npm (a failed or unapproved
+#   publish) is planned again by every later run, so re-running the run or the next push publishes it. The dist-tags
+#   job then lists each published pack's dist-tags in the run summary and fails if one is not
 #   where it was published, or one's `next` is older than its `latest`. A pack never published at all needs its first
 #   publish by hand; the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
@@ -109,8 +110,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # On a push, the plan reads each pack's dist-tags (is it held?), which for these restricted packs needs the
-      # read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. The file names the variable, not the token.
+      # On a push, the plan reads from npm whether each tagged version is published and each pack's dist-tags (is it
+      # held?), with the read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
+      # plan, so a version npm lacks is never taken as released. The file names the variable, not the token.
       - name: Authenticate npm to read the packs
         if: github.event_name == 'push'
         env:
@@ -321,7 +323,8 @@ jobs:
   # pack's trusted publisher, so no npm token exists anywhere. packs-publish.mjs passes `--provenance` here, so a pack
   # that npm cannot attach a provenance attestation to fails to publish instead of going out without one. It publishes
   # the tagged versions and waits on nothing npm does after a publish. Should it fail, the tags and Releases stand:
-  # re-run this job (or the run's failed jobs), and a version npm already has counts as published.
+  # every later plan publishes again a version tagged but not on npm, so re-running the run (all jobs or failed jobs)
+  # or the next push recovers it, and a version npm already has counts as published.
   publish:
     name: Publish to npmjs
     needs: [plan, pack, tag]

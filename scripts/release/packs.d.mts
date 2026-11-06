@@ -34,13 +34,19 @@ export function releasePacks(
   manifest: readonly { name: string; version: string; file: string }[],
   steps: {
     publish(file: string, distTag: string): { ok: boolean; output: string };
+    readLatest(name: string): Promise<string | null>;
     readNext(name: string): Promise<string | null>;
     distTag(name: string, version: string, tag: string): void;
     log(line: string): void;
   },
   held?: readonly string[],
-): Promise<{ name: string; version: string; distTag: string }[]>;
-export function planPacks(packs: readonly ReleasePack[], tags: readonly string[]): { publish: string[]; first: string[] };
+): Promise<{ released: { name: string; version: string; distTag: string }[]; superseded: { name: string; version: string; latest: string }[] }>;
+export function onRegistry(version: string, distTags: Record<string, string> | null, versions: readonly string[] | null): boolean | null;
+export function planPacks(
+  packs: readonly ReleasePack[],
+  tags: readonly string[],
+  npmHas: (name: string, version: string) => boolean | null,
+): { publish: string[]; first: string[]; unpublished: string[]; unreadable: string[] };
 export interface PromotionCandidate extends ReleasePack {
   hold?: boolean;
 }
