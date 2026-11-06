@@ -341,14 +341,14 @@ pub(super) fn select(
                     for (&atom, &kind) in &wanted {
                         let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
                         let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        decode(postings, at, space.count(at), set)?;
+                        push_kinds(postings, at, space.count(at), set)?;
                     }
                 } else if !wanted.is_empty() {
                     let mut rows = kinds.query([file])?;
                     while let Some(row) = rows.next()? {
                         let Some(&kind) = wanted.get(&row.get::<_, i64>(0)?) else { continue };
                         let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        decode(row.get_ref(1)?.as_blob()?, at, space.count(at), set)?;
+                        push_kinds(row.get_ref(1)?.as_blob()?, at, space.count(at), set)?;
                     }
                 }
                 if reads_uncovered {
@@ -547,6 +547,13 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
     let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
         .map_err(|error| crate::content_store::StoreError::Invalid(format!("the set steps failed on Metal: {error:?}")))?;
     Ok(words.into_iter().map(|words| NodeSet::from_words(space, &words)).collect())
+}
+
+/// Adds a kind's container segment (`content_store::postings::segment_positions`) of the space's
+/// file `file`, of `count` nodes, to `set`: its containers are copied, not decoded.
+fn push_kinds(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
+    let invalid = |why: &str| rusqlite::Error::UserFunctionError(format!("invalid kind segment: {why}").into());
+    set.push_segment(file, bytes, count).map_err(invalid)
 }
 
 /// Adds a posting segment's nodes (preorders as varint deltas, from 0) of the space's file `file`,

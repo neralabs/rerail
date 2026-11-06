@@ -1,6 +1,6 @@
 # 0045: Node sets are chunked containers: arrays, bitmaps and runs
 
-Status: accepted (user agreed, 2026-11-06); step 1 measured, step 2 built (`space::NodeSet`)
+Status: accepted (user agreed, 2026-11-06); steps 1-2 done (`space::NodeSet`), step 3 done for kind postings
 
 ## Intro
 
@@ -189,7 +189,13 @@ What this shows:
 2. Host type and operations (§1-2), replacing `NodeSet`; set steps from SQL's plan run on it (done:
    `space/chunked.rs`; the prefilter's set programs run on it; Metal reads and writes dense words
    through `to_words`/`from_words` until step 4).
-3. Postings as containers (§5); compare size and read cost with delta-varint.
+3. Postings as containers (§5); compare size and read cost with delta-varint (kind postings done:
+   `tape_kind_counts.postings` are container segments, prefilter version 6; SQL reads them through
+   `nera_segment`, the prefilter's sets copy their containers. Over the 9,010-file repository
+   (`posting_forms`): 40.6 MB against delta-varint's 19.5 MB on disk, read into every kind's set
+   in 66 ms against 201 ms. In memory the sets are the same. Disk has room under its 10 GB budget,
+   so the copy-in read wins. Term postings and coverage stay delta-varint: they are read through
+   SQL rows, not as sets).
 4. Device containers (§4) for the Metal set steps and label passes.
 
 Each step: the replay and the converted gate unchanged; CPU time against the current set code.

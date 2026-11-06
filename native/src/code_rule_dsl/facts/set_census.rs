@@ -497,7 +497,7 @@ fn posting_forms() {
             let mut set = NodeSet::empty(&space);
             for &i in ids {
                 let (f, _, bytes) = &segments[i];
-                set.push_segment(*f, bytes).unwrap();
+                set.push_segment(*f, bytes, u32::MAX).unwrap();
             }
             set.len()
         }).sum::<usize>()

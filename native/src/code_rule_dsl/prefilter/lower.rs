@@ -540,7 +540,7 @@ impl Lower {
         }
         // Seek the tape/kind count row before decoding its compact positions.
         let body = format!(
-            "SELECT k.tape_id,p.pre FROM cf CROSS JOIN tape_kind_counts k ON k.tape_id=cf.fid CROSS JOIN nera_postings(k.postings) p WHERE k.kind IN ({})",
+            "SELECT k.tape_id,p.pre FROM cf CROSS JOIN tape_kind_counts k ON k.tape_id=cf.fid CROSS JOIN nera_segment(k.postings) p WHERE k.kind IN ({})",
             atoms.join(",")
         );
         let selected = self.relation(body, true)?;

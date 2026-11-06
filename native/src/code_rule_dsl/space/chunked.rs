@@ -732,7 +732,6 @@ impl NodeSet {
     /// File `file`'s chunks as a stored segment (0045 §5): per chunk its slice (u16), its form
     /// (u8), its length (u32) and its container, little-endian. Read back by `insert_segment`
     /// without decoding member by member.
-    #[allow(dead_code)] // the store's postings move to it in 0045 step 3
     pub(in crate::code_rule_dsl) fn segment(&self, file: usize) -> Vec<u8> {
         let file = file as u64;
         let from = self.directory.partition_point(|e| e.key >> 16 < file);
@@ -751,9 +750,9 @@ impl NodeSet {
         out
     }
 
-    /// Adds a segment of file `file` (`segment`), after every file already in the set.
-    #[allow(dead_code)] // the store's postings move to it in 0045 step 3
-    pub(in crate::code_rule_dsl) fn push_segment(&mut self, file: usize, mut bytes: &[u8]) -> Result<(), &'static str> {
+    /// Adds a segment of file `file` (`segment`), whose positions are below `count`, after every
+    /// file already in the set.
+    pub(in crate::code_rule_dsl) fn push_segment(&mut self, file: usize, mut bytes: &[u8], count: u32) -> Result<(), &'static str> {
         let invalid = "invalid segment";
         while !bytes.is_empty() {
             let (head, rest) = bytes.split_at_checked(7).ok_or(invalid)?;
@@ -780,6 +779,10 @@ impl NodeSet {
                 at
             };
             self.directory.push(Entry { key: k, form, at: at as u32, len: len as u32 });
+            let e = *self.directory.last().expect("just pushed");
+            if (u32::from(slice) << 16 | u32::from(self.view(&e).last())) >= count {
+                return Err("a position past the file's nodes");
+            }
             bytes = rest;
         }
         Ok(())
@@ -912,5 +915,26 @@ mod tests {
         let mut d = NodeSet::default();
         d.push_file(0, (0..65_536).step_by(2));
         assert_eq!(d.shape(), (0, 1, 0), "half the chunk, no runs: bitmap");
+    }
+
+    /// A segment written here is the store's format: `segment_positions` reads the same members,
+    /// and `push_segment` the same set, for every form.
+    #[test]
+    fn segments_are_the_stores_format() {
+        let mut g = Lcg(11);
+        for round in 0..6u32 {
+            let (set, model) = sample(&mut g, round);
+            for file in 0..4u32 {
+                let bytes = set.segment(file as usize);
+                let want: Vec<u32> = model.iter().filter(|(f, _)| *f == file).map(|&(_, p)| p).collect();
+                assert_eq!(crate::content_store::segment_positions(&bytes).unwrap(), want, "round {round} file {file}");
+                let mut back = NodeSet::default();
+                back.push_segment(file as usize, &bytes, 200_000).unwrap();
+                assert!(back.iter().map(|(_, p)| p).eq(want.iter().copied()));
+                if let Some(&last) = want.last() {
+                    assert!(NodeSet::default().push_segment(file as usize, &bytes, last).is_err(), "a position past the file is refused");
+                }
+            }
+        }
     }
 }
