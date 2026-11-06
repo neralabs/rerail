@@ -36,15 +36,11 @@
 //                 find fewer targets than W's path-bounded one.
 //   [tie]         where one base expression resolves to several catalog classes (several classes share a
 //                 qualified name) every one is searched; W's row_number keeps one of the tied routes.
-//   [attr-base]   an attribute base class's whitespace-stripped text (rx_replace(text,'\s+','')) is its dotted
-//                 name (`name`): equal for identifier chains; a base whose object is a call or subscript (no dotted
-//                 name) resolves to nothing (its text could only name a class whose module path held parentheses).
 
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
-.decl name(n: node, s: symbol)
 .decl value(n: node, v: symbol)
 .decl strprefix(n: node, s: symbol)
 .decl line(n: node, l: number)
@@ -313,43 +309,17 @@ prs_impx(d, n, t, t, xs) :- prs_impfrom(d, n, _), field(n, "module_name", mn), p
 prs_impx(d, n, al, nm, xs) :- prs_impfrom(d, n, _), field(n, "module_name", mn), prs_kid(n, x, _), x != mn,
   prs_n(d, x, "aliased_import", xs, _), field(x, "name", y), node_text(y, nm), field(x, "alias", z), node_text(z, al).
 
-// A relative module name: k leading dots strip k components off the file's module (a package's `__init__` file
-// counting as `<package>.__init__`); W's rx_replace `(?:\.[^.]+){k}$` leaves a module of fewer components unchanged;
-// the rest of the name follows a dot (W's `||'.'||`, even when empty).
-.decl prs_relms(ms: symbol)
-prs_relms(ms) :- prs_impfrom(_, _, ms), prefix(".", ms).
-// The name's suffixes after each leading dot (substr shrinks: a bounded recursion); k = the dots stripped.
-.decl prs_lsuf(ms: symbol, s: symbol)
-prs_lsuf(ms, ms) :- prs_relms(ms).
-prs_lsuf(ms, substr(s, 1, strlen(s) - 1)) :- prs_lsuf(ms, s), strlen(s) > 0, substr(s, 0, 1) = ".".
-.decl prs_nlead(ms: symbol, k: number)
-.decl prs_lsufn(ms: symbol, j: number)
-prs_lsufn(ms, strlen(ms) - strlen(s)) :- prs_lsuf(ms, s).
-prs_nlead(ms, k) :- prs_relms(ms), k = max j : { prs_lsufn(ms, j) }.
-.decl prs_needk(d: number, k: number)
-prs_needk(d, k) :- prs_impfrom(d, _, ms), prs_nlead(ms, k).
+// A relative module name ms (k leading dots): W's rx_replace(module || '.__init__' for a package's `__init__` file,
+// '(?:\.[^.]+){k}$', '') || '.' || rx_replace(ms, '^\.+', ''), the same @rx_replace (a module of fewer than k
+// components stays unchanged; the rest follows a dot even when empty).
 .decl prs_mm(d: number, mm: symbol)
-prs_mm(d, cat(m, ".__init__")) :- prs_needk(d, _), prs_doc(d, p, m), suffix("/__init__.py", p).
-prs_mm(d, m) :- prs_needk(d, _), prs_doc(d, p, m), !suffix("/__init__.py", p).
-// The module's suffixes; a dot at position i where the suffix of length strlen(mm) - i starts with one.
-.decl prs_msuf(d: number, s: symbol)
-prs_msuf(d, mm) :- prs_mm(d, mm).
-prs_msuf(d, substr(s, 1, strlen(s) - 1)) :- prs_msuf(d, s), strlen(s) > 1.
-.decl prs_mdot(d: number, i: number)
-prs_mdot(d, i) :- prs_msuf(d, s), substr(s, 0, 1) = ".", prs_mm(d, mm), i = strlen(mm) - strlen(s).
-.decl prs_mdots(d: number, i: number, k: number)
-.decl prs_mdge(d: number, i: number, j: number)
-prs_mdge(d, i, j) :- prs_mdot(d, i), prs_mdot(d, j), j >= i.
-prs_mdots(d, i, k) :- prs_mdot(d, i), k = count : { prs_mdge(d, i, _) }.
-.decl prs_ndots(d: number, k: number)
-prs_ndots(d, k) :- prs_mdot(d, _), k = count : { prs_mdot(d, _) }.
-.decl prs_strip(d: number, k: number, st: symbol)
-prs_strip(d, k, substr(mm, 0, i)) :- prs_needk(d, k), prs_mm(d, mm), prs_mdots(d, i, k).
-prs_strip(d, k, mm) :- prs_needk(d, k), prs_mm(d, mm), prs_ndots(d, nd), nd < k.
-prs_strip(d, k, mm) :- prs_needk(d, k), prs_mm(d, mm), !prs_mdot(d, _).
+prs_mm(d, cat(m, ".__init__")) :- prs_doc(d, p, m), suffix("/__init__.py", p).
+prs_mm(d, m) :- prs_doc(d, p, m), !suffix("/__init__.py", p).
 .decl prs_fbase(d: number, n: node, b: symbol)
 prs_fbase(d, n, ms) :- prs_impfrom(d, n, ms), !prefix(".", ms).
-prs_fbase(d, n, cat(cat(st, "."), substr(ms, k, strlen(ms) - k))) :- prs_impfrom(d, n, ms), prs_nlead(ms, k), prs_strip(d, k, st).
+prs_fbase(d, n, b) :- prs_impfrom(d, n, ms), prefix(".", ms), prs_mm(d, mm), r = @rx_replace(ms, "^\\.+", ""),
+  k = strlen(ms) - strlen(r), st = @rx_replace(mm, cat(cat("(?:\\.[^.]+){", to_string(k)), "}$"), ""),
+  b = cat(cat(st, "."), r).
 
 // import_statement names: local = alias, else the dotted name's first component; target the dotted name.
 .decl prs_dn(t: symbol)
@@ -458,9 +428,10 @@ prs_baseq(d, c, o, cat(cat(m, "."), bt)) :- prs_basex(d, c, b, o, "identifier"),
   !prs_firstimp(d, "import_from_statement", bt, _), prs_doc(d, _, m).
 prs_baseq(d, c, o, cat(cat(tg, "."), at)) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, at, _, ot),
   prs_firstimp(d, "import_statement", ot, tg).
-// [attr-base]
+// The base's text with its whitespace removed (rx_replace(base.text, '\s+', '')), as W qualifies an attribute
+// base no `import` names.
 prs_baseq(d, c, o, q) :- prs_basex(d, c, b, o, "attribute"), prs_attr(d, b, _, _, _, _, ot),
-  !prs_firstimp(d, "import_statement", ot, _), name(b, q).
+  !prs_firstimp(d, "import_statement", ot, _), node_text(b, t), q = @rx_replace(t, "\\s+", "").
 // [tie]
 .decl prs_base(c: node, p: node, o: number)
 prs_base(c, p, o) :- prs_baseq(_, c, o, q), prs_cls(_, p, q).
