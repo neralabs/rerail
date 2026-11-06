@@ -87,6 +87,7 @@ pub(super) fn plan_signature(sources: &std::collections::BTreeMap<String, Arc<dy
         for column in 0..source.columns().len() {
             source.indexed(column).hash(&mut hash);
             source.range_indexed(column).hash(&mut hash);
+            source.scoped_indexed(column).hash(&mut hash);
             if source.indexed(column) {
                 bucket(source.estimated_matches(column, false)).hash(&mut hash);
                 bucket(source.estimated_matches(column, true)).hash(&mut hash);
@@ -178,6 +179,57 @@ unsafe impl<'a> VTab<'a> for Table {
     fn best_index(&self, info: &mut IndexInfo) -> Result<bool> {
         let source = self.shared.current();
         let _reader = super::producer::ReadOnly::enter();
+        let path = info.constraints().enumerate().find_map(|(i, c)| {
+            (c.is_usable()
+                && c.column() == 0
+                && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                && info.collation(i).is_ok_and(|v| v == "BINARY"))
+            .then_some(i)
+        });
+        if let Some(path) = path {
+            let key = info
+                .constraints()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    if c.is_usable()
+                        && c.column() > 0
+                        && c.operator() == IndexConstraintOp::SQLITE_INDEX_CONSTRAINT_EQ
+                        && source.scoped_indexed(c.column() as usize)
+                        && info.collation(i).is_ok_and(|v| v == "BINARY")
+                    {
+                        let batch = info.is_in_constraint(i).ok()?;
+                        Some((
+                            i,
+                            c.column(),
+                            source.estimated_scoped_matches(c.column() as usize, batch),
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .min_by_key(|v| v.2);
+            if let Some((key, column, rows)) = key {
+                let path_batch = info.is_in_constraint(path)?;
+                let key_batch = info.is_in_constraint(key)?;
+                if path_batch {
+                    info.set_in_constraint(path, true)?;
+                }
+                if key_batch {
+                    info.set_in_constraint(key, true)?;
+                }
+                info.constraint_usage(path).set_argv_index(1);
+                info.constraint_usage(key).set_argv_index(2);
+                info.set_idx_num(
+                    (1 << 21)
+                        | ((column + 1) << 4)
+                        | i32::from(path_batch)
+                        | (i32::from(key_batch) << 1),
+                );
+                info.set_estimated_rows(rows as i64);
+                info.set_estimated_cost(rows.max(1) as f64);
+                return Ok(true);
+            }
+        }
         let selected = info
             .constraints()
             .enumerate()
@@ -332,7 +384,27 @@ unsafe impl VTabCursor for Cursor {
         self.position = 0;
         self.selected = None;
         self.range = 0..self.source.len();
-        if index & (1 << 20) != 0 {
+        if index & (1 << 21) != 0 {
+            let column = (((index & ((1 << 20) - 1)) >> 4) - 1) as usize;
+            let read = |arg, batch| -> Result<Vec<Value>> {
+                if batch {
+                    let mut iter = args.in_values(arg)?;
+                    let mut values = Vec::new();
+                    while let Some(value) = iter.next()? {
+                        values.push(Value::try_from(value).map_err(|e| failure(&e.to_string()))?);
+                    }
+                    Ok(values)
+                } else {
+                    Ok(vec![args.get::<Value>(arg)?])
+                }
+            };
+            let paths = read(0, index & 1 != 0)?;
+            let values = read(1, index & 2 != 0)?;
+            if index & 3 != 0 {
+                self.shared.stats.batches.fetch_add(1, Ordering::Relaxed);
+            }
+            self.selected = self.source.lookup_scoped(column, &paths, &values)?;
+        } else if index & (1 << 20) != 0 {
             let column = ((index & ((1 << 20) - 1)) >> 4) - 1;
             let mut arg = 0;
             let lower = if index & 1 != 0 {

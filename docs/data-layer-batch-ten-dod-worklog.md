@@ -82,3 +82,28 @@ All 36 existing budget regressions pass. SQL submission limits are unchanged.
 A quiet-apply regression reproduces missing failure status before result paging.
 The fixed apply returns `hasEvaluationFailures`; the benchmark stops and retains incomplete-run diagnostics when it is true.
 That regression passes. A new release build is in progress before targeted global recovery validation.
+
+The first targeted recovery run reaches a native input-capacity failure in the two lazy kernels.
+It also reproduces the identity query interruption.
+A second run confirms the input partition and identity repairs, then exposes argument-lookup exhaustion in both lazy kernels.
+These runs remain failed diagnostic runs. Neither satisfies the cumulative gate.
+The attempted external sample attached after the second process exited, so no stack sample was obtained.
+
+A repository consumer now partitions physical subtree input into bounded quanta and publishes one completed relation.
+Its SQL scope and root/node/file identities remain intact. Twelve batch tests pass.
+They include fitting peers, one multi-file consumer, retained layouts, and the existing 100-stage dependent-consumer guard.
+
+The identity rule now selects constructor calls and their files before lexical ownership.
+A new original-evaluated positive and clean control each contains 7,000 unrelated functions.
+Both failed before the repair with a `parents` query interruption.
+Both now pass, along with every original and supplemental identity observation in the existing replay.
+The focused DoD matrix now contains 54 passing tests.
+
+The argument stage joins a file path and a file-local parent ID.
+The virtual table pushed only one equality and looked up repeated IDs across files.
+A deterministic 128-file regression visits 1,280 candidates for ten matches before the fix.
+The revised index plan passes the path and indexed value together, including batched IN constraints.
+Its lookup routes directly to the selected file postings. SQLite retains affinity and collation rechecks.
+All four binding tests pass, including batched duplicates, numeric/text/NULL values, and NOCASE controls.
+The SQL text and remaining work limits are unchanged by this index repair.
+A rebuilt addon will be checked on the failing global kernels before another cumulative measurement.

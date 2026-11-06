@@ -57,6 +57,21 @@ pub(super) trait Source: Send + Sync {
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
     fn indexed(&self, column: usize) -> bool;
+    /// File identity plus one indexed value, delivered as one complete constraint batch.
+    fn scoped_indexed(&self, _column: usize) -> bool {
+        false
+    }
+    fn estimated_scoped_matches(&self, column: usize, batch: bool) -> usize {
+        self.estimated_matches(column, batch)
+    }
+    fn lookup_scoped(
+        &self,
+        _column: usize,
+        _paths: &[Value],
+        _values: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        Ok(None)
+    }
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {
         false
     }
@@ -894,6 +909,26 @@ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Re
 struct Union {
     sources: Vec<Nodes>,
     offsets: Vec<usize>,
+    by_path: HashMap<String, usize>,
+}
+impl Union {
+    fn matching_files(&self, paths: &[Value]) -> Option<Vec<usize>> {
+        let mut files = Vec::new();
+        for path in paths {
+            match path {
+                Value::Null => {}
+                Value::Text(path) => {
+                    if let Some(&file) = self.by_path.get(path) {
+                        files.push(file);
+                    }
+                }
+                _ => return None,
+            }
+        }
+        files.sort_unstable();
+        files.dedup();
+        Some(files)
+    }
 }
 impl Source for Union {
     fn columns(&self) -> Vec<String> {
@@ -906,7 +941,40 @@ impl Source for Union {
         *self.offsets.last().unwrap()
     }
     fn estimated_matches(&self, c: usize, b: bool) -> usize {
+        if c == 0 {
+            return self
+                .len()
+                .div_ceil(self.sources.len().max(1))
+                .saturating_mul(if b { 256 } else { 1 })
+                .min(self.len());
+        }
         self.sources.iter().map(|s| s.estimated_matches(c, b)).sum()
+    }
+    fn scoped_indexed(&self, c: usize) -> bool {
+        c != 0 && self.indexed(c)
+    }
+    fn estimated_scoped_matches(&self, c: usize, batch: bool) -> usize {
+        self.estimated_matches(c, batch)
+            .div_ceil(self.sources.len().max(1))
+    }
+    fn lookup_scoped(
+        &self,
+        c: usize,
+        paths: &[Value],
+        values: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        self.charge(paths.len() + 1)?;
+        let Some(files) = self.matching_files(paths) else {
+            return Ok(None);
+        };
+        let mut result = Vec::new();
+        for i in files {
+            match self.sources[i].lookup(c, values)? {
+                Some(rows) => result.extend(rows.into_iter().map(|row| row + self.offsets[i])),
+                None => result.extend(self.offsets[i]..self.offsets[i + 1]),
+            }
+        }
+        Ok(Some(result))
     }
     fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
         self.sources[0].range_upper_compatible(lower, upper)
@@ -936,6 +1004,15 @@ impl Source for Union {
         self.sources[0].charge(n)
     }
     fn lookup(&self, c: usize, v: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+        if c == 0 {
+            self.charge(v.len() + 1)?;
+            return Ok(self.matching_files(v).map(|files| {
+                files
+                    .into_iter()
+                    .flat_map(|i| self.offsets[i]..self.offsets[i + 1])
+                    .collect()
+            }));
+        }
         let mut result = Vec::new();
         for (i, s) in self.sources.iter().enumerate() {
             match s.lookup(c, v)? {
@@ -1066,9 +1143,18 @@ pub(super) fn sources(
         for s in &sources {
             offsets.push(offsets.last().unwrap() + s.len())
         }
+        let by_path = sources
+            .iter()
+            .enumerate()
+            .map(|(i, source)| (source.path.clone(), i))
+            .collect();
         output.push((
             name.clone(),
-            Arc::new(Union { sources, offsets }) as Arc<dyn Source>,
+            Arc::new(Union {
+                sources,
+                offsets,
+                by_path,
+            }) as Arc<dyn Source>,
         ));
     }
     Ok(output)

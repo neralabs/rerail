@@ -2,23 +2,104 @@ use super::*;
 
 #[test]
 fn file_and_parent_filters_do_not_visit_equal_node_ids_in_other_files() -> Result<()> {
-    use crate::code_rule_dsl::{model::FileInput,relational::syntax};
+    use crate::code_rule_dsl::{model::FileInput, relational::syntax};
     use std::sync::atomic::AtomicUsize;
-    let file=FileInput::new("f0.py".into(),"python".into(),Arc::new("f(a,b,c,d,e,f,g,h,i,j)\n".into()),None,None,"test").unwrap();
-    let facts=syntax::Facts::build(&file).unwrap();
-    let files=(0..128).map(|i|(format!("f{i}.py"),Arc::clone(&facts))).collect();
-    let spec:syntax::Spec=serde_json::from_value(serde_json::json!({"name":"nodes","gate":"gate","owners":{}})).unwrap();
-    let source=syntax::sources(&spec,&files,Arc::new(AtomicUsize::new(usize::MAX))).unwrap().remove(0).1;
-    let db=super::super::Database::open()?;
-    let binding=Binding { schema:Arc::new(Metadata {columns:source.columns(),types:source.column_types()}),current:Arc::new(parking_lot::RwLock::new(source)) };
-    let stats=register_inner(&db,"scoped_nodes",binding)?;
+    let file = FileInput::new(
+        "f0.py".into(),
+        "python".into(),
+        Arc::new("f(a,b,c,d,e,f,g,h,i,j)\n".into()),
+        None,
+        None,
+        "test",
+    )
+    .unwrap();
+    let facts = syntax::Facts::build(&file).unwrap();
+    let files = (0..128)
+        .map(|i| (format!("f{i}.py"), Arc::clone(&facts)))
+        .collect();
+    let spec: syntax::Spec =
+        serde_json::from_value(serde_json::json!({"name":"nodes","gate":"gate","owners":{}}))
+            .unwrap();
+    let source = syntax::sources(&spec, &files, Arc::new(AtomicUsize::new(usize::MAX)))
+        .unwrap()
+        .remove(0)
+        .1;
+    let db = super::super::Database::open()?;
+    let binding = Binding {
+        schema: Arc::new(Metadata {
+            columns: source.columns(),
+            types: source.column_types(),
+        }),
+        current: Arc::new(parking_lot::RwLock::new(source)),
+    };
+    let stats = register_inner(&db, "scoped_nodes", binding)?;
     let parent:i64=db.query_row("SELECT parent FROM scoped_nodes WHERE __path='f7.py' AND kind='identifier' ORDER BY id DESC LIMIT 1",[],|row|row.get(0))?;
-    let query=|sql:&str|->Result<Vec<i64>>{db.prepare(sql)?.query_map([parent],|row|row.get(0))?.collect()};
-    let expected=query("SELECT id FROM scoped_nodes WHERE __path='f7.py' AND +parent=?1 ORDER BY id")?;
+    let query = |sql: &str| -> Result<Vec<i64>> {
+        db.prepare(sql)?
+            .query_map([parent], |row| row.get(0))?
+            .collect()
+    };
+    let expected =
+        query("SELECT id FROM scoped_nodes WHERE __path='f7.py' AND +parent=?1 ORDER BY id")?;
     assert!(!expected.is_empty());
-    stats.candidates.store(0,Ordering::Relaxed);
-    assert_eq!(query("SELECT id FROM scoped_nodes WHERE __path='f7.py' AND parent=?1 ORDER BY id")?,expected);
-    assert!(stats.candidates.load(Ordering::Relaxed)<=expected.len() as u64+1,"scoped lookup visited {} candidates for {} matches",stats.candidates.load(Ordering::Relaxed),expected.len());
+    stats.candidates.store(0, Ordering::Relaxed);
+    assert_eq!(
+        query("SELECT id FROM scoped_nodes WHERE __path='f7.py' AND parent=?1 ORDER BY id")?,
+        expected
+    );
+    assert!(
+        stats.candidates.load(Ordering::Relaxed) <= expected.len() as u64 + 1,
+        "scoped lookup visited {} candidates for {} matches",
+        stats.candidates.load(Ordering::Relaxed),
+        expected.len()
+    );
+    let values = |sql: &str, parameters: Vec<Value>| -> Result<Vec<(String, i64)>> {
+        db.prepare(sql)?
+            .query_map(rusqlite::params_from_iter(parameters), |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?
+            .collect()
+    };
+    let parameters = vec![
+        Value::Text("f7.py".into()),
+        Value::Text("f8.py".into()),
+        Value::Integer(parent),
+        Value::Integer(parent),
+    ];
+    let control = values(
+        "SELECT __path,id FROM scoped_nodes WHERE (+__path) IN (?1,?2,?1) AND (+parent) IN (?3,?4) ORDER BY __path,id",
+        parameters.clone(),
+    )?;
+    stats.candidates.store(0, Ordering::Relaxed);
+    assert_eq!(
+        values(
+            "SELECT __path,id FROM scoped_nodes WHERE __path IN (?1,?2,?1) AND parent IN (?3,?4) ORDER BY __path,id",
+            parameters
+        )?,
+        control
+    );
+    assert!(stats.candidates.load(Ordering::Relaxed) <= control.len() as u64 + 1);
+    assert!(stats.batches.load(Ordering::Relaxed) > 0);
+    for path in ["f7.py", "F7.py", "absent.py"] {
+        for value in [
+            Value::Integer(parent),
+            Value::Real(parent as f64),
+            Value::Text(parent.to_string()),
+            Value::Null,
+        ] {
+            let parameters = vec![Value::Text(path.into()), value];
+            assert_eq!(
+                values(
+                    "SELECT __path,id FROM scoped_nodes WHERE __path COLLATE NOCASE=?1 AND parent=?2 ORDER BY id",
+                    parameters.clone()
+                )?,
+                values(
+                    "SELECT __path,id FROM scoped_nodes WHERE (+__path) COLLATE NOCASE=?1 AND (+parent)=?2 ORDER BY id",
+                    parameters
+                )?
+            );
+        }
+    }
     Ok(())
 }
 struct Rows(Vec<i64>);
