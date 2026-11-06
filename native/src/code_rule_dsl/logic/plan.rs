@@ -1275,10 +1275,11 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
-        "text" | "name" | "str" | "strprefix" => &[&["n"], &["s", "n"]],
-        "intval" | "op" | "tape" | "line" => &[&["n"]],
+        "text" | "name" | "str" | "strprefix" | "node_text" => &[&["n"], &["s", "n"]],
+        "intval" | "op" | "tape" | "line" | "end_line" | "col" => &[&["n"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
-        "doc" | "pkg" | "syntax_error" => &[&["d"]],
+        "doc" | "pkg" | "syntax_error" | "source" | "line_count" => &[&["d"]],
+        "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).

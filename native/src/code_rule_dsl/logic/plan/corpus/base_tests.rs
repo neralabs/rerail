@@ -1,0 +1,236 @@
+//! core.rr's base relations the corpus runner binds beyond T's (`facts::vtab::syntax::Extra`), each against W's
+//! notion of it (`CodeRuleDslRuntime`, the matcher, the regex query) on fixture files.
+
+use crate::code_rule_dsl::language::GrammarDialect;
+use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::model::{RegexLines, RegexOptions};
+use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_document_with, evaluate_file, violation};
+use crate::code_rule_dsl::typing::file_local::Binding;
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
+/// `files` (path, source) written under a fresh directory named for `name`.
+fn corpus(name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("base-{name}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, source) in files {
+        let p = dir.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, source).unwrap();
+    }
+    dir
+}
+
+/// `program`'s outputs over the corpus in `dir`, by relation: each `<rel>.csv` as the runner writes it.
+fn run(dir: &std::path::Path, program: &str, outputs: &[&str]) -> Vec<String> {
+    let out = dir.join(".out");
+    super::run(program, dir, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect()
+}
+
+/// Rows as the runner writes a relation: sorted, deduplicated, each ended by `\n`.
+fn csv(rows: impl IntoIterator<Item = String>) -> String {
+    let rows: BTreeSet<String> = rows.into_iter().collect();
+    rows.into_iter().map(|r| r + "\n").collect()
+}
+
+/// W's findings of one Python `clause` (its `forbid`, at `violation()`) in `source`.
+fn w(forbid: Value, path: &str, source: &str) -> Vec<Value> {
+    let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
+    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation() })), &capabilities)
+        .unwrap_or_else(|e| panic!("{}", e.reason));
+    evaluate_file(&compiled, "python", path, source)["violations"].as_array().unwrap().clone()
+}
+
+/// Every terminator `str.splitlines()` knows, a `\r\n`, a blank line, and no final terminator.
+const LINES: &str = "a = 1\r\nb = 2\rc = 3\x0bd = 4\x0ce = 5\x1cf\x1dg\x1eh\u{85}i\u{2028}j\u{2029}k = 6\n\n  last = 0";
+
+/// W's lines of a `lines` regex (`query::regex_query_matches`), 1-based, with their text.
+fn w_lines(source: &str, lf_only: bool) -> Vec<String> {
+    let options = RegexOptions {
+        lines: Some(RegexLines { include: vec![], exclude: vec![], first: true, lf_only, state: None, indentation: None }),
+        ..Default::default()
+    };
+    let (matches, complete) = crate::code_rule_dsl::query::regex_query_matches(&regex::Regex::new("(?s).*").unwrap(), source, &options, usize::MAX);
+    assert!(complete);
+    matches.into_iter().map(|m| format!("{}\t{}", m.line.unwrap() + 1, &source[m.context])).collect()
+}
+
+/// `src_line` is W's lines of a `lines` regex (Python's `str.splitlines()`), `src_line_lf` its `terminators: "lf"`
+/// lines, `line_count` their number; a line span's `text` is the line without its terminator, its `line` and
+/// `end_line` its number, its `col` 0.
+#[test]
+fn source_lines_are_ws_regex_lines() {
+    let dir = corpus("lines", &[("a.py", LINES)]);
+    let program = r#"
+.decl src_line(d: number, l: number, sp: span)
+.decl src_line_lf(d: number, l: number, sp: span)
+.decl line_count(d: number, k: number)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.input src_line, src_line_lf, line_count, text, line, end_line, col
+.decl lines(l: number, s: symbol)
+lines(l, s) :- src_line(_, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
+.decl lf_lines(l: number, s: symbol)
+lf_lines(l, s) :- src_line_lf(_, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
+.decl count(k: number)
+count(k) :- line_count(_, k).
+.output lines, lf_lines, count
+"#;
+    let got = run(&dir, program, &["lines", "lf_lines", "count"]);
+    let (python, lf) = (w_lines(LINES, false), w_lines(LINES, true));
+    assert_eq!(python.len(), 13, "{python:?}");
+    assert_eq!(got[2], format!("{}\n", python.len()));
+    assert_eq!(got[0], csv(python));
+    assert_eq!(got[1], csv(lf));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `lines` regex clause as `src_line`, `text` and `match`: W's findings, line for line.
+#[test]
+fn a_lines_regex_is_src_line_text_and_match() {
+    let files = [("a.py", "x = needle\n# needle\n  y = needle; needle\r\nz = 1\x0cneedle = 2\n"), ("b/c.py", "no = 1\n")];
+    let dir = corpus("lines-regex", &files);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input doc, src_line, text
+.decl hit(p: symbol, l: number)
+hit(p, l) :- doc(d, p, _), src_line(d, l, sp), text(sp, s), match(".*needle.*", s), !match("\\s*#.*", s).
+.output hit
+"#;
+    let got = run(&dir, program, &["hit"]);
+    let forbid = json!({ "regex": { "source": "file.content", "pattern": "needle", "lines": { "exclude": ["^\\s*#"] } } });
+    let want = files.iter().flat_map(|(path, source)| {
+        w(forbid.clone(), path, source).into_iter().map(move |v| format!("{path}\t{}", v["span"]["startLine"].as_u64().unwrap() + 1))
+    });
+    let want = csv(want);
+    assert_eq!(want, "a.py\t1\na.py\t3\na.py\t5\n");
+    assert_eq!(got[0], want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `source(d, sp)`: the whole file, its text exactly as W's content regex reads it; its lines 1 to the line holding
+/// its end.
+#[test]
+fn source_is_the_files_text() {
+    let files = [("a.py", "import os\n\n\tx = 1\r\n"), ("b.py", "import os\nx = 1\n"), ("c.py", "")];
+    let dir = corpus("source", &files);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.input doc, source, text, line, end_line
+.decl hit(p: symbol)
+hit(p) :- doc(d, p, _), source(d, sp), text(sp, s), match("(?s).*import os\n\\s+x = 1\r\n", s).
+.decl lines(p: symbol, l: number, e: number)
+lines(p, l, e) :- doc(d, p, _), source(d, sp), line(sp, l), end_line(sp, e).
+.output hit, lines
+"#;
+    let got = run(&dir, program, &["hit", "lines"]);
+    let forbid = json!({ "regex": { "source": "file.content", "pattern": "import os\\n\\s+x = 1\\r\\n\\z" } });
+    let want = csv(files.iter().filter(|(path, source)| !w(forbid.clone(), path, source).is_empty()).map(|(path, _)| (*path).to_owned()));
+    assert_eq!(want, "a.py\n");
+    assert_eq!(got[0], want);
+    // W's span of the whole file (`\A(?s:.*)\z`): its end line is the line holding the end.
+    let whole = json!({ "regex": { "source": "file.content", "pattern": "\\A(?s:.*)\\z" } });
+    let want = csv(files.iter().map(|(path, source)| {
+        let [v] = w(whole.clone(), path, source).try_into().unwrap();
+        format!("{path}\t{}\t{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["span"]["endLine"].as_u64().unwrap() + 1)
+    }));
+    assert_eq!(got[1], want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `tape_line(d, l, sp)`: the lines `line(n, l)` numbers (the tape's line table, W's `layout` lines), the empty
+/// line after a final terminator included.
+#[test]
+fn tape_lines_are_the_line_table() {
+    let source = "a = 1\r\nb = 2\rc = 3\x0cd = 4\n";
+    let dir = corpus("tape-lines", &[("a.py", source)]);
+    let program = r#"
+.decl tape_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input tape_line, text
+.decl lines(l: number, s: symbol)
+lines(l, s) :- tape_line(_, l, sp), text(sp, s).
+.output lines
+"#;
+    let got = run(&dir, program, &["lines"]);
+    let table = LineTable::new(source, Terminators::of(GrammarDialect::Python));
+    let want = csv((0..table.starts().len()).map(|i| format!("{}\t{}", i + 1, &source[table.start(i)..table.end(i)])));
+    assert_eq!(got[0], want);
+    assert!(want.starts_with("1\ta = 1\n") && want.contains("4\t\n"), "{want:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `node_text`, `line`, `end_line` and `col` of a node: W's span of it (its text, start line, end line and start
+/// column), for every node of a kind, the module's included (its text is its own, not the file's).
+#[test]
+fn node_text_and_positions_are_ws_spans() {
+    let files = [
+        ("a.py", "\n\nimport os  # c\nif a < b <= c:\n    f(x,\n      y)  # é\n\n"),
+        ("b.py", "def g(p: Callable[[int], str]) -> None:\r\n    return h(p)\r\n"),
+    ];
+    let dir = corpus("node-text", &files);
+    let kinds = ["module", "comparison_operator", "call", "type", "argument_list"];
+    let program = format!(
+        r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.input doc, node, node_text, line, end_line, col
+.decl kinds(k: symbol)
+{}
+.decl spans(p: symbol, k: symbol, l: number, e: number, c: number, s: symbol)
+spans(p, k, l, e, c, s) :- doc(d, p, _), node(d, n, k, _, _), kinds(k), line(n, l), end_line(n, e), col(n, c), node_text(n, s).
+.output spans
+"#,
+        kinds.iter().map(|k| format!("kinds({k:?}).")).collect::<Vec<_>>().join("\n")
+    );
+    let got = run(&dir, &program, &["spans"]);
+    let mut want = Vec::new();
+    for (path, source) in files {
+        for kind in kinds {
+            for v in w(json!({ "ast": { "language": "python", "rule": { "kind": kind } } }), path, source) {
+                let span = &v["span"];
+                let at = |k: &str| span[k].as_u64().unwrap();
+                want.push(format!(
+                    "{path}\t{kind}\t{}\t{}\t{}\t{}",
+                    at("startLine") + 1,
+                    at("endLine") + 1,
+                    at("startColumn"),
+                    &source[at("startByte") as usize..at("endByte") as usize]
+                ));
+            }
+        }
+    }
+    assert!(want.iter().any(|r| r.starts_with("a.py\tmodule\t3\t")), "the module starts at its first token: {want:?}");
+    assert_eq!(got[0], csv(want));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A program that reads none of them binds no span: `line` stays the node view, `text` T's.
+#[test]
+fn without_spans_text_and_line_are_ts() {
+    let dir = corpus("no-spans", &[("a.py", "x = 1\ny = 2\n")]);
+    let program = r#"
+.decl text(n: node, s: symbol)
+.decl line(n: node, l: number)
+.input text, line
+.decl t(s: symbol, l: number)
+t(s, l) :- text(n, s), line(n, l).
+.output t
+"#;
+    assert_eq!(run(&dir, program, &["t"])[0], "x\t1\ny\t2\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}

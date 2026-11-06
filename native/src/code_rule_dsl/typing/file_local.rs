@@ -221,11 +221,11 @@ pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg` and
-    // `syntax_error`.
+    // A base relation's location columns: node columns, and the document column of `node`, `doc`, `pkg`,
+    // `syntax_error` and the source text's (`source`, `src_line`, `src_line_lf`, `tape_line`, `line_count`).
     let base_locations = |rel: &str| -> Vec<usize> {
         let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if matches!(rel, "node" | "doc" | "pkg" | "syntax_error") {
+        if matches!(rel, "node" | "doc" | "pkg" | "syntax_error" | "source" | "src_line" | "src_line_lf" | "tape_line" | "line_count") {
             columns.push(0);
         }
         columns

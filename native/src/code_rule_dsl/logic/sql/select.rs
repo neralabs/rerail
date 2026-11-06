@@ -95,11 +95,17 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "doc" => &["d", "path", "module"],
         "child" => &["p", "c", "idx"],
         "field" => &["p", "f", "c"],
-        "text" | "name" | "str" | "strprefix" => &["n", "s"],
+        "text" | "name" | "str" | "strprefix" | "node_text" => &["n", "s"],
         "intval" => &["n", "v"],
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],
         "syntax_error" => &["d"],
+        // core.rr's source text and node columns beyond T's (`facts::vtab::syntax::Extra`).
+        "source" => &["d", "sp"],
+        "src_line" | "src_line_lf" | "tape_line" => &["d", "l", "sp"],
+        "line_count" => &["d", "k"],
+        "end_line" => &["n", "l"],
+        "col" => &["n", "c"],
         "tape" => &["n", "par", "size", "depth"],
         "core_node" => &["d", "t", "n"],
         // The transducer's `nearest` rows, and the tree axes' (`facts::vtab::syntax::with_nearest`).

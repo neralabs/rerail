@@ -27,7 +27,7 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// One document of a batch.
@@ -258,6 +258,43 @@ pub(crate) struct Batch {
     fields: Vec<usize>,
     /// The `py.*` families of the batch's Python documents, made on their first read (list step 25).
     py: Option<Py>,
+    /// Whether `line` is a relation of rows (nodes and spans: `Batch::build`) rather than the node view.
+    line_rows: bool,
+}
+
+/// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | SPAN | k`, past every node of its
+/// document, so no node view has a row of it (`Batch::node`). `k` is 0 for the whole source (`source`), `l` for
+/// physical line `l` (`src_line`), `LF | l` for `\n`-line `l` (`src_line_lf`) and `TAPE | l` for the tape's line `l`
+/// (`tape_line`).
+pub(crate) const SPAN: u32 = 1 << 31;
+pub(crate) const LF: u32 = 1 << 30;
+pub(crate) const TAPE: u32 = 1 << 29;
+
+/// The physical lines of `source`, as byte ranges without their terminators: as Python's `str.splitlines()`
+/// splits (`splitlines`: `\r\n`, `\n`, `\r`, `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029; W's `lines`
+/// regexes), else at `\n` only. A terminator at the end ends the last line: no empty line follows it, and an empty
+/// source has none.
+pub(crate) fn physical_lines(source: &str, splitlines: bool) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = source.char_indices().peekable();
+    while let Some((at, ch)) = chars.next() {
+        let ends = ch == '\n'
+            || splitlines && matches!(ch, '\r' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}');
+        if !ends {
+            continue;
+        }
+        out.push(start..at);
+        start = at + ch.len_utf8();
+        if ch == '\r' && chars.peek().is_some_and(|&(_, c)| c == '\n') {
+            chars.next();
+            start += 1;
+        }
+    }
+    if start < source.len() {
+        out.push(start..source.len());
+    }
+    out
 }
 
 /// The `py.*` families (`facts::producers::python::families`): the producer's grammar, the atoms of its
@@ -293,13 +330,196 @@ enum View {
     Core,
 }
 
+/// The relations of core.rr a batch makes only for a program that reads them (its `reads`), T's exporter having
+/// had none of them, so a program that reads none does no work and interns no text:
+///
+/// ```text
+/// source(d, sp)          src_line(d, l, sp)     src_line_lf(d, l, sp)  tape_line(d, l, sp)
+/// line_count(d, k)       node_text(n, s)        end_line(n, l)         col(n, c)
+/// ```
+///
+/// with `sp` a span (`SPAN`); `src_line` split as `physical_lines` does (Python's `str.splitlines()`; other
+/// languages at `\n`), `src_line_lf` at `\n` only (W's `terminators: "lf"`), and `tape_line` the lines `line(n, l)`
+/// numbers (the tape's `LineTable`: `\r\n`, `\r` and `\n` for Python; W's `layout`), the empty line after a final
+/// terminator included; `line_count` counts `src_line`'s lines. Spans have rows in `text` (their text, terminators
+/// left out), `line`, `end_line` and `col` (0): a line span's line is its number; the source's first line is 1 and
+/// its end line the line holding its end offset (`src_line`'s numbering). A node's `end_line` is the line holding its
+/// end offset, as W's `layout` counts (its last byte's, but where the node ends with a line terminator, as a module
+/// may), and its `col` its start's byte column, both on the tape's lines; `node_text` is its source text, exactly.
+/// Rows hold string indexes, as `Batch::build`'s do.
+#[derive(Default)]
+struct Extra {
+    source: bool,
+    src_line: bool,
+    src_line_lf: bool,
+    tape_line: bool,
+    line_count: bool,
+    text: bool,
+    line: bool,
+    end_line: bool,
+    col: bool,
+    node_text: bool,
+    sources: Vec<[i64; 2]>,
+    src_lines: Vec<[i64; 3]>,
+    src_lines_lf: Vec<[i64; 3]>,
+    tape_lines: Vec<[i64; 3]>,
+    line_counts: Vec<[i64; 2]>,
+    lines: Vec<[i64; 2]>,
+    end_lines: Vec<[i64; 2]>,
+    cols: Vec<[i64; 2]>,
+    node_texts: Vec<[i64; 2]>,
+}
+
+impl Extra {
+    fn new(reads: &BTreeSet<String>) -> Self {
+        let read = |rel: &str| reads.contains(rel);
+        Self {
+            source: read("source"),
+            src_line: read("src_line"),
+            src_line_lf: read("src_line_lf"),
+            tape_line: read("tape_line"),
+            line_count: read("line_count"),
+            text: read("text"),
+            line: read("line"),
+            end_line: read("end_line"),
+            col: read("col"),
+            node_text: read("node_text"),
+            ..Self::default()
+        }
+    }
+
+    fn spans(&self) -> bool {
+        self.source || self.src_line || self.src_line_lf || self.tape_line
+    }
+
+    /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
+    fn line_rows(&self) -> bool {
+        self.line && self.spans()
+    }
+
+    /// A span's rows in `text` (into `text`), `line`, `end_line` and `col`.
+    fn span(&mut self, sp: i64, first: usize, last: usize, body: &str, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+        if self.text {
+            text.push([sp, string(body) as i64]);
+        }
+        if self.line_rows() {
+            self.lines.push([sp, first as i64]);
+        }
+        if self.end_line {
+            self.end_lines.push([sp, last as i64]);
+        }
+        if self.col {
+            self.cols.push([sp, 0]);
+        }
+    }
+
+    /// Document `p`'s rows; `splitlines`: it is Python's.
+    fn document(&mut self, p: &Projected, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+        let f = &*p.facts;
+        if self.line_rows() || self.end_line || self.col || self.node_text {
+            for (local, &id) in p.core.iter().enumerate() {
+                let n = p.global(local as u32);
+                let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
+                if self.line_rows() {
+                    self.lines.push([n, i64::from(f.start_line[id as usize])]);
+                }
+                if self.end_line {
+                    self.end_lines.push([n, f.lines.line(end) as i64 + 1]);
+                }
+                if self.col {
+                    self.cols.push([n, (start - f.lines.start(f.lines.line(start))) as i64]);
+                }
+                if self.node_text {
+                    self.node_texts.push([n, string(f.text(id)) as i64]);
+                }
+            }
+        }
+        let key = i64::from(p.key);
+        let span = |k: u32| key << 32 | i64::from(SPAN | k);
+        let source = f.source.as_str();
+        if !(self.spans() || self.line_count) {
+            return;
+        }
+        let physical = physical_lines(source, splitlines);
+        if self.line_count {
+            self.line_counts.push([key, physical.len() as i64]);
+        }
+        if self.source {
+            let sp = span(0);
+            self.sources.push([key, sp]);
+            let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
+            self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), source, text, string);
+        }
+        if self.src_line {
+            for (i, r) in physical.iter().enumerate() {
+                let (l, sp) = (i + 1, span(i as u32 + 1));
+                self.src_lines.push([key, l as i64, sp]);
+                self.span(sp, l, l, &source[r.clone()], text, string);
+            }
+        }
+        if self.src_line_lf {
+            for (i, r) in physical_lines(source, false).iter().enumerate() {
+                let (l, sp) = (i + 1, span(LF | (i as u32 + 1)));
+                self.src_lines_lf.push([key, l as i64, sp]);
+                self.span(sp, l, l, &source[r.clone()], text, string);
+            }
+        }
+        if self.tape_line {
+            for i in 0..f.lines.starts().len() {
+                let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
+                self.tape_lines.push([key, l as i64, sp]);
+                self.span(sp, l, l, &source[f.lines.start(i)..f.lines.end(i)], text, string);
+            }
+        }
+    }
+
+    /// The relations read, their strings as atoms (`atom` of a string index).
+    fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+        let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
+            let mut r = Relation::new(columns);
+            rows.for_each(|row| r.push(&row));
+            r
+        };
+        let mut out = Vec::new();
+        if self.source {
+            out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.to_vec()))));
+        }
+        if self.src_line {
+            out.push(("src_line", relation(&["d", "l", "sp"], &mut self.src_lines.iter().map(|r| r.to_vec()))));
+        }
+        if self.src_line_lf {
+            out.push(("src_line_lf", relation(&["d", "l", "sp"], &mut self.src_lines_lf.iter().map(|r| r.to_vec()))));
+        }
+        if self.tape_line {
+            out.push(("tape_line", relation(&["d", "l", "sp"], &mut self.tape_lines.iter().map(|r| r.to_vec()))));
+        }
+        if self.line_count {
+            out.push(("line_count", relation(&["d", "k"], &mut self.line_counts.iter().map(|r| r.to_vec()))));
+        }
+        if self.line_rows() {
+            out.push(("line", relation(&["n", "l"], &mut self.lines.iter().map(|r| r.to_vec()))));
+        }
+        if self.end_line {
+            out.push(("end_line", relation(&["n", "l"], &mut self.end_lines.iter().map(|r| r.to_vec()))));
+        }
+        if self.col {
+            out.push(("col", relation(&["n", "c"], &mut self.cols.iter().map(|r| r.to_vec()))));
+        }
+        if self.node_text {
+            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)]))));
+        }
+        out
+    }
+}
+
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
-    /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`).
+    /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
+    /// of core.rr's the program `reads` that T had not (`Extra`).
     /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
     /// (`logic::strings::Vocabulary`, decision 0037).
     #[allow(clippy::type_complexity)]
-    fn build(store: &ContentStore, documents: Vec<Document>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, (Vec<String>, Vec<u32>))> {
+    fn build(store: &ContentStore, documents: Vec<Document>, reads: &BTreeSet<String>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, (Vec<String>, Vec<u32>))> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
         if documents.windows(2).any(|w| w[0].key == w[1].key) {
@@ -321,6 +541,8 @@ impl Batch {
         let (mut name, mut strs, mut strprefix) = (Vec::new(), Vec::new(), Vec::new());
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
+        let mut extra = Extra::new(reads);
+        let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
             let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
@@ -384,9 +606,9 @@ impl Batch {
                     _ => {}
                 }
             }
+            extra.document(&p, python == Some(tag), &mut text, &mut string);
             docs.push(p);
         }
-        let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {
             (py::CONTEXTS.map(|name| string(name) as i64), py::SPREADS.map(|name| string(name) as i64))
         });
@@ -403,7 +625,7 @@ impl Batch {
             rows.for_each(|row| r.push(&row));
             r
         };
-        let relations = vec![
+        let mut relations = vec![
             ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
             ("pkg", relation(&["d", "p"], &mut pkg.iter().map(|&[d, p]| vec![d, atom(p)]))),
             ("syntax_error", relation(&["d"], &mut errors.iter().map(|&d| vec![d]))),
@@ -414,6 +636,8 @@ impl Batch {
             ("str", relation(&["n", "s"], &mut strs.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("strprefix", relation(&["n", "s"], &mut strprefix.iter().map(|&[n, s]| vec![n, atom(s)]))),
         ];
+        let line_rows = extra.line_rows();
+        relations.extend(extra.relations(&atom));
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
             docs.iter().for_each(|p| v.push(v.last().unwrap() + count(p)));
@@ -422,7 +646,7 @@ impl Batch {
         let nodes = offsets(&|p| p.core.len());
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| p.fielded.len());
-        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py }), relations, (strings, atoms)))
+        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py, line_rows }), relations, (strings, atoms)))
     }
 
     fn offsets(&self, view: View) -> &[usize] {
@@ -630,7 +854,7 @@ pub(crate) fn field_atom(tag: u8, code: u16) -> u32 {
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
-    let (batch, relations, _) = Batch::build(store, documents)?;
+    let (batch, relations, _) = Batch::build(store, documents, &BTreeSet::new())?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
         relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
     out.extend(views(&batch));
@@ -641,6 +865,10 @@ pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreRe
 fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = Vec::new();
     for (name, view) in [("node", View::Node), ("line", View::Line), ("child", View::Child), ("field", View::Field), ("tape", View::Tape), ("core_node", View::Core)] {
+        // `line` is a relation where spans have lines too (`Extra::line_rows`).
+        if matches!(view, View::Line) && batch.line_rows {
+            continue;
+        }
         out.push((name, Arc::new(Viewed { batch: Arc::clone(batch), view })));
     }
     for (family, name) in PY.into_iter().enumerate() {
@@ -819,7 +1047,8 @@ impl Source for Nearest {
     }
 }
 
-/// T's base relations over `documents` (`sources`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms),
+/// T's base relations over `documents` (`sources`) and those of core.rr's the program `reads` that T had not
+/// (`Extra`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms),
 /// made by the transducer's file-local FIX bound as `binding`: `nearest_<set>(n, a)`, the nearest ancestor in the
 /// set, or `inside_<set>(n, a)`, every one (decision 0036).
 pub(crate) fn with_nearest(
@@ -827,11 +1056,12 @@ pub(crate) fn with_nearest(
     documents: Vec<Document>,
     sets: &[(String, Vec<i64>)],
     tests: &crate::code_rule_dsl::logic::strings::Vocabulary,
+    reads: &BTreeSet<String>,
     binding: crate::code_rule_dsl::typing::file_local::Binding,
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::typing::file_local;
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
-    let (batch, relations, (strings, symbols)) = Batch::build(store, documents)?;
+    let (batch, relations, (strings, symbols)) = Batch::build(store, documents, reads)?;
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.

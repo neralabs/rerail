@@ -402,7 +402,7 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             add(&mut parse, t);
             t = thread_usage();
             let batch_span = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
-            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, binding).map_err(|e| Error::Plan(e.to_string()));
+            let built = syntax::with_nearest(&store, std::mem::take(&mut pending), &sets, &vocabulary, &read, binding).map_err(|e| Error::Plan(e.to_string()));
             drop(batch_span);
             add(&mut batch, t);
             let n = std::mem::take(&mut pending_nodes);
