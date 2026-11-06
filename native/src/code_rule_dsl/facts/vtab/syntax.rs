@@ -41,7 +41,13 @@ pub(crate) struct Document {
     pub core: String,
     pub digest: [u8; 32],
     pub facts: Arc<Facts>,
+    /// The tape the facts were read off and the file it parsed, which W's values read (`Extra`: `VALUES`); kept only
+    /// for a program that reads one of them, else `None`.
+    pub(in crate::code_rule_dsl) tape: Option<(crate::code_rule_dsl::tape::TapeDoc, crate::code_rule_dsl::model::FileInput)>,
 }
+
+/// The relations of W's values (`Extra`), for which a batch's documents keep their tapes (`Document::tape`).
+pub(crate) const VALUES: [&str; 4] = ["value", "static_value", "value_type_of", "value_type"];
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
 /// the crate root under `crate` (`src/lib.rs` and `src/main.rs` are `crate`, `src/a/mod.rs` and
@@ -346,7 +352,10 @@ enum View {
 /// its end line the line holding its end offset (`src_line`'s numbering). A node's `end_line` is the line holding its
 /// end offset, as W's `layout` counts (its last byte's, but where the node ends with a line terminator, as a module
 /// may), and its `col` its start's byte column, both on the tape's lines; `node_text` is its source text, exactly.
-/// Rows hold string indexes, as `Batch::build`'s do.
+/// `value(n, v)` is W's value of expression node `n` as a string (`matcher::file_values`: a clause's `value` in its
+/// per-file context; Python's `str(v)` of a str, int, float, bool, None or Ellipsis), read off the document's tape
+/// (`Document::tape`), no row where W does not know it or it is no scalar. Rows hold string indexes, as
+/// `Batch::build`'s do.
 #[derive(Default)]
 struct Extra {
     source: bool,
@@ -359,6 +368,7 @@ struct Extra {
     end_line: bool,
     col: bool,
     node_text: bool,
+    value: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
     src_lines_lf: Vec<[i64; 3]>,
@@ -368,6 +378,7 @@ struct Extra {
     end_lines: Vec<[i64; 2]>,
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
+    values: Vec<[i64; 2]>,
 }
 
 impl Extra {
@@ -384,6 +395,7 @@ impl Extra {
             end_line: read("end_line"),
             col: read("col"),
             node_text: read("node_text"),
+            value: read("value"),
             ..Self::default()
         }
     }
@@ -413,9 +425,24 @@ impl Extra {
         }
     }
 
-    /// Document `p`'s rows; `splitlines`: it is Python's.
-    fn document(&mut self, p: &Projected, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) {
+    /// Document `p`'s rows (its `Document` `d`); `splitlines`: it is Python's.
+    fn document(&mut self, p: &Projected, d: &Document, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
+        if self.value {
+            let Some((tape, file)) = &d.tape else {
+                return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
+            };
+            if tape.transducer_len() != f.len() {
+                return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
+            }
+            let values = &mut self.values;
+            crate::code_rule_dsl::matcher::file_values(tape, file, true, false, &mut |_, ordinal, v, _| {
+                let local = p.local[ordinal as usize];
+                if let (true, Some(v)) = (local != NONE, v) {
+                    values.push([p.global(local), string(&v) as i64]);
+                }
+            });
+        }
         if self.line_rows() || self.end_line || self.col || self.node_text {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
@@ -438,7 +465,7 @@ impl Extra {
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
         if !(self.spans() || self.line_count) {
-            return;
+            return Ok(());
         }
         let physical = physical_lines(source, splitlines);
         if self.line_count {
@@ -471,6 +498,7 @@ impl Extra {
                 self.span(sp, l, l, &source[f.lines.start(i)..f.lines.end(i)], text, string);
             }
         }
+        Ok(())
     }
 
     /// The relations read, their strings as atoms (`atom` of a string index).
@@ -507,6 +535,9 @@ impl Extra {
         }
         if self.node_text {
             out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)]))));
+        }
+        if self.value {
+            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)]))));
         }
         out
     }
@@ -606,7 +637,7 @@ impl Batch {
                     _ => {}
                 }
             }
-            extra.document(&p, python == Some(tag), &mut text, &mut string);
+            extra.document(&p, d, python == Some(tag), &mut text, &mut string)?;
             docs.push(p);
         }
         let vocabulary = python.filter(|tag| dialects.contains_key(tag)).map(|_| {

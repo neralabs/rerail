@@ -76,6 +76,7 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
 .decl end_line(n: loc, l: number)                 // the line holding the end offset
 .decl col(n: loc, c: number)                      // the start's byte column, from 0 (0 on a span)
 .decl node_text(n: node, s: symbol)               // a node's source text, exactly (W's `regex` on a node)
+.decl value(n: node, v: symbol)                   // W's value of an expression, as Python's str(v) of a scalar
 ```
 
 - `text` on a node stays T's identifier text; `node_text` is any node's text, comments and strings in it included,
@@ -92,3 +93,10 @@ symbol)` are the same declaration. A span is a piece of a document's text, with 
   the regex matches no line terminator (no `\n`, `\s`, `[^…]` or `(?s).` that could reach one) and has no `^`, `$`,
   `\A` or `\z`. Otherwise read `source(d, sp), text(sp, s)` and test the whole text (`match("(?s).*re.*", s)`), and
   count lines with `line_count` (`\A(?:[^\n]*\n){1500}` is `line_count(d, k), k > 1500`). There is no `match_all`.
+- `value(n, v)` is W's value of expression node `n` (what W's `value` reads, in a clause's per-file context, the
+  language options the defaults), as the language converts it to a string: for Python `str(v)` of a str, int, float,
+  bool, None or Ellipsis (escapes decoded, adjacent literals joined, `0xff + 1` is `256`, `1e20` is `1e+20`, `...` is
+  `Ellipsis`). There is no row where W's value is unknown (a name, an f-string with an interpolation, a call) or is no
+  scalar (a tuple, list, dict, set, bytes). W's budget does not apply: every node is decoded. `v` alone does not say
+  the type (the str `"12"` and the int `12` are both `12`); W's `value.eq` on a number compares Python's way (`1 == 1.0
+  == True`), so it is every spelling of the number.

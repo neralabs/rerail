@@ -234,3 +234,117 @@ t(s, l) :- text(n, s), line(n, l).
     assert_eq!(run(&dir, program, &["t"])[0], "x\t1\ny\t2\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Python literals and folds W's `value` reads: escapes, adjacent literals, numbers in every base and form,
+/// operators, a bool, None, Ellipsis, containers, bytes, f-strings with and without an interpolation, and names
+/// (which only a following reading knows).
+const VALUES: &str = r#"import os
+A = "k"
+B = A
+x = "a\x41\u00e9" 'b'
+y = r"\d+" "z"
+n = 0xff + 1_000
+f1 = 1.5
+f2 = 1e20
+f3 = 10 / 4
+t = True
+nn = None
+e = ...
+neg = -3
+p = 2 ** 10
+s3 = "ab" * 2
+tup = (1, "a")
+lst = [1]
+bb = b"x"
+fs = f"x{os.sep}"
+fz = f"plain"
+call(A, B, x)
+def g(A=1):
+    return A
+"#;
+
+/// Python's type names of the scalars `value` gives (`value::python::to_str`), as W's `value.type` names them.
+const SCALARS: [&str; 6] = ["str", "int", "float", "bool", "NoneType", "ellipsis"];
+
+/// W's value of the node spanning `[start, end)` as `v` (a scalar of type `ty`, its `str`), by W's `value.eq`;
+/// `follow`: names followed. An Ellipsis has no JSON literal: its type alone says it.
+fn w_value_is(path: &str, source: &str, start: u64, end: u64, ty: &str, v: &str, follow: bool) -> bool {
+    let eq = match ty {
+        "str" => json!(v),
+        "int" => json!(v.parse::<i64>().unwrap()),
+        "float" => json!(v.parse::<f64>().unwrap()),
+        "bool" => json!(v == "True"),
+        "NoneType" => Value::Null,
+        _ => return v == "Ellipsis",
+    };
+    let rule = json!({ "value": { "type": ty, "eq": eq, "follow": follow } });
+    w(json!({ "ast": { "language": "python", "rule": rule } }), path, source)
+        .iter()
+        .any(|f| f["span"]["startByte"].as_u64() == Some(start) && f["span"]["endByte"].as_u64() == Some(end))
+}
+
+/// W's nodes whose value is a scalar of each type (`value.type`, `follow` or not), as `(start, end, type)`.
+fn w_scalars(path: &str, source: &str, follow: bool) -> BTreeSet<(u64, u64, String)> {
+    let mut out = BTreeSet::new();
+    for ty in SCALARS {
+        let rule = json!({ "value": { "type": ty, "follow": follow } });
+        for f in w(json!({ "ast": { "language": "python", "rule": rule } }), path, source) {
+            out.insert((f["span"]["startByte"].as_u64().unwrap(), f["span"]["endByte"].as_u64().unwrap(), ty.to_owned()));
+        }
+    }
+    out
+}
+
+/// `program`'s `vals(s, e, v)` rows read back as `(start, end, v)`.
+fn spans_and_values(csv: &str) -> Vec<(u64, u64, String)> {
+    csv.lines()
+        .map(|row| {
+            let mut cells = row.splitn(3, '\t');
+            let mut number = || cells.next().unwrap().parse::<u64>().unwrap();
+            let (start, end) = (number(), number());
+            (start, end, cells.next().unwrap().to_owned())
+        })
+        .collect()
+}
+
+/// `value(n, v)` is W's value of each expression node, as Python's `str(v)`: a row exactly where W's value is a known
+/// scalar (a str, int, float, bool, None or Ellipsis: `value.type`), and that row's `v` is W's value (`value.eq`, the
+/// type fixed). A name, an f-string with an interpolation, a container and bytes have none; escapes are decoded and
+/// adjacent literals joined.
+#[test]
+fn value_is_ws_value() {
+    let dir = corpus("value", &[("a.py", VALUES)]);
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl value(n: node, v: symbol)
+.input node, value
+.decl vals(s: number, e: number, v: symbol)
+vals(s, e, v) :- value(n, v), node(_, n, _, s, e).
+.output vals
+"#;
+    let got = spans_and_values(&run(&dir, program, &["vals"])[0]);
+    let text = |s: u64, e: u64| &VALUES[s as usize..e as usize];
+    let scalars = w_scalars("a.py", VALUES, false);
+    assert_eq!(got.iter().map(|(s, e, _)| (*s, *e)).collect::<BTreeSet<_>>(), scalars.iter().map(|(s, e, _)| (*s, *e)).collect(), "{got:?}");
+    for (start, end, ty) in &scalars {
+        let (_, _, v) = got.iter().find(|(s, e, _)| (s, e) == (start, end)).unwrap();
+        assert!(w_value_is("a.py", VALUES, *start, *end, ty, v, false), "{:?} is not W's {ty} {v:?}", text(*start, *end));
+    }
+    let value_of = |source: &str| got.iter().filter(|(s, e, _)| text(*s, *e) == source).map(|(_, _, v)| v.as_str()).collect::<Vec<_>>();
+    assert_eq!(value_of(r#""a\x41\u00e9" 'b'"#), ["aAéb"]);
+    assert_eq!(value_of(r#"r"\d+" "z""#), [r"\d+z"]);
+    assert_eq!(value_of("0xff + 1_000"), ["1255"]);
+    assert_eq!(value_of("1e20"), ["1e+20"]);
+    assert_eq!(value_of("10 / 4"), ["2.5"]);
+    assert_eq!(value_of("True"), ["True"]);
+    assert_eq!(value_of("None"), ["None"]);
+    assert_eq!(value_of("..."), ["Ellipsis"]);
+    assert_eq!(value_of("-3"), ["-3"]);
+    assert_eq!(value_of("2 ** 10"), ["1024"]);
+    assert_eq!(value_of(r#""ab" * 2"#), ["abab"]);
+    assert_eq!(value_of(r#"f"plain""#), ["plain"]);
+    for none in ["A", r#"f"x{os.sep}""#, r#"(1, "a")"#, "[1]", r#"b"x""#] {
+        assert_eq!(value_of(none), Vec::<&str>::new(), "{none}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
