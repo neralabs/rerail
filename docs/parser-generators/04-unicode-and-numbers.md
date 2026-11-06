@@ -263,7 +263,7 @@ A number token needs three things:
 - **its extent,** from masks (`lexers/python.bitlex` §7, `lexers/json.bitlex`);
 - **its kind:** Python's float is any number with a `.` or a decimal exponent, carried to the
   token's first byte by `back_fill`;
-- **a check** that tree-sitter's pattern accepts the whole token.
+- **a check** that tree-sitter's pattern accepts the whole token (§4.2).
 
 | | data-layer Python | CPython | data-layer JSON |
 |---|---:|---:|---:|
@@ -271,32 +271,45 @@ A number token needs three things:
 | bytes in number tokens | 0.17% | 0.95% | 1.94% |
 | tokens that are all digits | 89.4% | 83.8% | 94.8% |
 
-### 4.2 Most checks are one mask
+### 4.2 Validation as masks, with no automaton
 
-- **Python:** a token of digits only matches `([0-9]+_?)+`. That is true by construction, since
-  the extent stops at the first byte that is not a number byte.
-- **JSON:** an all-digit token is valid unless it starts with `0` and has more digits after it.
+simdjson and fast_float validate a number as they convert it, one number at a time, with a
+branch per character class. Lemire's speed comes from removing the per-digit loop: eight digits
+are tested and converted at once in a word. Bitlex goes one step further. It tests every number
+in a 64-byte block at once, with the same word-wide logic, and needs no automaton at all.
 
-So the check automaton runs only on tokens holding another byte, which are 5–16% of number tokens:
+**Why that works.** Each number pattern is a fixed sequence of parts. JSON's is
 
 ```text
-mask odd_number = num_start & back_fill(number & ~digit, ~number)   # a non-digit in the token
+-?  (0 | [1-9][0-9]*)  (\.[0-9]+)?  ([eE][+-]?[0-9]+)?
 ```
 
-The others are settled by one mask, `number_start & ~odd_number`, plus JSON's leading-zero test.
+A token matches such a pattern exactly when three kinds of rule hold:
 
-The remaining tokens go through the pattern's automaton. This is the data-parallel FSM of
-`03-bitlex.md` §3.3, run over their bytes only. The minimal DFAs have, counting the dead state
-and regex-automata's match state:
+| kind of rule | JSON example | mask form |
+|---|---|---|
+| which bytes are allowed in which part | the exponent holds digits and a sign | a class, ANDed with a part's region |
+| what may stand next to what | a '.' has a digit on each side | `prev` and `next`, at most 2 bytes away |
+| how often and in what order the separators appear | one '.', one 'e', the '.' first | "a '.' came earlier in this token": `fill(prev(dot), ~number)` |
 
-- JSON's number: 11 states;
-- Python's integer: 16 states;
-- Python's float: 13 states.
+The regions are fills that start after each separator and stop at the token's end, so each costs
+one subtraction and a one-bit carry. In a regular-expression sense, the patterns are *locally
+testable* once the regions are known. Nothing about them needs the memory an automaton keeps.
 
-All three fit one 16-entry table lookup per byte.
+**The cost** is fixed per block: about 25 mask operations per 64 bytes for JSON and about 40 for
+Python. It does not grow with the number of numbers, and no token list is gathered. The rules are
+in `lexers/json.bitlex` (8 rules) and `lexers/python.bitlex` (7 rules, covering integers in
+four bases, floats and suffixes). Both were checked against tree-sitter's parsers on these
+cases:
 
-Only the tokens' bytes are events. The gathered list is about 0.2% of JSON bytes and less in
-Python.
+- **valid:** `1_`, `007`, `1_.5`, `1.e5`, `0x_1f`, `1_j` and `1.5_`;
+- **errors:** `0b12`, `1__2` and `1._5`.
+
+**When this does not apply.** A pattern with repetition of a group that holds a separator, or
+with nesting, is not a fixed sequence of parts. `(ab|cd)*` and balanced brackets are examples.
+Such a pattern still needs the automaton of `03-bitlex.md` §3.3. tree-sitter's token patterns
+for numbers, identifiers, escapes and comments are all fixed sequences. The minimal DFAs would
+have been small too (11, 16 and 13 states), but the masks need no gather and no table walk.
 
 ### 4.3 Values, later
 
@@ -317,5 +330,6 @@ ask.
 - **Fidelity comes from tree-sitter's own tables** in `parser.c`, not from a Unicode library.
 - **Lemire's validator and transcoder** are not needed on Rerail's path. Their gather-and-decode
   pattern is what `ucode` lowers to.
-- **Numbers need validation only.** 84–95% of number tokens are validated by a mask, and the rest
-  by an automaton of at most 16 states over their bytes. Values are an optional later fact.
+- **Numbers need validation only, and validation is masks.** Each pattern is a fixed sequence of
+  parts, so it becomes a few class, neighbour and order rules over every byte of a block, with no
+  automaton. Values are an optional later fact.

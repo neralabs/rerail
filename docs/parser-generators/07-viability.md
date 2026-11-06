@@ -68,8 +68,8 @@ The data-layer JSON corpus has 169.2 M nodes. 72.8% are leaves.
 | `"` | 47.2 M | `lex` events (or `toggle(q)` when the file has no comment) |
 | `string_content` | 24.1 M | mask `content` |
 | `,` `:` `[` `]` `{` `}` | 46.8 M | code mask and class |
-| `number` | 3.0 M | word run, `check` for tokens with a non-digit byte |
-| `false` `null` `true` | 2.5 M | `keywords` |
+| `number` | 3.0 M | word run; 8 mask rules for the pattern |
+| `false` `null` `true` | 2.5 M | `keywords … required` |
 | `escape_sequence` | 0.65 M | always two bytes |
 | `comment` | 0 | `lex` machine |
 | `string` `pair` `array` `object` `document` | 45.9 M | `01-branch-free-design.md` §5 |
@@ -98,7 +98,7 @@ listed here.
 | 32 hard keywords, `def` (179 K) to `global` (152) | 1.63 M | `keywords` |
 | soft keywords: `type`, `case`, `match`, `__future__`, `_` | 14,748 | `keywords … soft`, decided with the tree |
 | `none`, `true`, `false` | 0.33 M | `keywords` |
-| `integer`, `float` | 0.17 M | number masks and `check` |
+| `integer`, `float` | 0.17 M | number masks; 7 mask rules for the patterns |
 | `ellipsis` | 17,377 | `munch` |
 | `comment` | 79,758 | `strings` (and `cm[d]` inside interpolations) |
 | `line_continuation` | 0 here; 521 in CPython | mask `lcont` |

@@ -94,8 +94,8 @@ directed acyclic graph of mask operations.
 | `ucode over EXPR { class NAME = … }` | Classes of Unicode characters, decoded only where `EXPR` is set (§2.6). |
 | `token KIND = start EXPR [through EXPR]` | Tokens of one kind (§2.4). |
 | `munch KIND over EXPR { "…" … }` | Longest-match operator tokens over a run of operator bytes (§2.4). |
-| `keywords KIND { "…" … } [soft { "…" … }]` | Retypes tokens of `KIND` whose text is a keyword. |
-| `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. |
+| `keywords KIND { "…" … } [soft { "…" … }] [required]` | Retypes tokens of `KIND` whose text is a keyword. With `required`, a token of `KIND` that is none of them is an error. |
+| `check KIND matches "REGEX"` | Every token of `KIND` (after `keywords`) must match `REGEX` in full, or the file goes to tree-sitter. Lowered as masks when it can be (§3.3); the lexers here write those masks out instead. |
 | `skip EXPR` | Bytes that may belong to no token, such as whitespace. |
 | `error "MESSAGE" when EXPR` | If any bit of `EXPR` is set, the file goes to tree-sitter. |
 
@@ -270,9 +270,19 @@ runs at once. On the CPU the carry passes from one block to the next in a regist
   starts one or two bytes earlier covers it. The rule is applied a fixed three times. If the third
   and fourth applications differ, a run of chained candidates (such as `=====`) was longer than
   the bound, and the error bit is set.
-- **`check`** is a machine whose events are the token's bytes, which a reset symbol at each token
-  start returns to the start state. The token's last byte must leave it in an accepting state.
-  The regex compiles to a DFA. With at most 16 states, it is one shuffle per byte of those tokens.
+- **`check`, flattened.** When the regex is a fixed sequence of parts (literals, classes, `?`,
+  `+` and `*` on one class, and alternatives that differ only in a class), the compiler turns it
+  into masks, as the number rules in both lexers do by hand. These are the masks:
+  - a region per part, a `fill` from each separator to the token's end;
+  - per region, the classes it allows;
+  - `prev`/`next` rules for each pair of adjacent parts;
+  - "at most once, in this order" rules for the separators.
+
+  Every tree-sitter number, escape and comment pattern seen so far has this form
+  (`04-unicode-and-numbers.md` §4.2).
+- **`check`, otherwise,** is a machine whose events are the token's bytes, which a reset symbol at
+  each token start returns to the start state. The token's last byte must leave it in an
+  accepting state. With at most 16 states, it is one shuffle per byte of those tokens.
 - **`keywords`** runs per token, not per byte. A word's first 8 bytes and its length index a small
   perfect hash, and one 8-byte compare confirms the match.
 

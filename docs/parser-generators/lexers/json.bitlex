@@ -33,6 +33,13 @@ class star      = '*'
 class high      = 0x80..0xff
 # Bytes a number or a literal word may contain. Which word it is gets checked per token below.
 class scalar    = '-' '+' '.' '0'..'9' 'a'..'z' 'A'..'Z'
+class digit     = '0'..'9'
+class zero      = '0'
+class letter    = 'a'..'z' 'A'..'Z'
+class minus     = '-'
+class sign      = '+' '-'
+class dot       = '.'
+class expc      = 'e' 'E'
 # The letters that may follow a backslash in tree-sitter-json's escape_sequence.
 class escapable = '"' '\\' '/' 'b' 'f' 'n' 'r' 't' 'u'
 
@@ -101,9 +108,14 @@ token '['             = start code & lbracket
 token ']'             = start code & rbracket
 token ','             = start code & comma
 token ':'             = start code & colon
-# A run of scalar bytes is one token: a number, or `true`, `false` or `null`.
-token number          = start starts(word) through word
-keywords number { "true" -> true  "false" -> false  "null" -> null }
+# A run of scalar bytes is one token. One that starts with a letter must be `true`, `false` or
+# `null`; any other is a number, checked below.
+mask wstart     = starts(word)
+mask lit        = fill(wstart & letter, ~word)
+mask num        = word & ~lit
+token number          = start wstart & ~letter through num
+token literal         = start wstart & letter through lit
+keywords literal { "true" -> true  "false" -> false  "null" -> null } required
 
 # `//` through the byte before '\n' (whose event returns to code); `/*` through '/'.
 token comment         = start cmt_start through in_cmt
@@ -119,6 +131,35 @@ error "a lone '/' or '*'"           when lex.reached(error) | (cmt_start & ~next
 error "unterminated comment"       when ~lex.final(code | line)
 error "non-ASCII outside a string" when code & high
 
-# A scalar token that is not `true`, `false` or `null` must be a number as tree-sitter-json
-# defines it. The check is a 10-state automaton run over each token's bytes (§3.3 of 03-bitlex.md).
-check number matches "-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?"
+# --- Numbers: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)? as masks -----------------------------
+#
+# The pattern is a fixed sequence of parts, so it needs no automaton. A token matches it exactly
+# when no byte breaks one of the rules below. Each rule looks at most two bytes away, or asks
+# whether a '.' or an 'e' came earlier in the same token: a `fill`, whose carry is one bit.
+# About 25 mask operations per 64 bytes, the same for every block, however many numbers it holds.
+#
+#   token     -0.5e+10     01      1.e5     1e5.0
+#   breaks    nothing      rule 6  rule 4   rule 3
+
+mask nstart     = wstart & num
+mask after_dot  = fill(prev(dot & num), ~num) & num    # bytes after a '.' in the same token
+mask after_e    = fill(prev(expc & num), ~num) & num   # bytes after an 'e' in the same token
+mask int_first  = (nstart & digit) | (prev(nstart & minus) & num)
+
+# 1. Only digits, '.', 'e', 'E', '+' and '-'.
+error "number: bad byte"        when num & ~(digit | dot | expc | sign)
+# 2. It starts with '-' or a digit, and a '-' is followed by a digit.
+error "number: bad start"       when (nstart & ~(digit | minus)) | (nstart & minus & ~next(digit))
+# 3. At most one '.', at most one 'e', and no '.' after the 'e'.
+error "number: '.' or e twice"  when (dot & (after_dot | after_e)) | (expc & after_e)
+# 4. A '.' has a digit on each side.
+error "number: bare '.'"        when dot & ~(prev(digit) & next(digit))
+# 5. A sign is first ('-' only) or right after the 'e'.
+error "number: misplaced sign"  when num & sign & ~prev(expc) & ~(nstart & minus)
+# 6. The integer part is 0, or does not start with 0.
+error "number: leading zero"    when int_first & zero & next(digit)
+# 7. An 'e' follows a digit, and is followed by a digit or by a sign and a digit.
+error "number: bare e"          when expc & num & (~prev(digit)
+                                                   | ~(next(digit) | (next(sign) & next(digit, 2))))
+# 8. The last byte is a digit.
+error "number: bad end"         when lasts(num) & ~digit

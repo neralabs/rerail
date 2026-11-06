@@ -50,6 +50,14 @@ class numc    = '0'..'9' 'a'..'z' 'A'..'Z' '_' '.'
 class expc    = 'e' 'E'
 class signc   = '+' '-'
 class radixc  = 'x' 'X' 'o' 'O' 'b' 'B'
+class xradix  = 'x' 'X'
+class oradix  = 'o' 'O'
+class bradix  = 'b' 'B'
+class octdig  = '0'..'7'
+class bindig  = '0' '1'
+class usc     = '_'
+class lsuf    = 'l' 'L'
+class jsuf    = 'j' 'J'
 class zeroc   = '0'
 class pfx     = 'r' 'R' 'b' 'B' 'f' 'F' 'u' 'U'
 class fpfx    = 'f' 'F'
@@ -299,18 +307,58 @@ token comment = start strings.on(code -> comment) | icmt_start  through (in_cmt 
 # A number starts at a digit, or at a '.' before a digit, that does not continue a word.
 mask num_start = code & ~prev(ident & code) & (digit | (dotc & next(digit)))
 mask num_base  = fill(num_start, ~(numc & code))
-# 1e-5: a sign continues a decimal number right after its e or E. In 0x1e+2 it does not.
-mask hexlike   = fill(num_start & zeroc & next(radixc), after(num_base))
-mask sign_cont = code & signc & prev(expc) & prev(num_base) & ~prev(hexlike)
+# 0x…, 0o…, 0b…: the whole token. 1e-5: a sign continues a decimal number right after its e or E;
+# in 0x1e+2 it does not.
+mask based     = fill(num_start & zeroc & next(radixc), after(num_base))
+mask sign_cont = code & signc & prev(expc) & prev(num_base) & ~prev(based)
 mask number    = num_base | fill(sign_cont, ~(numc & code) & ~sign_cont)
 # A float has a '.' or a decimal exponent somewhere in its token. `back_fill` carries that fact
 # back to the token's first byte. 1j is an integer in tree-sitter-python.
-mask floaty    = number & (dotc | (expc & ~hexlike))
+mask floaty    = number & (dotc | (expc & ~based))
 mask is_float  = num_start & back_fill(floaty, ~number)
 token integer  = start num_start & ~is_float  through number
 token float    = start is_float  through number
-check integer matches "(0[xX](_?[A-Fa-f0-9]+)+|0[oO](_?[0-7]+)+|0[bB](_?[01]+)+)[Ll]?|([0-9]+_?)+([Ll]|[jJ])?"
-check float   matches "(([0-9]+_?)+\.(([0-9]+_?)+)?([eE][+-]?([0-9]+_?)+)?|(([0-9]+_?)+)?\.([0-9]+_?)+([eE][+-]?([0-9]+_?)+)?|([0-9]+_?)+[eE][+-]?([0-9]+_?)+)[jJ]?"
+
+# --- Numbers: tree-sitter-python's patterns as masks ---
+#
+#   integer  (0[xX](_?[A-Fa-f0-9]+)+ | 0[oO](_?[0-7]+)+ | 0[bB](_?[01]+)+)[Ll]?
+#          | ([0-9]+_?)+([Ll]|[jJ])?
+#   float    mantissa ([0-9]+_?)+ '.' optional digits, or '.' and digits;
+#            then optional [eE][+-]?([0-9]+_?)+; then optional [jJ]
+#
+# Each pattern is a fixed sequence of parts, so a token matches it exactly when no byte breaks
+# one of the rules below. No automaton runs. Every rule looks at most two bytes away, or asks
+# whether a '.' or an 'e' came earlier in the token: a `fill`, carrying one bit.
+#
+# Checked on tree-sitter-python: 1_  007  1_.5  1.e5  0x_1f  1_j  1.5_ are numbers;
+# 0b12  1__2  1._5 are errors (rules 1, 4 and 6 below).
+
+mask flt       = fill(is_float, ~number) & number           # the bytes of float tokens
+mask dec       = number & ~flt & ~based                     # the bytes of decimal integers
+mask radix_at  = based & prev(num_start)                    # the x, o or b
+mask body      = based & ~num_start & ~radix_at             # what follows it
+mask hdig      = (fill(radix_at & xradix, ~number) & hexdig)
+               | (fill(radix_at & oradix, ~number) & octdig)
+               | (fill(radix_at & bradix, ~number) & bindig) # a digit of the token's own base
+mask after_dot = fill(prev(dotc & number), ~number) & number
+mask after_e   = fill(prev(expc & flt), ~number) & number
+
+# 1. Only the bytes each kind allows.
+error "number: bad byte"     when (body & ~(hdig | usc | lsuf)) | (dec & ~(digit | usc | lsuf | jsuf))
+                                  | (flt & ~(digit | usc | dotc | expc | signc | jsuf))
+# 2. A suffix (l, L, j, J) is the last byte.
+error "number: inner suffix" when number & (lsuf | jsuf) & ~lasts(number)
+# 3. 0x, 0o, 0b are followed by a digit of the base or a '_'.
+error "number: bare radix"   when radix_at & ~next(hdig | usc)
+# 4. In 0x… a '_' is followed by a digit of the base; elsewhere it follows a decimal digit.
+error "number: bad '_'"      when (body & usc & ~next(hdig))
+                                  | ((dec | flt) & usc & ~prev(digit))
+# 5. At most one '.', at most one e, and no '.' after the e.
+error "number: '.' or e twice" when (flt & dotc & (after_dot | after_e)) | (flt & expc & after_e)
+# 6. A '.' is not followed by '_'.
+error "number: '._'"         when flt & dotc & next(usc)
+# 7. An e is followed by a digit, or by a sign and a digit.
+error "number: bare e"       when flt & expc & ~(next(digit) | (next(signc) & next(digit, 2)))
 
 # --- Unicode ---
 # UTF-8 needs no decoding to find ASCII facts: every byte of a multi-byte character is 0x80 or
