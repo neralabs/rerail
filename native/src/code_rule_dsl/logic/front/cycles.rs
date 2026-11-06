@@ -26,6 +26,18 @@
 //! finitely many values, so nothing it reads flows; `@add($m, k)` under `$m < C` (and `@sub` under `$m > C`)
 //! counts up to a bound; and `@rx_group`, `@slice`, `@head`, `@dir` and `@replace_all(…, "")` give a part of
 //! their argument, as `substr` does.
+//!
+//! A key may also be a number column that counts: the head's is `@add($b, k)` (`k > 0`) of the recursive
+//! atom's `$b`, which a lower stratum binds or `$b < C` caps, so it rises through finitely many values. And a
+//! relation of the component with no node column (`negate(a, b)` between `number`'s rows) needs no key when
+//! it is a function: no rule of it reads such a relation of the component, its output columns are made from
+//! its input columns (each a column a positive atom binds, or a constant) and finite values; every rule that
+//! reads it is then a creating one, and binds the function's inputs by an atom strictly along the key.
+//! A text column may be the key too: `@rx_group($r, re, g)` is strictly shorter than `$r` when `re` matches
+//! something outside `g` in every match (`rest` after a `%%`), and the parts of finitely many texts are
+//! finitely many. A key is a column and, at the same node, a count that may rise but not fall
+//! (`tpl_upto(t, i + 1, …)` keeps its template `t`); a creating rule may keep the key when no cycle of rules
+//! that keep it comes back (`deps_dkey(n, …)` from `deps_dchain(n, …)`, which reads a node below `n`).
 
 use super::{Error, Literal, Program, Rule, Term};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -35,6 +47,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 enum Move {
     Down,
     Up,
+    /// From a text to a part of it.
+    Shorter,
+    Longer,
 }
 
 impl Move {
@@ -42,8 +57,38 @@ impl Move {
         match self {
             Move::Down => Move::Up,
             Move::Up => Move::Down,
+            Move::Shorter => Move::Longer,
+            Move::Longer => Move::Shorter,
         }
     }
+}
+
+/// The text `t` is a part of, and whether strictly: `@rx_group($x, re, g)` is strictly shorter than `$x`
+/// when what `re` matches outside the group `g` is never empty, and the other shrinking built-ins give a
+/// part that may be the whole.
+fn part_of(t: &Term) -> Option<(&String, bool)> {
+    let Term::Call(f, args) = t else { return None };
+    let Some(Term::Var(x)) = args.first() else { return None };
+    if let (true, [_, Term::Str(re), Term::Str(g)]) = (f == "rx_group", args.as_slice()) {
+        return Some((x, strict_group(re, g)));
+    }
+    shrinks(t).then_some((x, false))
+}
+
+/// Whether every match of `re` has text outside its group `g`.
+fn strict_group(re: &str, g: &str) -> bool {
+    use regex_syntax::hir::{Capture, Hir, HirKind, Repetition};
+    fn strip(h: &Hir, g: &str) -> Hir {
+        match h.kind() {
+            HirKind::Capture(c) if c.name.as_deref() == Some(g) => Hir::empty(),
+            HirKind::Capture(c) => Hir::capture(Capture { index: c.index, name: c.name.clone(), sub: Box::new(strip(&c.sub, g)) }),
+            HirKind::Concat(hs) => Hir::concat(hs.iter().map(|h| strip(h, g)).collect()),
+            HirKind::Alternation(hs) => Hir::alternation(hs.iter().map(|h| strip(h, g)).collect()),
+            HirKind::Repetition(r) => Hir::repetition(Repetition { sub: Box::new(strip(&r.sub, g)), ..r.clone() }),
+            _ => h.clone(),
+        }
+    }
+    regex_syntax::parse(re).is_ok_and(|h| strip(&h, g).properties().minimum_len().is_some_and(|n| n > 0))
 }
 
 /// A move and whether it is strict (`false`: the move or the same node).
@@ -83,6 +128,11 @@ fn edges(rule: &Rule, moves: &Moves) -> BTreeMap<String, Vec<(String, Option<Ste
                 }
             }
             Literal::Nearest { n, a, .. } => add(n, a, Some((Move::Up, true))),
+            Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } => {
+                if let Some((x, strict)) = part_of(r) {
+                    add(x, v, Some((Move::Shorter, strict)));
+                }
+            }
             Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } => match *op {
                 "=" => add(x, y, None),
                 "<" => add(x, y, Some((Move::Down, true))),
@@ -171,15 +221,7 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
         let mut from = BTreeMap::<String, BTreeSet<(Column, bool)>>::new();
         let mut bound = BTreeSet::new();
         // A variable a relation of a lower stratum binds takes finitely many values, whatever reaches it.
-        let finite: BTreeSet<&String> = rule
-            .body
-            .iter()
-            .filter_map(|l| match l {
-                Literal::Atom(a) if !a.neg && !component.contains(&a.rel) => Some(a),
-                _ => None,
-            })
-            .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
-            .collect();
+        let finite = finite_vars(rule, component);
         for literal in &rule.body {
             if let Some(a) = literal.atom().filter(|a| !a.neg) {
                 for (i, t) in a.args.iter().enumerate() {
@@ -334,27 +376,192 @@ fn summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
     }
 }
 
-/// Whether, along `way`, keys `key` (one node column per relation of `component`) bound every recursive rule.
-fn bounded(rules: &[&Rule], component: &BTreeSet<String>, key: &BTreeMap<&str, usize>, way: Move, moves: &Moves) -> Result<(), String> {
+/// The variables a rule's positive atoms of relations outside `component` bind: finitely many values each.
+fn finite_vars<'a>(rule: &'a Rule, component: &BTreeSet<String>) -> BTreeSet<&'a String> {
+    rule.body
+        .iter()
+        .filter_map(|l| match l {
+            Literal::Atom(a) if !a.neg && !component.contains(&a.rel) => Some(a),
+            _ => None,
+        })
+        .flat_map(|a| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }))
+        .collect()
+}
+
+/// The variable a counting key term rises from: `@add($b, k)` with `k > 0`, `$b` finite or capped.
+fn counter<'a>(t: &'a Term, rule: &Rule, finite: &BTreeSet<&String>) -> Option<&'a String> {
+    let Term::Call(f, args) = t else { return None };
+    match (f.as_str(), args.as_slice()) {
+        ("add", [Term::Var(b), Term::Int(k)] | [Term::Int(k), Term::Var(b)]) if *k > 0 && (finite.contains(b) || counts(t, rule)) => Some(b),
+        _ => None,
+    }
+}
+
+/// For a relation of `component` with no node column, its input columns when it is a function of them.
+fn function(prog: &Program, rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
+    let arity = rules.first()?.head.args.len();
+    let bound_by_atom = |rule: &Rule, v: &String| rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.contains(&Term::Var(v.clone()))));
+    let inputs: BTreeSet<usize> = (0..arity)
+        .filter(|&j| {
+            rules.iter().all(|rule| match &rule.head.args[j] {
+                Term::Int(_) | Term::Str(_) => true,
+                Term::Var(v) => bound_by_atom(rule, v),
+                _ => false,
+            })
+        })
+        .collect();
     for rule in rules {
-        let Some(Term::Var(h)) = rule.head.args.get(key[rule.head.rel.as_str()]) else { return Err(rule.to_string()) };
+        if rule.body.iter().any(|l| l.atom().is_some_and(|a| keyless.contains(a.rel.as_str()))) {
+            return None;
+        }
+        let mut known: BTreeSet<String> = finite_vars(rule, component).into_iter().cloned().collect();
+        for &j in &inputs {
+            rule.head.args[j].vars(&mut known);
+        }
+        loop {
+            let before = known.len();
+            for l in &rule.body {
+                if let Literal::Cmp { l: Term::Var(v), op: "=", r } = l {
+                    let mut vars = BTreeSet::new();
+                    r.vars(&mut vars);
+                    if vars.is_subset(&known) {
+                        known.insert(v.clone());
+                    }
+                }
+            }
+            if known.len() == before {
+                break;
+            }
+        }
+        for (_, t) in rule.head.args.iter().enumerate().filter(|(j, _)| !inputs.contains(j)) {
+            let mut vars = BTreeSet::new();
+            t.vars(&mut vars);
+            if !vars.is_subset(&known) {
+                return None;
+            }
+        }
+    }
+    let _ = prog;
+    Some(inputs)
+}
+
+/// A key: the column that moves (a node, or a count), and a count that rises while it stays.
+type Key = (usize, Option<usize>);
+
+/// How a recursive atom's key lies from the head's.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Lies {
+    /// Strictly along the way, or at the same place with a count that rises.
+    Before,
+    /// At the same place and count.
+    Same,
+}
+
+/// Whether, along `way`, keys `key` (a node or counting column per keyed relation of `component`, with
+/// perhaps a count) bound every recursive rule; `functions` are the keyless relations, with their inputs.
+/// Every step from an atom to the head moves the key along `way` or keeps it; a count kept at the same place
+/// may rise but not fall; and a creating step that keeps the key lies on no cycle of such steps. Along any
+/// derivation the key then settles, and after that no value is made.
+fn bounded(
+    rules: &[&Rule],
+    component: &BTreeSet<String>,
+    key: &BTreeMap<&str, Key>,
+    functions: &BTreeMap<&str, BTreeSet<usize>>,
+    way: Move,
+    moves: &Moves,
+) -> Result<(), String> {
+    let mut same = BTreeMap::<&str, BTreeSet<&str>>::new();
+    let mut creating_same = Vec::new();
+    for rule in rules.iter().filter(|r| !functions.contains_key(r.head.rel.as_str())) {
         let edges = edges(rule, moves);
-        let strict = creates(rule);
+        let finite = finite_vars(rule, component);
+        let (primary, count) = key[rule.head.rel.as_str()];
+        let head_primary = rule.head.args.get(primary);
+        let head_count = count.and_then(|c| rule.head.args.get(c));
+        let uses_function = rule.body.iter().any(|l| l.atom().is_some_and(|a| functions.contains_key(a.rel.as_str())));
+        let creating = creates(rule) || uses_function;
+        let lies = |a: &super::Atom| -> Option<Lies> {
+            let (p, c) = key[a.rel.as_str()];
+            let Some(Term::Var(b)) = a.args.get(p) else { return None };
+            match head_primary? {
+                Term::Var(h) => match reach(&edges, h, b, way)? {
+                    true => Some(Lies::Before),
+                    false => match (head_count, c.and_then(|c| a.args.get(c))) {
+                        (None, None) => Some(Lies::Same),
+                        // No count is above every count.
+                        (None, Some(_)) => Some(Lies::Before),
+                        (Some(_), None) => None,
+                        (Some(t), Some(Term::Var(bc))) => match t {
+                            Term::Var(hc) => reach(&edges, hc, bc, Move::Up).map(|s| if s { Lies::Before } else { Lies::Same }),
+                            t => {
+                                let y = counter(t, rule, &finite)?;
+                                reach(&edges, y, bc, Move::Up).map(|_| Lies::Before)
+                            }
+                        },
+                        _ => None,
+                    },
+                },
+                // A head key made from the atom's: a count up from it, or a strict part of it.
+                t => {
+                    let y = match (way, part_of(t)) {
+                        (Move::Up, _) => counter(t, rule, &finite)?,
+                        (Move::Longer, Some((y, true))) => y,
+                        _ => return None,
+                    };
+                    reach(&edges, y, b, way).map(|_| Lies::Before)
+                }
+            }
+        };
+        // The variables an atom before the head binds, for the functions' inputs.
+        let mut before = BTreeSet::<&String>::new();
         for literal in &rule.body {
-            let Some(a) = literal.atom().filter(|a| component.contains(&a.rel)) else { continue };
-            let Some(Term::Var(b)) = a.args.get(key[a.rel.as_str()]) else { return Err(rule.to_string()) };
-            match reach(&edges, h, b, way) {
-                Some(true) => {}
-                Some(false) if !strict => {}
-                _ => return Err(rule.to_string()),
+            let Some(a) = literal.atom().filter(|a| component.contains(&a.rel) && !functions.contains_key(a.rel.as_str())) else { continue };
+            match lies(a) {
+                Some(Lies::Before) => {
+                    if matches!(literal, Literal::Atom(x) if !x.neg) {
+                        before.extend(a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }));
+                    }
+                }
+                Some(Lies::Same) => {
+                    same.entry(a.rel.as_str()).or_default().insert(rule.head.rel.as_str());
+                    if creating {
+                        creating_same.push((a.rel.as_str(), rule.head.rel.as_str(), rule));
+                    }
+                }
+                None => return Err(rule.to_string()),
+            }
+        }
+        for literal in &rule.body {
+            let Some(a) = literal.atom().filter(|a| functions.contains_key(a.rel.as_str())) else { continue };
+            for &j in &functions[a.rel.as_str()] {
+                match a.args.get(j) {
+                    Some(Term::Var(v)) if before.contains(v) || finite.contains(v) => {}
+                    Some(Term::Int(_) | Term::Str(_)) => {}
+                    _ => return Err(rule.to_string()),
+                }
+            }
+        }
+    }
+    // A creating step that keeps the key, from `a` to `h`, may not come back to `a` by such steps.
+    for (a, h, rule) in creating_same {
+        let mut seen = BTreeSet::from([h]);
+        let mut stack = vec![h];
+        while let Some(at) = stack.pop() {
+            if at == a {
+                return Err(rule.to_string());
+            }
+            for &n in same.get(at).into_iter().flatten() {
+                if seen.insert(n) {
+                    stack.push(n);
+                }
             }
         }
     }
     Ok(())
 }
 
-/// Assignments of a key column to each relation, at most `limit` of them.
-fn keys<'a>(choices: &[(&'a str, Vec<usize>)], limit: usize) -> Vec<BTreeMap<&'a str, usize>> {
+/// Assignments of a key to each relation, at most `limit` of them.
+fn keys<'a>(choices: &[(&'a str, Vec<Key>)], limit: usize) -> Vec<BTreeMap<&'a str, Key>> {
     let mut out = vec![BTreeMap::new()];
     for (rel, columns) in choices {
         out = out.into_iter().flat_map(|key| columns.iter().map(move |&c| {
@@ -388,11 +595,34 @@ pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<Str
         if !value_cycle(prog, &rules, component) {
             continue;
         }
-        let choices: Vec<(&str, Vec<usize>)> = component.iter().map(|rel| (rel.as_str(), node_columns(prog, rel))).collect();
+        // The relations with no node column: functions between the others' rows, or keyed by a count.
+        let keyless: BTreeSet<&str> = component.iter().map(String::as_str).filter(|rel| node_columns(prog, rel).is_empty()).collect();
+        let functions: BTreeMap<&str, BTreeSet<usize>> = keyless
+            .iter()
+            .filter_map(|&rel| function(prog, by_head.get(rel).map_or(&[][..], Vec::as_slice), component, &keyless).map(|inputs| (rel, inputs)))
+            .collect();
+        let choices: Vec<(&str, Vec<Key>)> = component
+            .iter()
+            .filter(|rel| !functions.contains_key(rel.as_str()))
+            .map(|rel| {
+                let cols = prog.decls.get(rel).map_or(&[][..], Vec::as_slice);
+                let number = |t: &str| t == "int" || t == "number";
+                let counts: Vec<usize> = cols.iter().enumerate().filter(|(_, (_, t))| number(t)).map(|(i, _)| i).collect();
+                let mut keys: Vec<Key> = Vec::new();
+                for (i, (_, t)) in cols.iter().enumerate().filter(|(_, (_, t))| t == "node" || number(t) || t == "sym") {
+                    keys.push((i, None));
+                    if t == "node" {
+                        keys.extend(counts.iter().map(|&c| (i, Some(c))));
+                    }
+                }
+                (rel.as_str(), keys)
+            })
+            .collect();
         let mut first = None;
-        let ok = choices.iter().all(|(_, columns)| !columns.is_empty())
-            && [Move::Down, Move::Up].into_iter().any(|way| {
-                keys(&choices, 4096).iter().any(|key| match bounded(&rules, component, key, way, &moves) {
+        let ok = !choices.is_empty()
+            && choices.iter().all(|(_, columns)| !columns.is_empty())
+            && [Move::Down, Move::Up, Move::Longer].into_iter().any(|way| {
+                keys(&choices, 4096).iter().any(|key| match bounded(&rules, component, key, &functions, way, &moves) {
                     Ok(()) => true,
                     Err(rule) => {
                         first.get_or_insert(rule);
