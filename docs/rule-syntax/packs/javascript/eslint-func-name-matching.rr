@@ -56,11 +56,11 @@ property(p, x) :- (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "publ
     holder_key(p, k), kind(k, "property_identifier"), text(k, x).
 property(p, x) :- (kind(p, "pair") ; kind(p, "field_definition") ; kind(p, "public_field_definition")),
     estree_key(p, k), kind(k, "string"), value(k, x), identifier_name(x).
-// identifier_name(x): x could be written as a plain identifier (esutils' ES6 test, reserved words out). Any
-// non-ASCII character is taken as a letter (close to Unicode's ID_Start and ID_Continue) except Latin-1's
-// punctuation and U+2000–U+2BFF (punctuation, arrows, math, dingbats): '❤' is no name. Bytes of UTF-8.
+// identifier_name(x): x could be written as a plain identifier (esutils' ES6 test, reserved words out): an ID_Start
+// character, `$` or `_`, then ID_Continue characters, `$`, ZWNJ or ZWJ. 'ᢅ' is one (ID_Start), '❤' is not.
 .decl identifier_name(x: symbol)
-identifier_name(x) :- (stored_name(x) ; property_key_name(x)), match("([A-Za-z_$]|[\\xc3-\\xdf][\\x80-\\xbf]|\\xe2[\\xb0-\\xbf][\\x80-\\xbf]|[\\xe0\\xe1\\xe3-\\xef][\\x80-\\xbf][\\x80-\\xbf]|[\\xf0-\\xf4][\\x80-\\xbf][\\x80-\\xbf][\\x80-\\xbf])([A-Za-z0-9_$]|[\\xc3-\\xdf][\\x80-\\xbf]|\\xe2[\\xb0-\\xbf][\\x80-\\xbf]|[\\xe0\\xe1\\xe3-\\xef][\\x80-\\xbf][\\x80-\\xbf]|[\\xf0-\\xf4][\\x80-\\xbf][\\x80-\\xbf][\\x80-\\xbf])*", x), !reserved(x).
+identifier_name(x) :- (stored_name(x) ; property_key_name(x)),
+    match("[\\p{ID_Start}$_][\\p{ID_Continue}$\\x{200C}\\x{200D}]*", x), !reserved(x).
 .decl stored_name(x: symbol)
 stored_name(x) :- assignment(_, l, _), static_prop(l, _, x).
 .decl property_key_name(x: symbol)

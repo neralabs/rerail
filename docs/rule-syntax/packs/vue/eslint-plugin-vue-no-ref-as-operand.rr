@@ -64,7 +64,7 @@ operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "assignment_exp
 operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "ternary_expression"), field(p, "condition", w),
     deparen(w, r).
 operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "template_substitution"), child(t, p, _),
-    !tagged(t).
+    !tagged_template(t).
 operand(r, s) :- ref_read(r, s, _), estree_parent(r, m), vmut_member(m, r), static_prop(m, _, x), x != "value",
     x != "effect".
 operand(r, s) :- ref_read(r, s, _), estree_parent(r, al), kind(al, "arguments"), field(c, "arguments", al),
@@ -73,8 +73,6 @@ operand(r, s) :- ref_read(r, s, _), estree_parent(r, al), kind(al, "arguments"),
 whole("if_statement"). whole("switch_statement"). whole("unary_expression"). whole("update_expression").
 .decl logical(p: node)
 logical(p) :- kind(p, "binary_expression"), (op(p, "&&") ; op(p, "||") ; op(p, "??")).
-.decl tagged(t: node)
-tagged(t) :- kind(t, "template_string"), field(c, "arguments", t), kind(c, "call_expression").
 .decl vmut_member(m: node, r: node)
 vmut_member(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", w),
     deparen(w, r).

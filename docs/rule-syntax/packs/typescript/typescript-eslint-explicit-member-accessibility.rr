@@ -23,7 +23,7 @@
     fix add_private "Add 'private' accessibility modifier"
     fix add_protected "Add 'protected' accessibility modifier"
 explicit_member_accessibility(h, cat("Missing accessibility modifier on ", cat(t, cat(" ", cat(x, "."))))) :-
-    missing(m, t, x), head(m, h).
+    missing(m, t, x), member_head(m, h).
 explicit_member_accessibility(a, cat("Public accessibility modifier on ", cat(t, cat(" ", cat(x, "."))))) :-
     unwanted(m, t, x), child(m, a, _), kind(a, "accessibility_modifier").
 
@@ -60,14 +60,9 @@ unwanted(m, t, x) :- member(m, c, t, x), level(c, "no-public"), public(m), !igno
 ignored(m, c, x) :- member(m, c, _, x), c != "properties", c != "parameterProperties",
     option_item("ignoredMethodNames", _, x).
 
-// head(m, h): getMemberHeadLoc's start, the first token after the decorators.
-.decl head(m: node, h: loc)
-head(m, h) :- missing(m, _, _), !field(m, "decorator", _), first_token(m, h).
-head(m, h) :- missing(m, _, _), last_decorator(m, d), token_after(d, h).
-
 // The fixes. `public` is deleted as a node: a regex over the member could find `public` in a decorator's
 // string (`@Dec('public') public x`). The space after it stays.
 drop_public(a, _) :- unwanted(m, _, _), child(m, a, _), kind(a, "accessibility_modifier") => delete(a).
-add_public(h, _) :- missing(m, _, _), head(m, h) => replace(h, `public $h`).
-add_private(h, _) :- missing(m, _, _), head(m, h) => replace(h, `private $h`).
-add_protected(h, _) :- missing(m, _, _), head(m, h) => replace(h, `protected $h`).
+add_public(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `public $h`).
+add_private(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `private $h`).
+add_protected(h, _) :- missing(m, _, _), member_head(m, h) => replace(h, `protected $h`).

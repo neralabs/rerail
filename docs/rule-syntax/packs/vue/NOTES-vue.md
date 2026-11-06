@@ -20,7 +20,7 @@ rule's own. Column scores are at (path, line, column).
 |---|---|---|---|---|
 | attribute-hyphenation | 31 | 23/0/0 | 23/0/0 | no fix (a) |
 | no-async-in-computed-properties | 82 | 96/0/0 | 96/0/0 | |
-| no-child-content | 26 | 12/0/0 | 0/12/12 | column (b) |
+| no-child-content | 26 | 12/0/0 | 12/0/0 | (b), fixed |
 | no-deprecated-v-on-native-modifier | 17 | 2/0/0 | 2/0/0 | |
 | no-dupe-keys | 54 | 69/0/0 | 69/0/0 | |
 | no-duplicate-attributes | 26 | 2/0/0 | 2/0/0 | |
@@ -42,7 +42,7 @@ rule's own. Column scores are at (path, line, column).
 | v-on-event-hyphenation | 24 | 15/0/0 | 15/0/0 | |
 | valid-v-for | 73 | 46/0/0 | 46/0/0 | unexpectedExpression (d) |
 
-22 of 23 are perfect at line level, 21 at column level. Messages were compared with ESLint on samples for
+22 of 23 are perfect at line level, 22 at column level. Messages were compared with ESLint on samples for
 attribute-hyphenation, v-on-event-hyphenation, no-v-html, no-v-text-v-html-on-component, no-child-content,
 no-mutating-props, no-setup-props-reactivity-loss and require-valid-default-prop. Options were checked as well
 where those rules take them. ESLint 10.11.0 with the plugin is installed in the upstream checkout
@@ -53,10 +53,10 @@ has no eslint-plugin-vue.
 
 - **(a) attribute-hyphenation, no fix.** The plugin's fix renames the key, but the policy JSON has no fix, so none
   is offered.
-- **(b) no-child-content, column.** ESLint reports the children's range, which starts right after the start tag's
-  `>`. The finding here sits on the `>` token itself: same line, one column earlier. A span that starts after a
-  token would need a core helper, such as `token_end(t, sp)`, an empty span at a token's end. Not requested: the
-  score is at line level.
+- **(b) no-child-content, column (fixed).** ESLint reports the children's range, which starts right after the start
+  tag's `>`. The finding first sat on the `>` token, one column early. It now sits on a regex capture over the
+  element's text, the first character after the start tag (quoted attribute values skipped), which rrlab models as
+  a node since its update: 12/0/0 at columns too.
 - **(c) require-v-for-key, 3 FN.** These come from the recording, not the rule. ESLint reports a key-less element
   inside a nested `<template v-for>` twice (once per enclosing v-for), and the recording keeps both rows. The rule
   reports each element once. The three are no-mutating-props/invalid-006.vue:6 and valid-001.vue:17 and :18.
@@ -107,7 +107,7 @@ and each fix was checked against ESLint on those cases:
 - **mutation.rr.** `Object.assign` needs a plain `.assign`, so `Object['assign']` is not counted. The `!` clause
   of `vmut_strip` is gone: `estree_parent` stops at a non-null expression anyway.
 
-The eighth, no-child-content's column, stays as (b).
+The eighth, no-child-content's column (b), is fixed since rrlab models regex captures as spans.
 
 Idioms: `vref_site` and `local()` are gone (names.rr resolves once now). `vvue_import_call` is defined directly,
 and `earlier_hit` uses `earlier`.

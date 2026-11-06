@@ -5,11 +5,9 @@
 // What a rule gets from this library:
 //   builtin_ref(r, x)        r is a reference to the built-in global x, which nothing in the file defines (ESLint's
 //                            `variable.defs.length === 0`) and no `/* global x:off */` removes
-//   called(c, f)             c is a call whose callee is f, parentheses skipped; a tagged template is no call
 //   constructed(c, f)        c is `new f(…)` or `new f`, parentheses skipped
 //   member_call(c, o, x)     c calls o.x: `o.x(…)`, `o?.x(…)`, `(o.x)(…)`; x is a plain property name
 //   member_call_static(c, o, x)  the same, also `o["x"](…)` and `` o[`x`](…) `` (getStaticPropertyName)
-//   expr_name(r, x)          r is inside a named function or class expression x, whose name binds x there
 //   global_value(n, x)       n has the value of the global x, followed as eslint-utils' ReferenceTracker does
 //                            (the global object, aliases, pass-through expressions); for the names the
 //                            including rule lists in traced_global(x)
@@ -22,7 +20,7 @@
 // Examples, one per rule:
 //   no-new-func          new Function("a", "return a")       builtin_ref + constructed
 //   no-new-wrappers      new String("a")                      builtin_ref + constructed
-//   symbol-description   Symbol()                             builtin_ref + called
+//   symbol-description   Symbol()                             builtin_ref + called (eslint-a-common)
 //   radix                Number.parseInt(s)                   builtin_ref + member_call_static
 //   no-obj-calls         const m = Math; m()                  global_value + called
 //   no-redeclare         function f(a) { var a; }             var_site;  /* global Array */  global_item
@@ -35,8 +33,9 @@
 //   function f(Function) { Function() }     not: the parameter shadows the global
 //   var g = function Function() { Function() }   not: a function expression's name binds inside it
 //
-// Builds on tsx/eslint-a-globals (free_ref, global_var, deparen, static_prop, call_arg_count, call_arg,
-// and through it names and modules), tsx/values (member), tsx/eslint-a-text (js_comment) and tsx/statements (var_scope, for_head).
+// Builds on tsx/eslint-a-globals (free_ref, global_var; through it eslint-a-common's deparen, static_prop, called,
+// call_arg, and names and modules), tsx/values (member, pass_through, env_written), tsx/eslint-a-text (js_comment)
+// and tsx/statements (var_scope, for_head).
 #include "tsx/eslint-a-globals.rr"
 #include "tsx/values.rr"
 #include "tsx/eslint-a-text.rr"
@@ -44,22 +43,12 @@
 
 // ---- built-in globals ------------------------------------------------------------------------------------------
 .decl builtin_ref(r: node, x: symbol)
-builtin_ref(r, x) :- free_ref(r, x), docof(r, d), global_var(d, x), !expr_name(r, x), !global_off(d, x).
+builtin_ref(r, x) :- free_ref(r, x), docof(r, d), global_var(d, x), !global_off(d, x).
 // global_off(d, x): `/* global Boolean:off */` (or `globals`) removes the global variable x from document d.
 .decl global_off(d: number, x: symbol)
 global_off(d, x) :- global_item(c, x, "off", _), docof(c, d).
-// expr_name(r, x): names.rr gives a function or class expression's name no binding; eslint-scope binds it in a
-// scope of its own around the expression.   (function Symbol() { Symbol(); })   (class Number { m() { Number } })
-.decl expr_name(r: node, x: symbol)
-expr_name(r, x) :- ref(r, x, "value"), (kind(f, "function_expression") ; kind(f, "generator_function") ;
-    kind(f, "class")), field(f, "name", n), text(n, x), within(r, f).
 
 // ---- calls ---------------------------------------------------------------------------------------------------------
-// called(c, f): `parseInt(s)`, `(parseInt)(s)`, `parseInt?.(s)`. Not `` parseInt`s` ``: ESTree's
-// TaggedTemplateExpression is no CallExpression, while tree-sitter writes it as a call with a template argument.
-.decl called(c: node, f: node)
-called(c, f) :- kind(c, "call_expression"), field(c, "function", f0), deparen(f0, f), field(c, "arguments", a),
-    kind(a, "arguments").
 .decl constructed(c: node, f: node)
 constructed(c, f) :- kind(c, "new_expression"), field(c, "constructor", f0), deparen(f0, f).
 // member_call(c, o, x): `Number.parseInt(s)`, `Number?.parseInt(s)`, `(Number?.parseInt)(s)`. ESTree's
@@ -85,8 +74,8 @@ member_call_static(c, o, x) :- called(c, m), static_prop(m, o, x).
 .decl global_value(n: node, x: symbol)
 global_value(n, x) :- gval(n, x), x != "".
 .decl gval(n: node, x: symbol)
-gval(r, x) :- traced_global(x), builtin_ref(r, x), docof(r, d), !global_written(d, x).
-gval(r, "") :- global_object_name(g), builtin_ref(r, g), docof(r, d), !global_written(d, g).
+gval(r, x) :- traced_global(x), builtin_ref(r, x), docof(r, d), !env_written(d, x).
+gval(r, "") :- global_object_name(g), builtin_ref(r, g), docof(r, d), !env_written(d, g).
 gval(m, x) :- gval(o, ""), static_prop(m, o, x), traced_global(x).
 gval(p, v) :- gval(n, v), pass_through(n, p).
 // Aliases: the declarator, assignment or default that stores the value; each read of that variable has it.
@@ -96,17 +85,6 @@ gval(r, x) :- gval(e, ""), kind(dc, "variable_declarator"), field(dc, "value", e
 .decl global_object_name(g: symbol)
 global_object_name("globalThis"). global_object_name("global"). global_object_name("self").
 global_object_name("window").
-// pass_through(n, p): ReferenceTracker's isPassThrough, with tree-sitter's parentheses as one more step.
-.decl pass_through(n: node, p: node)
-pass_through(n, p) :- kind(p, "parenthesized_expression"), child(p, n, _), !kind(n, "comment").
-pass_through(n, p) :- kind(p, "ternary_expression"), (field(p, "consequence", n) ; field(p, "alternative", n)).
-pass_through(n, p) :- kind(p, "binary_expression"), (op(p, "&&") ; op(p, "||") ; op(p, "??")),
-    (field(p, "left", n) ; field(p, "right", n)).
-pass_through(n, p) :- kind(p, "sequence_expression"), child(p, n, i), !kind(n, "comment"),
-    count : { child(p, o, j), j > i, !kind(o, "comment") } = 0.
-pass_through(n, p) :- kind(p, k), (k = "as_expression" ; k = "satisfies_expression" ; k = "non_null_expression" ;
-    k = "type_assertion" ; k = "instantiation_expression"), child(p, n, 0).
-pass_through(n, a) :- kind(a, "assignment_expression"), field(a, "right", n).
 // store(e, s): value e is stored in the variable declared at s.   var m = e   m = e   function f(m = e) {}
 .decl store(e: node, s: node)
 store(e, dc) :- kind(dc, "variable_declarator"), field(dc, "value", e), field(dc, "name", n), kind(n, "identifier").
@@ -117,12 +95,6 @@ store(e, s) :- (kind(a, "assignment_expression") ; kind(a, "assignment_pattern")
 key_site(k, k) :- kind(k, "shorthand_property_identifier_pattern").
 key_site(k, s) :- kind(k, "pair_pattern"), field(k, "value", s), kind(s, "identifier").
 key_site(k, s) :- kind(k, "object_assignment_pattern"), field(k, "left", s).
-// global_written(d, x): `Math = f` or `Math++` somewhere in d, with Math the global: ReferenceTracker's
-// isModifiedGlobal, which then stops following it.
-.decl global_written(d: number, x: symbol)
-global_written(d, x) :- free_ref(r, x), docof(r, d), (field(a, "left", r), (kind(a, "assignment_expression") ;
-    kind(a, "augmented_assignment_expression")) ; kind(u, "update_expression"), field(u, "argument", r)).
-
 // ---- `/* global */` comments ---------------------------------------------------------------------------------------
 // global_item(c, x, v, l): block comment c is an ESLint `global` (or `globals`) directive whose list has the item x,
 // with setting v ("" for none, else "readonly", "writable", "off", "true", …), on line l.

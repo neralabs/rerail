@@ -33,8 +33,5 @@ annotated(t) :- (kind(d, "variable_declarator") ; kind(d, "public_field_definiti
 // same_literal(e, ty, t): expression e and type ty, both without parentheses (t is ty's literal_type), are the
 // same literal as written. A literal type of null or undefined is TSNullKeyword in TSESTree, no literal.
 .decl same_literal(e: node, ty: node, t: node)
-same_literal(e, ty, t) :- deparen(e, v), type_deparen(ty, t), kind(t, "literal_type"), child(t, l, 0),
+same_literal(e, ty, t) :- deparen(e, v), type_child(ty, t), kind(t, "literal_type"), child(t, l, 0),
     kind(l, k), (k = "string" ; k = "number" ; k = "true" ; k = "false"), kind(v, k), text(l, x), text(v, x).
-.decl type_deparen(ty: node, t: node)  // t is type ty without parenthesized_type wrappers
-type_deparen(ty, ty) :- kind(ty, k), k != "parenthesized_type".
-type_deparen(ty, t) :- kind(ty, "parenthesized_type"), child(ty, c, 0), type_deparen(c, t).

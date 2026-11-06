@@ -16,6 +16,7 @@
 //   import_syntax(i, s)          "none" | "all" | "multiple" | "single", as sort-imports classifies i
 //   import_prev(i, p, gap)       p is the import declaration just before i, with gap lines between them
 //   import_group(i, g)           g is the first import of i's group: imports with no line between them
+//   deparen(e, x)                x is expression e without its parentheses (and comments inside them): ((a)) is a
 //
 // Builds on tsx/names (import_binding: every name an import binds, with its local name) and on core.
 #include "tsx/names.rr"
@@ -51,10 +52,16 @@ not_stmt(n) :- kind(n, "hash_bang_line").
 // node for the parentheses, so ESLint's strict rule still counts it.
 .decl string_stmt(st: node, l: node, bare: number)
 string_stmt(st, l, 1) :- kind(st, "expression_statement"), child(st, l, 0), kind(l, "string").
-string_stmt(st, l, 0) :- kind(st, "expression_statement"), child(st, e, 0), unparen(e, l), e != l.
-.decl unparen(e: node, l: node)  // l is e without its parentheses: (("x")) -> "x"
-unparen(e, e) :- kind(e, "string").
-unparen(e, l) :- kind(e, "parenthesized_expression"), child(e, c, 0), unparen(c, l).
+string_stmt(st, l, 0) :- kind(st, "expression_statement"), child(st, e, 0), kind(e, "parenthesized_expression"),
+    deparen(e, l), kind(l, "string").
+// deparen(e, x): tree-sitter keeps `(a)` as a parenthesized_expression holding a; ESTree has just a, so ESLint's
+// `node.test.type` sees through any number of them. A comment may sit inside, `( /* why */ a)`, and is not the
+// expression. TypeScript's `(a as T)` keeps its as_expression.
+//   if ((!a)) …        the condition deparens to `!a`
+.decl deparen(e: node, x: node)
+deparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
+deparen(e, x) :- kind(e, "parenthesized_expression"), child(e, c, _), !not_stmt(c), deparen(c, x).
+
 
 // directive(s, d, text): the directive prologue, as ECMAScript defines it: the leading statements of s that
 // are bare string literals. text is as written, without quotes ("use strict", "use client"); so

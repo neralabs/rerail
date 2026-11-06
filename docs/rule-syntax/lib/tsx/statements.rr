@@ -29,9 +29,11 @@
 //   is_comment(n)            n is a comment, `//`, `/* */` or `<!--`: tree-sitter extras, never statements
 //   prev_stmt(x, p)          p is the statement just before x in the same list, comments skipped
 //
-// Builds on core only: the tape (kind, field, child, op, text, line, end_line, col), nearest, next_sibling,
-// precedes, and core's token relations (first_token, last_token, token_before, token_after).
+// Builds on tsx/names (fn_scope) and core: the tape (kind, field, child, op, text, line, end_line, col),
+// nearest, next_sibling, precedes, and core's token relations (first_token, last_token, token_before, token_after).
 
+
+#include "tsx/names.rr"
 
 // Computed only for the arguments rules ask about, not for every node in the file.
 .pragma "magic-transform" "one_liner,asi_hazard,unbrace_unsafe"
@@ -182,11 +184,10 @@ require_call(v) :- init_of(v, c), kind(c, "call_expression"), field(c, "function
 // Scopes, as ESLint's one-var keeps them. `var` belongs to the enclosing function (or program, or static block);
 // let, const and using to the nearest block, which includes a for statement's head and a switch. One quirk:
 // a TypeScript namespace body opens no scope there, so `let a; namespace N { let b; }` share one.
-// (tsx/names has fn_scope and block_scope for name resolution; these follow ESLint's stacks instead.)
+// var_scope is tsx/names' fn_scope (the kinds are the same: functions, the program, static blocks); the block
+// scopes below follow ESLint's one-var stack instead of names' block_scope.
 .decl var_scope(k: symbol)
-var_scope("program"). var_scope("function_declaration"). var_scope("function_expression").
-var_scope("arrow_function"). var_scope("generator_function"). var_scope("generator_function_declaration").
-var_scope("method_definition"). var_scope("class_static_block").
+var_scope(k) :- fn_scope(k).
 .decl lexical_scope(k: symbol)
 lexical_scope("program"). lexical_scope("statement_block"). lexical_scope("for_statement").
 lexical_scope("for_in_statement"). lexical_scope("switch_statement").

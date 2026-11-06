@@ -2,8 +2,6 @@
 // (require, module, exports), calls without parentheses, and where a node sits among ESTree's parents.
 //
 // What a rule gets from this library:
-//   node_call(c, f)          c is a CallExpression whose callee is f, parentheses skipped: `f(a)`, `(f)(a)`,
-//                            `f?.(a)`; a tagged template `` f`a` `` is no call
 //   cjs_ref(r, x)            r is a reference to the CommonJS global x (require, module, exports, __dirname,
 //                            __filename): nothing in the file declares it, and the global scope has it
 //   cjs_file(d, x)           document d's global scope has CommonJS variable x: a CommonJS file by package type
@@ -19,8 +17,6 @@
 //                            `module.exports` and `exports` have the whole statement's assignment
 //                            (exports-style's getTopAssignment)
 //   builtin_spec(name)       Node's isBuiltin(name): "fs", "node:fs", "fs/promises", "node:test" (not "test")
-//   node_runs_on(d, r)       the Node.js range document d must run on (getConfiguredNodeVersion): a valid `version`
-//                            option, else values.rr's node_range (engines, devEngines, ">=16.0.0")
 //
 // Examples:
 //   n/no-new-require        new require("x")             the constructor, parentheses skipped
@@ -41,9 +37,6 @@
 #include "tsx/values.rr"
 #include "tsx/eslint-a-common.rr"
 
-.decl node_call(c: node, f: node)
-node_call(c, f) :- kind(c, "call_expression"), field(c, "function", f0), deparen(f0, f), !tagged(c).
-
 .decl cjs_file(d: number, x: symbol)
 cjs_file(d, x) :- package_type(d, "commonjs"), cjs_global(x).
 cjs_file(d, x) :- cjs_global(x), directive_global(d, x).
@@ -51,7 +44,7 @@ cjs_file(d, x) :- cjs_global(x), directive_global(d, x).
 cjs_ref(r, x) :- cjs_global(x), ref(r, x, "value"), !ref_site(r, _), docof(r, d), cjs_file(d, x).
 
 .decl bare_require(c: node, f: node)
-bare_require(c, f) :- node_call(c, f), kind(f, "identifier"), text(f, "require"), !ref_site(f, _).
+bare_require(c, f) :- called(c, f), kind(f, "identifier"), text(f, "require"), !ref_site(f, _).
 .decl require_arg(c: node, s: node)
 require_arg(c, s) :- bare_require(c, _), first_arg(c, s).
 
@@ -102,12 +95,6 @@ node_q_below(p) :- node_link(n, p), node_q_below(n).
 node_link(n, p) :- (kind(p, "member_expression") ; kind(p, "subscript_expression")), field(p, "object", n).
 node_link(n, p) :- kind(p, "call_expression"), field(p, "function", n).
 
-// node_runs_on(d, r). A `version` that is no range ("lts") is ignored, as the plugin's schema check leaves it.
-.decl node_runs_on(d: number, r: symbol)
-node_runs_on(d, r) :- doc(d, _, _), node_version_opt(r).
-node_runs_on(d, r) :- node_range(d, r), !node_version_opt(_).
-.decl node_version_opt(r: symbol)
-node_version_opt(r) :- option("version", r), @semver_valid(r) = 1.
 
 .decl builtin_spec(name: symbol)
 builtin_spec(x) :- node_builtin(x).

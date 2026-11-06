@@ -15,8 +15,9 @@
 // through components. Within a file, render_up climbs the tree; across files, a tag's symbol (sym_of) is
 // joined with component(q, f) to continue inside the component's own file.
 //
-// Builds on tsx/names for sym_of and ref_site, and on core for the tape and nearest/within.
-#include "tsx/names.rr"
+// Builds on tsx/names for sym_of and ref_site, tsx/modules for function_kind, and on core for the tape and
+// nearest/within.
+#include "tsx/modules.rr"
 
 // The tag name of an element. Fragments (<>…</>) have none.
 // <A x={1}>…</A> is a jsx_element whose open_tag holds the name; <A/> is a jsx_self_closing_element with the name
@@ -102,10 +103,9 @@ render_attr(c, e, @dot(q, x)) :- jsx_el(c), nearest(c, at, "jsx_attribute"), chi
 // down with render_up.
 // returned(f, x): x is an expression function f returns. `return <A/>` or `return (cond ? <A/> : <B/>)`.
 .decl returned(f: node, x: node)
-// The returned expression of a return statement, attributed to the function the statement is in.
-.decl fn_kind(kind: symbol)
-fn_kind("function_declaration"). fn_kind("function_expression"). fn_kind("arrow_function").
-returned(f, x) :- kind(r, "return_statement"), nearest(r, f, fn_kind), child(r, x, _), !kind(x, "comment").
+// The returned expression of a return statement, attributed to the function the statement is in: the nearest
+// function of any kind, so a `return` in a method or generator nested in f is not f's.
+returned(f, x) :- kind(r, "return_statement"), nearest(r, f, function_kind), child(r, x, _), !kind(x, "comment").
 // An expression-bodied arrow returns its body: `() => <A/>`.
 returned(f, x) :- kind(f, "arrow_function"), field(f, "body", x), !kind(x, "statement_block").
 .decl render_root(f: node, e: node)

@@ -4,7 +4,7 @@
 //
 // What a rule gets from this library:
 //   parentheses and parents
-//     deparen(e, x)            x is expression e without its parentheses: ((a)) gives a; any other e is its own x
+//     deparen(e, x)            x is expression e without its parentheses: ((a)) gives a (from tsx/modules)
 //     deparen_count(e, x, k)   the same, with k the number of parentheses taken off: ((a)) gives a, 2
 //     estree_parent(x, p)      p is x's ESTree parent: the nearest enclosing node that is not a parenthesis
 //   functions
@@ -17,6 +17,10 @@
 //     static_prop(n, o, x)     member access n reads property x of object o by a static name: o.x, o["x"],
 //                              o[`x`], o?.x; o is the object without its parentheses
 //   calls
+//     callee(c, f)             f is call c's callee, parentheses skipped: `(eval)(s)`, `eval?.(s)`, `` eval`s` ``
+//     called(c, f)             the same for an ESTree CallExpression only: a tagged template is no call
+//     tagged(c)                c is a tagged template `` f`x` ``, which tree-sitter writes as a call
+//     tagged_template(t)       t is the template of one: the `x` of `` f`x` ``, which is no plain string
 //     call_arg(c, a, i)        a is call (or `new`) c's i-th argument as written, from 0; comments are not arguments
 //     call_arg_count(c, k)     c has k arguments
 //   tokens
@@ -27,6 +31,8 @@
 //                              a static block, the program
 //     this_owner(t, s)         `this` or `super` t has the `this` of s: the function, field value, static block or
 //                              program whose frame is nearest around t
+//   scopes
+//     escope_node(s)           s opens an eslint-scope scope (getScope's answer for the nodes inside it)
 //   text
 //     upper_first(s, t)        t is s with its first letter upper-cased (ASCII), for the s of upper_first_ask(s)
 //     capital(x)               identifier text x starts with an upper-case letter (ESLint's startsWithUpperCase)
@@ -38,13 +44,7 @@
 #include "tsx/modules.rr"
 
 // ---- parentheses and parents -------------------------------------------------------------------------------------
-// tree-sitter keeps `(a)` as a parenthesized_expression holding a; ESTree has just a, so ESLint's `node.test.type`
-// sees through any number of them. A comment may sit inside, `( /* why */ a)`, and is not the expression.
-// TypeScript's `(a as T)` keeps its as_expression.
-//   if ((!a)) …        the condition deparens to `!a`
-.decl deparen(e: node, x: node)
-deparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
-deparen(e, x) :- kind(e, "parenthesized_expression"), child(e, c, _), !not_stmt(c), deparen(c, x).
+// deparen is modules.rr's (its directives need it too).
 // deparen_count: no-cond-assign wants `if ((a = b))`, two parentheses, one of them the if's own.
 .decl deparen_count(e: node, x: node, k: number)
 deparen_count(e, e, 0) :- node(_, e, k, _, _), k != "parenthesized_expression".
@@ -89,6 +89,17 @@ static_prop(n, o, x) :- kind(n, "subscript_expression"), field(n, "index", i), d
     field(n, "object", w), deparen(w, o).
 
 // ---- calls ---------------------------------------------------------------------------------------------------------
+// callee(c, f): `(eval)(s)` and `eval?.(s)` have callee eval; `(0, eval)(s)` has a sequence, no identifier.
+// tree-sitter writes `` f`x` `` as a call_expression whose arguments are a template: callee keeps it (ESLint's
+// no-eval and no-alert read a tag as a callee), called does not (ESTree's TaggedTemplateExpression is no call).
+.decl callee(c: node, f: node)
+callee(c, f) :- kind(c, "call_expression"), field(c, "function", f0), deparen(f0, f).
+.decl called(c: node, f: node)
+called(c, f) :- callee(c, f), !tagged(c).
+.decl tagged(c: node)
+tagged(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "template_string").
+.decl tagged_template(t: node)
+tagged_template(t) :- tagged(c), field(c, "arguments", t).
 // call_arg(c, a, i): `f(a, /* why */ b)` gives a at 0 and b at 1; a is as written, parentheses kept (deparen it).
 // A tagged template has no arguments list.
 .decl call_arg(c: node, a: node, i: number)
@@ -122,10 +133,28 @@ this_frame_owner(r, f) :- fn_region(f, r), !kind(f, "arrow_function").
 this_frame_owner(v, v) :- (kind(c, "field_definition") ; kind(c, "public_field_definition")), field(c, "value", v).
 this_frame_owner(b, b) :- kind(b, "class_static_block").
 this_frame_owner(p, p) :- kind(p, "program").
+// TypeScript's `function f(this: T)` declares the type of this; that `this` is no use of it.
 .decl this_owner(t: node, s: node)
-this_owner(t, s) :- (kind(t, "this") ; kind(t, "super")), !this_frame(t), nearest(t, r, this_frame),
-    this_frame_owner(r, s).
-this_owner(t, t) :- (kind(t, "this") ; kind(t, "super")), this_frame(t).  // `x = this`: the value itself
+this_owner(t, s) :- this_use(t), !this_frame(t), nearest(t, r, this_frame), this_frame_owner(r, s).
+this_owner(t, t) :- this_use(t), this_frame(t).  // `x = this`: the value itself
+.decl this_use(t: node)
+this_use(t) :- kind(t, "super").
+this_use(t) :- kind(t, "this"), !this_annotation(t).
+.decl this_annotation(t: node)  // the `this` of a `this: T` parameter
+this_annotation(t) :- kind(t, "this"), field(p, "pattern", t), (kind(p, "required_parameter") ; kind(p, "optional_parameter")).
+
+// ---- scopes --------------------------------------------------------------------------------------------------------
+// escope_node(s): s opens an eslint-scope scope: a function (its body block is no scope of its own), a block, a for
+// or for-in/of head, a catch clause, a switch body, a class body, a static block (its block is no second scope), a
+// class field's value, the program. The switch scope starts after the discriminant: `switch (x)` reads x outside.
+.decl escope_node(s: node)
+escope_node(n) :- kind(n, k), function_kind(k).
+escope_node(n) :- kind(n, k), (k = "program" ; k = "for_statement" ; k = "for_in_statement" ; k = "catch_clause" ;
+    k = "switch_body" ; k = "class_body" ; k = "class_static_block").
+escope_node(b) :- kind(b, "statement_block"), !escope_body(b).
+escope_node(v) :- (kind(f, "field_definition") ; kind(f, "public_field_definition")), field(f, "value", v).
+.decl escope_body(b: node)  // a function's or static block's own `{ … }`
+escope_body(b) :- field(s, "body", b), kind(s, k), (function_kind(k) ; k = "class_static_block").
 
 // ---- text ----------------------------------------------------------------------------------------------------------
 // upper_first(s, t): ESLint's upperCaseFirst, for ASCII words: "async method" gives "Async method". Core has

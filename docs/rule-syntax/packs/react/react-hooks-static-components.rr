@@ -18,7 +18,7 @@
     "Declare {tag} once outside render (at module level, or a static lookup) and pass what varies as props; a component created during render remounts and loses its state each render."
     suppress eslint "react-hooks/static-components"
     suppress oxlint "static-components"
-static_components(t, t) :- jsx_open(e, o), field(o, "name", t), kind(t, "identifier"), rc_tag_site(t, s),
+static_components(t, t) :- jsx_open(e, o), field(o, "name", t), kind(t, "identifier"), ref_site(t, s),
     rc_local_of(s, f), within(e, f), made_here(s).
 
 // made_here(s): binding s holds a value made during render.

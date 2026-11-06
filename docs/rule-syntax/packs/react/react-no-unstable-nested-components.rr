@@ -38,7 +38,7 @@ in_props(n) :- checked(n), !as_property(n), inside(n, a, "jsx_attribute"), child
     ret_jsx(n).
 in_props(n) :- checked(n), !as_property(n), !inside(n, _, "jsx_attribute"), detected(n), nearest(n, c,
     "call_expression"),
-    create_element(c), nearest(n, o, "object"), create_arg(c, o, 1).
+    create_element(c), nearest(n, o, "object"), call_arg(c, o, 1).
 .decl as_property(n: node)  // n is a property's value: { a: () => … }, { a() { … } }
 as_property(n) :- estree_parent(n, p), kind(p, "pair"), field(p, "value", v), deparen(v, n).
 as_property(n) :- kind(n, "method_definition"), child(o, n, _), kind(o, "object").

@@ -29,6 +29,8 @@
 //     class_method(m)         m is a method of a class; object_method(m) one of an object literal
 //     property_def(p)         p is TSESTree's PropertyDefinition: a class field, not an `accessor` field
 //     last_decorator(m, d)    d is the last decorator field or parameter m holds
+//     member_head(m, h)       h is getMemberHeadLoc's start for member or parameter m: its first token after its
+//                             decorators (`@d private x` gives `private`)
 //     heritage(r)             r is an `extends` entry of an interface or an `implements` entry of a class
 //     has_overloads(f)        function or method f has overload signatures beside it (hasOverloadSignatures)
 //   types
@@ -207,6 +209,15 @@ property_def(p) :- kind(p, "public_field_definition"), !op(p, "accessor").
 // method's decorators to the class body instead). getMemberHeadLoc starts after it.
 .decl last_decorator(m: node, d: node)
 last_decorator(m, d) :- field(m, "decorator", _), d = max e : { field(m, "decorator", e) }.
+// member_head(m, h): a class member, type member or parameter; the decorators tree-sitter leaves to the class
+// body are already outside m, so only a field's or a parameter's own decorators are skipped.
+//   class A { @d x = 1; m(@e private y) {} }     x's head is `x`, y's is `private`
+.decl member_head(m: node, h: span)
+member_head(m, h) :- head_holder(m), !field(m, "decorator", _), first_token(m, h).
+member_head(m, h) :- head_holder(m), last_decorator(m, d), token_after(d, h).
+.decl head_holder(m: node)
+head_holder(m) :- ts_member(_, m, _).
+head_holder(p) :- kind(p, "required_parameter") ; kind(p, "optional_parameter").
 // heritage(r): r is an entry of an interface's `extends` or a class's `implements` list, which TSESTree holds as
 // TSInterfaceHeritage / TSClassImplements, not as a type reference:  interface I extends Array<string> {}
 .decl heritage(r: node)

@@ -31,7 +31,7 @@ may_blank(t) :- prop_value(t, c), kind(c, "ternary_expression"), (field(c, "cons
 blank_lit(v) :- kind(v, "string"), (jsx_string(v, s) ; !jsx_string(v, _), value(v, s)), @lower(s) = "_blank".
 // The link: the last href is a literal with a scheme or `//` (href="mailto:x" counts), or some href is {…}.
 .decl risky_link(o: node)
-risky_link(o) :- last_prop(o, "href", h), child(h, v, 1), jsx_string(v, u), match("(\\w+:|//)[\\s\\S]*", u).
+risky_link(o) :- last_prop(o, "href", h), child(h, v, 1), jsx_string(v, u), match("(?s)(\\w+:|//).*", u).
 risky_link(o) :- jsx_prop(o, "href", h), child(h, v, 1), kind(v, "jsx_expression").
 
 // The last rel is secure when every value it may have is a string whose space-separated words include noreferrer

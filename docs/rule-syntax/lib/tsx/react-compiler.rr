@@ -7,14 +7,14 @@
 //   which functions
 //     rc_compiled(f)          f is a component or hook the compiler compiles (and so checks)
 //     rc_component(f)         f is compiled as a component (its first parameter is props)
-//     hook_fn(n)              n is a function or method: code inside runs when it is called (react-hooks.rr)
+//     function_node(n)        n is a function or method: code inside runs when it is called (eslint-a-common)
 //   render code
 //     rc_render_fn(g, f)      g's own code runs while f renders: f itself, or a useMemo callback in f's render code
 //     rc_live_fn(g, f)        g is a function created while f renders that may be called then too: not deferred
 //     rc_called_fn(c, g, f)   call c, in f's render code, calls local function g
 //     rc_deferred(g)          function g is handed on to run later: a JSX prop's value, a hook's argument (an
 //                             effect's, useCallback's, useState's initializer), or a const holding it used only there
-//     rc_own(n, g)            g is the function whose own code n is in (hook_fn's nearest)
+//     rc_own(n, g)            g is the function whose own code n is in (function_kind's nearest)
 //     rc_always(n, g)         n runs whenever g's own code runs: no branch, loop or try around it, no return before
 //   React values
 //     rc_hook_call(c)         c calls a hook: useX(…) or Namespace.useX(…)
@@ -24,7 +24,6 @@
 //     rc_ref_site(s)          s binds a ref: `const r = useRef(…)`, or a name `ref` or `…Ref`
 //     rc_current(m)           m is a ref's `r.current`
 //     rc_local_of(s, f)       binding site s is declared inside compiled f (its parameters included)
-//     rc_tag_site(t, s)       JSX tag name t (<Row/>) names the binding at s: names.rr does not resolve tags
 //
 // The compiler's rules for which functions it compiles (findFunctionsToCompile, getComponentOrHookLike):
 //   function Button(props) { return <b/>; }        a component: capitalised, calls a hook or makes JSX,
@@ -36,18 +35,19 @@
 // The ESLint plugin runs the compiler only on files whose top level declares a capitalised or use* function
 // (mayContainReactCode); a file with only `export const A = memo(() => …)` is never checked.
 // Babel's tree has no parentheses, so the compiler sees through them: deparen (eslint-a-common).
+// A JSX tag <Row/> is a reference in tsx/names (jsx_tag_ref), so ref_site resolves it like any name.
 #include "tsx/react-hooks.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-functions.rr"   // fn_param; eslint-a-common (deparen, call_arg) through it
 
 // ---- functions ------------------------------------------------------------------------------------------------
 // Babel's Function: what the compiler compiles. Methods are not, and classes are skipped whole. Scopes, whose
-// code runs when called, are functions and methods: react-hooks' hook_fn.
+// code runs when called, are functions and methods: function_node.
 .decl rc_fn_kind(k: symbol)
-rc_fn_kind(k) :- hook_fn_kind(k), k != "method_definition".
+rc_fn_kind(k) :- function_kind(k), k != "method_definition".
 .decl rc_fn(f: node)
 rc_fn(f) :- kind(f, k), rc_fn_kind(k).
 .decl rc_own(n: node, g: node)
-rc_own(n, g) :- nearest(n, g, hook_fn_kind).
+rc_own(n, g) :- nearest(n, g, function_kind).
 
 // rc_name(f, n): getFunctionName. A declaration's id, or what the function is stored to:
 //   const Button = () => …     Button = function () {}     { Button: () => … }     ({ Button = () => … })
@@ -79,14 +79,10 @@ rc_hooks_or_jsx(f) :- rc_fn(f), within_stop(n, f, rc_fn), (jsx_el(n) ; rc_hook_c
 // isValidComponentParams: none; one that is not a rest; or (props, ref) with the second a plain name holding
 // "ref" or "Ref". A props annotation of an array, tuple, function, literal or primitive type rules it out.
 //   function Row(props: RowProps, ref) {…}    valid        function Row(a, b) {…}        not a component
-.decl rc_param(f: node, p: node, i: number)
-rc_param(f, p, i) :- rc_fn(f), field(f, "parameters", ps), child(ps, p, j), !kind(p, "comment"),
-    i = count : { child(ps, q, k), k < j, !kind(q, "comment") }.
-rc_param(f, p, 0) :- kind(f, "arrow_function"), field(f, "parameter", p).
 .decl rc_valid_params(f: node)
-rc_valid_params(f) :- rc_fn(f), !rc_param(f, _, _).
-rc_valid_params(f) :- rc_param(f, p, 0), !rc_param(f, _, 1), !rc_rest(p), !rc_bad_props_type(p).
-rc_valid_params(f) :- rc_param(f, p, 0), rc_param(f, r, 1), !rc_param(f, _, 2), !rc_bad_props_type(p), rc_ref_param(r).
+rc_valid_params(f) :- rc_fn(f), !fn_param(f, _, _).
+rc_valid_params(f) :- fn_param(f, p, 0), !fn_param(f, _, 1), !rc_rest(p), !rc_bad_props_type(p).
+rc_valid_params(f) :- fn_param(f, p, 0), fn_param(f, r, 1), !fn_param(f, _, 2), !rc_bad_props_type(p), rc_ref_param(r).
 .decl rc_rest(p: node)
 rc_rest(p) :- kind(p, "rest_pattern").
 rc_rest(p) :- field(p, "pattern", r), kind(r, "rest_pattern").
@@ -198,7 +194,7 @@ rc_effect_call(c) :- rc_react_call(c, x), effect_hook(x).
 //     const get = () => Date.now(); return <b>{get}</b>;       live: what <b> does with it is unknown
 //     const load = () => Date.now(); useEffect(() => { load(); });   not: the only reference runs later
 .decl rc_live_fn(g: node, f: node)
-rc_live_fn(g, f) :- hook_fn(g), !rc_fn_at(_, g), !rc_handed(g), !rc_memo_callback(g, _), rc_own(g, h),
+rc_live_fn(g, f) :- function_node(g), !rc_fn_at(_, g), !rc_handed(g), !rc_memo_callback(g, _), rc_own(g, h),
     (rc_render_fn(h, f) ; rc_live_fn(h, f)).
 rc_live_fn(g, f) :- rc_fn_at(s, g), within(g, f), ref_site(r, s), !rc_later_ref(r), rc_own(r, h),
     (rc_render_fn(h, f) ; rc_live_fn(h, f)).
@@ -255,10 +251,3 @@ rc_ref_site(s) :- ref_site(_, s), (kind(s, "variable_declarator"), field(s, "nam
 rc_current(m) :- kind(m, "member_expression"), field(m, "property", p), text(p, "current"), field(m, "object", o),
     kind(o, "identifier"), ref_site(o, s), rc_ref_site(s).
 
-// rc_tag_site(t, s): names.rr's ref excludes every `name` field, so <Row/>'s `Row` is not a reference there. This
-// resolves a plain tag the same way: the innermost enclosing scope that declares the name.
-.decl rc_tag_site(t: node, s: node)
-rc_tag_site(t, s) :- rc_tag_decl(t, sc, s), visit_index(sc, i), i = max j : { rc_tag_decl(t, b, _), visit_index(b, j) }.
-.decl rc_tag_decl(t: node, sc: node, s: node)
-rc_tag_decl(t, sc, s) :- jsx_open(_, o), field(o, "name", t), kind(t, "identifier"), text(t, x), within(t, sc),
-    decl_site(sc, x, s, _, "value").

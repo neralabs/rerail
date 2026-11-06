@@ -57,8 +57,7 @@ used(s, x) :- var(s, x), resolves(r, s, x), reads(r), !itself(r, s, x), !(type_q
 .decl marked(s: node, x: symbol)
 marked(s, x) :- variable(s, x, _, k), (k = "enum-member" ; k = "signature-param" ; k = "class-name").
 marked(s, x) :- variable(s, x, _, "type-param"), scope_type(s, "mappedType").
-marked(s, x) :- variable(s, x, id, "param"), param_target(p, id), (child(p, m, _), kind(m, "accessibility_modifier") ;
-    op(p, "readonly") ; child(p, o, _), kind(o, "override_modifier")).
+marked(s, x) :- variable(s, x, id, "param"), param_target(p, id), param_property(p).
 marked(s, x) :- variable(s, x, id, "param"), kind(m, "method_definition"), op(m, "set"), field(m, "parameters", ps),
     within(id, ps).
 marked(s, x) :- kind(f, "for_in_statement"), field(f, "body", b), only_return(b), field(f, "left", l),

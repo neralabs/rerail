@@ -12,22 +12,14 @@
 // only the quotes can be reported (NOTES).
 #include "tsx/react.rr"
 
-// The finding sits on the quote's line (src_line's span of it), as ESLint reports each quote where it is.
+// The finding sits on the quote itself (a match_all capture is a span with a line), as ESLint reports each quote.
 .violation unescaped(at: span, msg: symbol)
     code "react/no-unescaped-entities"
     "{msg}"
     suppress eslint "react/no-unescaped-entities"
     suppress oxlint "no-unescaped-entities"
-unescaped(sp, m) :- quote_at(t, l, q), entity_says(q, m), docof(t, d), src_line(d, l, sp).
-// quote_at(t, l, q): text t has quote q on line l. Walked one quote at a time over what follows the last one:
-// P is the text before the next quote, so its line breaks move the line on.
-.decl quote_at(t: node, l: number, q: symbol)
-quote_at(t, l + @count_matches("\\n", P), Q) :- quote_rest(t, s, l), match("(?<P>[^'\"]*)(?<Q>['\"])[\\s\\S]*", s).
-.decl quote_rest(t: node, s: symbol, l: number)
-quote_rest(t, s, l) :- kind(t, "jsx_text"), text(t, s), (contains("'", s) ; contains("\"", s)), line(t, l),
-    docof(t, d), react_doc(d).
-quote_rest(t, R, l + @count_matches("\\n", P)) :- quote_rest(t, s, l),
-    match("(?<P>[^'\"]*)['\"](?<R>[\\s\\S]*)", s).
+unescaped(Q, m) :- kind(t, "jsx_text"), docof(t, d), react_doc(d), match_all("(?<Q>['\"])", t), text(Q, q),
+    entity_says(q, m).
 .decl entity_says(c: symbol, msg: symbol)
 entity_says("\"", "Write this \" in JSX text as &quot; or wrap it in a {'\"'} string expression.").
 entity_says("'", "Write this ' in JSX text as &apos; or wrap it in a {\"'\"} string expression.").

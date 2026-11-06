@@ -50,4 +50,4 @@ value_of(o, w) :- value_of(o, v), (child(v, e, _) ; kind(v, "identifier"), text(
     field(s, "value", e)), deparen(e, w).
 .decl own_decl(o: node, x: symbol, s: node)  // x is declared (var, let, const, function) in o's innermost scope
 own_decl(o, x, s) :- value_of(o, v), kind(v, "identifier"), text(v, x), ref_site(v, s), decl_site(sc, x, s, f, _),
-    (f = "var" ; f = "let" ; f = "function"), nearest(o, h, scope_holder), (sc = h ; field(h, "body", sc)).
+    (f = "var" ; f = "let" ; f = "function"), nearest(o, h, escope_node), (sc = h ; field(h, "body", sc)).

@@ -31,7 +31,7 @@ exhaustive_deps(at, m) :- report(c, at, m), docof(c, d), react_doc(d).
 .decl report(c: node, at: node, msg: symbol)
 // The callback itself.
 report(c, f, "Pass a callback to this hook; without one React throws when it runs.") :-
-    deps_hook(c, _, f, k), !deps_arg(c, _, k).
+    deps_hook(c, _, f, k), !call_arg(c, _, k).
 report(c, f, "Pass a dependency array to this hook; with only a callback it recomputes on every render and memoizes nothing.") :-
     deps_cb(c, _), deps_hook(c, x, f, _), (x = "useMemo" ; x = "useCallback"), !deps_list(c, _).
 report(c, f, "Pass an inline function to this hook, so the values it reads can be checked against its dependencies.") :-
@@ -50,19 +50,19 @@ report(c, v, "Make this effect callback synchronous and call an async function f
 // `ref.current` read in the function an effect returns: by cleanup time it may point elsewhere. Unless the code
 // assigns `ref.current` itself somewhere (then it is a plain mutable box), copy it inside the effect.
 report(c, at, cat("Copy `", x, ".current` to a variable inside the effect and use that variable in the cleanup; by the time the cleanup runs the ref may point elsewhere.")) :-
-    cleanup_read(c, r, at), text(r, x), at = max a : { cleanup_read(c, q, a), deps_site(q, site), deps_site(r, site) },
-    deps_site(r, site), !current_assigned(site).
+    cleanup_read(c, r, at), text(r, x), at = max a : { cleanup_read(c, q, a), ref_site(q, site), ref_site(r, site) },
+    ref_site(r, site), !current_assigned(site).
 .decl cleanup_read(c: node, r: node, at: node)  // r.current read in the outermost function v returns
 cleanup_read(c, r, p) :- deps_hook(c, x, _, _), deps_effect(x), deps_visit(c, v), deps_component(v, _),
     deps_ref(v, r, _), field(m, "object", r), kind(m, "member_expression"), field(m, "property", p), text(p, "current"),
-    nearest(r, g, hook_fn_kind), outer_fn(v, g, h), child(rs, h, _), kind(rs, "return_statement").
+    nearest(r, g, function_kind), outer_fn(v, g, h), child(rs, h, _), kind(rs, "return_statement").
 .decl outer_fn(v: node, g: node, h: node)  // h is the outermost function in v that holds g (or g itself)
-outer_fn(v, g, g) :- deps_visit(_, v), nearest(g, v, hook_fn_kind).
-outer_fn(v, g, h) :- deps_visit(_, v), hook_fn(g), within(g, v), nearest(g, p, hook_fn_kind), p != v,
+outer_fn(v, g, g) :- deps_visit(_, v), nearest(g, v, function_kind).
+outer_fn(v, g, h) :- deps_visit(_, v), function_node(g), within(g, v), nearest(g, p, function_kind), p != v,
     outer_fn(v, p, h).
 .decl current_assigned(site: node)
 current_assigned(site) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
-    field(a, "left", m), field(m, "property", p), text(p, "current"), field(m, "object", o), deps_site(o, site).
+    field(a, "left", m), field(m, "property", p), text(p, "current"), field(m, "object", o), ref_site(o, site).
 
 // An assignment to a component variable from the callback is lost on the next render. Reported once per
 // variable, and then nothing else is checked for this Hook.
@@ -80,8 +80,8 @@ analysed(c) :- deps_visit(c, v), deps_component(v, _), !stale(c, _, _, _, _).
 
 // An effect without an array that sets state directly in its body re-renders forever.
 report(c, f, "Pass a dependency array to this effect; it sets state on every run without one, which can re-render in an endless loop.") :-
-    analysed(c), !deps_list(c, _), deps_hook(c, _, f, _), deps_visit(c, v), deps_used(c, _, r), nearest(r, v, hook_fn_kind),
-    deps_site(r, p), setter(p).
+    analysed(c), !deps_list(c, _), deps_hook(c, _, f, _), deps_visit(c, v), deps_used(c, _, r), nearest(r, v, function_kind),
+    ref_site(r, p), setter(p).
 .decl setter(p: node)  // the second name of `const [s, setS] = useState()`, not reassigned
 setter(p) :- deps_stable_site(p), kind(d, "variable_declarator"), within(p, d), deps_init_hook(d, "useState").
 
@@ -95,7 +95,7 @@ report(c, e, "Remove this literal from the dependency array; it never changes. I
 report(c, e, "Move this expression into a variable declared before the hook and list that variable, so the dependency can be checked.") :-
     analysed(c), deps_elem(c, e), !kind(e, "spread_element"), deps_bare(e, n), !literal(n), !deps_dkey(n, _).
 report(c, e, cat("Remove `", x, "` from this dependency array; call a useEffectEvent function from the effect without listing it, since it is not a reactive value.")) :-
-    analysed(c), deps_elem(c, e), kind(e, "identifier"), text(e, x), deps_site(e, d), deps_init_hook(d, "useEffectEvent"),
+    analysed(c), deps_elem(c, e), kind(e, "identifier"), text(e, x), ref_site(e, d), deps_init_hook(d, "useEffectEvent"),
     field(d, "name", n), kind(n, "identifier").
 .decl literal(n: node)
 literal(n) :- kind(n, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "regex").

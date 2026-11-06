@@ -8,7 +8,6 @@
 //   free_ref(r, x)         r names x and nothing in the file declares it: not shadowed, in ESLint's words
 //   global_ref_to(r, x)    r is a reference to the global variable x (free and declared global, or bound to a
 //                          script's top-level `var x`, which is the same variable)
-//   callee(c, f)           f is call c's callee, parentheses skipped:  (eval)(s)  gives eval
 //   global_object_ref(o, x) o is the global object under the name x: window, global, globalThis, or a chain
 //                          of the same name (window.window), where x is a global variable
 //   default_this(f)        function f's `this` is the default binding when it runs (isDefaultThisBinding)
@@ -75,10 +74,6 @@ script_global(s, x) :- decl_site(p, x, s, f, "value"), (f = "var" ; f = "functio
     source_type(d, "script").
 
 // ---- expressions ---------------------------------------------------------------------------------------------------
-// callee(c, f): `(eval)(s)` and `eval?.(s)` have callee eval; `(0, eval)(s)` has a sequence, no identifier.
-.decl callee(c: node, f: node)
-callee(c, f) :- kind(c, "call_expression"), field(c, "function", f0), deparen(f0, f).
-
 // global_object_ref(o, x): `window.eval`, `window.window.eval`, `globalThis.eval`: o is the object eval is read from.
 // ESLint follows the references of the global variables global, window and globalThis, so window needs the
 // browser environment (or `/* global window */`), while globalThis is a built-in.
@@ -139,6 +134,9 @@ bound_context(f, n) :- reaches(f, n), field(a, "right", w), deparen(w, n),
     (kind(l, "member_expression") ; kind(l, "subscript_expression") ; anonymous(f), capital_id(l)).
 bound_context(f, n) :- reaches(f, n), kind(v, "variable_declarator"), field(v, "value", w), deparen(w, n),
     anonymous(f), field(v, "name", l), capital_id(l).
+// function g(Ctor = function () {}) {}: in TypeScript the default is a parameter's `value`, not an assignment_pattern.
+bound_context(f, n) :- reaches(f, n), (kind(p, "required_parameter") ; kind(p, "optional_parameter")),
+    field(p, "value", w), deparen(w, n), anonymous(f), field(p, "pattern", l), capital_id(l).
 // f.call(o), f.apply(o), f.bind(o), with a first argument that is not null or undefined.
 bound_context(f, n) :- reaches(f, n), static_prop(m, n, x), (x = "bind" ; x = "call" ; x = "apply"), callee(c, m),
     call_arg(c, a, 0), !null_or_undefined(a).
@@ -179,8 +177,5 @@ jsdoc_target(f, x) :- kind(f, k), function_kind(k), kind(v, "variable_declarator
 // in_global_scope(n): `this.alert()` directly in a script, not in a function, block or class: ESLint's
 // `scope.type === "global"`.
 .decl in_global_scope(n: node)
-in_global_scope(n) :- nearest(n, s, any_scope), program(d, s), source_type(d, "script").
-.decl any_scope(k: symbol)
-any_scope(k) :- fn_scope(k).
-any_scope(k) :- block_scope(k).
-any_scope("generator_function"). any_scope("class_static_block").
+in_global_scope(n) :- nearest(n, s, lex_scope), program(d, s), source_type(d, "script").
+

@@ -9,7 +9,7 @@
 //   1. use: each API use (lib/tsx/values.rr), less the names the `ignores` option lists.
 //   2. range_of: the releases that have the API: ">=since", plus "^v" for each backport; the same for the releases
 //      where it is experimental. basis: which of the two decides; experimental only under allowExperimental.
-//   3. runs_on: the range the file must run on: a valid `version` option, else values.rr's node_range.
+//   3. node_runs_on: the range the file must run on: a valid `version` option, else values.rr's node_range.
 //   4. a finding where runs_on is not a subset of that range, or where no release supports the API in that form.
 // Not ported: ESLint's settings.node.version.
 
@@ -48,19 +48,14 @@ basis(p, how, "supported") :- tabled(p, how), !trial(p, how).
 .decl trial(api: symbol, how: symbol)
 trial(p, how) :- option("allowExperimental", "true"), api_experimental_since(p, how, _).
 
-// runs_on(d, r): the Node.js range document d must run on. A `version` that is no range ("lts") is ignored.
-.decl runs_on(d: number, r: symbol)
-runs_on(d, r) :- doc(d, _, _), version_opt(r).
-runs_on(d, r) :- node_range(d, r), !version_opt(_).
-.decl version_opt(r: symbol)
-version_opt(r) :- option("version", r), @semver_valid(r) = 1.
+// node_runs_on(d, r) (values.rr): the range document d must run on; a `version` that is no range is ignored.
 
 // The findings. Both share the plugin's code, so a finding's key is (policy, code, path, line), as in the JSON.
 .violation unsupported(at: node, api: symbol, kind: symbol, since: symbol, ok: symbol, cfg: symbol) code "n/no-unsupported-features/node-builtins"
     "{api} is {kind} from Node.js {since} on ({ok}); the configured range {cfg} includes earlier versions."
     suppress eslint "n/no-unsupported-features/node-builtins"
 unsupported(at, p, k, s, r, t) :- use(at, p, how), basis(p, how, k), range_of(p, how, k, s, r), docof(at, d),
-    runs_on(d, t), @semver_subset(t, r) = 0.
+    node_runs_on(d, t), @semver_subset(t, r) = 0.
 
 .violation experimental(at: node, api: symbol) code "n/no-unsupported-features/node-builtins"
     "{api} is still experimental in every Node.js release; do not rely on it."

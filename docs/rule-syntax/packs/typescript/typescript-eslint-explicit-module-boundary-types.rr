@@ -61,11 +61,7 @@ returned_by(f, g) :- fn_value(f), estree_parent(f, g), kind(g, "arrow_function")
 .decl followed(x: symbol, d: node)
 followed(x, d) :- module_site(x, s), site_node(s, d).
 followed(x, d) :- module_site(x, s), kind(a, "assignment_expression"), field(a, "left", l), deparen(l, i),
-    kind(i, "identifier"), ref_site(i, s), !local_too(i, s), field(a, "right", r), deparen(r, d).
-// local_too(i, s): names.rr's look climbs a block and its function apart, so `function f() { let a; a = … }`
-// resolves a to f's `let a` and to a module-level a both; the nearer one wins here.
-.decl local_too(i: node, s: node)
-local_too(i, s) :- module_site(_, s), ref_site(i, s), ref_site(i, o), o != s.
+    kind(i, "identifier"), ref_site(i, s), field(a, "right", r), deparen(r, d).
 .decl module_site(x: symbol, s: node)
 module_site(x, s) :- kind(p, "program"), decl_site(p, x, s, f, "value"), f != "import", f != "param", f != "catch".
 // site_node(s, d): the definition's node: the declarator, or the function or class; a destructured name's

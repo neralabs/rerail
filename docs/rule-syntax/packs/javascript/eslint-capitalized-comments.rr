@@ -20,7 +20,7 @@
     suppress oxlint "capitalized-comments"
     fix recase "Change the first letter's case"
 capitalized_comments(c, "Comments should not begin with a lowercase character.") :- first_char(c, x),
-    !option("option", "never"), upper(x, u), x != u.
+    !option("option", "never"), match("[\\p{Ll}\\p{Lt}]", x).
 capitalized_comments(c, "Comments should not begin with an uppercase character.") :- first_char(c, x),
     option("option", "never"), x != @lower(x).
 
@@ -28,8 +28,9 @@ capitalized_comments(c, "Comments should not begin with an uppercase character."
 .decl first_char(c: node, x: symbol)
 first_char(c, @slice(w, 0, 1)) :- js_comment(c, t, v), !tool_comment(c), bare(v, b), !url(b), !ignored(c, t, b),
     w = @replace_all(b, "\\s", ""), w != "".
-// upper(x, u): ESLint's toLocaleUpperCase of one character. Core has @lower and no @upper (proposed in NOTES);
-// until it has, common's upper_first table does ASCII letters, and any other character is its own capital.
+// A lower-case letter is one toLocaleUpperCase changes: Unicode's lower-case and title-case letters (Ll, Lt).
+// upper(x, u): ESLint's toLocaleUpperCase of one character, for the fix. Core has @lower and no @upper (proposed in
+// NOTES); until it has, common's upper_first table does ASCII letters, so `// über` is reported without a fix.
 .decl upper(x: symbol, u: symbol)
 upper(x, u) :- first_char(_, x), upper_first(x, u).
 upper_first_ask(x) :- first_char(_, x).

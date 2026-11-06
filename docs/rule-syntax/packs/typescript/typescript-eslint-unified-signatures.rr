@@ -5,6 +5,7 @@
 .scope include "**/*"
 
 #include "tsx/eslint-a-functions.rr"
+#include "tsx/ts-a.rr"
 //   fn_param, deparen
 
 // typescript-eslint's unified-signatures: two overloads of one function, method or signature that could be one.
@@ -102,7 +103,7 @@ optional(p) :- sig_param(_, _, p), kind(p, "optional_parameter").
 .decl this_first_param(p: node)  // `this: T` first
 this_first_param(p) :- sig_param(_, 0, p), field(p, "pattern", t), kind(t, "this").
 .decl this_void(s: node)  // `this: void` first
-this_void(s) :- sig_param(s, 0, p), this_first_param(p), type_of(p, t), kind(t, "predefined_type"), text(t, "void").
+this_void(s) :- sig_param(s, 0, p), this_first_param(p), type_of(p, t), ts_keyword(t, "void").
 .decl type_of(p: node, t: node)  // the type written for a parameter
 type_of(p, t) :- sig_param(_, _, p), field(p, "type", a), kind(a, "type_annotation"), child(a, t, 0).
 .decl type_text(p: node, x: symbol)
@@ -182,13 +183,10 @@ rest_last(o, k) :- params(o, k), k > 0, sig_param(o, k - 1, p), rest(p).
 named_apart(a, b) :- option("ignoreDifferentlyNamedParameters", "true"), pairable(a, b), sig_param(a, i, p), sig_param(b, i, q),
     shape(p, h), shape(q, h), name_of(p, x), name_of(q, y), x != y.
 .decl shape(p: node, h: symbol)  // ESTree's parameter type: "Identifier", "RestElement", "TSParameterProperty", …
-shape(p, "TSParameterProperty") :- prop_param(p).
-shape(p, h) :- sig_param(_, _, p), field(p, "pattern", n), !prop_param(p),
+shape(p, "TSParameterProperty") :- sig_param(_, _, p), param_property(p).
+shape(p, h) :- sig_param(_, _, p), field(p, "pattern", n), !param_property(p),
     (kind(n, "identifier"), h = "Identifier" ; kind(n, "this"), h = "Identifier" ; kind(n, "rest_pattern"), h = "RestElement" ;
     kind(n, "object_pattern"), h = "ObjectPattern" ; kind(n, "array_pattern"), h = "ArrayPattern").
-.decl prop_param(p: node)  // `private x`, `readonly x`
-prop_param(p) :- sig_param(_, _, p), child(p, m, _), (kind(m, "accessibility_modifier") ; kind(m, "override_modifier")).
-prop_param(p) :- sig_param(_, _, p), op(p, "readonly").
 .decl name_of(p: node, x: symbol)
 name_of(p, x) :- sig_param(_, _, p), field(p, "pattern", n), (kind(n, "identifier") ; kind(n, "this")), text(n, x).
 name_of(p, x) :- sig_param(_, _, p), field(p, "pattern", n), kind(n, "rest_pattern"), child(n, i, 0), kind(i, "identifier"),

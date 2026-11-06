@@ -18,4 +18,4 @@
     suppress oxlint "jsx-no-comment-textnodes"
     suppress biome "lint/suspicious/noCommentText"
 // The rule's regex is /^\s*\/(\/|\*)/m: any line of the text, after blanks.
-comment_text(t) :- kind(t, "jsx_text"), match("([\\s\\S]*\\n)?[ \\t\\r\\f\\v]*/[/*][\\s\\S]*", t), docof(t, d), react_doc(d).
+comment_text(t) :- kind(t, "jsx_text"), match("(?s)(.*\\n)?[ \\t\\r\\f\\v]*/[/*].*", t), docof(t, d), react_doc(d).

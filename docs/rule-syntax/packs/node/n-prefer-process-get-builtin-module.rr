@@ -13,7 +13,7 @@
 // name is a constant, as getStaticValue (with no scope) folds it: a string, a template whose ${…} are constants,
 // a + of constants, or `true ? a : b`. A variable is not one: `const n = "fs"; require(n)` is not reported.
 
-#include "tsx/node.rr"   // node_call, call_arg_count, node_runs_on, builtin_spec; values.rr's const_str
+#include "tsx/node.rr"   // called, call_arg_count, node_runs_on, builtin_spec; values.rr's const_str
 
 .decl get_builtin_ok(d: number)
 get_builtin_ok(d) :- node_runs_on(d, r), @semver_subset(r, "^20.16.0 || >=22.3.0") = 1.
@@ -28,24 +28,10 @@ node_require(f) :- kind(f, "identifier"), text(f, "require"), ref_site(f, v), ki
 create_require(i) :- kind(i, "import_specifier"), field(i, "name", n), text(n, "createRequire"), within(i, m),
     kind(m, "import_statement"), field(m, "source", s), (value(s, "module") ; value(s, "node:module")).
 
-// loads_builtin(c, arg): call c's argument arg is a constant built-in module name.
+// loads_builtin(c, arg): call c's argument arg is a constant built-in module name: "node:" + "fs",
+// `node:${"fs"}`, true ? "fs" : "os" (values.rr's const_str folds them as getStaticValue does).
 .decl loads_builtin(c: node, a: number)
-loads_builtin(c, a) :- call_arg(c, s, a), const_string(s, v), builtin_spec(v).
-.decl const_string(n: node, v: symbol)  // "node:" + "fs", `node:${"fs"}`, true ? "fs" : "os"
-const_string(n, v) :- const_str(n, v).
-const_string(n, cat(a, b)) :- kind(n, "binary_expression"), op(n, "+"), field(n, "left", l), field(n, "right", r),
-    const_part(l, a), const_part(r, b).
-const_string(n, v) :- kind(n, "ternary_expression"), field(n, "condition", c), deparen(c, b),
-    (kind(b, "true"), field(n, "consequence", w) ; kind(b, "false"), field(n, "alternative", w)), const_part(w, v).
-const_string(n, v) :- tpl_upto(n, i, v), !child(n, _, i).
-.decl const_part(n: node, v: symbol)
-const_part(n, v) :- deparen(n, m), const_string(m, v).
-// tpl_upto(t, i, v): the text of template t's first i parts (fragments, and ${…} of constants).
-.decl tpl_upto(t: node, i: number, v: symbol)
-tpl_upto(t, 0, "") :- kind(t, "template_string"), child(t, c, _), kind(c, "template_substitution").
-tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "string_fragment"), text(c, w).
-tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "template_substitution"), child(c, e, 0),
-    const_part(e, w).
+loads_builtin(c, a) :- call_arg(c, s, a), const_str(s, v), builtin_spec(v).
 // process_shadowed(n): a declaration of `process` is in scope at n.
 .decl process_shadowed(n: node)
 process_shadowed(n) :- decl_site(sc, "process", _, _, "value"), within(n, sc).
@@ -53,7 +39,7 @@ process_shadowed(n) :- decl_site(sc, "process", _, _, "value"), within(n, sc).
 .violation get_builtin(at: node, method: symbol) code "n/prefer-process-get-builtin-module"
     "Prefer `process.getBuiltinModule()` over `{method}()` for Node.js built-in modules."
     suppress eslint "n/prefer-process-get-builtin-module"
-get_builtin(c, "require") :- node_call(c, f), node_require(f), !field(c, "optional_chain", _), call_arg_count(c, 1),
+get_builtin(c, "require") :- called(c, f), node_require(f), !field(c, "optional_chain", _), call_arg_count(c, 1),
     loads_builtin(c, 0), !process_shadowed(c), docof(c, d), get_builtin_ok(d).
 get_builtin(w, "import") :- kind(w, "await_expression"), child(w, e, _), deparen(e, c), kind(c, "call_expression"),
     field(c, "function", f), kind(f, "import"), call_arg_count(c, 1), loads_builtin(c, 0), !process_shadowed(w),

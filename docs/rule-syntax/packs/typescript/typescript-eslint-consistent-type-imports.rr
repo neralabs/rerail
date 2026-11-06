@@ -56,17 +56,10 @@ used(s) :- use_of(s, _).
 used(s) :- value_use(s).
 used(s) :- import_binding(s, x, _, _), docof(s, d), kind(e, "export_specifier"), docof(e, d), field(e, "name", n),
     text(n, x), type_export(n).
-// use_of(s, r): r refers to s. The import's own names (`import D`, `{ a as b }`) are not uses, nor the T of a
-// qualified type `N.T`, which names a member of N (tsx/names reads every type_identifier as a reference).
+// use_of(s, r): r refers to s. The import's own names (`import D`, `{ a as b }`) are not uses. (The T of a qualified
+// type `N.T` names a member of N; tsx/names does not read it as a reference.)
 .decl use_of(s: node, r: node)
-use_of(s, r) :- spec(_, s), ref_site(r, s), !inside(r, _, "import_statement"), !qualified_member(r), !shadowed(r, s).
-// shadowed(r, s): names.rr's look climbs a block and its function apart, so in `function f(A) { g(A) }` the A
-// resolves to the parameter and to the import both. An import is at the top, so any other site is nearer. Only
-// for value uses: in `constructor(foo: foo.Foo)` the type's `foo` is still the import.
-.decl shadowed(r: node, s: node)
-shadowed(r, s) :- spec(_, s), ref_site(r, s), !in_type(r), ref_site(r, o), o != s.
-.decl qualified_member(r: node)
-qualified_member(r) :- kind(q, "nested_type_identifier"), field(q, "name", r).
+use_of(s, r) :- spec(_, s), ref_site(r, s), !inside(r, _, "import_statement").
 // value_use(s): a use outside types: an expression, `export { A }`, `export default A`, or React under JSX.
 // `export type { A }` and `export { type A }` are type uses.
 .decl value_use(s: node)

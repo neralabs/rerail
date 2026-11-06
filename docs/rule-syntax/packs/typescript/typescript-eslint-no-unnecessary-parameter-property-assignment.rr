@@ -53,7 +53,7 @@ unwrap(w, i) :- (kind(w, "as_expression") ; kind(w, "non_null_expression")), chi
 unwrap(w, i) :- (kind(w, "as_expression") ; kind(w, "non_null_expression")), child(w, c, 0), deparen(c, v), unwrap(v, i).
 .decl has_property_param(k: node, x: symbol)  // `constructor(public x)`, `constructor(readonly x = 1)`
 has_property_param(k, x) :- ctor(k), fn_param(k, p, _), field(p, "pattern", n), kind(n, "identifier"), text(n, x),
-    (child(p, m, _), kind(m, "accessibility_modifier") ; op(p, "readonly") ; child(p, m, _), kind(m, "override_modifier")).
+    param_property(p).
 .decl compound_before(a: node, k: node, x: symbol)  // `this.x += …` earlier in the constructor
 compound_before(a, k, x) :- ctor_write(a, k, x, "="), ctor_write(c, k, x, o), o != "=", earlier(c, a).
 // field_write(b, x): a field initialiser of class body b assigns this.x, outside any function (or in an arrow

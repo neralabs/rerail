@@ -38,12 +38,10 @@ sandbox_value(c, p, s) :- iframe(c), create_key(c, "sandbox", p), count : { crea
 .decl sandbox_literal(p: node, s: symbol)  // sandbox="…", or `sandbox: "…"` in createElement's props
 sandbox_literal(a, s) :- kind(a, "jsx_attribute"), child(a, v, 1), jsx_string(v, s).
 sandbox_literal(p, s) :- kind(p, "pair"), field(p, "value", v), kind(v, "string"), str(v, s).
-// sandbox_token(n, v, t): token t of the list, split at each space.
+// sandbox_token(n, v, t): token t of the list, split at each space and trimmed (the empty token "" between two
+// spaces is allowed, so it need not be listed).
 .decl sandbox_token(n: node, v: node, t: symbol)
-sandbox_token(n, v, @replace_all(t, "^\\s+|\\s+$", "")) :- sandbox_rest(n, v, s), match("(?<t>[^ ]*)( [\\s\\S]*)?", s).
-.decl sandbox_rest(n: node, v: node, s: symbol)
-sandbox_rest(n, v, s) :- sandbox_value(n, v, s), s != "".
-sandbox_rest(n, v, r) :- sandbox_rest(n, v, s), match("[^ ]* (?<r>[\\s\\S]*)", s).
+sandbox_token(n, v, @replace_all(t, "^\\s+|\\s+$", "")) :- sandbox_value(n, v, s), s != "", match_all("(?<t>[^ ]+)", s).
 .decl permission(t: symbol)
 permission(""). permission("allow-downloads-without-user-activation"). permission("allow-downloads").
 permission("allow-forms"). permission("allow-modals"). permission("allow-orientation-lock").

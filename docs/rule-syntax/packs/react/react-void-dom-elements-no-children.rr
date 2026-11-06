@@ -23,7 +23,7 @@ void_children(e, "Void DOM element cannot receive children.") :- void_el(e, o), 
 void_children(e, "Remove the children or dangerouslySetInnerHTML prop from this void element; img, br, input and other void elements cannot hold content.") :-
     void_el(e, o), (jsx_prop(o, "children", _) ; jsx_prop(o, "dangerouslySetInnerHTML", _)).
 void_children(c, "Drop the child arguments from this createElement call; img, br, input and other void elements cannot hold content.") :-
-    void_call(c), create_arg(c, _, 2).
+    void_call(c), call_arg(c, _, 2).
 void_children(c, "Remove children and dangerouslySetInnerHTML from these props; img, br, input and other void elements cannot hold content.") :-
     void_call(c), (create_key(c, "children", _) ; create_key(c, "dangerouslySetInnerHTML", _)).
 
@@ -31,7 +31,7 @@ void_children(c, "Remove children and dangerouslySetInnerHTML from these props; 
 .decl void_el(e: node, o: node)
 void_el(e, o) :- react_open(e, o), plain_tag(o, x), void_tag(x).
 .decl void_call(c: node)  // createElement("br", { … }, …): a string type and an object literal for props
-void_call(c) :- create_tag(c, x), void_tag(x), create_arg(c, p, 1), kind(p, "object"),
+void_call(c) :- create_tag(c, x), void_tag(x), call_arg(c, p, 1), kind(p, "object"),
     docof(c, d), react_doc(d).
 .decl void_tag(x: symbol)
 void_tag("area"). void_tag("base"). void_tag("br"). void_tag("col"). void_tag("embed"). void_tag("hr").

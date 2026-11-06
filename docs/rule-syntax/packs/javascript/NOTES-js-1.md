@@ -53,7 +53,7 @@ the same for every rule. Every rule was also diffed at line:column against ESLin
 | eslint-arrow-body-style | 89 | 42/0/0 | fix is more conservative (comments, for heads) |
 | eslint-class-methods-use-this | 63 | 787/0/1 | none |
 | eslint-default-param-last | 22 | 16/0/0 | follows ESLint: optional `a?` counts as not required |
-| eslint-func-name-matching | 104 | 47/1/0 | FP: recording artefact (ecmaVersion 5 case); identifiers are approximately Unicode |
+| eslint-func-name-matching | 104 | 47/1/0 | FP: recording artefact (ecmaVersion 5 case); identifiers by `\p{ID_Start}`/`\p{ID_Continue}` |
 | eslint-func-style | 66 | 25/0/0 | none |
 | eslint-grouped-accessor-pairs | 40 | 38/0/0 | none |
 | eslint-max-classes-per-file | 27 | 11/0/0 | none |
@@ -92,9 +92,9 @@ assignment patterns. The JSON's scope is JavaScript only, kept; the rule reads T
 **func-name-matching, 1 FP (fixture 104.js).** `var obj = { 'ᢅ': function foo() {} };` is byte-identical to
 134.js, which the recording reports. The ESLint test runs one of them with ecmaVersion 5 (U+1885 is no ES5
 identifier) and the recording drops languageOptions. ESLint 9.39 at ecmaVersion latest reports both, as this
-rule does. Identifier names: esutils tests Unicode ID_Start/ID_Continue; the rule takes any non-ASCII character
-as a letter except U+0080–U+00BF and U+2000–U+2BFF (so `'❤'` is no name), which is close but not exact
-(`ª`, `µ` and `º` are wrongly refused).
+rule does. Identifier names: esutils tests Unicode ID_Start/ID_Continue, and so does the rule, with the regex
+classes `\p{ID_Start}` and `\p{ID_Continue}` (the first version spelled out UTF-8 byte ranges, an approximation
+that stopped matching once rrlab moved to Rust regex: 46/0/1 until rewritten).
 A computed key names the function only when it is a literal, as in ESLint: `obj['foo'] = function bar() {}` is
 reported, ``obj[`foo`] = function bar() {}`` is not.
 Also: under considerPropertyDescriptor, ESLint names a descriptor by `key.name` of the outer property, which is
@@ -214,7 +214,8 @@ row noted under no-delete-var.
   read with common's `limit`; `maximum` wins over `max` when both are set, as ESLint's `option.maximum || option.max`.
 - **default-case: commentPattern.** ESLint builds `new RegExp(pattern, "u")` and searches the trimmed last
   comment. Here it is `match("[\s\S]*(?:" + p + ")[\s\S]*", v)` on the trimmed text: a user regex, run as
-  given. rrlab maps it onto std::regex, which lacks `(?s)`, hence `[\s\S]`. The default is
+  given. `[\s\S]` dates from rrlab's std::regex, which lacked `(?s)`; with Rust regex `(?s:.)` would do as well,
+  and `[\s\S]` is kept (equal, and the engine's dialect reads both). The default is
   `(?i)no default`, a whole-text match.
 - **no-await-in-loop: methods.** The climb stops at a function's own code (modules.rr's `fn_code`): for a method
   that is its parameters and body. A computed key runs in the surrounding code, so
@@ -290,19 +291,19 @@ the findings were the same.
 | eslint-no-div-regex | 17 | 1/0/0 | — |
 | eslint-no-dupe-keys | 30 | 57/0/0 | — |
 | eslint-no-empty-pattern | 35 | 18/0/0 | handles the JavaScript grammar's parameter shapes too (the JSON handles only TypeScript's) |
-| eslint-no-multi-str | 20 | 3/0/2 | FNs are a harness gap: std::regex cannot match U+2028/U+2029 in UTF-8; a string inside JSX only counts when it is the direct child (ESLint), not anywhere inside (JSON) |
+| eslint-no-multi-str | 20 | 5/0/0 | U+2028/U+2029 match since rrlab uses Rust regex (were the 2 FN); a string inside JSX only counts when it is the direct child (ESLint), not anywhere inside (JSON) |
 | eslint-no-iterator | 13 | 5/0/0 | identifiers written with `\u` escapes are not decoded |
 | eslint-no-caller | 16 | 2/0/0 | — |
 
-14 rules, 468 lines, 12 with perfect scores. The other two misses are not rule defects.
+14 rules, 468 lines, 13 with perfect scores (no-multi-str since rrlab's Rust regex). The other miss, no-bitwise, is not a rule defect.
 
 ### (2) Deviations and remaining misses
 
 - **no-bitwise, 010.js (`~1<<2 === -8`).** ESLint reports `~` and `<<`, and both are at line 1, column 1.
   A finding's key is (policy, code, path, line), so the two are one finding. The recording counts two.
-- **no-multi-str, 006.js and 007.js** (`'foo\` followed by U+2028 or U+2029). The rule tests
-  `[\r\n  ]`, which is ESLint's LINEBREAK_MATCHER. rrlab's `std::regex` reads bytes, so ` `
-  never matches the three-byte UTF-8 sequence. This is a harness gap: a code-point regex engine matches it.
+- **no-multi-str, 006.js and 007.js** (`'foo\` followed by U+2028 or U+2029). The rule tests ESLint's
+  LINEBREAK_MATCHER, `[\r\n\u2028\u2029]`. rrlab's old std::regex read bytes and missed them; with Rust regex they
+  match, and the rule scores 5/0/0.
 - **no-multi-str, JSX.** ESLint skips a literal only when its direct parent is a JSX node. The JSON skips any
   string inside a `jsx_expression`. Counterexample: in `<a b={f("x\⏎y")}/>` ESLint reports the string (its
   parent is the call), and the JSON does not. This rule follows ESLint.
@@ -401,9 +402,9 @@ line), so a rule cannot produce two findings on one line. Most of the FPs and FN
 | eslint-no-eval | 30 | 16 / 3 / 20 (script 32 / 8 / 4) | 19 / 0 / 3 parse errors; script 40 / 0 / 1; commonjs 45 / 0 / 0 | recording: script, browser/Node and ecmaVersion cases; follows ESLint 10's `Array.fromAsync` |
 | eslint-no-implied-eval | 49 | 4 / 2 / 17 | 6 / 0 / 0 (commonjs 28 / 0 / 0; with globals 48 / 0 / 2) | recording: environment globals; static_value is not modelled in rrlab |
 | eslint-no-extend-native | 30 | 22 / 0 / 0 | 21 / 0 / 1 parse error | none |
-| eslint-capitalized-comments | 55 | 47 / 0 / 4 | 47 / 0 / 4 (+3 unused-directive reports) | ASCII upper-casing until core has `@upper` |
+| eslint-capitalized-comments | 55 | 51 / 0 / 0 | 47 / 0 / 4 (+3 unused-directive reports) | lower case by `\p{Ll}\p{Lt}`; the fix upper-cases ASCII only until core has `@upper` |
 | eslint-no-inline-comments | 27 | 36 / 0 / 0 | 35 / 0 / 0 (+2 unused-directive reports) | none |
-| eslint-no-irregular-whitespace | 47 (+ 31 table) | not runnable under rrlab (no match_all); a match-based variant: 176 / 2 / 15 | 176 / 2 / 5 (variant) | one finding per run, at the run; U+2028/U+2029 line numbering |
+| eslint-no-irregular-whitespace | 47 (+ 31 table) | 186 / 5 / 5 (columns too; rrlab now runs match_all) | 176 / 2 / 5 (variant) | one finding per run, at the run; U+2028/U+2029 line numbering (the 5 FP / 5 FN) |
 | eslint-id-length | 116 | 101 / 0 / 1 | 86 / 0 / 1 | counts code points, not graphemes |
 | eslint-no-duplicate-imports | 65 | 19 / 0 / 0 | 19 / 0 / 0 (every option set: perfect) | none |
 
@@ -457,10 +458,11 @@ ESLint 9.39 reports it in a script. This rule follows the pinned tool and the JS
 console call, unless the tokens around it would join (maybeAsiHazard). It is added here as a non-safe fix, as
 ESLint marks it. The object may be parenthesised: `(console).log(x)` is reported, as in ESLint.
 
-**capitalized-comments: FN 056, 057, 078, 079** (`//über`, `//π`, `// ꮳꮃꭹ`, `/* 𐳡𐳡𐳡 */`). "Is this letter lower
-case" is `x != upper(x)`, and the fix writes `upper(x)`. Core has `@lower` but no `@upper`, and `@convert`'s
-upperCase is a word transform, not a character mapping, so upper(x) comes from common's `upper_first` table: ASCII
-letters only, so these four are missed (a real limit until core has `@upper`, below; then `upper(x, @upper(x))`).
+**capitalized-comments: 056, 057, 078, 079** (`//über`, `//π`, `// ꮳꮃꭹ`, `/* 𐳡𐳡𐳡 */`), once four FN. "Is this
+letter lower case" (ESLint: `c !== c.toLocaleUpperCase()`) is now the regex class `[\p{Ll}\p{Lt}]`, which rrlab's
+Rust regex and the engine's DFA both read, so all four are reported: 51/0/0. (A letter outside Ll and Lt with an
+upper-case mapping, such as U+0345, is missed.) The fix still writes `upper(x)`, from common's `upper_first` table,
+ASCII letters only: `//über` gets no fix until core has `@upper` (below; then `upper(x, @upper(x))`).
 Also:
 - ignoreInlineComments and ignoreConsecutiveComments ask ESLint's token store with includeComments. Here that is
   core's tokens plus the comment just before or after (`prev_comment`: a comment with no token between).
@@ -470,10 +472,9 @@ Also:
 - One `match_all` over each physical line (`src_line`) with a capture `(?<W>[…]+|[\x{2028}\x{2029}])`: one row
   per run, so each line is read once (no quadratic walk), and each finding sits on its run, at the run's column,
   as ESLint's does. A run inside a node the options skip is dropped (columns from `col` and `end_col`).
-- **Not runnable under rrlab** (harness gap): rrlab has no `match_all` rows, and a capture used as a span is not
-  modelled, so `run(W)` is ungrounded in its lowering and Soufflé stops. The logic was checked with a match-based
-  variant (not committed: the first run of each line, its column from the prefix length) on the own fixtures: 176
-  TP / 2 FP / 15 FN by line, the same as before. Columns cannot be scored in rrlab.
+- Runs under rrlab since it models `match_all` and capture spans: 186 TP / 5 FP / 5 FN, the same at (line, column).
+  The 5 and 5 are the U+2028/U+2029 line numbering below (181, 211–214). (Before that, a match-based variant gave
+  176 / 2 / 15 by line.)
 - Two runs on one line are now two findings at one key (line), which the findings contract merges; the recording
   counts each report, so a line-level score still loses a TP per extra run (133, 182, 183, 185, 190–192, 200, 201).
 - U+2028 and U+2029 are line breaks to ESLint, but not to the engine's `line` or `src_line`. So on any line after
@@ -532,11 +533,12 @@ The JSON's message texts are kept, and the earlier import's line is added.
 4. **rrlab (not mine, noted for its owner).**
    - `has(a, n, "kind")` filters a by the kind, as core says. Easy to misread as "a has a descendant of kind";
      this cost a debug round. No change needed.
-   - `\x{…}` regex escapes are not mapped onto std::regex.
+   - `\x{…}` regex escapes are not mapped onto std::regex. (Since done: rrlab uses Rust regex.)
    - `@convert` is ASCII only.
    - `es_global`, `directive_global` and `match_all` have no rows.
    - A regex capture used as a span (`match_all("(?<W>…)", sp)`, then `col(W, c)`) is not modelled, and neither is
-     a capture in a regex built with `cat`: no-irregular-whitespace cannot run under rrlab at all.
+     a capture in a regex built with `cat`: no-irregular-whitespace cannot run under rrlab at all. (Since done:
+     rrlab runs `match_all` with captures and capture spans; no-irregular-whitespace scores 186 / 5 / 5.)
 5. **names.rr: `fn_scope` lacks `generator_function`** (a `function*` expression). Its parameters and vars are given
    to the enclosing function. `eslint-a-globals.rr`'s `any_scope` adds it locally.
 6. **names.rr / values.rr:** `const_str` covers strings and plain templates. getStaticPropertyName also takes

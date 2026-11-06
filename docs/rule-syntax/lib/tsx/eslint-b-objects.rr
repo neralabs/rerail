@@ -114,14 +114,9 @@ script_top(p) :- program(d, p), source_type(d, "script").
 .decl global_member(e: node, g: symbol, x: symbol)
 global_member(e, g, x) :- static_prop(e, o, x), deparen(o, r), global_named(r, g).
 .decl global_named(r: node, g: symbol)  // r is the global g: a built-in reference, or g read off the global object
-global_named(r, g) :- builtin_ref(r, g), docof(r, d), !written_global(d, g).
-// written_global(d, g): ReferenceTracker's isModifiedGlobal: the file writes the global, so it is not followed.
+// values.rr's env_written is ReferenceTracker's isModifiedGlobal: the file writes the global, so it is not followed.
 //   Math = m;   Math.pow(a, b)        not reported
-.decl written_global(d: number, g: symbol)
-written_global(d, g) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
-    field(a, "left", l), deparen(l, i), builtin_ref(i, g), docof(a, d).
-written_global(d, g) :- kind(u, "update_expression"), field(u, "argument", l), deparen(l, i), builtin_ref(i, g),
-    docof(u, d).
+global_named(r, g) :- builtin_ref(r, g), docof(r, d), !env_written(d, g).
 global_named(r, g) :- static_prop(r, o, g), deparen(o, w), global_named(w, x),
     (x = "globalThis" ; x = "window" ; x = "self" ; x = "global").
 

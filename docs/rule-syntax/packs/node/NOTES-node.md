@@ -163,7 +163,8 @@ node-trace.rr filters `global_use` this way today; the module side needs it in v
 - **R2** `places.tsv` is appended across runs, so stale ids appear until the file is removed.
 - **R3** `package_field` emits every scalar, and keys are not `~1`-escaped as core documents them.
 - **R4** findings that share a key are counted separately on the recording side.
-- **R5** `src_line` keeps the BOM, and the `hash_bang_line` text keeps `\r`. std::regex `\uFEFF` does not match UTF-8.
+- **R5** `src_line` keeps the BOM, and the `hash_bang_line` text keeps `\r`. std::regex `\uFEFF` did not match UTF-8
+  (fixed: rrlab uses Rust regex since 08d977aa5; n-hashbang's `src_bom` reads the column, not a regex).
 
 ## Duplicates to merge
 

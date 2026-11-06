@@ -15,7 +15,5 @@
     suppress eslint "no-script-url"
     suppress oxlint "no-script-url"
     suppress biome "lint/security/noScriptUrl"
-no_script_url(s) :- (kind(s, "string") ; kind(s, "template_string"), !tagged(s)), static_string(s, v),
+no_script_url(s) :- (kind(s, "string") ; kind(s, "template_string"), !tagged_template(s)), static_string(s, v),
     iprefix("javascript:", v).
-.decl tagged(s: node)  // tag`…`: tree-sitter's call_expression with the template as its arguments
-tagged(s) :- kind(c, "call_expression"), field(c, "arguments", s).

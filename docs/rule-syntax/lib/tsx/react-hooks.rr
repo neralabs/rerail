@@ -10,7 +10,7 @@
 //     hook_use(c)              c calls `use` or `React.use` (allowed in conditions and loops)
 //     deps_name(f, x)          callee f names React's x: `x` or `React.x`
 //     effect_hook(x)           x is an effect Hook: useEffect, useLayoutEffect, useInsertionEffect
-//     hook_fn(f)               f is a function: declaration, expression, arrow, generator or method
+//     (a function is eslint-a-common's function_node: declaration, expression, arrow, generator or method)
 //     hook_path(n, p)          p is the code path n runs in: its nearest function, else the program
 //     hook_fn_name(f, n)       n names function f as getFunctionName does: `function F`, `const F = () =>`,
 //                              `F = function`, `{ F: () => … }`, `{ F() {} }`, `({ F = () => … })`
@@ -39,6 +39,8 @@
 //
 // The plugin knows Hooks by name only: `use` or `use` then an upper-case letter or digit, called bare or off a
 // PascalCase object (`React.useState`, `Foo.useBar`). `api.useThing()` and `usefulThing()` are not Hooks.
+// Builds on tsx/react (and through it tsx/eslint-a-common: deparen, call_arg, function_kind, function_node) and
+// tsx/names (ref, ref_site, decl_site: a JSX component tag is a reference there).
 #include "tsx/react.rr"
 
 // ---- Hooks and the functions around them ----------------------------------------------------------------------
@@ -57,21 +59,15 @@ hook_call(c, f) :- kind(c, "call_expression"), field(c, "function", f), hook_cal
 .decl hook_use(c: node)
 hook_use(c) :- hook_call(c, f), (text(f, "use") ; text(f, "React.use")).
 
-.decl hook_fn_kind(k: symbol)
-hook_fn_kind("function_declaration"). hook_fn_kind("generator_function_declaration").
-hook_fn_kind("function_expression"). hook_fn_kind("generator_function"). hook_fn_kind("arrow_function").
-hook_fn_kind("method_definition").
-.decl hook_fn(f: node)
-hook_fn(f) :- kind(f, k), hook_fn_kind(k).
 // A code path is a function's body, or the program's top level.
 .decl hook_path(n: node, p: node)
-hook_path(n, f) :- hook_call(n, _), nearest(n, f, hook_fn_kind).
-hook_path(n, p) :- hook_call(n, _), !inside(n, _, hook_fn_kind), inside(n, p, "program").
+hook_path(n, f) :- hook_call(n, _), nearest(n, f, function_kind).
+hook_path(n, p) :- hook_call(n, _), !inside(n, _, function_kind), inside(n, p, "program").
 
 // getFunctionName. A declaration or named function expression names itself; an anonymous one takes the name it
 // is stored under. A class method has none (it is reported as a class component's), an object method its key.
 .decl hook_fn_name(f: node, n: node)
-hook_fn_name(f, n) :- hook_fn(f), !kind(f, "method_definition"), !kind(f, "arrow_function"), field(f, "name", n).
+hook_fn_name(f, n) :- function_node(f), !kind(f, "method_definition"), !kind(f, "arrow_function"), field(f, "name", n).
 hook_fn_name(f, n) :- hook_anon(f), child(v, f, _), kind(v, "variable_declarator"), field(v, "value", f),
     field(v, "name", n).
 hook_fn_name(f, n) :- hook_anon(f), child(a, f, _), kind(a, "assignment_expression"), field(a, "right", f),
@@ -103,13 +99,13 @@ hook_wrapper(w) :- kind(w, "member_expression"), field(w, "object", o), text(o, 
     (text(p, "memo") ; text(p, "forwardRef")).
 .decl hook_direct(f: node)
 hook_direct(f) :- hook_fn_name(f, n), hook_comp_name(n).
-hook_direct(f) :- hook_fn(f), !hook_fn_name(f, _), hook_wrapped(f).
+hook_direct(f) :- function_node(f), !hook_fn_name(f, _), hook_wrapped(f).
 // isInsideComponentOrHook climbs every ancestor: a component or Hook function, or any argument of memo/forwardRef.
 .decl hook_somewhere(f: node)
-hook_somewhere(f) :- hook_fn(f), hook_named_comp(f).
-hook_somewhere(f) :- hook_fn(f), hook_wrapped(f).
-hook_somewhere(f) :- hook_fn(f), inside(f, a, hook_fn_kind), hook_named_comp(a).
-hook_somewhere(f) :- hook_fn(f), hook_wrapped(a), within(f, a).
+hook_somewhere(f) :- function_node(f), hook_named_comp(f).
+hook_somewhere(f) :- function_node(f), hook_wrapped(f).
+hook_somewhere(f) :- function_node(f), inside(f, a, function_kind), hook_named_comp(a).
+hook_somewhere(f) :- function_node(f), hook_wrapped(a), within(f, a).
 .decl hook_named_comp(f: node)
 hook_named_comp(f) :- hook_fn_name(f, n), hook_comp_name(n).
 
@@ -143,8 +139,8 @@ hook_region(r) :- (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pa
 .decl hook_branch(n: node)
 hook_branch(n) :- hook_path(n, p), hook_region(r), (within(n, r) ; n = r), hook_same_path(r, p).
 .decl hook_same_path(r: node, p: node)  // r is in code path p's own code
-hook_same_path(r, p) :- hook_path(_, p), within(r, p), nearest(r, p, hook_fn_kind).
-hook_same_path(r, p) :- hook_path(_, p), kind(p, "program"), within(r, p), !inside(r, _, hook_fn_kind).
+hook_same_path(r, p) :- hook_path(_, p), within(r, p), nearest(r, p, function_kind).
+hook_same_path(r, p) :- hook_path(_, p), kind(p, "program"), within(r, p), !inside(r, _, function_kind).
 // In a try block with a catch, the first node that may throw (a reference, call, member access, `new`, `yield`)
 // forks a path to the catch, so what follows it in the block runs on some paths:
 //   try { f(); useState(); } catch {}      useState is conditional;   try { useState(); } catch {}  is not
@@ -199,17 +195,15 @@ deps_effect(x) :- effect_hook(x), deps_cb_index(x, _).
 // isEffectIdentifier (rules-of-hooks), and the React Compiler's effect Hooks.
 .decl effect_hook(x: symbol)
 effect_hook("useEffect"). effect_hook("useLayoutEffect"). effect_hook("useInsertionEffect").
-.decl deps_arg(c: node, a: node, i: number)  // a is call c's i-th argument; comments are not arguments
-deps_arg(c, a, i) :- deps_hook(c, _, _, _), field(c, "arguments", l), child(l, a, j), !kind(a, "comment"),
-    i = count : { child(l, b, m), m < j, !kind(b, "comment") }.
 .decl deps_cb(c: node, cb: node)
-deps_cb(c, cb) :- deps_hook(c, _, _, k), deps_arg(c, a, k), deps_bare(a, cb).
-// deps_bare(e, x): x is e without TypeScript `as` casts and parentheses, which ESTree has no node for.
+deps_cb(c, cb) :- deps_hook(c, _, _, k), call_arg(c, a, k), deps_bare(a, cb).
+// deps_bare(e, x): x is e without parentheses (deparen) and TypeScript `as` casts, which the plugin also looks
+// through: `(cb as Fn)` gives cb. (A `satisfies` or `!` stays.)
 .decl deps_bare(e: node, x: node)
-deps_bare(e, e) :- node(_, e, k, _, _), k != "as_expression", k != "parenthesized_expression".
-deps_bare(e, x) :- (kind(e, "as_expression") ; kind(e, "parenthesized_expression")), child(e, y, 0), deps_bare(y, x).
+deps_bare(e, x) :- deparen(e, x), !kind(x, "as_expression").
+deps_bare(e, x) :- deparen(e, a), kind(a, "as_expression"), child(a, y, 0), deps_bare(y, x).
 .decl deps_list(c: node, a: node)
-deps_list(c, a) :- deps_hook(c, _, _, k), deps_arg(c, a, k + 1), !deps_undefined(a).
+deps_list(c, a) :- deps_hook(c, _, _, k), call_arg(c, a, k + 1), !deps_undefined(a).
 .decl deps_undefined(a: node)
 deps_undefined(a) :- kind(a, "undefined").
 .decl deps_fn(f: node)  // a function expression or arrow: what the plugin can read dependencies off
@@ -226,30 +220,29 @@ deps_visit(c, v) :- deps_named_cb(c, site), kind(site, "variable_declarator"), f
 // the dependency array does not already list it.
 .decl deps_named_cb(c: node, site: node)
 deps_named_cb(c, site) :- deps_cb(c, cb), kind(cb, "identifier"), deps_list(c, a), text(cb, x),
-    !deps_lists_name(a, x), deps_site(cb, site), decl_site(s, x, site, _, "value"), deps_own_scope(cb, s).
+    !deps_lists_name(a, x), ref_site(cb, site), decl_site(s, x, site, _, "value"), deps_own_scope(cb, s).
 .decl deps_lists_name(a: node, x: symbol)  // [cb, …] lists the callback itself
 deps_lists_name(a, x) :- kind(a, "array"), child(a, e, _), kind(e, "identifier"), text(e, x).
 // The eslint-scope scope of n: its nearest block, which for a function's body block is the function's own scope.
 .decl deps_own_scope(n: node, s: node)
 deps_own_scope(n, s) :- nearest(n, s, block_scope).
-deps_own_scope(n, f) :- nearest(n, b, block_scope), field(f, "body", b), hook_fn(f).
+deps_own_scope(n, f) :- nearest(n, b, block_scope), field(f, "body", b), function_node(f).
 
 // The component scope: the nearest function around v. Between v and it lie the "pure" scopes, whose variables
 // may change between renders; a variable from the module or the callback itself is never a dependency.
 .decl deps_component(v: node, cf: node)
-deps_component(v, cf) :- deps_visit(_, v), nearest(v, cf, hook_fn_kind).
+deps_component(v, cf) :- deps_visit(_, v), nearest(v, cf, function_kind).
 .decl deps_pure(v: node, s: node)
 deps_pure(v, s) :- deps_component(v, cf), (s = cf ; within(s, cf)), within(v, s), decl_site(s, _, _, _, _).
 // deps_ref(v, r, site): r, in v, reads a variable of a pure scope declared at site.
 .decl deps_ref(v: node, r: node, site: node)
-deps_ref(v, r, site) :- deps_visit(_, v), within(r, v), deps_read(r, x), deps_site(r, site),
+deps_ref(v, r, site) :- deps_visit(_, v), within(r, v), deps_read(r, x), ref_site(r, site),
     decl_site(s, x, site, _, "value"), deps_pure(v, s).
 // deps_read(r, x): a value read the plugin sees. `typeof x` in a type is not one. JSX tags depend on the parser:
-// typescript-eslint makes <Comp/> and <Ns.Comp/> read Comp and Ns (in .ts/.tsx files); espree, for JavaScript,
-// makes no references for JSX names at all.
+// typescript-eslint makes <Comp/> and <Ns.Comp/> read Comp and Ns (in .ts/.tsx files), as tsx/names' ref does
+// (jsx_tag_ref); espree, for JavaScript, makes no references for JSX names at all.
 .decl deps_read(r: node, x: symbol)
 deps_read(r, x) :- ref(r, x, "value"), !inside(r, _, "type_query"), !deps_js_tag(r).
-deps_read(r, x) :- deps_tag(r), kind(r, "identifier"), glob("[A-Z]**", r), text(r, x), docof(r, d), deps_ts_doc(d).
 .decl deps_tag(r: node)  // r is an element's tag name or its root: <Comp>, </Comp>, <Ns.Comp>
 deps_tag(r) :- (kind(e, "jsx_opening_element") ; kind(e, "jsx_self_closing_element") ; kind(e, "jsx_closing_element")),
     field(e, "name", r).
@@ -258,15 +251,6 @@ deps_tag(r) :- deps_tag(m), kind(m, "member_expression"), field(m, "object", r).
 deps_js_tag(r) :- deps_tag(r), docof(r, d), !deps_ts_doc(d).
 .decl deps_ts_doc(d: number)
 deps_ts_doc(d) :- doc(d, p, _), (suffix(".ts", p) ; suffix(".tsx", p) ; suffix(".mts", p) ; suffix(".cts", p)).
-// deps_site(r, site): the declaration r resolves to: the one in the innermost scope that declares its name, so a
-// callback's own `count => …` hides the component's count. (A tag name, which tsx/names does not treat as a
-// reference, is looked up the same way.)
-.decl deps_site(r: node, site: node)
-deps_site(r, site) :- deps_candidate(r, site, k), k = max j : { deps_candidate(r, _, j) }.
-.decl deps_candidate(r: node, site: node, depth: number)
-deps_candidate(r, site, k) :- ref(r, x, "value"), ref_site(r, site), decl_site(s, x, site, _, "value"), ast_depth(s, k).
-deps_candidate(r, site, k) :- deps_tag(r), kind(r, "identifier"), text(r, x), decl_site(s, x, site, _, "value"),
-    within(r, s), ast_depth(s, k).
 
 // The key of a read: the plugin's getDependency. A read climbs its member chain, `props.user.id` → "props.user.id",
 // but not through `.current` (a ref's value is read when it is used) or into a method call: `props.onChange()`
@@ -315,7 +299,7 @@ deps_init_hook(d, x) :- field(d, "value", w), deps_bare(w, v), kind(v, "call_exp
     deps_name(f, x).
 .decl deps_rewritten(p: node)  // the variable is assigned again: `setS = other`
 deps_rewritten(p) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
-    field(a, "left", r), deps_site(r, p).
+    field(a, "left", r), ref_site(r, p).
 // isFunctionWithoutCapturedValues: a function declared directly in the component whose free variables are all
 // outside the pure scopes, or stable: `function log(x) { console.log(x); }` never needs listing.
 .decl deps_fn_site(site: node, f: node)  // site declares function f in the component's own scope
@@ -327,10 +311,10 @@ deps_fn_pure(v, site) :- deps_ref(v, _, site), deps_fn_site(site, f), decl_site(
     deps_component(v, cf), (s = cf ; field(cf, "body", s)), !deps_captures(v, f).
 .decl deps_captures(v: node, f: node)  // f reads a changing value of v's pure scopes
 deps_captures(v, f) :- deps_ref(v, _, site), deps_fn_site(site, f), within(r, f), ref(r, x, "value"),
-    deps_site(r, s2), decl_site(sc, x, s2, _, "value"), sc != f, !within(sc, f), deps_pure(v, sc),
+    ref_site(r, s2), decl_site(sc, x, s2, _, "value"), sc != f, !within(sc, f), deps_pure(v, sc),
     !deps_stable_site(s2).
 .decl deps_stable(c: node, k: symbol)
-deps_stable(c, k) :- deps_used(c, k, r), deps_visit(c, v), deps_site(r, site),
+deps_stable(c, k) :- deps_used(c, k, r), deps_visit(c, v), ref_site(r, site),
     (deps_stable_site(site) ; deps_fn_pure(v, site)).
 
 // The declared dependencies: each element of the array, keyed as the plugin's analyzePropertyChain keys it
@@ -364,7 +348,7 @@ deps_root_of(m, n) :- field(m, "object", o), deps_bare(o, n), kind(n, "identifie
 deps_root_of(m, n) :- field(m, "object", o), deps_bare(o, p), kind(p, "member_expression"), deps_dobj(o),
     deps_root_of(p, n).
 .decl deps_inside(o: node, cf: node)  // o resolves to a declaration in cf or below
-deps_inside(o, cf) :- deps_component(_, cf), deps_site(o, site), decl_site(s, _, site, _, "value"),
+deps_inside(o, cf) :- deps_component(_, cf), ref_site(o, site), decl_site(s, _, site, _, "value"),
     (s = cf ; within(s, cf)).
 
 // collectRecommendations, over the keys as paths. A used key is satisfied by a declared or stable key that is it

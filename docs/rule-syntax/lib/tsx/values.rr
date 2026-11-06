@@ -8,6 +8,7 @@
 //   api_ref(n, p)         expression or binding n denotes API p (aliases followed)
 //   api_use(at, p, how)   at is where p is used as how: "load", "read", "call" or "new", one row per report site
 //   node_range(d, r)      the Node.js versions document d must run on (eslint-plugin-n's configured range)
+//   node_runs_on(d, r)    the same, unless the rule's `version` option (a valid range) overrides it
 //
 // API names: a module is the specifier as written ("fs", "node:fs"); its members are module `#` member path
 // ("fs#promises.readFile", as names.rr writes "module#name"); a global and its members are dotted ("fetch",
@@ -21,10 +22,10 @@
 //   globalThis.fetch(url)                 the call                    api_use "fetch" call
 //
 // Builds on names.rr (ref, ref_site, binding_value, site_occurrence, import_binding, import_spec, star_export,
-// directive_global) and core (semver, and the package.json reader package_for and package_field). No type
-// checker: a value is followed only through syntax that surely carries it.
+// directive_global), tsx/eslint-a-common (deparen, tagged) and core (semver, and the package.json reader
+// package_for and package_field). No type checker: a value is followed only through syntax that surely carries it.
 
-#include "tsx/names.rr"
+#include "tsx/eslint-a-common.rr"
 
 
 // node_module(spec, root): Node resolves spec to a built-in module whose members are traced under root:
@@ -67,9 +68,9 @@ val(n, "import.meta", "api") :- kind(n, "meta_property"), match("import\\s*\\.\\
 val(n, q, "api") :- member(n, o, x), val(o, m, "module"), q = @qname(m, x), api_known(q).
 val(n, q, "api") :- member(n, o, x), val(o, p, "api"), q = @dot(p, x), api_known(q).
 val(n, x, "api") :- member(n, o, x), val(o, _, "global").
-// Aliases. (v), `a = v` as an expression, and a binding whose value is v.
-val(n, p, k) :- kind(n, "parenthesized_expression"), child(n, c, 0), val(c, p, k).
-val(n, p, k) :- kind(n, "assignment_expression"), field(n, "right", v), val(v, p, k).
+// Aliases. What passes a value through unchanged (pass_through, below: `(v)`, `a = v`, `a || v`, `c ? v : w`,
+// `(a, v)`, `v as T`, `v!`), and a binding whose value is v.
+val(n, p, k) :- pass_through(v, n), val(v, p, k).
 // `const f = fs.readFile` gives the declarator the value; each reference to f then has it.
 val(d, p, k) :- binding_value(d, v), val(v, p, k).
 val(r, p, k) :- kind(r, "identifier"), ref_site(r, d), val(d, p, k).
@@ -106,15 +107,42 @@ member(n, o, x) :- kind(o, "object_pattern"), child(o, n, _), kind(n, "object_as
 key_name(key, x) :- kind(key, "property_identifier"), text(key, x).
 key_name(key, x) :- const_str(key, x).
 key_name(key, x) :- kind(key, "computed_property_name"), child(key, s, 0), const_str(s, x).
+// pass_through(n, p): ReferenceTracker's isPassThrough: p has n's value. tree-sitter's parentheses are one more step.
+//   (n)   a = n   a || n   a && n   a ?? n   c ? n : m   (a, n)   n as T   n satisfies T   n!   <T>n   n<T>
+.decl pass_through(n: node, p: node)
+pass_through(n, p) :- kind(p, "parenthesized_expression"), child(p, n, _), !kind(n, "comment").
+pass_through(n, p) :- kind(p, "ternary_expression"), (field(p, "consequence", n) ; field(p, "alternative", n)).
+pass_through(n, p) :- kind(p, "binary_expression"), (op(p, "&&") ; op(p, "||") ; op(p, "??")),
+    (field(p, "left", n) ; field(p, "right", n)).
+pass_through(n, p) :- kind(p, "sequence_expression"), child(p, n, i), !kind(n, "comment"),
+    count : { child(p, o, j), j > i, !kind(o, "comment") } = 0.
+pass_through(n, p) :- kind(p, k), (k = "as_expression" ; k = "satisfies_expression" ; k = "non_null_expression" ;
+    k = "type_assertion" ; k = "instantiation_expression"), child(p, n, 0).
+pass_through(n, a) :- kind(a, "assignment_expression"), field(a, "right", n).
 // first_arg(c, s): s is call c's first argument; a comment (`require(/* why */ "fs")`) is not one.
 .decl first_arg(c: node, s: node)
 first_arg(c, s) :- field(c, "arguments", a), kind(a, "arguments"), child(a, s, i), !kind(s, "comment"),
     count : { child(a, o, j), j < i, !kind(o, "comment") } = 0.
-// const_str(n, "fs"): a string, or a template with no ${…}, and its decoded value (getStringIfConstant's literals).
+// const_str(n, "fs"): n is a string constant with value v, as getStringIfConstant (getStaticValue) folds it: a
+// string, a template whose ${…} are constants, `+` of two constants, and `true ? a : b` / `false ? b : a`;
+// parentheses do not matter.   "node:fs"   `node:${"fs"}`   "node:" + "fs"   (true ? "fs" : "os")
+// Not followed: numbers and other literals (static_string has those), and constant variables (`const m = "fs"`).
 .decl const_str(n: node, v: symbol)
 const_str(n, v) :- kind(n, "string"), value(n, v).
 const_str(n, v) :- kind(n, "template_string"), value(n, v),
     count : { child(n, c, _), kind(c, "template_substitution") } = 0.
+const_str(n, v) :- tpl_upto(n, i, v), !child(n, _, i).
+const_str(n, cat(a, b)) :- kind(n, "binary_expression"), op(n, "+"), field(n, "left", l), field(n, "right", r),
+    const_str(l, a), const_str(r, b).
+const_str(n, v) :- kind(n, "ternary_expression"), field(n, "condition", c), deparen(c, b),
+    (kind(b, "true"), field(n, "consequence", w) ; kind(b, "false"), field(n, "alternative", w)), const_str(w, v).
+const_str(n, v) :- kind(n, "parenthesized_expression"), deparen(n, e), e != n, const_str(e, v).
+// tpl_upto(t, i, v): the text of template t's first i parts (fragments, and ${…} of constants).
+.decl tpl_upto(t: node, i: number, v: symbol)
+tpl_upto(t, 0, "") :- kind(t, "template_string"), child(t, c, _), kind(c, "template_substitution").
+tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "string_fragment"), text(c, w).
+tpl_upto(t, i + 1, cat(v, w)) :- tpl_upto(t, i, v), child(t, c, i), kind(c, "template_substitution"), child(c, e, 0),
+    const_str(e, w).
 
 // ---- module loads and globals ------------------------------------------------------------------------------------
 // module_load(at, "node:fs"): at loads a module by that specifier: require("node:fs") and process.getBuiltinModule
@@ -128,13 +156,25 @@ module_load(i, s) :- import_spec(i, s).
 loader(f) :- env_global(f, "require").
 loader(f) :- member(f, o, "getBuiltinModule"), kind(f, "member_expression"), val(o, "process", "api").
 loader(f) :- kind(f, "parenthesized_expression"), child(f, g, 0), loader(g).
-// env_global(r, g): r names traced global g, which no file-local declaration shadows. The CommonJS globals exist
-// only in a CommonJS file; a `/* global g */` comment declares g in any file.
+// The global require under another name: `const r = require; r("fs")`, `global.require("fs")`.
+loader(f) :- val(f, "require", "api").
+// env_global(r, g): r names traced global g, which no file-local declaration shadows and the file never assigns
+// (ReferenceTracker's isModifiedGlobal: after `require = f` or `Buffer++`, require and Buffer are not followed).
+// The CommonJS globals exist only in a CommonJS file. A `/* global g */` comment declares g in the global scope of
+// any file, whatever the policy's table of globals says (the rule's own table still bounds what is asked).
 .decl env_global(r: node, g: symbol)
-env_global(r, g) :- ref(r, g, "value"), !ref_site(r, _), node_global(g), !cjs_global(g).
+env_global(r, g) :- ref(r, g, "value"), !ref_site(r, _), node_global(g), !cjs_global(g), docof(r, d),
+    !env_written(d, g).
 env_global(r, g) :- ref(r, g, "value"), !ref_site(r, _), cjs_global(g), node_global(g), docof(r, d),
-    package_type(d, "commonjs").
-env_global(r, g) :- ref(r, g, "value"), !ref_site(r, _), node_global(g), docof(r, d), directive_global(d, g).
+    package_type(d, "commonjs"), !env_written(d, g).
+env_global(r, g) :- ref(r, g, "value"), !ref_site(r, _), docof(r, d), directive_global(d, g), !env_written(d, g).
+// env_written(d, g): `g = …`, `(g) += …`, `g++` in document d, with g no file-local declaration binds: a write
+// reference to the global variable g.
+.decl env_written(d: number, g: symbol)
+env_written(d, g) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", w), deparen(w, l), kind(l, "identifier"), text(l, g), !ref_site(l, _), docof(a, d).
+env_written(d, g) :- kind(a, "update_expression"), field(a, "argument", w), deparen(w, l), kind(l, "identifier"),
+    text(l, g), !ref_site(l, _), docof(a, d).
 // package_type(d, t): the module system eslint-plugin-n's configs give a file, which the policy asks for
 // (moduleSystem "package-type"; not modules.rr's source_type, which also reads syntax): .mjs/.mts are modules,
 // .cjs/.cts CommonJS, any other file a module only where its package.json's type is "module".
@@ -165,16 +205,22 @@ api_use(at, s, "load") :- module_load(at, s), node_module(s, _).
 api_use(n, p, "read") :- member(n, _, _), val(n, p, "api").
 api_use(r, g, "read") :- env_global(r, g).
 api_use(sp, @qname(m, x), "read") :- kind(sp, k), (k = "import_specifier" ; k = "export_specifier"),
-    field(sp, "name", nm), text(nm, x), nearest(sp, i, spec_stmt), import_spec(i, s), node_module(s, m).
+    field(sp, "name", nm), spec_name(nm, x), nearest(sp, i, spec_stmt), import_spec(i, s), node_module(s, m).
 api_use(c, p, "call") :- kind(c, "call_expression"), field(c, "function", f), val(f, p, "api"), !tagged(c).
 api_use(c, p, "new") :- kind(c, "new_expression"), field(c, "constructor", f), val(f, p, "api").
-.decl tagged(c: node)  // fs.readFile`x`: a tagged template, not a call of the function
-tagged(c) :- field(c, "arguments", a), kind(a, "template_string").
 .decl spec_stmt(kind: symbol)
 spec_stmt("import_statement"). spec_stmt("export_statement").
 // export_all(at, root): `export * from "fs"` (or `export * as ns from "fs"`) re-exports every member of the module.
 .decl export_all(at: node, root: symbol)
 export_all(e, m) :- star_export(e, s), node_module(s, m).
+
+// node_runs_on(d, r): the range a rule checks against (getConfiguredNodeVersion): a valid `version` option, else
+// node_range below. A `version` that is no range ("lts") is ignored, as the plugin's schema check leaves it.
+.decl node_runs_on(d: number, r: symbol)
+node_runs_on(d, r) :- doc(d, _, _), node_version_opt(r).
+node_runs_on(d, r) :- node_range(d, r), !node_version_opt(_).
+.decl node_version_opt(r: symbol)
+node_version_opt(r) :- option("version", r), @semver_valid(r) = 1.
 
 // node_range(d, r): the Node.js range document d targets, as the engine reads it (package_manifest.rs's
 // configured_node_version, after eslint-plugin-n's getConfiguredNodeVersion without settings):

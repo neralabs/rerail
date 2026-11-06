@@ -36,9 +36,9 @@
 //   prefer-enum-initializers      enum E { A }
 //   prefer-literal-enum-member    enum E { A = f() }
 //
-// Builds on tsx/modules (string_stmt, not_stmt), tsx/names (ref_site: declarations by name, in the type
-// namespace) and core.
-#include "tsx/modules.rr"
+// Builds on tsx/ts-a (heritage), tsx/modules (string_stmt, not_stmt), tsx/names (ref_site: declarations by name,
+// in the type namespace) and core.
+#include "tsx/ts-a.rr"
 
 // ---- files -------------------------------------------------------------------------------------------------------
 // definition_file(d): typescript-eslint's isDefinitionFile, on the lower-cased file name.
@@ -115,9 +115,8 @@ ambient_kind(n) :- kind(n, "module"), field(n, "name", i), kind(i, "identifier")
 type_ref(r, x) :- kind(r, "type_identifier"), text(r, x), child(p, r, _), !kind(p, "infer_type"), !type_name_of(p, r).
 .decl type_name_of(p: node, r: node)  // r is p's `name` field: a declared name, or the B of A.B (not Map of Map<K>)
 type_name_of(p, r) :- field(p, "name", r), kind(r, "type_identifier"), !kind(p, "generic_type").
-.decl heritage_ref(r: node)
-heritage_ref(r) :- type_ref(r, _), child(c, r, _), kind(c, "extends_type_clause").
-heritage_ref(r) :- type_ref(r, _), child(c, r, _), kind(c, "implements_clause").
+.decl heritage_ref(r: node)  // ts-a's heritage entry, when it is a plain name (not `Array<T>`, not `N.T`)
+heritage_ref(r) :- type_ref(r, _), heritage(r).
 // type_global(r, x): names.rr resolves r among the type declarations of enclosing scopes (classes, interfaces,
 // type aliases, imports). Type parameters, `infer U` and mapped `[K in …]` bind in the construct that declares
 // them; enums and namespaces declare a type in their block.

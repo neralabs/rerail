@@ -13,7 +13,7 @@
 //   if (err) { callback(err); }  f();     reported: the call is not last in the function
 // option_item("option", i, name): the list of names; ESLint's first option.
 
-#include "tsx/node.rr"                 // node_call
+#include "tsx/node.rr"                 // called
 #include "tsx/eslint-a-functions.rr"   // function_node, deparen
 #include "tsx/statements.rr"           // block_stmt
 
@@ -22,7 +22,7 @@ cb_name(x) :- option_item("option", _, x).
 cb_name(x) :- !option_item("option", _, _), (x = "callback" ; x = "cb" ; x = "next").
 // cb_call(c): containsOnlyIdentifiers(callee) and its text is a name.
 .decl cb_call(c: node)
-cb_call(c) :- node_call(c, f), plain(f), text(f, x), cb_name(x).
+cb_call(c) :- called(c, f), plain(f), text(f, x), cb_name(x).
 .decl plain(f: node)  // an identifier, or a member whose object (repeatedly) ends in an identifier
 plain(f) :- kind(f, "identifier").
 plain(f) :- (kind(f, "member_expression") ; kind(f, "subscript_expression")), field(f, "object", o),

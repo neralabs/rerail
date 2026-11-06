@@ -1,6 +1,7 @@
 // tsx/react: React as eslint-plugin-react and eslint-plugin-react-hooks see it: which files render with React, JSX
 // open tags and their props, React.createElement calls, and class components. Builds on tsx/jsx (elements,
-// tags, function components) and tsx/names (sym_of, ref_site).
+// tags, function components), tsx/names (sym_of, ref_site) and tsx/eslint-a-common (call_arg, deparen,
+// function_kind, function_node).
 //
 // What a rule gets from this library:
 //   files
@@ -21,7 +22,7 @@
 //     jsx_children(e)         element e has a child: an element, an expression or non-blank text
 //   createElement
 //     create_element(c)       c calls React.createElement (or a createElement taken from React)
-//     create_arg(c, a, i)     a is c's i-th argument, from 0 (comments are not arguments)
+//                             (its arguments are eslint-a-common's call_arg(c, a, i), from 0)
 //     create_prop(c, x, p)    p is the property of c's props object literal keyed x: { href: "…" }, { href }
 //     create_key(c, x, p)     the same where the key is a name, as the rules' `prop.key.name` reads it: `x:`,
 //                             `{ x }`, `x() {}` and `[x]`, but not "x"
@@ -38,6 +39,7 @@
 // (react.pragma), else "React". Settings are not modelled; the comment is.
 //   /** @jsx Preact.h */   → pragma "Preact"
 #include "tsx/jsx.rr"
+#include "tsx/eslint-a-common.rr"
 
 // ---- files ----------------------------------------------------------------------------------------------------
 // The React ports run only on files whose JSX runtime is React's or unknown. A file names another JSX library
@@ -158,17 +160,14 @@ create_element(c) :- kind(c, "call_expression"), field(c, "function", f), text(f
 create_element(c) :- kind(c, "call_expression"), field(c, "function", f), text(f, "createElement"),
     kind(f, "identifier"), ref_site(f, site), within(site, v), kind(v, "variable_declarator"), field(v, "value", i),
     docof(c, d), pragma(d, x), (text(i, x) ; field(i, "object", o), text(o, x)).
-.decl create_arg(c: node, a: node, i: number)
-create_arg(c, a, i) :- create_element(c), field(c, "arguments", l), child(l, a, j),
-    i = count : { child(l, b, k), k < j, !kind(b, "comment") }, !kind(a, "comment").
 // create_prop: { href: "x" }, { "href": x }, { href }. Computed keys and spreads are left out.
 .decl create_prop(c: node, x: symbol, p: node)
-create_prop(c, x, p) :- create_arg(c, o, 1), kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", k),
-    (kind(k, "property_identifier"), text(k, x) ; kind(k, "string"), str(k, x)).
-create_prop(c, x, p) :- create_arg(c, o, 1), kind(o, "object"), child(o, p, _),
+create_prop(c, x, p) :- create_element(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _), kind(p, "pair"),
+    field(p, "key", k), (kind(k, "property_identifier"), text(k, x) ; kind(k, "string"), str(k, x)).
+create_prop(c, x, p) :- create_element(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _),
     kind(p, "shorthand_property_identifier"), text(p, x).
 .decl create_key(c: node, x: symbol, p: node)
-create_key(c, x, p) :- create_arg(c, o, 1), kind(o, "object"), child(o, p, _), key_ident(p, x).
+create_key(c, x, p) :- create_element(c), call_arg(c, o, 1), kind(o, "object"), child(o, p, _), key_ident(p, x).
 .decl key_ident(p: node, x: symbol)  // property p of an object literal has a name as its key
 key_ident(p, x) :- (kind(p, "pair") ; kind(p, "method_definition")), (field(p, "key", k) ; field(p, "name", k)),
     kind(k, "property_identifier"), text(k, x).
@@ -177,7 +176,7 @@ key_ident(p, x) :- (kind(p, "pair") ; kind(p, "method_definition")), (field(p, "
 key_ident(p, x) :- kind(p, "shorthand_property_identifier"), text(p, x).
 // create_tag(c, x): c's type argument is the string x: createElement("button") gives "button".
 .decl create_tag(c: node, x: symbol)
-create_tag(c, x) :- create_arg(c, t, 0), kind(t, "string"), str(t, x).
+create_tag(c, x) :- create_element(c), call_arg(c, t, 0), kind(t, "string"), str(t, x).
 .decl create_dom(c: node)
 create_dom(c) :- create_tag(c, x), glob("[a-z]**", x).
 

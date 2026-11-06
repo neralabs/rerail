@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-common.rr"
-//   deparen(e, x)
+#include "tsx/ts-b.rr"
+//   enum_member(n, m, i, x), enum_init(m, v); deparen(e, x) (eslint-a-common)
 
 // typescript-eslint's no-duplicate-enum-values: an enum member whose initializer has the same static value as
 // an earlier member's. Values are compared with Object.is, so a string and a number never match, and -0 is not 0.
@@ -19,13 +19,12 @@
     suppress oxlint "no-duplicate-enum-values"
 no_duplicate_enum_values(m, x) :- same_value(b, m, x, e), e < m.
 
-// same_value(b, m, x, e): members m and e of enum body b have equal values (Object.is); x is m's initializer.
+// same_value(b, m, x, e): members m and e of enum b have equal values (Object.is); x is m's initializer.
 .decl same_value(b: node, m: node, x: node, e: node)
 same_value(b, m, x, e) :- enum_member_init(b, m, x), enum_string(x, v), enum_member_init(b, e, y), enum_string(y, v).
 same_value(b, m, x, e) :- enum_member_init(b, m, x), enum_number(x, f, z), enum_member_init(b, e, y), enum_number(y, f, z).
-.decl enum_member_init(b: node, m: node, x: node)  // member m of enum body b is `name = x`
-enum_member_init(b, m, x) :- kind(b, "enum_body"), child(b, m, _), kind(m, "enum_assignment"), field(m, "value", i),
-    deparen(i, x).
+.decl enum_member_init(b: node, m: node, x: node)  // member m of enum b is `name = x`, x without parentheses
+enum_member_init(b, m, x) :- enum_member(b, m, _, _), enum_init(m, i), deparen(i, x).
 
 // getMemberValue. enum_string(x, v): a string literal, or a template without `${}`.
 .decl enum_string(x: node, v: symbol)

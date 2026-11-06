@@ -58,9 +58,9 @@ chain_root(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expressio
 // frozen(s, f): binding s of compiled f holds a frozen value.
 .decl frozen(s: node, f: node)
 // props, or a destructured prop: the first parameter of a component (the second is its ref).
-frozen(s, f) :- rc_component(f), rc_param(f, p, 0), (s = p ; within(s, p)).
+frozen(s, f) :- rc_component(f), fn_param(f, p, 0), (s = p ; within(s, p)).
 // every argument of a hook
-frozen(s, f) :- rc_compiled(f), !rc_component(f), rc_param(f, p, _), (s = p ; within(s, p)).
+frozen(s, f) :- rc_compiled(f), !rc_component(f), fn_param(f, p, _), (s = p ; within(s, p)).
 // a hook's result, useState's value, a context: const v = useFoo(), const [state] = useState(…)
 frozen(s, f) :- rc_compiled(f), kind(d, "variable_declarator"), within(d, f), field(d, "value", c), rc_hook_call(c),
     bound(d, s), !setter_of(s).

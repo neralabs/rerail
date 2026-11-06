@@ -14,7 +14,7 @@
 // (no string literal argument). { allowCall: true } reads `require("a")(b)` as a require too.
 // The identifier is read by name: a local `require` counts.
 
-#include "tsx/node.rr"   // node_call, node_chain, deparen
+#include "tsx/node.rr"   // called, node_chain, deparen
 
 .decl grouping()
 grouping() :- (option("option", "true") ; option("grouping", "true")).
@@ -32,9 +32,9 @@ walk(o) :- step(_, o).
 .decl step(e: node, o: node)
 step(e, o) :- walk(e), !node_chain(e), (kind(e, "member_expression") ; kind(e, "subscript_expression")),
     field(e, "object", w), deparen(w, o).
-step(e, o) :- walk(e), !node_chain(e), option("allowCall", "true"), node_call(e, o), kind(o, "call_expression").
+step(e, o) :- walk(e), !node_chain(e), option("allowCall", "true"), called(e, o), kind(o, "call_expression").
 .decl req(e: node)  // a call of the identifier require
-req(e) :- walk(e), !node_chain(e), node_call(e, f), kind(f, "identifier"), text(f, "require").
+req(e) :- walk(e), !node_chain(e), called(e, f), kind(f, "identifier"), text(f, "require").
 .decl last(e: node, t: symbol)  // getDeclarationType(e): "require" or "other"
 last(e, "require") :- req(e).
 last(e, "other") :- walk(e), !req(e), !step(e, _).

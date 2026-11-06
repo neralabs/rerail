@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-b.rr"
 //   type_child
 
 // typescript-eslint's method-signature-style: methods of interfaces and object types are written one way.
@@ -46,8 +46,7 @@ returns(m, r) :- plain_method(m), field(m, "return_type", ta), child(ta, t, _), 
 returns(m, "any") :- plain_method(m), !field(m, "return_type", _).
 .decl no_fix(m: node)
 no_fix(m) :- plain_method(m), field(m, "return_type", ta), has(ta, _, "this_type").
-no_fix(m) :- plain_method(m), (inside(m, _, "internal_module") ; inside(m, _, "module") ;
-    inside(m, g, "ambient_declaration"), op(g, "global")).
+no_fix(m) :- plain_method(m), within(m, g), ts_module_decl(g).   // in a namespace, module or `declare global`
 no_fix(m) :- plain_method(m), key_text(m, k), child(b, m, _), child(b, o, _), o != m, plain_method(o), key_text(o, k).
 to_property(m, _, _) :- plain_method(m), !no_fix(m), key_text(m, k), params_text(m, p), returns(m, r)
     => replace(m, `$k: $p => $r`).

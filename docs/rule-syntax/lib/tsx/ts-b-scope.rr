@@ -122,10 +122,9 @@ scope_type(v, "class-field-initializer") :- field_value(v).
 variable_scope(s, s) :- scope_node(s), kind(s, k), var_home(k).
 variable_scope(v, v) :- field_value(v).
 variable_scope(s, f) :- scope_node(s), kind(s, k), !var_home(k), !field_value(s), scope_up(s, u), variable_scope(u, f).
-.decl var_home(k: symbol)  // where `var` lands
-var_home("program"). var_home("function_declaration"). var_home("function_expression").
-var_home("generator_function"). var_home("generator_function_declaration"). var_home("arrow_function").
-var_home("method_definition"). var_home("class_static_block"). var_home("internal_module"). var_home("module").
+.decl var_home(k: symbol)  // where `var` lands: names.rr's fn_scope, and a namespace (the scope manager's)
+var_home(k) :- fn_scope(k).
+var_home("internal_module"). var_home("module").
 
 // ---- variables ---------------------------------------------------------------------------------------------------
 .decl variable(s: node, x: symbol, id: node, k: symbol)

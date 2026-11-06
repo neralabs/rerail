@@ -36,9 +36,9 @@ name_of(e, cat(x, cat(".", y))) :- deparen(e, m), kind(m, "member_expression"), 
 name_of(e, cat(x, cat(".", y))) :- deparen(e, m), kind(m, "subscript_expression"), field(m, "object", o), name_of(o, x),
     field(m, "index", i), deparen(i, s), (kind(s, "string"), value(s, y) ; kind(s, "identifier"), text(s, y)).
 name_of(e, x) :- deparen(e, c), kind(c, "call_expression"), field(c, "function", f), name_of(f, x).
-// assertion(a): call a (not a tagged template) has a callee name an assertFunctionNames pattern starts.
-.decl assertion(a: node)
-assertion(a) :- kind(a, "call_expression"), field(a, "arguments", g), kind(g, "arguments"), field(a, "function", f),
+// assert_call(a): call a (not a tagged template) has a callee name an assertFunctionNames pattern starts.
+.decl assert_call(a: node)
+assert_call(a) :- kind(a, "call_expression"), field(a, "arguments", g), kind(g, "arguments"), field(a, "function", f),
     name_of(f, x), pattern(p), match(cat("(?i)", cat(p, "(\\..*)?")), x).
 .decl pattern(p: symbol)  // the regex of each assertFunctionNames entry
 pattern(p) :- names(n), p = @replace_all(@replace_all(@replace_all(@replace_all(n, "\\.", "\\."), "\\*\\*", "~"),
@@ -47,5 +47,5 @@ pattern(p) :- names(n), p = @replace_all(@replace_all(@replace_all(@replace_all(
 names(n) :- option_item("assertFunctionNames", _, n).
 names(n) :- !option("assertFunctionNames", _), (n = "expect" ; n = "assert").
 .decl asserted(c: node)
-asserted(c) :- test_block(c), assertion(a), within(a, c).
-asserted(c) :- test_block(c), test_fn(c, f), kind(f, "function_declaration"), assertion(a), within(a, f).
+asserted(c) :- test_block(c), assert_call(a), within(a, c).
+asserted(c) :- test_block(c), test_fn(c, f), kind(f, "function_declaration"), assert_call(a), within(a, f).

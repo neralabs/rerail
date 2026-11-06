@@ -13,7 +13,7 @@
 // version option, else values.rr's node_range) supports `node:` imports (^12.20.0 || >=14.13.1); require()
 // also needs it for require (^14.18.0 || >=16.0.0); getBuiltinModule always. The fix adds the prefix.
 
-#include "tsx/node.rr"   // node_call, deparen, call_arg_count, static_prop, node_runs_on
+#include "tsx/node.rr"   // called, deparen, call_arg_count, static_prop, node_runs_on
 
 .decl esm_ok(d: number)
 esm_ok(d) :- node_runs_on(d, r), @semver_subset(r, "^12.20.0 || >=14.13.1") = 1.
@@ -22,9 +22,9 @@ cjs_ok(d) :- esm_ok(d), node_runs_on(d, r), @semver_subset(r, "^14.18.0 || >=16.
 
 // protocol_source(n): a string literal n that loads a module, where the rule applies.
 .decl protocol_source(n: node)
-protocol_source(s) :- node_call(c, f), kind(f, "identifier"), text(f, "require"), !field(c, "optional_chain", _),
+protocol_source(s) :- called(c, f), kind(f, "identifier"), text(f, "require"), !field(c, "optional_chain", _),
     call_arg_count(c, 1), call_arg(c, w, 0), deparen(w, s), kind(s, "string"), docof(c, d), cjs_ok(d).
-protocol_source(s) :- node_call(c, f), static_prop(f, o, "getBuiltinModule"), process_ref(o), call_arg(c, w, 0),
+protocol_source(s) :- called(c, f), static_prop(f, o, "getBuiltinModule"), process_ref(o), call_arg(c, w, 0),
     deparen(w, s), kind(s, "string").
 protocol_source(s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", s), docof(i, d),
     esm_ok(d).

@@ -67,11 +67,12 @@ cloneElement, `i?.toString()` not checked), self-closing-comp and no-unknown-pro
    up in enclosing scopes with `decl_site`, in both namespaces, plus TypeScript's enums, namespaces and type
    parameters, as typescript-eslint's scope manager declares them. ESLint's quirk is followed too: the module scope's first child scope
    counts, so `function m() { var V } <V/>` is reported unless m is the first function.
-4. no-unescaped-entities: the one FN is `invalid-007.jsx:2`, which has two quotes on one line. They make one finding
-   key. The JSON checked only `'` and `"`; the rule's default list also has `>` and `}`. Both are syntax errors
+4. no-unescaped-entities: each quote is a `match_all` capture over the text node, a span with its own line and
+   column, so two quotes on one line are two findings, as ESLint reports them (3 TP / 0 FP / 0 FN; before
+   match_all, `invalid-007.jsx:2` with two quotes was one finding and one FN). The JSON checked only `'` and `"`; the rule's default list also has `>` and `}`. Both are syntax errors
    in JSX text for espree and typescript-eslint (checked), so only quotes can be reported. The rule does not
    report them either. Each quote is placed on its own line with `src_line`'s span, walking the text one quote at
-   a time with captures. rrlab has no `match_all`.
+   a time with captures. (Superseded: see the start of this item.)
 5. no-unknown-property follows the tool's algorithm: normalise the any-case names, skip data-*/aria-*, apply the
    tag map, look up the HTML/SVG attribute name, then the case-insensitive DOM property. The tables are
    `react-no-unknown-property.props.rr`, generated from the JSON by `gen-react-no-unknown-property.py`.
@@ -91,9 +92,12 @@ cloneElement, `i?.toString()` not checked), self-closing-comp and no-unknown-pro
 - `lib/tsx/names.rr`: `ref` excludes identifiers in any `name` field, which drops JSX tag names
   (`jsx_opening_element.name`, `jsx_self_closing_element.name`). Proposed: also add
   `ref(r, x, "value") :- kind(r, "identifier"), text(r, x), field(o, "name", r), (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")).`
-  jsx-no-undef and react-compiler.rr could then use `ref_site`.
+  jsx-no-undef and react-compiler.rr could then use `ref_site`. Done at the merge (names.rr `jsx_tag_ref`, for tags
+  not starting lower-case): react-compiler's `rc_tag_site` and react-hooks' `deps_site` are gone. jsx-no-undef keeps
+  its own lookup: it follows ESLint's quirks (both namespaces, enums and namespaces, the first child scope).
 - rrlab: `match_all` is not modelled, and neither is `(?s)` in match (the functor's regex dialect). Write
-  `[\s\S]` instead.
+  `[\s\S]` instead. Done in rrlab 08d977aa5 (Rust regex, match_all, capture spans); no-unescaped-entities,
+  jsx-no-comment-textnodes, iframe-missing-sandbox and jsx-no-target-blank now use them.
 - rrlab `run` uses the files' common directory as `--root` and reads file and package facts below it. Files under
   both /private/tmp and /Users give `/`, and the run walks the whole disk (2 GB RSS before it was killed).
   Proposed: refuse a root of `/`, or read only the files given and their package.json chain.
@@ -340,3 +344,13 @@ two entries with no replacement (`React.isValidClass`, `React.addons.LinkedState
   position; mine: the plugin's detection, with `null` returns and positions). Possibly with react-hooks.rr's
   component detection, if the hooks fork wrote one.
 - `same_scope` / `scope_holder` may duplicate eslint-b-scope's `escope_of` once that library is committed.
+
+## Merged at integration (see packs/MERGE-tsx.md)
+
+The duplicates listed above are settled: `deps_site` and `rc_tag_site` are names.rr's `ref_site` (JSX tags are
+references there); `deps_arg` and `create_arg` are eslint-a-common's `call_arg`; `hook_fn_kind` / `hook_fn` are
+modules.rr's `function_kind` / eslint-a-common's `function_node` (the same six kinds); `rc_param` is
+eslint-a-functions' `fn_param`; jsx.rr's `fn_kind` is gone (`returned` now stops at any function, methods and
+generators included), and react-class's `fn_returns` is built on `returned`. Kept apart on purpose: `rc_fn_kind`
+(Babel's Function, no methods), `deps_bare` (also drops `as`), `rc_state_setter` / `deps_second` (the compiler takes
+the second element, the plugin wants exactly two), `fn_component` / jsx.rr's `component`, and `scope_holder`.

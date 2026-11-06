@@ -83,18 +83,7 @@ state_read(n) :- this_prop(n, "state").
 // body, a class field's initializer, a static block, the program.
 //   onClick() { const next = this.state.n; this.setState({ n: next }); }    one scope: the method's
 .decl same_scope(a: node, b: node)
-same_scope(a, b) :- nearest(a, s, scope_holder), nearest(b, s, scope_holder).
-.decl scope_holder(n: node)
-scope_holder(n) :- kind(n, k), function_kind(k).
-scope_holder(n) :- kind(n, k), scope_holder_kind(k).
-scope_holder(b) :- kind(b, "statement_block"), !fn_body(b).
-scope_holder(v) :- (kind(f, "field_definition") ; kind(f, "public_field_definition")), field(f, "value", v).
-.decl fn_body(b: node)
-fn_body(b) :- kind(f, k), function_kind(k), field(f, "body", b).
-.decl scope_holder_kind(k: symbol)
-scope_holder_kind("program"). scope_holder_kind("for_statement"). scope_holder_kind("for_in_statement").
-scope_holder_kind("catch_clause"). scope_holder_kind("switch_statement"). scope_holder_kind("class_body").
-scope_holder_kind("class_static_block").
+same_scope(a, b) :- nearest(a, s, escope_node), nearest(b, s, escope_node).   // eslint-a-common
 
 // ---- ancestry -------------------------------------------------------------------------------------------------
 .decl fn_up(n: node, f: node)
@@ -131,10 +120,8 @@ keyed_kind("public_field_definition").
 //   ret_jsx(f)             f returns JSX: an element, a fragment or a createElement call, maybe through ?:, &&, ||,
 //                          ??, a sequence's last part, parentheses, or a const holding JSX (isReturningJSX)
 //   ret_jsx_null(f)        the same, or f returns null (isReturningJSXOrNull)
-.decl fn_returns(f: node, x: node)  // x is a value f returns: a return's argument, an arrow's expression body
-fn_returns(f, x) :- kind(r, "return_statement"), nearest(r, f, function_kind), child(r, e, 0), !kind(e, "comment"),
-    deparen(e, x).
-fn_returns(f, x) :- kind(f, "arrow_function"), field(f, "body", e), !kind(e, "statement_block"), deparen(e, x).
+.decl fn_returns(f: node, x: node)  // x is a value f returns (tsx/jsx's returned), parentheses off
+fn_returns(f, x) :- returned(f, e), deparen(e, x).
 .decl ret_branch(f: node, x: node)  // the parts that may be the value: both arms of ?:, both sides of && || ??
 ret_branch(f, x) :- fn_returns(f, x).
 ret_branch(f, y) :- ret_branch(f, x), kind(x, "ternary_expression"), (field(x, "consequence", e) ;
