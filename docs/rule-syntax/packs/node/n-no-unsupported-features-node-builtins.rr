@@ -7,11 +7,11 @@
 // a member, a global; read, called or constructed) whose supported releases do not cover every version the package
 // may run on. The data is a table, one row per API; this file is the check.
 //   1. use: each API use (lib/tsx/values.rr), less the names the `ignores` option lists.
-//   2. supported: the range of releases that have the API: ">=since", plus "^v" for each backport.
+//   2. range_of: the releases that have the API: ">=since", plus "^v" for each backport; the same for the releases
+//      where it is experimental. basis: which of the two decides; experimental only under allowExperimental.
 //   3. runs_on: the range the file must run on: a valid `version` option, else values.rr's node_range.
-//   4. a finding where runs_on is not a subset of supported, or where no release supports the API in that form.
-// Not ported: allowExperimental (the plugin has experimental versions; the JSON this table comes from dropped them)
-// and ESLint's settings.node.version.
+//   4. a finding where runs_on is not a subset of that range, or where no release supports the API in that form.
+// Not ported: ESLint's settings.node.version.
 
 #include "tsx/values.rr"
 #include "../packs/node/n-no-unsupported-features-node-builtins.facts.rr"   // api_since, api_backport, …
@@ -23,17 +23,30 @@ use(at, p, how) :- api_use(at, p, how), tabled(p, how), !ignored(p).
 use(e, p, "read") :- export_all(e, m), tabled(p, "read"), match("(?<pm>[^#]+)#[^.]+", p), pm = m, !ignored(p).
 .decl tabled(api: symbol, how: symbol)
 tabled(p, how) :- api_since(p, how, _).
-tabled(p, how) :- api_experimental(p, how).
+tabled(p, how) :- api_never(p, how).
 // ignores lists names as the plugin spells them: "fs.promises.readFile", "process.getBuiltinModule"; "fs" covers
 // node:fs too. One option row per list entry.
 .decl ignored(p: symbol)
 ignored(p) :- tabled(p, _), option("ignores", i), @replace_all(@replace_all(p, "^node:", ""), "#", ".") = i.
 
-// supported(api, how, since, r): the releases that have it: ("process.getBuiltinModule", "read", "22.3.0",
-// ">=22.3.0 || ^20.16.0"). Built from the table's versions, so always a valid range; the guard keeps it so.
-.decl supported(api: symbol, how: symbol, since: symbol, r: symbol)
-supported(p, how, s, cat(cat(">=", s), bs)) :- api_since(p, how, s),
-    bs = join x by b sep "" : { api_backport(p, how, b), x = cat(" || ^", b) }, @semver_valid(cat(cat(">=", s), bs)) = 1.
+// range_of(api, how, kind, since, r): kind "supported" or "experimental", since the latest such release, r the
+// range: ("process.getBuiltinModule", "read", "supported", "22.3.0", ">=22.3.0 || ^20.16.0").
+.decl range_of(api: symbol, how: symbol, kind: symbol, since: symbol, r: symbol)
+range_of(p, how, k, s, cat(cat(">=", s), bs)) :- first(p, how, k, s),
+    bs = join x by b sep "" : { also(p, how, k, b), x = cat(" || ^", b) }, @semver_valid(cat(cat(">=", s), bs)) = 1.
+.decl first(api: symbol, how: symbol, kind: symbol, v: symbol)
+first(p, how, "supported", v) :- api_since(p, how, v).
+first(p, how, "experimental", v) :- api_experimental_since(p, how, v).
+.decl also(api: symbol, how: symbol, kind: symbol, v: symbol)
+also(p, how, "supported", v) :- api_backport(p, how, v).
+also(p, how, "experimental", v) :- api_experimental_backport(p, how, v).
+// basis(api, how, kind): allowExperimental judges an API that has experimental releases by those alone, as the
+// plugin does (it then never looks at the supported ones); every other API by its supported releases.
+.decl basis(api: symbol, how: symbol, kind: symbol)
+basis(p, how, "experimental") :- trial(p, how).
+basis(p, how, "supported") :- tabled(p, how), !trial(p, how).
+.decl trial(api: symbol, how: symbol)
+trial(p, how) :- option("allowExperimental", "true"), api_experimental_since(p, how, _).
 
 // runs_on(d, r): the Node.js range document d must run on. A `version` that is no range ("lts") is ignored.
 .decl runs_on(d: number, r: symbol)
@@ -43,14 +56,14 @@ runs_on(d, r) :- node_range(d, r), !version_opt(_).
 version_opt(r) :- option("version", r), @semver_valid(r) = 1.
 
 // The findings. Both share the plugin's code, so a finding's key is (policy, code, path, line), as in the JSON.
-.violation unsupported(at: node, api: symbol, since: symbol, ok: symbol, cfg: symbol) code "n/no-unsupported-features/node-builtins"
-    "{api} needs Node.js {since} or later ({ok}); the configured range {cfg} includes earlier versions."
+.violation unsupported(at: node, api: symbol, kind: symbol, since: symbol, ok: symbol, cfg: symbol) code "n/no-unsupported-features/node-builtins"
+    "{api} is {kind} from Node.js {since} on ({ok}); the configured range {cfg} includes earlier versions."
     suppress eslint "n/no-unsupported-features/node-builtins"
-unsupported(at, p, s, r, t) :- use(at, p, how), supported(p, how, s, r), docof(at, d), runs_on(d, t),
-    @semver_subset(t, r) = 0.
+unsupported(at, p, k, s, r, t) :- use(at, p, how), basis(p, how, k), range_of(p, how, k, s, r), docof(at, d),
+    runs_on(d, t), @semver_subset(t, r) = 0.
 
 .violation experimental(at: node, api: symbol) code "n/no-unsupported-features/node-builtins"
     "{api} is still experimental in every Node.js release; do not rely on it."
     suppress eslint "n/no-unsupported-features/node-builtins"
 // No release supports p used this way: an experimental API, or a form no release has (zlib.Gzip() without new).
-experimental(at, p) :- use(at, p, how), api_experimental(p, how).
+experimental(at, p) :- use(at, p, how), api_never(p, how), basis(p, how, "supported").

@@ -21,11 +21,10 @@
 //   globalThis.fetch(url)                 the call                    api_use "fetch" call
 //
 // Builds on names.rr (ref, ref_site, binding_value, site_occurrence, import_binding, import_spec, star_export,
-// directive_global), modules.rr and core (its package.json reader, package_for and package_field). No type
+// directive_global) and core (semver, and the package.json reader package_for and package_field). No type
 // checker: a value is followed only through syntax that surely carries it.
 
 #include "tsx/names.rr"
-#include "tsx/modules.rr"
 
 
 // node_module(spec, root): Node resolves spec to a built-in module whose members are traced under root:

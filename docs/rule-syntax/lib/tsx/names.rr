@@ -62,14 +62,26 @@ decl_site(s, x, c, "class", sp)     :- kind(c, "class_declaration"), field(c, "n
 // `type T = …` and `interface I {}` declare only in the type namespace; they vanish at runtime.
 decl_site(s, x, t, "type", "type")   :- kind(t, k), (k = "type_alias_declaration" ; k = "interface_declaration"),
     field(t, "name", n), text(n, x), nearest(t, s, block_scope).
-// Parameters: in `function f(a, c = d)` a and c are declared with the function itself as scope. An identifier that
-// is a default value (`d`) is excluded: it is a reference, evaluated at call time. Only `identifier` nodes match,
-// so a destructured parameter `{ b }` (a shorthand pattern node) needs the second rule.
+// Parameters: in `function f(a, c = g(d), { e, h: [i] })` a, c, e and i are declared with the function itself as
+// scope. Default values (`g(d)`) and keys (`h`) are not: they are references, or no names at all. A name inside a
+// function nested in a default (`f(k = (j) => j)`) belongs to that function, hence nearest(p, f, fn_scope).
 decl_site(f, x, p, "param", "value") :- kind(f, k), fn_scope(k), field(f, "parameters", ps), within(p, ps),
-    kind(p, "identifier"), text(p, x), !field(_, "value", p).
-// `function f({ b, c = 1 })` declares b and c: the shorthand names of a destructured parameter.
-decl_site(f, x, p, "param", "value") :- kind(f, k), fn_scope(k), field(f, "parameters", ps), within(p, ps),
-    kind(p, "shorthand_property_identifier_pattern"), bound_name(p, x).
+    nearest(p, f, fn_scope), param_name(p, x).
+// `x => x`: an arrow function's single bare parameter sits in its own field.
+decl_site(f, x, p, "param", "value") :- kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier"),
+    text(p, x).
+// `catch (e)` and `catch ({ message })` declare in the catch clause, which is the block scope of its body's names.
+decl_site(c, x, p, "catch", "value") :- kind(c, "catch_clause"), field(c, "parameter", p), kind(p, "identifier"),
+    text(p, x).
+decl_site(c, x, p, "catch", "value") :- kind(c, "catch_clause"), field(c, "parameter", par), within(p, par),
+    nearest(p, f, fn_scope), nearest(c, f, fn_scope), bound_name(p, x).
+// param_name(p, x): p binds x as a parameter: listed directly, the pattern of a TypeScript `a: T = v` parameter, or a
+// name a destructuring pattern or a default's left side binds (bound_name).
+.decl param_name(p: node, x: symbol)
+param_name(p, x) :- kind(p, "identifier"), text(p, x), child(ps, p, _), kind(ps, "formal_parameters").
+param_name(p, x) :- kind(p, "identifier"), text(p, x), field(par, "pattern", p), kind(par, k),
+    (k = "required_parameter" ; k = "optional_parameter").
+param_name(p, x) :- bound_name(p, x).
 // `import { a } from "m"` declares a for the whole file, in both namespaces: an import can bring in a value,
 // a type, or both, and without the other file we cannot tell which.
 decl_site(s, x, sp, "import", "value") :- import_binding(sp, x, _, _), nearest(sp, s, "program").
@@ -78,9 +90,11 @@ decl_site(s, x, sp, "import", "type")  :- import_binding(sp, x, _, _), nearest(s
 // a appears as shorthand_property_identifier_pattern, c as a plain identifier; keys sit in a "key" field.
 .decl pattern_name(p: node, x: symbol, d: node)  // a name bound by destructuring in declarator d
 pattern_name(p, x, d) :- kind(d, "variable_declarator"), field(d, "name", pat), kind(pat, k),
-    (k = "object_pattern" ; k = "array_pattern"), within(p, pat), bound_name(p, x).
+    (k = "object_pattern" ; k = "array_pattern"), within(p, pat), bound_name(p, x),
+    nearest(p, f, fn_scope), nearest(d, f, fn_scope).   // not a parameter of a function in a default
 // bound_name(p, x): p is a name in a binding position of a pattern: directly in an object or array pattern, a pair's
-// value, a default's left side or a rest. Keys and default values are not: in `{ a: b = c }` only b is bound.
+// value, a default's left side or a rest. Keys and default values are not: in `{ a: b = c }` only b is bound, and in
+// `{ a = g(c) }` c's parent is no pattern node. (Callers rule out patterns in functions nested inside a default.)
 .decl bound_name(p: node, x: symbol)
 bound_name(p, x) :- kind(p, pk), (pk = "shorthand_property_identifier_pattern" ; pk = "identifier"), text(p, x),
     child(par, p, _), kind(par, k), binding_parent(k), !field(par, "key", p), !field(par, "right", p).
@@ -118,7 +132,7 @@ look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p
 // In `import { Link } from "x"; <Link/>`, the use of Link has ref_site to the import specifier.
 .decl ref_site(r: node, site: node)
 ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
-// site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern").
+// site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern" | "catch").
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)
 site_form(d, f) :- decl_site(_, _, d, f, _).

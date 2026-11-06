@@ -8,6 +8,12 @@ clause's alternatives (as a multiset), and each clause's version gate, languageO
 a wrong how (call for new), a wrong version or a missing row each changes some clause. It never parses the clauses'
 alternatives itself, so it is independent of gen-node-builtins.py's reading of them. (After a reviewer's roundtrip.py.)
 It also checks the rows values.rr reads: node_module, node_global and api_known.
+
+With --plugin DIR (eslint-plugin-n 18.4.1 unpacked; or $ESLINT_PLUGIN_N) it checks the experimental columns, which
+the JSON does not have, against the plugin's own trace map: every row's experimental versions, and its supported
+ones, equal the plugin's, and the table has exactly the APIs the plugin traces. The plugin's files are read by
+gen-node-builtins.py's PluginData; that reader is the one the supported comparison also exercises, against data the
+round trip has tied to the JSON.
 """
 import collections, json, os, re, sys
 
@@ -16,6 +22,7 @@ REPO = os.path.normpath(os.path.join(HERE, "..", "..", "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "scripts", "generate", "packs"))
 sys.dont_write_bytecode = True
 import node_policies as NP  # noqa: E402
+import importlib.util  # noqa: E402
 
 FACTS = os.path.join(HERE, "n-no-unsupported-features-node-builtins.facts.rr")
 JSON = os.path.join(REPO, "packs", "node", "rules", "n-no-unsupported-features-node-builtins.json")
@@ -24,7 +31,9 @@ FLAG = {"read": "$READ", "call": "$CALL", "new": "$CONSTRUCT"}
 
 def read_facts():
     since, back, exp, specs, globals_, known = {}, collections.defaultdict(list), set(), {}, set(), set()
-    for name, args in re.findall(r"^(api_since|api_backport|api_experimental|node_module|node_global|api_known)"
+    trial = collections.defaultdict(list)
+    for name, args in re.findall(r"^(api_since|api_backport|api_never|api_experimental_since|api_experimental_backport"
+                                 r"|node_module|node_global|api_known)"
                                  r"\(([^)]*)\)\.", open(FACTS).read().replace(". api_", ".\napi_"), re.M):
         a = json.loads("[" + args + "]")
         if name == "api_since":
@@ -32,15 +41,21 @@ def read_facts():
             since[(a[0], a[1])] = a[2]
         elif name == "api_backport":
             back[(a[0], a[1])].append(a[2])
-        elif name == "api_experimental":
+        elif name == "api_never":
             exp.add((a[0], a[1]))
+        elif name == "api_experimental_since":
+            assert (a[0], a[1]) not in trial, a
+            trial[(a[0], a[1])].insert(0, a[2])
+        elif name == "api_experimental_backport":
+            assert (a[0], a[1]) in trial, a
+            trial[(a[0], a[1])].append(a[2])
         elif name == "node_module":
             specs[a[0]] = a[1]
         elif name == "node_global":
             globals_.add(a[0])
         else:
             known.add(a[0])
-    return since, back, exp, specs, globals_, known
+    return since, back, exp, specs, globals_, known, dict(trial)
 
 
 def trace_map(since, back, exp, specs):
@@ -111,7 +126,7 @@ def canon(d):
 
 
 def main():
-    since, back, exp, specs, globals_, known = read_facts()
+    since, back, exp, specs, globals_, known, trial = read_facts()
     bad = []
     if set(since) & exp:
         bad.append(f"both supported and experimental: {sorted(set(since) & exp)[:5]}")
@@ -155,11 +170,34 @@ def main():
     if expect != known:
         bad.append(f"api_known differs: {sorted(expect ^ known)[:6]}")
 
+    if not set(trial) <= set(since) | exp:
+        bad.append(f"experimental versions for untabled APIs: {sorted(set(trial) - set(since) - exp)[:5]}")
+    plugin = None
+    arg = sys.argv[sys.argv.index("--plugin") + 1] if "--plugin" in sys.argv else os.environ.get("ESLINT_PLUGIN_N")
+    if arg:
+        spec = importlib.util.spec_from_file_location("gen", os.path.join(HERE, "gen-node-builtins.py"))
+        gen = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gen)
+        plugin = gen.PluginData(arg).rows(specs, globals_)
+        rows = set(since) | exp
+        if set(plugin) != rows:
+            bad.append(f"plugin-only {sorted(set(plugin) - rows)[:5]}, table-only {sorted(rows - set(plugin))[:5]}")
+        for k in sorted(rows & set(plugin)):
+            sup = ([since[k]] + back[k]) if k in since else []
+            if sorted(sup) != sorted(plugin[k]["supported"]) or gen.latest_first(sup) != sup:
+                bad.append(f"{k}: supported {sup}, plugin {plugin[k]['supported']}")
+            e = trial.get(k, [])
+            if sorted(e) != sorted(plugin[k]["experimental"]) or gen.latest_first(e) != e:
+                bad.append(f"{k}: experimental {e}, plugin {plugin[k]['experimental']}")
+
     count = collections.Counter(h for (_, h) in set(since) | exp)
     print(f"table: {len(set(since) | exp)} APIs ({dict(count)}), {len(exp)} with no supported release, {sum(1 for v in back.values() if v)} "
           f"with backports; {len(specs)} module specifiers, {len(globals_)} globals, {len(known)} traced names")
     print(f"round trip: utilities {len(u1)}/{len(u2)}, clauses {len(c1)}/{len(c2)}, alternatives "
           f"{sum(sum(c.values()) for c in c1.values())}/{sum(sum(c.values()) for c in c2.values())} (table/JSON)")
+    print(f"plugin data: {len(trial)} APIs with experimental versions; " +
+          (f"checked against the plugin's {len(plugin)} traced APIs" if plugin is not None
+           else "NOT checked against the plugin (pass --plugin DIR)"))
     for b in bad:
         print("MISMATCH", b)
     print("ok" if not bad else f"{len(bad)} mismatches")
