@@ -48,11 +48,14 @@ fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
     ];
     #[cfg(target_os = "macos")]
     {
-        use metal_program_backend::block_program::{LaneWidth, interpret, run_generated};
+        use metal_program_backend::block_program::{ClassStrategy, LaneWidth, interpret, run_generated_with};
         for width in LaneWidth::ALL {
             let w = width.bytes();
             out.push((format!("metal interpreter, {w}-byte lanes"), interpret(block, bytes, width).expect("runs")));
-            out.push((format!("generated msl, {w}-byte lanes"), run_generated(&native, bytes, width).expect("runs")));
+            for strategy in ClassStrategy::ALL {
+                let (got, _) = run_generated_with(&native, bytes, width, strategy).expect("runs");
+                out.push((format!("generated msl, {w}-byte lanes, {strategy:?}"), got));
+            }
         }
     }
     out
@@ -157,6 +160,7 @@ fn opcode(line: &str) -> &str {
 const BODY_OPCODES: &[&str] = &[
     "load", "store", "icmp", "icmp_imm", "vhigh_bits", "uextend", "ishl_imm", "bor", "band", "bxor",
     "bnot", "band_not", "iadd", "iadd_imm", "iconst", "brif", "iadd_pairwise", "bitcast", "extractlane",
+    "swizzle", "ushr_imm",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -176,25 +180,37 @@ fn check_lowering(name: &str, p: &Program) {
     let instructions = compiled.disassembly.lines().filter(|l| l.starts_with("  ") && !l.contains("unwind")).count();
     println!("== {name}: {instructions} machine instructions in the function ==");
     for width in [16usize, 32, 64] {
-        let msl = metal_program_backend_generate(&native, width);
-        println!("== {name}: generated MSL, {width}-byte lanes ==\n{msl}");
-        let kernel = &msl[msl.find("kernel void").expect("a kernel")..];
-        for word in ["for (", "while", "switch", "goto", "?", "if (", "simd_"] {
-            assert!(!kernel.contains(word), "{name}: generated MSL has `{word}`");
+        for (strategy, msl) in metal_program_backend_generate(&native, width) {
+            println!("== {name}: generated MSL, {width}-byte lanes, {strategy} ==\n{msl}");
+            for word in ["for (", "while", "switch", "goto", "?", "if (", "simd_"] {
+                assert!(!msl.contains(word), "{name}: generated MSL ({strategy}) has `{word}`");
+            }
+            // The only memory a class formula reads is the bytes: no tables.
+            if strategy == "Planes" {
+                assert!(!msl.contains("constant uchar"), "{name}: the planes form reads a table");
+            }
         }
     }
 }
 
+/// The generated MSL of every class strategy, from its first line (helpers included).
 #[cfg(target_os = "macos")]
-fn metal_program_backend_generate(native: &native_ir::BlockNative, width: usize) -> String {
-    use metal_program_backend::block_program::{LaneWidth, generate};
+fn metal_program_backend_generate(native: &native_ir::BlockNative, width: usize) -> Vec<(String, String)> {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let width = LaneWidth::ALL.into_iter().find(|w| w.bytes() == width).expect("a width");
-    generate(native, width)
+    ClassStrategy::ALL
+        .into_iter()
+        .map(|s| {
+            let msl = generate_with(native, width, s);
+            let body = msl[msl.find("using namespace metal;").expect("the prelude")..].to_owned();
+            (format!("{s:?}"), body)
+        })
+        .collect()
 }
 
 #[cfg(not(target_os = "macos"))]
-fn metal_program_backend_generate(_native: &native_ir::BlockNative, _width: usize) -> String {
-    "kernel void tempo_block() {}".into()
+fn metal_program_backend_generate(_native: &native_ir::BlockNative, _width: usize) -> Vec<(String, String)> {
+    vec![]
 }
 
 #[test]
@@ -320,4 +336,119 @@ fn operand_refusals() {
     assert!(refused("  block 0 %0 = not %0\n  block 0 output %0\n").contains("verifier"));
     assert!(refused("  block 0 %0 = eq 0x22\n  block 0 %1 = and %0, %2\n  block 0 output %1\n").contains("verifier"));
     assert!(refused("  block 0 %0 = eq 0x22\n  block 0 %1 = and %0\n  block 0 output %1\n").contains("unknown block operation"));
+}
+
+// --- Primitive 8: class ---------------------------------------------------------------------
+
+/// simdjson's table (`03-bitlex.md` §3.1): 0x01 `,`, 0x02 `:`, 0x04 `[]{}`, 0x08 space,
+/// 0x10 `\t \n \r`, 0x20 `\`, 0x40 `"`, 0x80 controls
+/// (every byte below 0x20, whitespace included, as in simdjson).
+const SIMDJSON_TABLE: &str = "  block 0 table 0 lo=8880c0808080808080909284a1948080 hi=90804902002400040000000000000000\n";
+
+/// The five masks simdjson's stage 1 classifies: structural operators, whitespace, backslash,
+/// quote, and controls, all from one table.
+fn simdjson_classes() -> String {
+    format!(
+        "{SIMDJSON_TABLE}  block 0 %0 = class t0 0x07\n  block 0 %1 = class t0 0x18\n  block 0 %2 = class t0 0x20\n\
+         \x20 block 0 %3 = class t0 0x40\n  block 0 %4 = class t0 0x80\n\
+         \x20 block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n  block 0 output %4\n"
+    )
+}
+
+fn simdjson_want(bytes: &[u8]) -> Vec<Vec<u64>> {
+    vec![
+        reference(bytes, |b| b",:[]{}".contains(&b)),
+        reference(bytes, |b| b" \t\n\r".contains(&b)),
+        reference(bytes, |b| b == b'\\'),
+        reference(bytes, |b| b == b'"'),
+        reference(bytes, |b| b < 0x20),
+    ]
+}
+
+#[test]
+fn class_round_trips_through_rir() {
+    let p = program(&simdjson_classes());
+    let text = rir::disassemble(&p, None);
+    assert!(text.contains("block 0 table 0 lo=8880c0808080808080909284a1948080 hi=90804902002400040000000000000000"), "{text}");
+    assert!(text.contains("block 0 %0 = class t0 0x07"), "{text}");
+    let again = rir::assemble(&text).expect("reassembles");
+    assert_eq!(again.canonical_digest("-", b""), p.canonical_digest("-", b""));
+}
+
+#[test]
+fn class_refusals() {
+    for (rows, why) in [
+        ("  block 0 %0 = class t0 0x01\n  block 0 output %0\n", "no table 0"),
+        (&format!("{SIMDJSON_TABLE}  block 0 %0 = class t0 0x00\n  block 0 output %0\n") as &str, "no class bits"),
+        ("  block 0 %0 = eq 0x22\n  block 0 table 0 lo=00000000000000000000000000000000 hi=00000000000000000000000000000000\n  block 0 output %0\n", "a table after an op"),
+        ("  block 0 table 1 lo=00000000000000000000000000000000 hi=00000000000000000000000000000000\n  block 0 %0 = eq 0x22\n  block 0 output %0\n", "table 1 first"),
+        ("  block 0 table 0 lo=00 hi=00\n  block 0 %0 = eq 0x22\n  block 0 output %0\n", "short table"),
+    ] {
+        let text = format!("program -\n  mode set=0 query=0\n{rows}  0000 STOP 0\n");
+        assert!(rir::assemble(&text).is_err(), "{why}: accepted\n{text}");
+    }
+}
+
+#[test]
+fn class_equals_reference_on_every_executor() {
+    check_all(&simdjson_classes(), simdjson_want);
+}
+
+/// Each class bit alone, and every pair, on a table of irregular classes (not products a table
+/// was designed for): the formulas' constant folding and sharing are exercised on all of them.
+#[test]
+fn class_bits_equal_reference_on_every_executor() {
+    let lo: [u8; 16] = [0x01, 0x82, 0x44, 0x08, 0x10, 0xff, 0x00, 0x21, 0x40, 0x80, 0x03, 0x0c, 0x30, 0xc0, 0x55, 0xaa];
+    let hi: [u8; 16] = [0xff, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x00, 0x0f, 0xf0, 0x33, 0xcc, 0x5a, 0xa5];
+    let table = block::ClassTable { lo, hi };
+    let hex = |xs: &[u8]| xs.iter().map(|x| format!("{x:02x}")).collect::<String>();
+    let selectors: Vec<u8> = (0..8).map(|c| 1u8 << c).chain([0x03, 0x81, 0xff, 0x5a]).collect();
+    let mut rows = format!("  block 0 table 0 lo={} hi={}\n", hex(&lo), hex(&hi));
+    for (i, s) in selectors.iter().enumerate() {
+        rows.push_str(&format!("  block 0 %{i} = class t0 {s:#04x}\n"));
+    }
+    for i in 0..selectors.len() {
+        rows.push_str(&format!("  block 0 output %{i}\n"));
+    }
+    check_all(&rows, |bytes| selectors.iter().map(|&s| reference(bytes, |b| table.member(b, s))).collect());
+}
+
+#[test]
+fn class_lowers_to_straight_bit_operations() {
+    check_lowering("class", &program(&simdjson_classes()));
+}
+
+/// Lookup against bit-planes for `class` on Metal: simdjson's five masks over 64 MiB of
+/// JSON-like bytes, per strategy and lane width, in GPU seconds (best of 5), with five `eq`s as
+/// the baseline. Run by name: it is a measurement, not a check.
+#[test]
+#[ignore = "a measurement; run by name"]
+#[cfg(target_os = "macos")]
+fn class_strategies_gpu_time() {
+    use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
+    let sample = br#"{"name": "rerail", "tags": ["a", "b\"c"], "n": 12345, "ok": true, "nested": {"x": [1, 2, 3]}}
+"#;
+    let bytes: Vec<u8> = sample.iter().copied().cycle().take(64 << 20).collect();
+    let p = program(&simdjson_classes());
+    let native = native_ir::lower(&p).expect("lowers").block_programs.remove(0);
+    let eqs = program(
+        "  block 0 %0 = eq 0x2c\n  block 0 %1 = eq 0x20\n  block 0 %2 = eq 0x5c\n  block 0 %3 = eq 0x22\n  block 0 %4 = eq 0x0a\n\
+         \x20 block 0 output %0\n  block 0 output %1\n  block 0 output %2\n  block 0 output %3\n  block 0 output %4\n",
+    );
+    let eq_native = native_ir::lower(&eqs).expect("lowers").block_programs.remove(0);
+    let want = simdjson_want(&bytes);
+    let gib = bytes.len() as f64 / f64::from(1u32 << 30);
+    for width in LaneWidth::ALL {
+        let best = |native: &native_ir::BlockNative, strategy| {
+            (0..5).map(|_| run_generated_with(native, &bytes, width, strategy).expect("runs").1).fold(f64::MAX, f64::min)
+        };
+        for strategy in ClassStrategy::ALL {
+            let (got, _) = run_generated_with(&native, &bytes, width, strategy).expect("runs");
+            assert!(got == want, "{strategy:?} at {} bytes differs", width.bytes());
+            let s = best(&native, strategy);
+            println!("class {strategy:?}, {:2}-byte lanes: {:.3} ms, {:.1} GiB/s", width.bytes(), s * 1e3, gib / s);
+        }
+        let s = best(&eq_native, ClassStrategy::Lookup);
+        println!("5 eqs (baseline), {:2}-byte lanes: {:.3} ms, {:.1} GiB/s", width.bytes(), s * 1e3, gib / s);
+    }
 }

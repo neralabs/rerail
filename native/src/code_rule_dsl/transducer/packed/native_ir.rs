@@ -382,6 +382,7 @@ pub(super) fn lower(program: &Program) -> Result<NativeModule, LoweringError> {
 /// there is no branch and no loop inside a body.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct BlockNative {
+    pub tables: Vec<super::block::ClassTable>,
     pub insts: Vec<BlockInst>,
     pub outputs: Vec<u16>,
 }
@@ -392,6 +393,9 @@ pub(super) enum BlockInst {
     /// The block's bytes compared with a byte, as a mask: on the CPU four 16-byte compares and a
     /// bitmask; on Metal SWAR over the lane's `uint4`s.
     EqByte(u8),
+    /// The block's bytes in any class of `bits` of table `table`: on the CPU two table lookups
+    /// per 16 bytes (`tbl`); on Metal, see `metal_block_program::ClassStrategy`.
+    Class { table: u16, bits: u8 },
     /// A 64-bit pattern repeated over the stream.
     Const(u64),
     Not(u16),
@@ -409,6 +413,7 @@ impl BlockNative {
             .iter()
             .map(|op| match *op {
                 BlockOp::Eq(byte) => BlockInst::EqByte(byte),
+                BlockOp::Class { table, bits } => BlockInst::Class { table, bits },
                 BlockOp::Const(c) => BlockInst::Const(c),
                 BlockOp::Not(a) => BlockInst::Not(a),
                 BlockOp::And(a, b) => BlockInst::And(a, b),
@@ -417,7 +422,7 @@ impl BlockNative {
                 BlockOp::AndNot(a, b) => BlockInst::AndNot(a, b),
             })
             .collect();
-        Self { insts, outputs: program.outputs.clone() }
+        Self { tables: program.tables.clone(), insts, outputs: program.outputs.clone() }
     }
 }
 

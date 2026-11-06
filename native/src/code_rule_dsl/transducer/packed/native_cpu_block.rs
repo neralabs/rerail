@@ -90,9 +90,31 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     Some(f.ins().splat(types::I8X16, c))
                 }
                 BlockInst::Const(c) => Some(f.ins().iconst(types::I64, c as i64)),
+                BlockInst::Class { bits, .. } => {
+                    let c = f.ins().iconst(types::I8, i64::from(bits));
+                    Some(f.ins().splat(types::I8X16, c))
+                }
                 _ => None,
             })
             .collect();
+        // Each table's two halves as vector constants, the low-nibble mask, and zero.
+        let tables: Vec<(Value, Value)> = native
+            .tables
+            .iter()
+            .map(|t| {
+                let lo = f.func.dfg.constants.insert(ConstantData::from(&t.lo[..]));
+                let hi = f.func.dfg.constants.insert(ConstantData::from(&t.hi[..]));
+                (f.ins().vconst(types::I8X16, lo), f.ins().vconst(types::I8X16, hi))
+            })
+            .collect();
+        let nibble = {
+            let c = f.ins().iconst(types::I8, 0x0f);
+            f.ins().splat(types::I8X16, c)
+        };
+        let zero16 = {
+            let c = f.ins().iconst(types::I8, 0);
+            f.ins().splat(types::I8X16, c)
+        };
         let weights = {
             const WEIGHTS: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
             let handle = f.func.dfg.constants.insert(ConstantData::from(&WEIGHTS[..]));
@@ -116,15 +138,37 @@ pub(super) fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         let base = f.ins().iadd(bytes, offset);
         let loads = MemFlags::new().with_notrap();
         let mut values: Vec<Value> = Vec::with_capacity(native.insts.len());
+        // The block's 64 bytes, loaded once for every compare and class.
+        let reads = native.insts.iter().any(|i| matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. }));
+        let chunks: Vec<Value> = if reads {
+            (0..4).map(|part| f.ins().load(types::I8X16, loads, base, part * 16)).collect()
+        } else {
+            vec![]
+        };
+        // Each class's nibbles, split once.
+        let (low, high): (Vec<Value>, Vec<Value>) = if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. })) {
+            chunks.iter().map(|&c| (f.ins().band(c, nibble), f.ins().ushr_imm(c, 4))).unzip()
+        } else {
+            (vec![], vec![])
+        };
         for (at, inst) in native.insts.iter().enumerate() {
             let v = |x: u16| values[usize::from(x)];
             let value = match *inst {
                 BlockInst::EqByte(_) => {
                     let splat = constants[at].expect("a splat per compare");
+                    let parts: Vec<Value> = chunks.iter().map(|&bytes| f.ins().icmp(IntCC::Equal, bytes, splat)).collect();
+                    bitmask(&mut f, &parts, weights)
+                }
+                BlockInst::Class { table, .. } => {
+                    let sel = constants[at].expect("a splat per class");
+                    let (lo, hi) = tables[usize::from(table)];
                     let parts: Vec<Value> = (0..4)
                         .map(|part| {
-                            let bytes = f.ins().load(types::I8X16, loads, base, part * 16);
-                            f.ins().icmp(IntCC::Equal, bytes, splat)
+                            let l = f.ins().swizzle(lo, low[part]);
+                            let h = f.ins().swizzle(hi, high[part]);
+                            let both = f.ins().band(l, h);
+                            let picked = f.ins().band(both, sel);
+                            f.ins().icmp(IntCC::NotEqual, picked, zero16)
                         })
                         .collect();
                     bitmask(&mut f, &parts, weights)

@@ -272,6 +272,10 @@ pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Na
         let _ = writeln!(out, "  predicate {at} {kind} s{source}");
     }
     for (at, block) in program.block_programs.iter().enumerate() {
+        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        for (t, table) in block.tables.iter().enumerate() {
+            let _ = writeln!(out, "  block {at} table {t} lo={} hi={}", hex(&table.lo), hex(&table.hi));
+        }
         for (value, op) in block.ops.iter().enumerate() {
             let _ = writeln!(out, "  block {at} %{value} = {}", op.text());
         }
@@ -680,6 +684,26 @@ fn row(parts: &mut Parts, line: &mut Line<'_>, keyword: &str) -> Result<(), Stri
             let first = line.word()?;
             if first == "output" {
                 program.outputs.push(line.number("%")?);
+            } else if first == "table" {
+                let t: usize = line.number("")?;
+                if t != program.tables.len() || !program.ops.is_empty() {
+                    return Err(format!("block {at} table {t} out of order (expected {}, before the operations)", program.tables.len()));
+                }
+                let nibbles = |line: &mut Line<'_>, key: &str| -> Result<[u8; 16], String> {
+                    let word = line.word()?;
+                    let hex = word.strip_prefix(key).ok_or_else(|| format!("expected `{key}…`, found `{word}`"))?;
+                    let mut out = [0u8; 16];
+                    if hex.len() != 32 {
+                        return Err(format!("a table half is 16 bytes of hex, not `{hex}`"));
+                    }
+                    for (i, o) in out.iter_mut().enumerate() {
+                        *o = u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).map_err(|_| format!("bad hex `{hex}`"))?;
+                    }
+                    Ok(out)
+                };
+                let lo = nibbles(line, "lo=")?;
+                let hi = nibbles(line, "hi=")?;
+                program.tables.push(block::ClassTable { lo, hi });
             } else {
                 let value: usize = first.strip_prefix('%').and_then(|v| v.parse().ok()).ok_or_else(|| format!("a bad value `{first}`"))?;
                 if value != program.ops.len() || !program.outputs.is_empty() {
