@@ -3,10 +3,11 @@
 //!   rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <json>]
 //!   rerail-engine asm <file.rir>
 //!   rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]
+//!   rerail-engine gc <store.sqlite> [--history-mb <n>]
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]";
+const USAGE: &str = "usage:\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes>] [--metal] [--chunk <nodes>]\n  rerail-engine gc <store.sqlite> [--history-mb <n>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +31,7 @@ fn run(args: &[String]) -> Result<String, String> {
             _ => Err(USAGE.into()),
         },
         Some("logic") => logic(&args[1..]),
+        Some("gc") => gc(&args[1..]),
         _ => Err(USAGE.into()),
     }
 }
@@ -69,6 +71,60 @@ fn logic(args: &[String]) -> Result<String, String> {
         return Err(format!("{program} has no .rr programs"));
     }
     rerail_engine::tools::logic(&programs, Path::new(root), facts, Path::new(out), &modes, metal, chunk)
+}
+
+/// `gc`: collects a store until nothing is left to collect (decision 0051): converts a store made before 0051 to
+/// incremental vacuum, decides which corpus runs to keep (`--history-mb`: the high-water mark, default 512; the low
+/// water is three quarters of it), and runs passes until two in a row find nothing.
+fn gc(args: &[String]) -> Result<String, String> {
+    use rerail_engine::content_store::{ContentStore, CorpusPolicy};
+    let (mut path, mut policy) = (None, CorpusPolicy::default());
+    let mut args = args.iter();
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "--history-mb" => {
+                let mb: u64 = args.next().ok_or("--history-mb requires a value")?.parse().map_err(|_| "--history-mb takes a number")?;
+                (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
+            }
+            other if path.is_none() => path = Some(other.to_owned()),
+            _ => return Err(USAGE.into()),
+        }
+    }
+    let path = path.ok_or(USAGE)?;
+    if !Path::new(&path).exists() {
+        return Err(format!("{path}: no such store"));
+    }
+    let e = |e: rerail_engine::content_store::StoreError| e.to_string();
+    let store = ContentStore::open(Path::new(&path)).map_err(e)?;
+    let before = store.capacity().map_err(e)?.bytes;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let mut out = String::new();
+    if store.convert_to_incremental_vacuum().map_err(e)? {
+        out += "converted to incremental vacuum (a store made before decision 0051)\n";
+    }
+    let kept = store.keep_corpus_runs(&policy, now).map_err(e)?;
+    out += &format!(
+        "corpus runs: {} manifests kept, {} evicted; history {:.1} MB (high water {} MB), protected {:.1} MB\n",
+        kept.manifests,
+        kept.evicted,
+        kept.history_bytes as f64 / 1048576.0,
+        policy.high_water >> 20,
+        kept.protected_bytes as f64 / 1048576.0
+    );
+    let (mut idle, mut passes, mut tapes, mut sources, mut plan_rows) = (0, 0, 0, 0, 0);
+    while idle < 2 {
+        let pass = store.collect_corpus_pass(&policy, now).map_err(e)?;
+        passes += 1;
+        idle = if pass.did_work() { 0 } else { idle + 1 };
+        (tapes, sources, plan_rows) = (tapes + pass.collection.tapes, sources + pass.collection.sources, plan_rows + pass.plan_rows);
+    }
+    let after = store.capacity().map_err(e)?.bytes;
+    out += &format!(
+        "{passes} passes: {tapes} tapes, {sources} sources and {plan_rows} memo rows of dead plans deleted; {:.1} MB -> {:.1} MB\n",
+        before as f64 / 1048576.0,
+        after as f64 / 1048576.0
+    );
+    Ok(out)
 }
 
 fn dump(args: &[String]) -> Result<String, String> {

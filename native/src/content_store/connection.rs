@@ -313,6 +313,12 @@ pub(super) const CACHE_KIB: i64 = 1_024;
 pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<()> {
     connection.set_prepared_statement_cache_capacity(128);
     connection.busy_handler(Some(wait_for_writer))?;
+    // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
+    // creating transaction, it was ignored, so no store returned freed pages (decision 0051 §4).
+    let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+    if pages == 0 {
+        connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+    }
     connection.pragma_update(None, "foreign_keys", "ON")?;
     // Readers never block the writer, nor it them: every worker thread reads while one apply
     // publishes.

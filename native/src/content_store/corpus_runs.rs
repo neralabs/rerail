@@ -128,10 +128,15 @@ impl ContentStore {
         })
     }
 
-    /// Whether a corpus run has recorded a new manifest since the last decision.
+    /// Whether corpus collection has work: a new manifest to decide on, or a decision's rows not yet collected.
     pub fn corpus_collection_due(&self) -> StoreResult<bool> {
+        Ok(self.corpus_due()? != 0)
+    }
+
+    /// `corpus_state.due`: 0 nothing, 1 a new manifest (a decision is due), 2 a decision's rows being collected.
+    fn corpus_due(&self) -> StoreResult<i64> {
         let connection = self.connection.lock().expect("content store connection unavailable");
-        Ok(connection.query_row("SELECT due FROM corpus_state WHERE singleton=1", [], |r| r.get::<_, i64>(0))? != 0)
+        Ok(connection.query_row("SELECT due FROM corpus_state WHERE singleton=1", [], |r| r.get(0))?)
     }
 
     /// Decides which manifests to keep under `policy` at unix second `now`, and applies it: evicted manifests go,
@@ -191,7 +196,8 @@ impl ContentStore {
             for plan in plans {
                 mark.execute(params![i64::from(keep_plans.contains(&plan)), plan])?;
             }
-            tx.execute("UPDATE corpus_state SET due=0, history_bytes=?1 WHERE singleton=1", [decided.history as i64])?;
+            // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.
+            tx.execute("UPDATE corpus_state SET due=2, history_bytes=?1 WHERE singleton=1 AND due<=1", [decided.history as i64])?;
             Ok(())
         })?;
         Ok(CorpusKept { manifests: decided.kept.len(), evicted: evicted.len(), protected_bytes: decided.protected, history_bytes: decided.history, unlived: unlive.len() })
@@ -201,7 +207,7 @@ impl ContentStore {
     /// the store's collection (`collect`).
     pub fn collect_corpus_pass(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
         let mut pass = CorpusPass::default();
-        if self.corpus_collection_due()? {
+        if self.corpus_due()? == 1 {
             pass.kept = Some(self.keep_corpus_runs(policy, now)?);
         }
         pass.plan_rows = self.immediate_transaction(|tx| {
@@ -218,6 +224,9 @@ impl ContentStore {
             Ok(n)
         })?;
         pass.collection = self.collect(now, MAX_COLLECTION_BATCH)?;
+        if !pass.did_work() {
+            self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
+        }
         Ok(pass)
     }
 

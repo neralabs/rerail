@@ -609,12 +609,6 @@ impl ContentStore {
     /// creation, a floor raise or a missing object (an index this build added) takes the
     /// exclusive lock and applies SCHEMA. Returns whether it created the store.
     pub(super) fn initialize(connection: &mut Connection) -> StoreResult<bool> {
-        // `auto_vacuum` takes only on an empty file before `journal_mode = WAL` writes its header: set after, inside
-        // the creating transaction, it was ignored, so no store returned freed pages (decision 0051 §4).
-        let pages: i64 = connection.query_row("PRAGMA page_count", [], |row| row.get(0))?;
-        if pages == 0 {
-            connection.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
-        }
         configure_connection(connection)?;
         if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
             return Ok(false);
