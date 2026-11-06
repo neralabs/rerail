@@ -1,331 +1,144 @@
-# Parser generators: Bitlex as bit programs
+# Parser generators: lowering Bitlex to bit operations through the pipeline
 
-Status: architecture and outline, 2026-11-06. Nothing here is built. It replaces the execution
-parts of `09-compile-and-lower.md` (§3–§6). Three earlier builds were reverted:
-
-- one walked bytes and events;
-- one ran per-byte integer lanes in scalar loops;
-- one built a parallel Rust tree beside the transducer pipeline instead of lowering through it.
-
-This document is the shape to build instead.
+Status: architecture and outline, 2026-11-06. Nothing here is built. It gathers what `00`–`09` and
+the engine's spike notes already decided, says what the latest direction changes, and lists the
+questions still open. It replaces `09-compile-and-lower.md` §3–§6 and §11.
 
 ## Intro
 
-A Bitlex lexer says, for every byte of a file, which classes it belongs to, which tokens start or
-continue there, and where errors are. The aim is to compute all of that the way simdjson computes
-its structural characters: 64 bytes at a time, as 64-bit masks, with no loop over bytes and no
-branch on the data.
+Three builds were reverted, each because it ignored work already done:
 
-The proposal in one paragraph:
+- the first walked bytes and events;
+- the second ran per-byte integer lanes in scalar loops;
+- the third built a parallel Rust tree beside the pipeline.
 
-- Every `.bitlex` file lowers to a **bit program**. A bit program is a straight-line list of steps.
-  Each step reads one or two 64-bit words per 64-byte block and writes one.
-- The steps are boolean word operations, plus four that pass a small carry from one block to the
-  next: shifts, add-with-carry, prefix XOR, and reading the block before or after.
-- Everything that is not a mask in Bitlex becomes masks too:
-  - a byte is 8 bit-planes;
-  - a count is a few bit-planes, holding its value in binary;
-  - a machine's state is a few bit-planes.
+This page starts from that earlier work.
 
-  Their arithmetic is boolean networks over those planes.
-- The program runs in the engine's existing pipeline, not beside it. The proposal (§3) is to
-  extend the engine's set program, its straight-line program of word operations on Metal, and to
-  give it the plan ids, JITs and background build that tree transducers already have.
-- Only a short list of exceptions is not a bit operation (§6). Each needs approval before it is
-  built.
+The direction, as stated:
 
-## 1. What a bit program is
+- "there should be NO byte-by-byte operations or event-by-event operations";
+- "lower into branchless, loopless bit (mostly) operations";
+- "lower through the same Metal / JIT pipeline, ideally through transducers";
+- "reuse EVERYTHING POSSIBLE in the existing pipeline";
+- the code in simdjson's shape: its ergonomic operations, and a chunk size per architecture.
 
-### 1.1 Values
+## 1. Already decided
 
-A **plane** is one bit per byte of the input: one `u64` per 64-byte block. It is the only value
-type. Every file starts at a block boundary, as the Metal set program's files start at a word
-boundary.
+These are settled. Each row cites where.
 
-| Bitlex value | as planes |
-|---|---|
-| a byte | 8 planes, bit `k` of every byte (`B0` … `B7`) |
-| a class, a mask | 1 plane |
-| a count with `max D` | `w = ⌈log2(D + 2)⌉` planes: the count in binary, one plane per bit |
-| a value mod 3 (`reflect`) | 2 planes |
-| a machine with `S` states | `⌈log2 S⌉` planes: the state number in binary |
-| a hypothesis lane | as a machine: the lane number in binary |
-
-### 1.2 Steps
-
-A step is `[op, out, a, b]`, the Metal set program's encoding. The set program's steps stay as
-they are: clear, all, copy, or, and, and-not, within. These are added:
-
-| step | meaning per block | carry to the next block |
+| topic | decision | where |
 |---|---|---|
-| `xor`, `not` | word logic | none |
-| `shl k`, `shr k` | bit `i` is bit `i − k` (`i + k`) of `a`, from the block before (after) | `k` bits |
-| `add` | `a + b` as one 64-bit number per block | 1 carry bit |
-| `prefix_xor` | bit `i` is the XOR of bits `0..=i` | 1 parity bit |
-| `first`, `last` | a file's first or last byte | none |
+| program kind | a **stream transducer**: a second program kind beside the tape transducers, in the same lowering pipeline. It reads bytes and writes a tape | `01` §4, §8; `09` §7 |
+| what it shares | plan ids, interpreted first with the JIT built in the background, backend selection, the Metal pipeline cache, the launch budget, residency slabs; the set program's slot layout and barrier pattern | `09` §7; decision 0012 |
+| executors | as for tape transducers: one verified program is the only semantic input. The CPU and Metal interpreters read it directly. One ephemeral native IR is emitted by both Cranelift and MSL, with one control-flow structure, no host callbacks and one packed ABI. Every op exists on every backend, with no Metal-to-CPU fallback | t6 §6 (`transducer-native-jit-design.md`); `final-shape/03-architecture.md` §88–90 |
+| what "no branching" allows | loops whose trip count is a size; selects, table lookups, gathers, scatters; one decision per file (the error bit) | `01` §1 |
+| masks | `class`: nibble lookups (`vqtbl1q_u8`), up to 8 classes per pair. `toggle`: carry-less multiply (`vmull_p64`), or `simd_prefix_exclusive_xor` on Metal. `fill`: the borrow form. `back_fill`: `fill` on bit-reversed words. `after_odd_run`: simdjson's add-with-carry. `prev`, `next`: shifts with the neighbouring word | `03` §3.1 |
+| carries | each carry has a summary, an associative combine and an apply. Only summaries cross blocks; masks are recomputed, not stored | `06` §2 |
+| hardware levels | NEON: a `u64` per mask, carries in registers, a chunk per core. Metal: a thread per 64-byte word, `simd_prefix_exclusive_*` per SIMD group, a threadgroup scan, decoupled look-back with bounded waits between threadgroups | `06` §5 |
+| corpus as one stream | files one after another in a slab; every scan segmented at file starts; nothing speculative crosses a file | `06` §5.1 |
+| machines | lowered by Krohn–Rhodes decomposition to a cascade of `fill`s (resets) and group scans (`toggle`, prefix sums mod `n`). The table scan is kept only for non-solvable groups, and no lexer has one | `08` §2.1 |
+| `reflect` | `toggle` for the sign, then a prefix sum mod 3 over two bit-planes: a Hillis–Steele scan, six rounds per word | `08` §2.2 |
+| hypotheses | every lane computed for every line; the segment's lane map composed by a scan of selects | `08` §7; `03` §3.5 |
+| rounds | unrolled to a fixed count; an error bit if the last round still changes; `until settled` may stop early | `08` §7; `03` §2.7 |
+| `ucode` | decoding gated by an ASCII-fact mask; lead bytes gathered; a branch-free decode; a two-level table | `04` §3.3 |
+| the tape | columns from extents by one prefix sum and gathers; the code table numbered by first use with a carried bitset | `01` §2; `06` §4.4 |
+| oracle | `tools/bitlex`'s evaluator, whose tokens equal tree-sitter's on all JSON files and 13,042 of 13,042 and 1,990 of 1,993 Python files | `03` §5; `08` §9 |
 
-These are enough. A fill, a toggle, `after_odd_run` and every scan below are sequences of these
-steps.
+## 2. What the direction changes
 
-- **Backwards scans.** `back_fill` is `add` on the blocks taken last to first. The step carries a
-  direction bit, so a file's carry runs from its end.
-- **No other kind of step.** There is no loop, no branch and no per-byte access in the step set.
-  The verifier refuses any other op, so the shape is checked when a program is made, not by
-  reading source code.
+The earlier docs allowed work per event and per token, over compacted lists. The direction now
+excludes event-by-event work and asks for bit operations where possible. Each row changes a
+decision of §1's sources.
 
-### 1.3 The cost of a program
-
-Each step costs a fixed number of word operations per block, whatever the data. A program's cost
-per block is the sum over its steps. The lowering prints it for each Bitlex statement, so the cost
-of every construct is visible before anything runs.
-
-## 2. Lowering each construct to steps
-
-The counts below are word operations per 64-byte block, per instance, before sharing equal steps.
-They are estimates to check when the lowering exists.
-
-| Bitlex | steps | ops per block |
-|---|---|---|
-| reading the input | the bytes transposed into planes `B0`–`B7` (§4.1) | about 60 SIMD instructions, once per block for all classes |
-| `class` | a boolean function of `B0`–`B7`, minimised per class; classes share terms | 5–15 |
-| `text("abc")` | each byte's class, shifted and ANDed (shift-and) | about 3 per byte of the text |
-| `prev`, `next`, `starts`, `lasts`, `after`, `span`, `aligned` | shifts and logic | 1–5 |
-| `fill(s, e)` | `add` with masks around it (one carry bit) | about 5 |
-| `back_fill` | the same, backwards | about 5 |
-| `toggle` | `prefix_xor` | about 7 |
-| `after_odd_run` | simdjson's odd-backslash sequence: `add`, logic | about 10 |
-| `count(up, down) max D` | the running count as `w` planes (§2.1) | about 120 with `w = 4` and no clamp; about 400 with clamps |
-| comparisons on a count (`c == L`, `c ≥ L`) | a comparator network on the `w` planes | about `2w` |
-| `frame(c, m)`, `since(c, m)` | for each level `L ≤ D + 1`: `c == L` on the planes, then one `fill` | about `(2w + 5)(D + 2)` |
-| `head(a, C)` | one shift and select per value of `C` up to `D` | about `3(D + 1)` |
-| `reflect` | a running sum mod 3 on 2 planes (§2.2) | about 60 |
-| `machine` with `S` states | the running state as `⌈log2 S⌉` planes (§2.2) | about `18 S² ⌈log2 S⌉`: 576 for 4 states, about 2,600 for JSON's 7 |
-| `hypotheses … split E lanes` | every lane's body; the lane choice as a machine over lanes; then a select per lane | the bodies, plus a machine of `E` states |
-| `rounds N until settled` | the body's steps repeated `N` times | `N` times the body (§2.3) |
-| keywords, `munch` | shift-and over the keyword texts; longest match by masks | about 3 per keyword byte |
-| `error` | the error's mask; whether a file has one is a `within` | 1–2 |
-
-### 2.1 Counts as bit-planes
-
-A count's value at each byte is held in binary, one plane per bit. Its running value across a block
-is a **scan of steps**: each byte adds `+1`, `−1` or `0`, or resets.
-
-- **Without clamps.** The running value is a prefix sum. It is computed in six doubling stages of
-  a Hillis–Steele scan:
-  - stage `d` adds the value `d` bytes before (`shl d` on each plane);
-  - each stage is a `w`-bit adder made of word logic, about `5w` operations.
-
-  The carry into the next block is the block's last value: `w` bits, added to every byte by one more
-  adder.
-- **With clamps** (a floor at 0, a cap at `D + 1`). Each byte's step is the map
-  `x ↦ min(max(x + a, lo), hi)`, which is closed under composition. The scan composes these maps
-  instead of adding numbers. A map is three `w`-bit values, and composition is adders and
-  comparators. It costs about three times the plain sum.
-- **When a clamp can be dropped.** The lowering proves where one cannot trigger, for example
-  where an error already covers an underflow. There the plain sum is used.
-
-### 2.2 Machines as bit-planes
-
-A machine's step at each byte is a map from states to states, chosen by the byte's classes. The
-running state is a scan that composes those maps.
-
-- **Maps as planes.** A map over `S` states is `S` entries of `⌈log2 S⌉` bits each, so
-  `S⌈log2 S⌉` planes.
-- **Composing two maps** is a fixed network: each entry of the result is the second map's entry
-  selected by the first map's. That is a multiplexer tree of word ANDs and ORs. Nothing indexes
-  memory.
-- **The scan** is the same six doubling stages as for counts. The carry into the next block is the
-  block's composed map. That map's entry for the state the block starts in gives each byte's state,
-  through one more selection network.
-- **Cost grows as `S²`.** The two lexers today:
-  - Python has no `machine`. Its scans are `reflect`, `count` and hypothesis lanes.
-  - JSON has one machine, `lex`, with 7 states. That is 3 planes and about 2,600 operations per
-    block. It runs only for files with a `/` outside strings; other files take `toggle(q)`, as
-    simdjson does.
-
-  A machine whose cost is out of line is split into smaller machines, or shown in the cost table.
-
-`reflect` is the same with the group of sums mod 3: 2 planes, and composition is a 2-bit adder
-mod 3.
-
-### 2.3 Rounds
-
-A `rounds N` block repeats its steps `N` times, each round reading the last round's `carry`
-values. Unrolled, that is `N` copies: straight-line, with no loop.
-
-`until settled` allows the copies after a settled round to be skipped. Skipping is a decision per
-chunk, not per byte: one test of "did any carry change in this chunk". Whether that test is
-allowed is exception E3 (§6).
-
-## 3. Where it runs in the pipeline
-
-### 3.1 What the pipeline has (read 2026-11-06)
-
-The engine has two kinds of program today. Neither can run a bit program yet.
-
-**Tree transducers** (`transducer/packed.rs`).
-
-- A program is a list of 32-bit words: an opcode, a mode and a 16-bit operand.
-- Its opcodes walk a tape:
-  - tests: `KIND`, `FIELD`, `FLAGS`, `TEXT`, `SIZE`;
-  - moves: `CHILD`, `NEXT`, `PARENT`, `DESCEND`, `FOLLOWING`;
-  - control: `FORK`, `GOTO`, cursors, repeats;
-  - output: `CAPTURE`, `EMIT`.
-- A path forks at each node it walks. There are "no registers, arithmetic instructions, calls,
-  stack operations, mutable memory" (`docs/transducer-design.md`).
-- Only `TEXT` reads bytes. It reads a node's own text, one byte at a time (`ByteNfa`, `ByteDfa`).
-- It has every executor and all the machinery around them:
-  - the interpreter;
-  - the Cranelift JIT, which emits scalar `I8`, `I32` and `I64` code only;
-  - the Metal runtime. Its JIT splices the runtime's own opcode bodies into one kernel per
-    program;
-  - plan ids, with background build and swap (`compilation.rs`);
-  - the JIT caches and the Metal pipeline cache.
-
-**Set programs** (`prefilter/sets.rs`, `packed/metal_set_steps.rs`).
-
-- The prefilter's set algebra (kinds, terms, union, intersection, difference, within) is lowered
-  to `SetStep`s: `[op, out, a, b]` over `u64` bitmaps, one bit per node.
-- They run in one of two places:
-  - Metal: one dispatch, a threadgroup of 64 threads per file, a barrier between steps;
-  - the CPU, through the `NodeSet` operations.
-- They have no shifts, scans or carries.
-- They have no plan id, no JIT and no background build.
-
-No Metal source in the engine uses SIMD-group operations (`simd_*`) yet.
-
-### 3.2 Two ways in
-
-**A. Bit steps as tree-transducer opcodes.**
-
-- *For:* plan ids, the JIT, background build and Metal come with the program kind.
-- *Against:*
-  - A step needs three slot operands, and an instruction has one 16-bit operand.
-  - The executors run paths that fork per node. A bit program has one path and no nodes, so every
-    word operation would pay the path loop's dispatch.
-  - It adds registers and arithmetic to a machine defined without them. The pipeline's rule for
-    new operations: "a new op must earn its place (local, cheap on every backend, multi-rule, not
-    better as a fact)" (`final-shape/notes/t1-piat-spec.md`).
-
-**B. Bit steps as set-program steps (proposed).**
-
-- The set program is already the engine's straight-line program of word operations over files,
-  run on Metal as one dispatch. A bit program is that, with more steps.
-- What it gains is what tree programs already have. Each part is copied from the tree programs'
-  machinery:
-
-  | what | copied from |
-  |---|---|
-  | a plan id, the digest of its steps, as one more binding in `compilation.rs` | `PlanId`, `resolve_plan` |
-  | a Cranelift JIT: one straight-line `I64` function per program, cached by plan id | `native_cpu.rs`'s module, cache and background thread |
-  | a Metal JIT: the kernel's step bodies spliced into one straight-line kernel per program | `metal_program_backend.rs` (`opcode_bodies`, `jit_kernel_source`) |
-  | carries across a file's words on Metal | new: SIMD-group prefix and shuffle |
-
-- The prefilter's own set programs get the plan id and the JITs too.
-
-Under B, the lexer runs through the pipeline's plan identity, background build and swap, caches,
-launch budget and residency slabs. Its output is a tape, which tree transducers read (§5). It does
-not use tree-transducer opcodes.
-
-**Decision needed: A or B.** Nothing in §8 starts before it.
-
-## 4. Running it
-
-### 4.1 Reading the input
-
-The bytes of a block are transposed into 8 planes once, and every class reads those planes.
-
-- **NEON.** For each bit `k`: shift so bit `k` is the sign bit, compare, and take the mask with
-  simdjson's `to_bitmask`. That is about 8 × 7 instructions.
-- **Metal.** Each thread holds one block's bytes. `simd_ballot`, or a 64-bit gather of each bit,
-  builds the planes.
-- **Cranelift.** The JIT emits scalar code, so the transposition is a fixed helper called once per
-  block.
-
-The transposition is the only step that reads bytes. It is a fixed data movement, and every
-target has a fixed-cost form of it.
-
-### 4.2 Width per architecture
-
-A step is one 64-bit word per block, everywhere. The width per architecture is **how many
-independent blocks one instruction carries**. They come from different chunks or files, so no
-carry crosses between them:
-
-| target | blocks per instruction | how |
-|---|---|---|
-| scalar (`I64`, Cranelift today) | 1 | one `u64` register |
-| NEON | 2 | `uint64x2_t`: two chunks side by side |
-| AVX2 / AVX-512 | 4 / 8 | the same |
-| Metal | 32 per SIMD group | a thread per block |
-
-This plays the part of simdjson's chunk size per architecture. The program is the same; only how
-many blocks run side by side differs.
-
-### 4.3 Carries
-
-A carry is at most a few bits per step: a borrow, a parity, `k` shifted bits, or a count's or
-machine's block summary.
-
-- **CPU.** Blocks run in order within a chunk, and the carry is a register.
-- **Metal.** A file's blocks are spread over threads. A carry across them is a SIMD-group prefix
-  over the block summaries (`simd_prefix_exclusive_*`), then across SIMD groups through threadgroup
-  memory. Every summary combine is the same step network as within a block (§2.1, §2.2). The
-  pattern is fixed, with no branch on the data.
-
-## 5. From planes to a tape
-
-The lexer ends with planes: for each token kind, where tokens start and where they continue; for
-each error, where it is.
-
-The tape needs positions. Turning a plane into a list of positions is a compaction, and its output
-size depends on the data. This is the one place that is not a bit operation (E1, §6). It is done
-once, at the end, in simdjson's form: its indexer writes the set bits' positions with a fixed
-unroll per block (`bit_indexer::write`). Everything before it stays a bit program.
-
-## 6. Exceptions: what is not a bit operation
-
-Each needs approval before it is built.
-
-| | what | why it is not a bit operation | proposal |
+| construct | was | becomes | why |
 |---|---|---|---|
-| E1 | planes to tape positions | the output's length depends on the data | simdjson's `bit_indexer` at the very end, once per token plane |
-| E2 | non-ASCII code point classes in `ucode` | a Unicode class over 21-bit code points is too large a boolean function | simdjson's ASCII path per block. A block with a byte ≥ 0x80 reads a two-level table per character start. That is a branch per block and a table read per non-ASCII character |
-| E3 | `rounds … until settled` | skipping settled rounds is a branch, taken once per chunk per round | allowed per chunk, never per byte; otherwise all `N` rounds run |
-| E4 | transposing bytes into planes | it moves bytes, not bits | a fixed instruction sequence per block on every target (§4.1) |
+| `count` | a prefix sum in bytes; the floor as a composed map | **bit-planes**: `w = ⌈log2(max + 2)⌉` planes, a Hillis–Steele scan of a `w`-bit adder, with clamps as composed maps where needed. Bounded by the declared `max` | the same method as `08` §2.2's mod-3 planes |
+| `frame`, `since` | matching by depth, a `last[depth]` vector of positions | one `fill` per depth level up to `max + 1`, from `c == L` on the planes | bit operations, no positions |
+| `machine` | compacted events, 16-byte maps composed by `TBL` (`03` §3.2) | Krohn–Rhodes only (`08` §2.1). JSON's `lex` is a `Z2` (`q` swaps code and string) with resets (comments), so it is `toggle`s and `fill`s | removes the event list |
+| `keywords` | a perfect hash per token (`03` §3.3) | shift-and over the keyword texts: each byte's class, shifted and ANDed | removes the token list |
+| `munch` | three fixed applications over candidates | the same, as masks | unchanged |
+| rounds over gathered lines and bodies | rounds over a compacted list of the lines and bodies that need them (`08` §7) | rounds over every block, fixed work | removes the gather; costs the round work on every block (Q3) |
+| tokens to the tape | compaction of token starts into a list (`03` §3.3) | kept only at the end, as `01` §2's prefix sum and scatter | the only per-token work is the output |
 
-## 7. Checks
+Nothing else changes. The nibble-table `class` stays: it is simdjson's own method, branch-free,
+and cheaper than any bit-plane alternative.
 
-- **The verifier.** A bit program has only the steps of §1.2. Every step's inputs come before it.
-  Every carry has a declared width. Because this is checked when a program is made, the "no loops,
-  no branches" rule holds by construction, not by inspecting code.
-- **The cost table.** The lowering prints operations per block per statement. It is compared with
-  §2's estimates, and every construct far off them is investigated before the next one is built.
-- **The oracle.** `tools/bitlex`'s whole-file evaluator stays the reference:
-  - each construct's lowering is checked against it on small inputs first;
-  - then the whole program, on all corpora: errors, token starts and continuations, `munch`,
-    `skip`.
-- **Block edges.** Each file is also run split at every offset within a window, so every carry
-  crosses a block edge at every phase.
-- **Backends.** The interpreter, Cranelift and Metal produce equal planes on the corpora.
+## 3. The stream transducer program
 
-## 8. Outline of the work
+### 3.1 Its operations
+
+A program is a straight-line list of operations over 64-bit masks, one word per 64-byte block,
+with typed carries. Its operations are `01` §4's, restricted by §2:
+
+| operation | carry | summary, combine |
+|---|---|---|
+| `class(table)` | none | — |
+| `and`, `or`, `xor`, `andnot`, `not`, `select` | none | — |
+| `shift(±k)` | `k` bits (a halo) | — |
+| `scan_xor` (`toggle`) | 1 bit | parity, XOR |
+| `scan_borrow` (`fill`, `back_fill`, `after_odd_run`) | 1 bit | generate and propagate |
+| `scan_planes(group)`: prefix sums over bit-planes mod `n`, or of clamp maps | the group element: a few bits | the group operation |
+| segmented forms of the scans | as the scan | reset at a flag |
+| `reduce_or` per file | 1 bit | OR |
+| `ucode` | the 3-byte halo | — (Q2) |
+| output: prefix count and scatter to the tape | a count | add |
+
+There is no operation that loops over bytes, events or tokens, and none that branches on data.
+The verifier refuses anything else when a program is made.
+
+### 3.2 Executors
+
+The executors are those of the tape transducers (§1, "executors"), not new ones:
+
+1. **The CPU interpreter** reads the program and runs each operation over a chunk of words: one
+   dispatch per operation per chunk (`09` §4.1).
+2. **The Metal interpreter** is the set program's kernel shape: a threadgroup per stretch of the
+   stream, every operation in order, a barrier between them. It is extended with the scans' SIMD-group
+   and threadgroup carries (`06` §5).
+3. **The native IR** is one straight-line block per program. Cranelift emits it as scalar `I64`
+   code, which the transducer JIT already emits. MSL emits it with one thread per word. Both come
+   from the same IR, with no host calls, as t6 §6 requires.
+4. **Plan identity and background build** as `compilation.rs` does for tape transducers: the
+   interpreter first, the JIT swapped in at the next batch.
+
+### 3.3 Width per architecture
+
+The block is 64 bytes on every target. The width is how many blocks one instruction carries.
+Blocks from different chunks of the stream run side by side, so no carry crosses between them.
+
+| target | blocks per instruction |
+|---|---|
+| scalar `I64` | 1 |
+| NEON `uint64x2_t` | 2 |
+| AVX2 / AVX-512 | 4 / 8 |
+| Metal | 32 per SIMD group, one per thread |
+
+This is the role of simdjson's step size per architecture (`09` §1).
+
+## 4. Open questions
+
+| | question | options |
+|---|---|---|
+| Q1 | per-character work in `ucode` for non-ASCII code (`04` §3.3: gather leads, decode, two table loads) | keep as `04` designed it: it is per character, zero per MB on data-layer Python; or find a bit-plane form |
+| Q2 | `until settled`: an early exit per chunk is a branch, taken once per chunk per round | allow it per chunk; or always run all rounds |
+| Q3 | rounds over every block, against `08` §7's gather of the 2.7% of lines and 1.2% of bytes that need them | fixed work on every block; or allow that one gather |
+| Q4 | the output: prefix count and scatter of token starts into the tape (`01` §2) | as designed; it is the one place output size depends on data |
+
+## 5. Outline of the work
 
 Each step closes only when its check passes, and with a table of what is done, changed or missing.
 
-1. **The way in** (§3.2): A or B, your decision. The pipeline was read on 2026-11-06 (§3.1).
-2. **The steps.** Add §1.2's steps to the set program's step enum, its verifier and its CPU
-   reference. *Check:* each step equal to a scalar reference on random words and at every block
-   edge.
-3. **The constructs, one at a time,** in this order: classes and the transposition; shifts;
-   fills, toggles, odd runs; counts; `frame`, `since`, `head`; `reflect`; machines; hypotheses;
-   rounds; keywords and `munch`. *Check:* for each one, the cost table and its equality with the
-   evaluator on small inputs.
-4. **JSON whole**, then **Python whole**, on the CPU interpreter. *Check:* equal to the evaluator
-   on all corpora; block edges; the cost table; CPU time.
-5. **Plan id and Cranelift.** The bit program as a binding in `compilation.rs`, and its steps as
-   `I64` code built in the background. *Check:* equal to the interpreter; CPU time, with compile
-   time reported apart.
-6. **Metal.** The set program's kernel with the carry steps, then its spliced JIT kernel. *Check:* equal to the interpreter;
-   the launch budget.
-7. **Planes to tape** (E1), once approved. *Check:* tapes equal to the current Python and JSON
-   tapes.
+1. **The program and its verifier,** in the engine beside the tape transducers: the operations of
+   §3.1, their carries, and a printer. *Check:* the verifier refuses every other operation; every
+   operation equals a scalar reference on random words and at every block edge.
+2. **The CPU interpreter**, one dispatch per operation per chunk. *Check:* as step 1, plus segmented
+   files.
+3. **Lowering from Bitlex,** one construct at a time, in the order of §2's table and `03` §3.1.
+   *Check:* each construct equals the evaluator on small inputs, with its cost per block printed.
+4. **JSON, then Python, whole,** on the interpreter. *Check:* equal to the evaluator on all corpora;
+   every file split at every offset in a window; CPU time.
+5. **The native IR, Cranelift, and plan identity.** *Check:* equal to the interpreter; CPU time,
+   with compile time reported apart.
+6. **Metal:** the interpreter kernel, then MSL from the native IR. *Check:* equal to the
+   interpreter; the launch budget; the corpus as one stream.
+7. **The tape** (`01` §2), once Q4 is settled. *Check:* tapes equal to today's.
