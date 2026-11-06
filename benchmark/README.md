@@ -198,6 +198,17 @@ code-rule steer strategies on real coding agents. Nothing here ships, and nothin
   patch, it prints per real decision and source the recall on its caught files, fires on its passed files and cross
   noise, distractor fires per patch, an embedding threshold sweep on these forms (reported, never frozen from here),
   the hook's model load and embedding time per call, and fails when a teammate file line reached the judge.
+- `merge-assist-replay.ts` (`node --import tsx benchmark/merge-assist-replay.ts --dataset dir [--pairs id,id]
+  [--trials N] [--arms none,align] [--concurrency N] [--timeout-min N] [--json out.json] [--repo path]`) replays
+  the later side of a real architecture conflict with a Codex agent and asks whether the alignment ledger, delivered
+  as the agent first touches an area, keeps it from conflicting with the earlier side. See
+  [Architecture-conflict replay](#architecture-conflict-replay).
+- `merge-assist-align.ts` (`node --import tsx benchmark/merge-assist-align.ts --pairs pairs.json [--repo dir | --repos
+  root] [--ids a,b] [--concurrency N] [--cache dir] [--json out.json] [--no-judge] [--verbose]`) replays the later side
+  of each labelled pair commit by commit against the alignment ledger of every other ref as visible then, and scores
+  when a unit from the earlier side reached it against when a person noticed the conflict, beside the textual and
+  file-overlap baselines on the same replay. It also provides `ledgerAt` and `deliverForArea` to
+  `merge-assist-replay.ts`. See [In-flight alignment replay](#in-flight-alignment-replay).
 
 The workloads are host test data under `fixtures/host/benchmark/<kind>/`. Benchmark results are never committed. Keep
 them out of the repository, and put headline numbers in prose (with corpus commits and tool versions) where a change
@@ -288,6 +299,65 @@ Fixed before any agent runs on `--split heldout-large2`, and not changed after. 
   report every primary's effect and CI.
 - **Analysis.** `node --import tsx benchmark/merge-assist-stats.ts --analyze <look reports...> --family large --arms
   focus-precise3,posthoc,focus-pool`. Runs with errors count as failures for their arm and are reported.
+
+## Architecture-conflict replay
+
+```sh
+node --import tsx benchmark/merge-assist-replay.ts --dataset /tmp/ma-ctx/align/dev --repo . --arms none,align \
+  --trials 1 --concurrency 2 --json /tmp/replay.json
+```
+
+`--dataset` holds `pairs.json` and `replay/<id>.json` in the formats of the shared replay spec
+(`/tmp/ma-ctx/align/oss-spec.md`): each pair names its first and second side, and each replay spec names the
+second side's `base_sha`, its `task` prompt, `first_visible`, a `rubric` and `done`. Every `.json` file in `replay/`
+is read as a spec, so write reports elsewhere. A pair's repository is `--repo`, or `--repos/<owner>__<name>`
+(`/tmp/ma-ctx/oss/repos` by default). The ledger is built once per pair before any run; `ledgerAt` caches what it
+extracts and judges under `/tmp/ma-ctx/align/replay-cache`, so the first build over many refs is slow and later ones
+are quick.
+
+- **Workspace.** Each run (pair × arm × trial) gets a temporary repository with the base snapshot as its only commit.
+  It is checked out from the source's objects through a throwaway index, so no ref or later commit of either side
+  can be found with git. Then the spec's `setup` runs and is committed. The isolated `CODEX_HOME` holds the person's
+  `auth.json` (a symlink) and `hooks.json` with `merge-assist-replay-hook.ts`. `codex exec` gets the task, at most
+  `--timeout-min` minutes (20 by default).
+- **Sandbox.** Every replay Codex call (agent and grader) runs the real `codex` executable (not the PATH symlink) under
+  a permission profile in its `CODEX_HOME` instead of `--sandbox workspace-write`. The profile extends Codex's
+  `:workspace` profile: only the workspace root is writable, and the network is off. It also denies reads and writes
+  in `/tmp`, `$TMPDIR` (other runs' folders), the home folder except its toolchains (`.cargo`, `.rustup`, `go`,
+  `.nvm`, `.pyenv`, `.bun`, `.local/bin`), Codex's release folder and Node, the source repository, the dataset,
+  `--repos` and the ledger cache. Hooks run outside the sandbox.
+- **Leak guard.** After each run, every tool call in Codex's `--json` events and in its session transcript is
+  checked. The transcript also holds calls the sandbox refused and calls a code-mode `exec` cell made. A run is marked
+  `leaked` with the offending calls if any call names a path outside its folder, the system folders or the
+  toolchains. Paths starting with `~`, `$HOME` or `..` count too, as do `/tmp/ma-ctx`, `refs/pull/`, GitHub hosts,
+  `curl`/`wget`/`gh`/`ssh`, git `fetch`/`clone`/`pull`/`ls-remote`, or a web search. Patches count by the files they
+  name. Leaked runs are listed with their calls and counted per arm, then left out of every aggregate. `--tamper` runs
+  each selected pair once under `none` with the task "Run `ls /tmp/ma-ctx/oss` …" and exits non-zero unless every
+  run is flagged.
+- **Arms.** `none`: the hook only logs. `align`: at an area's first touch (the context eval's areas and triggers:
+  files read after a command, files patched before the patch), the hook asks `--align-module`'s `deliverForArea`
+  (`benchmark/merge-assist-align.ts` by default) for that area's units, passing the files the call touched there.
+  The units come from `ledgerAt`: first and `concurrent` as visible at second's start. A spec whose `base_sha` is
+  one of second's commits (a long branch replayed from the middle) starts when that commit was authored. Otherwise
+  second starts at its creation, or at its earliest authored commit if that was earlier. At most 3 units go out per
+  area, contested ones first, one terse line each, with the `focus-pool` line to end the final message with
+  ("Note: … decided differently on …") last.
+- **Recorded.** The diff against the base (after setup), Codex's `--json` events, the hook log (each unit with its
+  file and the second it went out at, and whether the text reached Codex's transcript), tokens, wall time and the
+  final message.
+- **Blind grade.** A separate `codex exec` with no hooks, in an empty folder, and with `--output-schema`. It sees the
+  task, the rubric, `done` and the diff, nothing about the arm. Added lines that could tell the arm are stripped:
+  `Note:`, `decided differently`, first's author, branch and PR numbers, and `Rerail` (in Rerail's own repository,
+  only the hook's unit labels). It answers `conflicts_with_first` (yes/no/unclear), reasons citing diff lines, and
+  `done` (yes/partial/no). A run that changed no file gets "no" and "no" without a grader call (marked `empty diff`).
+- **Deterministic checks.** The diff is applied to `base_sha` as a commit in a scratch repository that borrows the
+  source's objects. `git merge-tree` then merges it against first's head and against `first_visible`, counting
+  conflicted files and hunks. The checks also list the diff's files among first's `first_half` files and among every
+  file first changed. Each pair also shows the real second-head × first-head merge.
+- **Report.** The ledger per pair, a row per run, the grader's reasons, leaked runs, and aggregates per arm and per
+  pair × arm: leaked runs, grader yes, unclear, done, textual conflicts, first-half touches, units, note lines,
+  median minutes and mean tokens. `--json` writes all of it, events and hook logs included. Folders are removed
+  unless `--keep`.
 
 ## Steer strategies
 

@@ -524,3 +524,95 @@ export function comparePrompt(input: CompareInput, nonce: string): string {
     fenceData("files git reports as conflicting", input.conflicts.length > 0 ? input.conflicts.join("\n") : "(none)", nonce),
   ].join("\n");
 }
+
+/** The most positions one passage yields, and the limits of each. */
+export const MAX_PASSAGE_POSITIONS = 3;
+export const MAX_POSITION_STATEMENT = 240;
+const MIN_POSITION_QUOTE = 10;
+export const MAX_POSITION_QUOTE = 200;
+const MAX_POSITION_ANCHORS = 8;
+const MAX_POSITION_ANCHOR_LENGTH = 200;
+
+/** Design-doc and commit-message passages from one branch, each under an id the caller chose. */
+export interface PositionsInput {
+  passages: Array<{ id: string; source: string; heading: string | null; text: string }>;
+}
+
+export interface PositionsVerdict {
+  positions: Array<{
+    passageId: string;
+    /** One self-contained sentence, at most 240 characters. */
+    statement: string;
+    /** A verbatim excerpt of the passage stating it, 10 to 200 characters. */
+    quote: string;
+    /** Paths and code names the passage writes that the position governs. */
+    files: string[];
+    symbols: string[];
+  }>;
+}
+
+const anchorListSchema = z.array(z.string().trim().min(1).max(MAX_POSITION_ANCHOR_LENGTH)).max(MAX_POSITION_ANCHORS);
+
+/** The positions answer for `input`, closed: every passage id one the prompt carried. */
+export function positionsVerdictSchemaFor(input: PositionsInput): z.ZodType<PositionsVerdict> {
+  const ids = new Set(input.passages.map(passage => passage.id));
+  return z.object({
+    positions: z.array(z.object({
+      passageId: z.string().refine(id => ids.has(id), "a position names a passage the prompt carried"),
+      statement: shownText(MAX_POSITION_STATEMENT),
+      quote: z.string().trim().min(MIN_POSITION_QUOTE).max(MAX_POSITION_QUOTE),
+      files: anchorListSchema,
+      symbols: anchorListSchema,
+    }).strict()).max(MAX_PASSAGE_POSITIONS * Math.max(1, input.passages.length)),
+  }).strict();
+}
+
+/** The positions answer as a JSON schema for the agent CLI: passage ids closed to the input's, as Codex requires. */
+export function positionsJsonSchemaFor(input: PositionsInput): Record<string, unknown> {
+  const anchors = { type: "array", maxItems: MAX_POSITION_ANCHORS, items: { type: "string", maxLength: MAX_POSITION_ANCHOR_LENGTH } };
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["positions"],
+    properties: {
+      positions: {
+        type: "array",
+        maxItems: MAX_PASSAGE_POSITIONS * Math.max(1, input.passages.length),
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: ["passageId", "statement", "quote", "files", "symbols"],
+          properties: {
+            passageId: { type: "string", enum: input.passages.map(passage => passage.id) },
+            statement: { type: "string", maxLength: MAX_POSITION_STATEMENT },
+            quote: { type: "string", maxLength: MAX_POSITION_QUOTE },
+            files: anchors,
+            symbols: anchors,
+          },
+        },
+      },
+    },
+  };
+}
+
+const POSITIONS_INSTRUCTIONS = `The passages below come from design documents, decision records and commit messages on one branch of this repository, each after its id and where it is from. Extract the design positions they take: choices about how the code is or will be built that another developer changing the same code must know, such as a choice made against an alternative, a component declared the owner or source of truth of something, a format or interface fixed, or something declared retired, replaced or out of scope.
+Leave out descriptions of what code does without a choice, status updates, measurements and test results, and plans with no stated choice.
+For each position:
+- passageId: the id of the passage it is from.
+- statement: one self-contained sentence, at most ${MAX_POSITION_STATEMENT} characters, naming the subsystem it is about.
+- quote: an exact excerpt of that passage, ${MIN_POSITION_QUOTE} to ${MAX_POSITION_QUOTE} characters, copied character for character, that states the position.
+- files: the repository paths written in the passage that the position governs; only paths the passage writes.
+- symbols: the code names written in the passage (functions, types, tables, constants) that the position governs; only names the passage writes.
+At most ${MAX_PASSAGE_POSITIONS} positions per passage, the most consequential first. Answer an empty list when no passage takes a position.`;
+
+/** The positions prompt for one branch's passages, with every passage fenced as data. */
+export function positionsPrompt(input: PositionsInput, nonce: string): string {
+  const passages = input.passages.map(passage => `${passage.id} (${passage.source}${passage.heading === null ? "" : `, under "${passage.heading}"`}):\n${passage.text}`);
+  return [
+    framing(nonce, "When unsure whether a passage takes a position, leave it out."),
+    "",
+    POSITIONS_INSTRUCTIONS,
+    "",
+    fenceData("the passages", passages.length > 0 ? passages.join("\n\n") : "(none)", nonce),
+  ].join("\n");
+}

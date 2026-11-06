@@ -809,7 +809,7 @@ function selectTasks(dataset: Dataset, options: Options): Task[] {
 // ---------------------------------------------------------------------------------------------------------- git
 
 /** Git for the eval's own commands, isolated from the person's global and system configuration. */
-const GIT_ENV: NodeJS.ProcessEnv = {
+export const GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
@@ -1140,7 +1140,7 @@ function printOracleChecks(checks: readonly OracleCheck[]): boolean {
 
 // ---------------------------------------------------------------------------------------------------------- run
 
-interface Usage {
+export interface Usage {
   input: number;
   cached: number;
   output: number;
@@ -1226,11 +1226,15 @@ function shellSafe(path: string): string {
   return path;
 }
 
-/** A temporary CODEX_HOME: the person's sign-in through a symlink, no configuration, and the eval hook on SessionStart and every tool call. */
-function createCodexHome(home: string, configPath: string): void {
+/**
+ * A temporary CODEX_HOME: the person's sign-in through a symlink, no configuration, and `hook` (the eval hook unless
+ * another is named) on SessionStart and every tool call; with `hook` null, no hooks at all.
+ */
+export function createCodexHome(home: string, configPath: string, hook: string | null = HOOK): void {
   mkdirSync(home, { recursive: true });
   symlinkSync(AUTH, join(home, "auth.json"));
   writeFileSync(join(home, "config.toml"), "");
+  if (hook === null) return;
   const loader = fileURLToPath(import.meta.resolve("tsx"));
   const command = [
     "env",
@@ -1239,13 +1243,13 @@ function createCodexHome(home: string, configPath: string): void {
     shellSafe(process.execPath),
     "--import",
     shellSafe(loader),
-    shellSafe(HOOK),
+    shellSafe(hook),
   ].join(" ");
   const group = [{ matcher: "", hooks: [{ type: "command", command }] }];
   writeFileSync(join(home, "hooks.json"), `${JSON.stringify({ hooks: { SessionStart: group, PreToolUse: group, PostToolUse: group } }, null, 2)}\n`);
 }
 
-interface CodexOutcome {
+export interface CodexOutcome {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number | null;
@@ -1253,22 +1257,39 @@ interface CodexOutcome {
   readonly wallMs: number;
 }
 
+export interface CodexRunOptions {
+  readonly model: string | undefined;
+  readonly config: readonly string[];
+  readonly timeoutMin: number;
+  /** More `codex exec` arguments, before the prompt (`--output-schema f.json`). */
+  readonly extraArgs?: readonly string[];
+  /**
+   * A permission profile CODEX_HOME's config.toml defines, run instead of the `workspace-write` sandbox (`--sandbox`
+   * would force the legacy sandbox and ignore the profile).
+   */
+  readonly permissions?: string;
+  /** The Codex executable; `codex` from PATH by default. */
+  readonly binary?: string;
+}
+
 /**
  * One `codex exec` call with `prompt` on stdin; with `resume`, `codex exec resume <thread> -` continues that session in
  * the same CODEX_HOME and workspace (resume takes no `--sandbox` or `-C`: the sandbox is set by `-c`, the folder by
  * the working directory). At most `--timeout-min` minutes.
  */
-function runCodex(repo: string, codexHome: string, configPath: string, prompt: string, options: Options, rerailHome: string, resume?: string): Promise<CodexOutcome> {
+export function runCodex(repo: string, codexHome: string, configPath: string, prompt: string, options: CodexRunOptions, rerailHome: string, resume?: string): Promise<CodexOutcome> {
+  const sandbox = options.permissions === undefined ? `sandbox_mode="workspace-write"` : `default_permissions="${options.permissions}"`;
   const args = resume === undefined
-    ? ["exec", "--json", "--dangerously-bypass-hook-trust", "--sandbox", "workspace-write", "--skip-git-repo-check", "-C", repo]
-    : ["exec", "resume", "--json", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "-c", "sandbox_mode=\"workspace-write\""];
+    ? ["exec", "--json", "--dangerously-bypass-hook-trust", ...(options.permissions === undefined ? ["--sandbox", "workspace-write"] : ["-c", sandbox]), "--skip-git-repo-check", "-C", repo]
+    : ["exec", "resume", "--json", "--dangerously-bypass-hook-trust", "--skip-git-repo-check", "-c", sandbox];
   if (options.model !== undefined) args.push("-m", options.model);
   for (const setting of options.config) args.push("-c", setting);
+  if (options.extraArgs !== undefined) args.push(...options.extraArgs);
   if (resume !== undefined) args.push(resume);
   args.push("-");
   const started = performance.now();
   const { promise, resolve, reject } = Promise.withResolvers<CodexOutcome>();
-  const child = spawn("codex", args, {
+  const child = spawn(options.binary ?? "codex", args, {
     cwd: repo,
     detached: true,
     env: { ...process.env, CODEX_HOME: codexHome, MA_CONTEXT_CONFIG: configPath, RERAIL_HOME: rerailHome, RERAIL_AUTOSTART: "0" },
@@ -1304,7 +1325,7 @@ function runCodex(repo: string, codexHome: string, configPath: string, prompt: s
 }
 
 /** What Codex's `--json` events say: the thread id, the last agent message, token usage, commands run, and any reported failure. */
-interface CodexEvents {
+export interface CodexEvents {
   readonly threadId: string | null;
   readonly finalMessage: string | null;
   readonly usage: Usage | null;
@@ -1312,7 +1333,7 @@ interface CodexEvents {
   readonly error: string | null;
 }
 
-function readEvents(stdout: string): CodexEvents {
+export function readEvents(stdout: string): CodexEvents {
   let threadId: string | null = null;
   let finalMessage: string | null = null;
   let usage: Usage | null = null;
@@ -1380,7 +1401,7 @@ async function focusRun(folder: string, variant: VariantParameters, log: readonl
 }
 
 /** Codex's own transcripts of the run, under the temporary CODEX_HOME, as raw text; null when it wrote none. */
-function transcriptText(codexHome: string): string | null {
+export function transcriptText(codexHome: string): string | null {
   const sessions = join(codexHome, "sessions");
   if (!existsSync(sessions)) return null;
   const files = workspaceFiles(sessions).filter(path => path.endsWith(".jsonl"));
@@ -1584,14 +1605,14 @@ function percentile(values: readonly number[], fraction: number): number {
   return sorted[Math.min(sorted.length - 1, Math.ceil(fraction * sorted.length) - 1)]!;
 }
 
-function median(values: readonly number[]): number {
+export function median(values: readonly number[]): number {
   if (values.length === 0) return Number.NaN;
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 1 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
-function mean(values: readonly number[]): number {
+export function mean(values: readonly number[]): number {
   return values.length === 0 ? Number.NaN : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
@@ -3306,7 +3327,7 @@ async function runLive(dataset: Dataset, base: BuiltIndex, options: Options): Pr
 
 // ---------------------------------------------------------------------------------------------------------- main
 
-async function pool<T, R>(items: readonly T[], concurrency: number, work: (item: T) => Promise<R>, progress: (done: number, result: R) => void): Promise<R[]> {
+export async function pool<T, R>(items: readonly T[], concurrency: number, work: (item: T) => Promise<R>, progress: (done: number, result: R) => void): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
   let done = 0;

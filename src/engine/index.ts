@@ -158,3 +158,8 @@ export { type CandidateSet } from "./merge-assist/candidate-files.js";
 export { callSummary, correctionFamilies } from "./merge-assist/corrections.js";
 export * from "./merge-assist/model.js";
 export * from "./merge-assist/signals.js";
+export * from "./merge-assist/alignment/commits.js";
+export * from "./merge-assist/alignment/ledger.js";
+export * from "./merge-assist/alignment/symbols.js";
+export * from "./merge-assist/alignment/units.js";
+export { baseBranch, mergeBase, mergeTreeConflicts } from "./merge-assist/branch-git.js";

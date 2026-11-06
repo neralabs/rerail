@@ -193,7 +193,7 @@ export interface HookLogEntry {
   readonly error?: string;
 }
 
-type ToolKind = "shell" | "edit" | "other";
+export type ToolKind = "shell" | "edit" | "other";
 export type Channel = "orientation" | "guard";
 
 export interface HookState {
@@ -317,7 +317,7 @@ function strings(value: unknown, into: string[]): string[] {
   return into;
 }
 
-interface Touched {
+export interface Touched {
   readonly path: string;
   readonly directory: boolean;
   /** A path a command names that does not exist yet: a file it is about to create, not one it reads. */
@@ -366,7 +366,7 @@ function commandPaths(command: string, root: string, cwd: string): Touched[] {
 }
 
 /** What a hook call's tool is, which workspace paths it touches, and what it shows the agent (for `relevance`). */
-function touchedPaths(input: Record<string, unknown>, root: string): { kind: ToolKind; touched: Touched[]; context: string } {
+export function touchedPaths(input: Record<string, unknown>, root: string): { kind: ToolKind; touched: Touched[]; context: string } {
   const toolInput = input.tool_input;
   const cwdField = [input.cwd, (toolInput as Record<string, unknown> | null)?.workdir].find(value => typeof value === "string") as string | undefined;
   const cwd = cwdField === undefined ? root : resolve(root, cwdField);
@@ -1081,7 +1081,7 @@ export function advance(state: HookState, candidates: readonly Candidate[], chos
 // ---------------------------------------------------------------------------------------------------------- formats
 
 /** A decision's text with control characters and runs of whitespace flattened, at most 280 characters. */
-function cleanDecision(text: string): string {
+export function cleanDecision(text: string): string {
   const flat = text.replace(/[\u0000-\u001f\u007f]+/gu, " ").replace(/\s+/gu, " ").trim();
   return flat.length > DECISION_CHARS ? `${flat.slice(0, DECISION_CHARS - 1)}…` : flat;
 }
@@ -1106,7 +1106,7 @@ function quoted(entry: IndexEntry): string {
 }
 
 /** `final-line`: the exact line the agent ends its final message with, naming the teammate's decision. */
-function endLine(peer: IndexEntry): string {
+export function endLine(peer: IndexEntry): string {
   const where = peer.branch ?? (peer.pr === undefined ? "their branch" : `#${peer.pr}`);
   return `End your final message with one line: "Note: ${peer.author} decided differently on ${where}: ${quoted(peer)}".`;
 }
