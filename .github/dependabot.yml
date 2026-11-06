@@ -4,6 +4,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A release is a week old before Dependabot offers it, two weeks for a major, so a compromised one has time to be
+    # pulled before an approved update auto-merges (.github/workflows/dependabot-automerge.yml).
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     open-pull-requests-limit: 3
     # Not Rerail's dependencies: test data (sample apps and packs the rule tests read) and the upstream tools' runtimes,
     # which pin upstream's own versions on purpose (docs/upstream.md); a bump there changes upstream's recorded answers.
@@ -32,6 +37,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A release is a week old before Dependabot offers it, two weeks for a major, so a compromised one has time to be
+    # pulled before an approved update auto-merges (.github/workflows/dependabot-automerge.yml).
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     open-pull-requests-limit: 3
     # The Rust crates under fixtures/ are test data, not Rerail's dependencies.
     exclude-paths:
@@ -51,6 +61,10 @@ updates:
       - "/.github/actions/*"
     schedule:
       interval: weekly
+    # A release is a week old before Dependabot offers it (.github/workflows/dependabot-automerge.yml). Dependabot takes
+    # no per-semver cooldown for actions; a major one goes to a person anyway.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 2
     groups:
       # A pull request of its own: reviewer.yml's `reviewer_ref` must follow the `uses:` commit, and `npm run check`

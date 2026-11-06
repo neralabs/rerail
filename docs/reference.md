@@ -798,7 +798,7 @@ A checkout without its own value inherits from the nearest containing checkout o
 
 In a repository not set up, `/rerail-start` (or `rerail start`) runs set-up first. It recommends packs, adds those you confirm (a language pack at its matched folder, a repository pack for the whole repository) and starts. A started repository that isn't set up records sessions but runs no rules.
 
-With a daemon running, the Claude Code, OMP and Pi footer shows `R E R A I L ○ not on here` in a stopped checkout. It shows `R E R A I L ○ not set up · rerail start` in a started repository that isn't set up. `/rerail` and `rerail status` report the checkout's state.
+The Claude Code, OMP and Pi footer is not shown in a stopped checkout, or one Rerail was never started in. With a daemon running, it shows `R E R A I L ○ not set up · rerail start` in a started repository that isn't set up. `/rerail` and `rerail status` report the checkout's state.
 
 </details>
 

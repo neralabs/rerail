@@ -71,8 +71,10 @@ function headline(input: RerailSummaryInput): readonly string[] {
       return notSetUpLines(input);
     case "not-running":
       return NOT_RUNNING;
-    case "unavailable":
+    case "starting":
       return [onLine(input), "  This session is not recorded yet; ask again after your next message."];
+    case "unavailable":
+      return [onLine(input), "  This session could not be read."];
     case "on": {
       const { rules, steered, awaitingApproval } = presentation.counts ?? { rules: null, steered: null, awaitingApproval: null };
       const coverage = rules === null ? "rules unavailable" : plural(rules, "rule");

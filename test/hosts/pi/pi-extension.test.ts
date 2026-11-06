@@ -182,7 +182,7 @@ describe("Pi conversation-rules extension", () => {
     expect(receiptCount(harness)).toBe(1);
   });
 
-  it("says Rerail is not on here in a stopped checkout, without asking a daemon", async () => {
+  it("draws no footer in a stopped checkout, without asking a daemon (#298)", async () => {
     const harness = createHarness();
     // Set-up starts the repository; stopping it afterwards leaves it set up but off here.
     addRules(harness, [messageRule]);
@@ -194,7 +194,7 @@ describe("Pi conversation-rules extension", () => {
       Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
       createPiConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["R E R A I L ○ not on here"]);
+      expect(widgets.every(lines => lines === undefined)).toBe(true);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
