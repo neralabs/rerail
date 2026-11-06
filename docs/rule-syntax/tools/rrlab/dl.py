@@ -83,15 +83,15 @@ def score(args, Run, here):
     if args.codeless:   # a record that carries no code: the code the linter's plugin gives every finding
         for e in evs:
             e["want"] = {(p, l, args.codeless if c == check else c) for p, l, c in e["want"]}
+    reported = collections.defaultdict(set)   # entry -> the codes it reports in any event, before the filters
+    for e in evs:
+        reported[e["entry"]] |= {c for _, _, c in e["want"]}
     if args.entry:
         evs = [e for e in evs if e["entry"] == args.entry]
     if args.test:
         evs = [e for e in evs if args.test in e["test"]]
     if not evs:
         raise SystemExit(f"rrlab dl: no events for {check} under {fixtures}")
-    reported = collections.defaultdict(set)
-    for e in evs:
-        reported[e["entry"]] |= {c for _, _, c in e["want"]}
     text = open(rule).read()
     codes_of = dict(re.findall(r'^\.violation\s+(\w+)\([^)]*\)\s*code\s+"([^"]+)"', text, re.M))
     log = log_codes(text, codes_of)
