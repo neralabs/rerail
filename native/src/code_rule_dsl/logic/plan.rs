@@ -1284,6 +1284,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         rel if rel.starts_with("nearest_") || rel.starts_with(crate::code_rule_dsl::logic::front::AXIS) => &[&["n"], &["a"]],
         // A text test's symbols (decision 0037, `logic::strings::as_relations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
+        // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
+        rel if rel.starts_with(super::strings::MATCHES) => &[&["sp"], &["m"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()

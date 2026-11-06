@@ -37,10 +37,36 @@ fn csv(rows: impl IntoIterator<Item = String>) -> String {
 
 /// W's findings of one Python `clause` (its `forbid`, at `violation()`) in `source`.
 fn w(forbid: Value, path: &str, source: &str) -> Vec<Value> {
+    w_as(forbid, "python", path, source)
+}
+
+/// W's findings of one clause in `source`, a file of language `language` (one with no grammar: "text").
+fn w_as(forbid: Value, language: &str, path: &str, source: &str) -> Vec<Value> {
     let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
     let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation() })), &capabilities)
         .unwrap_or_else(|e| panic!("{}", e.reason));
-    evaluate_file(&compiled, "python", path, source)["violations"].as_array().unwrap().clone()
+    evaluate_file(&compiled, language, path, source)["violations"].as_array().unwrap().clone()
+}
+
+/// W's spans of a content regex's findings in `source` (`lines`: a `lines` regex's), each as `path`, start line and
+/// end line (1-based), start column and, with `text`, the text matched.
+fn w_regex(pattern: &str, lines: bool, language: &str, path: &str, source: &str, text: bool) -> Vec<String> {
+    let mut regex = json!({ "source": "file.content", "pattern": pattern });
+    if lines {
+        regex["lines"] = json!({});
+    }
+    w_as(json!({ "regex": regex }), language, path, source)
+        .into_iter()
+        .map(|v| {
+            let at = |k: &str| v["span"][k].as_u64().unwrap() as usize;
+            let row = format!("{path}\t{}\t{}\t{}", at("startLine") + 1, at("endLine") + 1, at("startColumn"));
+            if !text {
+                return row;
+            }
+            // The span's bytes are the file's, in a line too (its line and column are the line's).
+            format!("{row}\t{}", &source[at("startByte")..at("endByte")])
+        })
+        .collect()
 }
 
 /// Every terminator `str.splitlines()` knows, a `\r\n`, a blank line, and no final terminator.
@@ -316,4 +342,51 @@ lines(p, s) :- doc(d, p, _), src_line(d, _, sp), text(sp, s).
         assert_eq!(run(dir, program, &["calls", "lines"]), ["", ""], "{}", dir.display());
         let _ = std::fs::remove_dir_all(dir);
     }
+}
+
+/// `match_all(re, sp, m)`: each match of `re` in span `sp`'s text, leftmost-first and non-overlapping, a span whose
+/// `line`, `end_line`, `col` and `text` are W's finding of a content regex (the tape's lines) over `source`, and of a
+/// `lines` regex over `src_line`; matches across lines, CRLF and non-ASCII text included.
+#[test]
+fn match_all_is_ws_regex() {
+    let files = [
+        ("a.py", "x = 'needle needles'\r\ny = 1  # néedle needle_2\n\tneedleneedle = 2\nz = \"\"\"needle\nend\"\"\"\n"),
+        ("b.py", "aaaa = 'aaaaa'\n"),
+    ];
+    let dir = corpus("match-all", &files);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.input doc, source, src_line, text, line, end_line, col
+.decl whole(p: symbol, l: number, e: number, c: number, s: symbol)
+whole(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+.decl across(p: symbol, l: number, e: number, c: number)
+across(p, l, e, c) :- doc(d, p, _), source(d, sp), match_all("(?s)needle.end", sp, m), line(m, l), end_line(m, e), col(m, c).
+.decl lines(p: symbol, l: number, e: number, c: number, s: symbol)
+lines(p, l, e, c, s) :- doc(d, p, _), src_line(d, k, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s), l = k.
+.decl pairs(p: symbol, l: number, e: number, c: number, s: symbol)
+pairs(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("aa", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+.decl none(p: symbol)
+none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
+.output whole, across, lines, pairs, none
+"#;
+    let got = run(&dir, program, &["whole", "across", "lines", "pairs", "none"]);
+    let all = |pattern: &str, lines: bool, text: bool| csv(files.iter().flat_map(|(path, source)| w_regex(pattern, lines, "python", path, source, text)));
+    let whole = all("needle\\w*", false, true);
+    assert_eq!(whole.lines().count(), 5, "{whole}");
+    assert_eq!(got[0], whole);
+    let across = all("(?s)needle.end", false, false);
+    assert_eq!(across, "a.py\t4\t5\t7\n");
+    assert_eq!(got[1], across);
+    assert_eq!(got[2], all("needle\\w*", true, true));
+    let pairs = all("aa", false, true);
+    assert_eq!(pairs, "b.py\t1\t1\t0\taa\nb.py\t1\t1\t10\taa\nb.py\t1\t1\t2\taa\nb.py\t1\t1\t8\taa\n");
+    assert_eq!(got[3], pairs);
+    assert_eq!(got[4], "b.py\n");
+    let _ = std::fs::remove_dir_all(&dir);
 }
