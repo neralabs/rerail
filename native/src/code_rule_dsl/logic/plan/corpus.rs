@@ -570,6 +570,22 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     phase("cross", statements.count());
     statements.enter("write");
     let mut rows = BTreeMap::new();
+    // A node column's value that is no node: `unset` (-1) is written as it is, and a `@place` (`rr::lower`'s
+    // `PLACE`, `-2 - (path << 32 | line)`) as `@place("path", line)`.
+    let mut places: HashMap<i64, String> = HashMap::new();
+    for (rel, lines) in &outputs {
+        for (i, v) in lines.iter().flat_map(|row| row.split('\t').enumerate()) {
+            if let Ok(v) = v.parse::<i64>()
+                && v < -1
+                && node_columns[rel].contains(&i)
+                && !places.contains_key(&v)
+            {
+                let n = -2 - v;
+                let path: String = db.query_row("SELECT sym_text(?1)", [n >> 32], |r| r.get(0))?;
+                places.insert(v, format!("@place({}, {})", crate::code_rule_dsl::logic::rr::quote(&path), n & 0xffff_ffff));
+            }
+        }
+    }
     for (rel, lines) in &outputs {
         let node_columns = &node_columns[rel];
         let mut decoded: Vec<String> = lines
@@ -578,8 +594,9 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
                 row.split('\t')
                     .enumerate()
                     .map(|(i, v)| match v.parse::<i64>() {
-                        Ok(v) if node_columns.contains(&i) && own => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
-                        Ok(v) if node_columns.contains(&i) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+                        Ok(v) if node_columns.contains(&i) && v < -1 => places[&v].clone(),
+                        Ok(v) if node_columns.contains(&i) && v >= 0 && own => format!("{}:{}", paths[&(v >> 32)], v & 0xffff_ffff),
+                        Ok(v) if node_columns.contains(&i) && v >= 0 => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
                         _ => v.to_owned(),
                     })
                     .collect::<Vec<_>>()
