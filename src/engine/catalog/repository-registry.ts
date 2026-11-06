@@ -402,7 +402,7 @@ function listedByGit(checkoutPath: string): boolean {
   }
   if (listed.status !== 0) return true;
   return listed.stdout.split("\n").filter(line => line.startsWith("worktree "))
-    .some(line => physicalPath(line.slice("worktree ".length)) === checkoutPath);
+    .some(line => storedPath(line.slice("worktree ".length)) === checkoutPath);
 }
 
 /** Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. */
