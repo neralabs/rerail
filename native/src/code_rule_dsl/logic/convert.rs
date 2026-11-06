@@ -167,14 +167,21 @@ impl Emitter {
         Ok(name)
     }
 
-    /// A relation `p(n)` holding where `body` (over `$n`) holds; its name.
-    fn relation(&mut self, bodies: Vec<Body>) -> String {
+    /// A relation `p(n, …)` holding where `bodies` (over `$n`) hold; its atom at `n`. The variables the bodies share
+    /// with the rule around them (made before `mark`: the metavariables it bound) are columns, passed in: a
+    /// variable of a rule of its own is that rule's alone, so one left out would match anything.
+    fn relation(&mut self, bodies: Vec<Body>, mark: usize, n: &str) -> String {
+        let outer = outer_vars(&bodies, mark);
         let name = self.fresh("m");
-        self.decls.insert(name.clone(), "n: node".to_owned());
+        let columns: Vec<String> = std::iter::once("n: node".to_owned()).chain(outer.iter().map(|v| format!("{}: node", &v[1..]))).collect();
+        self.decls.insert(name.clone(), columns.join(", "));
+        let args = |first: &str| std::iter::once(first.to_owned()).chain(outer.iter().cloned()).collect::<Vec<_>>().join(", ");
         for body in bodies {
-            self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
+            // Each column bound in the body: one only negated reads every node first, as `$n` does.
+            let body = outer.iter().fold(nonempty(body, "$n"), |body, v| nonempty(body, v));
+            self.rules.push(format!("{name}({}) :- {}.", args("$n"), body.join(", ")));
         }
-        name
+        format!("{name}({})", args(n))
     }
 
     /// The literals under which `m` holds at `n`.
@@ -194,8 +201,7 @@ impl Emitter {
                 self.approx.insert("supertype as its kinds".into());
                 let set = self.kindset(&st.kinds)?;
                 let bodies = self.kindsets[&set].iter().map(|k| vec![format!("node(_, $n, {}, _, _)", quote(k))]).collect();
-                let r = self.relation(bodies);
-                vec![format!("{r}({n})")]
+                vec![self.relation(bodies, 0, n)]
             }
             AstMatcher::Pattern(p) => self.pattern(p, n)?,
             AstMatcher::Constrained(c) => {
@@ -229,6 +235,7 @@ impl Emitter {
                 body?
             }
             AstMatcher::Any(ms) => {
+                let mark = self.next;
                 let bodies = ms.iter().map(|t| self.scoped(|e| e.body(t, "$n"))).collect::<Res<Vec<_>>>()?;
                 if bodies.iter().any(Vec::is_empty) {
                     return Ok(Vec::new());
@@ -236,20 +243,20 @@ impl Emitter {
                 if bodies.len() == 1 {
                     return Ok(rename(&bodies[0], "$n", n));
                 }
-                let r = self.relation(bodies);
-                vec![format!("{r}({n})")]
+                vec![self.relation(bodies, mark, n)]
             }
             AstMatcher::Not(t) => {
+                let mark = self.next;
                 let body = self.scoped(|e| e.body(t, "$n"))?;
                 if body.is_empty() {
                     return Ok(self.never(n));
                 }
                 // One positive literal over `$n` alone is negated as written.
                 let r = match body.as_slice() {
-                    [one] if single(one) && !one.contains("$v") => one.clone(),
-                    _ => format!("{}($n)", self.relation(vec![body])),
+                    [one] if single(one) && !one.contains("$v") => rename(&[one.clone()], "$n", n).remove(0),
+                    _ => self.relation(vec![body], mark, n),
                 };
-                vec![format!("!{}", rename(&[r], "$n", n)[0])]
+                vec![format!("!{r}")]
             }
             AstMatcher::Inside(related, stop) => self.walk(Axis::Inside, None, related.rule(), stop, n)?,
             AstMatcher::Has(related, stop) => self.walk(Axis::Has, None, related.rule(), stop, n)?,
@@ -267,8 +274,13 @@ impl Emitter {
                         let name = self.fresh("u");
                         self.utils.insert(key, name.clone());
                         self.decls.insert(name.clone(), "n: node".to_owned());
-                        // The relation is every caller's: it knows of the node only what its own rule says.
+                        // The relation is every caller's: it knows of the node only what its own rule says, and
+                        // reads no metavariable a caller bound.
+                        let mark = self.next;
                         let body = u.with_target(|rule| self.scoped(|e| e.at(rule, "$n"))).ok_or_else(|| Gap("utility unavailable".into()))??;
+                        if !outer_vars(std::slice::from_ref(&body), mark).is_empty() {
+                            return gap("a utility reading a metavariable bound outside it");
+                        }
                         self.rules.push(format!("{name}($n) :- {}.", nonempty(body, "$n").join(", ")));
                         name
                     }
@@ -390,7 +402,11 @@ impl Emitter {
                 {
                     let Some(stops) = kinds(stop, 0) else { return gap("a stop rule of any kind") };
                     let stops = self.kindset(&stops)?;
+                    let mark = self.next;
                     let is_stop = self.scoped(|e| e.at(stop, "$s"))?;
+                    if !outer_vars(std::slice::from_ref(&is_stop), mark).is_empty() {
+                        return gap("a stop rule reading a metavariable bound outside it");
+                    }
                     let blocked = self.fresh("blocked");
                     self.decls.insert(blocked.clone(), "low: node, high: node".to_owned());
                     // A stop node strictly between: over `low`, under `high`.
@@ -1099,6 +1115,24 @@ fn single(literal: &str) -> bool {
 
 fn rename(body: &[String], from: &str, to: &str) -> Body {
     body.iter().map(|l| replace_var(l, from, to)).collect()
+}
+
+/// The variables of `bodies` made before `mark` (`Emitter::fresh` numbers them in order): those of the rule around.
+fn outer_vars(bodies: &[Body], mark: usize) -> Vec<String> {
+    let mut out = BTreeSet::new();
+    for literal in bodies.iter().flatten() {
+        let mut rest = literal.as_str();
+        while let Some(at) = rest.find("$v") {
+            let digits: String = rest[at + 2..].chars().take_while(char::is_ascii_digit).collect();
+            rest = &rest[at + 2 + digits.len()..];
+            if let Ok(k) = digits.parse::<usize>()
+                && k <= mark
+            {
+                out.insert(k);
+            }
+        }
+    }
+    out.into_iter().map(|k| format!("$v{k}")).collect()
 }
 
 /// Replaces the variable `from` (whole names only) in a literal.

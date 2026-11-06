@@ -980,6 +980,58 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     assert_eq!(got, want);
 }
 
+/// A converted rule's findings on one file, and W's of the clauses converted (its lines 0-based), each sorted.
+fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<String>, Vec<String>) {
+    let c = convert_over(rule, &Adjust::default(), None).unwrap();
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    write_files(&dir, [(path, source)]);
+    let mut got = findings(&c.program, &dir).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let compiled = CodeRuleDslRuntime::compile(std::fs::read_to_string(rule).unwrap(), "json".to_owned(), CAPABILITIES.to_owned()).unwrap();
+    let result = crate::code_rule_dsl::test_support::evaluate_file(&compiled, "python", path, source);
+    let converted: BTreeSet<&str> = c.clauses.iter().filter(|(_, r)| r.is_ok()).map(|(id, _)| id.as_str()).collect();
+    let mut w: Vec<String> = result["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["clauseId"].as_str().is_some_and(|id| converted.contains(id)))
+        .map(|v| format!("{path}:{}:{}", v["span"]["startLine"].as_u64().unwrap() + 1, v["code"].as_str().unwrap()))
+        .collect();
+    for keys in [&mut got, &mut w] {
+        keys.sort();
+        keys.dedup();
+    }
+    (got, w)
+}
+
+/// A metavariable bound around a helper relation (an `any` branch, a `not`) is a column of it, passed in: here the
+/// call's argument must be the name the assignment binds (`$X`), as W finds, not any name: `x = f(x)` is SAME, and
+/// `y = f(z)`, whose argument is not `$X`, is OTHER (the negation). The constructor rule's "parameter named
+/// `$PARAM`" was such a helper.
+#[test]
+fn helpers_take_the_metavariables_bound_around_them() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("metavariables");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("probe.json");
+    let same = serde_json::json!({"any": [{"pattern": "$X"}, {"kind": "call", "has": {"field": "arguments", "stopBy": "neighbor", "has": {"pattern": "$X", "stopBy": "neighbor"}}}]});
+    let clause = |id: &str, code: &str, right: Json| {
+        serde_json::json!({"id": id, "forbid": {"ast": {"language": "python", "rule": {"all": [
+            {"kind": "assignment"},
+            {"has": {"field": "left", "stopBy": "neighbor", "pattern": "$X"}},
+            {"has": {"field": "right", "stopBy": "neighbor", "all": [{"kind": "call"}, right]}},
+        ]}}}, "violation": {"anchor": "witness.span", "code": code, "message": id}})
+    };
+    let policy = serde_json::json!({"format": "rerail.policy/v1", "id": "probe", "revision": 1, "mode": "block", "scope": {"include": ["**/*.py"], "exclude": []},
+        "clauses": [clause("same", "SAME", same.clone()), clause("other", "OTHER", serde_json::json!({"not": same}))]});
+    std::fs::write(&rule, policy.to_string()).unwrap();
+    let (got, w) = converted_and_w(&rule, "a.py", "x = f(x)\ny = f(z)\n", "metavariables-run");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(w, ["a.py:1:SAME", "a.py:2:OTHER"], "W");
+    assert_eq!(got, w);
+}
+
 /// A clause that fails after emitting relations takes them back: the emitter is as it was before the clause.
 #[test]
 fn a_failed_clause_leaves_nothing() {
@@ -991,7 +1043,7 @@ fn a_failed_clause_leaves_nothing() {
     .unwrap();
     let before = e.program(&["violation"]);
     let r = e.clause(|e| {
-        let m = e.relation(vec![vec!["node(_, $n, \"call\", _, _)".to_owned()], vec!["node(_, $n, \"attribute\", _, _)".to_owned()]]);
+        let m = e.relation(vec![vec!["node(_, $n, \"call\", _, _)".to_owned()], vec!["node(_, $n, \"attribute\", _, _)".to_owned()]], 0, "$n");
         e.kindset(&[e.kinds.kind_id("call")].into())?;
         e.approx.insert("an approximation".into());
         gap(format!("after {m}"))
