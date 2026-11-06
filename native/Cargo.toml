@@ -94,6 +94,8 @@ ast-grep-language = { version = "=0.50.0", default-features = false, features = 
 rusqlite = { version = "=0.40.2", features = ["bundled", "limits", "hooks", "array"] }
 # Temporary files in tests copied from P and D (P pins it as a dependency).
 tempfile = "=3.27.0"
+# The stream program's structural guards (`transducer/stream/guards.rs`) read its source as Rust syntax.
+syn = { version = "=2.0.119", features = ["full", "visit"] }
 
 [build-dependencies]
 cc = "=1.8.0"
