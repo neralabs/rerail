@@ -186,7 +186,7 @@ The cumulative process uses neither explicit application roots nor nonempty sche
 Its rule hashes and measured workload remain unchanged during these host-path repairs.
 
 The final cumulative run passes over all 9,028 inputs: 100 rules, 25,262 expected findings, and 25,262 actual findings.
-There are zero extra findings, missing findings, engine failures, or incremental comparison differences.
+There are zero extra findings, missing findings, or engine failures.
 The normal addon remains `21554b9bf6df95211d14407ececdeb5657b0a861eb44cba11193b65feffc0910`.
 Cold parent-process CPU is 2,768.671 seconds; cold wall time is 3,025.548 seconds.
 Rule compilation is separate: 2.151 CPU seconds and 2.249 wall seconds.
@@ -212,3 +212,7 @@ Original approval/root fixtures and the decoder payload reproduce exactly. CI co
 There are no remaining fixes from the reviewed batch-ten DoD list.
 The remaining 42 ports, earlier candidate activation/reporter contracts, and further performance optimization remain separate work.
 No Linear ticket was created.
+
+The cumulative 100-rule run is cold-only. Full-repository unchanged/edit phases were not run.
+Its empty incremental-difference array is not an incremental parity claim.
+The permanent 57-revision lifecycle matrix separately validates edits, restoration, removal, readdition, and dependencies for the latest ten rules.

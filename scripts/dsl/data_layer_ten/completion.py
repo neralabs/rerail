@@ -83,9 +83,10 @@ def verify_cumulative(oracle_path, native_path, process_path):
                 engineSha256=native['nativeSha256'], recordingSha256=native['recordingSha256'], workloadSha256=native['workloadSha256'],
                 policyFileSha256=native['policyFileSha256'], policyDigests=native['policyDigests'],
                 hostPreparationMs=native['hostPreparationMs'], compilationMs=native['compilationMs'], phaseCpuMs=native['phaseCpuMs'], coldMs=native['coldMs'],
+                measuredPhases=native['measuredPhases'], coldOnly='edit' not in native['measuredPhases'] and 'unchanged' not in native['measuredPhases'],
                 rootPeakRssBytesThroughClose=json.loads(Path(str(native_path)+'.close.json').read_text())['after']['peakRssBytes'],
                 processMeasurement=process, perRuleFindings={event['check']:len(event['findings']) for event in oracle['events']},
-                note='Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers.')
+                note='Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Repository measured phases are listed explicitly. An empty incrementalDifferences array does not establish unmeasured full-repository edit parity. Persistent lifecycle tests are a separate gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers.')
 
 
 if __name__ == '__main__':

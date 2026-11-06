@@ -242,6 +242,12 @@
     }
   },
   "coldMs": 3025547.819125,
+  "measuredPhases": [
+    "host-prepare",
+    "compile",
+    "cold"
+  ],
+  "coldOnly": true,
   "rootPeakRssBytesThroughClose": 10234003456,
   "processMeasurement": {
     "format": "rerail.complete-process-measurement/v1",
@@ -400,5 +406,5 @@
     "versioned_merged_identity": 0,
     "rust_sql_grammar_boundary": 0
   },
-  "note": "Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers."
+  "note": "Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Repository measured phases are listed explicitly. An empty incrementalDifferences array does not establish unmeasured full-repository edit parity. Persistent lifecycle tests are a separate gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers."
 }

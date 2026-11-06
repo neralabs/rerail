@@ -7358,7 +7358,7 @@ The sampling overhead is separate background work during this baseline, alongsid
 ### 2026-11-06: accepted complete 100-rule baseline
 
 The normal addon `21554b9bf6df95211d14407ececdeb5657b0a861eb44cba11193b65feffc0910` completes all 100 rules on 9,021 code files and seven required documents.
-Expected and actual findings are both 25,262. There are zero extras, missing findings, engine failures, or incremental comparison differences.
+Expected and actual findings are both 25,262. There are zero extras, missing findings, or engine failures.
 The native result, process receipt, and workspace-close receipt are under `dod-completion-20261106/native-100-complete*`.
 
 | Boundary | CPU seconds | Wall seconds | Peak RSS bytes |
@@ -7392,3 +7392,7 @@ No original linter assertion is skipped by the repaired source harness.
 The existing 22 ignored Rust external-corpus benchmarks are named in the validation summary and do not represent linter-test exclusions.
 All 75 transferable assertion sites have native counterparts; the 16 Python-object-specific sites remain identified in the source assertion ledger.
 The completed repair does not claim all 142 ports or resolved CPU performance. Forty-two checks remain, and cache eviction is the next measured performance lead.
+
+The cumulative 100-rule run is cold-only. Full-repository unchanged/edit phases were not run.
+Its empty incremental-difference array is not an incremental parity claim.
+The permanent 57-revision lifecycle matrix separately validates edits, restoration, removal, readdition, and dependencies for the latest ten rules.

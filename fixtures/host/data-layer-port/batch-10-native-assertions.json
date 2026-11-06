@@ -31676,6 +31676,12 @@
       }
     },
     "coldMs": 3025547.819125,
+    "measuredPhases": [
+      "host-prepare",
+      "compile",
+      "cold"
+    ],
+    "coldOnly": true,
     "rootPeakRssBytesThroughClose": 10234003456,
     "processMeasurement": {
       "format": "rerail.complete-process-measurement/v1",
@@ -31834,7 +31840,7 @@
       "versioned_merged_identity": 0,
       "rust_sql_grammar_boundary": 0
     },
-    "note": "Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers."
+    "note": "Position/code/multiplicity parity for the historical cumulative source-diagnostic contracts, with retained reporter cuts recorded in the oracle. Complete latest-ten DTO/configuration parity is a separate required gate. Repository measured phases are listed explicitly. An empty incrementalDifferences array does not establish unmeasured full-repository edit parity. Persistent lifecycle tests are a separate gate. Compile, host preparation, and cold phases are separate; process CPU includes waited-for Python producers."
   },
   "hostAssertionLedger": {
     "scripts/tests/test_lint_conditional_architecture.py::test_paths_are_under_repo_root": {
@@ -48018,8 +48024,8 @@
     "conformance/data-layer/policies.ts": "9fd8c2fd208e3bcd1fb1cc4af4ad4718e16be9f55d6310c3d311760ddab8d6e1",
     "conformance/data-layer/suite.ts": "4d246cd0756c1e1e55533d28311c4377e13642d575c135290740ae9faf8c3d81",
     "conformance/data-layer/transfer.ts": "43795f7b23d58c1eb9b35036d860ae18ab3c95301290165603be9c2728cec5d7",
-    "docs/performance-decisions/data-layer-batch-ten-20261106.json": "39638b55e7586f40b0834daff37284c3fda534d40241822e647b95c7e44f2f72",
-    "docs/performance-decisions/data-layer-batch-ten-global-recovery-20261106.json": "8c26d8724137fa2e2cba5515692db3e15a60066418aced8b21d2e734ae3b13ca",
+    "docs/performance-decisions/data-layer-batch-ten-20261106.json": "013edd2eca7ded4927f32d3dccc14afc13da1a0f175e2c65cb966214df2c570b",
+    "docs/performance-decisions/data-layer-batch-ten-global-recovery-20261106.json": "97e2f25ae429be5f475016ba04ab34e32b9ebc57ac267fa43c8b0e5187261a75",
     "docs/performance-decisions/data-layer-batch-ten-validation-20261106.json": "5b345ce0f069eb61c7b7b9617c4c2f9c254c6530393c61f8c59635aa6c419ad9",
     "fixtures/host/data-layer-port/batch-08-native-assertions.json": "735cfdf19ab96ff7f4566aa607d7e936375a34e854ea549820899763d555581b",
     "fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz": "fd50373d7c285a91b1ac1dc220618fc4389eaaefdd0dae5d44d067c58eb8eb43",
@@ -48266,7 +48272,7 @@
     "scripts/dsl/data_layer_ten/audit_cases.py": "88a8d4d590de3d1c00cbe4aeb02da71465e1e47810e9d7a0c16ce32b0c5efa2c",
     "scripts/dsl/data_layer_ten/bounded.py": "e18a235e612b38f88de89173f4d33a58e4dd2694ce92c1ed101f7bfc02fda2af",
     "scripts/dsl/data_layer_ten/common.py": "107f7b6555f9c691b82eebdc178de0cdacb0920f921df417c471a19cf0b949d1",
-    "scripts/dsl/data_layer_ten/completion.py": "8099232a51865768b3e05f04f8c70bafc9aa6e12533dd3f6dd23eedef3597380",
+    "scripts/dsl/data_layer_ten/completion.py": "e3dd790db33c30f17fe599ee8f7932b6aabe916d28f8cf453aa21a802bde6756",
     "scripts/dsl/data_layer_ten/conditional.py": "c15a657122ea63fd944444a34970860e2aef3476533d91cbd9830ebec4934979",
     "scripts/dsl/data_layer_ten/conditional_shared.py": "693f868856c4d46f9b9128ec27fa922dd64bf050f3a1ad40f1c9ac62b777581a",
     "scripts/dsl/data_layer_ten/contracts/__init__.py": "1d6bd5bd9108b81ca436a81e31e74cb45da31bc7a5438bf9893e396b1f57e0d8",
@@ -48312,7 +48318,7 @@
     "test/conformance/data-layer/batch-ten-helpers.test.ts": "aaa4b0b548664000a262fb3a3cf803220279829ca52e1b52039d93a7413dec36",
     "test/conformance/data-layer/batch-ten-repair.test.ts": "556a0b343b8898f51fe322de7048989181772b239d3e5602e188ab8eb78f7b3d",
     "test/conformance/data-layer/batch-ten-transfer.test.ts": "59559d4c3c6c160eccc66ba6ac87bdc0b761ae6c9b1ef76bc48c4c296cf307fa",
-    "test/conformance/data-layer/batch-ten.test.ts": "66aeb31ad8c03eef52d34ce822ded53b74283ca0d3c25a0ed89443d0e6878b56",
+    "test/conformance/data-layer/batch-ten.test.ts": "aa963822c5144d02c61bcded5129cd3ca706b7bb68bdfce650517473e4eaa896",
     "test/conformance/data-layer/dod/approvals.test.ts": "5e5703e566319e516b692841cf609e4b847befe6e47f2e44b4df796a0856850c",
     "test/conformance/data-layer/dod/commands.test.ts": "271f321a5d0e385bc71b47a08c951400440deb882f0fe52bb9c178faaae516bc",
     "test/conformance/data-layer/dod/global-queries.test.ts": "a943c2bac23b17c0c00c8113ebb3dfa7bf5a4796afcf50bbc74fdba5f6c76806",

@@ -273,5 +273,7 @@ PYTHONPATH=scripts/dsl python3.13 -m data_layer_ten.completion \
 Generate `/tmp/dod.json` with Vitest's JSON reporter over `test/conformance/data-layer/dod/`.
 The verifier requires all 57 named tests, both API paths, all 100 programs, exact finding multiplicity, and zero engine failures.
 The cumulative comparison checks rule, path, line, and code.
+The accepted repository measurement is cold-only; full-repository unchanged/edit phases were not run.
+The separate lifecycle gate covers 57 persistent revisions for the latest ten rules.
 Complete latest-ten diagnostic DTOs, configuration, and positive behavior have separate required gates described above.
 The historical reporter cuts for earlier batches remain documented in the original recording.

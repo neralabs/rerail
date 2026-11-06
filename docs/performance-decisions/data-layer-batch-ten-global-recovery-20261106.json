@@ -2827,6 +2827,8 @@
     "processWallSeconds": 3035.3801240000175,
     "rootPeakRssBytes": 10234003456,
     "minimumFreeBytes": 122239995904,
-    "note": "A correctness pass and a measured baseline. The earlier 80-rule run has a different rule inventory and engine. This is not a controlled speed-improvement claim. The one-second live sample is a performance lead, not whole-phase attribution."
+    "note": "A correctness pass and a measured baseline. The earlier 80-rule run has a different rule inventory and engine. This is not a controlled speed-improvement claim. The one-second live sample is a performance lead, not whole-phase attribution.",
+    "coldOnly": true,
+    "incrementalScope": "Full-repository unchanged/edit phases were not run. Separate 57-revision latest-ten lifecycle matrix."
   }
 }
