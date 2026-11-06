@@ -818,11 +818,11 @@ violation("data-layer-serverplan-state-tripwires", "state-signatures", "SPT-018"
 //   project_mode and return_kinds' `OR EXISTS(project_mode)`.
 // - Evidence `any`: the first branch that matches gives the captures; `has`/`inside` the first node found.
 
-// Approximations (each also noted where it is made, tagged APPROX), and what blocks each: transitive_sinks' tie on
-// (length, start) between origins takes the least-start origin (the SQL's choice is unspecified: no exact form);
-// routes longer than 99999 characters are not followed (counting recursion is an UnboundedValueCycle, so lengths come
-// from a finite table); returnKindsHex is read as compact, lowercase-hex JSON (nothing decodes a hex option: option_json
-// parses JSON text, and decoding it here would be string-building recursion).
+// Not exact, each noted where it is made (tagged GAP) with what blocks it: transitive_sinks' tie on (length(route),
+// __start) between origins (the SQL's row_number() order among tied rows is unspecified: no exact form); routes
+// longer than 99999 characters, and returnKindsHex past its 99999th byte (both read from the finite number table
+// spt_flow_num: value-making recursion over the call graph or along a string is an UnboundedValueCycle);
+// returnKindsHex keys holding characters outside printable ASCII, and the JSON5 forms SQLite's json_each also reads.
 // Options: the converter's facts (option_on / option_value, the run's resolved options, the replay's per event), so
 // the part follows every configuration; no dev swap.
 
@@ -835,67 +835,138 @@ spt_flow_opt("oracleAnalyzer", "false") :- spt_flow_digit(0), !option_on("oracle
 spt_flow_opt("sourceProvided", "true") :- option_on("sourceProvided").
 spt_flow_opt("sourceProvided", "false") :- spt_flow_digit(0), !option_on("sourceProvided").
 
-// returnKindsHex: the hex of a JSON object {"name":["kind",…],…}; the stage return_kinds' `json_each(X'…')`.
-// Decoded where it is read, without making values: hex positions from spt_flow_num, each key compared pair by pair
-// with a callee name (spt_flow_hexch: a name character's hex pair), each kind found as its quoted hex inside the key's
-// list. APPROX: the JSON is taken to be compact (no whitespace: Python's json.dumps(…, separators=(",", ":")), as the
-// default and every recorded value are) with lowercase hex; only the kinds the stages read (authority, provider,
-// runtime_value, runtime_authority) are looked for (another kind adds a taint nothing reads).
+// returnKindsHex: stage return_kinds' `json_each(CAST(X'…' AS TEXT)) entry, json_each(entry.value) kind`, a row
+// (entry.key, kind.value) per entry of the decoded top-level object and member of the entry's value (an array's
+// elements, an object's values). Parsed by byte position (spt_flow_num) with counts and least positions, no
+// recursion: a byte's value from its hex pair (either case, as X'…' reads it); the quotes not after an odd run of
+// backslashes pair up in order into strings; a bracket, `:` or `,` outside every string is structure; a position's
+// depth is the structural opens before it less the closes. A key is a string at depth 1 followed by `:`, its value
+// the container opened next (a string or scalar value makes the SQL's json_each(entry.value) fail or give no
+// string), the value's members the strings at depth 2 inside it not followed by `:`. A string's text is its units
+// joined in order: plain bytes, `\"`, `\\`, `\/` and `\uXXXX`.
+// GAP (blocker: no functor makes a character from a byte or code point): a string holding a character outside
+// printable ASCII (a byte ≥ 0x80, a control, `\b \f \n \r \t`, `\u` outside 0020–007e) gets no text, so a non-ASCII
+// callee name (Python allows them) never matches its key; every kind the stages read and every ASCII name is exact.
+// GAP (blocker: UnboundedValueCycle, see spt_flow_num): bytes past the 99999th are not read.
+// GAP (no form here): the JSON5 extensions SQLite's json_each also accepts (unquoted keys, single quotes, comments,
+// trailing commas) are not read; malformed JSON, where the SQL fails, is out of scope.
 .decl spt_flow_rkh(h: symbol)
 spt_flow_rkh(h) :- option_value("returnKindsHex", h).
-.decl spt_flow_hexch(c: symbol, hp: symbol)
-spt_flow_hexch("a", "61"). spt_flow_hexch("b", "62"). spt_flow_hexch("c", "63"). spt_flow_hexch("d", "64").
-spt_flow_hexch("e", "65"). spt_flow_hexch("f", "66"). spt_flow_hexch("g", "67"). spt_flow_hexch("h", "68").
-spt_flow_hexch("i", "69"). spt_flow_hexch("j", "6a"). spt_flow_hexch("k", "6b"). spt_flow_hexch("l", "6c").
-spt_flow_hexch("m", "6d"). spt_flow_hexch("n", "6e"). spt_flow_hexch("o", "6f"). spt_flow_hexch("p", "70").
-spt_flow_hexch("q", "71"). spt_flow_hexch("r", "72"). spt_flow_hexch("s", "73"). spt_flow_hexch("t", "74").
-spt_flow_hexch("u", "75"). spt_flow_hexch("v", "76"). spt_flow_hexch("w", "77"). spt_flow_hexch("x", "78").
-spt_flow_hexch("y", "79"). spt_flow_hexch("z", "7a"). spt_flow_hexch("A", "41"). spt_flow_hexch("B", "42").
-spt_flow_hexch("C", "43"). spt_flow_hexch("D", "44"). spt_flow_hexch("E", "45"). spt_flow_hexch("F", "46").
-spt_flow_hexch("G", "47"). spt_flow_hexch("H", "48"). spt_flow_hexch("I", "49"). spt_flow_hexch("J", "4a").
-spt_flow_hexch("K", "4b"). spt_flow_hexch("L", "4c"). spt_flow_hexch("M", "4d"). spt_flow_hexch("N", "4e").
-spt_flow_hexch("O", "4f"). spt_flow_hexch("P", "50"). spt_flow_hexch("Q", "51"). spt_flow_hexch("R", "52").
-spt_flow_hexch("S", "53"). spt_flow_hexch("T", "54"). spt_flow_hexch("U", "55"). spt_flow_hexch("V", "56").
-spt_flow_hexch("W", "57"). spt_flow_hexch("X", "58"). spt_flow_hexch("Y", "59"). spt_flow_hexch("Z", "5a").
-spt_flow_hexch("0", "30"). spt_flow_hexch("1", "31"). spt_flow_hexch("2", "32"). spt_flow_hexch("3", "33").
-spt_flow_hexch("4", "34"). spt_flow_hexch("5", "35"). spt_flow_hexch("6", "36"). spt_flow_hexch("7", "37").
-spt_flow_hexch("8", "38"). spt_flow_hexch("9", "39"). spt_flow_hexch("_", "5f").
-.decl spt_flow_rkhex(k: symbol, hk: symbol)
-spt_flow_rkhex("authority", "22617574686f7269747922"). spt_flow_rkhex("provider", "2270726f766964657222").
-spt_flow_rkhex("runtime_value", "2272756e74696d655f76616c756522").
-spt_flow_rkhex("runtime_authority", "2272756e74696d655f617574686f7269747922").
-// The even positions of `"` and of `]`.
-.decl spt_flow_hq(p: number)
-spt_flow_hq(p) :- spt_flow_rkh(h), n = strlen(h), spt_flow_num(i), p = 2 * i, p < n, substr(h, p, 2) = "22".
-.decl spt_flow_hrb(p: number)
-spt_flow_hrb(p) :- spt_flow_rkh(h), n = strlen(h), spt_flow_num(i), p = 2 * i, p < n, substr(h, p, 2) = "5d".
-// A key: a `"` after `{` or `,`, to the next `"`, followed by `:[`; its name L characters long.
-.decl spt_flow_hkey0(p: number)
-spt_flow_hkey0(p) :- spt_flow_hq(p), p >= 2, spt_flow_rkh(h), substr(h, p - 2, 2) = "7b".
-spt_flow_hkey0(p) :- spt_flow_hq(p), p >= 2, spt_flow_rkh(h), substr(h, p - 2, 2) = "2c".
-.decl spt_flow_hq_after(p: number, q: number)
-spt_flow_hq_after(p, q) :- spt_flow_hkey0(p), spt_flow_hq(q), q > p.
-.decl spt_flow_hkey(p: number, e: number, l: number)
-spt_flow_hkey(p, e, l) :- spt_flow_hq_after(p, e), e = min q : { spt_flow_hq_after(p, q) }, spt_flow_rkh(h), substr(h, e, 6) = "223a5b",
-    l = (e - p - 2) / 2.
-.decl spt_flow_hidx(l: number, j: number)
-spt_flow_hidx(l, j) :- spt_flow_hkey(_, _, l), spt_flow_num3(j), j < l.
-.decl spt_flow_hcand(x: symbol, p: number)
-spt_flow_hcand(x, p) :- spt_flow_callee(_, x), spt_flow_hkey(p, _, l), strlen(x) = l, substr(x, 0, 1) = c, spt_flow_hexch(c, hp), spt_flow_rkh(h),
-    substr(h, p + 2, 2) = hp.
-.decl spt_flow_hok(x: symbol, p: number, j: number)
-spt_flow_hok(x, p, j) :- spt_flow_hcand(x, p), spt_flow_hkey(p, _, l), spt_flow_hidx(l, j), substr(x, j, 1) = c, spt_flow_hexch(c, hp),
-    spt_flow_rkh(h), substr(h, p + 2 + 2 * j, 2) = hp.
-.decl spt_flow_hname(x: symbol, p: number)
-spt_flow_hname(x, p) :- spt_flow_hcand(x, p), spt_flow_hkey(p, _, l), l = count : { spt_flow_hok(x, p, _) }.
-// The key's list: from after `:[` to the next `]`.
-.decl spt_flow_hrb_after(e: number, q: number)
-spt_flow_hrb_after(e, q) :- spt_flow_hkey(_, e, _), spt_flow_hrb(q), q > e.
-.decl spt_flow_hlist(e: number, z: number)
-spt_flow_hlist(e, z) :- spt_flow_hrb_after(e, z), z = min q : { spt_flow_hrb_after(e, q) }.
+.decl spt_flow_hexd(c: symbol, v: number)
+spt_flow_hexd("0", 0). spt_flow_hexd("1", 1). spt_flow_hexd("2", 2). spt_flow_hexd("3", 3). spt_flow_hexd("4", 4).
+spt_flow_hexd("5", 5). spt_flow_hexd("6", 6). spt_flow_hexd("7", 7). spt_flow_hexd("8", 8). spt_flow_hexd("9", 9).
+spt_flow_hexd("a", 10). spt_flow_hexd("b", 11). spt_flow_hexd("c", 12). spt_flow_hexd("d", 13). spt_flow_hexd("e", 14).
+spt_flow_hexd("f", 15). spt_flow_hexd("A", 10). spt_flow_hexd("B", 11). spt_flow_hexd("C", 12). spt_flow_hexd("D", 13).
+spt_flow_hexd("E", 14). spt_flow_hexd("F", 15).
+// Printable ASCII by code.
+.decl spt_flow_chr(v: number, c: symbol)
+spt_flow_chr(32, " "). spt_flow_chr(33, "!"). spt_flow_chr(34, "\""). spt_flow_chr(35, "#"). spt_flow_chr(36, "$").
+spt_flow_chr(37, "%"). spt_flow_chr(38, "&"). spt_flow_chr(39, "'"). spt_flow_chr(40, "("). spt_flow_chr(41, ")").
+spt_flow_chr(42, "*"). spt_flow_chr(43, "+"). spt_flow_chr(44, ","). spt_flow_chr(45, "-"). spt_flow_chr(46, ".").
+spt_flow_chr(47, "/"). spt_flow_chr(48, "0"). spt_flow_chr(49, "1"). spt_flow_chr(50, "2"). spt_flow_chr(51, "3").
+spt_flow_chr(52, "4"). spt_flow_chr(53, "5"). spt_flow_chr(54, "6"). spt_flow_chr(55, "7"). spt_flow_chr(56, "8").
+spt_flow_chr(57, "9"). spt_flow_chr(58, ":"). spt_flow_chr(59, ";"). spt_flow_chr(60, "<"). spt_flow_chr(61, "=").
+spt_flow_chr(62, ">"). spt_flow_chr(63, "?"). spt_flow_chr(64, "@"). spt_flow_chr(65, "A"). spt_flow_chr(66, "B").
+spt_flow_chr(67, "C"). spt_flow_chr(68, "D"). spt_flow_chr(69, "E"). spt_flow_chr(70, "F"). spt_flow_chr(71, "G").
+spt_flow_chr(72, "H"). spt_flow_chr(73, "I"). spt_flow_chr(74, "J"). spt_flow_chr(75, "K"). spt_flow_chr(76, "L").
+spt_flow_chr(77, "M"). spt_flow_chr(78, "N"). spt_flow_chr(79, "O"). spt_flow_chr(80, "P"). spt_flow_chr(81, "Q").
+spt_flow_chr(82, "R"). spt_flow_chr(83, "S"). spt_flow_chr(84, "T"). spt_flow_chr(85, "U"). spt_flow_chr(86, "V").
+spt_flow_chr(87, "W"). spt_flow_chr(88, "X"). spt_flow_chr(89, "Y"). spt_flow_chr(90, "Z"). spt_flow_chr(91, "[").
+spt_flow_chr(92, "\\"). spt_flow_chr(93, "]"). spt_flow_chr(94, "^"). spt_flow_chr(95, "_"). spt_flow_chr(96, "`").
+spt_flow_chr(97, "a"). spt_flow_chr(98, "b"). spt_flow_chr(99, "c"). spt_flow_chr(100, "d"). spt_flow_chr(101, "e").
+spt_flow_chr(102, "f"). spt_flow_chr(103, "g"). spt_flow_chr(104, "h"). spt_flow_chr(105, "i"). spt_flow_chr(106, "j").
+spt_flow_chr(107, "k"). spt_flow_chr(108, "l"). spt_flow_chr(109, "m"). spt_flow_chr(110, "n"). spt_flow_chr(111, "o").
+spt_flow_chr(112, "p"). spt_flow_chr(113, "q"). spt_flow_chr(114, "r"). spt_flow_chr(115, "s"). spt_flow_chr(116, "t").
+spt_flow_chr(117, "u"). spt_flow_chr(118, "v"). spt_flow_chr(119, "w"). spt_flow_chr(120, "x"). spt_flow_chr(121, "y").
+spt_flow_chr(122, "z"). spt_flow_chr(123, "{"). spt_flow_chr(124, "|"). spt_flow_chr(125, "}"). spt_flow_chr(126, "~").
+// Byte i of the decoded text, its value.
+.decl spt_flow_jb(i: number, v: number)
+spt_flow_jb(i, v) :- spt_flow_rkh(h), n = strlen(h), spt_flow_num(i), 2 * i + 1 < n, hi = substr(h, 2 * i, 1), spt_flow_hexd(hi, x),
+    lo = substr(h, 2 * i + 1, 1), spt_flow_hexd(lo, y), v = 16 * x + y.
+.decl spt_flow_jws(i: number)
+spt_flow_jws(i) :- spt_flow_jb(i, v), (v = 32 ; v = 9 ; v = 10 ; v = 13).
+.decl spt_flow_jnws(i: number)
+spt_flow_jnws(i) :- spt_flow_jb(i, _), !spt_flow_jws(i).
+// After an odd run of backslashes: the run is the bytes from the last other byte before p.
+.decl spt_flow_jbs_odd(p: number)
+spt_flow_jbs_odd(p) :- spt_flow_jb(p, _), spt_flow_jb(p - 1, 92), m = max j : { spt_flow_jb(j, v), v != 92, j < p }, r = p - 1 - m,
+    r - 2 * (r / 2) = 1.
+// The delimiting quotes, numbered in order; strings from an even one to the next.
+.decl spt_flow_juq(q: number)
+spt_flow_juq(q) :- spt_flow_jb(q, 34), !spt_flow_jbs_odd(q).
+.decl spt_flow_juqn(q: number, k: number)
+spt_flow_juqn(q, k) :- spt_flow_juq(q), k = count : { spt_flow_juq(j), j < q }.
+.decl spt_flow_jstr(o: number, c: number)
+spt_flow_jstr(o, c) :- spt_flow_juqn(o, k), k - 2 * (k / 2) = 0, spt_flow_juqn(c, k + 1).
+// Structure: a bracket, `:` or `,` outside every string.
+.decl spt_flow_jcand(i: number, v: number)
+spt_flow_jcand(i, v) :- spt_flow_jb(i, v), (v = 123 ; v = 125 ; v = 91 ; v = 93 ; v = 58 ; v = 44).
+.decl spt_flow_jinstr(i: number)
+spt_flow_jinstr(i) :- spt_flow_jcand(i, _), spt_flow_jstr(o, c), o < i, i < c.
+.decl spt_flow_js(i: number, v: number)
+spt_flow_js(i, v) :- spt_flow_jcand(i, v), !spt_flow_jinstr(i).
+.decl spt_flow_jopen(i: number)
+spt_flow_jopen(i) :- spt_flow_js(i, 123).
+spt_flow_jopen(i) :- spt_flow_js(i, 91).
+.decl spt_flow_jclose(i: number)
+spt_flow_jclose(i) :- spt_flow_js(i, 125).
+spt_flow_jclose(i) :- spt_flow_js(i, 93).
+// The depth before a string, an open or a close.
+.decl spt_flow_jpt(p: number)
+spt_flow_jpt(p) :- spt_flow_jstr(p, _).
+spt_flow_jpt(p) :- spt_flow_jopen(p).
+spt_flow_jpt(p) :- spt_flow_jclose(p).
+.decl spt_flow_jdepth(p: number, x: number)
+spt_flow_jdepth(p, x) :- spt_flow_jpt(p), a = count : { spt_flow_jopen(j), j < p }, b = count : { spt_flow_jclose(j), j < p }, x = a - b.
+// The next byte not whitespace after a string or a `:`.
+.decl spt_flow_jafter(p: number)
+spt_flow_jafter(c) :- spt_flow_jstr(_, c).
+spt_flow_jafter(i) :- spt_flow_js(i, 58).
+.decl spt_flow_jnext(p: number, i: number)
+spt_flow_jnext(p, i) :- spt_flow_jafter(p), i = p + 1, spt_flow_jnws(i).
+spt_flow_jnext(p, i) :- spt_flow_jafter(p), spt_flow_jws(p + 1), i = min j : { spt_flow_jnws(j), j > p }.
+// The top-level value is an object.
+.decl spt_flow_jobj(t: number)
+spt_flow_jobj(t) :- spt_flow_rkh(_), t = min j : { spt_flow_jnws(j) }, spt_flow_js(t, 123).
+// A string followed by `:` (at depth 1 an entry's key; at depth 2 a member's key, not a member).
+.decl spt_flow_jkeyish(o: number)
+spt_flow_jkeyish(o) :- spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_js(i, 58).
+// An entry: its key at o, its value the container from v to its close m (the first close after v at depth 2).
+.decl spt_flow_jentry(o: number, v: number, m: number)
+spt_flow_jentry(o, v, m) :- spt_flow_jobj(_), spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i),
+    spt_flow_jnext(i, v), spt_flow_jopen(v), m = min j : { spt_flow_jclose(j), spt_flow_jdepth(j, 2), j > v }.
+.decl spt_flow_jmember(v: number, o: number)
+spt_flow_jmember(v, o) :- spt_flow_jentry(_, v, m), spt_flow_jstr(o, _), o > v, o < m, spt_flow_jdepth(o, 2), !spt_flow_jkeyish(o).
+// A string's escapes: a backslash in it not after an odd run of backslashes, x the byte it escapes; the bytes an
+// escape takes after its backslash; `\uXXXX`'s code.
+.decl spt_flow_jesc(o: number, p: number, x: number)
+spt_flow_jesc(o, p, x) :- spt_flow_jstr(o, c), spt_flow_jb(p, 92), o < p, p < c, !spt_flow_jbs_odd(p), spt_flow_jb(p + 1, x).
+.decl spt_flow_jcons(q: number)
+spt_flow_jcons(q) :- spt_flow_jesc(_, p, _), q = p + 1.
+spt_flow_jcons(q) :- spt_flow_jesc(_, p, 117), spt_flow_digit(k), k >= 2, k <= 5, q = p + k.
+.decl spt_flow_jhexv(i: number, x: number)
+spt_flow_jhexv(i, x) :- spt_flow_jb(i, v), spt_flow_chr(v, ch), spt_flow_hexd(ch, x).
+.decl spt_flow_jhex4(p: number, u: number)
+spt_flow_jhex4(p, u) :- spt_flow_jesc(_, p, 117), spt_flow_jhexv(p + 2, a), spt_flow_jhexv(p + 3, b), spt_flow_jhexv(p + 4, c),
+    spt_flow_jhexv(p + 5, e), u = 4096 * a + 256 * b + 16 * c + e.
+// The units: (string, position, character).
+.decl spt_flow_junit(o: number, p: number, ch: symbol)
+spt_flow_junit(o, p, ch) :- spt_flow_jstr(o, c), spt_flow_jb(p, v), o < p, p < c, v != 92, !spt_flow_jcons(p), spt_flow_chr(v, ch).
+spt_flow_junit(o, p, ch) :- spt_flow_jesc(o, p, x), (x = 34 ; x = 92 ; x = 47), spt_flow_chr(x, ch).
+spt_flow_junit(o, p, ch) :- spt_flow_jesc(o, p, 117), spt_flow_jhex4(p, u), spt_flow_chr(u, ch).
+// GAP (above): a string with a unit outside printable ASCII has no text.
+.decl spt_flow_jnonprint(p: number)
+spt_flow_jnonprint(p) :- spt_flow_jb(p, v), !spt_flow_chr(v, _).
+.decl spt_flow_jbad(o: number)
+spt_flow_jbad(o) :- spt_flow_jnonprint(p), spt_flow_jstr(o, c), o < p, p < c.
+spt_flow_jbad(o) :- spt_flow_jesc(o, _, x), x != 34, x != 92, x != 47, x != 117.
+spt_flow_jbad(o) :- spt_flow_jesc(o, p, 117), !spt_flow_jhex4_print(p).
+.decl spt_flow_jhex4_print(p: number)
+spt_flow_jhex4_print(p) :- spt_flow_jhex4(p, u), spt_flow_chr(u, _).
+.decl spt_flow_jtext(o: number, s: symbol)
+spt_flow_jtext(o, s) :- spt_flow_jstr(o, _), !spt_flow_jbad(o), s = join ch by p : { spt_flow_junit(o, p, ch) }.
 .decl spt_flow_return_kind(name: symbol, kind: symbol)
-spt_flow_return_kind(x, k) :- spt_flow_hname(x, p), spt_flow_hkey(p, e, _), spt_flow_hlist(e, z), spt_flow_hq(q), q >= e + 6, q < z,
-    spt_flow_rkhex(k, hk), spt_flow_rkh(h), substr(h, q, strlen(hk)) = hk.
+spt_flow_return_kind(x, k) :- spt_flow_jentry(o, v, _), spt_flow_jtext(o, x), spt_flow_jmember(v, e), spt_flow_jtext(e, k).
 
 .decl spt_flow_ep_ok(x: number)
 spt_flow_ep_ok(1) :- spt_flow_opt("entryPoint", "all").
@@ -1544,15 +1615,16 @@ spt_flow_l2070(d) :- doc(d, p, _), match("(?s:.*)(?:(?:^|/)impl/common/l2070_ser
 // fn's SQL id + 1) over the route: a shortest path with fn weight w. spt_flow_tl holds every walk's length up to
 // spt_flow_bound (no simple route is longer); a walk through a cycle is longer than the simple route inside it, so the
 // least lengths are the simple routes'. A propagated row's node is the call site in fn; its start the least among the
-// sites on a least route. origin: the SQL keeps an arbitrary one of the routes tied on (length, start); here the
-// origin with the least start (APPROX: the SQL's pick is unspecified; read only by SPT-024's origin-name test).
+// sites on a least route. origin: among rows tied on (length(route), __start) the SQL's row_number() keeps whichever
+// SQLite orders first; here the origin with the least start. GAP (no exact form: SQL leaves the order of tied rows
+// unspecified): only SPT-024's origin-name test reads it (a propagated row's origin is never fn, whichever is kept).
 .decl spt_flow_w(d: number, f: node, w: number)
 spt_flow_w(d, f, w) :- spt_flow_ctx(d, f, s, e, _), w = strlen(to_string(s * 16777216 + e)) + 1.
-// The recursion may not make values (front/cycles.rs: only moves along the tree bound one), so a step's length is
-// read from spt_flow_add, a finite table of l + w for every l up to the document's bound (no simple route is longer:
-// 1 + Σ w over the functions it may visit). spt_flow_num: 0..99999 from digit facts (num3: 0..999).
-// APPROX (blocker: counting recursion, UnboundedValueCycle): a route longer than 99999 characters (a document with
-// ~7000 reachable functions) is not followed.
+// The recursion runs over the call graph, not a tree edge, so it may not make values (front/cycles.rs,
+// UnboundedValueCycle): a step's length is read from spt_flow_add, a finite table of l + w for every l up to the
+// document's bound (no simple route is longer: 1 + Σ w over the functions it may visit). spt_flow_num: 0..99999 from
+// digit facts (num3: 0..999). GAP (blocker: UnboundedValueCycle): a route longer than 99999 characters (one simple
+// call chain through ~6500 functions, w being 15 for a file of a megabyte) is not followed.
 .decl spt_flow_digit(x: number)
 spt_flow_digit(0). spt_flow_digit(1). spt_flow_digit(2). spt_flow_digit(3). spt_flow_digit(4). spt_flow_digit(5).
 spt_flow_digit(6). spt_flow_digit(7). spt_flow_digit(8). spt_flow_digit(9).
