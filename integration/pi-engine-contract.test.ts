@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedContractCodeRuleForRoot } from "./support/contract-code-rule.js";
+import { awaitCodeRulesOpenThrough } from "./support/code-rules-open.js";
 import { steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("Pi native code rule engine", () => {
-  it("delivers the contract cursor-execute code rule violation through Pi's native session queue", async () => {
+  it("delivers the contract cursor-execute code rule violation once, in the write's result", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "rerail-pi-kernel-"));
     process.env.RERAIL_HOME = join(cwd, "home");
     startTestRepository(cwd);
@@ -73,6 +74,18 @@ describe("Pi native code rule engine", () => {
 
     try {
       await session.bindExtensions({});
+      // The write's own check runs only for a call that finds the evaluator open: one reached while it is still opening
+      // (indexing the repository) goes on without code rules, and only the baseline walk could find the edit, if it
+      // read the file after the write. So the test waits for the evaluator, through calls that edit nothing.
+      await awaitCodeRulesOpenThrough(sessionManager.getSessionId(), async probe => {
+        const probeCallId = `open-probe:${probe}`;
+        const input = { path: "api/route.py" };
+        await session.extensionRunner.emitToolCall({ type: "tool_call", toolCallId: probeCallId, toolName: "read", input });
+        await session.extensionRunner.emitToolResult({
+          type: "tool_result", toolCallId: probeCallId, toolName: "read", input,
+          content: [{ type: "text", text: "def route():\n    return 1\n" }], details: undefined, isError: false,
+        });
+      });
       const toolCallId = "write-route-with-cursor";
       await session.extensionRunner.emitToolCall({
         type: "tool_call",
@@ -84,7 +97,7 @@ describe("Pi native code rule engine", () => {
         },
       });
       await writeFile(join(cwd, "api", "route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
-      await session.extensionRunner.emitToolResult({
+      const result = await session.extensionRunner.emitToolResult({
         type: "tool_result",
         toolCallId,
         toolName: "write",
@@ -97,13 +110,14 @@ describe("Pi native code rule engine", () => {
         isError: false,
       });
       const steer = steerText(CONTRACT_CURSOR_EXECUTE_RULE_ID, CONTRACT_CURSOR_EXECUTE_MESSAGE, "api/route.py:2:5");
-      await expect.poll(() => sessionManager.getBranch(), { timeout: 10_000, interval: 10 }).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            type: "custom_message",
-            content: expect.stringContaining(steer),
-          }),
-        ]),
+      // The write's check finishes while Pi waits on the write's result, so its steer rides that result.
+      expect(result?.content?.filter(block => block.type === "text" && block.text.includes(steer))).toHaveLength(1);
+      // The end of the agent's run hands Pi every steer still due: none of them repeats the one the result carried.
+      await session.extensionRunner.emitBoundary({ type: "agent_before_settle", outcome: "completed" }, () => ({
+        contextEntries: [], contextMessages: [], llmMessages: [], pendingMessages: [], canContinue: false,
+      }));
+      expect(sessionManager.getBranch()).not.toContainEqual(
+        expect.objectContaining({ type: "custom_message", content: expect.stringContaining(steer) }),
       );
     } finally {
       await session.dispose();
