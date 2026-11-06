@@ -1,0 +1,15 @@
+.policy "clippy-single-char-lifetime-names" revision 2
+.description "Give Rust lifetime parameters descriptive names instead of single letters; the name says what the borrow is tied to."
+.language rust
+.mode steer
+.scope include "**/*"
+
+// Clippy's single_char_lifetime_names (restriction): a lifetime parameter named with one letter. Declared
+// lifetimes count, in generics and in `for<…>` binders; uses do not.
+//   fn f<'a>(x: &'a str)   for<'b> Fn(&'b u8)     reported at the declarations 'a and 'b
+//   fn f<'src>(x: &'src str)   &'static str        not reported
+.violation single_char_lifetime_names(at: node) code "single_char_lifetime_names"
+    "Rename this lifetime to say what it borrows from, e.g. 'input instead of 'a."
+    suppress clippy "clippy::single_char_lifetime_names", "clippy::restriction", "warnings"
+single_char_lifetime_names(l) :- kind(l, "lifetime"), text(l, x), glob("'[A-Za-z]", x),
+    (kind(p, "lifetime_parameter"), field(p, "name", l) ; kind(p, "for_lifetimes"), child(p, l, _)).

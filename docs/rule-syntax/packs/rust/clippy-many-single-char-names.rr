@@ -1,0 +1,95 @@
+.policy "clippy-many-single-char-names" revision 2
+.description "Avoid more than four single-character variable names in scope at once in a Rust function, tests excluded; descriptive names are easier to follow."
+.language rust
+.mode steer
+.scope include "**/*"
+
+#include "rust/syntax.rr"
+//   has_attr(n, x)   n carries #[x]
+
+// Clippy's many_single_char_names (pedantic): more than four single-letter bindings in scope at once.
+// Clippy walks each function with a stack of scopes: the function (its parameters and its body's own lets),
+// every other block, and every match arm. A binding is pushed when it starts: a parameter at the start, a
+// let's names after its value, an arm's names before its guard and body. A name already on the stack is not
+// pushed again (shadowing). At the end of each scope that pushed a name, if the stack holds more than four,
+// Clippy reports at the stack's first name.
+//   fn f() { let (a, b, c, d) = t; { let e = 1; } }      reported at `a`: a b c d e are in scope at once
+//   fn f() { match z { A(a) => {} B(b) => {} C(c) => {} D(d) => {} E(e) => {} } }
+//                                                        not reported: each arm is its own scope
+// Bindings are the identifiers in parameter, let and arm patterns: not shorthand fields `S { x }`, and only
+// the first alternative of `p | q`. Closure parameters, `if let` and `for` do not count, as in Clippy.
+// Functions marked #[test], and default methods of traits, are not checked. Names are ASCII here: [a-z].
+.violation many_single_char_names(at: node) code "many_single_char_names"
+    "Rename some of these single-letter variables to descriptive names; more than four are in scope here."
+    suppress clippy "clippy::many_single_char_names", "clippy::pedantic", "warnings"
+many_single_char_names(b) :- visible_count(s, k), k > 4, pushed(_, s, _, _), outermost(s, o),
+    first = min p : { pushed(_, o, p, _) }, pushed(b, o, first, _).
+
+// ---- functions and scopes --------------------------------------------------------------------------------
+.decl checked(f: node)
+checked(f) :- kind(f, "function_item"), field(f, "body", _), !has_attr(f, "test"),
+    !trait_method(f).
+.decl trait_method(f: node)
+trait_method(f) :- child(l, f, _), kind(l, "declaration_list"), child(t, l, _), kind(t, "trait_item").
+.decl fn_body(b: node)
+fn_body(b) :- kind(f, "function_item"), field(f, "body", b).
+// The `else` block of `let p = v else { … };` is not a scope: Clippy reads it as part of the let.
+.decl scope_node(n: node)
+scope_node(n) :- kind(n, "block"), !field(_, "alternative", n).
+scope_node(n) :- kind(n, "match_arm") ; kind(n, "function_item").
+// scope_of(n, s): the scope n sits in. A function's body block is the function's own scope.
+.decl scope_of(n: node, s: node)
+scope_of(n, s) :- nearest(n, s, scope_node), !fn_body(s).
+scope_of(n, f) :- nearest(n, b, scope_node), fn_body(b), field(f, "body", b).
+// scope(s, f, start): s is a scope of checked function f, starting at byte `start`.
+.decl scope(s: node, f: node, start: number)
+scope(f, f, x) :- checked(f), node(_, f, _, x, _).
+scope(s, f, x) :- scope_node(s), !fn_body(s), !kind(s, "function_item"), scope(u, f, _), scope_of(s, u),
+    node(_, s, _, x, _).
+.decl enclosing(s: node, a: node)   // a is s's scope or an outer one
+enclosing(s, u) :- scope(s, f, _), s != f, scope_of(s, u).
+enclosing(s, a) :- enclosing(s, u), enclosing(u, a).
+
+// ---- bindings ------------------------------------------------------------------------------------------------
+// bound(n, s, t): identifier n is bound in scope s, pushed at time t (a byte offset).
+.decl bound(n: node, s: node, t: number)
+bound(n, s, t) :- field(f, "parameters", ps), child(ps, p, _), field(p, "pattern", r), binding_in(n, r),
+    scope(f, f, t), s = f.
+bound(n, s, t) :- kind(l, "let_declaration"), field(l, "pattern", r), binding_in(n, r), scope_of(l, s),
+    scope(s, _, _), node(_, l, _, _, t).
+bound(n, a, t) :- kind(a, "match_arm"), field(a, "pattern", m), child(m, r, 0), binding_in(n, r),
+    scope(a, _, t).
+// binding_in(n, r): n is a single-letter name bound by pattern r.
+.decl binding_in(n: node, r: node)
+binding_in(n, r) :- kind(n, "identifier"), (n = r ; within(n, r)), text(n, x), glob("[a-z]", x),
+    !not_bound(n).
+.decl path_kind(k: symbol)
+path_kind("scoped_identifier"). path_kind("token_tree").
+// not bound: a path segment `m::n(r)`, a struct name, a later alternative of `p | q`, or anything after the
+// `@` of `x @ p` (Clippy reads the name x, not its subpattern)
+.decl not_bound(n: node)
+not_bound(n) :- kind(n, "identifier"), field(_, "type", n).
+not_bound(n) :- kind(n, "identifier"), inside(n, _, path_kind).
+not_bound(n) :- kind(n, "identifier"), kind(o, "or_pattern"), child(o, c, i), i > 0, (n = c ; within(n, c)).
+not_bound(n) :- kind(n, "identifier"), kind(o, "captured_pattern"), child(o, c, i), i > 0, (n = c ; within(n, c)).
+
+// pushed(n, s, p, x): bound and not shadowed; p is n's offset, x its name.
+.decl pushed(n: node, s: node, p: number, x: symbol)
+pushed(n, s, p, x) :- bound(n, s, _), !shadowed(n), node(_, n, _, p, _), text(n, x).
+// shadowed(n): the same name is already on the stack: earlier in n's scope, or in an outer scope before
+// n's scope began.
+.decl shadowed(n: node)
+shadowed(n) :- bound(n, s, t), text(n, x), bound(m, s, u), m != n, text(m, x),
+    (u < t ; u = t, m < n).
+shadowed(n) :- bound(n, s, _), text(n, x), enclosing(s, a), bound(m, a, u), text(m, x), scope(s, _, b), u < b.
+
+// visible_count(s, k): at the end of scope s, the stack holds k names.
+.decl visible(s: node, n: node, a: node)
+visible(s, n, s) :- pushed(n, s, _, _).
+visible(s, n, a) :- pushed(_, s, _, _), enclosing(s, a), pushed(n, a, _, _), bound(n, a, u), scope(s, _, b), u < b.
+.decl visible_count(s: node, k: number)
+visible_count(s, k) :- pushed(_, s, _, _), k = count : { visible(s, _, _) }.
+// outermost(s, o): the outermost scope with a name on the stack at the end of s; Clippy reports its first.
+.decl outermost(s: node, o: node)
+outermost(s, o) :- visible(s, _, _), x = min y : { visible(s, _, a), scope(a, _, y) }, visible(s, _, o),
+    scope(o, _, x).
