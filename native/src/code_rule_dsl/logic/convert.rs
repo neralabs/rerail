@@ -5,7 +5,8 @@
 //! Each sub-rule is a conjunction of literals over one node variable. `any` is a relation with one rule per
 //! branch, `not` its negation, a utility a relation of its own (recursive where it reaches itself). Regexes become string tests or
 //! name sets, never regexes. What it cannot say is a gap, named; what it says only approximately is noted.
-//! The clause is converted whole or not at all.
+//! The clause is converted whole or not at all: a clause that fails leaves nothing it emitted (`Emitter::clause`),
+//! and the program keeps only what `violation` reaches (`reachable`).
 //!
 //! The relations, per node `n`:
 //! - `inside` (to the end): `inside($n, $a, set)`, the set being the kinds the ancestor's rule allows;
@@ -16,6 +17,7 @@
 //!   descendant is within that field's child (byte spans, both nodes bound);
 //! - neighbours: `child(p, c, i)` or `field(p, f, c)`.
 
+use super::front::{self, Literal, Program};
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::matcher::{AstMatcher, Axis, Semantic, StopBy};
 use ast_grep_core::matcher::{Pattern, PatternNode};
@@ -34,6 +36,7 @@ fn gap<T>(what: impl Into<String>) -> Res<T> {
 }
 
 /// The rules one or more clauses need, and the shared declarations.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Emitter {
     kinds: KindCatalog,
     /// Relation declarations, by name: `(name, columns)`.
@@ -73,6 +76,17 @@ impl Emitter {
             never: false,
             here: None,
         }
+    }
+
+    /// Converts one clause with `f`. Where it fails, all it emitted is taken back (rules, declarations, kind sets,
+    /// utilities, approximations): a clause is converted whole or leaves nothing.
+    pub(in crate::code_rule_dsl) fn clause(&mut self, f: impl FnOnce(&mut Self) -> Res<()>) -> Res<()> {
+        let saved = self.clone();
+        let out = f(self);
+        if out.is_err() {
+            *self = saved;
+        }
+        out
     }
 
     fn fresh(&mut self, stem: &str) -> String {
@@ -739,6 +753,33 @@ const KEYWORDS: [&str; 35] = [
 /// The strings a path or module condition tests.
 const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];
 
+/// `prog` less what its outputs do not reach: the rules (`front::prune`), then the declarations, inputs, facts and
+/// kind sets no rule left reads or derives.
+pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
+    let mut prog = front::prune(prog);
+    let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
+    let mut sets = BTreeSet::new();
+    for r in &prog.rules {
+        used.insert(r.head.rel.clone());
+        for l in &r.body {
+            if let Some(a) = l.atom() {
+                used.insert(a.rel.clone());
+                if let Some(set) = a.rel.strip_prefix(front::AXIS) {
+                    sets.insert(set.to_owned());
+                }
+            }
+            if let Literal::Nearest { kindset, .. } = l {
+                sets.insert(kindset.clone());
+            }
+        }
+    }
+    prog.decls.retain(|r, _| used.contains(r));
+    prog.inputs.retain(|r| used.contains(r));
+    prog.facts.retain(|r, _| used.contains(r));
+    prog.lattice.retain(|r, _| used.contains(r));
+    prog.kindsets.retain(|k, _| sets.contains(k));
+    prog
+}
 
 fn quote(s: &str) -> String {
     serde_json::to_string(s).expect("a string")

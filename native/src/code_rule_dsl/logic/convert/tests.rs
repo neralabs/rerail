@@ -78,7 +78,8 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
         if adjust.keep.as_ref().is_some_and(|keep| !keep(&clause.id)) {
             continue;
         }
-        let result = (|| -> Res<()> {
+        // A clause that fails leaves nothing it emitted.
+        let result = e.clause(|e| -> Res<()> {
             let matchers = match &clause.kind {
                 ClauseKind::Forbid(Query::Ast { matchers, .. }) => matchers,
                 ClauseKind::Forbid(Query::Regex { .. }) => return gap("a regex over file content or paths"),
@@ -134,12 +135,15 @@ fn convert(path: &Path, adjust: &Adjust) -> Converted {
             };
             e.rules.push(format!("violation({}, {}, {}, $p, {line}) :- {}.", quote(&id), quote(&clause.id), quote(&clause.violation.code), body.join(", ")));
             Ok(())
-        })();
+        });
         clauses.push((clause.id.clone(), result));
     }
     clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
-    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
-    let program = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043), with only
+    // what `violation` reaches.
+    let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    let program = crate::code_rule_dsl::logic::rr::print(&reachable(prog)).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
     Converted { program, clauses, approx: e.approx.clone() }
 }
 
@@ -498,6 +502,60 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     let want = [format!("{path}:1:SPTA006"), format!("{path}:2:SPTA007"), format!("{path}:4:SPTA007")];
     assert_eq!(w, want, "W");
     assert_eq!(got, want);
+}
+
+/// A clause that fails after emitting relations takes them back: the emitter is as it was before the clause.
+#[test]
+fn a_failed_clause_leaves_nothing() {
+    let mut e = Emitter::new(GrammarDialect::Python);
+    e.clause(|e| {
+        e.rule("in_scope($d)", "d: int", vec!["doc($d, _, _)".into()]);
+        Ok(())
+    })
+    .unwrap();
+    let before = e.program(&["violation"]);
+    let r = e.clause(|e| {
+        let m = e.relation(vec![vec!["node(_, $n, \"call\", _, _)".to_owned()], vec!["node(_, $n, \"attribute\", _, _)".to_owned()]]);
+        e.kindset(&[e.kinds.kind_id("call")].into())?;
+        e.approx.insert("an approximation".into());
+        gap(format!("after {m}"))
+    });
+    assert!(r.is_err());
+    assert_eq!(e.program(&["violation"]), before);
+    assert!(e.approx.is_empty());
+}
+
+/// Every converted program holds only what `violation` reaches: no rule, declaration, input or kind set of a
+/// clause that failed, or of a branch it did not use. Over every rule of the pack, many with failed clauses.
+#[test]
+fn converted_programs_hold_only_what_violation_reaches() {
+    let mut failed = 0;
+    for path in rule_files() {
+        let c = convert(&path, &Adjust::default());
+        failed += c.clauses.iter().filter(|(_, r)| r.is_err()).count();
+        let prog = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
+        let (mut reached, mut todo) = (BTreeSet::new(), vec!["violation".to_owned()]);
+        while let Some(rel) = todo.pop() {
+            if reached.insert(rel.clone()) {
+                todo.extend(prog.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())));
+            }
+        }
+        let id = path.display();
+        for r in &prog.rules {
+            assert!(reached.contains(&r.head.rel), "{id}: {} is not reached", r.head.rel);
+        }
+        for rel in prog.decls.keys().chain(&prog.inputs) {
+            assert!(reached.contains(rel), "{id}: {rel} is declared and not reached");
+        }
+        let sets: BTreeSet<String> = reached.iter().filter_map(|r| r.strip_prefix(crate::code_rule_dsl::logic::front::AXIS)).map(str::to_owned).chain(prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
+            crate::code_rule_dsl::logic::front::Literal::Nearest { kindset, .. } => Some(kindset.clone()),
+            _ => None,
+        })).collect();
+        for set in prog.kindsets.keys() {
+            assert!(sets.contains(set), "{id}: kind set {set} is not read");
+        }
+    }
+    assert!(failed > 0, "some clause failed");
 }
 
 /// A measurement, not a check: converted rules (`RERAIL_MEASURE_RULES`, comma-separated rule ids) run over a corpus
