@@ -665,7 +665,7 @@ function showRule(r, view) {
     : [{ label: "Generated .rr", panes: [json, gen] }];
   const k = Math.min(view || 0, views.length - 1);
   const note = r.h
-    ? "Written by hand on the libraries (see Libraries), and reviewed against the JSON and ESLint. The generated tab shows what the translator makes of the same JSON."
+    ? "Written by hand on the libraries (see Libraries), and reviewed against the JSON and the tool it ports. The generated tab shows what the translator makes of the same JSON."
     : "No hand-written version yet. The .rr is the translator's construct-by-construct lowering of the JSON. It is meant to keep the JSON's meaning, but nobody has reviewed it, and it is not how a person would write the rule.";
   $("#pack-bar").innerHTML = `<h2>${esc(r.id)}</h2><p>${esc(r.d || "")}</p><p class="note" style="padding:0">${esc(note)}</p>${views.length > 1 ? `<div class="tabs" role="tablist"></div>` : ""}`;
   if (views.length > 1) {

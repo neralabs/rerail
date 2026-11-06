@@ -633,11 +633,11 @@ w('''  <section class="sect">
     <div class="txt">
       <h2>Where to look next</h2>
       <ul class="tight">
-        <li><a href="#packs">Pack rules</a>: every shipped rule, today's JSON beside the generated .rr.</li>
+        <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rr beside today's JSON.</li>
         <li><a href="#data-layer">Data-layer rules</a>: hand-written final forms of complex data-layer checks, and the router example in four forms. function-level-imports, missing-async-pairs and the router carry fixes.</li>
         <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
       </ul>
-      <p class="note" style="padding:0">Generated .rr is a display translation from today's JSON. It shows the shape; nothing here has been compiled or run against the engine.</p>
+      <p class="note" style="padding:0">The pack rules run in the rrlab harness (Soufflé), scored against each tool's own findings. They do not yet run on the engine. The generated tab is a display translation of today's JSON.</p>
     </div>
   </section>
 </div>

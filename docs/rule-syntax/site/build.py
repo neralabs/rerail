@@ -86,6 +86,7 @@ def main():
     n_datalog = sum(len(re.findall(r"^\.(?:decl|edit)\s", l["src"], re.M)) for m, l in libs.items() if l["kind"] == "datalog")
 
     packs, total_json, total_rr, atom_rules, n_rules, ungrounded = [], 0, 0, 0, 0, 0
+    hand_rules, hand_rr = 0, 0   # hand-written pack rules and their size, code only (tables excluded)
     for pdir in sorted(glob.glob(os.path.join(ROOT, "packs", "*", "rules"))):
         name = pdir.split(os.sep)[-2]
         rules = []
@@ -97,10 +98,12 @@ def main():
             rid = doc.get("id", os.path.basename(f))
             entry = {"id": rid, "d": doc.get("description", ""), "m": doc.get("mode", "log"),
                      "j": compact(doc), "r": rr, "u": u, "jl": pretty.count("\n") + 1, "rl": rr.count("\n")}
-            # A hand-written exemplar: docs/rule-syntax/packs/<pack>/<id>.rr, plus <id>.<part>.rr files (a fact table).
+            # The hand-written rule: docs/rule-syntax/packs/<pack>/<id>.rr, plus <id>.<part>.rr files (a fact table).
             hand = os.path.join(RS, "packs", name, rid + ".rr")
             if os.path.exists(hand):
                 entry["h"] = read(hand)
+                hand_rules += 1
+                hand_rr += len("\n".join(l for l in entry["h"].split("\n") if not l.lstrip().startswith("//")))
                 entry["hx"] = {os.path.basename(x)[len(rid) + 1:-3]: read(x)
                                for x in sorted(glob.glob(os.path.join(RS, "packs", name, rid + ".*.rr")))}
             rules.append(entry)
@@ -170,7 +173,7 @@ def main():
     dl_rr = sum(code_lines(e["final"]) for e in hand_data.values() if "final" in e)
     lib_lines = lambda fam: sum(code_lines(l["src"]) for m, l in libs.items() if m.startswith(fam))
     router_pretty = json.dumps(router_json, indent=2, ensure_ascii=False)
-    stats = {"rules": f"{n_rules:,}",
+    stats = {"rules": f"{n_rules:,}", "hand_rules": f"{hand_rules:,}", "hand_mb": f"{hand_rr / 1e6:.1f} MB",
              "router_json_lines": str(router_pretty.count("\n") + 1), "router_b1_code": str(code_lines(b1)),
              "dl_py_lines": f"{dl_py:,}", "dl_rr_code": f"{dl_rr:,}",
              "lib_py_lines": f"{lib_lines('python/'):,}", "lib_tsx_lines": f"{lib_lines('tsx/'):,}", "json_mb": f"{total_json / 1e6:.1f} MB", "rr_mb": f"{total_rr / 1e6:.1f} MB",
