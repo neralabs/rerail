@@ -128,5 +128,5 @@ test_helper(i) :- scope_of(i, fn, _), match("test_.*", fn).
 .decl internal(m: symbol)
 internal("").
 internal(m) :- local_imp(_, m, _), internal_root(m).
-internal(m) :- local_imp(_, m, _), match("(api|impl|data_layer|_internal|conform|scripts)\..*", m).
-internal(m) :- local_imp(_, m, _), match("l\d{3,4}_[a-z][a-z0-9_]*(\..*)?", m).
+internal(m) :- local_imp(_, m, _), match("(api|impl|data_layer|_internal|conform|scripts)\\..*", m).
+internal(m) :- local_imp(_, m, _), match("l\\d{3,4}_[a-z][a-z0-9_]*(\\..*)?", m).

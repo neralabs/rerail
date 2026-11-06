@@ -106,7 +106,7 @@ internal_alias(i, m) :- lint_import(i, m), glob("{api,impl}.**", m).
 layer_dependency(i, s, t, m) :- edge(i, d, m), path_part(d, top), app(top),
     count : { path_part(d, p), layer_free_dir(p) } = 0,
     count : { path_part(d, "l7200_versioned_transactions"), file_name(d, f), vt_file(f) } = 0,
-    doc(d, _, q), match("(?:|.*?\.)l(?<s>\d{4})_.*", q), match(".*?\.l(?<t>\d{4})_.*", m),
+    doc(d, _, q), match("(?:|.*?\\.)l(?<s>\\d{4})_.*", q), match(".*?\\.l(?<t>\\d{4})_.*", m),
     t > s,   // 4 digits: text order
     count : { path_part(d, "l2100_sql_grammar"), t = "2200" } = 0.
 
@@ -216,6 +216,6 @@ conform_impl(i, m) :- edge(i, d, m), prefix("impl.", m), path_part(d, "conform")
 // b: the imported module's layer: the first dotted segment of the same shape.
 // Then both layers must be in a known group (layer_group); unknown layers give no row, as in the Python linter.
 group_dependency(i, g, h, m) :- edge(i, d, m), count : { path_part(d, p), group_skip(p) } = 0,
-    doc(d, path, _), match("(?:|.*?/)(?<a>l\d{4}[^/]*_[^/]*|types|row_id)(?:/.*)?", path),
-    match("(?:|.*?\.)(?<b>l\d{4}[^.]*_[^.]*).*", m),
+    doc(d, path, _), match("(?:|.*?/)(?<a>l\\d{4}[^/]*_[^/]*|types|row_id)(?:/.*)?", path),
+    match("(?:|.*?\\.)(?<b>l\\d{4}[^.]*_[^.]*).*", m),
     layer_group(a, g), layer_group(b, h), g != h, !group_allows(g, h).

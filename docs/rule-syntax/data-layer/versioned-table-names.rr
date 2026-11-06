@@ -39,7 +39,7 @@ vsuffix("_sparse"). vsuffix("_tip"). vsuffix("_staged"). vsuffix("_log"). vsuffi
 // broad_repo_scope without tests: the whole repository, minus test, tests and conform parts.
 .decl checked(d: number)
 checked(d) :- doc(d, p, _), !path_part(d, "conform"),
-    !match(".*(?:^|/)(?:l1000_schema/table_utils|l7000_versioned_schema/versioned_table_info)\.py", p),
+    !match(".*(?:^|/)(?:l1000_schema/table_utils|l7000_versioned_schema/versioned_table_info)\\.py", p),
     !glob("{**/,}{docs,impl/doltdb,impl/mongodb,impl/neo4j}/**", p).
 .decl here(n: node)
 here(n) :- docof(n, d), checked(d).
