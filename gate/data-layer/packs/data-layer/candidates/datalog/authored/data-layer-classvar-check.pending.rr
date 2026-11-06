@@ -1,0 +1,57 @@
+// data-layer-classvar-check, clause `comparison` (CLASSVAR001), from candidates/rules-ast/data-layer-classvar-check.json.
+//
+// W: a `ClassVar` (or `x.ClassVar`) right after an `is`/`is not`/`==`/`!=` token (`follows`, neighbor: the previous
+// sibling, anonymous tokens included), whose parent is a comparison_operator whose first named child is a call of
+// `get_origin` (or `x.get_origin`) and which has such an operator token among its children; not inside a
+// `def is_classvar_annotation` (`^def\b`: not `async def`). Reported at the comparison (capture.COMPARE).
+//
+// The operator right before child i of a comparison is its operator token i - 1 (`op_at`): the named children
+// and the operators alternate, comments aside (a comment between the operator and `ClassVar` would be W's previous
+// sibling; not modelled). Awaiting `op_at`.
+
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, op, op_at, line, syntax_error
+.output violation
+
+.decl comparison_ops(s: symbol)
+comparison_ops("is"). comparison_ops("is not"). comparison_ops("=="). comparison_ops("!=").
+
+// `identifier` with the name, or an attribute whose `attribute` field is one.
+.decl comparison_classvar(n: node)
+comparison_classvar(n) :- node(_, n, "identifier", _, _), text(n, "ClassVar").
+comparison_classvar(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "ClassVar").
+
+.decl comparison_get_origin(n: node)
+comparison_get_origin(n) :- node(_, n, "identifier", _, _), text(n, "get_origin").
+comparison_get_origin(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "get_origin").
+
+// The comparison: first named child a `get_origin(...)` call, and an operator token of the set.
+.decl comparison_compare(c: node)
+comparison_compare(c) :-
+    node(_, c, "comparison_operator", _, _), child(c, call, 0), node(_, call, "call", _, _),
+    field(call, "function", f), comparison_get_origin(f), op_at(c, _, s), comparison_ops(s).
+
+.decl comparison_defs(kind: symbol)
+comparison_defs("function_definition").
+
+// Inside a `def is_classvar_annotation` (any depth).
+.decl comparison_exempt(n: node)
+comparison_exempt(n) :-
+    inside(n, f, comparison_defs), !op(f, "async"), field(f, "name", nm), node(_, nm, "identifier", _, _),
+    text(nm, "is_classvar_annotation").
+
+violation("data-layer-classvar-check", "comparison", "CLASSVAR001", p, l) :-
+    comparison_compare(c), child(c, x, i), i >= 1, comparison_classvar(x), op_at(c, i - 1, s), comparison_ops(s),
+    !comparison_exempt(x),
+    node(d, c, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(c, l).
