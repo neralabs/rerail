@@ -80,6 +80,9 @@ pub struct Ev<'a> {
 type R<T> = Result<T, String>;
 
 /// Character ranges named `sym` in a tree-sitter `parser.c` (`static const TSCharacterRange`).
+/// Expression nodes evaluated (each over the whole file), for cost estimates.
+pub static OPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 pub fn load_table(parser_c: &str, sym: &str) -> R<Vec<(u32, u32)>> {
     let key = format!("{sym}[] = {{");
     let at = parser_c.find(&key).ok_or(format!("{sym} not in parser.c"))?;
@@ -622,6 +625,9 @@ impl<'a> Ev<'a> {
 
     fn mask(&self, e: &Expr) -> R<Mask> {
         let n = self.n;
+        if !matches!(e, Expr::Name(_) | Expr::Empty) {
+            OPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         Ok(match e {
             Expr::Empty => Mask::zeros(n),
             Expr::Name(nm) => {

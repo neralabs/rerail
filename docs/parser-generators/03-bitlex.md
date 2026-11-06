@@ -463,6 +463,8 @@ case (`lexers/python.bitlex` §4).
 
 ## 6. Next
 
+`09-compile-and-lower.md` sets out how the IR, the interpreter and the compiled forms fit together.
+
 1. **NEON and Metal lowerings** of the same programs, in the block-parallel form of
    `06-block-parallel.md`, checked against the evaluator.
 2. **The tree stages** of `01-branch-free-design.md` and `02-python.md`, from the token masks to
