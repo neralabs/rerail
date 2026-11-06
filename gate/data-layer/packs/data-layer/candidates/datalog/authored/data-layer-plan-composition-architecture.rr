@@ -8,9 +8,8 @@
 // - SPC-004 reads `ast_name` of an Attribute as its attr;
 // - SPC-005's `Name` is an identifier in expression position: not an attribute's attr, a keyword argument's name, a
 //   def's or class's name, a parameter's name, or in an import.
-// Clause `composition-runtime-observations` is not authored: it parses the `parameters` option as JSON (engine
-// gap), and at the default options its `observations` stage fails (`json_extract('[]','$[composition
-// observations required]')`), which is an error, not a finding.
+// Clause `composition-runtime-observations` reads option `parameters` (JSON text) through option_json; see its
+// section at the end.
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -20,6 +19,8 @@
 .decl op(n: node, s: symbol)
 .decl line(n: node, l: number)
 .decl syntax_error(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl option_json(name: symbol, pointer: symbol, v: symbol)
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
@@ -148,3 +149,41 @@ violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-0
 violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :-
     plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "rewrite_exact_plan_refs_payload"),
     doc(d, p, _), line(f, l).
+
+// ---- composition-runtime-observations ----
+// Relational, not per file, its findings at the declared location `l2070_batching/semantic_plan.py` (byte 0, line 1,
+// no document needed). Stage `supplied` is the `parameters` option as JSON; `observations` keeps it when
+// `fingerprints` is an array of exactly two strings and `firstRefs` and `secondRefs` are arrays of strings, and
+// otherwise fails (`json_extract('[]','$[composition observations required]')` is a SQL error: no findings, as
+// here). The query's `$option: entryPoint` has the cases `all` (the default) and `run_behavior_probes`, the same
+// query, and no default: another entry point is a compile error in W, no findings here. Findings: SPC-012 when the
+// two fingerprints differ, SPC-005 when a value of firstRefs is one of secondRefs.
+// APPROXIMATION (blocked: option_json gives no leaf's JSON type and no row for an empty array or object): a number,
+// boolean or null element passes as a string here where W's `type!='text'` fails the stage; an element that is an
+// empty array or object is unseen (a third such fingerprint passes; one of two leaves one, which fails, as in W);
+// an absent firstRefs/secondRefs passes as an empty array. A scalar or object in their place is seen (a leaf at
+// the key itself, or under a non-index key) and fails.
+.decl observations_entry(e: symbol)
+observations_entry("all"). observations_entry("run_behavior_probes").
+.decl observations_on(e: symbol)
+observations_on(e) :- option_value("entryPoint", e), observations_entry(e).
+.decl observations_list(key: symbol)
+observations_list("fingerprints"). observations_list("firstRefs"). observations_list("secondRefs").
+// A leaf under a list key that is not a direct string element.
+.decl observations_bad(key: symbol)
+observations_bad(k) :- observations_list(k), ptr = cat("/", k), option_json("parameters", ptr, _).
+observations_bad(k) :-
+    observations_list(k), pre = cat(cat("/", k), "/"), option_json("parameters", ptr, _), prefix(pre, ptr),
+    re = cat(pre, "[0-9]+"), !match(re, ptr).
+observations_bad("fingerprints") :-
+    option_json("parameters", ptr, _), prefix("/fingerprints/", ptr), ptr != "/fingerprints/0", ptr != "/fingerprints/1".
+.decl observations_valid(a: symbol, b: symbol)
+observations_valid(a, b) :-
+    observations_on(_), option_json("parameters", "/fingerprints/0", a), option_json("parameters", "/fingerprints/1", b),
+    !observations_bad("fingerprints"), !observations_bad("firstRefs"), !observations_bad("secondRefs").
+
+violation("data-layer-plan-composition-architecture", "composition-runtime-observations", "SPC-012", "l2070_batching/semantic_plan.py", 1) :-
+    observations_valid(a, b), a != b.
+violation("data-layer-plan-composition-architecture", "composition-runtime-observations", "SPC-005", "l2070_batching/semantic_plan.py", 1) :-
+    observations_valid(_, _), option_json("parameters", p, v), prefix("/firstRefs/", p),
+    option_json("parameters", q, v), prefix("/secondRefs/", q).
