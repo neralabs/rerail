@@ -1493,3 +1493,45 @@ violation("{TARGET_ID}", "executor-parameters", cat("call ", x), p, l) :- call_n
     assert_eq!(got, want);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An authored clause with `match_all` and `match_group` (on one match, its column joined to a node's, and under a
+/// disjunction) survives the merge and its printing: the merged program prints them as the built-ins (not as
+/// relations `match_all_`), reads back to the same program, and the runner gives the clause's findings from it.
+#[test]
+fn authored_match_built_ins_print_and_run() {
+    let re = r"step_tags\\((?P<arg>\\w+)\\)";
+    let authored = format!(
+        r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl source(d: number, sp: span)
+.decl tape_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl in_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), source(d, sp),
+    match_all("{re}", sp, m), match_group("{re}", sp, m, "arg", g), text(g, "step"), line(m, l), (col(m, c), c = 7 ; col(m, c), c > 10).
+violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d), doc(d, p, _), node(d, call, "call", _, _),
+    line(call, l), col(call, c), tape_line(d, l, sp), match_all("{re}", sp, m), col(m, c), match_group("{re}", sp, m, "arg", g), text(g, "step").
+violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), doc(d, p, _), node(d, _, "module", _, _).
+"#
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("authored-match");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
+    let c = convert_over(&rule_file(TARGET).unwrap(), &Adjust::default(), Some(&dir)).unwrap();
+    assert!(c.program.contains("match_all(\"") && c.program.contains("match_group(\"") && !c.program.contains("match_all_("), "{}", c.program);
+    let again = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap()).unwrap();
+    assert_eq!(again, c.program);
+    let run = dir.join("run");
+    write_files(&run, [EXECUTOR]);
+    let mut got = findings(&c.program, &run).unwrap();
+    got.sort();
+    got.dedup();
+    let at = |l: usize, code: &str| format!("{}:{l}:{code}", EXECUTOR.0);
+    assert_eq!(got, [at(1, "SPTA001"), at(2, "SPTA006"), at(2, "SPTA007"), at(4, "SPTA006"), at(4, "SPTA007")]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
