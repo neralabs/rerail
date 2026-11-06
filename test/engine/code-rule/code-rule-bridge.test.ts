@@ -227,11 +227,13 @@ describe("CodeRuleBridge", () => {
         checkpoints: ["edit", "function"],
         edits: [{ path: "src/a.py", language: "python", previousText: "before\n", generatedText: "tool edit\n" }],
       }],
-      // The session saw the file as its tool edit left it: that is the external edit's preimage.
+      // Made while no command of the session ran, the external edit is another writer's: the evaluator, holding the file
+      // as the tool edit left it, is told in Log, with no generated lines.
       ["session-1", {
         revision: 2,
         checkpoints: ["final"],
-        edits: [{ path: "src/a.py", language: "python", previousText: "tool edit\n", generatedText: "external edit\n" }],
+        mode: "log",
+        edits: [{ path: "src/a.py", language: "python", previousText: "external edit\n", generatedText: "external edit\n" }],
       }],
     ]);
   });
@@ -312,6 +314,31 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  it("credits a tool call answered while the evaluator opened with what was written as it ran, and nothing else written then", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "a.py"), "before\n");
+    await writeFile(join(root, "src", "b.py"), "before\n");
+    await awaitClockAfter(join(root, "src", "a.py"), join(root, "src", "b.py"));
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const opening = Promise.withResolvers<void>();
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), openWorkspace: async () => { await opening.promise; } });
+    const open = bridge.openWorkspace("session-1");
+    passes.push(open);
+    // The runtime answers the agent's tool calls without the bridge until the evaluator opens.
+    await bridge.unwatchedCall("write-1");
+    await writeFile(join(root, "src", "a.py"), "mine\n");
+    await bridge.unwatchedResult("write-1");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await writeFile(join(root, "src", "b.py"), "theirs\n");
+    await awaitClockAfter(join(root, "src", "b.py"));
+    opening.resolve();
+    await open;
+    await bridge.checkpoint("turn");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousReadError: "Source changed during initial discovery without a captured preimage", generatedText: "mine\n" }],
+    ]);
+  });
+
   it("closes and reopens without waiting for an abandoned baseline read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
@@ -348,7 +375,7 @@ describe("CodeRuleBridge", () => {
     expect(engine.close).toHaveBeenCalledTimes(1);
   });
 
-  it("reports uncaptured shell writes made before baseline discovery reaches their files", async () => {
+  it("reports a command's uncaptured shell writes made before baseline discovery reaches their files", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "existing before startup\n");
     await writeFile(join(root, "src", "untouched.py"), "existing unchanged\n");
@@ -358,6 +385,7 @@ describe("CodeRuleBridge", () => {
     const baseline = holdDiscovery("directories", root);
     await bridge.openWorkspace("session-1");
     await baseline.entered;
+    await bridge.begin("shell-1", "Bash", { command: "./replace.sh" });
     await writeFile(join(root, "src", "a.py"), "external replacement\n");
     await writeFile(join(root, "src", "new.py"), "external creation\n");
     const final = bridge.checkpoint("final");
@@ -379,6 +407,7 @@ describe("CodeRuleBridge", () => {
         },
       ],
     }]]);
+    await expect(bridge.finish("shell-1")).resolves.toEqual([]);
     await bridge.checkpoint("turn");
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
   });
@@ -421,6 +450,7 @@ describe("CodeRuleBridge", () => {
     const baseline = holdDiscovery("directories", root);
     await bridge.openWorkspace("session-1");
     await baseline.entered;
+    await bridge.begin("shell-1", "Bash", { command: "./write.sh &" });
     await writeFile(path, "shell write\n");
 
     await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
@@ -481,7 +511,7 @@ describe("CodeRuleBridge", () => {
     }
   });
 
-  it("discovers a shell write that races the startup snapshot read", async () => {
+  it("discovers a command's shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
     await writeFile(path, "before\n");
@@ -491,9 +521,10 @@ describe("CodeRuleBridge", () => {
     const reading = holdDiscovery("reads", path);
     await bridge.openWorkspace("session-1");
     await reading.entered;
+    await bridge.begin("shell-1", "Bash", { command: "./write.sh" });
     await writeFile(path, "after\n");
     reading.release();
-    await bridge.checkpoint("turn");
+    await bridge.finish("shell-1");
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-1", expect.objectContaining({
       edits: [expect.objectContaining({ path: "src/a.py", generatedText: "after\n" })],
     }));
@@ -619,6 +650,7 @@ describe("CodeRuleBridge", () => {
     await bridge.checkpoint("final");
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
 
+    await bridge.begin("shell-1", "Bash", { command: "./write.sh &" });
     await writeFile(join(root, "src", "a.py"), "after\n");
     await bridge.checkpoint("final");
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
@@ -637,6 +669,7 @@ describe("CodeRuleBridge", () => {
       edits: [expect.objectContaining({ path: "src/a.py", previousReadError: expect.any(String), generatedText: "after\n" })],
     }));
     expect(onRevision).toHaveBeenCalledWith("session-1", 1, ["src/a.py"]);
+    await expect(bridge.finish("shell-1")).resolves.toEqual([]);
   });
 
   it("opens the workspace before the baseline walk and publishes the walk once settled", async () => {
@@ -680,8 +713,7 @@ describe("CodeRuleBridge", () => {
     expect(unchangedRead.started).toBe(false);
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
 
-    await writeFile(join(root, "src", "a.py"), "after again\n");
-    await second.checkpoint("turn");
+    await shell(second, () => writeFile(join(root, "src", "a.py"), "after again\n"));
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(1);
     expect(auditGeneratedEdits).toHaveBeenCalledWith("session-2", expect.objectContaining({
       edits: [expect.objectContaining({ path: "src/a.py", previousReadError: expect.any(String), generatedText: "after again\n" })],
@@ -1011,6 +1043,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       await bridge.checkpoint("turn");
+      await bridge.begin("shell-1", "shell", { command: "./write.sh &" });
       await writeFile(join(root, "src", "hold.py"), "mine\n");
       const walk = holdDiscovery("reads", join(root, "src", "hold.py"));
       await requestDiscovery(bridge, walk);
@@ -1023,6 +1056,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     } finally {
       vi.useRealTimers();
     }
+    await expect(bridge.finish("shell-1")).resolves.toEqual([]);
     expect(auditedPaths(auditGeneratedEdits)).toEqual(["src/hold.py"]);
   });
 
@@ -1168,6 +1202,72 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(edit).toMatchObject({ path: "src/a.py", generatedText: "old\nresolved\n" });
     expect(edit?.previousText).toContain("<<<<<<<");
     expect(edit?.previousReadError).toBeUndefined();
+  });
+
+  it("steers on a shell write stamped while one of its commands ran, keeps another writer's as the next edit's preimage, and logs it only for a file it had changed", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    const audits = () => auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.mode, ...batch.edits]);
+    // Written and removed while no command of the session ran, as another session, an editor or a backgrounded process
+    // would: found at the next command and at the turn's end, none of it is the session's edit.
+    await writeFile(join(root, "src", "a.py"), "old\ntheirs\n");
+    await writeFile(join(root, "src", "b.py"), "theirs\n");
+    await rm(join(root, "src", "gone.py"));
+    await awaitClockAfter(join(root, "src", "a.py"), join(root, "src", "b.py"));
+    await expect(shell(bridge, () => undefined)).resolves.toEqual([]);
+    await bridge.checkpoint("turn");
+    expect(audits()).toEqual([]);
+    // The session's own writes, within its command, measure from what the other writer left, and a deletion is its own.
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "a.py"), "old\ntheirs\nmine\n");
+      await writeFile(join(root, "src", "b.py"), "theirs\nmine\n");
+    });
+    expect(audits()).toEqual([[undefined,
+      { path: "src/a.py", language: "python", previousText: "old\ntheirs\n", generatedText: "old\ntheirs\nmine\n" },
+      { path: "src/b.py", language: "python", previousText: "theirs\n", generatedText: "theirs\nmine\n" },
+    ]]);
+    await shell(bridge, () => rm(join(root, "src", "b.py")));
+    expect(audits().at(-1)).toEqual([undefined, { path: "src/b.py", language: "python", previousReadError: "Source was deleted without a captured preimage", deleted: true }]);
+    // Another writer's change to a file the session had changed reaches the evaluator in Log with no generated lines, as
+    // Git's would: the evaluator held the session's text of it.
+    await writeFile(join(root, "src", "a.py"), "old\ntheirs\nmine\ntheirs again\n");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await bridge.checkpoint("turn");
+    expect(audits().at(-1)).toEqual(["log", {
+      path: "src/a.py", language: "python", previousText: "old\ntheirs\nmine\ntheirs again\n", generatedText: "old\ntheirs\nmine\ntheirs again\n",
+    }]);
+  });
+
+  it("owns a write stamped while a tool call that is no command ran, and finds it at the turn's end", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // A tool the bridge knows neither as a command nor as an edit tool, which still wrote a file.
+    await bridge.begin("notebook-1", "NotebookEdit", { notebook_path: "src/a.ipynb" });
+    await writeFile(join(root, "src", "a.py"), "old\nmine\n");
+    await expect(bridge.finish("notebook-1")).resolves.toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+    await bridge.checkpoint("turn");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.mode, ...batch.edits])).toEqual([[undefined,
+      { path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" },
+    ]]);
+  });
+
+  it("closes the window of a call whose result never came at the turn's end, so a later write is another writer's", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    const audits = () => auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.mode, ...batch.edits]);
+    // Interrupted: begun, never finished. What it wrote before the turn's end is the session's own.
+    await bridge.begin("shell-1", "shell", { command: "./run.sh" });
+    await writeFile(join(root, "src", "a.py"), "old\nmine\n");
+    await bridge.checkpoint("turn");
+    expect(audits()).toEqual([[undefined, { path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }]]);
+    // Written after that turn, while no call of the session ran: not the session's.
+    await writeFile(join(root, "src", "a.py"), "old\nmine\ntheirs\n");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    await bridge.checkpoint("turn");
+    expect(audits().at(-1)).toEqual(["log", {
+      path: "src/a.py", language: "python", previousText: "old\nmine\ntheirs\n", generatedText: "old\nmine\ntheirs\n",
+    }]);
   });
 
   it("audits nothing of a worktree added inside the session's folder", async () => {
