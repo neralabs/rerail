@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "pkg_up" => (vec![Some(Name), Some(Int)], Some(Name)),
         "head" => (vec![Some(Name)], Some(Name)),
         "replace_all" | "rx_replace" => (vec![Some(Name); 3], Some(Name)),
-        "json_str" => (vec![Some(Name)], Some(Name)),
+        "json_str" | "nfkc" => (vec![Some(Name)], Some(Name)),
         "ed25519_ok" => (vec![Some(Name); 3], Some(Int)),
         "equals" => (vec![None; arity], None),
         f if crate::code_rule_dsl::logic::strings::is_test(f) => (vec![Some(Name); arity], None),

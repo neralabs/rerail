@@ -281,6 +281,7 @@ engine cannot step through runs them in SQL. Beyond Soufflé's `cat`, `strlen`, 
 @json_str(s: symbol): symbol                      // s as a JSON string literal, quotes included
 @ed25519_ok(key: symbol, message: symbol, sig: symbol): number   // 1 or 0
 @rx_replace(s: symbol, re: symbol, by: symbol): symbol           // every match of re in s replaced by by
+@nfkc(s: symbol): symbol                          // s under Unicode NFKC: CPython's identifier normalization
 s = join x by (k, …) sep "," : { … }              // an ordered string aggregate
 s = sum x : { … }                                 // a number aggregate
 ```
@@ -296,6 +297,12 @@ s = sum x : { … }                                 // a number aggregate
   `replace_all`, every non-overlapping match (empty ones too), `by` read as that crate reads it (`$1`, `$name`,
   `${name}`, `$$` a dollar; `$1x` names a group `1x`, so write `${1}x`). `@replace_all(s, re, by)` is W's
   `replace` transform, whose `$` reading differs.
+- `@nfkc(s)` is `unicodedata.normalize("NFKC", s)`, which CPython's parser applies to every non-ASCII identifier
+  (PEP 3131), so `@nfkc(x)` of an identifier's `text` is its `ast` `Name` id, `arg`, `attr` or def name: `ﬁle` is
+  `file`, `ℌ` is `H`, a decomposed accent composed. W's pythonAst `identifier` field is `@nfkc` of the text with its
+  whitespace and line continuations taken out (`@rx_replace(t, "\\\\\\r?\\n|\\s+", "")` first). The engine's Unicode
+  tables (`unicode-normalization` 0.1.26) are newer than CPython 3.13's (15.1), which changes no character 15.1
+  assigns (Unicode's normalization stability), and an identifier CPython 3.13 reads has no other.
 - `join x by (k, …) sep "sep" : { … }` (`by k` for one key; `by` and `sep` optional, `""` the default separator) is
   the body's distinct `(k, …, x)` rows' `x`, ordered by `k, …` then `x`, numbers by value and symbols by code point
   (as W's `ORDER BY` over text and Python's `sorted()` order them), joined by `sep`; `""` over no rows. A number `x`

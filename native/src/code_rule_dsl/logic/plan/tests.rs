@@ -885,6 +885,40 @@ fn rx_replace_is_ws_rx_replace() {
     }
 }
 
+/// `@nfkc(s)` is CPython's identifier normalization (PEP 3131): CPython 3.13.18's `unicodedata.normalize("NFKC", s)`,
+/// which is also the `Name` id `ast.parse` gives each of these (but `x²`, no identifier): ligatures, letterlike and
+/// mathematical letters, full- and half-width forms, a decomposed accent composed, titlecase digraphs, the Angstrom and
+/// micro signs, a long s with a dot below; ASCII unchanged.
+#[test]
+fn nfkc_is_cpythons_identifier_normalization() {
+    let cases = [
+        ("\u{fb01}le", "file"),
+        ("\u{210c}ello", "Hello"),
+        ("x\u{b2}", "x2"),
+        ("\u{ff21}b", "Ab"),
+        ("\u{ff76}", "\u{30ab}"),
+        ("e\u{301}t\u{e9}", "\u{e9}t\u{e9}"),
+        ("ascii", "ascii"),
+        ("\u{1c5}x", "D\u{17e}x"),
+        ("\u{fb03}", "ffi"),
+        ("\u{212b}", "\u{c5}"),
+        ("\u{1d431}y", "xy"),
+        ("\u{b5}s", "\u{3bc}s"),
+        ("\u{1e9b}\u{323}", "\u{1e69}"),
+    ];
+    let mut src = String::from(".decl written(i: number, s: symbol)\n.decl cpython(i: number, v: symbol)\n");
+    for (i, (s, v)) in cases.iter().enumerate() {
+        src += &format!("written({i}, {}).\ncpython({i}, {}).\n", rr_str(s), rr_str(v));
+    }
+    src += ".decl got(i: number, v: symbol)\ngot(i, @nfkc(s)) :- written(i, s).\n";
+    src += ".decl differs(i: number)\ndiffers(i) :- got(i, v), !cpython(i, v).\ndiffers(i) :- cpython(i, v), !got(i, v).\n";
+    src += ".decl cases(k: number)\ncases(k) :- written(0, _), k = count : { got(_, _) }.\n.output differs, cases\n";
+    for (path, got) in ["sql", "atoms"].iter().zip(on_both_paths("nfkc", &src, &["differs", "cases"])) {
+        assert_eq!(got[0], "", "{path}");
+        assert_eq!(got[1], format!("{}\n", cases.len()), "{path}");
+    }
+}
+
 /// `sum x : { … }` is SQL's sum over the body's rows (rows that differ elsewhere count twice), grouped by the
 /// rule's variables, 0 over none (Soufflé's), as W's `coalesce(sum(x), 0)`.
 #[test]

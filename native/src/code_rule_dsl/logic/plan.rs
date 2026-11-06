@@ -1399,6 +1399,7 @@ fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> R
                 // A JSON string literal as W's signed-list stages write one (`json_group_array`'s elements): SQLite's
                 // `json_quote` of the text.
                 ("json_str", [x]) => symbol_of(atoms, call("json_quote", vec![bin(Op::Concatenate, text_of(atoms, x), string(""))])),
+                ("nfkc", [x]) => symbol_of(atoms, call("rr_nfkc", vec![text_of(atoms, x)])),
                 ("ed25519_ok", [k, m, sig]) => call("rr_ed25519_ok", vec![text_of(atoms, k), text_of(atoms, m), text_of(atoms, sig)]),
                 ("rx_replace", [s, re, by]) => symbol_of(atoms, call("rr_rx_replace", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
                 ("flat_bin", [o, x, y]) => {
@@ -3131,7 +3132,9 @@ fn plan_views(prog: &Program, model: &mut Model, rules_by: &IndexMap<&str, Vec<&
 /// and `${name}` its groups, as W's `replace` transform does (`matcher::transform::replace`); `@rx_replace(s, re, by)`
 /// the same as W's SQL `rx_replace` does it (`waves::relational::functions`: the `regex` crate's `replace_all`, `$1`,
 /// `$name`, `${name}` and `$$` as it reads them); `@ed25519_ok(key, message, sig)`, 1 where `crypto::ed25519_ok`
-/// holds, else 0. NULL gives NULL (`rr_ed25519_ok`: 0). `rr_join(sep, x, k, …)` is `join`'s aggregate: the distinct
+/// holds, else 0; `@nfkc(s)`, `s` under Unicode NFKC, as CPython normalizes an identifier (PEP 3131: the parser's
+/// `unicodedata.normalize("NFKC", …)` of each non-ASCII one; `identifier::nfkc`). NULL gives NULL (`rr_ed25519_ok`:
+/// 0). `rr_join(sep, x, k, …)` is `join`'s aggregate: the distinct
 /// `(k, …, x)` rows' `x` ordered by `k, …` then `x` (numbers by value, then text by code point, as `sorted()` orders a
 /// list of one type), joined by `sep`; `""` over no rows.
 fn register_functors(db: &Connection) -> rusqlite::Result<()> {
@@ -3166,6 +3169,7 @@ fn register_functors(db: &Connection) -> rusqlite::Result<()> {
     db.create_scalar_function(c"rr_ed25519_ok", 3, flags, move |ctx| {
         Ok(texts(ctx)?.is_some_and(|[key, message, sig]| super::crypto::ed25519_ok(&key, &message, &sig)))
     })?;
+    db.create_scalar_function(c"rr_nfkc", 1, flags, |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::code_rule_dsl::identifier::nfkc(&s).into_owned())))?;
     db.create_aggregate_function(c"rr_join", -1, flags, OrderedJoin)
 }
 

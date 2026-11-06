@@ -310,3 +310,35 @@ fn string_annotation_parity() {
     }
 }
 
+/// `@nfkc` (`identifier::nfkc`) against CPython's identifier normalization: each `Name` of each file that parses (the
+/// oracle's `names` mode, whose span is the identifier as written), its id against `@nfkc` of its source text. The
+/// non-ASCII ones, where normalization can do anything, are counted apart.
+#[test]
+#[ignore]
+fn nfkc_identifier_parity() {
+    for python in pythons() {
+        println!("CPython {} ({python})", version(&python));
+        for corpus in corpora() {
+            let want = oracle(&python, "names", &corpus.files);
+            let texts = sources(&corpus.files);
+            let (mut all, mut non_ascii) = (Tally::default(), Tally::default());
+            for ((path, shown), source) in corpus.files.iter().zip(&texts) {
+                let (Some(source), Some(row)) = (source, want.get(&path.display().to_string())) else { continue };
+                let Some(rows) = row["n"].as_array() else { continue };
+                for r in rows.iter().filter(|r| r[2] == "Name") {
+                    let (s, e, id) = (r[0].as_u64().unwrap() as usize, r[1].as_u64().unwrap() as usize, r[3].as_str().unwrap());
+                    let Some(written) = source.get(s..e) else { continue };
+                    let got = crate::code_rule_dsl::identifier::nfkc(written);
+                    let difference = || format!("{shown}@{s}: {written:?}: CPython {id:?}, @nfkc {got:?}");
+                    all.add(got == id, difference);
+                    if !written.is_ascii() {
+                        non_ascii.add(got == id, difference);
+                    }
+                }
+            }
+            println!(" {}: {} files", corpus.name, want.len());
+            all.report("Name ids");
+            non_ascii.report("Name ids written with a non-ASCII character");
+        }
+    }
+}
