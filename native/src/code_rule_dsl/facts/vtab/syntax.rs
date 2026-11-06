@@ -460,8 +460,15 @@ impl Batch {
             let dialect = &dialects[&tag];
             let p = Projected::new(d.key, Arc::clone(&d.facts), dialect, shape);
             let key = i64::from(d.key);
-            doc.push([key, string(&d.path) as i64, string(&module(&d.path)) as i64]);
-            pkg.push([key, string(&package(&d.path)) as i64]);
+            // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
+            // for every file.
+            let python = d.path.ends_with(".py");
+            let dotted = python || d.path.ends_with(".rs");
+            let module = if shape == Shape::Core && !dotted { String::new() } else { module(&d.path) };
+            doc.push([key, string(&d.path) as i64, string(&module) as i64]);
+            if shape != Shape::Core || python {
+                pkg.push([key, string(&package(&d.path)) as i64]);
+            }
             let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
             if let Some(last) = parts.last() {
                 file_name.push([key, string(last) as i64]);
