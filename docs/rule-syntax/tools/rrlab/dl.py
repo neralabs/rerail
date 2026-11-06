@@ -19,8 +19,9 @@ the set of (path, line, code) keys.
   ports. They are passed to the rule as `option` rows; a rule may ignore them.
 - **Scope.** A direct call takes the files it is given, so `.scope` is ignored, except on production (plugin)
   events, which also drop the rule's `.mode log` codes.
-- A record with no code (an internal entry's plain dict) gets `--codeless CODE`, or the rule's code when it has one
-  only, or the check's name. A record whose
+- A record with no code (an internal entry's plain dict) gets `--codeless CODE`, or the check's name. When the rule
+  has only one code, every recorded finding is compared under it: an internal entry may give the message instead.
+  An event whose recorded codes are none of the rule's (fixed) codes is compared on (path, line) only, and counted. A record whose
   call raised is left out.
 - A file with a syntax error is withheld, as core.rr says: only `.on syntax_error`'s finding is kept for it.
 - Events with more than `--max-files` files (500) are not run: rrlab's facts grow with the whole tree.
@@ -108,8 +109,17 @@ def score(args, Run, here):
     text = open(rule).read()
     codes_of = dict(re.findall(r'^\.violation\s+(\w+)\([^)]*\)\s*code\s+"([^"]+)"', text, re.M))
     names = re.findall(r'^\.violation\s+(\w+)\(', text, re.M)
-    if not args.codeless and len({codes_of.get(n, n) for n in names}) == 1:
-        args.codeless = codes_of.get(names[0], names[0])   # a rule with one code: a codeless record has that code
+    one = {codes_of.get(n, n) for n in names}
+    # the rule's codes, when every violation's code is fixed (a `code {c}` makes them open)
+    closed = not re.search(r'^\.violation\s+\w+\([^)]*\)\s*code\s+\{', text, re.M)
+    rule_codes = one
+    byplace = [0]
+    if len(one) == 1 and closed and not args.codeless:
+        # a rule with one code (a plugin that reports every finding as PHA001, say): every recorded finding has
+        # it, whatever an internal entry put in its place (nothing, or the message)
+        (code,) = one
+        for e in evs:
+            e["want"] = {(p, l, code) for p, l, _ in e["want"]}
     if args.codeless:   # a record that carries no code: the code the linter's plugin gives every finding
         for e in evs:
             e["want"] = {(p, l, args.codeless if c == check else c) for p, l, c in e["want"]}
@@ -163,17 +173,25 @@ def score(args, Run, here):
             continue
         if e["production"]:
             got = {g for g in got if g[2] not in log}
-        codes = reported[e["entry"]]
-        if codes:
-            got = {g for g in got if g[2] in codes}
-        if got == e["want"]:
+        want = e["want"]
+        if closed and any(c not in rule_codes for _, _, c in want):
+            # the record's codes are not codes the rule has (an entry returned messages): compare by place only
+            want, got = {(p, l) for p, l, _ in want}, {(p, l) for p, l, _ in got}
+            byplace[0] += 1
+        else:
+            codes = reported[e["entry"]]
+            if codes:
+                got = {g for g in got if g[2] in codes}
+        if got == want:
             row[1] += 1
         else:
-            misses.append(f"{e['test']} [{e['entry']}]: missing {sorted(e['want'] - got)} extra {sorted(got - e['want'])}")
+            misses.append(f"{e['test']} [{e['entry']}]: missing {sorted(want - got)} extra {sorted(got - want)}")
     tot = [sum(r[i] for r in per.values()) for i in range(3)]
     for b, r in sorted(per.items()):
         print(f"{b:34} {r[0]:4} events {r[1]:4} exact {r[2]:3} errors")
     print(f"{'total':34} {tot[0]:4} events {tot[1]:4} exact {tot[2]:3} errors   ({rule})")
+    if byplace[0]:
+        print(f"  {byplace[0]} event(s) compared by (path, line) only: their recorded codes are none of the rule's")
     if big:
         print(f"  {len(big)} event(s) with more than {args.max_files} files not run (--max-files): "
               + ", ".join(e["test"] for e in big[:3]))

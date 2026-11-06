@@ -19,6 +19,8 @@
 //                       asked for through la_ask_*(n, e)
 //   la_arg(c, i, a) / la_kw(c, k, v) / la_argc(c, k) / la_sarg(c, i, v)   call arguments as `ast` has them
 //   la_ename(e, s) / la_ext(e) / la_conn(e)   _expr_name, _expr_is_external_state, _expr_uses_conn_handle
+//   la_func(c, g) / la_kwv(c, v)   a call's function (parentheses dropped); its keyword and `**` values
+//   la_last(s, x)       the part of s after its last dot, for s asked for by la_lastq(s)
 //
 // How the script walks a function (_walk_body_for_analysis), and what this file mirrors:
 //   - It visits the statements of the body in order. Of each it scans some expressions (an assignment's value, an
@@ -36,9 +38,7 @@
 #include "python/names.rr"    // def_name, decorator, attr_of
 
 // ---- documents and facts -------------------------------------------------------------------------------------------
-// la_mod(d, m): the module name is the path with `/` as `.`, `__init__` kept (_module_name_for_file).
-.decl la_mod(d: number, m: symbol)
-la_mod(d, m) :- path_module(d, m).
+// A module's name is path_module's: the path with `/` as `.`, `__init__` kept (_module_name_for_file).
 
 // la_cls(k, d, q): class k is collected: at module level, or directly in a collected class. q is "Outer.Inner".
 .decl la_cls(k: node, d: number, q: symbol)
@@ -50,10 +50,10 @@ la_cls(k, d, @dot(p, x)) :- kind(k, "class_definition"), ast_parent(k, o), la_cl
 // @pure_lazy, with one bootstrap mutation at its own line).
 .decl la_fact(f: node, d: number, sym: symbol, q: symbol, x: symbol)
 la_fact(f, d, @dot(m, x), x, x) :- kind(f, "function_definition"), ast_parent(f, p), kind(p, "module"),
-    def_name(f, x), docof(f, d), la_mod(d, m).
+    def_name(f, x), docof(f, d), path_module(d, m).
 la_fact(f, d, @dot(m, q), q, x) :- kind(f, "function_definition"), ast_parent(f, k), la_cls(k, d, p),
-    def_name(f, x), la_mod(d, m), q = @dot(p, x).
-la_fact(s, d, @dot(m, q), q, x) :- la_field(s, k, x), la_cls(k, d, p), la_mod(d, m), q = @dot(p, x).
+    def_name(f, x), path_module(d, m), q = @dot(p, x).
+la_fact(s, d, @dot(m, q), q, x) :- la_field(s, k, x), la_cls(k, d, p), path_module(d, m), q = @dot(p, x).
 .decl la_fn(f: node)
 la_fn(f) :- la_fact(f, _, _, _, _), kind(f, "function_definition").
 // la_cls_of(F, k): the class F is collected in.
@@ -134,10 +134,15 @@ la_ann_q(d, h, cat(m, ".", a)) :- attr_of(h, o, a), kind(o, "identifier"), text(
 // la_imp(d, x, q): `from m import a as x` at module level gives x -> "m.a" (imported_names). A relative import
 // keeps its module as written without dots; `from . import a` is skipped.
 .decl la_imp(d: number, x: symbol, q: symbol)
-la_imp(d, x, cat(m, ".", a)) :- modnode(d, mn), child(mn, i, _), la_from(i, m, a, x).
-// la_impmod(d, x, m): `import m as x` at module level (imported_modules); `import a.b` keys "a.b".
+// A later import of the same name overwrites an earlier one (each is a dict).
+la_imp(d, x, cat(m, ".", a)) :- la_imp_at(d, x, i), la_from(i, m, a, x), count : { la_imp_at(d, x, i2), i2 > i } = 0.
+.decl la_imp_at(d: number, x: symbol, i: node)
+la_imp_at(d, x, i) :- modnode(d, mn), child(mn, i, _), la_from(i, _, _, x).
+// la_impmod(d, x, m): `import m as x` at module level (imported_modules); `import a.b` keys "a.b". The last wins.
 .decl la_impmod(d: number, x: symbol, m: symbol)
-la_impmod(d, x, m) :- modnode(d, mn), child(mn, i, _), la_import(i, m, x).
+la_impmod(d, x, m) :- la_impmod_at(d, x, i), la_import(i, m, x), count : { la_impmod_at(d, x, i2), i2 > i } = 0.
+.decl la_impmod_at(d: number, x: symbol, i: node)
+la_impmod_at(d, x, i) :- modnode(d, mn), child(mn, i, _), la_import(i, _, x).
 // la_from(i, m, a, x) / la_import(i, m, x): the aliases of one import statement.
 .decl la_from(i: node, m: symbol, a: symbol, x: symbol)
 la_from(i, m, a, a) :- from_module_raw(i, m), m != "", field(i, "name", n), kind(n, "dotted_name"), text(n, a).
@@ -151,8 +156,8 @@ la_import(i, m, x) :- kind(i, "import_statement"), field(i, "name", n), kind(n, 
 .decl la_grhs(d: number, x: symbol, v: node)
 la_grhs(d, x, v) :- la_gasg(d, s, x, v), count : { la_gasg(d, s2, x, _), s2 > s } = 0.
 .decl la_gasg(d: number, s: node, x: symbol, v: node)
-la_gasg(d, s, x, v) :- modnode(d, mn), child(mn, s, _), asgstmt(a, s), assign_target(a, t), kind(t, "identifier"),
-    text(t, x), assign_value(a, v0), unparen(v0, v).
+la_gasg(d, s, x, v) :- modnode(d, mn), child(mn, s, _), asgstmt(a, s), !assign_ann(a, _), assign_target(a, t),
+    kind(t, "identifier"), text(t, x), assign_value(a, v0), unparen(v0, v).   // plain Assign only, not `x: T = v`
 // la_gleaf(d, x, s): _resolve_module_global_name: follow `x = y`, `x = y(…)` at module level; `x = o.a` gives "a";
 // then an imported name gives its "m.a"; else x itself. Asked for through la_gneed.
 .decl la_gneed(d: number, x: symbol)
@@ -227,6 +232,10 @@ la_root(f, v) :- la_stmt(f, _, s), kind(s, "match_statement"), field(s, "subject
 la_root(f, g) :- la_stmt(f, _, s), kind(s, "match_statement"), field(s, "body", mb), child(mb, c, _),
     kind(c, "case_clause"), field(c, "guard", g).
 la_root(f, s) :- la_stmt(f, _, s), la_whole(s).
+// A class statement scanned whole is scanned with its body (only classes below it are skipped); under a
+// decorator the class is the root's child, so it is a root of its own.
+la_root(f, g) :- la_stmt(f, _, s), la_whole(s), kind(s, "decorated_definition"), field(s, "definition", g),
+    kind(g, "class_definition").
 // la_whole(s): a statement the script scans as one subtree (everything it does not walk).
 .decl la_whole(s: node)
 la_whole(s) :- la_stmt(_, _, s), kind(s, k), !la_walked_kind(k), !la_nested_def(s, _), !la_route_stmt(s).
@@ -295,7 +304,17 @@ la_cstr(n, e, s) :- la_ask_cstr(n, e), kind(e, "parenthesized_expression"), unpa
 .decl la_callee(c: node, s: symbol)
 la_callee(c, s) :- la_call(_, c), field(c, "function", f), la_cstr(c, f, s).
 .decl la_cleaf(c: node, x: symbol)
-la_cleaf(c, x) :- la_callee(c, s), match("(?:.*\\.)?(?<x>[^.]*)", s).
+la_cleaf(c, x) :- la_callee(c, s), la_last(s, x).
+// la_last(s, x): x is the part of dotted name s after its last dot (s itself if it has none), for any s that
+// la_lastq asks for.
+.decl la_lastq(s: symbol)
+la_lastq(s) :- la_callee(_, s).
+.decl la_last(s: symbol, x: symbol)
+la_last(s, x) :- la_lastq(s), split_dot(s, m, x), m != "".   // (m named: rrlab cannot lower `_` here)
+la_last(s, s) :- la_lastq(s), !contains(".", s).
+// la_func(c, g): call c's function, parentheses dropped (`(f)()` calls f, as in `ast`).
+.decl la_func(c: node, g: node)
+la_func(c, g) :- kind(c, "call"), field(c, "function", g0), unparen(g0, g).
 // la_gcstr(d, e, s): the same with no local state (the script passes {} for `vars(…).get`).
 .decl la_gcstr(d: number, e: node, s: symbol)
 la_gcstr(d, e, s) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d), la_gleaf(d, x, s).
@@ -311,15 +330,15 @@ la_gneed(d, x) :- la_ask_gcstr(e), kind(e, "identifier"), text(e, x), docof(e, d
 //   `self.m` / `cls.m` in a class: "module.Class.m", through a class-body alias `m = other`;
 //   `mod.f` for a module-level `import … as mod`: "mod.f".
 .decl la_ask_local(f: node, e: node)
-la_ask_local(f, g) :- la_call(f, c), field(c, "function", g).
+la_ask_local(f, g) :- la_call(f, c), la_func(c, g).
 .decl la_local(f: node, e: node, s: symbol)
 la_local(f, e, q) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), la_simp_last(f, x, q).
 la_local(f, e, q) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), !la_simp(f, x, _, _), docof(e, d),
     la_imp(d, x, q).
 la_local(f, e, s) :- la_ask_local(f, e), kind(e, "identifier"), text(e, x), !la_simp(f, x, _, _), docof(e, d),
-    !la_imp(d, x, _), la_gleaf(d, x, r), (la_imp(d, r, s) ; !la_imp(d, r, _), la_mod(d, m), s = cat(m, ".", r)).
+    !la_imp(d, x, _), la_gleaf(d, x, r), (la_imp(d, r, s) ; !la_imp(d, r, _), path_module(d, m), s = cat(m, ".", r)).
 la_local(f, e, cat(m, ".", q, ".", t)) :- la_ask_local(f, e), attr_of(e, o, a), kind(o, "identifier"),
-    (text(o, "self") ; text(o, "cls")), la_cls_of(f, k), la_cls(k, d, q), la_mod(d, m),
+    (text(o, "self") ; text(o, "cls")), la_cls_of(f, k), la_cls(k, d, q), path_module(d, m),
     (la_calias(k, a, t) ; !la_calias(k, a, _), t = a).
 la_local(f, e, cat(m, ".", a)) :- la_ask_local(f, e), attr_of(e, o, a), kind(o, "identifier"), text(o, x),
     !text(o, "self"), !text(o, "cls"), docof(e, d), la_impmod(d, x, m).
@@ -328,10 +347,10 @@ la_local(f, e, cat(m, ".", a)) :- la_ask_local(f, e), attr_of(e, o, a), kind(o, 
 la_gneed(d, x) :- la_ask_local(_, e), kind(e, "identifier"), text(e, x), docof(e, d).
 // la_calias(k, a, t): `a = t` (both names) in class k's body; the last one counts.
 .decl la_calias(k: node, a: symbol, t: symbol)
-la_calias(k, a, t) :- la_cls(k, _, _), field(k, "body", b), child(b, s, _), asgstmt(x, s), assign_target(x, l),
-    kind(l, "identifier"), text(l, a), assign_value(x, v), kind(v, "identifier"), text(v, t),
-    count : { child(b, s2, _), s2 > s, asgstmt(x2, s2), assign_target(x2, l2), kind(l2, "identifier"),
-              text(l2, a), assign_value(x2, v2), kind(v2, "identifier") } = 0.
+la_calias(k, a, t) :- la_calias_at(k, a, s, t), count : { la_calias_at(k, a, s2, _), s2 > s } = 0.
+.decl la_calias_at(k: node, a: symbol, s: node, t: symbol)   // plain Assign only, not `a: T = t`
+la_calias_at(k, a, s, t) :- la_cls(k, _, _), field(k, "body", b), child(b, s, _), asgstmt(x, s), !assign_ann(x, _),
+    assign_target(x, l), kind(l, "identifier"), text(l, a), assign_value(x, v), kind(v, "identifier"), text(v, t).
 // la_simp(F, x, i, q): an import of x as q in F's own blocks (if/for/while/with/try/match bodies, not nested
 // defs); the last one wins.
 .decl la_simp(f: node, x: symbol, i: node, q: symbol)
@@ -377,9 +396,10 @@ la_lz(n, e) :- la_ask_lz(n, e), kind(e, "call"), field(e, "function", g), la_cst
 .decl la_ask_cb(n: node, e: node)
 la_ask_cb(n, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v).
 la_ask_cb(s, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_vis(n, x, s, v, "rhs").
+la_ask_cb(s, v) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, "elt").
 la_ask_cb(n, a) :- la_ask_cb(n, e), la_cb_part(e, a).
 .decl la_cb_part(e: node, a: node)
-la_cb_part(e, a) :- kind(e, "call"), (la_arg(e, _, a) ; la_kw(e, _, a)).
+la_cb_part(e, a) :- kind(e, "call"), (la_arg(e, _, a) ; la_kwv(e, a)).
 la_cb_part(e, a) :- (kind(e, "tuple") ; kind(e, "list") ; kind(e, "set") ; kind(e, "expression_list")),
     child(e, a0, _), !kind(a0, "comment"), unparen(a0, a).
 la_cb_part(e, a) :- kind(e, "dictionary"), child(e, p, _), kind(p, "pair"), (field(p, "key", a0) ; field(p, "value", a0)),
@@ -392,6 +412,10 @@ la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, 
     la_cb(s, v).
 la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_rhs(n, x, v), la_cb(n, v).
 la_cb(n, e) :- la_ask_cb(n, e), la_cb_part(e, a), la_cb(n, a).
+// A tuple or list target whose value holds a callable makes each of its names an alias; only a later plain
+// assignment of the name clears it (_assigned_names, then difference_update over plain targets).
+la_cb(n, e) :- la_ask_cb(n, e), kind(e, "identifier"), text(e, x), la_vis(n, x, s, v, "elt"), la_cb(s, v),
+    count : { la_vis(n, x, s2, _, "rhs"), s2 > s } = 0.
 // la_dyn: _expr_is_dynamic_behavior_lookup. A name through its value; getattr(o, k) / __getattribute__ with k not
 // a literal or a literal naming a behaviour key part; `t.get(k)` the same, unless t is an UPPER_CASE table.
 .decl la_ask_dyn(n: node, e: node)
@@ -445,6 +469,11 @@ la_posarg(a) :- child(al, a, _), kind(al, "argument_list"), !kind(a, "keyword_ar
 .decl la_kw(c: node, k: symbol, v: node)
 la_kw(c, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ka, _), kind(ka, "keyword_argument"),
     field(ka, "name", n), text(n, k), field(ka, "value", v0), unparen(v0, v).
+// la_kwv(c, v): the value of a keyword argument or of a `**` argument (ast's keywords).
+.decl la_kwv(c: node, v: node)
+la_kwv(c, v) :- la_kw(c, _, v).
+la_kwv(c, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ds, _), kind(ds, "dictionary_splat"),
+    child(ds, v0, _), !kind(v0, "comment"), unparen(v0, v).
 .decl la_argc(c: node, k: number)
 la_argc(c, k) :- kind(c, "call"), k = count : { la_arg(c, _, _) }.
 .decl la_sarg(c: node, i: number, v: symbol)

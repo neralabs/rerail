@@ -2,9 +2,9 @@
 .description "Lazy-first architecture: lazy and pure-lazy code plans, never executes, directly or down its call chain."
 .language python
 .mode block
+.mode log LA_018                  // scan_files' text scan: the suite plugin never runs it
 .scope dirs "impl", "api", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
 .scope tests false
-.budget LA by code from la_ceiling report LA at ".ratchet-baselines/lint_lazy_architecture.json"
 // Python linter: scripts/lint_lazy_architecture.py. It collects "facts" about each module-level function and method
 // (lib/data-layer/lazy-analyzer.rr: what is scanned, the alias state, the callee strings), links them into a call
 // graph by symbol, and reports, at the line given:
@@ -20,7 +20,8 @@
 //           private runtime state touched in ServerPlan-sensitive files; *_lazy delegating to an eager method;
 //           compatibility helpers imported or called in sensitive files
 //   LA-010  a name with "lazy" and "sync" or "async"
-//   LA-011  lower/compile/preprocess/pre_op/post_op of a server-plan step does I/O, itself or down its calls
+//   LA-011  lower/compile/preprocess/pre_op/post_op of a server-plan step does I/O, itself or down its calls;
+//           any server-plan function calling a terminal hydration helper (hydrate_one_post_op, …)
 //   LA-012  `.resolve()` of a lazy value outside a legacy boundary
 //   LA-013  defer_lazy_result imported or called; @pure_lazy code calls _ensure_internal_raw_access or reaches a
 //           legacy wrapper; a lazy function reaches a non-lazy one
@@ -29,19 +30,20 @@
 //   LA-016  bootstrap/DDL @pure_lazy code mutates self/cls state, or declares a side-queue field
 //   LA-017  schema reconciliation code defines a deleted surface, calls discovery/DDL/trampoline surfaces, falls
 //           back to "absent" (set(), False), or resolves a LazyResult
-//   LA-018  a deleted cold-bootstrap or schema-sidecar name appears in a file's text (first occurrence)
-//   LA-000  the allowlist's signature fails (a gate: the only finding then)
-// Each finding has a symbol; `LA-xxx::symbol` lines of the signed allowlist suppress findings. Every rule's
-// count is capped by the signed budget (all 0): the .budget above.
-// The findings are scan_files' (each site), not the plugin's, which keeps one per LA-xxx::symbol.
+//   LA-018  a deleted cold-bootstrap or schema-sidecar name appears in a file's text (first occurrence); scan_files
+//           only, so `.mode log`
+//   LA-000  the allowlist's signature fails, or the budget file does not load (a gate: the only finding then)
+// Each finding has a symbol. As the suite plugin does, one finding is kept per `LA-xxx::symbol`, the first by
+// line, and `LA-xxx::symbol` lines of the signed allowlist suppress findings. The signed budget caps each code's
+// count of sites, taken before both: a code over its ceiling is a finding at the budget file.
 //
 // How to read this file
 //   1. File classes: path tests from the script's tables (la_set, generated) and its inline lists.
 //   2. la_item(F, what, n): the script's per-function lists (plan_io_calls, intent_calls, …), one row per entry;
 //      la_first(F, what, l) is the first entry's line.
 //   3. The call graph and its searches (dfs_first_memo, as the script's memoised depth-first searches).
-//   4. The findings, one rule per branch of _scan_analyzed_files, into la_find; LA reports what the allowlist
-//      leaves.
+//   4. The findings, one rule per branch of _scan_analyzed_files, into la_find; LA reports the first of each
+//      code and symbol that the allowlist leaves.
 //   5. The whole-file scans: defer_lazy_result and compatibility imports and calls, and the LA-018 text scan.
 //   6. The policy inputs: allowlist, its signature, the budget.
 
@@ -50,29 +52,28 @@
 #include "data-layer/signing.rr"
 
 // ---- 1. file classes -----------------------------------------------------------------------------------------------
-.decl la_rel(d: number, p: symbol)
-la_rel(d, p) :- doc(d, p, _).
 .decl la_in(d: number, what: symbol)                   // the script's _is_*_file tests
-la_in(d, "sensitive") :- la_rel(d, p), la_set("LAZY_SENSITIVE_EXACT_FILES", p).
-la_in(d, "sensitive") :- la_rel(d, p), la_set("LAZY_SENSITIVE_PREFIXES", x), prefix(x, p).
-la_in(d, "sensitive") :- la_rel(d, p),
+la_in(d, "sensitive") :- doc(d, p, _), la_set("LAZY_SENSITIVE_EXACT_FILES", p).
+la_in(d, "sensitive") :- doc(d, p, _), la_set("LAZY_SENSITIVE_PREFIXES", x), prefix(x, p).
+la_in(d, "sensitive") :- doc(d, p, _),
     (prefix("l7200_versioned_transactions/_lint_", p) ; prefix("impl/common/l7300_revision_history/_lint_", p)).
-la_in(d, "feature") :- la_rel(d, p), la_set("FEATURE_PUBLIC_PREFIXES", x), prefix(x, p).
-la_in(d, "feature") :- la_rel(d, "impl/common/l5200_sql_query/_insert_from_query.py").
-la_in(d, "native_orch") :- la_rel(d, p), la_set("NATIVE_ORCHESTRATION_PATHS", x), prefix(x, p).
-la_in(d, "transaction") :- la_rel(d, p), la_set("TRANSACTION_PREFIXES", x), prefix(x, p).
-la_in(d, "migration") :- la_rel(d, p), contains("migration", p).
-la_in(d, "server_plan") :- la_rel(d, p), la_set("SERVER_PLAN_PREFIX", x), prefix(x, p).
-la_in(d, "service") :- la_rel(d, p), la_set("SERVERPLAN_SERVICE_EXACT_FILES", p).
-la_in(d, "service") :- la_rel(d, p), la_set("SERVERPLAN_SERVICE_PREFIXES", x), prefix(x, p).
+la_in(d, "feature") :- doc(d, p, _), la_set("FEATURE_PUBLIC_PREFIXES", x), prefix(x, p).
+la_in(d, "feature") :- doc(d, "impl/common/l5200_sql_query/_insert_from_query.py", _).
+la_in(d, "native_orch") :- doc(d, p, _), la_set("NATIVE_ORCHESTRATION_PATHS", x), prefix(x, p).
+la_in(d, "transaction") :- doc(d, p, _), la_set("TRANSACTION_PREFIXES", x), prefix(x, p).
+la_in(d, "migration") :- doc(d, p, _), contains("migration", p).
+la_in(d, "server_plan") :- doc(d, p, _), la_set("SERVER_PLAN_PREFIX", x), prefix(x, p).
+la_in(d, "service") :- doc(d, p, _), la_set("SERVERPLAN_SERVICE_EXACT_FILES", p).
+la_in(d, "service") :- doc(d, p, _), la_set("SERVERPLAN_SERVICE_PREFIXES", x), prefix(x, p).
 // la_hay(F, h): "path qualname", lowercased: the haystack the bootstrap and reconciliation tests read.
 .decl la_hay(f: node, h: symbol)
-la_hay(f, @lower(cat(p, " ", q))) :- la_fact(f, d, _, q, _), la_rel(d, p).
+la_hay(f, @lower(cat(p, " ", q))) :- la_fact(f, d, _, q, _), doc(d, p, _).
 .decl la_is(f: node, what: symbol)
 la_is(f, "bootstrap") :- la_hay(f, h), (contains("bootstrap", h) ; contains("ddl", h)).
-la_is(f, "recon") :- la_hay(f, h), la_recon_token(t), contains(t, h).
-la_is(f, "recon") :- la_fact(f, d, _, _, _), la_rel(d, p), la_recon_file(p).
-la_is(f, "recon_terminal") :- la_hay(f, h), la_recon_token(t), contains(t, h), la_fact(f, d, _, _, _), la_rel(d, p),
+la_is(f, "recon_token") :- la_hay(f, h), la_recon_token(t), contains(t, h).
+la_is(f, "recon") :- la_is(f, "recon_token").
+la_is(f, "recon") :- la_fact(f, d, _, _, _), doc(d, p, _), la_recon_file(p).
+la_is(f, "recon_terminal") :- la_is(f, "recon_token"), la_fact(f, d, _, _, _), doc(d, p, _),
     (prefix("impl/common/l2200_sql_dialect/", p) ; p = "l2000_connection/schema_transaction.py").
 la_is(f, "public") :- la_fact(f, _, _, _, x), !prefix("_", x).
 .decl la_recon_token(t: symbol)
@@ -99,7 +100,7 @@ la_io(f, c, nm) :- la_sink(f, c, nm0), la_recv(c, o, a),
 la_native_recv(f, c) :- la_recv(c, o, a), la_call(f, c), kind(o, "identifier"), text(o, x), la_native(f, x),
     (a = "fetchone" ; a = "fetchmany" ; a = "fetchall").
 .decl la_recv(c: node, o: node, a: symbol)              // call c is `o.a(…)`
-la_recv(c, o, a) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o0, a), unparen(o0, o).
+la_recv(c, o, a) :- la_func(c, fn), attr_of(fn, o0, a), unparen(o0, o).
 .decl la_sink(f: node, c: node, nm: symbol)
 la_sink(f, c, cat("plan.", a)) :- la_call(f, c), la_recv(c, o, a), (a = "execute" ; a = "execute_async"), la_pl(c, o).
 la_sink(f, c, cat("plan.", a)) :- la_call(f, c), la_recv(c, o, a), la_set("QUERY_BUILDER_RESULT_ATTRS", a), la_pl(c, o).
@@ -122,11 +123,9 @@ la_item(f, "async_exec", c) :- la_call(f, c), la_callee(c, s), prefix("grammar_"
 la_item(f, "intent", c) :- la_call(f, c), la_cleaf(c, x), la_set("INTENT_HINTS", x).
 la_item(f, "intent", c) :- la_call(f, c), la_callee(c, s), suffix("Intent", s).
 la_item(f, "native", c) :- la_call(f, c), la_cleaf(c, x), la_set("IMPERATIVE_NATIVE_ATTRS", x).
-// Strings scanned for Dolt: a whole str constant (adjacent literals are one) mentioning dolt_, dolt log, …
-la_item(f, "dolt", n) :- la_scan(f, n), (kind(n, "string") ; kind(n, "concatenated_string")),
-    !la_in_concat(n), plain_str(n, v), la_dolt_text(@lower(v)).
-.decl la_in_concat(n: node)
-la_in_concat(n) :- child(p, n, _), kind(p, "concatenated_string").
+// Strings scanned for Dolt: each str constant mentioning dolt_, dolt log, … (adjacent literals are one; an
+// f-string's literal runs are one each), at the piece it starts in.
+la_item(f, "dolt", at) :- la_scan(f, n), str_part(n, _, v, at, _), la_dolt_text(@lower(v)).
 la_item(f, "ctx", f) :- la_exec_ctx(f).
 // getattr / object.__getattribute__ of a LazyResult internal on a lazy-like object.
 la_item(f, "internal_read", c) :- la_call(f, c), la_sarg(c, 1, k), la_internal_attr(k), la_callee(c, s), la_getattr(s),
@@ -145,8 +144,12 @@ la_item(f, "reach", c) :- la_call(f, c), la_recv(c, v, "get"), kind(v, "call"), 
 la_ask_gcstr(g) :- la_call(_, c), la_recv(c, v, "get"), kind(v, "call"), field(v, "function", g).
 // @pure_lazy code calling _ensure_internal_raw_access, by its callee string or its call-graph symbol.
 la_item(f, "forbidden", c) :- la_pure(f), la_call(f, c), la_cleaf(c, x), la_set("FORBIDDEN_PURE_LAZY_CALLEE_NAMES", x).
-la_item(f, "forbidden", c) :- la_pure(f), la_call(f, c), field(c, "function", g), la_local(f, g, s),
-    match("(?:.*\\.)?(?<x>[^.]*)", s), la_set("FORBIDDEN_PURE_LAZY_CALLEE_NAMES", x).
+la_item(f, "forbidden", c) :- la_pure(f), la_call(f, c), la_func(c, g), la_local(f, g, s), la_last(s, x),
+    la_set("FORBIDDEN_PURE_LAZY_CALLEE_NAMES", x).
+la_lastq(s) :- la_pure(f), la_call(f, c), la_func(c, g), la_local(f, g, s).
+// Terminal hydration helpers, by call-graph symbol (local_callee_calls).
+la_item(f, "hydrate", c) :- la_call(f, c), la_func(c, g), la_local(f, g, s),
+    la_set("FORBIDDEN_SERVERPLAN_HYDRATION_HELPERS", s).
 // Schema reconciliation surfaces, by the callee's last part; flush_schema_plan is allowed in its wrappers.
 la_item(f, "recon", c) :- la_call(f, c), la_cleaf(c, x),
     (la_set("RECONCILIATION_SCHEMA_DISCOVERY_NAMES", x) ; la_set("RECONCILIATION_CALLBACK_TRAMPOLINE_NAMES", x) ;
@@ -201,19 +204,19 @@ la_ask_cb(c, p) :- la_payload(c, p).
 .decl la_payload(c: node, p: node)
 la_payload(c, p) :- la_call(_, c), la_kw(c, "closed_post_op", p).
 la_payload(c, p) :- la_call(_, c), !la_kw(c, "closed_post_op", _), la_callee(c, s),
-    (s = "literal_post_op" ; s = "l2070_batching.post_op.literal_post_op"), (la_arg(c, 0, p) ; la_kw(c, _, p)).
+    (s = "literal_post_op" ; s = "l2070_batching.post_op.literal_post_op"), (la_arg(c, 0, p) ; la_kwv(c, p)).
 la_payload(c, p) :- la_call(_, c), !la_kw(c, "closed_post_op", _), la_callee(c, s),
-    (s = "runtime_builder_post_op" ; s = "l2070_batching.post_op.runtime_builder_post_op"), la_kw(c, _, p).
+    (s = "runtime_builder_post_op" ; s = "l2070_batching.post_op.runtime_builder_post_op"), la_kwv(c, p).
 la_payload(c, p) :- la_call(_, c), !la_kw(c, "closed_post_op", _), la_cleaf(c, "RuntimeBuilderSpec"),
     la_kw(c, "literal_kwargs", p).
 la_payload(c, p) :- la_call(_, c), !la_kw(c, "closed_post_op", _), la_cleaf(c, "ResultMaterializationSpec"),
     (la_kw(c, "literal_payload", p) ; la_kw(c, "default_value", p)).
 la_item(f, "dispatch", c) :- la_call(f, c), la_fact(f, _, _, _, x), prefix("materialize_", x), la_callee(c, s),
     (s = "callable" ; s = "builtins.callable"), la_arg(c, 0, a), la_dyn(c, a).
-la_item(f, "dispatch", c) :- la_call(f, c), la_fact(f, _, _, _, x), prefix("materialize_", x), field(c, "function", g),
+la_item(f, "dispatch", c) :- la_call(f, c), la_fact(f, _, _, _, x), prefix("materialize_", x), la_func(c, g),
     kind(g, "identifier"), la_dyn(c, g).
 la_ask_dyn(c, a) :- la_call(_, c), la_callee(c, s), (s = "callable" ; s = "builtins.callable"), la_arg(c, 0, a).
-la_ask_dyn(c, g) :- la_call(_, c), field(c, "function", g), kind(g, "identifier").
+la_ask_dyn(c, g) :- la_call(_, c), la_func(c, g), kind(g, "identifier").
 // defer_lazy_result(sync_resolve=…, async_resolve=…): the delegates, as call-graph symbols.
 .decl la_deferred(f: node, c: node, s: symbol)
 la_deferred(f, c, s) :- la_call(f, c), la_callee(c, cs), (cs = "defer_lazy_result" ; suffix(".defer_lazy_result", cs)),
@@ -226,13 +229,13 @@ la_conn_arg(c) :- la_kw(c, k, v), (k = "owner" ; k = "txn" ; k = "tx" ; k = "con
 .decl la_dolt_text(s: symbol)
 la_dolt_text(s) :- la_item_str(s), (contains("dolt_", s) ; contains("dolt log", s) ; contains("dolt branches", s)).
 .decl la_item_str(s: symbol)
-la_item_str(@lower(v)) :- la_scan(_, n), plain_str(n, v).
+la_item_str(@lower(v)) :- la_scan(_, n), str_part(n, _, v, _, _).
 .decl la_setattr(s: symbol)
 la_setattr("setattr"). la_setattr("builtins.setattr"). la_setattr("__setattr__"). la_setattr("object.__setattr__").
 
 // la_first(F, what, l): the line of F's first entry of a list (the script's lists are in walk order).
 .decl la_first(f: node, what: symbol, l: number)
-la_first(f, w, l) :- la_item(f, w, _), i = min j : { la_item(f, w, n), visit_index(n, j) },
+la_first(f, w, l) :- la_item(f, w, _), i = min j : { la_item(f, w, m), visit_index(m, j) },
     la_item(f, w, n), visit_index(n, i), line(n, l).
 .decl la_has(f: node, what: symbol)
 la_has(f, w) :- la_item(f, w, _).
@@ -242,17 +245,18 @@ la_has(f, w) :- la_item(f, w, _).
 // edges only for the file it is looking at (_resolve_callable_targets per file), so T in another file is a leaf:
 // the edge goes to the call node itself, which stands for T (la_stands). Only the fact the symbol tables keep
 // (la_canon) has edges.
-.decl la_edge4(g: node, m: node, i: number, s: symbol)
-la_edge4(g, m, i, s) :- la_canon(g), la_call(g, c), field(c, "function", fn), la_local(g, fn, s), la_fact(t, _, s, _, _),
+.decl la_edge5(g: node, m: node, i: number, s: symbol, t: node)
+la_edge5(g, m, i, s, t) :- la_canon(g), la_call(g, c), la_func(c, fn), la_local(g, fn, s), la_fact(t, _, s, _, _),
     la_canon(t), !la_sym(g, s), visit_index(c, i), docof(g, d), (docof(t, d), m = t ; !docof(t, d), m = c).
+.decl la_edge4(g: node, m: node, i: number, s: symbol)
+la_edge4(g, m, i, s) :- la_edge5(g, m, i, s, _).
 .decl la_edge(g: node, m: node, i: number)
 la_edge(g, m, i) :- la_edge4(g, m, i, _).
 // The non-lazy search does not follow the sanctioned pure helpers.
 .decl la_edge_nl(g: node, m: node, i: number)
 la_edge_nl(g, m, i) :- la_edge4(g, m, i, s), !la_set("SANCTIONED_PURE_HELPER_SYMBOLS", s).
 .decl la_stands(c: node, t: node)
-la_stands(c, t) :- la_canon(g), la_call(g, c), field(c, "function", fn), la_local(g, fn, s), la_fact(t, _, s, _, _),
-    la_canon(t), !la_sym(g, s), docof(g, d), !docof(t, d).
+la_stands(m, t) :- la_edge5(_, m, _, _, t), m != t.
 // la_as(m, T): node m is fact T, or stands for it.
 .decl la_as(m: node, t: node)
 la_as(t, t) :- la_canon(t).
@@ -356,8 +360,8 @@ la_at(f, w, l) :- la_canon_of(f, g), la_line(g, w, l).
 // la_find(c, p, l, sym): a finding with code c at line l of file p; sym is the allowlist symbol. la_ffind gives
 // the findings of a fact (its symbol, its file); la_nfind those at a node.
 .decl la_find(c: symbol, p: symbol, l: number, sym: symbol)
-la_find(c, p, l, s) :- la_ffind(c, f, l), la_fact(f, d, s, _, _), la_rel(d, p).
-la_find(c, p, l, s) :- la_nfind(c, n, s), docof(n, d), la_rel(d, p), line(n, l).
+la_find(c, p, l, s) :- la_ffind(c, f, l), la_fact(f, d, s, _, _), doc(d, p, _).
+la_find(c, p, l, s) :- la_nfind(c, n, s), docof(n, d), doc(d, p, _), line(n, l).
 .decl la_nfind(c: symbol, n: node, sym: symbol)
 .decl la_ffind(c: symbol, f: node, l: number)
 la_ffind("LA-001", f, l) :- la_pure(f), la_at(f, "io", l).
@@ -369,11 +373,12 @@ la_ffind("LA-009", f, l) :- la_sens(f), la_first(f, "state_write", l).
 la_ffind("LA-009", f, l) :- la_sens(f), la_first(f, "reach", l).
 la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, x), la_server_phase(x), la_in(d, "server_plan"),
     (la_at(f, "io", l) ; !la_at(f, "io", _), la_at(f, "perm", l)).
+la_ffind("LA-011", f, l) :- la_fact(f, d, _, _, _), la_in(d, "server_plan"), la_first(f, "hydrate", l).
 la_ffind("LA-012", f, l) :- la_fact(f, _, _, _, _), !la_legacy(f), la_first(f, "lazy_resolve", l).
 // *_lazy without @pure_lazy, deferring to a delegate whose own calls do plan I/O: at the first such deferral.
 la_ffind("LA-009", f, l) :- la_fact(f, _, _, _, x), suffix("_lazy", x), !la_pure(f),
-    i = min j : { la_deferred(f, c, s), la_eager_delegate(s), visit_index(c, j) },
-    la_deferred(f, c, _), visit_index(c, i), line(c, l).
+    i = min j : { la_deferred(f, c2, s2), la_eager_delegate(s2), visit_index(c2, j) },
+    la_deferred(f, c, s), la_eager_delegate(s), visit_index(c, i), line(c, l).
 la_ffind("LA-002", f, l) :- la_at(f, "intent", _), la_at(f, "io", l).
 la_ffind("LA-003", f, l) :- la_fact(f, d, _, _, _), la_in(d, "feature"), la_is(f, "public"), !la_lazy(f),
     la_at(f, "io", l), !la_at(f, "intent", _).
@@ -388,7 +393,7 @@ la_ffind("LA-009", f, l) :- la_pure(f), !la_skip(f), la_at(f, "eager", l).
 la_ffind("LA-013", f, l) :- la_lazy(f), !la_skip(f), la_at(f, "nonlazy", l).
 la_ffind("LA-015", f, l) :- !la_skip(f), la_is(f, "bootstrap"), la_item(f, "lr_of", s), line(s, l).
 la_ffind("LA-016", f, l) :- !la_skip(f), la_is(f, "bootstrap"), la_item(f, "mutation", n), line(n, l).
-la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon"), la_fact(f, d, _, q, _), la_rel(d, p),
+la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon"), la_fact(f, d, _, q, _), doc(d, p, _),
     la_set("SCHEMA_RECONCILIATION_FORBIDDEN_SURFACES", cat(p, "::", q)), line(f, l).
 la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon"), la_item(f, w, n), (w = "recon" ; w = "absent"), line(n, l).
 la_ffind("LA-017", f, l) :- !la_skip(f), la_is(f, "recon_terminal"), la_item(f, "lazy_resolve", c), line(c, l).
@@ -400,8 +405,9 @@ la_server_phase("post_op").
 // la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name.
 .decl la_eager_delegate(s: symbol)
 la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), field(c, "function", g),
-    la_local(t, g, q), match("(?:.*\\.)?(?<x>[^.]*)", q), la_set("PLAN_IO_NAMES", x).
+la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
+    la_local(t, g, q), la_last(q, x), la_set("PLAN_IO_NAMES", x).
+la_lastq(q) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g), la_local(t, g, q).
 
 // LA-008: in a transaction module, f (the last fact named f) and f_async: f uses grammar calls, f_async async
 // plan or grammar calls, each directly or down its calls. At f.
@@ -412,8 +418,9 @@ la_byname(d, x, f) :- la_fact(f, d, _, _, x), count : { la_fact(g, d, _, _, x), 
 
 // ---- 5. whole-file scans ---------------------------------------------------------------------------------------------------
 // The collector's own findings, over every node of the file: defer_lazy_result imported from
-// l2055_lazy_result.transform or called (LA-013); in sensitive files, a compatibility surface imported from there
-// or called (LA-009). Symbols: the imported name, or the callee.
+// l2055_lazy_result.transform (relative or not: the script compares the module without its dots) or called
+// (LA-013); in sensitive files, a compatibility surface imported from there or called (LA-009). Symbols: the
+// imported name, or the callee.
 la_nfind("LA-013", i, x) :- la_transform_import(i, "defer_lazy_result", x).
 la_nfind("LA-009", i, x) :- la_transform_import(i, a, x), la_set("FORBIDDEN_LAZY_COMPAT_CALLS", a), docof(i, d),
     la_in(d, "sensitive").
@@ -421,15 +428,15 @@ la_nfind("LA-013", c, "defer_lazy_result") :- la_bare_callee(c, "defer_lazy_resu
 la_nfind("LA-009", c, x) :- la_bare_callee(c, x), (la_set("FORBIDDEN_LAZY_COMPAT_CALLS", x) ;
     la_set("FORBIDDEN_LAZY_COMPAT_HELPERS", x)), docof(c, d), la_in(d, "sensitive").
 .decl la_transform_import(i: node, a: symbol, x: symbol)
-la_transform_import(i, a, x) :- la_from(i, "l2055_lazy_result.transform", a, x), !la_relative(i).
-.decl la_relative(i: node)
-la_relative(i) :- field(i, "module_name", r), kind(r, "relative_import").
+la_transform_import(i, a, x) :- la_from(i, "l2055_lazy_result.transform", a, x).
 .decl la_bare_callee(c: node, x: symbol)               // a call's function: a name's text, or an attribute's name
-la_bare_callee(c, x) :- kind(c, "call"), field(c, "function", g), kind(g, "identifier"), text(g, x).
-la_bare_callee(c, a) :- kind(c, "call"), field(c, "function", g), attr_of(g, _, a).
-// LA-018: the first line of each file (outside scripts/) that contains a deleted surface's name.
-la_find("LA-018", p, l, x) :- la_rel(d, p), !prefix("scripts/", p), la_dead_surface(x),
-    l = min k : { src_line(d, k, sp), text(sp, t), contains(x, t) }.
+la_bare_callee(c, x) :- la_func(c, g), kind(g, "identifier"), text(g, x).
+la_bare_callee(c, a) :- la_func(c, g), attr_of(g, _, a).
+// LA-018: the first line of each file (outside scripts/) that contains a deleted surface's name. Only scan_files
+// runs it, and it is not counted against the budget.
+.violation LA_018(at: loc, sym: symbol) code "LA-018" "{sym}: deleted cold-bootstrap surface"
+LA_018(@place(p, l), x) :- doc(d, p, _), !prefix("scripts/", p), la_dead_surface(x),
+    l = min k : { src_line(d, k, sp), text(sp, t), contains(x, t) }, !la_allowed(cat("LA-018::", x)).
 .decl la_dead_surface(x: symbol)
 la_dead_surface(x) :- la_set("COLD_BOOTSTRAP_DELETED_SURFACES", x).
 la_dead_surface(x) :- la_set("DELETED_SCHEMA_SIDECAR_SURFACES", x).
@@ -447,8 +454,10 @@ allow_entry("lazy_architecture", k) :- la_allowed(k).
 allow_sig("lazy_architecture", "lint_lazy_architecture", s) :- la_script_line(_, t),
     match("ALLOWLIST_SIGNATURE(?:\\s*:\\s*str)?\\s*=\\s*\"(?<s>[^\"]*)\".*", t).
 
+// One finding per code and symbol: the first line in its file. (A symbol names one fact, so one file, except
+// the whole-file scans' imported names and callees; those keep the first line in each file.)
 .violation LA(at: loc, c: symbol, sym: symbol) code {c} "{sym}: {c}"
-LA(@place(p, l), c, s) :- la_find(c, p, l, s), !la_allowed(cat(c, "::", s)).
+LA(@place(p, l), c, s) :- la_find(c, p, _, s), !la_allowed(cat(c, "::", s)), l = min k : { la_find(c, p, k, s) }.
 
 // The plugin checks the signature before reporting; a list that fails it is the only finding.
 .violation LA_000(at: loc) code "LA-000" "The lazy-architecture allowlist has been modified without re-signing."
@@ -456,7 +465,20 @@ LA_000(@place("scripts/lint_lazy_architecture.py", 1)) :- allow_sig("lazy_archit
     !allow_status("lazy_architecture", "valid").
 .gate LA_000
 
-// .ratchet-baselines/lint_lazy_architecture.json: {"counts": {"LA-001": 0, …}}: the ceilings (all 0). The script
-// counts findings before the allowlist, as the budget counts suppressed keys too.
+// .ratchet-baselines/lint_lazy_architecture.json: {"counts": {"LA-001": 0, …}}: the signed ceilings (all 0). The
+// plugin counts sites before the dedupe and the allowlist, and reports each code over its ceiling once, at the
+// budget file's line 1. A file that does not load, or lacks a code (LA-013 and LA-017 default to 0), is LA-000;
+// with no budget file and no script (a fixture tree) there is no budget.
 .decl la_ceiling(code: symbol, n: number)
 .input la_ceiling(IO=json, filename=".ratchet-baselines/lint_lazy_architecture.json", path="/counts")
+.decl la_ceil(code: symbol, n: number)
+la_ceil(c, n) :- la_ceiling(c, n).
+la_ceil(c, 0) :- la_ceiling(_, _), (c = "LA-013" ; c = "LA-017"), !la_ceiling(c, _).
+.violation LA_budget(at: loc, c: symbol) code {c} "{c} count exceeds signed budget"
+LA_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1), c) :- la_ceil(c, n),
+    count : { la_find(c, _, _, _) } > n.
+// Like the signature check, only where the script itself is present.
+.violation LA_000_budget(at: loc) code "LA-000" "Could not load the lazy-architecture budget."
+.gate LA_000_budget
+LA_000_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1)) :- allow_sig("lazy_architecture", _, _),
+    la_set("RULES", c), !la_ceil(c, _).

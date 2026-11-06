@@ -7,8 +7,7 @@
 // Python linter: scripts/lint_plan_helpers_allowlist.py. Helper names are those of
 // impl.common.l2070_server_plan.plan_helpers (the tables file): the old public *_via_plan helpers, their private
 // terminals, the lazy terminals and the lazy terminals' legacy private forms. Any name starting with `_` and
-// containing via_plan is private too. Each finding's code is its message, as the direct calls report it (the
-// plugin reports them all as PHA001):
+// containing via_plan is private too. Every finding is PHA001, as the plugin reports it; the message says which:
 //   "old or private H() call is forbidden"       a call of any helper H, by name, alias or `….H`; private
 //                                                helpers may be called inside plan_helpers itself
 //   "old or private H import is forbidden"       `from …plan_helpers import H`, H not a lazy terminal
@@ -21,7 +20,8 @@
 // How to read this file
 //   1. pha_write / pha_helper: what each name holds, as the linter's one map per file has it. The map is written in
 //      visit order, and only by values that are helpers: `a = grammar_row_lazy; a = other` leaves a a helper.
-//      That is "the latest earlier write that counts", so pha_helper is ordered by earlier.
+//      Whether a write stores a helper never changes once true (pha_stores), so "the latest earlier write that
+//      counts" is a max over it (pha_latest), with no ordered recursion.
 //   2. pha_callsite: the module name the linter derives from the path, and the enclosing classes and functions.
 //   3. The five messages, then the signature gate.
 
@@ -87,21 +87,30 @@ pha_asked(e) :- kind(c, "call"), field(c, "function", e).
 pha_asked(v) :- pha_write(_, _, v, _).
 
 // pha_helper(e, h): expression e, read where it stands, is helper h (the linter's _helper_name_from_expr).
-.decl pha_helper(e: node, h: symbol) ordered by earlier
+.decl pha_helper(e: node, h: symbol)
 // An imported helper.
 pha_helper(a, y) :- pha_import(_, a, y, _).
 // `….H`: a helper name as the attribute, whatever the object.
-pha_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h), pha_tracked(h).
-// `ph._x_via_plan`: a private name on a module alias imported before.
-pha_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h), pha_private(h),
-    field(e, "object", o), kind(o, "identifier"), text(o, m), pha_module_alias(i, m), earlier(i, e).
+pha_helper(e, h) :- pha_attr_helper(e, h).
 // A name: what the latest earlier write of a helper to it stored. Writes of anything else leave the map alone.
-pha_helper(e, h) :- pha_asked(e), kind(e, "identifier"), text(e, x),
-    k = max j : { pha_write(_, x, v2, _), earlier(v2, e), pha_helper(v2, _), visit_index(v2, j) },
-    visit_index(v, k), pha_write(_, x, v, _), pha_helper(v, h).
+pha_helper(e, h) :- pha_latest(e, v), pha_helper(v, h).
 // A helper's own name, when nothing earlier was stored under it.
-pha_helper(e, x) :- pha_asked(e), kind(e, "identifier"), text(e, x), pha_tracked(x),
-    count : { pha_write(_, x, v2, _), earlier(v2, e), pha_helper(v2, _) } = 0.
+pha_helper(e, x) :- pha_asked(e), kind(e, "identifier"), text(e, x), pha_tracked(x), !pha_latest(e, _).
+.decl pha_attr_helper(e: node, h: symbol)
+pha_attr_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h), pha_tracked(h).
+pha_attr_helper(e, h) :- pha_asked(e), kind(e, "attribute"), field(e, "attribute", n), text(n, h), pha_private(h),
+    field(e, "object", o), kind(o, "identifier"), text(o, m), pha_module_alias(i, m), earlier(i, e).
+// pha_stores(v): write value v puts a helper in the map. Whether it does is monotone (an entry is never removed),
+// so it needs no order; only which write is the latest needs one, and that is a max over this lower relation.
+.decl pha_stores(v: node)
+pha_stores(a) :- pha_import(_, a, _, _).
+pha_stores(v) :- pha_write(_, _, v, _), pha_attr_helper(v, _).
+pha_stores(v) :- pha_write(_, _, v, _), kind(v, "identifier"), text(v, y),
+    (pha_tracked(y) ; pha_write(_, y, v2, _), pha_stores(v2), earlier(v2, v)).
+.decl pha_latest(e: node, v: node)
+pha_latest(e, v) :- pha_asked(e), kind(e, "identifier"), text(e, x),
+    k = max j : { pha_write(_, x, v2, _), pha_stores(v2), earlier(v2, e), visit_index(v2, j) },
+    visit_index(v, k), pha_write(_, x, v, _).
 
 // ---- 2. callsites -----------------------------------------------------------------------------------------------
 // pha_module(d, m): the linter's module name for a path: from the first `impl` directory on, else after the first
@@ -148,8 +157,8 @@ pha_finding(t, cat("old or private ", h, " alias is forbidden")) :- assign_value
 pha_finding(t, cat("lazy terminal ", h, " assigned to eager alias")) :- assign_value(w, v), pha_write(w, x, v, t),
     pha_helper(v, h), pha_lazy(h), pha_eager_alias(x).
 
-.violation PHA(at: node, c: symbol) code {c} "{c}"
-PHA(n, c) :- pha_finding(n, c), !pha_allowed(n).
+.violation PHA001(at: node, c: symbol) "{c}"
+PHA001(n, c) :- pha_finding(n, c), !pha_allowed(n).
 
 // PHA000: the allowlist in the linter no longer matches its signature. It replaces every other finding.
 .violation PHA000(at: loc) "Plan helper allowlist signature verification failed."

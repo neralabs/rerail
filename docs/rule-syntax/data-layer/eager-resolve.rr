@@ -46,6 +46,8 @@ er_serverplan(d) :- er_doc(d, _), doc(d, p, _), er_serverplan_prefix(q), prefix(
 er_frame("class_definition"). er_frame("function_definition").
 .decl er_stop(k: symbol)
 er_stop("class_definition"). er_stop("function_definition"). er_stop("lambda").
+// A nested def's decorators run in the outer body in Python, but the linter's AST puts them under the nested def.
+er_stop("decorator").
 // er_qual(s, q): "C.f.g" for a class or def, through every enclosing class and def.
 .decl er_qual(s: node, q: symbol)
 er_qual(s, x) :- kind(s, k), er_frame(k), def_name(s, x), !nearest(s, _, er_frame).
@@ -121,48 +123,88 @@ er_terminal("resolve"). er_terminal("resolve_async"). er_terminal("result").
 .decl er_param(f: node, x: symbol, ann: loc)
 er_param(f, x, a) :- er_sym(f, _), sig_param(f, _, nm, _, k, a, _), (k = "posonly" ; k = "pos" ; k = "kwonly"),
     text(nm, x).
-// er_mentions(a, x): annotation a names x: `x`, `m.x`, `Optional[x]`, `x | None`; not in a string.
+// er_mentions(a, x): annotation a names x: `x`, `m.x`, `Optional[x]`, `Dict[k, x]`, `x | None`. As the linter,
+// it looks through subscripts, `|` and tuples only: not into a list (`Callable[[x], int]`), a call or a string.
 .decl er_mentions(a: loc, x: symbol)
-er_mentions(a, x) :- er_ann(a), (i = a ; within(i, a)), kind(i, "identifier"), text(i, x), !er_attr_object(i),
-    !inside(i, _, er_str_kind).
+er_mentions(a, x) :- er_ann_part(a, n), kind(n, "identifier"), text(n, x).
+er_mentions(a, x) :- er_ann_part(a, n), kind(n, "attribute"), field(n, "attribute", m), text(m, x).
 .decl er_ann(a: loc)
 er_ann(a) :- er_param(_, _, a).
 er_ann(t) :- assign_ann(_, t).
-.decl er_attr_object(i: node)
-er_attr_object(i) :- kind(p, "attribute"), field(p, "object", i).
-.decl er_str_kind(k: symbol)
-er_str_kind("string").
+.decl er_ann_part(a: loc, n: loc)
+er_ann_part(a, a) :- er_ann(a).
+er_ann_part(a, c) :- er_ann_part(a, n), kind(n, k), er_ann_through(k), child(n, c, _).
+.decl er_ann_through(k: symbol)
+er_ann_through("type"). er_ann_through("generic_type"). er_ann_through("type_parameter").
+er_ann_through("subscript"). er_ann_through("binary_operator"). er_ann_through("union_type").
+er_ann_through("tuple"). er_ann_through("parenthesized_expression").
 // er_assign(f, w, x, v): statement w in f's body assigns name x from v (`x = v`, `x: T = v`, `a = x = v`).
 .decl er_assign(f: node, w: node, x: symbol, v: node)
 er_assign(f, w, x, v) :- er_body(f, w), assign_value(w, v), assign_target(w, t), kind(t, "identifier"), text(t, x).
 
 // er_lazy(f, x): a LazyResult local: a parameter or `x: LazyResult…` annotated so, or assigned a lazy value.
-.decl er_lazy(f: node, x: symbol)
-er_lazy(f, x) :- er_param(f, x, a), er_mentions(a, "LazyResult").
-er_lazy(f, x) :- er_body(f, w), assign_ann(w, a), er_mentions(a, "LazyResult"), assign_target(w, t),
+// The linter collects them in statement order, so `y = x` counts only after x became lazy (er_lazy_def, w the
+// parameter or statement that did it). The patterns then test against the whole set (er_lazy_expr).
+.decl er_lazy_def(f: node, x: symbol, w: node)
+er_lazy_def(f, x, p) :- er_sym(f, _), sig_param(f, p, nm, _, k, a, _), (k = "posonly" ; k = "pos" ; k = "kwonly"),
+    er_mentions(a, "LazyResult"), text(nm, x).
+er_lazy_def(f, x, w) :- er_body(f, w), assign_ann(w, a), er_mentions(a, "LazyResult"), assign_target(w, t),
     kind(t, "identifier"), text(t, x).
-er_lazy(f, x) :- er_assign(f, _, x, v), er_lazy_expr(f, v).
-// er_lazy_expr(f, e): a lazy local, `cast(T, lazy)`, or a call of a `*_lazy` callable.
+er_lazy_def(f, x, w) :- er_assign(f, w, x, v), er_lazy_val(f, v).
+.decl er_lazy(f: node, x: symbol)
+er_lazy(f, x) :- er_lazy_def(f, x, _).
+// er_lazy_val(f, e): e is lazy where it stands: a local made lazy before this statement, `cast(T, lazy)`, a call of
+// a `*_lazy` callable. er_lazy_expr(f, e): the same against every lazy local.
+.decl er_lazy_val(f: node, e: node)
+er_lazy_val(f, e) :- er_body(f, e), kind(e, "identifier"), text(e, x), er_lazy_def(f, x, w), earlier(w, e),
+    !within(e, w).
+er_lazy_val(f, e) :- er_body(f, e), er_cbase(e, "cast"), posarg(e, 1, a), er_lazy_val(f, a).
+er_lazy_val(f, e) :- er_body(f, e), er_cbase(e, x), suffix("_lazy", x).
+er_lazy_val(f, e) :- er_body(f, e), kind(e, "parenthesized_expression"), unparen(e, m), er_lazy_val(f, m).
 .decl er_lazy_expr(f: node, e: node)
 er_lazy_expr(f, e) :- er_body(f, e), kind(e, "identifier"), text(e, x), er_lazy(f, x).
 er_lazy_expr(f, e) :- er_body(f, e), er_cbase(e, "cast"), posarg(e, 1, a), er_lazy_expr(f, a).
-er_lazy_expr(f, e) :- er_body(f, e), er_cbase(e, x), suffix("_lazy", x).
+er_lazy_expr(f, e) :- er_lazy_val(f, e), !kind(e, "identifier").
 er_lazy_expr(f, e) :- er_body(f, e), kind(e, "parenthesized_expression"), unparen(e, m), er_lazy_expr(f, m).
 
 // er_sql(f, x): a local holding rows read eagerly: assigned from `_get_…(…)`, `_find_…`, `_list_…` (not *_lazy),
 // or an eager resolver, possibly through await, cast and attributes.
 .decl er_sql(f: node, x: symbol)
-er_sql(f, x) :- er_assign(f, _, x, v), er_sql_expr(f, v).
+// In statement order, as the lazy locals: er_sql_val reads locals assigned before, er_sql_expr all of them.
+er_sql(f, x) :- er_sql_def(f, x, _).
+.decl er_sql_def(f: node, x: symbol, w: node)
+er_sql_def(f, x, w) :- er_assign(f, w, x, v), er_sql_val(f, v).
+.decl er_sql_val(f: node, e: node)
+er_sql_val(f, e) :- er_body(f, e), kind(e, "identifier"), text(e, x), er_sql_def(f, x, w), earlier(w, e),
+    !within(e, w).
+er_sql_val(f, e) :- er_body(f, e), er_cbase(e, "cast"), posarg(e, 1, a), er_sql_val(f, a).
+er_sql_val(f, e) :- er_body(f, e), kind(e, "await"), child(e, a, 0), er_sql_val(f, a).
+er_sql_val(f, e) :- er_body(f, e), kind(e, "attribute"), field(e, "object", a), er_sql_val(f, a).
+er_sql_val(f, e) :- er_sql_source(f, e).
+.decl er_sql_source(f: node, e: node)
+er_sql_source(f, e) :- er_body(f, e), er_cbase(e, x), er_sql_resolver(x).
+er_sql_source(f, e) :- er_body(f, e), er_cbase(e, x), er_sql_prefix(p), prefix(p, x), !suffix("_lazy", x).
 .decl er_sql_expr(f: node, e: node)
 er_sql_expr(f, e) :- er_body(f, e), kind(e, "identifier"), text(e, x), er_sql(f, x).
 er_sql_expr(f, e) :- er_body(f, e), er_cbase(e, "cast"), posarg(e, 1, a), er_sql_expr(f, a).
 er_sql_expr(f, e) :- er_body(f, e), kind(e, "await"), child(e, a, 0), er_sql_expr(f, a).
 er_sql_expr(f, e) :- er_body(f, e), kind(e, "attribute"), field(e, "object", a), er_sql_expr(f, a).
-er_sql_expr(f, e) :- er_body(f, e), er_cbase(e, x), er_sql_resolver(x).
-er_sql_expr(f, e) :- er_body(f, e), er_cbase(e, x), er_sql_prefix(p), prefix(p, x), !suffix("_lazy", x).
-// er_sql_in(f, a): a contains such an expression.
+er_sql_expr(f, e) :- er_sql_source(f, e).
+// er_sql_in(f, a): a contains such an expression, looking through calls, operators, subscripts and displays, as
+// the linter does; not into comprehensions, lambdas or `*rows`.
 .decl er_sql_in(f: node, a: node)
-er_sql_in(f, a) :- er_sql_expr(f, e), (a = e ; within(e, a)), er_body(f, a).
+er_sql_in(f, a) :- er_sql_expr(f, a).
+er_sql_in(f, a) :- er_body(f, a), kind(a, k), er_sql_through(k), child(a, c, _), !kind(c, "keyword_argument"),
+    er_sql_in(f, c).
+er_sql_in(f, a) :- er_body(f, a), (kind(a, "call") ; kind(a, "argument_list")), child(a, c, _),
+    kind(c, "keyword_argument"), field(c, "value", v), er_sql_in(f, v).
+er_sql_in(f, a) :- er_body(f, a), kind(a, "attribute"), field(a, "object", o), er_sql_in(f, o).
+.decl er_sql_through(k: symbol)
+er_sql_through("call"). er_sql_through("argument_list"). er_sql_through("await").
+er_sql_through("boolean_operator"). er_sql_through("binary_operator"). er_sql_through("unary_operator").
+er_sql_through("not_operator"). er_sql_through("conditional_expression"). er_sql_through("comparison_operator").
+er_sql_through("subscript"). er_sql_through("list"). er_sql_through("tuple"). er_sql_through("set").
+er_sql_through("dictionary"). er_sql_through("pair"). er_sql_through("parenthesized_expression").
 
 // er_txn(f, x): a transaction parameter: txn, transaction, read_txn, write_txn, *_txn, or annotated Transaction.
 .decl er_txn(f: node, x: symbol)
@@ -175,7 +217,6 @@ er_root(o, x) :- kind(o, "identifier"), text(o, x).
 er_root(o, x) :- kind(o, "attribute"), field(o, "object", p), er_root(p, x).
 er_root(o, x) :- er_cattr(o, _, p), er_root(p, x).
 er_root(o, x) :- er_cid(o, "cast"), posarg(o, 1, p), er_root(p, x).
-er_root(o, x) :- kind(o, "await"), child(o, p, 0), er_root(p, x).
 
 // er_plan_scope(f, x): a plan scope: a parameter named *scope, or `with ….open_read_plan() as x`.
 .decl er_plan_scope(f: node, x: symbol)
@@ -247,8 +288,8 @@ er_test(n, e) :- kind(n, "conditional_expression"), child(n, e, 1).
 er_last_str(c, v) :- er_strarg(c, i, v), i = max j : { posarg(c, j, _) }.
 // er_bound_use(f, n, b): `x.resolve` passed to a call or assigned, not called.
 .decl er_bound_use(f: node, n: node, b: symbol)
-er_bound_use(f, c, b) :- er_body(f, c), er_arg(c, a), er_bound(a, b).
-er_bound_use(f, w, b) :- er_body(f, w), assign_value(w, v), er_bound(v, b).
+er_bound_use(f, c, b) :- er_body(f, c), er_arg(c, a), unparen(a, m), er_bound(m, b).
+er_bound_use(f, w, b) :- er_body(f, w), assign_value(w, v), unparen(v, m), er_bound(m, b).
 
 // er_ph(f, n, k): node n of body f has phase pattern k (reported as "lower:k" for a def lower runs).
 .decl er_ph(f: node, n: node, k: symbol)
@@ -309,8 +350,10 @@ er_alias(f, x, t) :- er_assign(f, w, x, v), !er_multi_target(w), kind(v, "attrib
     text(s, "self"), field(v, "attribute", n), text(n, y), er_cls(f, cs), docof(v, d), er_method(d, cs, y, t),
     er_legacy(t).
 er_alias(f, x, t) :- er_assign(f, w, x, v), !er_multi_target(w), er_indirect(f, v, t), er_legacy(t).
+// Only a plain `x = …` (one target, no annotation) is an alias.
 .decl er_multi_target(w: node)
 er_multi_target(w) :- assign_target(w, a), assign_target(w, b), a != b.
+er_multi_target(w) :- assign_ann(w, _).
 // er_boundary_call(f, t): f calls boundary t (not itself), directly, through a local alias or by name.
 .decl er_boundary_call(f: node, t: symbol)
 er_boundary_call(f, t) :- er_call(f, _, t), er_legacy(t), !er_sym(f, t).
@@ -379,7 +422,10 @@ er_resolved(f, "resolved") :- sig_param(f, _, nm, i, "pos", _, _), text(nm, "res
 .decl er_phase(s: symbol, p: symbol)
 er_phase(s, p) :- er_sym(f, s), def_name(f, p), (p = "preprocess" ; p = "lower" ; p = "compile").
 er_phase(t, p) :- er_phase(s, p), er_edge(s, t).
-er_site(d, l, cat(p, ":", k), s) :- er_phase(s, p), er_sym(f, s), er_ph(f, n, k), line(n, l), docof(n, d).
+er_site(d, l, cat(p, ":", k), s) :- er_phase(s, p), er_last_def(s, f), er_ph(f, n, k), line(n, l), docof(n, d).
+// er_last_def(s, f): the last def with symbol s, the one the linter's map by symbol keeps.
+.decl er_last_def(s: symbol, f: node)
+er_last_def(s, f) :- er_sym(f, s), line(f, l), l = max a : { er_sym(g, s), line(g, a) }.
 
 // transitive: each def's own patterns, less its exemptions, plus its calls into boundaries; then every caller's.
 // Defs in l2050_transaction.legacy_wrappers and server_ref's deleted_planning_value_helper take no part.
@@ -404,8 +450,7 @@ er_exempt(f, s, cat("transitive:", h, "()")) :- er_sym(f, s), er_wrapper(f, h).
 er_io_pattern(c) :- er_tr(_, k), c = cat("transitive:", k), (prefix("non-lazy-call:", k) ; k = "*.resolve()" ;
     k = "*.resolve_async()" ; k = "*.result()").
 // A dirty symbol is reported at its def (the last def of that name, as the linter's map keeps it).
-er_site(d, l, c, s) :- er_dirty(s, c), er_sym(f, s), docof(f, d), l = max a : { er_sym(g, s), line(g, a) },
-    !er_ignored(d, c, s).
+er_site(d, l, c, s) :- er_dirty(s, c), er_last_def(s, f), docof(f, d), line(f, l), !er_ignored(d, c, s).
 
 // io: external-I/O boundary definitions, in files that mention external_io_boundary_eager.
 er_site(d, l, cat("external-io-boundary:", x, "()"), s) :- er_sym(f, s), er_dec_base(f, b), er_io_dec(b),
@@ -448,8 +493,25 @@ er_io_symbol(s) :- er_io_entry(_, s, _), allow_status(cat("eager_io:", s), "vali
 // grandfathered when an entry carries its path, pattern and symbol.
 .input er_grand_line(IO=lines, dir="scripts/allowlists/architecture_grandfathered/eager_resolve/")
 .decl er_grand_line(file: symbol, n: number, t: symbol)
+// er_grand_text(g, n, e): line n of fragment g (a .txt file, its path relative to the directory), stripped.
+.decl er_grand_text(g: symbol, n: number, e: symbol)
+er_grand_text(g, n, e) :- er_grand_line(g, n, t), suffix(".txt", g), match("\\s*(?<e>.*?)\\s*", t).
+// er_grand_bad(g, n, m): the loader's error for a line it does not accept.
+.decl er_grand_bad(g: symbol, n: number, m: symbol)
+er_grand_bad(g, n, "blank lines are not permitted") :- er_grand_text(g, n, "").
+er_grand_bad(g, n, "expected 4 non-empty tab-separated fields") :- er_grand_text(g, n, e), e != "",
+    !match("[^\\t]+\\t[^\\t]+\\t[^\\t]+\\t[^\\t]+", e).
+er_grand_bad(g, n, "source path must be a normalized repository-relative path") :- er_grand_fields(g, n, _, p, _, _),
+    (prefix("/", p) ; match("(.*/)?\\.\\.?(/.*)?", p) ; contains("//", p) ; suffix("/", p)).
+er_grand_bad(g, n, cat("entry source '", p, "' does not match fragment '", q, "'")) :-
+    er_grand_fields(g, n, _, p, _, _), match("(?<q>.*)\\.txt", g), p != q,
+    !prefix("/", p), !match("(.*/)?\\.\\.?(/.*)?", p), !contains("//", p), !suffix("/", p).
+.decl er_grand_fields(g: symbol, n: number, e: symbol, p: symbol, c: symbol, s: symbol)
+er_grand_fields(g, n, e, p, c, s) :- er_grand_text(g, n, e),
+    match("(?<p>[^\\t]+)\\t[^\\t]+\\t(?<c>[^\\t]+)\\t(?<s>[^\\t]+)", e).
+// er_grand(e, p, c, s): an accepted entry and its payload (path, pattern, symbol).
 .decl er_grand(e: symbol, p: symbol, c: symbol, s: symbol)
-er_grand(e, p, c, s) :- er_grand_line(_, _, t), match("\\s*(?<e>(?<p>[^\\t]+)\\t[^\\t]+\\t(?<c>[^\\t]+)\\t(?<s>[^\\t]+?))\\s*", t).
+er_grand(e, p, c, s) :- er_grand_fields(g, n, e, p, c, s), !er_grand_bad(g, n, _).
 allow_entry("eager_resolve", e) :- er_grand(e, _, _, _).
 
 .violation ER(at: span, c: symbol, s: symbol, t: symbol) code {c} "{c}: {s}: {t}"
@@ -469,6 +531,11 @@ ER(@place("scripts/allowlists/lint_eager_resolve_external_io_boundaries.txt", n)
 .violation EAGER_ALLOWLIST(at: span, m: symbol) code "EAGER-ALLOWLIST" "{m}"
 EAGER_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/eager_resolve", 1), cat("spurious allowlist entry: ", e)) :-
     er_grand(e, p, c, s), !er_reported_payload(p, c, s).
+EAGER_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/eager_resolve", 1), cat(g, ":", to_string(n), ": ", m)) :-
+    er_grand_bad(g, n, m).
+EAGER_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/eager_resolve", 1),
+    cat("duplicate entry appears ", to_string(k), " times: ", e)) :-
+    er_grand(e, _, _, _), k = count : { er_grand_fields(g2, n2, e, _, _, _), !er_grand_bad(g2, n2, _) }, k > 1.
 .decl er_reported_payload(p: symbol, c: symbol, s: symbol)
 er_reported_payload(p, c, s) :- er_site(d, _, c, s), doc(d, p, _).
 .input er_ceiling_line(IO=lines, filename="scripts/allowlists/architecture_burn_down_ceilings/eager_resolve.txt")

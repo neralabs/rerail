@@ -4,10 +4,7 @@
 |---|---|---|---|---|
 | lazy_sql_surface | 446 | 125 | 34 / 34 | lowers |
 | lazy_adapter_ownership | 529 | 168 | 9 / 9 | lowers |
-| lazy_architecture | 3,840 | 459 + 474 library (`lib/data-layer/lazy-analyzer.rr`) + 318 generated table | 197 / 197 for the reach variant (see below); 177 / 197 as written | refuses `dfs_first` and `dfs_first_memo` |
-
-Recorded events after rrlab's filtering: 34 for lazy_sql_surface (36 recorded) and 197 for lazy_architecture (205
-recorded).
+| lazy_architecture | 3,840 | 484 + 503 library (`lib/data-layer/lazy-analyzer.rr`) + 318 generated table | 197 / 205 for the reach variant (see below); 176 / 205 as written | refuses `dfs_first` and `dfs_first_memo` |
 
 The generated table is `data-layer/lazy-architecture.tables.rr`. It is built by
 `data-layer/gen-lazy-architecture.py`, and `--check` confirms it matches the linter at 2b1504adc. It holds every
@@ -15,54 +12,73 @@ module-level string and string-set constant of the script, as `la_set(NAME, v)`.
 
 ## How lazy_architecture was scored
 
-rrlab gives `dfs_first` and `dfs_first_memo` no rows, so every finding found by a transitive search is missed. This
-is a harness gap. Those misses are the 20 events lost by the file as written: 5 in `_scan_analyzed_files`, 6 in
-`ast-component` and 9 in `scan_files`.
+rrlab gives `dfs_first` and `dfs_first_memo` no rows. This is a harness gap, and it is why the file as written loses 22
+events (the other 7 misses are the dedupe ones below).
 
 To check the edges, targets and roots, I scored a scratch variant. It replaces each
 `dfs_first[_memo](g, _, i, edge, target[, roots])` with plain reachability: `i = min j : { edge(g, m, j), reach(m) }`.
-The variant scores:
+I scored each entry on its own, to stay under the run cap.
 
-- `scan_files`: 105 / 105
-- `scan_files.ast-component`: 43 / 43
-- `_scan_analyzed_files`: 6 / 6
-- `_scan_deleted_cold_bootstrap_surfaces`: 43 / 43
+| entry | exact / events | how |
+|---|---|---|
+| `scan_files` | 108 / 113 | reach variant |
+| `scan_files.ast-component` | 40 / 43 | reach variant |
+| `_scan_analyzed_files` | 6 / 6 | reach variant |
+| `_scan_deleted_cold_bootstrap_surfaces` | 43 / 43 | LA-018-only variant |
 
-I scored the last entry with a variant that keeps only the LA-018 text scan. Its events contain the real 5k–15k-line
-schema files, and the full analysis of those takes about 38 s per event in rrlab, which goes past the 2-minute cap. The
-entry reports only LA-018, and LA-018 does not depend on the analysis.
+The last entry reports only LA-018, which does not depend on the analysis. Its events hold real 5k–15k-line files,
+and the full analysis of those takes about 38 s per event in rrlab.
 
-Reachability matches `dfs_first_memo` whenever no root's search cuts through a node that an earlier root's search
-already visited and that is still on the stack. The recorded events never hit that case.
+The variant's 8 misses:
+
+- **7 are the plugin's dedupe** (see below). The recorded `scan_files` results keep every site:
+  - two LA-017s for one symbol: `test_reconciliation_direct_ddl_triggers_la017` and
+    `test_fact_check_default_false_result_triggers_la017`, each recorded through both entries;
+  - two LA-014s for one symbol: `test_la014_flags_dynamic_behavior_lookup_in_materializer`, also through both
+    entries;
+  - an `@overload` stack's two LA-010s: `lazy-overload-declaration-diagnostics`.
+
+  The plugin keeps the first site of each, as the rule now does.
+- **1 is a stand-in artefact:** `native-ordered-cycle`. Plain reachability answers through a node that an earlier
+  root's memoised search already visited. `dfs_first_memo` handles that node as the script does, so the rule as
+  written is right here.
 
 ## Deliberate differences
 
 - **lazy_sql_surface: the code is the message.** The direct calls return messages only, so the recorded "code" is the
   message. `LSS(at, c) code {c}` reports the message as the code. The plugin reports every finding as LSS-001.
-- **lazy_adapter_ownership: the source-trigger gate is applied.** It is written `lao_doc` (Transaction, PlanScope,
-  legacy_, pure_lazy, @lazy). The plugin applies this gate, but the direct `materialize_source_facts` path does not.
-  No scored event depends on the difference.
-- **lazy_architecture follows `scan_files`, not the plugin:**
-  - **No per-symbol dedupe.** The plugin keeps one finding per `LA-xxx::symbol`, but events expect two LA-017
-    findings for the same symbol.
-  - **LA-018 is reported.** The text scan is part of `scan_files`, not of the plugin.
+- **lazy_adapter_ownership: the source-trigger gate is applied.** It is written `lao_doc`. The plugin applies this
+  gate, but the direct `materialize_source_facts` path does not. No scored event depends on the difference.
+- **lazy_architecture follows the suite plugin:**
+  - **One finding per `LA-xxx::symbol`,** the first by (file, line), before the allowlist.
+    - A function's symbol is module-qualified, so it lives in one file, and the rule takes `min` line within it.
+    - The whole-file scans' symbols are constant: `defer_lazy_result`, and imported or called compatibility
+      names. For those the plugin keeps the first site across files, ordered by path string, then line. The rule
+      keeps the first site in each file, because `min` over symbols is not a path order.
+  - **LA-018 (the text scan) is `.mode log`.** The plugin never runs it, and production events drop it. It is still
+    reported for `scan_files` events.
   - **No source-trigger gate.** "def " is one of its triggers, so it gates almost nothing.
-  - **The allowlist applies to every finding,** as `LA-xxx::symbol` keys in
-    `scripts/allowlists/lint_lazy_architecture_allowlist.txt`.
-  - **The signature is checked through signing.rr.** It is read from the script's `ALLOWLIST_SIGNATURE` line. A bad
-    signature gives LA-000 at the script's line 1, which is a gate.
-  - **The ratchet becomes a `.budget`** from `.ratchet-baselines/lint_lazy_architecture.json` `/counts`, where every
-    ceiling is 0. It reports code LA at the baseline file, while the script reports its own ratchet message.
+  - **Signature:** the allowlist is checked through signing.rr. A bad signature gives LA-000 at the script's line 1,
+    as a gate.
+  - **Budget:** `LA_budget` reports each code whose count of sites, taken before dedupe and allowlist, exceeds its
+    ceiling in `.ratchet-baselines/lint_lazy_architecture.json` `/counts`. It reports at that file's line 1, as the
+    plugin does.
+    - A budget that does not load gives LA-000 there. This covers a missing code; LA-013 and LA-017 default to 0.
+      As with the signature, this only applies where the script itself is present.
+    - Two sites at one line with one symbol count once. The script counts them twice.
 
 ## Known approximations (lazy_architecture)
 
-- `callable_aliases` follows only plain name targets. A cycle in a chain of name aliases gives no symbol, where the
+- `callable_aliases` follows plain names and tuple or list targets (each name is an alias when the value holds a
+  callable; only a later plain assignment clears it). A cycle in a chain of name aliases gives no symbol, where the
   script returns the start name.
 - The script's recursion and depth caps are ignored.
-- "First" means first by `visit_index`, which is tree-sitter preorder. CPython's `ast.walk` order differs in a few
-  places, such as dict keys against values, and these only matter when two entries compete.
-- `TryStar` (`except*`) blocks are not walked as the script walks them.
-- The LA-011 helper-regression branch is unreachable with the script's own tables, so it is not written.
+- "First" means first by `visit_index`. rrlab uses start order, while the engine uses CPython's ast order.
+- `TryStar` (`except*`) blocks are scanned whole, an approximation of the script's walk.
+- `_transitive_line_to_target_symbols` (the LA-011 permission search) counts a root that it reaches again through a
+  cycle. `dfs_first_memo` never returns to its root, so that one case gives no finding.
+- The scratch reachability stand-in differs from `dfs_first_memo` on ordered cycles, as above. It is used only for
+  scoring.
 - COVERAGE.md's no-L6 note stands. `scoped_rhs` and `callable_aliases` are lexical: the latest visible assignment,
   found by position.
 
@@ -71,15 +87,16 @@ already visited and that is still on the stack. The recorded events never hit th
 - **lazy_architecture:** 9 lines use `dfs_first_memo` and 2 use `dfs_first`, and the reader answers "not lowered
   yet" for all of them. The form is the one COVERAGE.md names for these searches, so I kept it.
 - **Rewritten so they lower:**
-  - `code {c} in "regex"` on a `.violation` is a syntax error, so I dropped it. It only documented the code range.
-  - `@place` outside a `.violation`'s `at` is not lowered, so `la_find` now carries path and line.
+  - `code {c} in "regex"` on a `.violation` is a syntax error, so I dropped it.
+  - `@place` outside a `.violation`'s `at` is not lowered, so `la_find` carries path and line.
 
 ## Library and core change requests
 
-- **rrlab:** give `dfs_first` and `dfs_first_memo` rows. The reachability form above would do as a stand-in.
-- **rrlab dl:** `--test` recomputes the entry's reported codes from the filtered events only, so a single-test run of
-  an entry that reports no codes compares every code. Compute `reported` before the `--test` filter.
-- **rr-census:** lower `dfs_first` and `dfs_first_memo`.
+- **rrlab:** give `dfs_first` and `dfs_first_memo` rows.
+- **rrlab:** lower `split_dot(s, _, x)`. It is written as `_ = @rr_dot_init(s)`, which Soufflé rejects. The library
+  names the variable instead.
+- **rrlab:** apply `.gate`. It is dropped, so a gating LA-000 is reported alongside the other findings.
+- **Engine reader:** lower `dfs_first` and `dfs_first_memo`.
 
 ## Not expressible
 
