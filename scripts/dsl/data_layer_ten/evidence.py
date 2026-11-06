@@ -122,6 +122,8 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_
  files|=set(Path('src/cli/data-layer').glob('*.ts'))|set(Path('packs/data-layer/runtime').glob('*'))|set(Path('test/conformance/data-layer/dod').glob('*.ts'))
  files|={Path('fixtures/host/data-layer-port')/name for name in ['batch-10-dod-audit-20261106.json','batch-10-dod-contracts.json','batch-10-lifecycle.json']}
  files|={Path('scripts/profiling/data_layer/measure.py'),Path('test/scripts/data_layer/test_complete_measurement.py')}
+ files|={Path('packs/data-layer/pack.json'),Path('packs/data-layer/package.json'),Path('fixtures/host/data-layer-port/batch-08-native-assertions.json'),Path('fixtures/host/data-layer-port/batch-09-native-assertions.json')}
+ files|={Path('docs/performance-decisions/data-layer-batch-ten-global-recovery-20261106.json'),Path('docs/performance-decisions/data-layer-batch-ten-validation-20261106.json')}
  files|={Path('scripts/dsl/data_layer_rule_audit.py')}
  files|={Path('scripts/dsl/data_layer_audit')/name for name in ['native_suite.py','native_guard.py','native_scanners.py']}
  files|=set(Path('test/engine/native/data-layer-ten').glob('*.ts'))|{Path('.github/workflows/ci.yml')}
@@ -131,6 +133,7 @@ def receipt(oracle_path,snapshot,workspace,controls,configured,contracts,helper_
  files|={Path('native/src/code_rule_dsl/value/python_ast.rs'),Path('native/src/code_rule_dsl/value/python_ast/tests.rs')}
  files|={Path('native/src/code_rule_dsl')/p for p in ['model.rs','workspace/api.rs','workspace/index.rs','workspace/mod.rs','workspace/tests.rs','workspace/context_tests.rs','relational/producer.rs','relational/producer/partition.rs','relational/batch.rs','relational/batch/tests.rs']}
  files|={Path('scripts/dsl/data_layer_batch_seven_identity.py'),Path('scripts/dsl/data_layer_generate_batch_seven.py'),Path('fixtures/host/data-layer-port/batch-10-identity-inventory.json')}
+ files|=set(Path('scripts/dsl/data_layer_eight').glob('*.py'))|{Path('scripts/dsl/data_layer_generate_batch_eight.py'),Path('packs/data-layer/candidates/facts/lazy-analyzed.json'),Path('fixtures/host/data-layer-port/batch-10-global-queries.json'),Path('fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz'),Path('test/conformance/data-layer/regressions/bootstrap-inventory.test.ts')}
  files|={Path('native/src/code_rule_dsl/relational')/p for p in ['syntax.rs','table.rs','table/bindings_tests.rs','shared.rs','anchors.rs']}
  files|={Path('src/engine/code-rule/code-rule-schema.ts'),Path('src/engine/code-rule/code-rule.ts'),Path('.gitattributes')}
  files|={Path('packs/data-layer/rules')/('data-layer-'+c.replace('_','-')+'.json') for c in CHECKS}

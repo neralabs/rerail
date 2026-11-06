@@ -585,6 +585,14 @@ jobs:
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.recovery \
             --source .rerail/data-layer-upstream --output "$reports/identity-inventory-original.json"
           cmp fixtures/host/data-layer-port/batch-10-identity-inventory.json "$reports/identity-inventory-original.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_ten.contracts.global_queries \
+            --source .rerail/data-layer-upstream --output "$reports/global-queries-original.json"
+          cmp fixtures/host/data-layer-port/batch-10-global-queries.json "$reports/global-queries-original.json"
+          PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" -m data_layer_nine.audit.inventory \
+            --source .rerail/data-layer-upstream --output "$reports/bootstrap-inventory-original.json.gz"
+          cmp fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz "$reports/bootstrap-inventory-original.json.gz"
+          timeout 115s npx vitest run --dir test test/conformance/data-layer/regressions/bootstrap-inventory.test.ts \
+            --reporter=json --outputFile="$reports/bootstrap-inventory.json"
           timeout 115s npx vitest run --dir test test/conformance/data-layer/dod/ \
             --reporter=json --outputFile="$reports/dod.json"
           PYTHONPATH=scripts/dsl timeout 115s "$RUNNER_TEMP/batch-eight-venv/bin/python" - <<'PY'
