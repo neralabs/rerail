@@ -57,6 +57,9 @@ pub(in crate::code_rule_dsl) const RELATION: &str = "strtest_";
 /// The prefix of a `match_all` built-in's input relation, `matchall_<k>(sp, m)` (`as_relations`).
 pub(in crate::code_rule_dsl) const MATCHES: &str = "matchall_";
 
+/// The prefix of a `match_group` built-in's input relation, `matchgroup_<k>(sp, m, g, gsp)` (`as_relations`).
+pub(in crate::code_rule_dsl) const GROUPS: &str = "matchgroup_";
+
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
 pub(in crate::code_rule_dsl) const TEXT_COLUMNS: [(&str, &[usize]); 8] =
@@ -164,11 +167,12 @@ fn as_test(l: &Literal) -> Option<(&str, &str, Vec<String>, bool)> {
 }
 
 /// The text tests a run answers from the vocabulary: each input relation `strtest_<k>(s)` and its matcher; and the
-/// `match_all` regexes the batches find in their spans: each input relation `matchall_<k>(sp, m)` and its regex.
+/// regexes of `match_all` and `match_group` the batches find in their spans, regex `k`'s matches in
+/// `matchall_<k>(sp, m)` and their groups in `matchgroup_<k>(sp, m, g, gsp)`.
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct Vocabulary {
     pub(in crate::code_rule_dsl) tests: Vec<(String, Arc<Matcher>)>,
-    pub(in crate::code_rule_dsl) matches: Vec<(String, Arc<regex::Regex>)>,
+    pub(in crate::code_rule_dsl) matches: Vec<Arc<regex::Regex>>,
     /// Per symbol, the tests it passes (bit k is test k): each string is tested once per run.
     seen: Mutex<HashMap<u32, Box<[u64]>>>,
     /// The strings tested, and the CPU (user + system seconds) testing them took.
@@ -231,8 +235,10 @@ impl Vocabulary {
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
 ///
 /// And each `match_all("re", sp, m)` (core.rr's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
-/// `find_iter` finds them) into an atom over the input relation `matchall_<k>(sp, m)`, one per distinct regex, which
-/// the batches fill (`facts::vtab::syntax`). The regex is a constant, in Rust `regex` syntax (W's).
+/// `find_iter` finds them) into an atom over the input relation `matchall_<k>(sp, m)`, and each
+/// `match_group("re", sp, m, g, gsp)` (`gsp` the span of named group `g` in match `m`) into one over
+/// `matchgroup_<k>(sp, m, g, gsp)`, `k` the regex's (one per distinct regex, so the two agree on `m`), which the
+/// batches fill (`facts::vtab::syntax`). The regex is a constant, in Rust `regex` syntax (W's).
 pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
     let mut tests = Vec::new();
@@ -275,28 +281,34 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             *literal = Literal::Atom(Atom { rel, args: vec![Term::Var(s.to_owned())], neg: !holds, gated: false });
         }
     }
-    let mut regexes: BTreeMap<String, String> = BTreeMap::new();
+    let mut regexes: BTreeMap<String, usize> = BTreeMap::new();
     let mut matches = Vec::new();
+    let mut made = BTreeMap::new();
     for rule in &mut prog.rules {
         for literal in &mut rule.body {
             let (Literal::Atom(a) | Literal::Agg { atom: a, .. }) = literal else { continue };
-            if a.rel != "match_all" {
-                continue;
-            }
-            let [Term::Str(re), sp, m] = a.args.as_slice() else {
-                return Err(format!("match_all takes a constant regex, a span and its match: match_all(\"re\", sp, m), not {a}"));
+            let (args, group) = match (a.rel.as_str(), a.args.as_slice()) {
+                ("match_all", [Term::Str(_), sp, m]) => (vec![sp.clone(), m.clone()], false),
+                ("match_group", [Term::Str(_), sp, m, g, gsp]) => (vec![sp.clone(), m.clone(), g.clone(), gsp.clone()], true),
+                ("match_all", _) => return Err(format!("match_all takes a constant regex, a span and its match: match_all(\"re\", sp, m), not {a}")),
+                ("match_group", _) => {
+                    return Err(format!("match_group takes a constant regex, a span, its match, a group name and its span: match_group(\"re\", sp, m, g, gsp), not {a}"));
+                }
+                _ => continue,
             };
-            let rel = match regexes.get(re) {
-                Some(r) => r.clone(),
+            let Term::Str(re) = &a.args[0] else { unreachable!("matched above") };
+            let k = match regexes.get(re) {
+                Some(&k) => k,
                 None => {
-                    let rel = format!("{MATCHES}{}", regexes.len());
-                    let regex = regex::Regex::new(re).map_err(|e| format!("match_all({re:?}, …): {e}"))?;
-                    matches.push((rel.clone(), Arc::new(regex)));
-                    regexes.insert(re.clone(), rel.clone());
-                    rel
+                    let regex = regex::Regex::new(re).map_err(|e| format!("{}({re:?}, …): {e}", a.rel))?;
+                    matches.push(Arc::new(regex));
+                    regexes.insert(re.clone(), matches.len() - 1);
+                    matches.len() - 1
                 }
             };
-            a.args = vec![sp.clone(), m.clone()];
+            let rel = if group { format!("{GROUPS}{k}") } else { format!("{MATCHES}{k}") };
+            made.insert(rel.clone(), group);
+            a.args = args;
             a.rel = rel;
         }
     }
@@ -306,10 +318,12 @@ pub(in crate::code_rule_dsl) fn as_relations(prog: &mut Program) -> Result<Vocab
             prog.inputs.push(rel.clone());
         }
     }
-    for (rel, _) in &matches {
-        prog.decls.insert(rel.clone(), vec![("sp".to_owned(), "node".to_owned()), ("m".to_owned(), "node".to_owned())]);
-        if !prog.inputs.contains(rel) {
-            prog.inputs.push(rel.clone());
+    for (rel, group) in made {
+        let node = |c: &str| (c.to_owned(), "node".to_owned());
+        let columns = if group { vec![node("sp"), node("m"), ("g".to_owned(), "sym".to_owned()), node("gsp")] } else { vec![node("sp"), node("m")] };
+        prog.decls.insert(rel.clone(), columns);
+        if !prog.inputs.contains(&rel) {
+            prog.inputs.push(rel);
         }
     }
     Ok(Vocabulary { tests, matches, seen: Mutex::default(), tested: Mutex::default() })

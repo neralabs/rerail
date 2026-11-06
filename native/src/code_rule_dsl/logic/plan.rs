@@ -1286,6 +1286,8 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
         rel if rel.starts_with(super::strings::MATCHES) => &[&["sp"], &["m"]],
+        // A `match_group` regex's groups, by span, by match and by group span.
+        rel if rel.starts_with(super::strings::GROUPS) => &[&["sp"], &["m"], &["gsp"]],
         _ => &[],
     };
     lists.iter().map(|l| l.iter().map(|c| (*c).to_owned()).collect()).collect()

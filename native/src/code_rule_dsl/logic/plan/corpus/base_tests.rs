@@ -42,8 +42,13 @@ fn w(forbid: Value, path: &str, source: &str) -> Vec<Value> {
 
 /// W's findings of one clause in `source`, a file of language `language` (one with no grammar: "text").
 fn w_as(forbid: Value, language: &str, path: &str, source: &str) -> Vec<Value> {
+    w_reporting(forbid, violation(), language, path, source)
+}
+
+/// `w_as` with the clause's `violation` (its anchor: `capture.NAME` reports a regex group's span).
+fn w_reporting(forbid: Value, violation: Value, language: &str, path: &str, source: &str) -> Vec<Value> {
     let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
-    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation() })), &capabilities)
+    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation })), &capabilities)
         .unwrap_or_else(|e| panic!("{}", e.reason));
     evaluate_file(&compiled, language, path, source)["violations"].as_array().unwrap().clone()
 }
@@ -474,5 +479,65 @@ lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
     for program in [program, printed.as_str()] {
         assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `match_group(re, sp, m, g, gsp)`: per match `m` of `re` in `sp`, the span `gsp` of each named group `g` that takes
+/// part in it, placed as W places a finding anchored at that capture (`capture.NAME`), in `source` and in `src_line`;
+/// `m` is `match_all`'s. The regex is internal-dead-code's dynamic-import shape.
+#[test]
+fn match_group_is_ws_capture() {
+    let re = r#"(?:\bimport_module|__import__)\(\s*['"](?P<module>[^'"]+)['"]\s*\)(?:\.(?P<attr>[A-Za-z_]\w*))?"#;
+    let files = [
+        ("a.py", "import importlib\nm = importlib.import_module('pkg.mod').run\r\nn = __import__(\"other\")  # é\nx = import_module( 'a.b' ).c; y = __import__('z').w\n"),
+        ("b.py", "none = 1\n"),
+    ];
+    let dir = corpus("match-group", &files);
+    let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl groups(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
+groups(p, g, l, e, c, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+.decl lines(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
+lines(p, g, l, e, c, s) :- doc(d, p, _), src_line(d, _, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+.decl imports(p: symbol, l: number, s: symbol, a: symbol)
+imports(p, l, s, a) :- doc(d, p, _), source(d, sp), match_all("RE", sp, m), line(m, l), match_group("RE", sp, m, "module", ms), text(ms, s), match_group("RE", sp, m, "attr", asp), text(asp, a).
+.decl bare(p: symbol, s: symbol)
+bare(p, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, m, "module", ms), text(ms, s), !match_group("RE", sp, m, "attr", _).
+.output groups, lines, imports, bare
+"#
+    .replace("RE", &quoted);
+    let got = run(&dir, &program, &["groups", "lines", "imports", "bare"]);
+    // W's finding at a capture, per group; where the group took no part W falls back to the whole match, so those are
+    // left out (the whole match holds the call's parenthesis).
+    let w_groups = |lines: bool| {
+        let mut regex = json!({ "source": "file.content", "pattern": re });
+        if lines {
+            regex["lines"] = json!({});
+        }
+        csv(files.iter().flat_map(|(path, source)| {
+            let regex = regex.clone();
+            ["module", "attr"].into_iter().flat_map(move |g| {
+                let v = json!({ "anchor": format!("capture.{g}"), "code": "X", "message": "x" });
+                w_reporting(json!({ "regex": regex.clone() }), v, "python", path, source).into_iter().filter_map(move |v| {
+                    let at = |k: &str| v["span"][k].as_u64().unwrap() as usize;
+                    let s = &source[at("startByte")..at("endByte")];
+                    (!s.contains('(')).then(|| format!("{path}\t{g}\t{}\t{}\t{}\t{s}", at("startLine") + 1, at("endLine") + 1, at("startColumn")))
+                })
+            })
+        }))
+    };
+    let want = w_groups(false);
+    assert_eq!(want.lines().count(), 7, "{want}");
+    assert_eq!(got[0], want);
+    assert_eq!(got[1], w_groups(true));
+    assert_eq!(got[2], "a.py\t2\tpkg.mod\trun\na.py\t4\ta.b\tc\na.py\t4\tz\tw\n");
+    assert_eq!(got[3], "a.py\tother\n");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -382,15 +382,26 @@ struct Extra {
     end_lines: Vec<[i64; 2]>,
     cols: Vec<[i64; 2]>,
     node_texts: Vec<[i64; 2]>,
-    /// The `match_all` relations read, their regexes, and their rows (sp, m).
-    matches: Vec<(String, Arc<regex::Regex>, Vec<[i64; 2]>)>,
+    /// The regexes of the `match_all` and `match_group` relations read (`Found`).
+    matches: Vec<Found>,
+}
+
+/// Regex `k`'s rows: its matches (`matchall_<k>(sp, m)`, when read) and their named groups' spans
+/// (`matchgroup_<k>(sp, m, g, gsp)`, when read; `g` a string index), with one numbering of `m` for both.
+struct Found {
+    k: usize,
+    regex: Arc<regex::Regex>,
+    all: bool,
+    groups: bool,
+    rows: Vec<[i64; 2]>,
+    group_rows: Vec<[i64; 4]>,
 }
 
 /// A span made for a document: its id, its bytes, and its line where it is one line (else the source).
 type Made = (i64, std::ops::Range<usize>, Option<usize>);
 
 impl Extra {
-    fn new(reads: &BTreeSet<String>, matches: &[(String, Arc<regex::Regex>)]) -> Self {
+    fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>]) -> Self {
         let read = |rel: &str| reads.contains(rel);
         Self {
             source: read("source"),
@@ -403,7 +414,19 @@ impl Extra {
             end_line: read("end_line"),
             col: read("col"),
             node_text: read("node_text"),
-            matches: matches.iter().filter(|(rel, _)| read(rel)).map(|(rel, regex)| (rel.clone(), Arc::clone(regex), Vec::new())).collect(),
+            matches: matches
+                .iter()
+                .enumerate()
+                .map(|(k, regex)| Found {
+                    k,
+                    regex: Arc::clone(regex),
+                    all: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::MATCHES)),
+                    groups: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::GROUPS)),
+                    rows: Vec::new(),
+                    group_rows: Vec::new(),
+                })
+                .filter(|found| found.all || found.groups)
+                .collect(),
             ..Self::default()
         }
     }
@@ -498,26 +521,45 @@ impl Extra {
                 made.push((sp, r, Some(l)));
             }
         }
-        // Each regex's matches in each span, numbered through the document.
+        // Each regex's matches in each span, and their named groups, numbered through the document.
         let mut next: u32 = 0;
+        let mut id = |p: &Projected| -> StoreResult<i64> {
+            if next >= MATCH {
+                return Err(StoreError::Invalid(format!("document {} has more than {MATCH} match_all matches and groups", p.key)));
+            }
+            next += 1;
+            Ok(span(MATCH | (next - 1)))
+        };
+        // A piece of span `r` (`at` within it) placed as W places a regex's finding there.
+        let place = |r: &std::ops::Range<usize>, line: &Option<usize>, at: std::ops::Range<usize>| match line {
+            Some(l) => (*l, *l, at.start),
+            None => {
+                let s = f.lines.span(r.start + at.start, r.start + at.end);
+                (s.start_line + 1, s.end_line + 1, s.start_column)
+            }
+        };
         for k in 0..self.matches.len() {
-            let regex = Arc::clone(&self.matches[k].1);
+            let (regex, groups) = (Arc::clone(&self.matches[k].regex), self.matches[k].groups);
+            let names: Vec<&str> = regex.capture_names().flatten().collect();
             for (sp, r, line) in &made {
-                for found in regex.find_iter(&source[r.clone()]) {
-                    if next >= MATCH {
-                        return Err(StoreError::Invalid(format!("document {} has more than {MATCH} match_all matches", p.key)));
-                    }
-                    let m = span(MATCH | next);
-                    next += 1;
-                    self.matches[k].2.push([*sp, m]);
-                    let (first, last, col) = match line {
-                        Some(l) => (*l, *l, found.start()),
-                        None => {
-                            let at = f.lines.span(r.start + found.start(), r.start + found.end());
-                            (at.start_line + 1, at.end_line + 1, at.start_column)
-                        }
-                    };
+                let body = &source[r.clone()];
+                for captures in regex.captures_iter(body) {
+                    let found = captures.get(0).expect("group 0 always matches");
+                    let m = id(p)?;
+                    self.matches[k].rows.push([*sp, m]);
+                    let (first, last, col) = place(r, line, found.range());
                     self.span(m, first, last, col, found.as_str(), text, string);
+                    if !groups {
+                        continue;
+                    }
+                    // A group that takes no part in the match has no row.
+                    for name in &names {
+                        let Some(group) = captures.name(name) else { continue };
+                        let g = id(p)?;
+                        self.matches[k].group_rows.push([*sp, m, string(name) as i64, g]);
+                        let (first, last, col) = place(r, line, group.range());
+                        self.span(g, first, last, col, group.as_str(), text, string);
+                    }
                 }
             }
         }
@@ -560,7 +602,16 @@ impl Extra {
         if self.node_text {
             out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)]))));
         }
-        let matched = self.matches.into_iter().map(|(rel, _, rows)| (rel, relation(&["sp", "m"], &mut rows.iter().map(|r| r.to_vec())))).collect();
+        let mut matched = Vec::new();
+        for found in self.matches {
+            if found.all {
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::MATCHES, found.k), relation(&["sp", "m"], &mut found.rows.iter().map(|r| r.to_vec()))));
+            }
+            if found.groups {
+                let rows = &mut found.group_rows.iter().map(|&[sp, m, g, gsp]| vec![sp, m, atom(g), gsp]);
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows)));
+            }
+        }
         (out, matched)
     }
 }
@@ -577,7 +628,7 @@ impl Batch {
         store: &ContentStore,
         documents: Vec<Document>,
         reads: &BTreeSet<String>,
-        matches: &[(String, Arc<regex::Regex>)],
+        matches: &[Arc<regex::Regex>],
     ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, (Vec<String>, Vec<u32>))> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
