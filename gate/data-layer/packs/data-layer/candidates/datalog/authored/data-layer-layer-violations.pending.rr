@@ -1,0 +1,10 @@
+// data-layer-layer-violations, awaiting `option_on` (ConvertFoundation A9). Not read by the converter.
+// When option_on lands, replace the two `lv_gate` rules of data-layer-layer-violations.rr with these and add the
+// declaration: the option `sourceGate` picks the module-text regex `import\ |from\ ` (true, the default) or
+// `(?s).*` (false: every module). `oracleAnalyzer` is read by no clause of the rule.
+
+.decl option_on(name: symbol)
+
+lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("import ", s).
+lv_gate(d) :- lv_doc(d, _), option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), contains("from ", s).
+lv_gate(d) :- lv_doc(d, _), !option_on("sourceGate"), node(d, _, "module", _, _).
