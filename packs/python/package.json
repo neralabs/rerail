@@ -2,6 +2,15 @@
   "name": "@neralabs/rerail-pack-python",
   "version": "0.1.7",
   "description": "Rerail rule pack: Ruff and Bandit rules ported to Rerail code rules.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "python",
+    "ruff",
+    "bandit"
+  ],
   "license": "Apache-2.0 AND MIT",
   "repository": {
     "type": "git",
