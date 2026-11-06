@@ -105,11 +105,13 @@
 // ---- source text (every document, parsed or not) ------------------------------------------------------------
 // Checks that count lines, scan comments or read files with no grammar (Markdown, Rust read as text) need the
 // raw bytes, comments and blank lines included. A document in `.scope text "**/*.md"` has doc, path_part and these
-// relations, and no tree.
-// source(d, sp): the whole file as one span. match / match_all over it give spans with lines.
+// relations, and no tree; its lines (tape_line, a match's) end at \r\n, \r, \n, U+2028 and U+2029, as the linter's
+// do in a file of no language.
+// source(d, sp): the whole file as one span. match_all over it gives spans with lines.
 .decl source(d: number, sp: span)
-// src_line(d, 12, sp): physical line 12, without its terminator. Python documents split as str.splitlines()
-// does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line); others split at \n only.
+// src_line(d, 12, sp): physical line 12, without its terminator. Python and text-only documents split as
+// str.splitlines() does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line), as the linter's
+// `lines` regexes do; others split at \n only.
 // A Datalog version over match_all would be exact for \n only, so it is native.
 .decl src_line(d: number, l: number, sp: span)
 // src_line_lf(d, 12, sp): line 12 split at \n only, a \r kept (a regex rule's `terminators: "lf"`).
@@ -282,7 +284,14 @@
 //                   A group that takes no part in the match (an unmatched `(?<X>…)?`) gives no row.
 //                   Inside `!` or `count : { … }`, groups bind only there, like any variable.
 //                 e.g. match("use_(?<x>.*)", "use_foo") binds x = "foo".
-// match_all("re", s)  one row per non-overlapping match of re anywhere in s, with that match's groups bound.
+// match_all("re", sp, m)  one row per match m of re in span sp's text, leftmost-first and non-overlapping (Rust's
+//                 find_iter: "aa" in "aaaaa" at 0 and 2), as the linter's `regex` finds them. m is a span: its text
+//                 is what matched; its line, end_line and col are the linter's finding's (in source, the lines and
+//                 byte column of the file; in a line span, that line and the column in it). re is a constant;
+//                 its named groups bind as match's do. !match_all("re", sp, _): re does not occur in sp.
+// match_group("re", sp, m, g, gsp)  the groups of match_all's matches, as spans: gsp is the span of named group g
+//                 in match m, one row per group that takes part, placed as the linter places a finding at that
+//                 capture. match_group("(?P<module>[\w.]+)\.py", sp, m, "module", gsp) is the module's span.
 //
 // User functors, declared as in Soufflé and written @name(…). They compute a symbol from symbols.
 .functor dot(a: symbol, b: symbol): symbol               // "a.b" ("" . b gives b): @dot("os", "path") = "os.path"

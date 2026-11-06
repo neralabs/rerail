@@ -82,8 +82,18 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
     let bang = if neg { "!" } else { "" };
     let one = |p: &Term| -> Result<String, Error> {
         let Term::Str(p) = p else {
-            let p = term(p)?;
-            return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
+            // A pattern computed in the rule. `rx` has no `.rr` name: of an anchored pattern (`match(x, s)`,
+            // `lower::anchored`) it is `match` of the pattern; another search is `match` of it between any text.
+            let between = |p: &Term, open: &str| -> Result<String, Error> { Ok(format!("cat({}, cat({}, {}))", quote(open), term(p)?, quote(")(?s:.*)"))) };
+            return Ok(match op {
+                "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, term(p)?),
+                "rx" => match super::lower::unanchored(p) {
+                    Some(inner) => format!("{bang}match({}, {s})", term(inner)?),
+                    None => format!("{bang}match({}, {s})", between(p, "(?s:.*)(?:")?),
+                },
+                "irx" => format!("{bang}match({}, {s})", between(p, "(?s:.*)(?i:")?),
+                _ => format!("{bang}{op}({}, {s})", term(p)?),
+            });
         };
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),

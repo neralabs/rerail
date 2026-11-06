@@ -37,10 +37,41 @@ fn csv(rows: impl IntoIterator<Item = String>) -> String {
 
 /// W's findings of one Python `clause` (its `forbid`, at `violation()`) in `source`.
 fn w(forbid: Value, path: &str, source: &str) -> Vec<Value> {
+    w_as(forbid, "python", path, source)
+}
+
+/// W's findings of one clause in `source`, a file of language `language` (one with no grammar: "text").
+fn w_as(forbid: Value, language: &str, path: &str, source: &str) -> Vec<Value> {
+    w_reporting(forbid, violation(), language, path, source)
+}
+
+/// `w_as` with the clause's `violation` (its anchor: `capture.NAME` reports a regex group's span).
+fn w_reporting(forbid: Value, violation: Value, language: &str, path: &str, source: &str) -> Vec<Value> {
     let capabilities: Value = serde_json::from_str(CAPABILITIES).unwrap();
-    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation() })), &capabilities)
+    let compiled = compile_document_with(clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation })), &capabilities)
         .unwrap_or_else(|e| panic!("{}", e.reason));
-    evaluate_file(&compiled, "python", path, source)["violations"].as_array().unwrap().clone()
+    evaluate_file(&compiled, language, path, source)["violations"].as_array().unwrap().clone()
+}
+
+/// W's spans of a content regex's findings in `source` (`lines`: a `lines` regex's), each as `path`, start line and
+/// end line (1-based), start column and, with `text`, the text matched.
+fn w_regex(pattern: &str, lines: bool, language: &str, path: &str, source: &str, text: bool) -> Vec<String> {
+    let mut regex = json!({ "source": "file.content", "pattern": pattern });
+    if lines {
+        regex["lines"] = json!({});
+    }
+    w_as(json!({ "regex": regex }), language, path, source)
+        .into_iter()
+        .map(|v| {
+            let at = |k: &str| v["span"][k].as_u64().unwrap() as usize;
+            let row = format!("{path}\t{}\t{}\t{}", at("startLine") + 1, at("endLine") + 1, at("startColumn"));
+            if !text {
+                return row;
+            }
+            // The span's bytes are the file's, in a line too (its line and column are the line's).
+            format!("{row}\t{}", &source[at("startByte")..at("endByte")])
+        })
+        .collect()
 }
 
 /// Every terminator `str.splitlines()` knows, a `\r\n`, a blank line, and no final terminator.
@@ -232,6 +263,282 @@ t(s, l) :- text(n, s), line(n, l).
 .output t
 "#;
     assert_eq!(run(&dir, program, &["t"])[0], "x\t1\ny\t2\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file whose tree starts with an ERROR node (its kind atom past the dialect's stride) is read in its own dialect:
+/// `node` has its ERROR nodes, by kind as W's `kind: "ERROR"` finds them, and `syntax_error` has the file.
+#[test]
+fn a_tree_rooted_at_an_error_node_is_read() {
+    let (path, source) = ("l9750_graphql/d.py", "def f(scope: PlanScope):\n    return (\n");
+    let dir = corpus("error-root", &[(path, source)]);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl line(n: node, l: number)
+.decl syntax_error(d: number)
+.input doc, node, line, syntax_error
+.decl errors(p: symbol, l: number, s: number, e: number)
+errors(p, l, s, e) :- doc(d, p, _), node(d, n, "ERROR", s, e), line(n, l).
+.decl invalid(p: symbol)
+invalid(p) :- doc(d, p, _), syntax_error(d).
+.output errors, invalid
+"#;
+    let got = run(&dir, program, &["errors", "invalid"]);
+    let want = csv(w(json!({ "ast": { "language": "python", "syntax": "invalid", "rule": { "kind": "ERROR" } } }), path, source).into_iter().map(|v| {
+        let span = &v["span"];
+        format!("{path}\t{}\t{}\t{}", span["startLine"].as_u64().unwrap() + 1, span["startByte"], span["endByte"])
+    }));
+    assert!(want.starts_with(&format!("{path}\t1\t0\t")), "W finds the ERROR root: {want:?}");
+    assert_eq!(got[0], want);
+    assert_eq!(got[1], format!("{path}\n"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A base relation a program reads is an input though its `.input` leaves it out, as in an authored file: `text`
+/// over spans only (the program port-21 reported failing with "no such column: n in SELECT n, s FROM text"), in
+/// rules run per chunk and in rules run once over every file.
+#[test]
+fn base_relations_read_are_inputs() {
+    let files = [("l9750_graphql/bad.py", "def f(:\n    ServerPlan\n"), ("l9750_graphql/ok.py", "x = 1\n")];
+    let dir = corpus("span-text", &files);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl syntax_error(d: number)
+.input doc, syntax_error, source
+.decl hit(p: symbol)
+hit(p) :- doc(d, p, _), syntax_error(d), source(d, sp), text(sp, s), contains("ServerPlan", s).
+.decl plain(p: symbol)
+plain(p) :- doc(d, p, _), !syntax_error(d), source(d, sp), text(sp, s), contains("x = 1", s).
+.decl same(p: symbol, q: symbol)
+same(p, q) :- doc(d, p, _), source(d, sp), text(sp, s), doc(e, q, _), source(e, sq), text(sq, s).
+.output hit, plain, same
+"#;
+    let got = run(&dir, program, &["hit", "plain", "same"]);
+    assert_eq!(got[0], "l9750_graphql/bad.py\n");
+    assert_eq!(got[1], "l9750_graphql/ok.py\n");
+    assert_eq!(got[2], csv(files.iter().map(|(p, _)| format!("{p}\t{p}"))));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A corpus with no documents (no files at all, or only files the runner skips) gives no rows, not an error; so
+/// does a program declaring an input no rule reads.
+#[test]
+fn no_documents_give_no_rows() {
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.input doc, node, source, src_line, text
+.decl calls(p: symbol)
+calls(p) :- doc(d, p, _), node(d, _, "call", _, _).
+.decl lines(p: symbol, s: symbol)
+lines(p, s) :- doc(d, p, _), src_line(d, _, sp), text(sp, s).
+.output calls, lines
+"#;
+    let empty = corpus("no-docs-empty", &[]);
+    std::fs::create_dir_all(&empty).unwrap();
+    let skipped = corpus("no-docs-skipped", &[(".venv/lib/a.py", "f()\n"), (".git/hooks/b.py", "g()\n")]);
+    for dir in [&empty, &skipped] {
+        assert_eq!(run(dir, program, &["calls", "lines"]), ["", ""], "{}", dir.display());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// `match_all(re, sp, m)`: each match of `re` in span `sp`'s text, leftmost-first and non-overlapping, a span whose
+/// `line`, `end_line`, `col` and `text` are W's finding of a content regex (the tape's lines) over `source`, and of a
+/// `lines` regex over `src_line`; matches across lines, CRLF and non-ASCII text included.
+#[test]
+fn match_all_is_ws_regex() {
+    let files = [
+        ("a.py", "x = 'needle needles'\r\ny = 1  # néedle needle_2\n\tneedleneedle = 2\nz = \"\"\"needle\nend\"\"\"\n"),
+        ("b.py", "aaaa = 'aaaaa'\n"),
+    ];
+    let dir = corpus("match-all", &files);
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.input doc, source, src_line, text, line, end_line, col
+.decl whole(p: symbol, l: number, e: number, c: number, s: symbol)
+whole(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+.decl across(p: symbol, l: number, e: number, c: number)
+across(p, l, e, c) :- doc(d, p, _), source(d, sp), match_all("(?s)needle.end", sp, m), line(m, l), end_line(m, e), col(m, c).
+.decl lines(p: symbol, l: number, e: number, c: number, s: symbol)
+lines(p, l, e, c, s) :- doc(d, p, _), src_line(d, k, sp), match_all("needle\\w*", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s), l = k.
+.decl pairs(p: symbol, l: number, e: number, c: number, s: symbol)
+pairs(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("aa", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+.decl none(p: symbol)
+none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
+.output whole, across, lines, pairs, none
+"#;
+    let got = run(&dir, program, &["whole", "across", "lines", "pairs", "none"]);
+    let all = |pattern: &str, lines: bool, text: bool| csv(files.iter().flat_map(|(path, source)| w_regex(pattern, lines, "python", path, source, text)));
+    let whole = all("needle\\w*", false, true);
+    assert_eq!(whole.lines().count(), 5, "{whole}");
+    assert_eq!(got[0], whole);
+    let across = all("(?s)needle.end", false, false);
+    assert_eq!(across, "a.py\t4\t5\t7\n");
+    assert_eq!(got[1], across);
+    assert_eq!(got[2], all("needle\\w*", true, true));
+    let pairs = all("aa", false, true);
+    assert_eq!(pairs, "b.py\t1\t1\t0\taa\nb.py\t1\t1\t10\taa\nb.py\t1\t1\t2\taa\nb.py\t1\t1\t8\taa\n");
+    assert_eq!(got[3], pairs);
+    assert_eq!(got[4], "b.py\n");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file with no grammar (`.md`, `.rst`, `.txt`, …) is a text-only document: `doc`, `source`, `src_line`,
+/// `tape_line`, `line_count` and `match_all`, each as W reads a file of no language (its lines `\r\n`, `\r`, `\n`,
+/// U+2028 and U+2029), and no node. A file that is not UTF-8 is no document; a hidden one neither.
+#[test]
+fn text_files_are_text_only_documents() {
+    let rst = "Graph query\r\n===========\n\nUse graph_query_builder( no more.\u{2028}needle here\nlast needle";
+    let md = "# Title\n\nneedle\n";
+    let files = [("docs/l9700_graph_query.rst", rst), ("docs/design/a.md", md), ("notes.txt", ""), ("pkg/m.py", "f(needle)\n"), (".hidden.md", "needle\n")];
+    let dir = corpus("text-docs", &files);
+    std::fs::write(dir.join("docs/logo.png"), [0x89, b'P', b'N', b'G', 0xff, 0xfe, 0x00]).unwrap();
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl tape_line(d: number, l: number, sp: span)
+.decl line_count(d: number, k: number)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl docs(p: symbol)
+docs(p) :- doc(_, p, _).
+.decl treed(p: symbol)
+treed(p) :- doc(d, p, _), node(d, _, _, _, _).
+.decl advertised(p: symbol)
+advertised(p) :- doc(d, p, _), source(d, sp), text(sp, s), contains("graph_query_builder(", s).
+.decl lines(p: symbol, l: number, s: symbol)
+lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s).
+.decl tape(p: symbol, l: number, s: symbol)
+tape(p, l, s) :- doc(d, p, _), tape_line(d, l, sp), text(sp, s).
+.decl counts(p: symbol, k: number)
+counts(p, k) :- doc(d, p, _), line_count(d, k).
+.decl hits(p: symbol, l: number, e: number, c: number, s: symbol)
+hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
+.output docs, treed, advertised, lines, tape, counts, hits
+"#;
+    let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "tape", "counts", "hits"]);
+    let texts = [("docs/design/a.md", md), ("docs/l9700_graph_query.rst", rst), ("notes.txt", "")];
+    assert_eq!(got[0], csv(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(str::to_owned)));
+    assert_eq!(got[1], "pkg/m.py\n");
+    assert_eq!(got[2], "docs/l9700_graph_query.rst\n");
+    let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| format!("{path}\t{l}")).collect::<Vec<_>>();
+    assert_eq!(got[3], csv(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
+    let table = |path: &str, source: &str| {
+        let t = LineTable::new(source, Terminators::Eslint);
+        (0..t.starts().len()).map(|i| format!("{path}\t{}\t{}", i + 1, &source[t.start(i)..t.end(i)])).collect::<Vec<_>>()
+    };
+    let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
+    let python = (0..python.starts().len()).map(|i| format!("pkg/m.py\t{}\t{}", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]));
+    assert_eq!(got[4], csv(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
+    assert!(got[4].contains("docs/l9700_graph_query.rst\t5\tneedle here\n"), "U+2028 ends a line: {}", got[4]);
+    assert_eq!(got[5], csv(texts.iter().map(|(p, s)| format!("{p}\t{}", w_lines(s, false).len())).chain(["pkg/m.py\t1".to_owned()])));
+    let hits = texts.iter().flat_map(|(p, s)| w_regex("needle", false, "text", p, s, true)).chain(w_regex("needle", false, "python", "pkg/m.py", "f(needle)\n", true));
+    let hits = csv(hits);
+    assert_eq!(hits.lines().count(), 4, "{hits}");
+    assert_eq!(got[6], hits);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `match(p, s)` with `p` computed in the rule is the same whole-string test as with a constant pattern, each
+/// distinct (pattern, string) tested once; and the program printed (`rr::print`, the overlay's merge) runs alike.
+#[test]
+fn a_computed_pattern_is_matched_per_row() {
+    let source = "def load(): pass\ndef load_async(): pass\ndef loader(): pass\nx = load_lazy\ny = re_load_x\n";
+    let dir = corpus("computed-pattern", &[("a.py", source)]);
+    let program = r#"
+.decl name(n: node, s: symbol)
+.decl twin(s: symbol, t: symbol)
+twin(s, t) :- name(_, s), name(_, t), x = cat(s, "_[a-z]+"), match(x, t).
+.decl lone(s: symbol)
+lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
+.output twin, lone
+"#;
+    let names = ["load", "load_async", "loader", "load_lazy", "x", "y", "re_load_x"];
+    let whole = |p: &str, s: &str| regex::Regex::new(&format!("^(?:{p})$")).unwrap().is_match(s);
+    let twin = csv(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| format!("{s}\t{t}"))));
+    assert_eq!(twin, "load\tload_async\nload\tload_lazy\n");
+    let lone = csv(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| (*s).to_owned()));
+    let printed = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).unwrap()).unwrap();
+    for program in [program, printed.as_str()] {
+        assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `match_group(re, sp, m, g, gsp)`: per match `m` of `re` in `sp`, the span `gsp` of each named group `g` that takes
+/// part in it, placed as W places a finding anchored at that capture (`capture.NAME`), in `source` and in `src_line`;
+/// `m` is `match_all`'s. The regex is internal-dead-code's dynamic-import shape.
+#[test]
+fn match_group_is_ws_capture() {
+    let re = r#"(?:\bimport_module|__import__)\(\s*['"](?P<module>[^'"]+)['"]\s*\)(?:\.(?P<attr>[A-Za-z_]\w*))?"#;
+    let files = [
+        ("a.py", "import importlib\nm = importlib.import_module('pkg.mod').run\r\nn = __import__(\"other\")  # é\nx = import_module( 'a.b' ).c; y = __import__('z').w\n"),
+        ("b.py", "none = 1\n"),
+    ];
+    let dir = corpus("match-group", &files);
+    let quoted = re.replace('\\', "\\\\").replace('"', "\\\"");
+    let program = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl source(d: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
+.decl text(n: loc, s: symbol)
+.decl line(n: loc, l: number)
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)
+.decl groups(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
+groups(p, g, l, e, c, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+.decl lines(p: symbol, g: symbol, l: number, e: number, c: number, s: symbol)
+lines(p, g, l, e, c, s) :- doc(d, p, _), src_line(d, _, sp), match_group("RE", sp, _, g, gsp), line(gsp, l), end_line(gsp, e), col(gsp, c), text(gsp, s).
+.decl imports(p: symbol, l: number, s: symbol, a: symbol)
+imports(p, l, s, a) :- doc(d, p, _), source(d, sp), match_all("RE", sp, m), line(m, l), match_group("RE", sp, m, "module", ms), text(ms, s), match_group("RE", sp, m, "attr", asp), text(asp, a).
+.decl bare(p: symbol, s: symbol)
+bare(p, s) :- doc(d, p, _), source(d, sp), match_group("RE", sp, m, "module", ms), text(ms, s), !match_group("RE", sp, m, "attr", _).
+.output groups, lines, imports, bare
+"#
+    .replace("RE", &quoted);
+    let got = run(&dir, &program, &["groups", "lines", "imports", "bare"]);
+    // W's finding at a capture, per group; where the group took no part W falls back to the whole match, so those are
+    // left out (the whole match holds the call's parenthesis).
+    let w_groups = |lines: bool| {
+        let mut regex = json!({ "source": "file.content", "pattern": re });
+        if lines {
+            regex["lines"] = json!({});
+        }
+        csv(files.iter().flat_map(|(path, source)| {
+            let regex = regex.clone();
+            ["module", "attr"].into_iter().flat_map(move |g| {
+                let v = json!({ "anchor": format!("capture.{g}"), "code": "X", "message": "x" });
+                w_reporting(json!({ "regex": regex.clone() }), v, "python", path, source).into_iter().filter_map(move |v| {
+                    let at = |k: &str| v["span"][k].as_u64().unwrap() as usize;
+                    let s = &source[at("startByte")..at("endByte")];
+                    (!s.contains('(')).then(|| format!("{path}\t{g}\t{}\t{}\t{}\t{s}", at("startLine") + 1, at("endLine") + 1, at("startColumn")))
+                })
+            })
+        }))
+    };
+    let want = w_groups(false);
+    assert_eq!(want.lines().count(), 7, "{want}");
+    assert_eq!(got[0], want);
+    assert_eq!(got[1], w_groups(true));
+    assert_eq!(got[2], "a.py\t2\tpkg.mod\trun\na.py\t4\ta.b\tc\na.py\t4\tz\tw\n");
+    assert_eq!(got[3], "a.py\tother\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

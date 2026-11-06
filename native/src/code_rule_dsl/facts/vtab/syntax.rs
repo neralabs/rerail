@@ -22,7 +22,7 @@
 
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, kind_atom};
+use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, TEXT, kind_atom, kind_code};
 use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
@@ -148,14 +148,20 @@ impl Dialect {
         }
         Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), canonical, codes })
     }
-    fn code(f: &Facts, id: u32) -> u16 {
-        (f.kind[id as usize] % KIND_STRIDE) as u16
+    /// Node `id`'s kind code (ERROR's is `u16::MAX`).
+    fn code(&self, f: &Facts, id: u32) -> u16 {
+        kind_code(self.tag, f.kind[id as usize]).unwrap_or(0)
     }
     fn class(&self, f: &Facts, id: u32) -> Class {
-        self.classes.get(usize::from(Self::code(f, id))).copied().unwrap_or(Class::Other)
+        self.classes.get(usize::from(self.code(f, id))).copied().unwrap_or(Class::Other)
     }
     fn name(&self, f: &Facts, id: u32) -> &'static str {
-        self.catalog.kind_name(Self::code(f, id)).unwrap_or("")
+        self.catalog.kind_name(self.code(f, id)).unwrap_or("")
+    }
+    /// Node `id`'s kind atom as the `kind` column holds it: its name's canonical code's.
+    fn kind(&self, f: &Facts, id: u32) -> i64 {
+        let code = self.code(f, id);
+        i64::from(kind_atom(self.tag, self.canonical.get(usize::from(code)).copied().unwrap_or(code)))
     }
     /// The child of `id` in field `field`.
     fn field_child(&self, f: &Facts, id: u32, field: &str) -> Option<u32> {
@@ -207,11 +213,12 @@ struct Projected {
     fielded: Vec<u32>,
 }
 impl Projected {
-    fn new(key: u32, facts: Arc<Facts>, dialect: &Dialect) -> Self {
+    /// Document `key`'s projection; `dialect` is its facts' (`None` for a text-only document, which has no node).
+    fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>) -> Self {
         let f = &*facts;
         let mut p = Projected {
             key,
-            tag: dialect.tag,
+            tag: f.tag,
             core: Vec::new(),
             local: vec![NONE; f.len()],
             parent: Vec::new(),
@@ -223,7 +230,7 @@ impl Projected {
         };
         let mut next_idx: Vec<u32> = Vec::new();
         for id in 0..f.len() as u32 {
-            if !f.named(id) || dialect.class(f, id) == Class::Comment {
+            if !f.named(id) || dialect.is_none_or(|dialect| dialect.class(f, id) == Class::Comment) {
                 continue;
             }
             // T walks named children from the root: a node under one left out is not reached.
@@ -287,13 +294,15 @@ pub(crate) struct Batch {
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | SPAN | k`, past every node of its
 /// document, so no node view has a row of it (`Batch::node`). `k` is 0 for the whole source (`source`), `l` for
 /// physical line `l` (`src_line`), `LF | l` for `\n`-line `l` (`src_line_lf`), `TAPE | l` for the tape's line `l`
-/// (`tape_line`) and `COMMENT | k` for the document's `k`-th comment from 1, in source order, of those no node is
+/// (`tape_line`), `COMMENT | k` for the document's `k`-th comment from 1, in source order, of those no node is
 /// (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but keep Rust's `line_comment`, which is
-/// then the comment's id).
+/// then the comment's id) and `MATCH | i` for the document's `i`th match or group of a `match_all` or
+/// `match_group` regex.
 pub(crate) const SPAN: u32 = 1 << 31;
 pub(crate) const LF: u32 = 1 << 30;
 pub(crate) const TAPE: u32 = 1 << 29;
 pub(crate) const COMMENT: u32 = 1 << 28;
+pub(crate) const MATCH: u32 = 1 << 27;
 
 /// The physical lines of `source`, as byte ranges without their terminators: as Python's `str.splitlines()`
 /// splits (`splitlines`: `\r\n`, `\n`, `\r`, `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029; W's `lines`
@@ -380,8 +389,15 @@ enum View {
 /// `value_type(v, t)` pairs `value`'s strings with those types: one row per string and type some node of the batch has
 /// (the str `"12"` and the int `12` both give `12`). `comment(c, s)` is each comment's text without its marker
 /// (`comment_body`); a comment no node is (`COMMENT`) has rows in `text` and `node_text` (its text, marker included),
-/// `line`, `end_line` and `col` as a node's. `docof` has every node and every span (comments included), each with its document (a span's
-/// `sp >> 32`, as a node's). Rows hold string indexes, as `Batch::build`'s do.
+/// `line`, `end_line` and `col` as a node's. `docof` has every node and every span (comments and matches included),
+/// each with its document (a span's `sp >> 32`, as a node's). Rows hold string indexes, as `Batch::build`'s do.
+///
+///
+/// And each `matchall_<k>(sp, m)` read (`logic::strings::as_relations`, core.rr's `match_all`): `m` each match of
+/// regex `k` in span `sp`'s text, leftmost-first and non-overlapping (Rust's `find_iter`, as W's `regex` reads a
+/// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
+/// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
+/// (W's `lines` regexes); in the source, the lines and column of the tape's line table (W's content regex).
 #[derive(Default)]
 struct Extra {
     source: bool,
@@ -415,10 +431,26 @@ struct Extra {
     value_types_of: Vec<[i64; 2]>,
     value_types: BTreeSet<[i64; 2]>,
     comments: Vec<[i64; 2]>,
+    /// The regexes of the `match_all` and `match_group` relations read (`Found`).
+    matches: Vec<Found>,
 }
 
+/// Regex `k`'s rows: its matches (`matchall_<k>(sp, m)`, when read) and their named groups' spans
+/// (`matchgroup_<k>(sp, m, g, gsp)`, when read; `g` a string index), with one numbering of `m` for both.
+struct Found {
+    k: usize,
+    regex: Arc<regex::Regex>,
+    all: bool,
+    groups: bool,
+    rows: Vec<[i64; 2]>,
+    group_rows: Vec<[i64; 4]>,
+}
+
+/// A span made for a document: its id, its bytes, and its line where it is one line (else the source).
+type Made = (i64, std::ops::Range<usize>, Option<usize>);
+
 impl Extra {
-    fn new(reads: &BTreeSet<String>) -> Self {
+    fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>]) -> Self {
         let read = |rel: &str| reads.contains(rel);
         Self {
             source: read("source"),
@@ -437,6 +469,19 @@ impl Extra {
             value_type_of: read("value_type_of"),
             value_type: read("value_type"),
             comment: read("comment"),
+            matches: matches
+                .iter()
+                .enumerate()
+                .map(|(k, regex)| Found {
+                    k,
+                    regex: Arc::clone(regex),
+                    all: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::MATCHES)),
+                    groups: read(&format!("{}{k}", crate::code_rule_dsl::logic::strings::GROUPS)),
+                    rows: Vec::new(),
+                    group_rows: Vec::new(),
+                })
+                .filter(|found| found.all || found.groups)
+                .collect(),
             ..Self::default()
         }
     }
@@ -470,11 +515,14 @@ impl Extra {
         }
     }
 
-    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`); `splitlines`: it is Python's.
-    fn document(&mut self, p: &Projected, d: &Document, dialect: &Dialect, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
+    /// `splitlines`: its lines split as Python's `str.splitlines()` does.
+    #[allow(clippy::too_many_arguments)]
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
-        if plain || self.static_value {
+        // A text-only document has no node, so no value.
+        if (plain || self.static_value) && dialect.is_some() {
             let Some((tape, file)) = &d.tape else {
                 return Err(StoreError::Invalid(format!("{}: W's values need the document's tape", d.path)));
             };
@@ -534,7 +582,7 @@ impl Extra {
         let key = i64::from(p.key);
         let span = |k: u32| key << 32 | i64::from(SPAN | k);
         let source = f.source.as_str();
-        if self.comment {
+        if self.comment && let Some(dialect) = dialect {
             use crate::code_rule_dsl::matcher::is_comment_kind;
             let mut k = 0;
             for id in 0..f.len() as u32 {
@@ -567,38 +615,87 @@ impl Extra {
         if self.line_count {
             self.line_counts.push([key, physical.len() as i64]);
         }
+        let mut made: Vec<Made> = Vec::new();
         if self.source {
             let sp = span(0);
             self.sources.push([key, sp]);
             let terminated = physical.last().map_or(!source.is_empty(), |r| r.end < source.len());
             self.span(sp, 1, (physical.len() + usize::from(terminated)).max(1), 0, source, text, string);
+            made.push((sp, 0..source.len(), None));
         }
         if self.src_line {
             for (i, r) in physical.iter().enumerate() {
                 let (l, sp) = (i + 1, span(i as u32 + 1));
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], text, string);
+                made.push((sp, r.clone(), Some(l)));
             }
         }
         if self.src_line_lf {
-            for (i, r) in physical_lines(source, false).iter().enumerate() {
+            for (i, r) in physical_lines(source, false).into_iter().enumerate() {
                 let (l, sp) = (i + 1, span(LF | (i as u32 + 1)));
                 self.src_lines_lf.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[r.clone()], text, string);
+                made.push((sp, r, Some(l)));
             }
         }
         if self.tape_line {
             for i in 0..f.lines.starts().len() {
                 let (l, sp) = (i + 1, span(TAPE | (i as u32 + 1)));
+                let r = f.lines.start(i)..f.lines.end(i);
                 self.tape_lines.push([key, l as i64, sp]);
-                self.span(sp, l, l, 0, &source[f.lines.start(i)..f.lines.end(i)], text, string);
+                self.span(sp, l, l, 0, &source[r.clone()], text, string);
+                made.push((sp, r, Some(l)));
+            }
+        }
+        // Each regex's matches in each span, and their named groups, numbered through the document.
+        let mut next: u32 = 0;
+        let mut id = |p: &Projected| -> StoreResult<i64> {
+            if next >= MATCH {
+                return Err(StoreError::Invalid(format!("document {} has more than {MATCH} match_all matches and groups", p.key)));
+            }
+            next += 1;
+            Ok(span(MATCH | (next - 1)))
+        };
+        // A piece of span `r` (`at` within it) placed as W places a regex's finding there.
+        let place = |r: &std::ops::Range<usize>, line: &Option<usize>, at: std::ops::Range<usize>| match line {
+            Some(l) => (*l, *l, at.start),
+            None => {
+                let s = f.lines.span(r.start + at.start, r.start + at.end);
+                (s.start_line + 1, s.end_line + 1, s.start_column)
+            }
+        };
+        for k in 0..self.matches.len() {
+            let (regex, groups) = (Arc::clone(&self.matches[k].regex), self.matches[k].groups);
+            let names: Vec<&str> = regex.capture_names().flatten().collect();
+            for (sp, r, line) in &made {
+                let body = &source[r.clone()];
+                for captures in regex.captures_iter(body) {
+                    let found = captures.get(0).expect("group 0 always matches");
+                    let m = id(p)?;
+                    self.matches[k].rows.push([*sp, m]);
+                    let (first, last, col) = place(r, line, found.range());
+                    self.span(m, first, last, col, found.as_str(), text, string);
+                    if !groups {
+                        continue;
+                    }
+                    // A group that takes no part in the match has no row.
+                    for name in &names {
+                        let Some(group) = captures.name(name) else { continue };
+                        let g = id(p)?;
+                        self.matches[k].group_rows.push([*sp, m, string(name) as i64, g]);
+                        let (first, last, col) = place(r, line, group.range());
+                        self.span(g, first, last, col, group.as_str(), text, string);
+                    }
+                }
             }
         }
         Ok(())
     }
 
-    /// The relations read, their strings as atoms (`atom` of a string index).
-    fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
+    /// The relations read, their strings as atoms (`atom` of a string index), and the `match_all` relations read.
+    #[allow(clippy::type_complexity)]
+    fn relations(self, atom: &dyn Fn(i64) -> i64) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
         let relation = |columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>| {
             let mut r = Relation::new(columns);
             rows.for_each(|row| r.push(&row));
@@ -650,18 +747,34 @@ impl Extra {
         if self.comment {
             out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)]))));
         }
-        out
+        let mut matched = Vec::new();
+        for found in self.matches {
+            if found.all {
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::MATCHES, found.k), relation(&["sp", "m"], &mut found.rows.iter().map(|r| r.to_vec()))));
+            }
+            if found.groups {
+                let rows = &mut found.group_rows.iter().map(|&[sp, m, g, gsp]| vec![sp, m, atom(g), gsp]);
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows)));
+            }
+        }
+        (out, matched)
     }
 }
 
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
-    /// of core.rr's the program `reads` that T had not (`Extra`).
+    /// of core.rr's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
+    /// apart. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node.
     /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
     /// (`logic::strings::Vocabulary`, decision 0037).
     #[allow(clippy::type_complexity)]
-    fn build(store: &ContentStore, documents: Vec<Document>, reads: &BTreeSet<String>) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, (Vec<String>, Vec<u32>))> {
+    fn build(
+        store: &ContentStore,
+        documents: Vec<Document>,
+        reads: &BTreeSet<String>,
+        matches: &[Arc<regex::Regex>],
+    ) -> StoreResult<(Arc<Self>, Vec<(&'static str, Relation)>, Vec<(String, Relation)>, (Vec<String>, Vec<u32>))> {
         let mut documents = documents;
         documents.sort_by_key(|d| d.key);
         if documents.windows(2).any(|w| w[0].key == w[1].key) {
@@ -683,16 +796,21 @@ impl Batch {
         let (mut name, mut strs, mut strprefix) = (Vec::new(), Vec::new(), Vec::new());
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
-        let mut extra = Extra::new(reads);
+        let mut extra = Extra::new(reads, matches);
         let mut tree = tree::Tree::new(reads);
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         let mut docs = Vec::with_capacity(documents.len());
         for d in &documents {
-            let tag = (d.facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8;
-            if !dialects.contains_key(&tag) {
-                dialects.insert(tag, Dialect::new(tag)?);
-            }
-            let dialect = &dialects[&tag];
+            // The document's own dialect: its first node's kind may be ERROR's, past the stride (`kind_atom`).
+            let tag = d.facts.tag;
+            let dialect = if tag == TEXT {
+                None
+            } else {
+                if !dialects.contains_key(&tag) {
+                    dialects.insert(tag, Dialect::new(tag)?);
+                }
+                Some(&dialects[&tag])
+            };
             let p = Projected::new(d.key, Arc::clone(&d.facts), dialect);
             let key = i64::from(d.key);
             doc.push([key, string(&d.path) as i64, string(&module(&d.path)) as i64]);
@@ -703,6 +821,8 @@ impl Batch {
             let f = &*d.facts;
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
+                // A text document has no node.
+                let Some(dialect) = dialect else { break };
                 match dialect.class(f, id) {
                     Class::Text => {
                         let t = f.text(id);
@@ -749,7 +869,8 @@ impl Batch {
                     _ => {}
                 }
             }
-            extra.document(&p, d, dialect, python == Some(tag), &mut text, &mut string)?;
+            // A text document's lines split as W's `lines` regexes split any file's.
+            extra.document(&p, d, dialect, python == Some(tag) || tag == TEXT, &mut text, &mut string)?;
             tree.document(&p, dialect, &d.path, python == Some(tag), &mut string);
             docs.push(p);
         }
@@ -781,7 +902,8 @@ impl Batch {
             ("strprefix", relation(&["n", "s"], &mut strprefix.iter().map(|&[n, s]| vec![n, atom(s)]))),
         ];
         let line_rows = extra.line_rows();
-        relations.extend(extra.relations(&atom));
+        let (read, matched) = extra.relations(&atom);
+        relations.extend(read);
         relations.extend(tree.relations(&atom));
         let offsets = |count: &dyn Fn(&Projected) -> usize| {
             let mut v = vec![0];
@@ -791,7 +913,7 @@ impl Batch {
         let nodes = offsets(&|p| p.core.len());
         let children = offsets(&|p| p.core.len().saturating_sub(1));
         let fields = offsets(&|p| p.fielded.len());
-        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py, line_rows }), relations, (strings, atoms)))
+        Ok((Arc::new(Batch { docs, dialects, nodes, children, fields, py, line_rows }), relations, matched, (strings, atoms)))
     }
 
     fn offsets(&self, view: View) -> &[usize] {
@@ -946,14 +1068,20 @@ impl Source for Viewed {
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
-                    continue;
-                };
-                let Some(dialect) = b.dialects.get(&tag).filter(|_| v >= 0) else { continue };
-                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| p.tag == tag) {
-                    for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                // The constant's dialect is the batch's whose code it is (ERROR's reaches past the stride).
+                let Ok(v) = u32::try_from(v) else { continue };
+                for (&tag, dialect) in &b.dialects {
+                    let Some(code) = kind_code(tag, v).filter(|&c| u32::from(c) < KIND_STRIDE || c == u16::MAX) else { continue };
+                    // ERROR has no canonical entry: its nodes hold its atom itself.
+                    let atoms: Vec<u32> = match dialect.codes.get(&code) {
+                        Some(codes) => codes.iter().map(|&c| kind_atom(tag, c)).collect(),
+                        None if code == u16::MAX => vec![v],
+                        None => Vec::new(),
+                    };
+                    for (doc, p) in b.docs.iter().enumerate().filter(|(_, p)| p.tag == tag) {
+                        for &kind in &atoms {
+                            rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local[id as usize]).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                        }
                     }
                 }
             } else {
@@ -975,10 +1103,7 @@ impl Source for Viewed {
         match (self.view, column) {
             (View::Node | View::Core, 0) => i64::from(p.key),
             (View::Core, 1) => id as i64,
-            (View::Node, 2) => {
-                let code = (p.facts.kind[id] % KIND_STRIDE) as usize;
-                i64::from(kind_atom(p.tag, self.batch.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16)))
-            }
+            (View::Node, 2) => self.batch.dialects[&p.tag].kind(&p.facts, id as u32),
             (View::Node, 3) => i64::from(p.facts.start[id]),
             (View::Node, 4) => i64::from(p.facts.end[id]),
             (View::Line, 1) => i64::from(p.facts.start_line[id]),
@@ -1001,7 +1126,7 @@ pub(crate) fn field_atom(tag: u8, code: u16) -> u32 {
 /// `node`: what W's call summaries name a definition by (`calls::summary::Def`).
 pub(crate) fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(u32, u32), i64>> {
     let dialect = Dialect::new((facts.kind.first().copied().unwrap_or(0) / KIND_STRIDE) as u8)?;
-    let p = Projected::new(key, Arc::clone(facts), &dialect);
+    let p = Projected::new(key, Arc::clone(facts), Some(&dialect));
     Ok(p.core
         .iter()
         .enumerate()
@@ -1012,7 +1137,7 @@ pub(crate) fn definitions(key: u32, facts: &Arc<Facts>) -> StoreResult<HashMap<(
 
 /// T's nine base relations over `documents`, and the `py.*` families, by table name.
 pub(crate) fn sources(store: &ContentStore, documents: Vec<Document>) -> StoreResult<Vec<(&'static str, Arc<dyn Source>)>> {
-    let (batch, relations, _) = Batch::build(store, documents, &BTreeSet::new())?;
+    let (batch, relations, _, _) = Batch::build(store, documents, &BTreeSet::new(), &[])?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> =
         relations.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)).collect();
     out.extend(views(&batch));
@@ -1132,8 +1257,7 @@ impl Batch {
             for local in 0..p.len() as usize {
                 let up = p.parent[local];
                 parent.push(if up == NONE { crate::code_rule_dsl::typing::file_local::NONE } else { (self.nodes[doc] + up as usize) as u32 });
-                let code = (p.facts.kind[p.core[local] as usize] % KIND_STRIDE) as usize;
-                kind.push(i64::from(kind_atom(p.tag, self.dialects[&p.tag].canonical.get(code).copied().unwrap_or(code as u16))));
+                kind.push(self.dialects[&p.tag].kind(&p.facts, p.core[local]));
             }
         }
         (parent, kind)
@@ -1219,9 +1343,11 @@ pub(crate) fn with_nearest(
 ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
     use crate::code_rule_dsl::typing::file_local;
     let built = crate::code_rule_dsl::logic::profile::span(|| "project and intern".into());
-    let (batch, relations, (strings, symbols)) = Batch::build(store, documents, reads)?;
+    let (batch, relations, matched, (strings, symbols)) = Batch::build(store, documents, reads, &tests.matches)?;
     drop(built);
     let mut out: Vec<(String, Arc<dyn Source>)> = relations.into_iter().map(|(name, r)| (name.to_owned(), Arc::new(r) as Arc<dyn Source>)).collect();
+    // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
+    out.extend(matched.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
     // The text tests' relations (decision 0037): the batch's strings that pass each, each string tested once a run.
     let text = crate::code_rule_dsl::logic::profile::span(|| "text tests".into());
     for ((name, _), rows) in tests.tests.iter().zip(tests.rows(&strings, &symbols)) {

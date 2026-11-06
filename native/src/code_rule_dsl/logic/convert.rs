@@ -48,15 +48,16 @@
 //!   or a string holding one, as `parameters` does) at its JSON pointer (`/lineCounts/a~1b.py`), as W's
 //!   `json_extract` reads it, the leaf as `option_value` renders it. A clause
 //!   whose matchers carry `when: {option: …}` converts for the run's options only (its matchers that do not apply
-//!   give nothing); coverage marks it: an authored clause, gated on these facts, follows every configuration;
+//!   give nothing); coverage marks it: an authored clause, gated on these facts, follows every configuration.
+//!   `match_all("re", sp, m)` is a built-in, never declared: `m` each match of regex `re` in span `sp`'s text; so is
+//!   `match_group("re", sp, m, g, gsp)`: `gsp` the span of the named group `g` in that match;
 //! - each clause it gives derives `violation("<rule-id>", "<clause-id>", "<code>", p, l)`, declared
 //!   `.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)`, the rule and clause
 //!   constant and the clause one of the policy's;
 //! - its helper relations and kind sets start with a prefix of their clause's. A name the converter makes is an
 //!   error (`m`, `u`, `t`, `k` or `blocked` and digits; `never`, `in_scope`, `out_scope`, `report_when_gt`,
-//!   `option_on`, `option_item`, `option_value`, `option_json`;
-//!   `strtest_*`, `magic_*`, `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name
-//!   declared with other columns;
+//!   `option_on`, `option_item`, `option_value`, `option_json`; `strtest_*`, `matchall_*`, `matchgroup_*`, `magic_*`,
+//!   `done_*`, `inside_*`, `nearest_*`), and so are a relation both derive and one name declared with other columns;
 //! - a clause it derives is authored, whatever the converter made of it: its rules replace the converter's. A
 //!   clause the run leaves out (the replay's `keep`) is dropped from both. The merge, less what `violation` does not
 //!   reach, is printed with `rr::print`.
@@ -905,7 +906,7 @@ fn converter_name(rel: &str) -> bool {
     ["m", "u", "t", "k", "blocked"].into_iter().any(numbered)
         || ["never"].contains(&rel)
         || GIVEN.contains(&rel)
-        || ["strtest_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
+        || ["strtest_", "matchall_", "matchgroup_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
 }
 
 fn types(columns: &[(String, String)]) -> Vec<&str> {
@@ -956,6 +957,9 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
         if axis(name) {
             continue;
         }
+        if matches!(name.as_str(), "match_all" | "match_group") {
+            return err(format!("{name} is a built-in constraint (match_all(\"re\", sp, m), match_group(\"re\", sp, m, g, gsp)): it is not declared"));
+        }
         let want = match name.as_str() {
             "violation" => Some(VIOLATION.map(str::to_owned).to_vec()),
             _ => given_types(name).or_else(|| base_types(name)),
@@ -965,7 +969,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
                 return err(format!("{name}({}) is declared with other columns than the converter's ({})", spelled(types(columns)), spelled(want.iter().map(String::as_str))));
             }
             None if converter_name(name) => {
-                return err(format!("{name} is a name the converter makes (m, u, t, k or blocked and digits; never, strtest_*, magic_*, done_*, inside_*, nearest_*): name it after its clause"));
+                return err(format!("{name} is a name the converter makes (m, u, t, k or blocked and digits; never, strtest_*, matchall_*, magic_*, done_*, inside_*, nearest_*): name it after its clause"));
             }
             _ => {}
         }
@@ -984,7 +988,9 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, authored: Progra
     }
     let mut authored_clauses = BTreeSet::new();
     for r in &authored.rules {
-        for a in r.body.iter().filter_map(Literal::atom) {
+        // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
+        // relations of (`strings::as_relations`).
+        for a in r.body.iter().filter_map(Literal::atom).filter(|a| !matches!(a.rel.as_str(), "match_all" | "match_group")) {
             let rel = a.rel.as_str();
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));

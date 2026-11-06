@@ -20,13 +20,22 @@ pub(crate) const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
 pub(crate) const KIND_STRIDE: u32 = 1024;
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`.
+/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's code (`u16::MAX`) reaches past the
+/// stride, so a kind atom's dialect is its document's (`Facts::tag`), never the atom divided by the stride.
 pub(crate) fn kind_atom(tag: u8, code: u16) -> u32 {
     u32::from(tag) * KIND_STRIDE + u32::from(code)
 }
 
+/// The kind code of `atom` in the dialect whose tape tag is `tag` (`kind_atom`'s inverse), if it is one of that
+/// dialect's.
+pub(crate) fn kind_code(tag: u8, atom: u32) -> Option<u16> {
+    atom.checked_sub(u32::from(tag) * KIND_STRIDE).and_then(|code| u16::try_from(code).ok())
+}
+
 /// One file's facts. Columns are indexed by node id.
 pub(crate) struct Facts {
+    /// The tape tag of the file's dialect, which every kind atom is of.
+    pub tag: u8,
     pub source: Arc<String>,
     pub lines: Arc<LineTable>,
     /// node(id, kind, parent, start, end, start_line, end_line) + subtree_end, flags, field.
@@ -80,6 +89,7 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
     let mut f = Facts {
+        tag,
         source: Arc::clone(doc.document_source()),
         lines,
         kind: Vec::with_capacity(n),
@@ -117,6 +127,41 @@ pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, S
     let classes = doc.transducer_supertypes().map(|(node, class)| (kind_atom(tag, class), node)).collect();
     (f.class_keys, f.class_offsets, f.class_nodes) = postings(classes);
     Ok(f)
+}
+
+/// The tape tag of a text-only document's facts (`text`): no dialect has it.
+pub(crate) const TEXT: u8 = u8::MAX;
+
+/// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
+/// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
+pub(crate) fn text(source: Arc<String>) -> Facts {
+    let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
+    let mut f = Facts {
+        tag: TEXT,
+        source,
+        lines,
+        kind: Vec::new(),
+        parent: Vec::new(),
+        start: Vec::new(),
+        end: Vec::new(),
+        start_line: Vec::new(),
+        end_line: Vec::new(),
+        subtree_end: Vec::new(),
+        flags: Vec::new(),
+        field: Vec::new(),
+        child_offsets: Vec::new(),
+        children: Vec::new(),
+        kind_keys: Vec::new(),
+        kind_offsets: Vec::new(),
+        kind_nodes: Vec::new(),
+        class_keys: Vec::new(),
+        class_offsets: Vec::new(),
+        class_nodes: Vec::new(),
+        syntax_errors: false,
+    };
+    index(&mut f);
+    (f.class_keys, f.class_offsets, f.class_nodes) = postings(Vec::new());
+    f
 }
 
 /// The derived columns: the children CSR (preorder lists a parent's children in order) and the

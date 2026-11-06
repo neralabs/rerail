@@ -55,8 +55,8 @@ impl Tree {
         }
     }
 
-    /// Document `p`'s rows (`path` its path; `python`: it is Python's).
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, path: &str, python: bool, string: &mut dyn FnMut(&str) -> usize) {
+    /// Document `p`'s rows (`path` its path; `python`: it is Python's). A text document (no `dialect`) has its path's.
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, path: &str, python: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let key = i64::from(p.key);
         if self.path_part || self.file_name {
@@ -68,6 +68,7 @@ impl Tree {
                 self.file_names.push([key, string(last) as i64]);
             }
         }
+        let Some(dialect) = dialect else { return };
         if self.op_at {
             let fields = [dialect.catalog.field_id("operator"), dialect.catalog.field_id("operators")];
             for (local, &id) in p.core.iter().enumerate() {
