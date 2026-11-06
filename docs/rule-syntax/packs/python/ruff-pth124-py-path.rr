@@ -1,0 +1,18 @@
+.policy "ruff-pth124-py-path" revision 2
+.description "Use pathlib instead of py.path.local; the py library's path API is in maintenance mode."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH124 (flake8-use-pathlib): every call of `py.path.local`, however it is imported. Reported at the
+// callee. A reference that is not called is not reported.
+//   py.path.local("../foo")                       ← PTH124
+//   from py.path import local as path; path("x")  ← PTH124
+//   f = py.path.local                             not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
+
+.violation PTH124(at: node) code "PTH124"
+    "Use `pathlib.Path(...)` instead of `py.path.local(...)` and port the py.path methods called on it (`join`, `ensure`, `check`, `read`); keep it where an API still requires a `py.path.local`."
+    suppress ruff "PTH124"
+PTH124(f) :- pth_call(_, "py.path.local", f).

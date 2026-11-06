@@ -1,0 +1,73 @@
+.policy "ruff-ruf009-function-call-in-dataclass-default-argument" revision 2
+.description "Avoid function calls in dataclass field defaults; the call runs once at class definition, so every instance shares its result."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF009: a dataclass or attrs field whose default is a call. The call runs once, when the class is
+// defined, and every instance shares its result. Not reported:
+//   - ClassVar fields, and fields with an immutable annotation (`x: int = f()`);
+//   - calls known to return immutable values (`int(…)`, `datetime.date(…)`, `Path(…)`, … and the
+//     flake8-bugbear.extend-immutable-calls option), and `NewType`s of an immutable type;
+//   - the field makers (`field(…)`, `attrs.field(…)`, `attr.ib(…)`, `Factory(…)`);
+//   - descriptor classes (with `__get__`, `__set__` or `__delete__`) and frozen dataclasses of the file;
+//   - attrs classes with auto_attribs off (`@attr.s`), whose annotated assignments are not fields.
+//   @dataclass
+//   class B:
+//       items: list[int] = default_items()     ← RUF009
+//       when: datetime.date = datetime.date(2042, 1, 1)    not reported
+#include "python/ruff-classes.rr"
+
+.violation RUF009(at: node, msg: symbol) code "RUF009" "{msg}"
+    suppress ruff "RUF009"
+RUF009(v, m) :- dataclass_of(c, k, _), fields_on(c), class_field(c, a, _, v), unparen(v, call), kind(call, "call"),
+    field(a, "type", t), !class_var_ann(t), !immutable_ann(t), field(call, "function", f), !exempt(f, k), says(k, m).
+.decl fields_on(c: node)
+fields_on(c) :- dataclass_of(c, "stdlib", _).
+fields_on(c) :- attrs_auto(c, "true").
+
+// exempt(f, k): a callee whose result is fine as a shared default in a class of kind k.
+.decl exempt(f: node, k: symbol)
+exempt(f, k) :- callee_q(f, q), dc_maker(_, k), (immutable_call(q) ; field_maker(k, q)).
+exempt(f, k) :- callee_q(f, _), dc_maker(_, k), unparen(f, g), immutable_newtype(g).
+exempt(f, k) :- callee_q(f, _), dc_maker(_, k), local_class(f, cl), (descriptor(cl) ; frozen_dataclass(cl)).
+.decl callee_q(f: node, q: symbol)
+// The callee's name, a subscript stripped (Ruff's map_subscript): `tuple[int]()` calls tuple.
+callee_q(f, q) :- callee_head(f, h), (ruff_qual(h, q) ; !ruff_qual(h, _), q = "").
+.decl callee_head(f: node, h: node)
+callee_head(f, h) :- class_field(_, _, _, v), unparen(v, c), field(c, "function", f), unparen(f, g),
+    (kind(g, "subscript"), field(g, "value", h) ; !kind(g, "subscript"), h = g).
+.decl immutable_call(q: symbol)
+immutable_call(cat("builtins.", x)) :- immutable_builtin(x).
+immutable_call("datetime.date"). immutable_call("datetime.datetime"). immutable_call("datetime.time").
+immutable_call("datetime.timedelta"). immutable_call("datetime.timezone"). immutable_call("datetime.tzinfo").
+immutable_call("decimal.Decimal"). immutable_call("fractions.Fraction"). immutable_call("operator.attrgetter").
+immutable_call("operator.itemgetter"). immutable_call("operator.methodcaller"). immutable_call("pathlib.Path").
+immutable_call("types.MappingProxyType"). immutable_call("re.compile").
+immutable_call(q) :- option_item("flake8-bugbear.extend-immutable-calls", _, q).
+.decl immutable_builtin(x: symbol)
+immutable_builtin("bool"). immutable_builtin("bytes"). immutable_builtin("complex"). immutable_builtin("float").
+immutable_builtin("frozenset"). immutable_builtin("int"). immutable_builtin("range"). immutable_builtin("str").
+immutable_builtin("tuple"). immutable_builtin("slice"). immutable_builtin("frozendict").
+.decl field_maker(k: symbol, q: symbol)
+field_maker("stdlib", "dataclasses.field").
+field_maker("attrs", "attrs.field"). field_maker("attrs", "attrs.Factory"). field_maker("attrs", "attr.ib").
+field_maker("attrs", "attr.attr"). field_maker("attrs", "attr.attrib"). field_maker("attrs", "attr.field").
+field_maker("attrs", "attr.Factory").
+// immutable_newtype(g): g reads `N = NewType("N", T)` (the one binding of N) with an immutable T.
+.decl immutable_newtype(g: node)
+immutable_newtype(g) :- look(g, x, s), count : { binding(s, x, _, _) } = 1, asg(s, x, r, _), unparen(r, nt),
+    call_q(nt, q), typing_name(q, "typing.NewType"), call_nargs(nt, np), call_nkwargs(nt, nk), np + nk = 2,
+    (ruff_arg(nt, 1, tp) ; call_kwarg(nt, "tp", tp)), newtype_ann(tp).
+// newtype_ann(tp): NewType's second argument read as an annotation (Ruff reuses is_immutable_annotation).
+.decl newtype_ann(tp: node)
+newtype_ann(tp) :- unparen(tp, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q), immutable_type(q).
+newtype_ann(tp) :- unparen(tp, m), kind(m, "subscript"), field(m, "value", h), ruff_qual(h, q), immutable_generic(q).
+// descriptor(cl): a class with `__get__`, `__set__` or `__delete__` defined in its body.
+.decl descriptor(cl: node)
+descriptor(cl) :- class_stmt(cl, s), (s = f ; kind(s, "decorated_definition"), field(s, "definition", f)),
+    kind(f, "function_definition"), def_name(f, x), (x = "__get__" ; x = "__set__" ; x = "__delete__").
+
+.decl says(k: symbol, m: symbol)
+says("stdlib", "Pass the callable as `field(default_factory=...)`, using a lambda if it takes arguments, or assign the result to a module-level constant if sharing it is intended; leave immutable results.").
+says("attrs", "Pass the callable as `attrs.field(factory=...)`, using a lambda if it takes arguments, or assign the result to a module-level constant if sharing it is intended; leave immutable results.").

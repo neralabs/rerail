@@ -1,0 +1,19 @@
+.policy "ruff-ruf034-useless-if-else" revision 2
+.description "Avoid a conditional expression whose two branches are identical; use the value directly, since the condition changes nothing."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF034: `a if cond else a`, whose branches are the same expression (Ruff's ComparableExpr: parentheses,
+// quotes and spacing aside, literals by value: `0x10` and `16`).
+//   x = 1 if flag else 1      ← RUF034
+//   x = 1 if flag else 2      not reported
+#include "python/compare.rr"
+
+.violation RUF034(at: node) code "RUF034"
+    "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."
+    suppress ruff "RUF034"
+RUF034(e) :- branches(e, a, b), cmp_same(a, b).
+.decl branches(e: node, a: node, b: node)
+branches(e, a, b) :- kind(e, "conditional_expression"), child(e, a, 0), child(e, b, 2).
+cmp_same_ask(a, b) :- branches(_, a, b).

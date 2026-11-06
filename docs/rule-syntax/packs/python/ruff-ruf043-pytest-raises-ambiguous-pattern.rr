@@ -1,0 +1,27 @@
+.policy "ruff-ruf043-pytest-raises-ambiguous-pattern" revision 1
+.description "Use a raw string or re.escape for the match pattern of pytest.raises; a plain string with regex special characters hides whether a regex or literal text was meant."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF043: `pytest.raises(…, match="…")` where the pattern is a plain str literal, no part raw, whose
+// value has a regex metacharacter that no backslash escapes: . ^ $ * + ? { [ | ( ) (a closing `]` or `}`
+// alone is not one), or a metasequence \A \b \B \d \D \s \S \w \W \z \Z. Reported at the pattern.
+//   pytest.raises(E, match="foo.")         ← RUF043  r"foo." or re.escape("foo.")
+//   pytest.raises(E, match="foo\\.bar")    not reported: the dot is escaped
+//   pytest.raises(E, match=r"fo()bar")     not reported: a raw string says it is a regex
+#include "python/ruff.rr"
+
+.violation RUF043(at: node) code "RUF043"
+    "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text."
+    suppress ruff "RUF043"
+RUF043(v) :- call_q(c, "pytest.raises"), call_kwarg(c, "match", m), unparen(m, v), plain_str(v, s), !raw_part(v),
+    regex_special(s).
+// regex_special(s): reading s left to right, a backslash escapes the next character unless that character
+// starts a metasequence; s has an unescaped metacharacter or a metasequence.
+.decl regex_special(s: symbol)
+regex_special(s) :- call_kwarg(_, "match", m), unparen(m, v), plain_str(v, s),
+    match("(?:[^\\\\.^$*+?{\\[|()]|\\\\[^AbBdDsSwWzZ])*(?:[.^$*+?{\\[|()]|\\\\[AbBdDsSwWzZ])[\\s\\S]*", s).
+.decl raw_part(v: node)
+raw_part(v) :- strprefix(v, p), match("[\\s\\S]*[rR][\\s\\S]*", p).
+raw_part(v) :- kind(v, "concatenated_string"), child(v, s, _), strprefix(s, p), match("[\\s\\S]*[rR][\\s\\S]*", p).

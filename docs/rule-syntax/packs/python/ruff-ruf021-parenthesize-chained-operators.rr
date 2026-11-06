@@ -1,0 +1,19 @@
+.policy "ruff-ruf021-parenthesize-chained-operators" revision 2
+.description "Parenthesize an and expression that is chained with or, so the operator precedence is explicit."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF021: an `and` written bare as an operand of `or`. `and` binds tighter, so the code is right, but
+// parentheses make the reading explicit. Each bare `and` chain is reported once, at its start; `not` is left
+// alone. Annotations Ruff parses out of strings are trees like any other, so they are covered too.
+//   x = a or b and c          ← RUF021 at `b and c`
+//   x = a or (b and c)        not reported
+//   x = not a or b            not reported
+#include "python/ruff.rr"
+
+.violation RUF021(at: node) code "RUF021"
+    "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."
+    suppress ruff "RUF021"
+// tree-sitter keeps parentheses as a node of their own, so a parenthesised `and` is not a direct child.
+RUF021(a) :- kind(a, "boolean_operator"), op(a, "and"), child(o, a, _), kind(o, "boolean_operator"), op(o, "or").

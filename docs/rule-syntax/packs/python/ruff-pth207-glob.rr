@@ -1,0 +1,20 @@
+.policy "ruff-pth207-glob" revision 2
+.description "Use Path.glob() or Path.rglob() instead of glob.glob() and glob.iglob(); path objects read better than string-based glob calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH207 (flake8-use-pathlib): a call of `glob.glob` or `glob.iglob`, however it is imported, with
+// any arguments, unless `dir_fd` is passed and not None: `Path.glob` has no `dir_fd`. Reported at the callee.
+//   glob.glob("*.png")                   ← PTH207: `Path().glob("*.png")`
+//   from glob import iglob; iglob("*")   ← PTH207, with the iglob message
+//   glob.glob("*.png", dir_fd=3)         not reported
+#include "python/pathlib.rr"
+//   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
+
+.violation PTH207(at: node, msg: symbol) code "PTH207" "{msg}"
+    suppress ruff "PTH207"
+PTH207(f, "Use `Path(root).glob(pattern)` (or `rglob`) instead of `glob.glob(...)`; it lazily yields `Path` objects and includes hidden files, so wrap it in `list(...)` where a list is needed.") :-
+    pth_call(c, "glob.glob", f), !kw_set(c, "dir_fd").
+PTH207(f, "Use `Path(root).glob(pattern)` (or `rglob`) instead of `glob.iglob(...)`; it yields `Path` objects, includes hidden files, and `**` always recurses.") :-
+    pth_call(c, "glob.iglob", f), !kw_set(c, "dir_fd").

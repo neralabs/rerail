@@ -1,0 +1,24 @@
+.policy "ruff-ruf049-dataclass-enum" revision 2
+.description "Avoid decorating an enum class with the dataclass decorator; the generated methods can make distinct members compare equal."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF049: `@dataclasses.dataclass` (with or without a call) on a class that subclasses an enum:
+// enum.Enum, Flag, IntEnum, IntFlag, StrEnum, ReprEnum or CheckEnum, directly or through a class of this file.
+// Reported at the decorator. attrs decorators are not checked.
+//   @dataclass                ← RUF049
+//   class E(Enum): ...
+#include "python/ruff-classes.rr"
+
+.violation RUF049(at: node) code "RUF049"
+    "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`."
+    suppress ruff "RUF049"
+RUF049(d) :- dataclass_of(c, "stdlib", e), enum_class(c), kind(d, "decorator"), child(d, e, 0).
+
+.decl enum_class(c: node)
+enum_class(c) :- class_base_expr(c, b), base_head(b, h), ruff_qual(h, q), enum_base(q).
+enum_class(c) :- class_base_expr(c, b), base_head(b, h), local_class(h, k), enum_class(k).
+.decl enum_base(q: symbol)
+enum_base(cat("enum.", x)) :- (x = "Enum" ; x = "Flag" ; x = "IntEnum" ; x = "IntFlag" ; x = "StrEnum" ; x = "ReprEnum" ;
+    x = "CheckEnum").

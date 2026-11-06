@@ -1,0 +1,51 @@
+.policy "ruff-ruf028-invalid-formatter-suppression-comment" revision 1
+.description "Place formatter suppression comments between statements, not inside expressions or after decorators, keeping skip comments at a line's end and on comments on their own line."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF028: a formatter comment the formatter will ignore where it stands. The comments: `# fmt: off`,
+// `# fmt: on`, `# fmt: skip`, `# yapf: disable` (off) and `# yapf: enable` (on), also after other text
+// (`# noqa: X # fmt: skip`). One finding per comment, first reason first:
+//   x = [  # fmt: off  …  ]            ← in brackets or an expression (any kind)
+//   # fmt: skip     (own line)         ← skip must end a line; on must not
+//   @dec  / # fmt: off /  def f(): …   ← off or on after a decorator
+//   # fmt: off      (just above `else:`, at its indent)   ← directly above else, elif, except or finally
+//   off as the first line of the else or finally block of a try with except clauses
+// Not modelled: Ruff's "attached to the statement above" case (another formatter comment inside the
+// statement above's brackets).
+#include "python/ruff.rr"
+
+.violation RUF028(at: node, msg: symbol) code "RUF028" "{msg}"
+    suppress ruff "RUF028"
+RUF028(c, "Move this formatter comment out of the brackets or expression to a line between statements; the formatter ignores it where it stands.") :-
+    fmt_comment(c, _), in_expr(c).
+RUF028(c, "Put a skip comment at the end of the line it applies to and an on comment on a line of its own; the other way round the formatter ignores them.") :-
+    fmt_comment(c, k), !in_expr(c), (k = "skip", own_line(c) ; k = "on", !own_line(c)).
+RUF028(c, "Move this comment above the first decorator; after a decorator the formatter ignores it.") :-
+    fmt_comment(c, k), k != "skip", own_line(c), child(p, c, _), kind(p, "decorated_definition").
+RUF028(c, "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it.") :-
+    fmt_comment(c, "off"), own_line(c), !in_expr(c), token_after(c, t), text(t, w),
+    (w = "else" ; w = "elif" ; w = "except" ; w = "finally"), col(c, n), col(t, n).
+RUF028(c, "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it.") :-
+    fmt_comment(c, "off"), own_line(c), kind(y, "try_statement"), child(y, x, _), kind(x, "except_clause"),
+    child(y, e, _), (kind(e, "else_clause") ; kind(e, "finally_clause")), field(e, "body", b), child(b, s, 0),
+    token_after(c, t), first_token(s, t).
+
+// fmt_comment(c, k): comment c is a formatter comment of kind "off", "on" or "skip".
+.decl fmt_comment(c: node, k: symbol)
+fmt_comment(c, k) :- kind(c, "comment"), text(c, t),
+    match("#(?:[^#]*#)*\\s*(?<w>fmt|yapf):\\s*(?<v>off|on|skip|disable|enable)\\s*", t), fmt_word(w, v, k).
+.decl fmt_word(w: symbol, v: symbol, k: symbol)
+fmt_word("fmt", "off", "off"). fmt_word("fmt", "on", "on"). fmt_word("fmt", "skip", "skip").
+fmt_word("yapf", "disable", "off"). fmt_word("yapf", "enable", "on").
+// own_line(c): nothing comes before c on its line.
+.decl own_line(c: node)
+own_line(c) :- kind(c, "comment"), !token_before(c, _).
+own_line(c) :- kind(c, "comment"), token_before(c, t), end_line(t, l), line(c, m), l < m.
+// in_expr(c): c sits in an expression, brackets or a statement's header, not between statements.
+.decl in_expr(c: node)
+in_expr(c) :- kind(c, "comment"), child(p, c, _), kind(p, k), !stmt_level(k).
+.decl stmt_level(k: symbol)
+stmt_level(k) :- kind(_, k), (k = "module" ; k = "block" ; k = "decorator" ; k = "decorated_definition" ;
+    match("[a-z_]+(_statement|_clause|_definition)", k)), k != "for_in_clause", k != "if_clause", k != "with_clause".

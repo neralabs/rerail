@@ -1,0 +1,47 @@
+.policy "ruff-ruf012-mutable-class-default" revision 2
+.description "Initialize mutable class attributes such as lists, dicts and sets in the constructor, or mark them as class variables; a default in the class body is shared by every instance."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF012: a class attribute whose value is mutable is one object shared by every instance. Exempt:
+//   - an annotated attribute that is a ClassVar or Final, or has an immutable annotation;
+//   - annotated attributes of a dataclass or attrs class (RUF008's business; their plain ones still count);
+//   - `__slots__`, `__dict__`, `__weakref__`, `__annotations__`, and a name already declared a ClassVar;
+//   - every attribute of a model class that copies defaults (pydantic, msgspec, sqlmodel; RUF012 stops there);
+//   - ctypes structures and unions: Ruff stops checking at their `_fields_ = [...]`.
+//   class A:
+//       items: list[int] = []                  ← RUF012
+//       cache = {}                             ← RUF012
+//       names: ClassVar[list[str]] = []        not reported
+#include "python/ruff-classes.rr"
+
+.violation RUF012(at: node) code "RUF012"
+    "Initialize this mutable default in `__init__`, or annotate it `ClassVar[...]` if one object is meant to be shared; a class-level default is shared by every instance."
+    suppress ruff "RUF012"
+RUF012(v) :- class_field(c, a, t, v), mutable_value(v), field(a, "type", ann), !special(t), !class_var_ann(ann),
+    !final_ann(ann), !immutable_ann(ann), !dataclass_of(c, _, _), checked(c, a).
+RUF012(v) :- class_assign(c, a, v), mutable_value(v), count : { assign_target(a, t), !special(t), !declared_cv(c, t) } > 0,
+    checked(c, a).
+
+// special(t): a dunder that must hold a mutable value.
+.decl special(t: node)
+special(t) :- class_stmt(_, s), child(s, a, 0), assign_target(a, t), text(t, x),
+    (x = "__slots__" ; x = "__dict__" ; x = "__weakref__" ; x = "__annotations__").
+// declared_cv(c, t): `x: ClassVar[...] = …` with a value came earlier in c's body, so `x = …` rebinds the class
+// variable. A bare `x: ClassVar[...]` does not count, as in Ruff.
+.decl declared_cv(c: node, t: node)
+declared_cv(c, t) :- class_assign(c, a, _), assign_target(a, t), kind(t, "identifier"), text(t, x),
+    class_field(c, a0, t0, _), field(a0, "right", _), text(t0, x), field(a0, "type", ann), class_var_ann(ann), a0 < a.
+// checked(c, a): Ruff reaches statement a: c does not copy defaults, and a is before any ctypes `_fields_ = …`.
+.decl checked(c: node, a: node)
+checked(c, a) :- (class_field(c, a, _, _) ; class_assign(c, a, _)), !copies_defaults(c), !ctypes_stop(c, a).
+.decl ctypes_stop(c: node, a: node)
+ctypes_stop(c, a) :- ctypes_class(c), class_assign(c, f, v), assign_target(f, t), text(t, "_fields_"),
+    mutable_value(v), (class_field(c, a, _, _) ; class_assign(c, a, _)), f <= a.
+.decl ctypes_class(c: node)
+ctypes_class(c) :- class_base_expr(c, b), base_head(b, h), ruff_qual(h, q), ctypes_base(q).
+ctypes_class(c) :- class_base_expr(c, b), base_head(b, h), local_class(h, k), ctypes_class(k).
+.decl ctypes_base(q: symbol)
+ctypes_base("ctypes.Structure"). ctypes_base("ctypes.BigEndianStructure"). ctypes_base("ctypes.LittleEndianStructure").
+ctypes_base("ctypes.Union"). ctypes_base("ctypes.BigEndianUnion"). ctypes_base("ctypes.LittleEndianUnion").

@@ -1,0 +1,19 @@
+.policy "ruff-ruf003-ambiguous-unicode-character-comment" revision 1
+.description "Replace look-alike Unicode characters in comments with the ASCII characters they imitate; they make text read differently from what it is."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF003: RUF001 for comments, those inside f-string replacement fields too. Which characters and words
+// count: see the table file.
+//   # see the 𝐁ug tracker      ← RUF003 at 𝐁
+//   # Привет                   not reported: a Russian word
+#include "python/ast.rr"
+#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rr"
+
+.violation RUF003(at: span, ch: symbol) code "RUF003"
+    "Replace the look-alike character `{ch}` in this comment with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+    suppress ruff "RUF003"
+RUF003(c, x) :- confusable_text(p), confusable_char(p, c), text(c, x).
+
+confusable_text(c) :- kind(c, "comment").

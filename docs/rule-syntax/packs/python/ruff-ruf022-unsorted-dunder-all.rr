@@ -1,0 +1,22 @@
+.policy "ruff-ruf022-unsorted-dunder-all" revision 3
+.description "Keep the names in __all__ sorted: SCREAMING_CASE constants first, then CamelCase classes, then everything else, each group in natural order."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF022: a module's `__all__` list or tuple of strings that is not in isort order: SCREAMING_CASE
+// constants, then CamelCase classes, then the rest, each in natural order (digit runs by number). Checked:
+// `__all__ = …` (one target), `__all__: T = …`, `__all__ += …` and `__all__.extend(…)` at module level (in an
+// `if` too), when every element is a string and there are two or more. Reported at the sequence.
+//   __all__ = ["b", "a"]                ← RUF022
+//   __all__ = ["APRIL", "Day", "f"]     not reported
+//   __all__ = ["a01", "a1"]             not reported: a run starting with 0 compares digit by digit
+//   __all__ = {"b", "a"}                not reported: a set has no order
+#include "python/ruff-sorting.rr"
+
+.violation RUF022(at: node) code "RUF022"
+    "Sort `__all__`: SCREAMING_CASE constants first, then CamelCase classes, then the rest, each in natural order (digit runs by number). Leave it if other code relies on the current order."
+    suppress ruff "RUF022"
+RUF022(m) :- all_seq(v), unsorted(v, "isort"), unparen(v, m).
+
+sort_ask(v, "isort") :- all_seq(v).

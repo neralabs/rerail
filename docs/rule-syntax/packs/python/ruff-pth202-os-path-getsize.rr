@@ -1,0 +1,20 @@
+.policy "ruff-pth202-os-path-getsize" revision 2
+.description "Use Path.stat().st_size instead of os.path.getsize(); path objects read better than string-based os.path calls."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff PTH202 (flake8-use-pathlib): a call of `os.path.getsize`, however it is imported, with exactly one argument:
+// the `filename` parameter, by position or by keyword. pathlib's form is `Path(p).stat().st_size`.
+// Reported at the callee.
+//   os.path.getsize(p)              ← PTH202
+//   from os.path import getsize
+//   getsize(filename=p)             ← PTH202
+//   os.path.getsize(p, 1)           not reported: two arguments
+#include "python/pathlib.rr"
+//   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
+
+.violation PTH202(at: node, s: node) code "PTH202"
+    "Use `Path({s}).stat().st_size` instead of `os.path.getsize({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
+    suppress ruff "PTH202"
+PTH202(f, a) :- single_arg(_, "os.path.getsize", "filename", f, a).

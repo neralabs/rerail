@@ -1,0 +1,63 @@
+.policy "ruff-ruf013-implicit-optional" revision 3
+.description "Spell out Optional or a union with None in the annotation of a parameter whose default is None; leaving None out of the type is an implicit Optional."
+.language python
+.mode steer
+.scope include "**/*"
+
+// Ruff RUF013: a parameter defaulting to None whose annotation does not admit None (PEP 484 forbids the
+// implicit Optional). An annotation admits None when it is None, Optional (bare or not), Any, object or
+// Hashable, a Literal listing None, a Union or `|` with a member that admits None, or Annotated[T, …] of such
+// a T; a bare Literal, Union or Annotated does not, except a bare Annotated as the whole annotation. A type
+// Ruff does not know (a class of this file, an alias, an import from outside the standard library) is given
+// the benefit of the doubt; a string annotation is read as the type it holds.
+//   def f(arg: int = None): ...                   ← RUF013 at `int`
+//   def f(arg: Annotated[int, ...] = None): ...   ← RUF013 at `int`
+//   def f(arg: int | None = None): ...            not reported
+//   def f(arg: MyAlias = None): ...               not reported: unknown type
+#include "python/ruff-classes.rr"
+#include "../packs/python/ruff-ruf013-implicit-optional.stdlib.rr"   // stdlib_module(m), stdlib_module_in(m, minor)
+
+.violation RUF013(at: node) code "RUF013"
+    "Allow `None` explicitly: write `T | None` here (`Optional[T]` before Python 3.10), or give the parameter a default other than `None`."
+    suppress ruff "RUF013"
+RUF013(at) :- kind(p, "typed_default_parameter"), field(p, "value", v), unparen(v, n), kind(n, "none"),
+    field(p, "type", t), !allows(t), !ann_q(t, "typing.Annotated"), shown(t, at).
+
+// allows(t): annotation t admits None, or Ruff cannot tell.
+.decl allows(t: node)
+allows(t) :- ann_strip(t, m), kind(m, "none").
+allows(t) :- ann_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), (!known(m) ; ann_q(t, q), takes_none(q)).
+allows(t) :- head_q(t, "typing.Optional").
+allows(t) :- head_q(t, "typing.Literal"), lit_none(t).
+allows(t) :- head_q(t, "typing.Union"), type_app(t, _, _, a), allows(a).
+allows(t) :- head_q(t, "typing.Annotated"), type_app(t, _, 0, a), allows(a).
+allows(t) :- type_app(t, h, 0, _), !known(h).
+allows(t) :- ann_strip(t, m), (kind(m, "binary_operator") ; kind(m, "union_type")), op(m, "|"), child(m, x, _), allows(x).
+allows(t) :- ann_strip(t, s), (kind(s, "string") ; kind(s, "concatenated_string")), (!parsed(s, "annotation", _) ;
+    parsed(s, "annotation", r), allows(r)).
+allows(t) :- ann_strip(t, m), kind(m, k), !typed_kind(k).
+.decl typed_kind(k: symbol)
+typed_kind("none"). typed_kind("identifier"). typed_kind("attribute"). typed_kind("subscript"). typed_kind("generic_type").
+typed_kind("binary_operator"). typed_kind("union_type"). typed_kind("string"). typed_kind("concatenated_string").
+// Bare Optional, Any, object and Hashable take None. A bare Literal, Union or Annotated does not (a bare Annotated
+// is let through only as the whole annotation, above).
+.decl takes_none(q: symbol)
+takes_none("typing.Optional"). takes_none("typing.Any").
+takes_none("typing.Hashable"). takes_none("collections.abc.Hashable"). takes_none("builtins.object").
+// lit_none(t): Literal t lists None, directly or in a nested Literal.
+.decl lit_none(t: node)
+lit_none(t) :- type_app(t, _, _, a), ann_strip(a, m), kind(m, "none").
+lit_none(t) :- type_app(t, _, _, a), head_q(a, "typing.Literal"), lit_none(a).
+// known(m): a builtin, or a name from typing_extensions or the standard library of the target version (option
+// pythonVersion: `tomllib` from 3.11, `annotationlib` from 3.14, `distutils` up to 3.11).
+.decl known(m: node)
+known(m) :- ruff_qual(m, q), (prefix("builtins.", q) ; stdlib_known(@head(q))).
+.decl stdlib_known(m: symbol)
+stdlib_known(m) :- stdlib_module(m).
+stdlib_known(m) :- target_minor(t), stdlib_module_in(m, t).
+
+// shown(t, at): where Ruff reports: inside Annotated[…], at its type; in a string, at the type it parses to.
+.decl shown(t: node, at: node)
+shown(t, m) :- ann_strip(t, m), !head_q(t, "typing.Annotated"), !parsed(m, "annotation", _).
+shown(t, at) :- head_q(t, "typing.Annotated"), type_app(t, _, 0, a), shown(a, at).
+shown(t, at) :- ann_strip(t, s), parsed(s, "annotation", r), shown(r, at).
