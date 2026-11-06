@@ -79,7 +79,7 @@ pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupte
         .iter()
         .enumerate()
         .filter(|(_, n)| **n != 0)
-        .map(|(code, &n)| (lang * LANG_STRIDE + code as u32, n, statistics.sizes[code], std::mem::take(&mut positions.segments[code])))
+        .map(|(code, &n)| (lang * LANG_STRIDE + code as u32, n, statistics.sizes[code], positions.segment(code)))
         .collect();
     let mut set = TapePrefilter {
         tape_id,

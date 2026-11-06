@@ -97,6 +97,7 @@ pub(in crate::code_rule_dsl) fn input_columns(rel: &str) -> Option<&'static [&'s
         "field" => &["p", "f", "c"],
         "text" | "name" | "str" | "strprefix" | "value" => &["n", "s"],
         "intval" => &["n", "v"],
+        "op_at" => &["n", "i", "s"],
         "op" => &["n", "s"],
         "pkg" => &["d", "p"],
         "path_part" | "file_name" => &["d", "s"],

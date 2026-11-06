@@ -8,6 +8,9 @@
 //   sym_of(n, q)          identifier or member chain n denotes the exported symbol q, across files
 //   global_ref(r, x)      r names a global (window, process, …) that nothing in the file declares
 //   exports(m, x, q)      module m exports name x, which is symbol q
+//   jsx_tag_ref(r)        r is a component tag `<Row/>`, a value reference here (typescript-eslint's view; espree
+//                         makes none, so a rule following plain ESLint excludes these)
+//   spec_name(n, x)       an import or export list's name n reads x: `a`, or the value of a string `"a-b"`
 //   plus binding filters (site_used, site_only, …) that mirror ESLint's scope-manager questions.
 //
 // Symbols are written "module#name": "react#useState", "src/ui/button#Button". Two names in two files are the
@@ -24,13 +27,17 @@
 .decl fn_scope(kind: symbol)
 fn_scope("program"). fn_scope("function_declaration"). fn_scope("function_expression").
 fn_scope("arrow_function"). fn_scope("method_definition").
-fn_scope("generator_function_declaration").
+fn_scope("generator_function_declaration"). fn_scope("generator_function").
+// `class C { static { var a; } }`: a static block is a var scope of its own, as in eslint-scope.
+fn_scope("class_static_block").
 // block_scope: where let, const, class and function declarations live. `{ let x }` is invisible outside the braces;
 // `for (let i …)` binds i in the for statement; `catch (e)` binds e in the catch clause.
 .decl block_scope(kind: symbol)
 block_scope("program"). block_scope("statement_block"). block_scope("for_statement").
 block_scope("for_in_statement"). block_scope("catch_clause").
 block_scope("class_body"). block_scope("switch_body").
+// A class expression scopes its own name (below), heritage included: `(class D extends D {})` reads its own D.
+block_scope("class").
 
 // ---- declarations ------------------------------------------------------------------------------------------------
 // decl_site(scope, name, site, form, space): the site that declares name in scope; space is "value" or "type".
@@ -41,12 +48,17 @@ block_scope("class_body"). block_scope("switch_body").
 .decl decl_site(s: node, x: symbol, site: node, form: symbol, space: symbol)
 // `var x = 1` anywhere in function f (even inside an if or a loop) declares x in f: var is function-scoped.
 decl_site(s, x, d, "var", "value")   :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
-    text(n, x), nearest(d, v, "variable_declaration"), nearest(d, s, fn_scope).
+    text(n, x), child(v, d, _), kind(v, "variable_declaration"), nearest(d, s, fn_scope).
 // `let x` and `const x` (both are lexical_declaration) declare x in the innermost block. Form "let" covers const.
 decl_site(s, x, d, "let", "value")   :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
-    text(n, x), nearest(d, v, "lexical_declaration"), nearest(d, s, block_scope).
-// `const { a, b: c } = obj` declares a and c, in the same scope as the declarator that holds the pattern.
-decl_site(s, x, p, "pattern", "value") :- pattern_name(p, x, d), decl_site(s, _, d, _, "value").
+    text(n, x), child(v, d, _), kind(v, "lexical_declaration"), nearest(d, s, block_scope).
+// The declaration a declarator sits in is its parent: `var f = () => { let x }` declares x with let, not var.
+// `const { a, b: c } = obj` declares a and c where a plain `const a` would: the declaration's kind decides, var
+// in the function, let and const in the block.
+decl_site(s, x, p, "pattern", "value") :- pattern_name(p, x, d), child(v, d, _), kind(v, "variable_declaration"),
+    nearest(d, s, fn_scope).
+decl_site(s, x, p, "pattern", "value") :- pattern_name(p, x, d), child(v, d, _), kind(v, "lexical_declaration"),
+    nearest(d, s, block_scope).
 // `function f() {}` declares f in its enclosing block (ES2015 block-level functions, as eslint-scope models them).
 // It is hoisted within that block: a call above the declaration still resolves to it.
 decl_site(s, x, f, "function", "value") :- kind(f, "function_declaration"), field(f, "name", n), text(n, x),
@@ -54,14 +66,54 @@ decl_site(s, x, f, "function", "value") :- kind(f, "function_declaration"), fiel
 // `class C {}` declares C twice: as a value (the constructor, `new C()`) and as a type (`let c: C`).
 decl_site(s, x, c, "class", sp)     :- kind(c, "class_declaration"), field(c, "name", n), text(n, x),
     nearest(c, s, block_scope), (sp = "value" ; sp = "type").
+// `const f = function g() { g(); }`: g is bound inside the function only (eslint-scope's function-expression-name
+// scope, which sits outside the parameters). A parameter or var named g in the function shadows it, so then there
+// is no row: both would declare g in the same scope here.
+decl_site(f, x, f, "function", "value") :- kind(f, k), (k = "function_expression" ; k = "generator_function"),
+    field(f, "name", n), text(n, x), !fn_own_name(f, x).
+// `const C = class D { m() { D } }`: D is bound inside the class only (its heritage and body), as eslint-scope's
+// class scope binds it.
+decl_site(c, x, c, "class", sp) :- kind(c, "class"), field(c, "name", n), text(n, x), (sp = "value" ; sp = "type").
+// fn_own_name(f, x): function f has a parameter or a var named x.
+.decl fn_own_name(f: node, x: symbol)
+fn_own_name(f, x) :- field(f, "parameters", ps), within(p, ps), nearest(p, f, fn_scope), param_name(p, x).
+fn_own_name(f, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x), child(v, d, _),
+    kind(v, "variable_declaration"), nearest(d, f, fn_scope).
+// `for (const x of xs)`, `for (let [k, v] in o)`: tree-sitter has no declarator here; the loop's "left" field is the
+// name or pattern, and the loop is its block scope. `for (var k in o)` declares k in the function. `for (k in o)`
+// with no keyword declares nothing: k is an assignment to an outer name. The site is the identifier, as for params.
+decl_site(l, x, n, "let", "value") :- for_binding(l, n, x), (op(l, "let") ; op(l, "const")).
+decl_site(s, x, n, "var", "value") :- for_binding(l, n, x), op(l, "var"), nearest(l, s, fn_scope).
+.decl for_binding(l: node, n: node, x: symbol)
+for_binding(l, n, x) :- kind(l, "for_in_statement"), field(l, "left", n), kind(n, "identifier"), text(n, x).
+for_binding(l, n, x) :- kind(l, "for_in_statement"), field(l, "left", pat), within(n, pat), bound_name(n, x),
+    nearest(n, f, fn_scope), nearest(l, f, fn_scope).
 // `type T = …` and `interface I {}` declare only in the type namespace; they vanish at runtime.
 decl_site(s, x, t, "type", "type")   :- kind(t, k), (k = "type_alias_declaration" ; k = "interface_declaration"),
     field(t, "name", n), text(n, x), nearest(t, s, block_scope).
-// Parameters: in `function f(a, c = d)` a and c are declared with the function itself as scope. An identifier that
-// is a default value (`d`) is excluded: it is a reference, evaluated at call time. Only `identifier` nodes match,
-// so a destructured parameter `{ b }` (a shorthand pattern node) is not declared by this rule.
+// Parameters: in `function f(a, c = g(d), { e, h: [i] })` a, c, e and i are declared with the function itself as
+// scope. Default values (`g(d)`) and keys (`h`) are not: they are references, or no names at all. A name inside a
+// function nested in a default (`f(k = (j) => j)`) belongs to that function, hence nearest(p, f, fn_scope).
 decl_site(f, x, p, "param", "value") :- kind(f, k), fn_scope(k), field(f, "parameters", ps), within(p, ps),
-    kind(p, "identifier"), text(p, x), !field(_, "value", p).
+    nearest(p, f, fn_scope), param_name(p, x).
+// `x => x`: an arrow function's single bare parameter sits in its own field.
+decl_site(f, x, p, "param", "value") :- kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier"),
+    text(p, x).
+// `catch (e)` and `catch ({ message })` declare in the catch clause, which is the block scope of its body's names.
+decl_site(c, x, p, "catch", "value") :- kind(c, "catch_clause"), field(c, "parameter", p), kind(p, "identifier"),
+    text(p, x).
+decl_site(c, x, p, "catch", "value") :- kind(c, "catch_clause"), field(c, "parameter", par), within(p, par),
+    nearest(p, f, fn_scope), nearest(c, f, fn_scope), bound_name(p, x).
+// param_name(p, x): p binds x as a parameter: listed directly, the pattern of a TypeScript `a: T = v` parameter, or a
+// name a destructuring pattern or a default's left side binds (bound_name).
+.decl param_name(p: node, x: symbol)
+// tree-sitter writes `undefined` as a kind of its own, also where it is a parameter: `function f(undefined) {}`.
+param_name(p, x) :- param_id(p), text(p, x), child(ps, p, _), kind(ps, "formal_parameters").
+param_name(p, x) :- param_id(p), text(p, x), field(par, "pattern", p), kind(par, k),
+    (k = "required_parameter" ; k = "optional_parameter").
+.decl param_id(p: node)
+param_id(p) :- kind(p, "identifier") ; kind(p, "undefined").
+param_name(p, x) :- bound_name(p, x).
 // `import { a } from "m"` declares a for the whole file, in both namespaces: an import can bring in a value,
 // a type, or both, and without the other file we cannot tell which.
 decl_site(s, x, sp, "import", "value") :- import_binding(sp, x, _, _), nearest(sp, s, "program").
@@ -70,30 +122,64 @@ decl_site(s, x, sp, "import", "type")  :- import_binding(sp, x, _, _), nearest(s
 // a appears as shorthand_property_identifier_pattern, c as a plain identifier; keys sit in a "key" field.
 .decl pattern_name(p: node, x: symbol, d: node)  // a name bound by destructuring in declarator d
 pattern_name(p, x, d) :- kind(d, "variable_declarator"), field(d, "name", pat), kind(pat, k),
-    (k = "object_pattern" ; k = "array_pattern"), within(p, pat), kind(p, pk),
-    (pk = "shorthand_property_identifier_pattern" ; pk = "identifier"), text(p, x), !field(_, "key", p).
+    (k = "object_pattern" ; k = "array_pattern"), within(p, pat), bound_name(p, x),
+    nearest(p, f, fn_scope), nearest(d, f, fn_scope).   // not a parameter of a function in a default
+// bound_name(p, x): p is a name in a binding position of a pattern: directly in an object or array pattern, a pair's
+// value, a default's left side or a rest. Keys and default values are not: in `{ a: b = c }` only b is bound, and in
+// `{ a = g(c) }` c's parent is no pattern node. (Callers rule out patterns in functions nested inside a default.)
+.decl bound_name(p: node, x: symbol)
+bound_name(p, x) :- kind(p, pk), (pk = "shorthand_property_identifier_pattern" ; pk = "identifier"), text(p, x),
+    child(par, p, _), kind(par, k), binding_parent(k), !field(par, "key", p), !field(par, "right", p).
+.decl binding_parent(kind: symbol)
+binding_parent("object_pattern"). binding_parent("array_pattern"). binding_parent("pair_pattern").
+binding_parent("object_assignment_pattern"). binding_parent("assignment_pattern"). binding_parent("rest_pattern").
 
 // ---- references --------------------------------------------------------------------------------------------------
 // ref(r, x, space): node r uses the name x and looks it up in namespace space.
 // In `const y = x + 1`: x is a value ref; y is not (it is the declared name). In `let v: Props`: Props is a type ref.
 .decl ref(r: node, x: symbol, space: symbol)
 // A plain identifier that is not itself being declared (not a parameter site, not the "name" of a declaration).
-ref(r, x, "value") :- kind(r, "identifier"), text(r, x), !decl_site(_, x, r, _, _), !field(_, "name", r).
-// Type names in annotations: `x: Props`, `Array<Item>`.
-ref(r, x, "type")  :- kind(r, "type_identifier"), text(r, x).
+ref(r, x, "value") :- kind(r, "identifier"), text(r, x), !decl_site(_, x, r, _, _), !field(_, "name", r),
+    !type_qualifier(r).
+// `foo.Foo` and `a.b.C` in a type: the leftmost name is a namespace, looked up among types, so a parameter or
+// variable `foo` (a value only) does not shadow an imported or declared namespace `foo`.
+ref(r, x, "type")  :- type_qualifier(r), text(r, x).
+.decl type_qualifier(r: node)
+type_qualifier(r) :- kind(q, "nested_type_identifier"), field(q, "module", r), kind(r, "identifier").
+type_qualifier(r) :- kind(q, "nested_type_identifier"), field(q, "module", m), kind(m, "nested_identifier"),
+    within(r, m), kind(r, "identifier"), !field(_, "property", r).
+// `undefined` is its own node kind, not an identifier; it is a reference to the global (or to a parameter or
+// variable a sloppy script names undefined) like any other name.
+ref(r, "undefined", "value") :- kind(r, "undefined"), !decl_site(_, _, r, _, _).
+// Type names in annotations: `x: Props`, `Array<Item>`. Not the T of `N.T`, a member of the namespace N.
+ref(r, x, "type")  :- kind(r, "type_identifier"), text(r, x), !qualified_name(r).
+.decl qualified_name(r: node)  // r is the member name of a qualified type `N.T` or `a.b.T`
+qualified_name(r) :- kind(q, "nested_type_identifier"), field(q, "name", r).
+// A JSX tag that names a component, `<Row/>` (not an intrinsic `<div/>`): the value Row. typescript-eslint's scope
+// manager references these; espree's eslint-scope references no JSX names at all, so a rule that follows plain
+// ESLint excludes jsx_tag_ref. Closing tags repeat the name and are no second reference; `<A.B/>` is a member
+// chain whose A is an ordinary identifier already.
+ref(r, x, "value") :- jsx_tag_ref(r), text(r, x).
+.decl jsx_tag_ref(r: node)
+jsx_tag_ref(r) :- kind(r, "identifier"), field(o, "name", r),
+    (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), !match("[a-z].*", r).
 // `{ a }` in an object literal reads the variable a: shorthand `{ a }` means `{ a: a }`.
 ref(r, x, "value") :- kind(r, "shorthand_property_identifier"), text(r, x).
+// `({ a } = obj)` assigns the variable a: a shorthand pattern that declares nothing is a (write) reference.
+ref(r, x, "value") :- kind(r, "shorthand_property_identifier_pattern"), text(r, x), !decl_site(_, x, r, _, _).
 // Lookup: from the innermost scope outwards, to the first that declares the name in its namespace.
 // look(r, x, sp, s): scope s is on r's search path, and no scope nearer to r declared x. Each scope is reached
 // via nearest, so the climb is a chain of tape lookups, one step per enclosing scope.
 // Example: `let x; function f() { x }` starts at f's body block, finds no x, climbs to f, then to program: found.
 .decl look(r: node, x: symbol, sp: symbol, s: node)
-// Start: the innermost block and the innermost function around r (the function holds params and vars).
-look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, block_scope).
-look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, fn_scope).
+// lex_scope: every scope, block or function. The climb walks one chain through both kinds, innermost first, so
+// `function f(fs) { fs }` stops at f and `{ let fs; fs }` at the block: the outer `fs` is never reached.
+.decl lex_scope(kind: symbol)
+lex_scope(k) :- fn_scope(k) ; block_scope(k).
+// Start at the innermost scope around r.
+look(r, x, sp, s) :- ref(r, x, sp), nearest(r, s, lex_scope).
 // Step outwards only while the current scope does not declare x; so the inner declaration shadows outer ones.
-look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, block_scope).
-look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, fn_scope).
+look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p, lex_scope).
 
 // ==== interface ===================================================================================================
 // ref_site(r, site): reference r resolves to declaration site. The lookup above stops at the first scope that
@@ -101,7 +187,7 @@ look(r, x, sp, p) :- look(r, x, sp, s), !decl_site(s, x, _, _, sp), nearest(s, p
 // In `import { Link } from "x"; <Link/>`, the use of Link has ref_site to the import specifier.
 .decl ref_site(r: node, site: node)
 ref_site(r, d) :- look(r, x, sp, s), decl_site(s, x, d, _, sp).
-// site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern").
+// site_form(site, "import" | "var" | "let" | "function" | "class" | "type" | "param" | "pattern" | "catch").
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)
 site_form(d, f) :- decl_site(_, _, d, f, _).
@@ -127,7 +213,15 @@ global_ref(r, x) :- ref(r, x, "value"), !ref_site(r, _), es_global(x).
 //   import D from "m"               (clause, "D", "m", "default")
 //   import * as NS from "m"         (ns, "NS", "m", "*")         NS is the module object, see ns_target
 .decl import_binding(site: node, local: symbol, src: symbol, imported: symbol)
-import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), text(n, x),
+import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), spec_name(n, x),
+    local_of(sp, l), source_of(sp, m).
+// spec_name(n, x): a name in an import or export list, an identifier or (ES2022) a string, `{ "a-b" as c }`,
+// read as its value.
+.decl spec_name(n: node, x: symbol)
+spec_name(n, x) :- (field(sp, "name", n) ; field(sp, "alias", n)), (kind(sp, "import_specifier") ;
+    kind(sp, "export_specifier")), (kind(n, "string"), str(n, x) ; !kind(n, "string"), text(n, x)).
+// `import { default as foo }`: tree-sitter writes `default` as an anonymous token, so there is no name field.
+import_binding(sp, l, m, "default") :- kind(sp, "import_specifier"), !field(sp, "name", _), op(sp, "default"),
     local_of(sp, l), source_of(sp, m).
 // Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
 import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
@@ -136,7 +230,7 @@ import_binding(ns, l, m, "*") :- kind(ns, "namespace_import"), child(ns, id, 0),
 // local_of: the name a specifier binds in this file: the alias if there is one (`a as b` binds b), else the name.
 .decl local_of(sp: node, l: symbol)
 local_of(sp, l) :- field(sp, "alias", a), text(a, l).
-local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), text(n, l).
+local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, l).
 // source_of: the module specifier string of the enclosing import statement, without quotes: "./util", "react".
 .decl source_of(n: node, m: symbol)
 source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).
@@ -209,14 +303,16 @@ def_of(d, x) :- kind(d, "lexical_declaration"), child(d, v, _), kind(v, "variabl
 // export_from(e, s, y, x): e re-exports s's name y under the name x.
 .decl export_from(e: node, s: symbol, y: symbol, x: symbol)  // export { y as x } from "s"
 export_from(e, s, y, x) :- field(e, "source", src), str(src, s), child(e, c, _), kind(c, "export_clause"),
-    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), text(n, y), export_name(sp, x).
+    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), spec_name(n, y), export_name(sp, x).
 // export_name: the name the outside world sees: the alias if present (`y as x` -> x), else the name itself.
 .decl export_name(sp: node, x: symbol)
-export_name(sp, x) :- field(sp, "alias", a), text(a, x).
-export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), text(n, x).
-// star_export: an export with a source and no `{ … }` clause is `export * from "s"`.
+export_name(sp, x) :- field(sp, "alias", a), spec_name(a, x).
+export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, x).
+// star_export: an export statement with a source and no `{ … }` clause is `export * from "s"` (or `export * as
+// ns from "s"`). An import statement has a source too and is never one.
 .decl star_export(e: node, s: symbol)  // export * from "s"
-star_export(e, s) :- field(e, "source", src), str(src, s), count : { child(e, c, _), kind(c, "export_clause") } = 0.
+star_export(e, s) :- kind(e, "export_statement"), field(e, "source", src), str(src, s),
+    count : { child(e, c, _), kind(c, "export_clause") } = 0.
 
 // symbol(t, x, q): name x of resolved target t is symbol q.
 // Workspace module: follow its exports (possibly through re-exports to another file).

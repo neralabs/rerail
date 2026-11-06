@@ -336,26 +336,25 @@ pub(super) fn select(
                 if space.count(at) == 0 || gated.any.as_ref().is_some_and(|any| !any.contains(&file)) {
                     continue;
                 }
-                let base = space.base(at);
                 if let (false, Some(image)) = (wanted.is_empty(), store.working_set().kinds(file)) {
                     crate::code_rule_dsl::prof::count("working_set.kind_hits", 1);
                     for (&atom, &kind) in &wanted {
                         let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
                         let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        decode(postings, base, space.count(at), set)?;
+                        push_kinds(postings, at, space.count(at), set)?;
                     }
                 } else if !wanted.is_empty() {
                     let mut rows = kinds.query([file])?;
                     while let Some(row) = rows.next()? {
                         let Some(&kind) = wanted.get(&row.get::<_, i64>(0)?) else { continue };
                         let set = by_kind.entry(kind).or_insert_with(|| NodeSet::empty(&space));
-                        decode(row.get_ref(1)?.as_blob()?, base, space.count(at), set)?;
+                        push_kinds(row.get_ref(1)?.as_blob()?, at, space.count(at), set)?;
                     }
                 }
                 if reads_uncovered {
                     let mut rows = missing.query([file])?;
                     while let Some(row) = rows.next()? {
-                        decode(row.get_ref(0)?.as_blob()?, base, space.count(at), &mut uncovered)?;
+                        decode(row.get_ref(0)?.as_blob()?, at, space.count(at), &mut uncovered)?;
                     }
                 }
             }
@@ -378,7 +377,7 @@ pub(super) fn select(
                 let mut rows = postings.query(rusqlite::params![lang, term])?;
                 while let Some(row) = rows.next()? {
                     if let Some(&at) = index.get(&row.get::<_, i64>(0)?) {
-                        decode(row.get_ref(1)?.as_blob()?, space.base(at), space.count(at), &mut set)?;
+                        decode(row.get_ref(1)?.as_blob()?, at, space.count(at), &mut set)?;
                     }
                 }
             }
@@ -414,7 +413,7 @@ pub(super) fn select(
     for (set, gate) in outputs.iter_mut().zip(&gated.plans) {
         let Some(gate) = gate else { continue };
         let mut kept = NodeSet::empty(&space);
-        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| kept.fill(space.range(at)));
+        files.iter().enumerate().filter(|(_, file)| gate.contains(file)).for_each(|(at, _)| kept.fill_file(&space, at));
         set.intersect_with(&kept);
     }
     let ns_per_plan = started.elapsed().as_nanos() as f64 / outputs.len().max(1) as f64;
@@ -438,35 +437,79 @@ pub(in crate::code_rule_dsl) enum Device {
 
 /// The program's outputs, its operations on the host's bitmaps.
 fn evaluate(program: &Program, space: &NodeSpace, mut leaves: HashMap<usize, NodeSet>) -> Vec<NodeSet> {
-    let mut values: Vec<NodeSet> = Vec::with_capacity(program.ops.len());
+    // Each value is freed after the last operation that reads it (outputs are kept), and that
+    // operation takes it instead of copying it: the program holds its live values only.
+    let reads = |op: &Op| -> Vec<usize> {
+        match op {
+            Op::Empty | Op::All | Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered => Vec::new(),
+            Op::Union(ids) => ids.clone(),
+            Op::Intersect(a, b) | Op::Except(a, b) => vec![*a, *b],
+            Op::Within(scope, tests) => std::iter::once(*scope).chain(tests.iter().copied()).collect(),
+        }
+    };
+    let mut last = vec![None::<usize>; program.ops.len()];
     for (id, op) in program.ops.iter().enumerate() {
+        reads(op).into_iter().for_each(|read| last[read] = Some(id));
+    }
+    let outputs = program.outputs.iter().copied().collect::<std::collections::HashSet<_>>();
+    let dies_at = |value: usize, at: usize| !outputs.contains(&value) && last[value].is_none_or(|l| l == at);
+    let mut values: Vec<NodeSet> = Vec::with_capacity(program.ops.len());
+    // The leaves are read before the program runs: live from the start.
+    let (mut live, mut live_sets) = (leaves.values().map(NodeSet::bytes).sum::<usize>(), leaves.len());
+    let (mut peak, mut peak_sets) = (live, live_sets);
+    let (mut sizes, mut freed) = (Vec::with_capacity(program.ops.len()), Vec::with_capacity(program.ops.len()));
+    for (id, op) in program.ops.iter().enumerate() {
+        // The first operand, taken when this is its last read and no other operand is the same value.
+        let first = |values: &mut Vec<NodeSet>, first: usize, rest: &[usize]| -> NodeSet {
+            if dies_at(first, id) && !rest.contains(&first) { std::mem::take(&mut values[first]) } else { values[first].clone() }
+        };
         let value = match op {
             Op::Empty => NodeSet::empty(space),
             Op::All => NodeSet::all(space),
             Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered => leaves.remove(&id).expect("a read leaf"),
             Op::Union(ids) => {
-                let mut set = values[ids[0]].clone();
+                let mut set = first(&mut values, ids[0], &ids[1..]);
                 ids[1..].iter().for_each(|&id| set.union_with(&values[id]));
                 set
             }
             Op::Intersect(a, b) => {
-                let mut set = values[*a].clone();
+                let mut set = first(&mut values, *a, &[*b]);
                 set.intersect_with(&values[*b]);
                 set
             }
             Op::Except(a, b) => {
-                let mut set = values[*a].clone();
+                let mut set = first(&mut values, *a, &[*b]);
                 set.difference_with(&values[*b]);
                 set
             }
             Op::Within(scope, tests) => {
-                let mut set = values[*scope].clone();
+                let mut set = first(&mut values, *scope, tests);
                 set.within_files(space, &tests.iter().map(|&id| &values[id]).collect::<Vec<_>>());
                 set
             }
         };
+        sizes.push(value.bytes());
+        freed.push(false);
+        if !matches!(op, Op::Kinds(_) | Op::Terms { .. } | Op::Uncovered) {
+            live += sizes[id];
+            live_sets += 1;
+        }
         values.push(value);
+        (peak, peak_sets) = (peak.max(live), peak_sets.max(live_sets));
+        for read in reads(op).into_iter().chain(std::iter::once(id)) {
+            if dies_at(read, id) && (read != id || last[id].is_none()) && !freed[read] {
+                live -= sizes[read];
+                live_sets -= 1;
+                freed[read] = true;
+                values[read] = NodeSet::default();
+            }
+        }
     }
+    // The most the program held at once, and what dense words over the space would have held.
+    crate::code_rule_dsl::prof::count("sets.peak_live", peak_sets);
+    crate::code_rule_dsl::prof::count("sets.peak_bytes", peak);
+    crate::code_rule_dsl::prof::count("sets.peak_dense_bytes", peak_sets * space.words() * 8);
+    crate::code_rule_dsl::prof::count("sets.ops", program.ops.len());
     program.outputs.iter().map(|&id| values[id].clone()).collect()
 }
 
@@ -499,17 +542,26 @@ fn evaluate_metal(program: &Program, space: &NodeSpace, leaves: &HashMap<usize, 
     crate::code_rule_dsl::prof::count("set.withins", steps.iter().filter(|step| matches!(step, SetStep::Within { .. })).count());
     crate::code_rule_dsl::prof::count("set.programs", 1);
     let files = (0..space.files()).map(|file| (space.base(file), space.count(file))).collect::<Vec<_>>();
-    let leaves = leaves.iter().map(|(&id, set)| (id, set.words())).collect::<Vec<_>>();
+    let leaves = leaves.iter().map(|(&id, set)| (id, set.to_words(space))).collect::<Vec<_>>();
+    let leaves = leaves.iter().map(|(id, words)| (*id, words.as_slice())).collect::<Vec<_>>();
     let words = set_steps::run(&files, space.len(), program.ops.len(), &leaves, &steps, &program.outputs)
         .map_err(|error| crate::content_store::StoreError::Invalid(format!("the set steps failed on Metal: {error:?}")))?;
-    Ok(words.into_iter().map(|words| NodeSet::from_words(space, words)).collect())
+    Ok(words.into_iter().map(|words| NodeSet::from_words(space, &words)).collect())
 }
 
-/// Adds a posting segment's nodes (preorders as varint deltas, from 0) of a file of `count`
-/// nodes at `base` to `set`.
-fn decode(bytes: &[u8], base: u32, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
+/// Adds a kind's container segment (`content_store::postings::segment_positions`) of the space's
+/// file `file`, of `count` nodes, to `set`: its containers are copied, not decoded.
+fn push_kinds(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
+    let invalid = |why: &str| rusqlite::Error::UserFunctionError(format!("invalid kind segment: {why}").into());
+    set.push_segment(file, bytes, count).map_err(invalid)
+}
+
+/// Adds a posting segment's nodes (preorders as varint deltas, from 0) of the space's file `file`,
+/// of `count` nodes, to `set`.
+fn decode(bytes: &[u8], file: usize, count: u32, set: &mut NodeSet) -> rusqlite::Result<()> {
     let invalid = || rusqlite::Error::UserFunctionError("invalid posting".into());
     let (mut at, mut pre) = (0, 0_u32);
+    let mut positions = Vec::new();
     while at < bytes.len() {
         let mut delta = 0_u32;
         let mut shift = 0;
@@ -529,7 +581,9 @@ fn decode(bytes: &[u8], base: u32, count: u32, set: &mut NodeSet) -> rusqlite::R
             }
         }
         pre = pre.checked_add(delta).filter(|&pre| pre < count).ok_or_else(invalid)?;
-        set.insert(base + pre);
+        positions.push(pre);
     }
+    positions.dedup();
+    set.insert_file(file, positions);
     Ok(())
 }

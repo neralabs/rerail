@@ -41,41 +41,103 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
 
 /// A program's `.rr` file, with what it includes.
 pub(in crate::code_rule_dsl) fn parse_file(path: &Path) -> Result<Program, Error> {
-    let files = program(path)?;
-    lower::lower(files.into_iter().flat_map(|(_, statements)| statements).collect())
+    read_file(path).map(|(program, _)| program)
 }
 
-fn read(path: &Path) -> Result<Vec<syntax::Statement>, Error> {
-    let src = std::fs::read_to_string(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
-    syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))
+/// A library file a program read: decision 0044's seeded fact `library_file(path, hash)`. `sha256`
+/// is of the file's bytes, or `None` where an `#include` looked and found no file (a file
+/// appearing there changes what the program reads).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::code_rule_dsl) struct LibraryFile {
+    pub path: PathBuf,
+    pub sha256: Option<[u8; 32]>,
 }
 
-/// A file and everything it includes, each once, includes first: (path, statements without the includes).
-fn program(path: &Path) -> Result<Vec<(PathBuf, Vec<syntax::Statement>)>, Error> {
-    fn visit(path: &Path, out: &mut Vec<(PathBuf, Vec<syntax::Statement>)>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
+impl LibraryFile {
+    fn now(path: &Path) -> Self {
+        use sha2::{Digest as _, Sha256};
+        Self { path: path.to_owned(), sha256: std::fs::read(path).ok().map(|bytes| Sha256::digest(&bytes).into()) }
+    }
+
+    /// The seeded fact, for a file that exists.
+    // Read by the runner's record when it seeds the store (0044 step 2).
+    #[allow(dead_code)]
+    pub(in crate::code_rule_dsl) fn fact(&self) -> Option<String> {
+        let hash = self.sha256?;
+        let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        Some(format!("library_file({}, \"sha256:{hex}\").", quote(&self.path.to_string_lossy())))
+    }
+}
+
+/// The program of a `.rr` file and the library files it read or probed, in reading order (core.rr, then
+/// each file before what it includes).
+///
+/// The lowered program is a derivation of those files (0044 §4): it is kept for the process and
+/// reused while every file it read hashes the same, so only an edit to a file it read (or a
+/// file appearing where an include looked) reads and lowers it again.
+pub(in crate::code_rule_dsl) fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
+    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let cache = PROGRAMS.get_or_init(Default::default);
+    if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
+        && files.iter().all(|file| LibraryFile::now(&file.path) == *file)
+    {
+        crate::code_rule_dsl::prof::count("rr.program_reused", 1);
+        return Ok((program.clone(), files.clone()));
+    }
+    let (statements, files) = program(path)?;
+    let program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    Ok((program, files))
+}
+
+fn read(path: &Path) -> Result<(Vec<syntax::Statement>, LibraryFile), Error> {
+    use sha2::{Digest as _, Sha256};
+    let bytes = std::fs::read(path).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let file = LibraryFile { path: path.to_owned(), sha256: Some(Sha256::digest(&bytes).into()) };
+    let src = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let statements = syntax::Parser::new(&src)?.statements().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    Ok((statements, file))
+}
+
+type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
+
+/// A file and everything it includes, each once, includes first: (path, statements without the
+/// includes); and every library file read or probed, in reading order.
+fn program(path: &Path) -> Result<(Files, Vec<LibraryFile>), Error> {
+    fn visit(path: &Path, out: &mut Files, read_files: &mut Vec<LibraryFile>, seen: &mut Vec<PathBuf>) -> Result<(), Error> {
         let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
         if seen.contains(&path) {
             return Ok(());
         }
         seen.push(path.clone());
-        let (includes, rest): (Vec<_>, Vec<_>) = read(&path)?.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
+        let (statements, file) = read(&path)?;
+        read_files.push(file);
+        let (includes, rest): (Vec<_>, Vec<_>) = statements.into_iter().partition(|(item, _)| matches!(item, syntax::Item::Include(_)));
         for (item, line) in includes {
             let syntax::Item::Include(name) = item else { unreachable!("an include") };
             let in_library = library().join(&name);
             let beside = path.parent().map(|d| d.join(&name)).unwrap_or_default();
-            let found = if in_library.exists() { in_library } else { beside };
+            let found = if in_library.exists() {
+                in_library
+            } else {
+                read_files.push(LibraryFile { path: in_library, sha256: None });
+                beside
+            };
             if !found.exists() {
                 return Err(Error::Syntax(format!("{}:{line}: #include {name:?}: no such file", path.display())));
             }
-            visit(&found, out, seen)?;
+            visit(&found, out, read_files, seen)?;
         }
         out.push((path, rest));
         Ok(())
     }
-    let mut out = Vec::new();
+    let (mut out, mut read_files) = (Vec::new(), Vec::new());
     // `core.rr` is every program's prelude (the base relations and built-ins), included or not.
-    visit(&library().join("core.rr"), &mut out, &mut Vec::new())?;
+    visit(&library().join("core.rr"), &mut out, &mut read_files, &mut Vec::new())?;
     let mut seen = vec![library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?];
-    visit(path, &mut out, &mut seen)?;
-    Ok(out)
+    visit(path, &mut out, &mut read_files, &mut seen)?;
+    Ok((out, read_files))
 }

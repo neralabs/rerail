@@ -1,0 +1,73 @@
+// python/upgrade-format: the vocabulary of Ruff's pyupgrade rules on strings and on calls' arguments: string
+// literals and their escapes, `.encode()`, open() and subprocess modes, and the format-string rewrites (UP030-UP032).
+// Format strings themselves are parsed by python/pyflakes-format; this file adds what the rewrites ask of them.
+//
+// Interface
+//   1. Arguments:  up_arg, up_kw, up_kwarg, up_argc, up_splat: python/upgrade
+//   2. Strings:    str_lit(e, v)          e, through parentheses, is a str literal (adjacent ones joined, no f, t
+//                                         or b prefix) with decoded value v (python/pyflakes' plain_str)
+//                  fstr_lit(e)            e, through parentheses, is an f-string, or adjacent literals one of which is
+//                  wide_escape(e)         a non-raw piece of literal e has a `\N{…}`, `\u` or `\U` escape, or an
+//                                         octal escape above `\377` (Ruff will not rewrite those to bytes)
+//                  ascii_str(v)           v is ASCII
+//                  lit_piece(e, s)        s is a piece of literal e: e itself, or each of adjacent literals
+//                  u_piece(s)             string piece s has a `u` or `U` prefix
+//   3. Encodings:  utf8_name(x)           Ruff's spellings of UTF-8, lowercased: "utf-8", "u8", "cp65001", …
+//                  utf8_only_arg(c)       c's one argument is UTF-8: `("utf-8")` or `(encoding="utf8")`
+//   5. Percent:    pct_conv(v, i, flags, conv)   placeholder i of printf-style string v (pyflakes-format's pct_spec)
+//                                         has these flags (`#0- +`) and conversion character
+//                  rhs_form(e)            the right side of `S % e` is one Ruff rewrites: a literal, a name, an
+//                                         attribute, a subscript, a call, a tuple or a dict (UP031)
+//
+// Python background
+//   - `"a" "b"` is one constant; a piece with `f` makes the whole an f-string.
+//   - Escapes: in a non-raw str, `\\` is a backslash, so `"\\u0031"` holds a backslash and `u0031`, not an escape.
+//   - `s.encode()` encodes as UTF-8; Ruff's is_utf8 reads the codec name case-insensitively.
+//
+//   "foo".encode("UTF8")          str_lit(<"foo">, "foo"), utf8_only_arg(<call>)        (UP012)
+//   "\N{DIGIT ONE}".encode()      wide_escape(<"\N{DIGIT ONE}">): not a bytes literal   (UP012)
+#include "python/upgrade.rr"          // the target version, names in Ruff's order, call arguments
+#include "python/pyflakes-format.rr"   // percent_fmt, pct_spec, format_call, brace_*; includes python/pyflakes
+
+// ---- 1. arguments: python/upgrade (up_arg, up_kw, up_kwarg, up_argc, up_splat) ---------------------------------
+
+// ---- 2. strings --------------------------------------------------------------------------------------------------
+.decl str_lit(e: node, v: symbol)
+str_lit(e, v) :- unparen(e, m), plain_str(m, v).
+.decl fstr_lit(e: node)
+fstr_lit(e) :- unparen(e, m), fstring(m).
+// wide_escape(e): an odd run of backslashes before N, u or U, or before an octal escape above \377 (`\477`),
+// in a piece without an r prefix.
+.decl wide_escape(e: node)
+wide_escape(e) :- unparen(e, m), lit_piece(m, s), strprefix(s, p), !contains("r", p),
+    match("[\\s\\S]*?(^|[^\\\\])(\\\\\\\\)*\\\\([NuU]|[4-7][0-7][0-7])[\\s\\S]*", s).
+.decl lit_piece(e: node, s: node)  // the pieces of a literal: itself, or each piece of adjacent ones
+lit_piece(e, e) :- kind(e, "string").
+lit_piece(e, s) :- kind(e, "concatenated_string"), child(e, s, _), kind(s, "string").
+.decl ascii_str(v: symbol)
+ascii_str(v) :- str_lit(_, v), match("[\\x00-\\x7f]*", v).
+.decl u_piece(s: node)
+u_piece(s) :- kind(s, "string"), strprefix(s, "u").
+
+// ---- 3. encodings ------------------------------------------------------------------------------------------------
+.decl utf8_name(x: symbol)
+utf8_name("utf-8"). utf8_name("utf8"). utf8_name("utf_8"). utf8_name("u8"). utf8_name("utf").
+utf8_name("cp65001").
+.decl utf8_only_arg(c: node)
+utf8_only_arg(c) :- up_argc(c, 1), (up_arg(c, 0, a) ; call_kw(c, "encoding", a)), str_lit(a, x), utf8_name(@lower(x)).
+
+// ---- 5. percent format -------------------------------------------------------------------------------------------
+// pct_conv(v, i, flags, conv): the parts of placeholder i that pct_spec does not keep, by the same regex.
+//   "%-5d" gives flags "-", conv "d"
+.decl pct_conv(v: symbol, i: number, flags: symbol, conv: symbol)
+pct_conv(v, i, fl, cv) :- pct_spec(v, i, _, _, _, _), pct_rest(v, r, i), match(
+    "[^%]*%(\\([^)]*\\))?(?<fl>[#0 +\\-]*)(\\*|[0-9]+)?(\\.(\\*|[0-9]*))?[hlL]?(?<cv>[diouxXeEfFgGcrsab])[\\s\\S]*",
+    r).
+// rhs_form(e): Ruff's printf rewrite reads these right sides and leaves every other one (a list, an operator,
+// a lambda, `-1`, a comprehension, …) alone.
+.decl rhs_form(e: node)
+rhs_form(e) :- kind(e, k), rhs_kind(k).
+.decl rhs_kind(k: symbol)
+rhs_kind("string"). rhs_kind("concatenated_string"). rhs_kind("integer"). rhs_kind("float"). rhs_kind("true").
+rhs_kind("false"). rhs_kind("none"). rhs_kind("ellipsis"). rhs_kind("identifier"). rhs_kind("attribute").
+rhs_kind("subscript"). rhs_kind("call"). rhs_kind("tuple"). rhs_kind("dictionary").

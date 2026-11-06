@@ -54,7 +54,7 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     let domain = |tbl: &str, col: &str| match (tbl, col) {
         ("node", "kind") => Domain::Kind,
         ("field", "f") => Domain::Field,
-        ("text" | "op" | "path_part" | "file_name" | "value", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
+        ("text" | "op" | "op_at" | "path_part" | "file_name" | "value", "s") | ("doc", "path" | "module") | ("pkg", "p") => Domain::Name,
         _ => Domain::Int,
     };
     db.execute_batch(

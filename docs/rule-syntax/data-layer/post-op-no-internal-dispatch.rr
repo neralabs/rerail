@@ -80,7 +80,7 @@ enum_ref(n, s) :- kind(n, "attribute"), field(n, "object", o), kind(o, "identifi
 // By resolution: any attribute that resolves to a case of one of the enums, e.g. through `import … as RBN`.
 // The regex keeps the last "Enum.CASE" of the qualified name.
 enum_ref(n, s) :- kind(n, "attribute"), sym_of(n, q),
-    match(".*?(?<s>(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)\.[^.]+)", q).
+    match(".*?(?<s>(?:ResultMaterializationKind|RuntimeBuilderKind|RuntimeBuilderName)\\.[^.]+)", q).
 .decl enum_cmp(c: node, s: symbol)
 // cmp(c, op, l, r) has a row only for single-operator comparisons, as _comparison_symbol requires. Left side first;
 // the right side is tried only when the left is no enum case (the Python linter's `left or comparators[0]`).
@@ -88,10 +88,10 @@ enum_cmp(c, s) :- cmp(c, o, l, _), eq_op(o), enum_ref(l, s).
 enum_cmp(c, s) :- cmp(c, o, l, r), eq_op(o), !enum_ref(l, _), enum_ref(r, s).
 
 // 001: one case compared more than once in the same function, reported once, at the first comparison.
-// `count : { … precedes … } = 0` picks the comparison with no earlier one of the same case; the other count
+// `count : { … earlier … } = 0` picks the comparison with no earlier one of the same case; the other count
 // counts them all.
 .violation POSTOPDISPATCH001(at: node, fn: symbol, case: symbol, n: number) "{fn}: {case} is checked {n} times in one function"
-POSTOPDISPATCH001(c, x, s, k) :- enum_cmp(c, s), in_fn(c, f, x), count : { enum_cmp(p, s), in_fn(p, f, _), precedes(p, c) } = 0,
+POSTOPDISPATCH001(c, x, s, k) :- enum_cmp(c, s), in_fn(c, f, x), count : { enum_cmp(p, s), in_fn(p, f, _), earlier(p, c) } = 0,
     k = count : { enum_cmp(d, s), in_fn(d, f, _) }, k > 1.
 // 002: a materializer (by name, post_op.py helpers excluded) compares a RuntimeBuilderName case at all.
 .violation POSTOPDISPATCH002(at: node, fn: symbol, case: symbol) "{fn}: materializers must not dispatch on {case}"

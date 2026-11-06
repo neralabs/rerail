@@ -298,8 +298,15 @@ pub(in crate::code_rule_dsl) fn lower(
                         k.term(t, col(&a.rel, c))?;
                     }
                 }
-                Literal::Cmp { l, r, .. } => {
+                Literal::Cmp { l, op, r } => {
                     let of = |t: &Term| if let Term::Var(v) = t { vars.get(v).copied() } else { None };
+                    // Symbols are ordered by their text, not their atoms: `$t > $s` is `@str_cmp($t, $s) > 0`.
+                    if matches!(*op, "<" | "<=" | ">" | ">=") && (of(l) == Some(Domain::Name) || of(r) == Some(Domain::Name)) {
+                        let mut pair = [std::mem::replace(l, Term::Int(0)), std::mem::replace(r, Term::Int(0))];
+                        pair.iter_mut().try_for_each(|t| k.term(t, Some(Domain::Name)))?;
+                        *l = Term::Call("str_cmp".to_owned(), pair.into());
+                        continue;
+                    }
                     // Membership of a kind or field, `@equals($k, {"a", "b"})`: `@in` of their atoms.
                     if let Term::Call(f, args) = l
                         && f == "equals"

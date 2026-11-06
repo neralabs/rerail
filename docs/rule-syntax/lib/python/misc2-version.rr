@@ -1,0 +1,48 @@
+// python/misc2-version: reading the interpreter version through `sys`, as Ruff's flake8-2020 (YTT) rules see it.
+// They look for version checks that break on Python 3.10 (a two-digit minor) or Python 4 (a new major).
+//
+// Interface
+//   ytt_sys(e, x)              e, parentheses off, resolves to `sys.x`: `sys.version`, or `version` after
+//                              `from sys import version` (aliases too). Only through the import, as Ruff's
+//                              resolve_qualified_name does.
+//   ytt_version_index(v, k)    v is `sys.version` indexed by the int literal k: `sys.version[2]` (YTT102, YTT301)
+//   ytt_version_upto(v, k)     v is `sys.version` sliced as `[:k]`, k an int literal, no lower bound or step
+//                              (YTT101, YTT303)
+//   ytt_single_cmp(c, l, o, r) c is a comparison with one operator o, `l o r`; l and r without parentheses
+//   ytt_order(o)               o is <, <=, > or >= (an ordering, not an equality)
+//   ytt_info_index(l, k)       l is `sys.version_info[k]`, k an int literal (YTT201, YTT203)
+//
+// Python background
+//   sys.version is a string, "3.10.4 (main, …)", so `sys.version[:3]` is "3.1" on 3.10, and `sys.version >= "3.9"`
+//   is false there ("3.10" < "3.9" as strings). sys.version_info is a tuple of ints; compare it to a tuple:
+//
+//   sys.version[:3]                 ytt_version_upto(<sys.version>, "3")
+//   sys.version[2]                  ytt_version_index(<sys.version>, "2")
+//   sys.version >= "3.9"            ytt_single_cmp(<cmp>, <sys.version>, ">=", <"3.9">), ytt_sys(<sys.version>, "version")
+//   sys.version_info[1] < 7         ytt_info_index(<sys.version_info[1]>, "1")
+#include "python/ruff.rr"   // ruff_qual, ruff_int, slice_part
+
+.decl ytt_sys(e: node, x: symbol)
+ytt_sys(e, x) :- ruff_qual(e, q), split_dot(q, "sys", x).
+
+// ytt_subscript(s, v, i): s is `v[i]` with one subscript i (`v[a, b]` is a tuple and is not this); v without
+// parentheses, as Ruff's tree has none: `(sys.version)[0]` gives v = `sys.version`.
+.decl ytt_subscript(s: node, v: node, i: node)
+ytt_subscript(s, v, i) :- kind(s, "subscript"), field(s, "value", v0), unparen(v0, v), field(s, "subscript", i),
+    count : { field(s, "subscript", _) } = 1.
+
+.decl ytt_version_index(v: node, k: symbol)
+ytt_version_index(v, k) :- ytt_subscript(_, v, i), ytt_sys(v, "version"), ruff_int(i, k).
+
+.decl ytt_version_upto(v: node, k: symbol)
+ytt_version_upto(v, k) :- ytt_subscript(_, v, sl), kind(sl, "slice"), ytt_sys(v, "version"),
+    slice_part(sl, "upper", u), ruff_int(u, k), !slice_part(sl, "lower", _), !slice_part(sl, "step", _).
+
+.decl ytt_single_cmp(c: node, l: node, o: symbol, r: node)
+ytt_single_cmp(c, l, o, r) :- cmp_pair(c, 0, o, l0, r0), !cmp_pair(c, 1, _, _, _), unparen(l0, l), unparen(r0, r).
+
+.decl ytt_order(o: symbol)
+ytt_order("<"). ytt_order("<="). ytt_order(">"). ytt_order(">=").
+
+.decl ytt_info_index(l: node, k: symbol)
+ytt_info_index(l, k) :- ytt_subscript(l, v, i), ytt_sys(v, "version_info"), ruff_int(i, k).

@@ -12,9 +12,12 @@
 //   api_impl           an api/ file other than __init__.py imports impl.*
 //   conform_impl       a conform/ file other than conftest.py imports impl.*
 //   group_dependency   (--check-groups) a layer imports from a group its LAYER_GROUPS.yaml entry does not allow
-// Improves on the Python linter:
-//   relative imports are resolved before the checks (the Python linter drops the dots, so `from ..l9600_x import y` passed);
-//   TYPE_CHECKING is resolved, not matched by name, and only its body is exempt (the Python linter also exempts `else:`).
+// TYPE_CHECKING is matched by text, as the Python linter's is_type_checking_block does: an `if` whose condition is the
+//   bare name TYPE_CHECKING, imported or not, exempts every import below it, `elif` and `else` branches included.
+//   `if typing.TYPE_CHECKING:` exempts nothing. The text decides; nothing is resolved (the recorded findings are the
+//   reference, and they follow the text).
+// Modules are the written text too, as the linter's ast.ImportFrom.module and alias.name are (lint_import): a relative
+//   import's dots are dropped, so `from ..l9600_x import y` is module l9600_x, and `from . import x` is no import.
 //
 // How to read this file
 //   1. edge(i, d, m) is the one input every violation reads: import i in document d loads module m, at run time.
@@ -26,9 +29,8 @@
 // which is the Python linter's `"tests" in source_file.parts`.
 
 #include "python/imports.rr"
-//   import_alias(i, a, module, name, local)   module absolute, relative imports resolved
 #include "python/names.rr"
-//   type_checking_block(b)
+//   fdef
 
 // fdef (python/names): plain defs, async defs included. Used only to tell deferred imports from module-level ones
 // in the metrics.
@@ -49,14 +51,33 @@ group_skip("tests"). group_skip("__pycache__"). group_skip(".venv").
 group_skip("conform").
 
 // edge(i, d, m): import statement i in document d imports module m, outside TYPE_CHECKING.
-// tc(i): import i sits under `if TYPE_CHECKING:` (anywhere below its body, however deeply nested).
-// The Python linter skips these before every check (_check_import_violations), and so does edge.
+// tc(i): import i sits anywhere below an `if TYPE_CHECKING:` statement (tc_if), in any of its branches, however deeply
+// nested. The Python linter skips these before every check (_check_import_violations), and so does edge.
 .decl tc(i: node)
-tc(i) :- import_alias(i, _, _, _, _), within(i, b), type_checking_block(b).
+tc(i) :- lint_import(i, _), within(i, f), tc_if(f).
+// tc_if(f): the linter's is_type_checking_block: f's condition is the name TYPE_CHECKING (ast.Name), parentheses
+// aside. Not resolved: an unimported TYPE_CHECKING counts, `typing.TYPE_CHECKING` and `not TYPE_CHECKING` do not.
+// In Python's ast an `elif` is an If nested in the else branch, so `elif TYPE_CHECKING:` exempts its own body and the
+// `elif`/`else` clauses after it (precedes: later clauses of the same `if`).
+.decl tc_if(f: node)
+tc_if(f) :- kind(f, "if_statement"), field(f, "condition", c), tc_name(c).
+tc_if(e) :- kind(e, "elif_clause"), field(e, "condition", c), tc_name(c).
+tc_if(e) :- kind(e0, "elif_clause"), field(e0, "condition", c), tc_name(c), precedes(e0, e),
+    (kind(e, "elif_clause") ; kind(e, "else_clause")).
+.decl tc_name(c: node)
+tc_name(c) :- kind(c, "identifier"), name(c, "TYPE_CHECKING").
+tc_name(c) :- kind(c, "parenthesized_expression"), child(c, x, 0), tc_name(x).
+// lint_import(i, m): the linter's ImportInfo.module_name for statement i. `import a.b, c as d` gives a.b and c, one
+// each; `from m import x, y` gives m once; `from .m import x` gives m, the dots dropped; `from . import x` none.
+.decl lint_import(i: node, m: symbol)
+lint_import(i, m) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "dotted_name"), name(n, m).
+lint_import(i, m) :- kind(i, "import_statement"), field(i, "name", n), kind(n, "aliased_import"), field(n, "name", d),
+    name(d, m).
+lint_import(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), name(n, m).
+lint_import(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "relative_import"),
+    child(n, d, _), kind(d, "dotted_name"), name(d, m).
 .decl edge(i: node, d: number, m: symbol)
-// import_alias gives one row per imported name; edge keeps only (statement, module), so `from m import a, b` is one
-// edge, as in the Python linter's ImportFrom handling. m != "" drops rows whose module could not be resolved.
-edge(i, d, m) :- import_alias(i, _, m, _, _), m != "", !tc(i), docof(i, d).
+edge(i, d, m) :- lint_import(i, m), !tc(i), docof(i, d).
 
 // Ratchet metrics internal_module_level / internal_deferred / internal_type_checking: api.* and impl.* imports
 // by style, TYPE_CHECKING ones included. Counted, never reported.
@@ -69,7 +90,7 @@ internal_import(i, m, "type_checking") :- internal_alias(i, m), tc(i).
 internal_import(i, m, "deferred")      :- internal_alias(i, m), !tc(i), nearest(i, _, fdef).
 internal_import(i, m, "module_level")  :- internal_alias(i, m), !tc(i), !nearest(i, _, fdef).
 .decl internal_alias(i: node, m: symbol)
-internal_alias(i, m) :- import_alias(i, _, m, _, _), glob("{api,impl}.**", m).
+internal_alias(i, m) :- lint_import(i, m), glob("{api,impl}.**", m).
 
 // layer_dependency: a file in layer lNNNN imports from a higher-numbered layer.
 // Python linter: check_layer_dependency. Each negated test below is one of its early returns.
@@ -85,7 +106,7 @@ internal_alias(i, m) :- import_alias(i, _, m, _, _), glob("{api,impl}.**", m).
 layer_dependency(i, s, t, m) :- edge(i, d, m), path_part(d, top), app(top),
     count : { path_part(d, p), layer_free_dir(p) } = 0,
     count : { path_part(d, "l7200_versioned_transactions"), file_name(d, f), vt_file(f) } = 0,
-    doc(d, _, q), match("(?:|.*?\.)l(?<s>\d{4})_.*", q), match(".*?\.l(?<t>\d{4})_.*", m),
+    doc(d, _, q), match("(?:|.*?\\.)l(?<s>\\d{4})_.*", q), match(".*?\\.l(?<t>\\d{4})_.*", m),
     t > s,   // 4 digits: text order
     count : { path_part(d, "l2100_sql_grammar"), t = "2200" } = 0.
 
@@ -195,6 +216,6 @@ conform_impl(i, m) :- edge(i, d, m), prefix("impl.", m), path_part(d, "conform")
 // b: the imported module's layer: the first dotted segment of the same shape.
 // Then both layers must be in a known group (layer_group); unknown layers give no row, as in the Python linter.
 group_dependency(i, g, h, m) :- edge(i, d, m), count : { path_part(d, p), group_skip(p) } = 0,
-    doc(d, path, _), match("(?:|.*?/)(?<a>l\d{4}[^/]*_[^/]*|types|row_id)(?:/.*)?", path),
-    match("(?:|.*?\.)(?<b>l\d{4}[^.]*_[^.]*).*", m),
+    doc(d, path, _), match("(?:|.*?/)(?<a>l\\d{4}[^/]*_[^/]*|types|row_id)(?:/.*)?", path),
+    match("(?:|.*?\\.)(?<b>l\\d{4}[^.]*_[^.]*).*", m),
     layer_group(a, g), layer_group(b, h), g != h, !group_allows(g, h).

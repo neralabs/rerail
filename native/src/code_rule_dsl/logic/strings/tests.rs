@@ -117,3 +117,16 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
     assert_eq!(json_str("a\"b\u{e9}\u{1f600}"), "\"a\\\"b\\u00e9\\ud83d\\ude00\"");
 }
+
+/// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
+#[test]
+fn globs_nest_alternatives() {
+    let p = "{{versioned,}{databaseconnection,readtransaction},{lazyresult,lazyseq}}";
+    for s in ["ReadTransaction", "VersionedReadTransaction", "LazySeq"] {
+        assert!(super::test("iglob", s, p), "{s}");
+    }
+    for s in ["Versioned", "ReadTransactions", "x"] {
+        assert!(!super::test("iglob", s, p), "{s}");
+    }
+    assert!(super::test("glob", "a,b", "{{a\\,b,c},d}"));
+}

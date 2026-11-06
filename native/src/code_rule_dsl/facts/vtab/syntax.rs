@@ -114,6 +114,8 @@ struct Dialect {
     catalog: KindCatalog,
     classes: Vec<Class>,
     operator: Option<u16>,
+    /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
+    operators: Option<u16>,
     canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
 }
@@ -131,7 +133,7 @@ impl Dialect {
         for (k, &c) in canonical.iter().enumerate() {
             codes.entry(c).or_default().push(k as u16);
         }
-        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), canonical, codes })
+        Ok(Self { tag, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes })
     }
     fn code(f: &Facts, id: u32) -> u16 {
         (f.kind[id as usize] % KIND_STRIDE) as u16
@@ -331,6 +333,9 @@ impl Batch {
         // `value(n, v)`: a literal's static value (`core.rr`): a Python string decoded (`value::python::str_value`),
         // an integer in decimal.
         let mut value: Vec<[i64; 2]> = Vec::new();
+        // `op_at(n, i, s)`: n's operator tokens in order, from 0 (`core.rr`): in `a < b <= c`, (c, 0, "<") and
+        // (c, 1, "<="). `op` keeps T's one row per node; a comparison's position needs its own relation.
+        let mut op_at: Vec<[i64; 3]> = Vec::new();
         let python_tag = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`).
         let mut errors = Vec::new();
@@ -361,6 +366,13 @@ impl Batch {
             let f = &*d.facts;
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
+                let is_operator = |c: &&u32| {
+                    let field = f.field[**c as usize];
+                    field != 0 && (dialect.operator == Some(field) || dialect.operators == Some(field))
+                };
+                for (i, &c) in f.children(id).iter().filter(is_operator).enumerate() {
+                    op_at.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+                }
                 match dialect.class(f, id) {
                     Class::Text => {
                         let t = f.text(id);
@@ -444,6 +456,7 @@ impl Batch {
             ("text", relation(&["n", "s"], &mut text.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("intval", relation(&["n", "v"], &mut intval.iter().map(|&[n, v]| vec![n, v]))),
             ("op", relation(&["n", "s"], &mut op.iter().map(|&[n, s]| vec![n, atom(s)]))),
+            ("op_at", relation(&["n", "i", "s"], &mut op_at.iter().map(|&[n, i, s]| vec![n, i, atom(s)]))),
             ("name", relation(&["n", "s"], &mut name.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("str", relation(&["n", "s"], &mut strs.iter().map(|&[n, s]| vec![n, atom(s)]))),
             ("strprefix", relation(&["n", "s"], &mut strprefix.iter().map(|&[n, s]| vec![n, atom(s)]))),

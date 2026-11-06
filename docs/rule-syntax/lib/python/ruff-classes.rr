@@ -1,0 +1,194 @@
+// python/ruff-classes: classes as Ruff's dataclass and class-attribute rules see them (RUF008, RUF009, RUF012,
+// RUF033, RUF049): which decorator makes a dataclass, which annotations are ClassVar, Final or immutable, and
+// which values are mutable.
+//
+// Interface
+//   Classes:      dataclass_of(c, k, e)    class c is a dataclass of kind k, "stdlib" (dataclasses.dataclass) or "attrs",
+//                                          by decorator e: the first decorator Ruff recognises decides
+//                 attrs_auto(c, v)         attrs class c's auto_attribs, after defaults: "true", "false" or "unknown"
+//                 frozen_dataclass(c)      `@dataclass(frozen=True)`, `@attrs.frozen`, `@attr.frozen`
+//                 class_field(c, a, t, v)  annotated assignment a, `t: T = v`, directly in class c's body (v unset
+//                                          for `t: T`); t is the target
+//                 class_assign(c, a, v)    plain assignment a, `x = v`, directly in class c's body
+//                 copies_defaults(c)       c's bases (through classes of the file) include pydantic's, msgspec's or
+//                                          sqlmodel's model classes, which copy defaults per instance
+//                 local_class(e, k)        name e reads class k, defined in the same file
+//   Annotations:  class_var_ann(t)         t is `ClassVar` or `ClassVar[...]` (typing, typing_extensions, _typeshed)
+//                 final_ann(t)             t is `Final` or `Final[...]`
+//                 immutable_ann(t)         Ruff's is_immutable_annotation: `int`, `tuple[...]`, `typing.Sequence[...]`,
+//                                          `Optional[str]`, `int | None`, `Annotated[str, …]`, …
+//                 type_app(t, h, i, a)     annotation t is h[…] with argument a at position i (h the head node)
+//   Values:       mutable_value(e)         Ruff's is_mutable_expr: a list, dict or set display or comprehension, or a
+//                                          call of `list`, `dict`, `set` or a mutable collections type
+//
+// Ruff background
+//   - A string annotation (`x: "list[int]" = []`) is opaque here, as in Ruff's class rules: it is neither
+//     ClassVar nor immutable.
+//   - Names resolve through imports wherever they are in the module, so a `ClassVar` imported later under
+//     `if TYPE_CHECKING:` counts, as Ruff's deferred annotations do.
+//   e.g.  @dataclass
+//         class C:
+//             a: list[int] = []              mutable_value; not class_var_ann, not immutable_ann (RUF008)
+//             b: ClassVar[list[int]] = []    class_var_ann
+//             c: Sequence[int] = []          immutable_ann
+#include "python/ruff.rr"
+
+// ---- dataclasses -------------------------------------------------------------------------------------------------
+// dc_dec(c, e, q, k): decorator e of class c resolves to q, a dataclass maker of kind k, bare or called.
+.decl dc_dec(c: node, e: node, q: symbol, k: symbol)
+dc_dec(c, e, q, k) :- kind(c, "class_definition"), decorator(c, e), unparen(e, m), dec_callee(m, q), dc_maker(q, k).
+.decl dec_callee(m: node, q: symbol)
+dec_callee(m, q) :- decorator(_, e), unparen(e, m), ruff_qual(m, q).
+dec_callee(m, q) :- decorator(_, e), unparen(e, m), call_q(m, q).
+.decl dc_maker(q: symbol, k: symbol)
+dc_maker("dataclasses.dataclass", "stdlib").
+dc_maker(q, "attrs") :- attrs_maker(q, _).
+// attrs_maker(q, d): an attrs class decorator and its auto_attribs default. `attr.s` means auto_attribs=False;
+// the others default to None, which is True when the class has an annotated assignment.
+.decl attrs_maker(q: symbol, d: symbol)
+attrs_maker("attr.s", "false"). attrs_maker("attr.attrs", "none"). attrs_maker("attr.attributes", "none").
+attrs_maker("attr.define", "none"). attrs_maker("attr.frozen", "none"). attrs_maker("attr.mutable", "none").
+attrs_maker("attrs.define", "none"). attrs_maker("attrs.frozen", "none"). attrs_maker("attrs.mutable", "none").
+.decl dataclass_of(c: node, k: symbol, e: node)
+dataclass_of(c, k, e) :- dc_dec(c, e, _, k), !later_dec(c, e).
+.decl later_dec(c: node, e: node)
+later_dec(c, e) :- dc_dec(c, e, _, _), dc_dec(c, e0, _, _), e0 < e.
+// attrs_auto(c, v): auto_attribs, after defaults: "true", "false" or "unknown". Bare `@attr.s` means False and
+// the other bare decorators None; a called one without the keyword means None. `auto_attribs=` is "true" only
+// for a literal True, None for None, "unknown" for a value of unknown truth, and "false" for anything else (even 1).
+// None means True when the class has an annotated assignment.
+.decl attrs_auto(c: node, v: symbol)
+attrs_auto(c, v) :- attrs_auto_given(c, t), auto_of(c, t, v).
+.decl attrs_auto_given(c: node, t: symbol)
+attrs_auto_given(c, d) :- dataclass_of(c, "attrs", e), dc_dec(c, e, q, _), attrs_maker(q, d), unparen(e, m), !kind(m, "call").
+attrs_auto_given(c, "none") :- dataclass_of(c, "attrs", e), unparen(e, m), kind(m, "call"), !call_kwarg(m, "auto_attribs", _).
+attrs_auto_given(c, t) :- dataclass_of(c, "attrs", e), unparen(e, m), call_kwarg(m, "auto_attribs", a), unparen(a, v),
+    (kind(v, "true"), t = "true" ; kind(v, "none"), t = "none" ; !truth_of(v, _), t = "unknown" ;
+    truth_of(v, _), !kind(v, "true"), !kind(v, "none"), t = "false").
+.decl auto_of(c: node, t: symbol, v: symbol)
+auto_of(c, t, t) :- attrs_auto_given(c, t), t != "none".
+auto_of(c, "none", "true") :- attrs_auto_given(c, "none"), class_field(c, _, _, _).
+auto_of(c, "none", "false") :- attrs_auto_given(c, "none"), !class_field(c, _, _, _).
+// frozen_dataclass(c): instances are immutable: `@dataclass(frozen=…)` with a true value, `@attrs.frozen`.
+.decl frozen_dataclass(c: node)
+frozen_dataclass(c) :- dataclass_of(c, "stdlib", e), unparen(e, m), call_kwarg(m, "frozen", v), unparen(v, t),
+    truth_of(t, "true").
+frozen_dataclass(c) :- dataclass_of(c, "attrs", e), dc_dec(c, e, q, _), (q = "attrs.frozen" ; q = "attr.frozen").
+
+// ---- class bodies ------------------------------------------------------------------------------------------------
+.decl class_field(c: node, a: node, t: node, v: loc)
+class_field(c, a, t, v) :- class_stmt(c, s), kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"),
+    field(a, "type", _), field(a, "left", t), (field(a, "right", v) ; !field(a, "right", _), unset(v)).
+.decl class_assign(c: node, a: node, v: node)
+class_assign(c, a, v) :- class_stmt(c, s), kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"),
+    !field(a, "type", _), assign_value(a, v).
+.decl class_stmt(c: node, s: node)
+class_stmt(c, s) :- kind(c, "class_definition"), field(c, "body", b), child(b, s, _), !kind(s, "comment").
+// local_class(e, k): name e reads class k of the same file (`class Foo` in the scope the name resolves to).
+.decl local_class(e: node, k: node)
+local_class(e, k) :- unparen(e, m), look(m, x, s), defn(s, x, k), kind(k, "class_definition").
+// copies_defaults(c): Ruff's has_default_copy_semantics.
+.decl copies_defaults(c: node)
+copies_defaults(c) :- class_base_expr(c, b), base_head(b, h), ruff_qual(h, q), copy_base(q).
+copies_defaults(c) :- class_base_expr(c, b), base_head(b, h), local_class(h, k), copies_defaults(k).
+.decl base_head(b: node, h: node)
+base_head(b, h) :- unparen(b, h), !kind(h, "subscript").
+base_head(b, h) :- unparen(b, s), kind(s, "subscript"), field(s, "value", h).
+.decl copy_base(q: symbol)
+copy_base("pydantic.BaseModel"). copy_base("pydantic.RootModel"). copy_base("pydantic.BaseSettings").
+copy_base("pydantic.BaseConfig"). copy_base("pydantic.generics.GenericModel"). copy_base("pydantic.v1.BaseModel").
+copy_base("pydantic.v1.BaseSettings"). copy_base("pydantic.v1.BaseConfig").
+copy_base("pydantic.v1.generics.GenericModel"). copy_base("pydantic_settings.BaseSettings"). copy_base("msgspec.Struct").
+copy_base("sqlmodel.SQLModel").
+// class_base_expr(c, e): a base-class expression of c (keyword arguments excluded).
+.decl class_base_expr(c: node, e: node)
+class_base_expr(c, e) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
+    !kind(e, "comment").
+
+// ---- annotations -------------------------------------------------------------------------------------------------
+// ann_strip(t, m): t without its `type` wrapper and parentheses.
+.decl ann_strip(t: node, m: node)
+ann_strip(t, m) :- ann_input(t), unparen(t, m), !kind(m, "type").
+ann_strip(t, m) :- ann_input(t), unparen(t, x), kind(x, "type"), child(x, y, 0), ann_input(y), ann_strip(y, m).
+// ann_input(t): the annotations of class fields and parameters, and every part of one that is read as a type.
+.decl ann_input(t: node)
+ann_input(t) :- kind(a, "assignment"), field(a, "type", t).
+ann_input(t) :- kind(p, k), (k = "typed_parameter" ; k = "typed_default_parameter"), field(p, "type", t).
+ann_input(y) :- ann_input(t), unparen(t, x), kind(x, "type"), child(x, y, 0).
+ann_input(a) :- type_app(_, _, _, a).
+ann_input(x) :- ann_input(t), ann_strip(t, m), kind(m, k), (k = "binary_operator" ; k = "union_type"), child(m, x, _).
+// A string annotation's parsed tree is an input too, for the rules that read strings (RUF013); the class rules
+// look only at the annotation node itself, which stays a string.
+ann_input(r) :- ann_input(t), ann_strip(t, s), (kind(s, "string") ; kind(s, "concatenated_string")),
+    parsed(s, "annotation", r).
+// type_app(t, h, i, a): `h[a0, a1]` as a subscript (`typing.Optional[int]`) or a generic_type (`Optional[int]`).
+.decl type_app(t: node, h: node, i: number, a: node)
+type_app(t, h, i, a) :- ann_input(t), ann_strip(t, m), kind(m, "subscript"), field(m, "value", h),
+    field(m, "subscript", a), i = count : { field(m, "subscript", a0), a0 < a }.
+type_app(t, h, i, a) :- ann_input(t), ann_strip(t, m), kind(m, "generic_type"), child(m, h, 0),
+    child(m, tp, 1), kind(tp, "type_parameter"), child(tp, a, i).
+.decl ruff_type_nargs(t: node, n: number)
+ruff_type_nargs(t, n) :- type_app(t, _, _, _), n = count : { type_app(t, _, _, _) }.
+// ann_q(t, q): t's head (t itself when it is a name) resolves to q; typing_extensions names read as typing's.
+.decl ann_q(t: node, q: symbol)
+ann_q(t, q) :- ann_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q0), typing_name(q0, q).
+.decl head_q(t: node, q: symbol)
+head_q(t, q) :- ann_q(t, q).
+head_q(t, q) :- type_app(t, h, 0, _), ruff_qual(h, q0), typing_name(q0, q).
+.decl typing_name(q: symbol, r: symbol)
+typing_name(q, q) :- ruff_qual(_, q).
+typing_name(q, cat("typing.", x)) :- ruff_qual(_, q), (split_dot(q, "typing_extensions", x) ; split_dot(q, "_typeshed", x)).
+.decl class_var_ann(t: node)
+class_var_ann(t) :- head_q(t, "typing.ClassVar").
+.decl final_ann(t: node)
+final_ann(t) :- head_q(t, "typing.Final").
+// immutable_ann(t): Ruff's is_immutable_annotation: an immutable type, a generic immutable type with any
+// arguments, `Optional[x]` and `x | y` of immutable ones, `Union[x, y, …]` of immutable ones (two or more),
+// `Annotated[x, …]` of an immutable x, and None. Names match exactly (`typing.Sequence`, not
+// typing_extensions'); only Annotated is read from typing_extensions too. Also the
+// flake8-bugbear.extend-immutable-calls option's names.
+.decl immutable_ann(t: node)
+immutable_ann(t) :- ann_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q),
+    (immutable_type(q) ; option_item("flake8-bugbear.extend-immutable-calls", _, q)).
+immutable_ann(t) :- type_app(t, h, 0, _), ruff_qual(h, q), immutable_generic(q).
+immutable_ann(t) :- type_app(t, h, 0, a), ruff_qual(h, "typing.Optional"), ruff_type_nargs(t, 1), immutable_ann(a).
+immutable_ann(t) :- type_app(t, h, 0, _), ruff_qual(h, "typing.Union"), ruff_type_nargs(t, n), n > 1, imm_prefix(t, n - 1).
+immutable_ann(t) :- type_app(t, h, 0, a), ruff_qual(h, q), (q = "typing.Annotated" ; q = "typing_extensions.Annotated"),
+    ruff_type_nargs(t, n), n > 1, immutable_ann(a).
+immutable_ann(t) :- ann_strip(t, m), (kind(m, "binary_operator") ; kind(m, "union_type")), op(m, "|"),
+    child(m, x, 0), child(m, y, 1), immutable_ann(x), immutable_ann(y).
+immutable_ann(t) :- ann_strip(t, m), kind(m, "none").
+// imm_prefix(t, i): arguments 0 to i of t are immutable (a chain, so the recursion stays positive).
+.decl imm_prefix(t: node, i: number)
+imm_prefix(t, 0) :- type_app(t, _, 0, a), immutable_ann(a).
+imm_prefix(t, i) :- imm_prefix(t, i - 1), type_app(t, _, i, a), immutable_ann(a).
+.decl immutable_type(q: symbol)
+immutable_type(q) :- immutable_generic(q).
+immutable_type("builtins.bool"). immutable_type("builtins.bytes"). immutable_type("builtins.complex").
+immutable_type("builtins.float"). immutable_type("builtins.int"). immutable_type("builtins.object").
+immutable_type("builtins.range"). immutable_type("builtins.str"). immutable_type("collections.abc.Sized").
+immutable_type("typing.LiteralString"). immutable_type("typing.Sized").
+.decl immutable_generic(q: symbol)
+immutable_generic("builtins.frozenset"). immutable_generic("builtins.tuple"). immutable_generic("builtins.frozendict").
+immutable_generic(cat("collections.abc.", x)) :- abc_immutable(x).
+immutable_generic(cat("typing.", x)) :- abc_immutable(x).
+immutable_generic("typing.AbstractSet"). immutable_generic("typing.Callable"). immutable_generic("typing.FrozenSet").
+immutable_generic("typing.Literal"). immutable_generic("typing.Never"). immutable_generic("typing.NoReturn").
+immutable_generic("typing.Tuple").
+.decl abc_immutable(x: symbol)
+abc_immutable("ByteString"). abc_immutable("Collection"). abc_immutable("Container"). abc_immutable("Iterable").
+abc_immutable("Mapping"). abc_immutable("Reversible"). abc_immutable("Sequence").
+immutable_generic("collections.abc.Set").
+
+// ---- values ------------------------------------------------------------------------------------------------------
+// mutable_value(e): `[]`, `{}`, `{1}`, a comprehension of those, or `list()`, `dict(a=1)`, `list[int]()`,
+// `collections.deque()`, `Counter()`, `OrderedDict()`, `defaultdict(list)`.
+.decl mutable_value(e: node)
+mutable_value(e) :- mutable_literal(e).
+mutable_value(e) :- unparen(e, m), kind(m, "call"), field(m, "function", f), unparen(f, g), mutable_callee(g).
+.decl mutable_callee(g: node)
+mutable_callee(g) :- ruff_qual(g, q), mutable_fn(q).
+mutable_callee(g) :- kind(g, "subscript"), field(g, "value", v), ruff_qual(v, q), mutable_fn(q).
+.decl mutable_fn(q: symbol)
+mutable_fn("builtins.dict"). mutable_fn("builtins.list"). mutable_fn("builtins.set"). mutable_fn("collections.Counter").
+mutable_fn("collections.OrderedDict"). mutable_fn("collections.defaultdict"). mutable_fn("collections.deque").

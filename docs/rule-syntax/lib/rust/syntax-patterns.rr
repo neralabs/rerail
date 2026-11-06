@@ -1,0 +1,92 @@
+// rust/syntax-patterns: Rust patterns as Clippy's pattern lints read them (rustc's PatKind).
+//
+// tree-sitter-rust's pattern shapes, where they differ from rustc's:
+//   - `_` is an anonymous token, not a node. In `(0, _, ..)` the tuple_pattern's named children are `0` and
+//     the remaining_field_pattern `..`; the `_` is read through tokens, between two separators.
+//   - `ref mut a @ ..` nests as ref_pattern > mut_pattern > captured_pattern (`a @ ..`); rustc has one
+//     PatKind::Ident with its binding mode.
+//   - `c: _` in a struct pattern is a field_pattern with only its name as a named child.
+//
+// What a rule gets from this library:
+//   bare_pat(p, q)          q is pattern p without `ref` / `mut` wrappers: `ref mut a @ ..` gives `a @ ..`
+//   rest_pat(p, r)          r is the `..` of tuple, tuple-struct or slice pattern p
+//   wild_before(x, w)       token w is a `_` element right before element or token x: `_, x`
+//   wild_after(x, w)        token w is a `_` element right after x: `x, _`
+//   wild_field(f)           f is the struct-pattern field `name: _`
+//   paren_pat(p, q)         p is `(q)`: a tuple_pattern of one element and no comma (rustc's PatKind::Paren)
+//   unparen(p, q)           q is p with its parentheses removed: `((0 | 1))` gives `0 | 1`
+//   top_pattern(p)          p is a whole pattern: of a let, `if let` / `while let`, match arm or parameter
+//   elem_key(p, i, k, rest) the i-th element of tuple, tuple-struct or slice pattern p, from 0, `_` included;
+//                           k is its text without parentheses or whitespace, rest = 1 for `..`
+//   elem_count(p, n)        p has n elements
+//
+// Builds on core (the tape, tokens, text) and rust/syntax.rr (comment_kind).
+#include "rust/syntax.rr"
+
+.decl bare_pat(p: node, q: node)
+bare_pat(p, p) :- kind(p, k), k != "ref_pattern", k != "mut_pattern", child(_, p, _).
+bare_pat(p, q) :- (kind(p, "ref_pattern") ; kind(p, "mut_pattern")), child(p, c, _), kind(c, k),
+    k != "mutable_specifier", bare_pat(c, q).
+
+.decl rest_pat(p: node, r: node)
+rest_pat(p, r) :- (kind(p, "tuple_pattern") ; kind(p, "tuple_struct_pattern") ; kind(p, "slice_pattern")),
+    child(p, r, _), kind(r, "remaining_field_pattern").
+
+// A `_` element sits between separators: `(_,`, `, _,`, `, _)`. `&_`, `x @ _` and `_ | 0` are other patterns.
+// Comments are skipped: `(0, /* x */ _, ..)`.
+.decl wild_before(x: loc, w: span)
+wild_before(x, w) :- prev_tok(x, c), text(c, ","), prev_tok(c, w), text(w, "_"),
+    prev_tok(w, s), (text(s, ",") ; text(s, "(")).
+.decl wild_after(x: loc, w: span)
+wild_after(x, w) :- next_tok(x, c), text(c, ","), next_tok(c, w), text(w, "_"),
+    next_tok(w, s), (text(s, ",") ; text(s, ")")).
+.decl prev_tok(x: loc, t: span)   // token_before, comments skipped
+prev_tok(x, t) :- token_before(x, t), !comment_end(t, _).
+prev_tok(x, t) :- token_before(x, c), comment_end(c, k), prev_tok(k, t).
+.decl next_tok(x: loc, t: span)   // token_after, comments skipped
+next_tok(x, t) :- token_after(x, t), !comment_start(t, _).
+next_tok(x, t) :- token_after(x, c), comment_start(c, k), next_tok(k, t).
+// A comment's delimiters (`/*`, `*/`, `//`) are tokens of its own node.
+.decl comment_end(t: span, k: node)
+comment_end(t, k) :- kind(k, x), comment_kind(x), last_token(k, t).
+.decl comment_start(t: span, k: node)
+comment_start(t, k) :- kind(k, x), comment_kind(x), first_token(k, t).
+
+.decl wild_field(f: node)
+wild_field(f) :- kind(f, "field_pattern"), op(f, "_"), !child(f, _, 1).
+
+.decl paren_pat(p: node, q: node)
+paren_pat(p, q) :- kind(p, "tuple_pattern"), child(p, q, 0), !child(p, _, 1), !op(p, ","), !op(p, "_").
+.decl unparen(p: node, q: node)
+unparen(p, p) :- child(_, p, _), !paren_pat(p, _).
+unparen(p, q) :- paren_pat(p, r), unparen(r, q).
+
+// Clippy's pattern lints visit these; `for` patterns are not among them.
+.decl top_pattern(p: node)
+top_pattern(p) :- (kind(s, "let_declaration") ; kind(s, "let_condition") ; kind(s, "parameter")),
+    field(s, "pattern", p).
+top_pattern(p) :- kind(m, "match_pattern"), child(m, p, 0), !field(m, "condition", p).
+top_pattern(p) :- kind(c, "closure_parameters"), child(c, p, _), !kind(p, "parameter").
+
+// Elements are read along the tokens, so that `_` (a token, not a node) keeps its place: `(_, 1)` has two.
+.decl seq_pat(p: node, open: span)   // p's elements follow token `open`: `(`, `[`, or `S(`
+seq_pat(p, o) :- (kind(p, "tuple_pattern"), !paren_pat(p, _) ; kind(p, "slice_pattern")), first_token(p, o).
+seq_pat(p, o) :- kind(p, "tuple_struct_pattern"), field(p, "type", t), token_after(t, o).
+.decl elem_start(p: node, i: number, t: span)   // token t starts p's i-th element
+elem_start(p, 0, t) :- seq_pat(p, o), token_after(o, t), !closer(t).
+elem_start(p, i + 1, t) :- elem_node(p, i, c), token_after(c, k), text(k, ","), token_after(k, t), !closer(t).
+elem_start(p, i + 1, t) :- elem_wild(p, i, w), token_after(w, k), text(k, ","), token_after(k, t), !closer(t).
+.decl closer(t: span)
+closer(t) :- text(t, ")") ; text(t, "]").
+.decl elem_node(p: node, i: number, c: node)
+elem_node(p, i, c) :- elem_start(p, i, t), child(p, c, _), first_token(c, t).
+.decl elem_wild(p: node, i: number, w: span)
+elem_wild(p, i, w) :- elem_start(p, i, w), text(w, "_"), !starts_child(p, w).
+.decl starts_child(p: node, t: span)
+starts_child(p, t) :- seq_pat(p, _), child(p, c, _), first_token(c, t).
+.decl elem_key(p: node, i: number, k: symbol, rest: number)
+elem_key(p, i, k, r) :- elem_node(p, i, c), unparen(c, q), text(q, s), k = @replace_all(s, "\\s+", ""),
+    (kind(q, "remaining_field_pattern"), r = 1 ; !kind(q, "remaining_field_pattern"), r = 0).
+elem_key(p, i, "_", 0) :- elem_wild(p, i, _).
+.decl elem_count(p: node, n: number)
+elem_count(p, n) :- seq_pat(p, _), n = count : { elem_start(p, _, _) }.

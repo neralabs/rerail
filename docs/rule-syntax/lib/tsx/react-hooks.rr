@@ -1,0 +1,379 @@
+// tsx/react-hooks: React Hooks as eslint-plugin-react-hooks' two classic rules (rules-of-hooks, exhaustive-deps)
+// see them: which calls are Hooks, which functions are components or Hooks, where a call sits in its function's
+// control flow, and the Hook calls that take a callback and a dependency array.
+//
+// What a rule gets from this library:
+//   Hooks and the functions around them
+//     hook_call(c, f)          call c is a Hook call; f is its callee: useState(…), React.useState(…), Foo.useBar(…)
+//     hook_named(n)            n (a name) is a Hook's: `use`, `useState`, `use3d`; hook_proper(n) leaves out `use`
+//     hook_callee(f)           f is a Hook callee: a Hook's name, or one off a PascalCase object
+//     hook_use(c)              c calls `use` or `React.use` (allowed in conditions and loops)
+//     deps_name(f, x)          callee f names React's x: `x` or `React.x`
+//     effect_hook(x)           x is an effect Hook: useEffect, useLayoutEffect, useInsertionEffect
+//     (a function is eslint-a-common's function_node: declaration, expression, arrow, generator or method)
+//     hook_path(n, p)          p is the code path n runs in: its nearest function, else the program
+//     hook_fn_name(f, n)       n names function f as getFunctionName does: `function F`, `const F = () =>`,
+//                              `F = function`, `{ F: () => … }`, `{ F() {} }`, `({ F = () => … })`
+//     hook_comp_name(n)        name n is a component's (`App`) or a Hook's (`useThing`, `Foo.useThing`)
+//     hook_direct(f)           f is a component or Hook: by name, or unnamed and passed to memo or forwardRef
+//     hook_somewhere(f)        f is, or is inside, a component or Hook (isInsideComponentOrHook)
+//   where a call runs in its code path (an approximation of ESLint's code path analysis, below)
+//     hook_cycled(n)           n is in a loop of its own code path: it may run more than once
+//     hook_in_do(n)            n is inside a do-while, at any depth (the plugin climbs past functions here)
+//     hook_branch(n)           n runs only on some paths: a branch, a short-circuit, a default, a catch
+//     hook_after_exit(n)       a `return` or `break label` earlier in n's code path can skip n
+//     hook_dead(n)             n is unreachable: after an unconditional return, throw, break or continue
+//   callbacks with dependencies (exhaustive-deps)
+//     deps_hook(c, x, f, k)    c calls Hook x (React. dropped) through callee f; its callback is argument k
+//     deps_effect(x)           x is an effect Hook with a dependency list: useEffect, useLayoutEffect
+//     deps_cb(c, cb)           cb is c's callback as written (`as` casts and parentheses dropped)
+//     deps_list(c, a)          a is c's dependency argument (an explicit `undefined` is none)
+//     deps_visit(c, v)         v is the function whose reads c's dependencies must cover: the callback, or the
+//                              function a callback identifier names in the same scope
+//     deps_component(v, cf)    cf is the function v is declared in: the component or Hook
+//     deps_used(c, k, r)       the callback reads dependency k at r: `props.user.id` gives "props.user.id"
+//     deps_declared(c, k, e)   element e of c's dependency array names k: [a, b.c] gives "a", "b.c"
+//     deps_stable(c, k)        k never changes between renders: a ref, a state setter, a dispatch, a const literal,
+//                              a function in the component that captures none of those values
+//     deps_missing(c, k), deps_unnecessary(c, k), deps_duplicate(c, k)   the plugin's three verdicts
+//
+// The plugin knows Hooks by name only: `use` or `use` then an upper-case letter or digit, called bare or off a
+// PascalCase object (`React.useState`, `Foo.useBar`). `api.useThing()` and `usefulThing()` are not Hooks.
+// Builds on tsx/react (and through it tsx/eslint-a-common: deparen, call_arg, function_kind, function_node) and
+// tsx/names (ref, ref_site, decl_site: a JSX component tag is a reference there).
+#include "tsx/react.rr"
+
+// ---- Hooks and the functions around them ----------------------------------------------------------------------
+.decl hook_named(n: node)  // n's text is a Hook's name: "use", "useState", "use3d"; not "user"
+hook_named(n) :- hook_ident(n), text(n, "use").
+hook_named(n) :- hook_proper(n).
+.decl hook_proper(n: node)  // isHookName, which the React Compiler uses: `use` then a capital or digit; not `use`
+hook_proper(n) :- hook_ident(n), glob("use[A-Z0-9]**", n).
+.decl hook_callee(f: node)  // isHook: an identifier, or a non-computed member off a PascalCase identifier
+hook_callee(f) :- kind(f, "identifier"), hook_named(f).
+hook_callee(f) :- kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"),
+    hook_named(p), field(f, "object", o), kind(o, "identifier"), glob("[A-Z]**", o).
+.decl hook_call(c: node, f: node)
+hook_call(c, f) :- kind(c, "call_expression"), field(c, "function", f), hook_callee(f).
+// isUseIdentifier: `use` or `React.use`. use() may be called conditionally and in loops.
+.decl hook_use(c: node)
+hook_use(c) :- hook_call(c, f), (text(f, "use") ; text(f, "React.use")).
+
+// A code path is a function's body, or the program's top level.
+.decl hook_path(n: node, p: node)
+hook_path(n, f) :- hook_call(n, _), nearest(n, f, function_kind).
+hook_path(n, p) :- hook_call(n, _), !inside(n, _, function_kind), inside(n, p, "program").
+
+// getFunctionName. A declaration or named function expression names itself; an anonymous one takes the name it
+// is stored under. A class method has none (it is reported as a class component's), an object method its key.
+.decl hook_fn_name(f: node, n: node)
+hook_fn_name(f, n) :- function_node(f), !kind(f, "method_definition"), !kind(f, "arrow_function"), field(f, "name", n).
+hook_fn_name(f, n) :- hook_anon(f), child(v, f, _), kind(v, "variable_declarator"), field(v, "value", f),
+    field(v, "name", n).
+hook_fn_name(f, n) :- hook_anon(f), child(a, f, _), kind(a, "assignment_expression"), field(a, "right", f),
+    field(a, "left", n).
+hook_fn_name(f, n) :- hook_anon(f), child(p, f, _), kind(p, "pair"), field(p, "value", f), field(p, "key", n),
+    !kind(n, "computed_property_name").
+hook_fn_name(f, n) :- hook_anon(f), child(p, f, _), (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pattern")),
+    field(p, "right", f), field(p, "left", n).
+hook_fn_name(f, n) :- kind(f, "method_definition"), child(o, f, _), kind(o, "object"), field(f, "name", n),
+    !kind(n, "computed_property_name").
+.decl hook_anon(f: node)  // a function expression or arrow without its own name
+hook_anon(f) :- (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")),
+    !field(f, "name", _).
+// isComponentName (an identifier starting upper-case) or isHook. Keys and shorthand patterns are identifiers in
+// ESTree; a string key `"useX": …` is not.
+.decl hook_comp_name(n: node)
+hook_comp_name(n) :- hook_ident(n), glob("[A-Z]**", n).
+hook_comp_name(n) :- hook_callee(n).
+hook_comp_name(n) :- hook_named(n).
+.decl hook_ident(n: node)
+hook_ident(n) :- kind(n, k), (k = "identifier" ; k = "property_identifier" ; k = "shorthand_property_identifier_pattern").
+// memo(…) and forwardRef(…), bare or off React: a function passed to them is a component.
+.decl hook_wrapped(n: node)  // n is an argument of a memo or forwardRef call
+hook_wrapped(n) :- kind(c, "call_expression"), field(c, "function", w), hook_wrapper(w), field(c, "arguments", l),
+    child(l, n, _).
+.decl hook_wrapper(w: node)
+hook_wrapper(w) :- kind(w, "identifier"), (text(w, "memo") ; text(w, "forwardRef")).
+hook_wrapper(w) :- kind(w, "member_expression"), field(w, "object", o), text(o, "React"), field(w, "property", p),
+    (text(p, "memo") ; text(p, "forwardRef")).
+.decl hook_direct(f: node)
+hook_direct(f) :- hook_fn_name(f, n), hook_comp_name(n).
+hook_direct(f) :- function_node(f), !hook_fn_name(f, _), hook_wrapped(f).
+// isInsideComponentOrHook climbs every ancestor: a component or Hook function, or any argument of memo/forwardRef.
+.decl hook_somewhere(f: node)
+hook_somewhere(f) :- function_node(f), hook_named_comp(f).
+hook_somewhere(f) :- function_node(f), hook_wrapped(f).
+hook_somewhere(f) :- function_node(f), inside(f, a, function_kind), hook_named_comp(a).
+hook_somewhere(f) :- function_node(f), hook_wrapped(a), within(f, a).
+.decl hook_named_comp(f: node)
+hook_named_comp(f) :- hook_fn_name(f, n), hook_comp_name(n).
+
+// ---- where a call runs ----------------------------------------------------------------------------------------
+// The plugin counts the paths through a Hook's code path segment: a Hook on fewer paths than the whole function
+// runs conditionally, and one on a cycle runs repeatedly. Here those are read off the tree, which is exact for
+// structured code:
+//   if/else branches, ?: branches, the right of && || ?? and &&= ||= ??=, switch cases, catch clauses, the arguments of
+//   an optional call, the finally
+//   of a try without catch, and default values run on some paths:     if (a) { useA(); }   x ?? useB();
+//   a `return` (even an unconditional one) or a `break label` out of a block before the call skips it:
+//     if (a) return null;  useC();        lbl: { if (a) break lbl; useD(); }
+//   a `throw` does not count: a thrown path is not a path to the end.   if (!a) throw e;  useE();   is fine
+//   loops: the body, test and update of for, while and do, and the body of for-in/of. Not the for-in/of
+//   right side or a for initializer, which run once.
+.decl hook_region(r: node)  // a node whose contents run on some paths only
+hook_region(r) :- kind(s, "if_statement"), (field(s, "consequence", r) ; field(s, "alternative", r)).
+hook_region(r) :- kind(s, "ternary_expression"), (field(s, "consequence", r) ; field(s, "alternative", r)).
+hook_region(r) :- kind(b, "binary_expression"), (op(b, "&&") ; op(b, "||") ; op(b, "??")), field(b, "right", r).
+hook_region(r) :- kind(b, "augmented_assignment_expression"), (op(b, "&&=") ; op(b, "||=") ; op(b, "??=")),
+    field(b, "right", r).
+hook_region(r) :- (kind(s, "switch_case") ; kind(s, "switch_default")), field(s, "body", r).
+hook_region(r) :- kind(r, "catch_clause").
+// a?.b(x), a?.(x): the arguments of a call after `?.` run only when a is not nullish.
+hook_region(l) :- kind(c, "call_expression"), field(c, "arguments", l),
+    (field(c, "optional_chain", _) ; field(c, "function", f), has(f, _, "optional_chain")).
+hook_region(r) :- kind(t, "try_statement"), !field(t, "handler", _), field(t, "finalizer", r), field(t, "body", b),
+    has(b, _, hook_throwable).
+hook_region(r) :- (kind(p, "assignment_pattern") ; kind(p, "object_assignment_pattern")), field(p, "right", r).
+// n is in region r, and r is in n's own code path (no function between).
+.decl hook_branch(n: node)
+hook_branch(n) :- hook_path(n, p), hook_region(r), (within(n, r) ; n = r), hook_same_path(r, p).
+.decl hook_same_path(r: node, p: node)  // r is in code path p's own code
+hook_same_path(r, p) :- hook_path(_, p), within(r, p), nearest(r, p, function_kind).
+hook_same_path(r, p) :- hook_path(_, p), kind(p, "program"), within(r, p), !inside(r, _, function_kind).
+// In a try block with a catch, the first node that may throw (a reference, call, member access, `new`, `yield`)
+// forks a path to the catch, so what follows it in the block runs on some paths:
+//   try { f(); useState(); } catch {}      useState is conditional;   try { useState(); } catch {}  is not
+hook_branch(n) :- hook_path(n, p), kind(t, "try_statement"), field(t, "handler", _), field(t, "body", b),
+    within(n, b), hook_same_path(b, p), has(b, x, hook_throwable), hook_same_path(x, p), hook_before(x, n).
+.decl hook_throwable(k: symbol)
+hook_throwable("identifier"). hook_throwable("call_expression"). hook_throwable("member_expression").
+hook_throwable("new_expression"). hook_throwable("yield_expression").
+// Unreachable code is not checked: a call after an unconditional return, throw, break or continue in its block.
+//   function useA() { return; useHook(); }      not reported
+// (The plugin's code path analysis reports some unreachable calls after earlier branches; see NOTES.)
+.decl hook_dead(n: node)
+hook_dead(n) :- hook_path(n, p), hook_jump(x), hook_same_path(x, p), child(b, x, _), (kind(b, "statement_block") ; kind(b, "program")),
+    child(b, st, _),
+    precedes(x, st), (within(n, st) ; n = st).
+.decl hook_jump(x: node)
+hook_jump(x) :- kind(x, k), (k = "return_statement" ; k = "throw_statement" ; k = "break_statement" ;
+    k = "continue_statement").
+// Exits before n: a return of n's code path, or a `break L` out of a labelled block around n, ending before n.
+.decl hook_after_exit(n: node)
+hook_after_exit(n) :- hook_path(n, p), kind(x, "return_statement"), hook_same_path(x, p), hook_before(x, n).
+hook_after_exit(n) :- hook_path(n, p), kind(x, "break_statement"), child(x, l, _), kind(l, "statement_identifier"),
+    text(l, y), kind(s, "labeled_statement"), field(s, "label", sl), text(sl, y), within(x, s), within(n, s),
+    hook_same_path(x, p), hook_before(x, n).
+.decl hook_before(x: node, n: node)  // x ends before n starts, in one document
+hook_before(x, n) :- node(d, x, _, _, e), node(d, n, _, s, _), e <= s.
+.decl hook_loop_part(r: node)
+hook_loop_part(r) :- kind(l, "for_statement"), (field(l, "condition", r) ; field(l, "increment", r) ; field(l, "body", r)).
+hook_loop_part(r) :- kind(l, "for_in_statement"), field(l, "body", r).
+hook_loop_part(r) :- (kind(l, "while_statement") ; kind(l, "do_statement")), (field(l, "condition", r) ; field(l, "body", r)).
+.decl hook_cycled(n: node)
+hook_cycled(n) :- hook_path(n, p), hook_loop_part(r), (within(n, r) ; n = r), hook_same_path(r, p).
+.decl hook_in_do(n: node)
+hook_in_do(n) :- hook_call(n, _), inside(n, _, "do_statement").
+
+// ---- callbacks with dependencies ------------------------------------------------------------------------------
+// exhaustive-deps checks the Hooks that take a callback and a dependency array, bare or off React:
+//   useEffect(cb, deps), useLayoutEffect, useCallback, useMemo: the callback is argument 0;
+//   useImperativeHandle(ref, cb, deps): argument 1. (useInsertionEffect is not among them.)
+.decl deps_hook(c: node, x: symbol, f: node, k: number)
+deps_hook(c, x, f, k) :- kind(c, "call_expression"), field(c, "function", f), deps_name(f, x), deps_cb_index(x, k).
+.decl deps_name(f: node, x: symbol)  // useEffect or React.useEffect: x is the Hook's own name
+deps_name(f, x) :- kind(f, "identifier"), text(f, x).
+deps_name(f, x) :- kind(f, "member_expression"), field(f, "object", o), kind(o, "identifier"), text(o, "React"),
+    field(f, "property", p), kind(p, "property_identifier"), text(p, x).
+.decl deps_cb_index(x: symbol, k: number)
+deps_cb_index("useEffect", 0). deps_cb_index("useLayoutEffect", 0). deps_cb_index("useCallback", 0).
+deps_cb_index("useMemo", 0). deps_cb_index("useImperativeHandle", 1).
+// isEffect: the name matches /Effect($|[^a-z])/, among the Hooks above.
+.decl deps_effect(x: symbol)
+deps_effect(x) :- effect_hook(x), deps_cb_index(x, _).
+// isEffectIdentifier (rules-of-hooks), and the React Compiler's effect Hooks.
+.decl effect_hook(x: symbol)
+effect_hook("useEffect"). effect_hook("useLayoutEffect"). effect_hook("useInsertionEffect").
+.decl deps_cb(c: node, cb: node)
+deps_cb(c, cb) :- deps_hook(c, _, _, k), call_arg(c, a, k), deps_bare(a, cb).
+// deps_bare(e, x): x is e without parentheses (deparen) and TypeScript `as` casts, which the plugin also looks
+// through: `(cb as Fn)` gives cb. (A `satisfies` or `!` stays.)
+.decl deps_bare(e: node, x: node)
+deps_bare(e, x) :- deparen(e, x), !kind(x, "as_expression").
+deps_bare(e, x) :- deparen(e, a), kind(a, "as_expression"), child(a, y, 0), deps_bare(y, x).
+.decl deps_list(c: node, a: node)
+deps_list(c, a) :- deps_hook(c, _, _, k), call_arg(c, a, k + 1), !deps_undefined(a).
+.decl deps_undefined(a: node)
+deps_undefined(a) :- kind(a, "undefined").
+.decl deps_fn(f: node)  // a function expression or arrow: what the plugin can read dependencies off
+deps_fn(f) :- kind(f, "arrow_function") ; kind(f, "function_expression").
+
+// The function to check. A callback named by an identifier is followed to its declaration in the scope the Hook
+// call is in: `function update() {…}; useEffect(update, [a])` checks update's body against [a].
+.decl deps_visit(c: node, v: node)
+deps_visit(c, v) :- deps_cb(c, v), deps_fn(v), (deps_list(c, _) ; deps_hook(c, x, _, _), deps_effect(x)).
+deps_visit(c, v) :- deps_named_cb(c, site), kind(site, "function_declaration"), v = site.
+deps_visit(c, v) :- deps_named_cb(c, site), kind(site, "variable_declarator"), field(site, "value", w), deps_bare(w, v),
+    deps_fn(v).
+// deps_named_cb(c, site): the callback is an identifier declared in the scope of the call (getScope(cb).set), and
+// the dependency array does not already list it.
+.decl deps_named_cb(c: node, site: node)
+deps_named_cb(c, site) :- deps_cb(c, cb), kind(cb, "identifier"), deps_list(c, a), text(cb, x),
+    !deps_lists_name(a, x), ref_site(cb, site), decl_site(s, x, site, _, "value"), deps_own_scope(cb, s).
+.decl deps_lists_name(a: node, x: symbol)  // [cb, …] lists the callback itself
+deps_lists_name(a, x) :- kind(a, "array"), child(a, e, _), kind(e, "identifier"), text(e, x).
+// The eslint-scope scope of n: its nearest block, which for a function's body block is the function's own scope.
+.decl deps_own_scope(n: node, s: node)
+deps_own_scope(n, s) :- nearest(n, s, block_scope).
+deps_own_scope(n, f) :- nearest(n, b, block_scope), field(f, "body", b), function_node(f).
+
+// The component scope: the nearest function around v. Between v and it lie the "pure" scopes, whose variables
+// may change between renders; a variable from the module or the callback itself is never a dependency.
+.decl deps_component(v: node, cf: node)
+deps_component(v, cf) :- deps_visit(_, v), nearest(v, cf, function_kind).
+.decl deps_pure(v: node, s: node)
+deps_pure(v, s) :- deps_component(v, cf), (s = cf ; within(s, cf)), within(v, s), decl_site(s, _, _, _, _).
+// deps_ref(v, r, site): r, in v, reads a variable of a pure scope declared at site.
+.decl deps_ref(v: node, r: node, site: node)
+deps_ref(v, r, site) :- deps_visit(_, v), within(r, v), deps_read(r, x), ref_site(r, site),
+    decl_site(s, x, site, _, "value"), deps_pure(v, s).
+// deps_read(r, x): a value read the plugin sees. `typeof x` in a type is not one. JSX tags depend on the parser:
+// typescript-eslint makes <Comp/> and <Ns.Comp/> read Comp and Ns (in .ts/.tsx files), as tsx/names' ref does
+// (jsx_tag_ref); espree, for JavaScript, makes no references for JSX names at all.
+.decl deps_read(r: node, x: symbol)
+deps_read(r, x) :- ref(r, x, "value"), !inside(r, _, "type_query"), !deps_js_tag(r).
+.decl deps_tag(r: node)  // r is an element's tag name or its root: <Comp>, </Comp>, <Ns.Comp>
+deps_tag(r) :- (kind(e, "jsx_opening_element") ; kind(e, "jsx_self_closing_element") ; kind(e, "jsx_closing_element")),
+    field(e, "name", r).
+deps_tag(r) :- deps_tag(m), kind(m, "member_expression"), field(m, "object", r).
+.decl deps_js_tag(r: node)
+deps_js_tag(r) :- deps_tag(r), docof(r, d), !deps_ts_doc(d).
+.decl deps_ts_doc(d: number)
+deps_ts_doc(d) :- doc(d, p, _), (suffix(".ts", p) ; suffix(".tsx", p) ; suffix(".mts", p) ; suffix(".cts", p)).
+
+// The key of a read: the plugin's getDependency. A read climbs its member chain, `props.user.id` → "props.user.id",
+// but not through `.current` (a ref's value is read when it is used) or into a method call: `props.onChange()`
+// depends on "props", since `this` would be props. A member written to depends on its object: `a.b = 1` is "a".
+.decl deps_up(r: node, n: node, k: symbol)
+deps_up(r, r, x) :- deps_ref(_, r, _), text(r, x).
+deps_up(r, m, cat(k, ".", p)) :- deps_up(r, n, k), deps_step(n, m, p).
+.decl deps_step(n: node, m: node, p: symbol)  // m is n.p, and the chain goes on through it
+deps_step(n, m, p) :- kind(m, "member_expression"), field(m, "object", n), field(m, "property", pn),
+    kind(pn, "property_identifier"), text(pn, p), p != "current", !deps_callee(m).
+.decl deps_callee(m: node)
+deps_callee(m) :- kind(c, "call_expression"), field(c, "function", m).
+.decl deps_top(r: node, t: node, k: symbol)  // where r's chain stops, with its key
+deps_top(r, t, k) :- deps_up(r, t, k), !deps_step(t, _, _).
+.decl deps_key(r: node, k: symbol)
+deps_key(r, k) :- deps_top(r, t, k), !deps_assigned(t).
+deps_key(r, k) :- deps_top(r, t, _), deps_assigned(t), field(t, "object", o), deps_up(r, o, k).
+.decl deps_assigned(t: node)  // a member that is assigned to: `a.b = 1`, `a.b += 1`
+deps_assigned(t) :- kind(t, "member_expression"), (kind(a, "assignment_expression") ;
+    kind(a, "augmented_assignment_expression")), field(a, "left", t).
+
+// What the callback uses. The variable the Hook's own result is stored in is not a dependency:
+//   const onClick = useCallback(() => onClick(), [])
+.decl deps_used(c: node, k: symbol, r: node)
+deps_used(c, k, r) :- deps_visit(c, v), deps_ref(v, r, site), !field(site, "value", c), deps_key(r, k).
+
+// isStableKnownHookValue: values React keeps the same across renders.
+//   const ref = useRef();  const [s, setS] = useState();  const [st, dispatch] = useReducer(…);
+//   const [pending, startTransition] = useTransition();  const onTick = useEffectEvent(…);  const N = 10;
+// A useState setter that is reassigned elsewhere is not stable.
+.decl deps_stable_site(site: node)
+deps_stable_site(d) :- kind(d, "variable_declarator"), child(l, d, _), kind(l, "lexical_declaration"), op(l, "const"),
+    field(d, "value", w), deps_bare(w, v), (kind(v, "string") ; kind(v, "number") ; kind(v, "null")).
+deps_stable_site(d) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
+    deps_init_hook(d, x), (x = "useRef" ; x = "useEffectEvent").
+deps_stable_site(p) :- kind(d, "variable_declarator"), field(d, "name", ap), deps_second(ap, p), deps_init_hook(d, x),
+    (x = "useReducer" ; x = "useActionState" ; x = "useTransition" ; x = "useState", !deps_rewritten(p)).
+// deps_second(ap, p): p is the second of exactly two elements, a hole counting as one: [a, b] and [, b].
+.decl deps_second(ap: node, p: node)
+deps_second(ap, p) :- kind(ap, "array_pattern"), child(ap, p, i), kind(p, "identifier"), token_before(p, t1),
+    text(t1, ","), token_after(p, t2), text(t2, "]"), token_before(t1, t0),
+    (i = 0, text(t0, "[") ; i = 1, child(ap, q, 0), last_token(q, t0), first_token(q, f), token_before(f, b),
+    text(b, "[")).
+.decl deps_init_hook(d: node, x: symbol)  // d = useRef(…), React.useRef(…), …
+deps_init_hook(d, x) :- field(d, "value", w), deps_bare(w, v), kind(v, "call_expression"), field(v, "function", f),
+    deps_name(f, x).
+.decl deps_rewritten(p: node)  // the variable is assigned again: `setS = other`
+deps_rewritten(p) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", r), ref_site(r, p).
+// isFunctionWithoutCapturedValues: a function declared directly in the component whose free variables are all
+// outside the pure scopes, or stable: `function log(x) { console.log(x); }` never needs listing.
+.decl deps_fn_site(site: node, f: node)  // site declares function f in the component's own scope
+deps_fn_site(f, f) :- kind(f, "function_declaration").
+deps_fn_site(d, f) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), field(d, "value", f),
+    deps_fn(f).
+.decl deps_fn_pure(v: node, site: node)
+deps_fn_pure(v, site) :- deps_ref(v, _, site), deps_fn_site(site, f), decl_site(s, _, site, _, "value"),
+    deps_component(v, cf), (s = cf ; field(cf, "body", s)), !deps_captures(v, f).
+.decl deps_captures(v: node, f: node)  // f reads a changing value of v's pure scopes
+deps_captures(v, f) :- deps_ref(v, _, site), deps_fn_site(site, f), within(r, f), ref(r, x, "value"),
+    ref_site(r, s2), decl_site(sc, x, s2, _, "value"), sc != f, !within(sc, f), deps_pure(v, sc),
+    !deps_stable_site(s2).
+.decl deps_stable(c: node, k: symbol)
+deps_stable(c, k) :- deps_used(c, k, r), deps_visit(c, v), ref_site(r, site),
+    (deps_stable_site(site) ; deps_fn_pure(v, site)).
+
+// The declared dependencies: each element of the array, keyed as the plugin's analyzePropertyChain keys it
+// (identifiers and non-computed members only; `.current` stays in the key).
+.decl deps_array(c: node, arr: node)  // [a, b] or [a, b] as const
+deps_array(c, arr) :- deps_visit(c, _), deps_list(c, a), deps_bare(a, arr), kind(arr, "array").
+.decl deps_elem(c: node, e: node)
+deps_elem(c, e) :- deps_array(c, arr), child(arr, e, _), !kind(e, "comment").
+.decl deps_dkey(n: node, k: symbol)
+deps_dkey(n, k) :- deps_elem(_, e), deps_bare(e, n), kind(n, "identifier"), text(n, k).
+deps_dkey(n, cat(k, ".", p)) :- deps_elem(_, e), deps_bare(e, n), deps_dchain(n, k, p).
+deps_dkey(o, k) :- deps_dobj(o), deps_bare(o, n), kind(n, "identifier"), text(n, k).
+deps_dkey(o, cat(k, ".", p)) :- deps_dobj(o), deps_bare(o, n), deps_dchain(n, k, p).
+.decl deps_dobj(o: node)  // the object of a member in a declared element, keyed on demand
+deps_dobj(o) :- deps_elem(_, e), deps_bare(e, n), kind(n, "member_expression"), field(n, "object", o).
+deps_dobj(o) :- deps_dobj(p), deps_bare(p, n), kind(n, "member_expression"), field(n, "object", o).
+.decl deps_dchain(n: node, k: symbol, p: symbol)  // n is o.p, and o has key k
+deps_dchain(n, k, p) :- kind(n, "member_expression"), field(n, "property", pn), kind(pn, "property_identifier"),
+    text(pn, p), field(n, "object", o), deps_dkey(o, k).
+.decl deps_declared(c: node, k: symbol, e: node)
+deps_declared(c, k, e) :- deps_elem(c, e), deps_bare(e, n), deps_dkey(n, k).
+// An external dependency: the element's root variable is not declared in the component (a module value, a global).
+.decl deps_external(c: node, k: symbol)
+deps_external(c, k) :- deps_declared(c, k, e), deps_root(e, o), deps_visit(c, v), deps_component(v, cf),
+    !deps_inside(o, cf).
+.decl deps_root(e: node, o: node)  // the identifier a declared chain starts from
+deps_root(e, n) :- deps_elem(_, e), deps_bare(e, n), kind(n, "identifier").
+deps_root(e, n) :- deps_elem(_, e), deps_bare(e, m), kind(m, "member_expression"), deps_root_of(m, n).
+.decl deps_root_of(m: node, n: node)
+deps_root_of(m, n) :- field(m, "object", o), deps_bare(o, n), kind(n, "identifier"), deps_dobj(o).
+deps_root_of(m, n) :- field(m, "object", o), deps_bare(o, p), kind(p, "member_expression"), deps_dobj(o),
+    deps_root_of(p, n).
+.decl deps_inside(o: node, cf: node)  // o resolves to a declaration in cf or below
+deps_inside(o, cf) :- deps_component(_, cf), ref_site(o, site), decl_site(s, _, site, _, "value"),
+    (s = cf ; within(s, cf)).
+
+// collectRecommendations, over the keys as paths. A used key is satisfied by a declared or stable key that is it
+// or a prefix of it ("props" covers "props.a.b"); it is missing when no prefix satisfies it, unless a shorter used
+// key is already missing for it. A declared key is "satisfying" when the path walk reaches it and something below
+// it is used. Effects may list more than they use, except `.current` values and values from outside.
+.decl deps_keys(c: node, k: symbol)
+deps_keys(c, k) :- deps_used(c, k, _) ; deps_declared(c, k, _).
+.decl deps_pre(c: node, p: symbol, k: symbol)  // p is k or a path prefix of k
+deps_pre(c, p, k) :- deps_keys(c, p), deps_keys(c, k), (p = k ; prefix(cat(p, "."), k)).
+.decl deps_sat(c: node, p: symbol)
+deps_sat(c, p) :- deps_declared(c, p, _) ; deps_stable(c, p).
+.decl deps_covered(c: node, k: symbol)
+deps_covered(c, k) :- deps_used(c, k, _), deps_sat(c, p), deps_pre(c, p, k).
+.decl deps_used_above(c: node, k: symbol)  // a shorter used key lies on k's path
+deps_used_above(c, k) :- deps_keys(c, k), deps_used(c, q, _), q != k, deps_pre(c, q, k).
+.decl deps_sat_above(c: node, k: symbol)
+deps_sat_above(c, k) :- deps_keys(c, k), deps_sat(c, q), q != k, deps_pre(c, q, k).
+.decl deps_missing(c: node, k: symbol)
+deps_missing(c, k) :- deps_used(c, k, _), !deps_covered(c, k), !deps_used_above(c, k).
+.decl deps_satisfying(c: node, k: symbol)
+deps_satisfying(c, k) :- deps_declared(c, k, _), deps_used(c, u, _), deps_pre(c, k, u), !deps_sat_above(c, k),
+    !deps_used_above(c, k).
+.decl deps_duplicate(c: node, k: symbol)
+deps_duplicate(c, k) :- deps_satisfying(c, k), count : { deps_declared(c, k, _) } > 1.
+.decl deps_unnecessary(c: node, k: symbol)
+deps_unnecessary(c, k) :- deps_declared(c, k, _), !deps_satisfying(c, k), deps_hook(c, x, _, _),
+    (!deps_effect(x) ; suffix(".current", k) ; deps_external(c, k)).

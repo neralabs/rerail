@@ -91,6 +91,9 @@ struct Lowerer {
     /// The literals beside the one being lowered, in its conjunction and those enclosing it: what binds an
     /// aggregate's shared variables (`aggregate`).
     siblings: Vec<Lit>,
+    /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
+    /// lattice's top value (`v != top`), as the translated programs write it.
+    top_is_var: bool,
 }
 
 pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
@@ -153,9 +156,9 @@ pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     l.projections();
     // The built-ins lowering writes out (`nearest`, `within`, …) are declared in `core.rr` for the checker; they
     // are no relations of the program.
-    // `within` stays where a rule reads it: the lowering made it the engine's relation.
+    // `within` stays where a rule reads it: the lowering made it the engine's relation (decision 0048).
     let reads_within = l.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == crate::code_rule_dsl::facts::vtab::syntax::WITHIN);
-    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
+    for b in RELATION_ARG.iter().map(|(r, _)| *r).chain(["within", "earlier", "split_dot", "unset"]).filter(|b| !(reads_within && *b == "within")) {
         l.prog.decls.remove(b);
         l.prog.inputs.retain(|i| i != b);
     }
@@ -302,6 +305,14 @@ impl Lowerer {
     }
 
     fn clause(&mut self, heads: &[Head], body: &[Lit]) -> Result<(), Error> {
+        fn binds_top(lits: &[Lit]) -> bool {
+            lits.iter().any(|l| match l {
+                Lit::Atom { neg: false, args, .. } => args.iter().any(|a| matches!(a, STerm::Var(v) if v == "top")),
+                Lit::Group { alts, neg: false } => alts.iter().any(|a| binds_top(a)),
+                _ => false,
+            })
+        }
+        self.top_is_var = binds_top(body);
         let mut outer = Vec::new();
         heads.iter().flat_map(|h| &h.args).for_each(|a| a.vars(&mut outer));
         let bodies = self.conjunction(body, &outer.into_iter().collect())?;
@@ -353,6 +364,7 @@ impl Lowerer {
             }
             Lit::Pattern { pattern, .. } => return not_yet(format!("the pattern `{pattern}`")),
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "within" | "within_stop") => self.within(rel, args, *neg)?,
+            Lit::Atom { rel, args, neg } if rel == "earlier" => self.earlier(args, *neg)?,
             Lit::Atom { rel, args, neg: false } if rel == "match" && matches!(args.as_slice(), [STerm::Str(re), _] if !groups(re).is_empty()) => self.captures(args)?,
             Lit::Atom { rel, args, neg } => {
                 // A computed argument (`loads(@dot(m, x))`) is bound to a variable first: the engine joins on
@@ -405,6 +417,20 @@ impl Lowerer {
         ])
     }
 
+    /// `earlier(m, n)`: m comes before n in one document. A node is `d << 32 | its preorder index`, so that is
+    /// `docof(m, d), docof(n, d), m < n`: document order. CPython's visit order differs from it for a few
+    /// children (a def's decorators and return annotation after its body, `core.rr`); that is not followed yet.
+    fn earlier(&mut self, args: &[STerm], neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let [m, n] = args else { return not_yet(format!("earlier/{}", args.len())) };
+        if neg {
+            return not_yet("!earlier");
+        }
+        let (m, n) = (self.term(m)?, self.term(n)?);
+        let d = Term::Var(self.fresh("doc"));
+        let docof = |x: &Term| Literal::Atom(Atom { rel: "docof".to_owned(), args: vec![x.clone(), d.clone()], neg: false, gated: false });
+        Ok(vec![vec![docof(&m), docof(&n), Literal::Cmp { l: m.clone(), op: "<", r: n.clone() }]])
+    }
+
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
     /// `x = @rx_group(s, "^(?:…)$", "x")`, which has no value when s does not match (`strings::group`).
     fn captures(&mut self, args: &[STerm]) -> Result<Vec<Vec<Literal>>, Error> {
@@ -448,8 +474,10 @@ impl Lowerer {
                 _ => None,
             })
             .collect();
+        // Only a test when something else binds x: `kind(c, k), (x = "a" ; x = "b")` gives x each value.
         if let Some(members) = members
             && members.iter().all(|(x, _)| *x == members[0].0)
+            && self.bound_beside(&members[0].0)
         {
             let set = Term::Call(SET.to_owned(), members.iter().map(|(_, c)| Term::Str(c.clone())).collect());
             return Ok(Some(Literal::Cmp { l: Term::Call("equals".to_owned(), vec![Term::Var(members[0].0.clone()), set]), op: "=", r: Term::Int(1) }));
@@ -548,7 +576,9 @@ impl Lowerer {
                 let v = self.fresh("agg");
                 let mut out = self.aggregate(&v, agg, over.as_deref(), by, sep, body, outer)?;
                 let other = self.term(other)?;
-                let (l, r) = if matches!(l, STerm::Agg { .. }) { (Term::Var(v), other) } else { (other, Term::Var(v)) };
+                // `$v = 0` with `$v` unbound would assign it (`front::cmp_binds`), and the planner may place it
+                // before the aggregate: an equality is written `0 = $v`, a test that waits for the aggregate.
+                let (l, r) = if matches!(l, STerm::Agg { .. }) && op != "=" { (Term::Var(v), other) } else { (other, Term::Var(v)) };
                 out.push(Literal::Cmp { l, op, r });
                 Ok(vec![out])
             }
@@ -567,6 +597,26 @@ impl Lowerer {
                 _ => false,
             })
             .collect();
+        // A comparison stays only if the context binds what it reads (`k > 1` needs the count that binds k, which
+        // is left out): the context may hold more rows than the rule, and the rule joins it with its own literals.
+        let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        let mut bound = body_vars(&context.iter().filter(|l| binds(l)).cloned().collect::<Vec<_>>());
+        let (atoms, mut cmps): (Vec<Lit>, Vec<Lit>) = context.into_iter().partition(|l| matches!(l, Lit::Atom { .. }));
+        let mut context = atoms;
+        loop {
+            let ready = cmps.iter().position(|c| {
+                let Lit::Cmp { l, op, r } = c else { return false };
+                let reads = |t: &STerm| body_vars(&[Lit::Cmp { l: t.clone(), op: "=", r: STerm::Wild }]);
+                match (l, r) {
+                    (STerm::Var(x), t) | (t, STerm::Var(x)) if *op == "=" && !bound.contains(x) => reads(t).is_subset(&bound),
+                    _ => reads(l).union(&reads(r)).all(|v| bound.contains(v)),
+                }
+            });
+            let Some(k) = ready else { break };
+            let c = cmps.remove(k);
+            bound.extend(body_vars(std::slice::from_ref(&c)));
+            context.push(c);
+        }
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -576,6 +626,18 @@ impl Lowerer {
             self.prog.rules.push(Rule { head: head.clone(), body: b });
         }
         Ok(head)
+    }
+
+    /// Whether a positive atom beside the literal being lowered (not a text test or `earlier`) binds `v`. `within`
+    /// and `within_stop` bind both ends: they are the engine's relation (decision 0048).
+    fn bound_beside(&self, v: &str) -> bool {
+        let atoms: Vec<Lit> = self
+            .siblings
+            .iter()
+            .filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier"))
+            .cloned()
+            .collect();
+        body_vars(&atoms).contains(v)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -620,7 +682,7 @@ impl Lowerer {
         // A shared variable the body only tests (`count : { slash_at(ps, j), i < j }`) is bound inside the helper by
         // a context relation: the rule's other literals, projected on those variables.
         let bound: BTreeSet<String> = body_vars(
-            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none())).cloned().collect::<Vec<_>>(),
+            &body.iter().filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier")).cloned().collect::<Vec<_>>(),
         );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {
@@ -669,7 +731,7 @@ impl Lowerer {
 
     fn term(&mut self, t: &STerm) -> Result<Term, Error> {
         Ok(match t {
-            STerm::Var(v) if v == "top" => Term::Top,
+            STerm::Var(v) if v == "top" && !self.top_is_var => Term::Top,
             STerm::Var(v) => Term::Var(v.clone()),
             STerm::Wild => Term::Wild,
             STerm::Num(n) => Term::Int(*n),
@@ -701,38 +763,54 @@ impl Lowerer {
             }
             STerm::Agg { op, .. } => return not_yet(format!("the aggregate {op} as a term")),
             STerm::Tick(t) => return not_yet(format!("the template `{t}`")),
+            STerm::Float(f) => return not_yet(format!("the decimal number {f}")),
             STerm::Json(_) | STerm::Named(..) => return Err(Error::Syntax("a JSON term or an `ast` capture outside `ast(…)`".to_owned())),
         })
     }
 
     /// Kind sets: the relations of facts given to `nearest`, `inside` and `has`. One read nowhere else is only a set.
     fn kind_sets(&mut self) -> Result<(), Error> {
-        let used: BTreeSet<String> = self
-            .prog
-            .rules
-            .iter()
-            .flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)))
-            .map(|a| a.rel.clone())
-            .collect();
         for set in std::mem::take(&mut self.sets) {
             if self.prog.kindsets.contains_key(&set) {
                 continue;
             }
-            let rows = self.prog.facts.get(&set).cloned().unwrap_or_default();
-            let kinds = rows
-                .iter()
-                .map(|row| match row.as_slice() {
-                    [Value::Str(k)] => Some(k.clone()),
-                    _ => None,
-                })
-                .collect::<Option<Vec<_>>>()
-                .filter(|_| !used.contains(&set) && !self.prog.inputs.contains(&set) && self.prog.decls.get(&set).is_none_or(|c| c.len() == 1))
-                .ok_or_else(|| Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, no rules)")))?;
+            let kinds = self
+                .kinds_of(&set, &mut BTreeSet::new())
+                .ok_or_else(|| Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")))?;
             self.prog.kindsets.insert(set.clone(), kinds);
-            self.prog.facts.remove(&set);
-            self.prog.decls.remove(&set);
+            // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`)
+            // stays one as well.
+            let read = self.prog.rules.iter().filter(|r| r.head.rel != set).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set));
+            if !read {
+                self.prog.facts.remove(&set);
+                self.prog.decls.remove(&set);
+                self.prog.rules.retain(|r| r.head.rel != set);
+            }
         }
         Ok(())
+    }
+
+    /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`.
+    fn kinds_of(&self, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+        if !seen.insert(set.to_owned()) || self.prog.inputs.iter().any(|i| i == set) || self.prog.decls.get(set).is_some_and(|c| c.len() != 1) {
+            return None;
+        }
+        let mut kinds: Vec<String> = Vec::new();
+        for row in self.prog.facts.get(set).into_iter().flatten() {
+            let [Value::Str(k)] = row.as_slice() else { return None };
+            kinds.push(k.clone());
+        }
+        for r in self.prog.rules.iter().filter(|r| r.head.rel == set) {
+            let ([Term::Var(k)], [Literal::Atom(a)]) = (r.head.args.as_slice(), r.body.as_slice()) else { return None };
+            if a.neg || !matches!(a.args.as_slice(), [Term::Var(v)] if v == k) {
+                return None;
+            }
+            kinds.extend(self.kinds_of(&a.rel, seen)?);
+        }
+        // In the order written, each once.
+        let mut once = BTreeSet::new();
+        kinds.retain(|k| once.insert(k.clone()));
+        Some(kinds)
     }
 }
 

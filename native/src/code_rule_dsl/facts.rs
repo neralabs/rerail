@@ -30,6 +30,8 @@ pub(crate) mod producers;
 pub(crate) mod propagate;
 #[allow(dead_code)]
 pub(crate) mod runs;
+#[cfg(test)]
+mod set_census;
 #[allow(dead_code)]
 pub(crate) mod vtab;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).

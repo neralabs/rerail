@@ -1,0 +1,134 @@
+// tsx/next: what eslint-plugin-next's rules share. They read JSX tags and attributes the plugin's way
+// (its NodeAttributes helper), the local names next/* modules are imported under, and where a file sits in a
+// Next.js app (pages/, pages/_document, app/), which the plugin decides from substrings of the file name.
+//
+// What a rule gets from this library:
+//   tag_of(o, x)            o is a JSX opening tag, <x …> or <x …/>, whose name is the plain identifier x
+//   opening(e, o)           o is element e's opening tag (e itself when it is self-closing)
+//   attr(o, x, a)           a is the attribute named x of opening tag o; a spread {...p} is no attribute
+//   attr_str(o, x, v)       attribute x is a string: x="v" or x={"v"}
+//   attr_plain(o, x, v)     attribute x is a string written directly, x="v" (the plugin's attr.value.value)
+//   attr_lit(o, x, v)       attribute x is a literal of any type: the above, x={1}, x={true}
+//   attr_count(o, k)        o has k attributes, spreads included (the plugin's node.attributes.length)
+//   inline_children(e)      element e has something between its tags, whitespace included
+//   child_el(e, c, x)       c is an element directly inside e, with tag x
+//   superclass(c, x)        class c extends the plain name x
+//   imported(d, m, x, y)    document d imports module m's export y as local x; y is "default" or "*" for those
+//   first_import(d, m, x)   x is the local name of the first specifier of d's last import of m
+//                           (the plugin's `node.specifiers[0].local.name`)
+//   default_import(d, m, x) x is the default import of m (ImportDefaultSpecifier), last one in d
+//   pages_rest(d, r)        r is d's path after its first "pages", cut at a second (`split('pages', 2)[1]`)
+//   pages_last(d, r)        r is d's path after its last "pages" (`split('pages').pop()`)
+//   document_file(d)        d is pages/_document…, or pages/_document/index: where Document lives
+//   in_app_dir(d)           d's path has "app/" in it
+//
+// Paths are as the engine gives them, relative to the repository; the plugin reads the absolute file name. They
+// differ only where a directory above the repository is called pages or …app.
+//
+// Builds on tsx/names (import_binding) and core.
+#include "tsx/names.rr"
+
+// ---- tags and attributes -------------------------------------------------------------------------------------------
+// ESTree's JSXOpeningElement is tree-sitter's jsx_opening_element, or the whole jsx_self_closing_element. Rules
+// that report "the opening element" report at its `<`. `node.name.name` is the tag only for a plain name: for
+// <a.b> and <svg:x> it is undefined, so those never match a tag test.
+.decl tag_of(o: node, x: symbol)
+tag_of(o, x) :- (kind(o, "jsx_opening_element") ; kind(o, "jsx_self_closing_element")), field(o, "name", t),
+    kind(t, "identifier"), text(t, x).
+.decl opening(e: node, o: node)
+opening(e, o) :- kind(e, "jsx_element"), field(e, "open_tag", o).
+opening(e, e) :- kind(e, "jsx_self_closing_element").
+
+// attr(o, x, a): <link rel="x" href={u} async {...p}/> has attributes rel, href and async; the spread is a
+// jsx_expression in the attribute list and has no name. A repeated attribute gives a row for each: NodeAttributes
+// keeps the last, so attr_str and attr_lit hold for either value where the plugin reads only the last.
+.decl attr(o: node, x: symbol, a: node)
+attr(o, x, a) :- field(o, "attribute", a), kind(a, "jsx_attribute"), child(a, n, 0), kind(n, "property_identifier"),
+    text(n, x).
+// attr_str and attr_lit are NodeAttributes' value(): the literal itself, or a literal in {…}. A template
+// x={`v`} is not a literal there, and gives nothing.
+.decl attr_lit(o: node, x: symbol, v: symbol)
+attr_lit(o, x, v) :- attr(o, x, a), child(a, l, 1), attr_literal(l), value(l, v).
+attr_lit(o, x, v) :- attr(o, x, a), child(a, c, 1), kind(c, "jsx_expression"), child(c, l, 0), attr_literal(l),
+    value(l, v).
+.decl attr_literal(l: node)  // ESTree's Literal, as an attribute value
+attr_literal(l) :- kind(l, k), (k = "string" ; k = "number" ; k = "true" ; k = "false" ; k = "null").
+.decl attr_str(o: node, x: symbol, v: symbol)
+attr_str(o, x, v) :- attr(o, x, a), child(a, l, 1), kind(l, "string"), str(l, v).
+attr_str(o, x, v) :- attr(o, x, a), child(a, c, 1), kind(c, "jsx_expression"), child(c, l, 0), kind(l, "string"),
+    str(l, v).
+.decl attr_plain(o: node, x: symbol, v: symbol)
+attr_plain(o, x, v) :- attr(o, x, a), child(a, l, 1), kind(l, "string"), str(l, v).
+.decl attr_count(o: node, k: number)
+attr_count(o, k) :- tag_of(o, _), k = count : { field(o, "attribute", _) }.
+
+// inline_children(e): <Script>…</Script> has children. ESTree keeps whitespace-only JSXText, so a line break
+// between the tags counts, though tree-sitter makes no node for it: the tags not touching is the test.
+.decl inline_children(e: node)
+inline_children(e) :- field(e, "open_tag", o), field(e, "close_tag", c), node(_, o, _, _, oe), node(_, c, _, cs, _),
+    oe < cs.
+// child_el(e, c, x): <Head><title/></Head> gives (Head element, title element, "title"). Only direct children:
+// the plugin reads `node.children`, so <Head>{cond && <title/>}</Head> has none.
+.decl child_el(e: node, c: node, x: symbol)
+child_el(e, c, x) :- kind(e, "jsx_element"), child(e, c, _), opening(c, o), !field(e, "open_tag", c), tag_of(o, x).
+
+// superclass(c, x): `class C extends Document`. JavaScript's class_heritage holds the expression; TypeScript's
+// holds an extends_clause (beside any implements_clause), whose value it is.
+.decl superclass(c: node, x: symbol)
+superclass(c, x) :- child(c, h, _), kind(h, "class_heritage"), child(h, s, 0), kind(s, "identifier"), text(s, x).
+superclass(c, x) :- child(c, h, _), kind(h, "class_heritage"), child(h, e, _), kind(e, "extends_clause"),
+    field(e, "value", s), kind(s, "identifier"), text(s, x).
+
+// ---- imports -------------------------------------------------------------------------------------------------------
+// imported(d, "next/script", "Script", "default"): `import Script from "next/script"`.
+.decl imported(d: number, m: symbol, x: symbol, y: symbol)
+imported(d, m, x, y) :- import_binding(s, x, m, y), docof(s, d).
+// The plugin's rules remember the import they saw last; a file has one import of next/script, so "last" only
+// matters for odd files. specifiers[0] is the first name in the clause: `import S, { a } from …` gives S.
+.decl first_import(d: number, m: symbol, x: symbol)
+first_import(d, m, x) :- import_stmt(i, d, m), !later_import(i, m), child(i, c, 0), kind(c, "import_clause"),
+    child(c, f, 0), clause_local(f, x).
+.decl clause_local(f: node, x: symbol)  // the local name of an import clause's first part
+clause_local(f, x) :- kind(f, "identifier"), text(f, x).
+clause_local(f, x) :- kind(f, "namespace_import"), child(f, n, 0), text(n, x).
+clause_local(f, x) :- kind(f, "named_imports"), child(f, s, 0), local_of(s, x).
+.decl default_import(d: number, m: symbol, x: symbol)
+default_import(d, m, x) :- import_stmt(i, d, m), !later_default(i, m), child(i, c, 0), kind(c, "import_clause"),
+    child(c, f, 0), kind(f, "identifier"), text(f, x).
+.decl import_stmt(i: node, d: number, m: symbol)  // i imports module m, in document d
+import_stmt(i, d, m) :- kind(i, "import_statement"), field(i, "source", s), str(s, m), docof(i, d).
+.decl later_import(i: node, m: symbol)
+later_import(i, m) :- import_stmt(i, d, m), import_stmt(j, d, m), earlier(i, j), child(j, c, 0), kind(c, "import_clause").
+.decl later_default(i: node, m: symbol)
+later_default(i, m) :- import_stmt(i, d, m), import_stmt(j, d, m), earlier(i, j), child(j, c, 0), kind(c, "import_clause"),
+    child(c, f, 0), kind(f, "identifier").
+
+// ---- where the file is -------------------------------------------------------------------------------------------
+// The plugin splits the file name on the substring "pages", not on a directory: "mypages/x.js" splits too.
+// pages_rest: `filename.split('pages', 2)[1]`, the text after the first "pages" and before a second one.
+//   "src/pages/_document.tsx" gives "/_document.tsx";  "pages/a/pages/b.js" gives "/a/".
+.decl pages_rest(d: number, r: symbol)
+pages_rest(d, @replace_all(@slice(p, strlen(pre) + 5, strlen(p)), "pages.*", "")) :- doc(d, p, _),
+    contains("pages", p), pre = @replace_all(p, "pages.*", "").
+// pages_last: `filename.split('pages').pop()`, after the last "pages". A path with no "pages" gives itself.
+.decl pages_last(d: number, r: symbol)
+pages_last(d, r) :- doc(d, p, _), match(".*pages(?<r>.*)", p).
+pages_last(d, p) :- doc(d, p, _), !contains("pages", p).
+// document_file(d): path.parse(rest) has a name starting with _document, or is /_document/index.*:
+//   pages/_document.js, pages/_document.page.tsx, pages/_document/index.tsx.
+.decl document_file(d: number)
+document_file(d) :- pages_rest(d, r), document_name(r).
+document_file(d) :- pages_rest(d, r), match("/_document/index(\\.[^.]*)?", r).
+// document_name(r): the last part of path r starts with _document (path.parse(r).name.startsWith("_document")).
+.decl document_name(r: symbol)
+document_name(r) :- pages_rest(_, r), glob("{_document*,**/_document*}", r).
+.decl in_app_dir(d: number)
+in_app_dir(d) :- doc(d, p, _), contains("app/", p).
+
+// Examples, one per rule that uses this library (packs/next):
+//   google-font-display     <link href="https://fonts.googleapis.com/css2?family=X" />        attr_str
+//   inline-script-id        import S from 'next/script'; <S>{`x()`}</S>                        first_import, inline_children
+//   no-css-tags             <link rel="stylesheet" href="/a.css" />                             attr_str
+//   no-duplicate-head       class D extends Document { render() { return <Html><Head/><Head/></Html> } }
+//   no-head-import-in-document  pages/_document.js: import Head from 'next/head'               document_file
+//   no-title-in-document-head   import { Head } from 'next/document'; <Head><title/></Head>     child_el
