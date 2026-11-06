@@ -296,9 +296,10 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
     std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     let path = out.join("store.sqlite");
     let cross_path = out.join("cross.sqlite");
-    for p in [&path, &cross_path] {
+    // A failed run leaves its write-ahead log beside the store; reopening a new store over it reads stale pages.
+    for p in [&path, &cross_path].into_iter().flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
-            std::fs::remove_file(p).map_err(|e| Error::Plan(e.to_string()))?;
+            std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }
     }
     let store = ContentStore::open(&path).map_err(|e| Error::Plan(e.to_string()))?;
