@@ -1,0 +1,129 @@
+# T10 notes: where a corpus run's CPU goes, and the opportunity set (2026-11-06)
+
+Profiled on the merged tree (`0ceda4e37`, final-rerail-shape merged in). These are the sources:
+
+- **The run profiles:** `RERAIL_PROFILE` gives phases, spans, plans and joins by work.
+- **One wall-clock sample:** macOS `sample` of a full-corpus serverplan-quality run (30 s at 1 ms intervals,
+  demangled with `rustfilt`).
+- **Every converted rule on s200:** 100 rules, one run each.
+
+Marks:
+
+- **M** = measured.
+- **D** = derived from measurements: a sample share applied to a span's CPU.
+- **A** = an estimate.
+
+CPU is user + sys. The machine was shared and busy (load 15–47), so absolute times vary run to run by about 30%.
+Shares and row counts don't.
+
+## 1. One rule over the whole corpus: serverplan-quality, 9,010 files, 28.2M nodes
+
+| Phase | CPU (load ~25) | Share | |
+|---|---|---|---|
+| parse (worker) | 22.9 s | 52% | M |
+| batch (worker) | 8.8 s | 20% | M |
+| local (the rules) | 11.8 s | 27% | M |
+| total | 43.8 s | | M; 34.2 s at load 15–19 |
+
+Peak RSS is 316 MB. The rules run per file: 269 rules file-local, 0 cross-file.
+
+### 1a. Parse: 22.9 s, mostly ours, not tree-sitter's
+
+| Span | CPU | Inside it (sample shares of the parse) |
+|---|---|---|
+| tree-sitter parse | 10.2 s M | The Python scanner's `deserialize` frees and reallocates its stacks on every call, through the system allocator, whose `free` reads the clock: 6.2% of the parse D |
+| tape encode | 5.9 s M | `ts_tree_cursor_current_status` once per node, for the supertypes: 7.6%. SipHash in `TapeImage::finish`'s code map: 4.4%. Software SHA-256 of the source: 3.5% D |
+| digest | 2.2 s M | SHA-256 fed one 4-byte value at a time, over the source and every fact column |
+| facts from tape | 1.4 s M | Copies the tape's columns |
+| tape restore | 1.4 s M | Deserializes the image encode had just serialized, and SHA-256s the source again (3.3%) D |
+| read | 0.9 s M | |
+
+The opportunities, cheapest first:
+
+1. **Hardware SHA-256.** `sha2` 0.10 on aarch64 needs its `asm` feature, otherwise it runs `soft::compress`; the
+   tree already locks 0.11 too. The source is hashed three times per file (encode, restore, digest). Hash it once,
+   and hash the fact columns as byte slices. That saves most of the digest's 2.2 s plus about 0.7 s in
+   encode/restore (A).
+2. **The Python scanner's allocations.** Compile the grammars with `TREE_SITTER_REUSE_ALLOCATOR`, so the scanner
+   uses jemalloc like the parser, or patch `deserialize` to clear its arrays instead of freeing them (the grammar
+   already carries patches, `PATCHES.md`). About 1.2 s (A).
+3. **FxHash for `finish`'s code map.** About 1 s (A).
+4. **No serialize/restore round trip in a corpus run.** Build the `TapeDoc` from the encoder's columns. About 1.4 s
+   (A).
+5. **Supertypes without `current_status` per node.** Ask only for kinds that are some supertype's subtype, or cache
+   by (parent production, child index). Up to 1.6 s (A).
+
+Tree-sitter's own 8–10 s remains. Only parsing less removes it: a tape cache across runs, keyed by source digest.
+That is a product decision.
+
+### 1b. Batch: 8.8 s, three quarters of it SQLite durability
+
+`with_nearest` → `ContentStore::intern_atoms` is 77% of the batch worker's samples (D). For each of the 104 chunks it:
+
+- appends the chunk's new strings (640k distinct in all) to the on-disk `atoms` table in an `IMMEDIATE` transaction;
+- runs on a 1 MB page cache (`cache_size = -1024`), so B-tree inserts miss (`pread`) and dirty pages spill
+  mid-transaction (`pagerStress`);
+- commits with a WAL checkpoint, `pwrite` and `fsync`. Checkpoint and `fsync` are about 36% and 26% of the
+  worker's samples.
+
+The opportunity: the store's in-memory mirror already allocates the ids. Write the rows once, or once per several
+chunks, with a larger cache for the append and no checkpoint per chunk. Most of the 6–7 s (A). This is also most of
+the run's 6.3 s of sys time.
+
+### 1c. Rules: 11.8 s, 66.6M rows of join work
+
+Engine overheads (main-thread samples):
+
+- **Filtered views rebuilt per stratum and chunk.** `setfix::view` is 12%: `node(_, $n, <kind>, _, _)` filters are
+  recomputed by every stratum that reads them, through `Source::value` calls. The fix is a view cache per chunk, or
+  the facts' kind postings.
+- **Strings formatted for plan-cache keys and join specs per chunk.** `core::fmt` is about 6%.
+- **Candidates re-checked against every key.** `Source::value` inside `run_join::go` is about 10%.
+
+Rule shapes (rows, M). Most of the work is a few shapes the converter emits:
+
+| Relation | Rows | Shape |
+|---|---|---|
+| m650 | 13.3M | span containment by comparisons (P1) |
+| m758 | 11.4M | **read by nothing** (P5): 10 of 99 derived relations are unreachable from `violation` |
+| violation ×4 | 3.3–7.3M each | "the file contains name X" through every node of the file (P3) |
+| m680 | 7.2M | text test checked after a scan of every identifier, because the planner estimates `strtest` at selectivity 1 (P6) |
+| violation #192 | 4.6M | `node($d, $n, _, …)` and `node(_, $n, 1223, …)`: one row, two atoms (P4) |
+
+## 2. Every rule on s200 (200 files, 530k nodes)
+
+Most rules take 0.36–0.73 s, and parsing is most of that (M). The exceptions are all the same shapes:
+
+| Rule | CPU | Rows | Shape |
+|---|---|---|---|
+| transaction-closures | 71.3 s | 3.1 billion (`blocked110`) | P1 |
+| module-level-caches | > 60 s (38.1 s on **s50**) | 500M on s50 (`m131`) | P3 + P6 |
+| grammar-callable-constructors | 2.7 s, 690 MB RSS | 44.6M, cross-file (`m131`) | P2 |
+| error-handling | 1.8 s | 18.9M (`m17`) | P3 |
+
+The first two cannot run on the full corpus at all. They grow with file size squared (P1) and with the file's nodes
+times its matches (P3).
+
+## 3. The shapes
+
+The fix for each is one engine rule, not one per check:
+
+- **P1. Span containment written as comparisons.** For example,
+  `node(D, A, _, sa, ea), node(D, B, _, sb, eb), sb <= sa, ea <= eb`. The engine joins every node of the file, then
+  filters. Spans form a laminar family, so the nodes containing a span are one chain: A's ancestors, plus
+  same-span descendants and zero-width edge cases, read off the tape. **Billions of rows; the largest.**
+- **P2. An atom whose other variables are used nowhere else.** For example, `text($v122, $s)` beside
+  `text($v129, $s)` is implied, but the implied-atom rule (0038) only sees `_`. Treating singleton variables as `_`
+  drops it.
+- **P3. An existential part joined only through a document.** For example,
+  `node($d, $y), name($y, $s), strtest($s)` joined to the rest only by `$d`. Project that part to
+  `aux($d)` (distinct docs) before the join: a semi-join, Yannakakis-style.
+- **P4. Two atoms of a relation keyed by its node.** For example, `node(_, $n, …)` twice. Merge them into one by
+  the key, `node`'s column 1.
+- **P5. Relations no output reads.** Drop them before planning.
+- **P6. Text-test sizes unknown to the planner.** The vocabulary pass knows each `strtest_*` exactly before the run.
+  Feed those sizes to the statistics.
+
+P2, P4 and P5 are simplifier rules (decision 0038's family). P3 and P6 are planning. P1 is a structural join on the
+tape. A converter fix can also remove P1 and P3 at the source (`inside`, `has` on the file), but the engine must
+not depend on it (decision 0044's point: imperfect conversions).
