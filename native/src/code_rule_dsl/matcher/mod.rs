@@ -40,7 +40,7 @@ mod run;
 mod semantic;
 #[cfg(test)]
 mod tests;
-mod transform;
+pub(in crate::code_rule_dsl) mod transform;
 mod util;
 mod value;
 
