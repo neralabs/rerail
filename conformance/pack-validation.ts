@@ -195,7 +195,7 @@ function headerOf(text: string): z.infer<typeof headerSchema> {
 const documentIdOf = (text: string): string | undefined => headerOf(text).id;
 
 const CODE_RULE_FORMAT = "rerail.policy/v1";
-/** A rule document in some format: `rerail.policy/v1`, or an older one such as `tempo.policy/v1`. */
+/** A rule document in some format: `rerail.policy/v1`, or an older `<name>.policy/v<n>`. */
 const POLICY_FORMAT = /\.policy\/v\d+$/u;
 
 const inRulesDirectory = (file: string): boolean => posix.basename(posix.dirname(file)) === "rules";

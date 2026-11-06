@@ -444,7 +444,7 @@ Metrics 22–24 cover problems the structure review found.
 
 ### 22. Stale paths left from the import — target 0
 
-No tracked text file mentions `rerail-fixtures/`, `tempo-oracles`, `code-rule-dsl/rules/opt-in` or
+No tracked text file mentions `rerail-fixtures/`, `code-rule-dsl/rules/opt-in` or
 `policies/rule-packs`. Exemptions: `history` (`CHANGELOG.md`, `.changelog/*.md`, `.changeset/*.md`) and
 `structure-gate` (this page, the gate, its tests).
 

@@ -644,7 +644,7 @@ conformance check (`npm run test:conformance`), not here.
      object with a `match` and no `format`, `parseConversationRule`) whose every pattern the engine accepts
      (`engineRegexIssues`).
    - Candidates need not compile. Every rule document under `candidates/` (each JSON file in a `rules/` directory
-     there, and any file there whose `format` names a policy, such as the older `tempo.policy/v1`) must be
+     there, and any file there whose `format` names a policy, an older `<name>.policy/v<n>` included) must be
      `rerail.policy/v1` or a conversation rule, sit in a `rules/` directory and be named `<id>.json`
      (`candidates/rules/<id>.json`, `candidates/probes/rules/<id>.json`).
    - Every port in the pack's `conformance.json`, and in each `conformance.json` under `candidates/` (probes), has its
