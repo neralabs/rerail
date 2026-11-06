@@ -470,7 +470,13 @@ pub(crate) fn run_typed(program: &str, root: &Path, t_facts: Option<&Path>, out:
             let types: Vec<&str> = lowered.program.decls[rel].iter().map(|(_, t)| t.as_str()).collect();
             if kept.contains(rel) {
                 let cols = (0..types.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-                let inserted = db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
+                // `set_derived` gives the rows the engine derived beyond its table's; a relation of facts and rules
+                // has its facts there (the engine read them as stored rows), so they go first.
+                let mut inserted = 0;
+                if lowered.program.facts.get(rel).is_some_and(|f| !f.is_empty()) {
+                    inserted += db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM temp.{rel}"), [])?;
+                }
+                inserted += db.execute(&format!("INSERT OR IGNORE INTO x.{rel} SELECT {cols} FROM set_derived WHERE rel = ?1"), [rel])?;
                 let rows = crate::code_rule_dsl::logic::native::component::derived(&db, rel).ok_or_else(|| Error::Plan(format!("{rel} is not held")))?;
                 totals.add_rows(rel, inserted, rows.as_ref(), &types);
             } else {

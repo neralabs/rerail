@@ -639,3 +639,45 @@ fn("function_definition").
     }
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
+fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<String> {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, source) in files {
+        let p = dir.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, source).unwrap();
+    }
+    let out = dir.join("out");
+    super::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let got = outputs.iter().map(|rel| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default()).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    got
+}
+
+/// A relation given both facts and rules holds both: its facts are not lost to its rules' rows.
+#[test]
+fn a_relation_of_facts_and_rules_keeps_its_facts() {
+    let program = r#"
+.decl str(n: node, s: symbol)
+.decl text(n: node, s: symbol)
+.input str, text
+.decl other(x: symbol)
+other("SyncX").
+.decl pat(x: symbol)
+pat("Sequence").
+pat(x) :- other(x).
+.decl hit(s: symbol)
+hit(c) :- str(_, c), pat(x), word(x, c).
+.decl pair(y: symbol, x: symbol)
+pair("legacy", "a").
+pair(y, y) :- text(_, y), prefix("le", y).
+.decl joined(y: symbol, x: symbol)
+joined(y, x) :- pair(y, x), text(_, y).
+.output hit, joined
+"#;
+    let got = corpus_outputs("facts-and-rules", &[("a.py", "def f(a: \"Sequence\", b: \"SyncX\"):\n    legacy = lemon\n")], program, &["hit", "joined"]);
+    assert_eq!(got[0], "Sequence\nSyncX\n");
+    assert_eq!(got[1], "legacy\ta\nlegacy\tlegacy\nlemon\tlemon\n");
+}
