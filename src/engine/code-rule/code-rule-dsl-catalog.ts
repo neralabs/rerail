@@ -27,8 +27,8 @@ import {
   type CodeRulePlacementEntry,
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
-import { repositoryIdentityLocation } from "../catalog/repository-identity.js";
-import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion } from "../catalog/repository-registry.js";
+import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
+import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion, recordStartedWorktree } from "../catalog/repository-registry.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
@@ -305,7 +305,7 @@ export interface ConversationRuleSource {
 
 interface CheckoutEntry {
   readonly root: string;
-  location: { readonly git: boolean; readonly main: boolean } | undefined;
+  location: RepositoryIdentityLocation | undefined;
   checkout: CheckoutContext | undefined;
   parents: readonly string[];
   status: RepositoryStatus | undefined;
@@ -427,10 +427,12 @@ export class CheckoutCatalogs {
     return entry;
   }
 
-  /** Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. */
+  /**
+   * Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. A worktree
+   * of a started clone that no session started in is recorded here, the first time a path in it is looked up.
+   */
   #read(entry: CheckoutEntry): void {
-    const row = this.database.select({ repositoryKey: checkouts.repositoryKey, cloneId: checkouts.cloneId })
-      .from(checkouts).where(eq(checkouts.checkoutPath, entry.root)).get();
+    const row = this.#row(entry) ?? this.#recordWorktree(entry);
     if (row === undefined) {
       entry.checkout = undefined;
       entry.parents = [];
@@ -438,17 +440,28 @@ export class CheckoutCatalogs {
       entry.eligibility = "unrecorded";
       return;
     }
-    if (entry.location === undefined) {
-      const { git, main } = repositoryIdentityLocation(entry.root);
-      entry.location = { git, main };
-    }
-    const checkout: CheckoutContext = { checkoutPath: entry.root, repositoryKey: row.repositoryKey, cloneId: row.cloneId, ...entry.location };
+    entry.location ??= repositoryIdentityLocation(entry.root);
+    const { git, main } = entry.location;
+    const checkout: CheckoutContext = { checkoutPath: entry.root, repositoryKey: row.repositoryKey, cloneId: row.cloneId, git, main };
     const status = checkoutStatus(this.database, checkout);
     entry.checkout = checkout;
     entry.parents = parentCheckouts(this.database, checkout).map(parent => parent.checkoutPath);
     entry.status = status;
     if (!status.started) entry.eligibility = "stopped";
     else entry.eligibility = status.setUp ? "ok" : "not-set-up";
+  }
+
+  /** The row of `entry` once recorded as a worktree of a started clone (`recordStartedWorktree`); undefined when it is not one. */
+  #recordWorktree(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
+    // A folder outside Git may become a checkout, so only a Git location is kept.
+    const location = entry.location ?? repositoryIdentityLocation(entry.root);
+    if (location.git) entry.location = location;
+    return recordStartedWorktree(this.database, entry.root, location) ? this.#row(entry) : undefined;
+  }
+
+  #row(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
+    return this.database.select({ repositoryKey: checkouts.repositoryKey, cloneId: checkouts.cloneId })
+      .from(checkouts).where(eq(checkouts.checkoutPath, entry.root)).get();
   }
 
   /** `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`. */

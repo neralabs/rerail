@@ -1,15 +1,19 @@
 /**
  * A session's code-rule audit across checkouts: each file goes to the lane of the checkout that owns it,
  * one native enforcer per checkout, judged by that checkout's rules. Only checkouts that are recorded, started and
- * set up get a lane; files of any other checkout are not audited.
+ * set up get a lane; files of any other checkout are not audited. A worktree Git registered for a started clone Rerail
+ * knows is recorded when a path in it is first looked up (`recordStartedWorktree`), wherever it sits.
  *
  * A nested checkout owns its files only when it is a submodule the checkout around it declares (a gitlink), or a
  * recorded checkout that may run rules. Any other nested repository, such as an untracked `git init` or a stray
  * `.git` entry, is judged with the checkout around it, so a `.git` never exempts files from that checkout's rules. A
  * declared submodule that is not set up runs nothing.
  */
+import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
+import { worktreeRegistry } from "../catalog/repository-identity.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -55,6 +59,11 @@ function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeR
     failures: responses.flatMap(response => response.failures),
     disposition: responses.some(response => response.disposition === "steer") ? "steer" : "continue",
   };
+}
+
+/** Whether `folder`, relative to a checkout ("" for all of it), holds `path` or is it. */
+function folderHolds(folder: string, path: string): boolean {
+  return folder === "" || path === folder || path.startsWith(`${folder}/`);
 }
 
 export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
@@ -124,6 +133,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot;
   }
 
+  /**
+   * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
+   * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
+   * session wrote a file, so what it finds there is recorded under the repository and steers no session.
+   */
+  worktreeRoots(): string[] {
+    const starting = this.#options.startingCheckout;
+    return (worktreeRegistry(starting)?.worktrees ?? [])
+      .map(worktree => storedPath(worktree))
+      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
   async auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse> {
     this.#assertSession(sessionId);
     const partitioned = new Map<Lane, CodeRuleEdit[]>();
@@ -160,29 +181,31 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     input: { scope: "repository" | "touched-files"; mode: AuditMode; paths?: string[]; audit?: RepositoryAuditHooks },
   ): Promise<readonly string[]> {
     this.#assertSession(sessionId);
+    const auditIds: string[] = [];
     if (input.scope === "repository") {
       if ((input.paths ?? []).length > 0) throw new Error("Repository scope always covers the full repository");
-      const auditIds: string[] = [];
       await this.#audit(sessionId, this.#options.startingCheckout, input.mode, input.audit, auditIds, new Set());
       return auditIds;
     }
-    const partitioned = new Map<Lane, string[]>();
-    for (const path of input.paths ?? []) {
-      const routed = this.#route(path);
-      if (routed !== undefined) partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), routed.path]);
-    }
-    const auditIds: string[] = [];
     const visited = new Set<string>();
-    for (const [lane, paths] of partitioned) {
+    for (const [lane, paths] of this.#byLane(input.paths ?? [])) {
       await lane.opening;
       auditIds.push(...await lane.enforcer.audit(sessionId, { scope: "touched-files", mode: input.mode, paths }));
       // The lane's walk skips the checkouts nested in a folder it was given; each is audited whole, in its own lane.
-      for (const nested of this.#nestedCheckoutsOf(lane.root)) {
-        if (!paths.some(path => path === "" || nested === path || nested.startsWith(`${path}/`))) continue;
+      for (const nested of this.#nestedCheckoutsOf(lane.root).filter(nested => paths.some(path => folderHolds(path, nested))))
         await this.#audit(sessionId, join(lane.root, nested), input.mode, undefined, auditIds, visited);
-      }
     }
     return auditIds;
+  }
+
+  /** Each path, relative to the checkout that owns it, under that checkout's lane; a path no lane owns is left out. */
+  #byLane(paths: readonly string[]): Map<Lane, string[]> {
+    const partitioned = new Map<Lane, string[]>();
+    for (const path of paths) {
+      const routed = this.#route(path);
+      if (routed !== undefined) partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), routed.path]);
+    }
+    return partitioned;
   }
 
   interrupt(options?: AuditorCloseOptions): void {
@@ -212,19 +235,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   ): Promise<void> {
     if (visited.has(root) || this.#closing) return;
     visited.add(root);
+    const report = await this.#auditCheckout(sessionId, root, mode, audit);
+    if (report === undefined) return;
+    if (report.auditId !== undefined) auditIds.push(report.auditId);
+    for (const nested of this.#ownNestedCheckouts(root, report.nestedCheckouts))
+      await this.#audit(sessionId, nested, mode, audit, auditIds, visited);
+  }
+
+  /** The checkout's own run once its lane has opened; undefined when it has no lane or `audit` did not let it claim the run. */
+  async #auditCheckout(sessionId: string, root: string, mode: AuditMode, audit: RepositoryAuditHooks | undefined) {
     const lane = this.#lane(root);
-    if (lane === undefined) return;
+    if (lane === undefined) return undefined;
     await lane.opening;
-    if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return;
+    if (audit !== undefined && !audit.claim(root, lane.enforcer.catalogRevision())) return undefined;
     const report = await lane.enforcer.auditRepository(sessionId, mode);
     audit?.finish(root, report.auditId);
-    if (report.auditId !== undefined) auditIds.push(report.auditId);
-    for (const nested of report.nestedCheckouts) {
-      const owner = this.#owner(join(root, nested));
-      if (owner !== undefined && owner.path === "" && owner.checkoutRoot !== root) {
-        await this.#audit(sessionId, owner.checkoutRoot, mode, audit, auditIds, visited);
-      }
-    }
+    return report;
+  }
+
+  /** Of the checkouts a walk of `root` skipped, the roots of those that own their files and so are judged in their own lane. */
+  #ownNestedCheckouts(root: string, nested: readonly string[]): string[] {
+    return nested
+      .map(path => this.#owner(join(root, path)))
+      .filter((owner): owner is CheckoutOwner => owner !== undefined && owner.path === "" && owner.checkoutRoot !== root)
+      .map(owner => owner.checkoutRoot);
   }
 
   async #settleLanes(settle: (lane: Lane) => Promise<void>): Promise<void> {
@@ -260,9 +294,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * A checkout inside another owns its files when Rerail recorded it or the outer one declares it as a submodule; a
-   * stopped or not set up one then runs nothing. Only a Git folder Rerail never recorded (a stray `.git`, a `git init`
-   * nobody started) is judged by the checkout around it.
+   * A checkout inside another owns its files when Rerail recorded it, or would on this lookup (a worktree Git registered
+   * for a started clone), or the outer one declares it as a submodule; a stopped or not set up one then runs nothing.
+   * Only a Git folder Rerail never recorded (a stray `.git`, a `git init` nobody started) is judged by the checkout
+   * around it.
    */
   #ownsItsFiles(root: string): boolean {
     return this.#eligibilityOf(root) !== "unrecorded" || this.#options.owners.isDeclaredSubmodule(root);

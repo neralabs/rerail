@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   chmodSync,
   closeSync,
   constants as fsConstants,
@@ -8,11 +9,14 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
+  readFileSync,
   readSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { physicalPath } from "./checkout-control.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
@@ -36,19 +40,94 @@ function nonGitLocation(requested: string): RepositoryIdentityLocation {
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   const requested = resolve(workspace);
-  let result;
+  const result = locateInGit(requested);
+  return result === undefined || result.status !== 0 ? nonGitLocation(requested) : gitLocation(requested, result.stdout);
+}
+
+/** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
+function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
   try {
-    result = runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
+    return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
   } catch (error) {
-    if (error instanceof GitUnavailableError) return nonGitLocation(requested);
+    if (error instanceof GitUnavailableError) return undefined;
     throw error;
   }
-  if (result.status !== 0) return nonGitLocation(requested);
-  const [top, commonDirectory, gitDirectory] = result.stdout.trim().split("\n").map(line => resolve(line.trim()));
+}
+
+function gitLocation(requested: string, stdout: string): RepositoryIdentityLocation {
+  const [top, commonDirectory, gitDirectory] = stdout.trim().split("\n").map(line => resolve(line.trim()));
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
   return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+}
+
+/** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */
+const worktreeRegistries = new Map<string, WorktreeRegistry & { readonly contents: string }>();
+
+export interface WorktreeRegistry {
+  /** The common directory Git reads for the checkout that was asked, physical. */
+  readonly commonDirectory: string;
+  /** The main checkout and each linked worktree `git worktree add` made, as Git reports them. */
+  readonly worktrees: readonly string[];
+}
+
+/**
+ * Each registered worktree's name and where it says it is: `git worktree add`, `remove`, `move` and `repair` all change
+ * it. The `worktrees` folder's own time would miss the last two, which rewrite a file inside an entry.
+ */
+function registryContents(commonDirectory: string): string {
+  const folder = join(commonDirectory, "worktrees");
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return "";
+  }
+  return names.toSorted().map(name => {
+    try {
+      return `${name}\0${readFileSync(join(folder, name, "gitdir"), "utf8")}`;
+    } catch {
+      return name;
+    }
+  }).join("\0");
+}
+
+/**
+ * The registry of `checkout`, a recorded checkout: its own common directory and what Git lists there. Undefined when Git
+ * cannot answer in it (it is gone, say). A `.git` file naming that directory is not listed, nor is a worktree moved
+ * without `git worktree move` or `repair`. Git's answer is kept until the registry's contents change, so `.git` files a
+ * repository plants cost Git one call, not one per file per tool call; only the recorded checkout decides what is kept,
+ * never a folder asking to be listed. Line output because `-z` needs Git 2.36, which distributions Rerail runs on do not
+ * have yet.
+ */
+export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined {
+  const commonDirectory = registryCommonDirectory(checkout);
+  // Read before Git runs: a worktree added meanwhile changes it, and Git is asked again next time.
+  const contents = commonDirectory === undefined ? undefined : registryContents(commonDirectory);
+  const known = worktreeRegistries.get(checkout);
+  if (known !== undefined && known.contents === contents) return known;
+  const registry = contents === undefined ? undefined : listWorktrees(checkout, commonDirectory!, contents);
+  // A checkout that is gone, or where Git cannot answer, keeps nothing: what is kept is bounded by what answers.
+  if (registry === undefined) worktreeRegistries.delete(checkout);
+  else worktreeRegistries.set(checkout, registry);
+  return registry;
+}
+
+/** The physical common directory `checkout` reads, as Git first gave it; undefined when the folder is gone or not in Git. */
+function registryCommonDirectory(checkout: string): string | undefined {
+  if (!existsSync(checkout)) return undefined;
+  const known = worktreeRegistries.get(checkout);
+  if (known !== undefined) return known.commonDirectory;
+  const location = repositoryIdentityLocation(checkout);
+  return location.git ? physicalPath(dirname(location.identityPath)) : undefined;
+}
+
+function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {
+  const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
+  if (result.status !== 0) return undefined;
+  const worktrees = result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
+  return { commonDirectory, worktrees, contents };
 }
 
 /** The repository's own folder name: the main checkout's folder for a linked worktree, else the checkout's folder. */
@@ -163,8 +242,17 @@ export interface RemoteAddress {
 
 /** The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
+  const origin = originUrl(root);
+  return origin === undefined ? soleRemote(root) : { name: "origin", url: origin };
+}
+
+/** `origin`'s address; `ls-remote --get-url` gives the name back when no remote has it. */
+function originUrl(root: string): string | undefined {
   const origin = gitText(root, ["ls-remote", "--get-url", "origin"]);
-  if (origin !== undefined && origin !== "" && origin !== "origin") return { name: "origin", url: origin };
+  return origin === undefined || origin === "" || origin === "origin" ? undefined : origin;
+}
+
+function soleRemote(root: string): RemoteAddress | undefined {
   const names = (gitText(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
   if (names.length !== 1) return undefined;
   const [name] = names as [string];
@@ -176,14 +264,21 @@ const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const SCP_FORM = /^(?:[^@/]+@)?([^:/]+):(.*)$/;
 
 function splitAddress(address: string): { host: string; path: string } | undefined {
-  if (SCHEME.test(address)) {
-    if (/^file:\/\//i.test(address)) return undefined;
-    const rest = address.replace(SCHEME, "");
-    const slash = rest.indexOf("/");
-    const authority = slash === -1 ? rest : rest.slice(0, slash);
-    const host = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d*$/, "");
-    return { host, path: slash === -1 ? "" : rest.slice(slash) };
-  }
+  return SCHEME.test(address) ? splitUrl(address) : splitScpForm(address);
+}
+
+/** A `scheme://[user@]host[:port]/path` address; a `file://` one is a local path. */
+function splitUrl(address: string): { host: string; path: string } | undefined {
+  if (/^file:\/\//i.test(address)) return undefined;
+  const rest = address.replace(SCHEME, "");
+  const slash = rest.indexOf("/");
+  const authority = slash === -1 ? rest : rest.slice(0, slash);
+  const host = authority.slice(authority.lastIndexOf("@") + 1).replace(/:\d*$/, "");
+  return { host, path: slash === -1 ? "" : rest.slice(slash) };
+}
+
+/** A `[user@]host:path` address. */
+function splitScpForm(address: string): { host: string; path: string } | undefined {
   const scp = SCP_FORM.exec(address);
   // A single-letter "host" is a Windows drive (`C:/repo`, `C:\repo`), which is a local path.
   if (scp === null || scp[1]!.length === 1) return undefined;
